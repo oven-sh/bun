@@ -18,6 +18,7 @@
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/WeakMapImpl.h>
 #include <JavaScriptCore/WeakMapImplInlines.h>
+#include <JavaScriptCore/FunctionPrototype.h>
 
 namespace Bun {
 
@@ -501,6 +502,21 @@ extern "C" EncodedJSValue JSMock__spyOn(JSC::JSGlobalObject* lexicalGlobalObject
             if (hasValue)
                 attributes = slot.attributes();
 
+            {
+                auto catcher = DECLARE_CATCH_SCOPE(vm);
+                WTF::String nameToUse;
+                if (auto* fn = jsDynamicCast<JSFunction*>(value)) {
+                    nameToUse = fn->name(vm);
+                } else if (auto* fn = jsDynamicCast<InternalFunction*>(value)) {
+                    nameToUse = fn->name();
+                }
+                if (nameToUse.length()) {
+                    mock->putDirect(vm, vm.propertyNames->name, jsString(vm, nameToUse));
+                }
+                if (catcher.exception())
+                    catcher.clearException();
+            }
+
             attributes |= PropertyAttribute::Function;
             object->putDirect(vm, propertyKey, mock, attributes);
             RETURN_IF_EXCEPTION(scope, {});
@@ -538,7 +554,7 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
     JSMockModule mock;
     mock.mockFunctionStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
-            auto* prototype = JSMockFunctionPrototype::create(init.vm, init.owner, JSMockFunctionPrototype::createStructure(init.vm, init.owner, jsNull()));
+            auto* prototype = JSMockFunctionPrototype::create(init.vm, init.owner, JSMockFunctionPrototype::createStructure(init.vm, init.owner, init.owner->functionPrototype()));
 
             init.set(JSMockFunction::createStructure(init.vm, init.owner, prototype));
         });
@@ -951,11 +967,25 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockImplementation, (JSC::JSGlobalObject 
     }
 
     if (callframe->argumentCount() > 0) {
-        JSValue arg = callframe->argument(0);
-        if (arg.isCallable()) {
-            pushImpl(thisObject, globalObject, JSMockImplementation::Kind::Call, arg);
+        JSValue value = callframe->argument(0);
+        if (value.isCallable()) {
+            {
+                auto catcher = DECLARE_CATCH_SCOPE(vm);
+                WTF::String nameToUse;
+                if (auto* fn = jsDynamicCast<JSFunction*>(value)) {
+                    nameToUse = fn->name(vm);
+                } else if (auto* fn = jsDynamicCast<InternalFunction*>(value)) {
+                    nameToUse = fn->name();
+                }
+                if (nameToUse.length()) {
+                    thisObject->putDirect(vm, vm.propertyNames->name, jsString(vm, nameToUse));
+                }
+                if (catcher.exception())
+                    catcher.clearException();
+            }
+            pushImpl(thisObject, globalObject, JSMockImplementation::Kind::Call, value);
         } else {
-            pushImpl(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, arg);
+            pushImpl(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, value);
         }
     }
 
@@ -982,11 +1012,26 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockImplementationOnce, (JSC::JSGlobalObj
     }
 
     if (callframe->argumentCount() > 0) {
-        JSValue arg = callframe->argument(0);
-        if (arg.isCallable()) {
-            pushImpl(thisObject, globalObject, JSMockImplementation::Kind::Call, arg);
+        JSValue value = callframe->argument(0);
+        if (value.isCallable()) {
+            if (!thisObject->implementation) {
+                auto catcher = DECLARE_CATCH_SCOPE(vm);
+                WTF::String nameToUse;
+                if (auto* fn = jsDynamicCast<JSFunction*>(value)) {
+                    nameToUse = fn->name(vm);
+                } else if (auto* fn = jsDynamicCast<InternalFunction*>(value)) {
+                    nameToUse = fn->name();
+                }
+                if (nameToUse.length()) {
+                    thisObject->putDirect(vm, vm.propertyNames->name, jsString(vm, nameToUse));
+                }
+                if (catcher.exception())
+                    catcher.clearException();
+            }
+
+            pushImpl(thisObject, globalObject, JSMockImplementation::Kind::Call, value);
         } else {
-            pushImpl(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, arg);
+            pushImpl(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, value);
         }
     }
 

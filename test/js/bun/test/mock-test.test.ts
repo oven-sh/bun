@@ -15,6 +15,83 @@ test("are callable", () => {
   expect(fn.mock.calls[1]).toBeEmpty();
 });
 
+test(".call works", () => {
+  const fn = mock(function hey() {
+    // @ts-expect-error
+    return this;
+  });
+  expect(fn.call(123)).toBe(123);
+  expect(fn).toHaveBeenCalled();
+  expect(fn).toHaveBeenCalledTimes(1);
+  expect(fn.mock.calls).toHaveLength(1);
+  expect(fn.mock.calls[0]).toBeEmpty();
+
+  expect(fn()).toBe(undefined);
+  expect(fn).toHaveBeenCalledTimes(2);
+
+  expect(fn.mock.calls).toHaveLength(2);
+  expect(fn.mock.calls[1]).toBeEmpty();
+});
+
+test(".apply works", () => {
+  const fn = mock(function hey() {
+    // @ts-expect-error
+    return this;
+  });
+  expect(fn.apply(123)).toBe(123);
+  expect(fn).toHaveBeenCalled();
+  expect(fn).toHaveBeenCalledTimes(1);
+  expect(fn.mock.calls).toHaveLength(1);
+  expect(fn.mock.calls[0]).toBeEmpty();
+
+  expect(fn.apply(undefined)).toBe(undefined);
+  expect(fn).toHaveBeenCalledTimes(2);
+
+  expect(fn.mock.calls).toHaveLength(2);
+  expect(fn.mock.calls[1]).toBeEmpty();
+});
+
+test(".bind works", () => {
+  const fn = mock(function hey() {
+    // @ts-expect-error
+    return this;
+  });
+  expect(fn.bind(123)()).toBe(123);
+  expect(fn).toHaveBeenCalled();
+  expect(fn).toHaveBeenCalledTimes(1);
+  expect(fn.mock.calls).toHaveLength(1);
+  expect(fn.mock.calls[0]).toBeEmpty();
+
+  expect(fn.bind(undefined)()).toBe(undefined);
+  expect(fn).toHaveBeenCalledTimes(2);
+
+  expect(fn.mock.calls).toHaveLength(2);
+  expect(fn.mock.calls[1]).toBeEmpty();
+});
+
+test(".name works", () => {
+  const fn = mock(function hey() {
+    // @ts-expect-error
+    return this;
+  });
+  expect(fn.name).toBe("hey");
+});
+
+test(".name throwing doesnt segfault", () => {
+  function baddie() {
+    // @ts-expect-error
+    return this;
+  }
+  Object.defineProperty(baddie, "name", {
+    get() {
+      throw new Error("foo");
+    },
+  });
+
+  const fn = mock(baddie);
+  fn.name;
+});
+
 test("include arguments", () => {
   const fn = mock(f => f);
   expect(fn(43)).toBe(43);

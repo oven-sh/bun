@@ -72,8 +72,6 @@ function sseServer(
     evtSource?.close();
     server.stop(true);
     done(err);
-  } finally {
-    server.stop(true);
   }
 }
 

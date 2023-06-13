@@ -387,6 +387,8 @@ public:
     BunPlugin::OnLoad onLoadPlugins[BunPluginTargetMax + 1] {};
     BunPlugin::OnResolve onResolvePlugins[BunPluginTargetMax + 1] {};
     BunPluginTarget defaultBunPluginTarget = BunPluginTargetBun;
+    WTF::HashMap<uintptr_t, Ref<JSC::SourceProvider>> sourceProviderMap;
+    size_t reloadCount = 0;
 
     void reload();
 

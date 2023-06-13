@@ -63,6 +63,7 @@
 
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/GetterSetter.h>
+#include "ZigSourceProvider.h"
 
 namespace Bun {
 using namespace JSC;
@@ -298,10 +299,11 @@ JSC::SourceCode createCommonJSModule(
     ResolvedSource source)
 {
     auto sourceURL = Zig::toStringCopy(source.source_url);
+    auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program);
 
     return JSC::SourceCode(
         JSC::SyntheticSourceProvider::create(
-            [source, sourceURL](JSC::JSGlobalObject* lexicalGlobalObject,
+            [source, sourceProvider = WTFMove(sourceProvider), sourceURL](JSC::JSGlobalObject* lexicalGlobalObject,
                 JSC::Identifier moduleKey,
                 Vector<JSC::Identifier, 4>& exportNames,
                 JSC::MarkedArgumentBuffer& exportValues) -> void {
@@ -309,7 +311,6 @@ JSC::SourceCode createCommonJSModule(
                 auto& vm = globalObject->vm();
 
                 auto throwScope = DECLARE_THROW_SCOPE(vm);
-                auto sourceCodeString = Zig::toString(source.source_code);
                 auto* requireMapKey = jsString(vm, sourceURL);
 
                 JSC::JSObject* exportsObject = source.commonJSExportsLen < 64
@@ -323,11 +324,8 @@ JSC::SourceCode createCommonJSModule(
                 }
 
                 globalObject->requireMap()->set(globalObject, requireMapKey, exportsObject);
-
                 JSC::SourceCode inputSource(
-                    JSC::StringSourceProvider::create(sourceCodeString,
-                        JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL)),
-                        sourceURL, TextPosition()));
+                    WTFMove(sourceProvider));
 
                 JSC::Structure* scopeExtensionObjectStructure = globalObject->commonJSFunctionArgumentsStructure();
                 JSC::JSObject* scopeExtensionObject = JSC::constructEmptyObject(
@@ -462,22 +460,15 @@ JSC::SourceCode createCommonJSModule(
 
                 globalObject->requireMap()->set(globalObject, requireMapKey, result);
 
-                exportNames.append(vm.propertyNames->defaultKeyword);
-                exportValues.append(result);
-
                 moduleObject->m_executable.clear();
-
-                // This exists to tell ImportMetaObject.ts that this is a CommonJS module.
-                exportNames.append(Identifier::fromUid(vm.symbolRegistry().symbolForKey("CommonJS"_s)));
-                exportValues.append(jsNumber(0));
 
                 if (result.isObject()) {
                     auto* exports = asObject(result);
 
                     auto* structure = exports->structure();
                     uint32_t size = structure->inlineSize() + structure->outOfLineSize();
-                    exportNames.reserveCapacity(size + 1);
-                    exportValues.ensureCapacity(size + 1);
+                    exportNames.reserveCapacity(size + 2);
+                    exportValues.ensureCapacity(size + 2);
 
                     if (canPerformFastEnumeration(structure)) {
                         exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
@@ -530,6 +521,13 @@ JSC::SourceCode createCommonJSModule(
                         }
                     }
                 }
+
+                exportNames.append(vm.propertyNames->defaultKeyword);
+                exportValues.append(result);
+
+                // This exists to tell ImportMetaObject.ts that this is a CommonJS module.
+                exportNames.append(Identifier::fromUid(vm.symbolRegistry().symbolForKey("CommonJS"_s)));
+                exportValues.append(jsNumber(0));
             },
             SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL)),
             sourceURL));

@@ -203,7 +203,7 @@ pub const ResolvedSource = extern struct {
     pub const namespace = shim.namespace;
 
     specifier: bun.String,
-    source_code: ZigString,
+    source_code: bun.String,
     source_url: ZigString,
     commonjs_exports: ?[*]ZigString = null,
     commonjs_exports_len: u32 = 0,

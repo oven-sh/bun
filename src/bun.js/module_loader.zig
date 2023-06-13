@@ -932,8 +932,16 @@ pub const ModuleLoader = struct {
                 } else {
                     arena = bun.ArenaAllocator.init(jsc_vm.allocator);
                 }
-
-                errdefer arena.deinit();
+                var give_back_arena = true;
+                defer {
+                    if (give_back_arena) {
+                        if (jsc_vm.parser_arena == null) {
+                            jsc_vm.parser_arena = arena;
+                        } else {
+                            arena.deinit();
+                        }
+                    }
+                }
 
                 var allocator = arena.allocator();
 
@@ -1035,11 +1043,7 @@ pub const ModuleLoader = struct {
                 };
 
                 if (parse_result.loader == .wasm) {
-                    if (jsc_vm.parser_arena == null) {
-                        jsc_vm.parser_arena = arena;
-                    }
-
-                    const wasm_result = transpileSourceCode(
+                    return transpileSourceCode(
                         jsc_vm,
                         specifier,
                         display_specifier,
@@ -1055,7 +1059,6 @@ pub const ModuleLoader = struct {
                         globalObject,
                         flags,
                     );
-                    return wasm_result;
                 }
 
                 if (comptime !disable_transpilying) {
@@ -1081,10 +1084,6 @@ pub const ModuleLoader = struct {
                 }
 
                 if (comptime disable_transpilying) {
-                    if (jsc_vm.parser_arena == null) {
-                        jsc_vm.parser_arena = arena;
-                    }
-
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = switch (comptime flags) {
@@ -1099,9 +1098,6 @@ pub const ModuleLoader = struct {
                 }
 
                 if (parse_result.already_bundled) {
-                    if (jsc_vm.parser_arena == null) {
-                        jsc_vm.parser_arena = arena;
-                    }
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = bun.String.createLatin1(parse_result.source.contents),
@@ -1162,6 +1158,7 @@ pub const ModuleLoader = struct {
                         },
                     );
                     arena = bun.ArenaAllocator.init(bun.default_allocator);
+                    give_back_arena = false;
                     return error.AsyncModule;
                 }
 
@@ -1188,7 +1185,6 @@ pub const ModuleLoader = struct {
                     // if it's an empty file but there were plugins
                     // we don't want it to break if you try to import from it
                     if (has_bun_plugin) {
-                        arena.deinit();
                         return ResolvedSource{
                             .allocator = null,
                             .source_code = String.static("// auto-generated plugin stub\nexport default undefined\n"),
@@ -1211,10 +1207,6 @@ pub const ModuleLoader = struct {
                 var commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
                 for (parse_result.ast.commonjs_export_names, commonjs_exports) |name, *out| {
                     out.* = ZigString.fromUTF8(name);
-                }
-
-                if (jsc_vm.parser_arena == null) {
-                    jsc_vm.parser_arena = arena;
                 }
 
                 if (jsc_vm.isWatcherEnabled()) {

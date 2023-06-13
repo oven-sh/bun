@@ -217,8 +217,8 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 };
                 var dirname_reader = DirnameReader{ .outdirname = &resolved };
 
-                _ = if (PackageManager.verbose_install)
-                    try Archive.extractToDir(
+                switch (PackageManager.verbose_install) {
+                    inline else => |log| _ = try Archive.extractToDir(
                         zlib_pool.data.list.items,
                         extract_destination,
                         null,
@@ -227,20 +227,9 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                         // for GitHub tarballs, the root dir is always <user>-<repo>-<commit_id>
                         1,
                         true,
-                        true,
-                    )
-                else
-                    try Archive.extractToDir(
-                        zlib_pool.data.list.items,
-                        extract_destination,
-                        null,
-                        *DirnameReader,
-                        &dirname_reader,
-                        // for GitHub tarballs, the root dir is always <user>-<repo>-<commit_id>
-                        1,
-                        true,
-                        false,
-                    );
+                        log,
+                    ),
+                }
 
                 // This tag is used to know which version of the package was
                 // installed from GitHub. package.json version becomes sort of
@@ -253,31 +242,18 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                     };
                 }
             },
-            else => {
-                _ = if (PackageManager.verbose_install)
-                    try Archive.extractToDir(
-                        zlib_pool.data.list.items,
-                        extract_destination,
-                        null,
-                        void,
-                        {},
-                        // for npm packages, the root dir is always "package"
-                        1,
-                        true,
-                        true,
-                    )
-                else
-                    try Archive.extractToDir(
-                        zlib_pool.data.list.items,
-                        extract_destination,
-                        null,
-                        void,
-                        {},
-                        // for npm packages, the root dir is always "package"
-                        1,
-                        true,
-                        false,
-                    );
+            else => switch (PackageManager.verbose_install) {
+                inline else => |log| _ = try Archive.extractToDir(
+                    zlib_pool.data.list.items,
+                    extract_destination,
+                    null,
+                    void,
+                    {},
+                    // for npm packages, the root dir is always "package"
+                    1,
+                    true,
+                    log,
+                ),
             },
         }
 

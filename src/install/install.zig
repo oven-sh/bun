@@ -3937,10 +3937,10 @@ pub const PackageManager = struct {
 
             var task: Task = task_;
             if (task.log.msgs.items.len > 0) {
-                if (Output.enable_ansi_colors) {
-                    try task.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-                } else {
-                    try task.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
+                switch (Output.enable_ansi_colors) {
+                    inline else => |enable_ansi_colors| {
+                        try task.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors);
+                    },
                 }
             }
 
@@ -5535,11 +5535,7 @@ pub const PackageManager = struct {
         } else {
             // bun link lodash
             switch (manager.options.log_level) {
-                .default => try updatePackageJSONAndInstallWithManager(ctx, manager, .link, .default),
-                .verbose => try updatePackageJSONAndInstallWithManager(ctx, manager, .link, .verbose),
-                .silent => try updatePackageJSONAndInstallWithManager(ctx, manager, .link, .silent),
-                .default_no_progress => try updatePackageJSONAndInstallWithManager(ctx, manager, .link, .default_no_progress),
-                .verbose_no_progress => try updatePackageJSONAndInstallWithManager(ctx, manager, .link, .verbose_no_progress),
+                inline else => |log_level| try updatePackageJSONAndInstallWithManager(ctx, manager, .link, log_level),
             }
         }
     }
@@ -6041,11 +6037,7 @@ pub const PackageManager = struct {
         }
 
         switch (manager.options.log_level) {
-            .default => try updatePackageJSONAndInstallWithManager(ctx, manager, op, .default),
-            .verbose => try updatePackageJSONAndInstallWithManager(ctx, manager, op, .verbose),
-            .silent => try updatePackageJSONAndInstallWithManager(ctx, manager, op, .silent),
-            .default_no_progress => try updatePackageJSONAndInstallWithManager(ctx, manager, op, .default_no_progress),
-            .verbose_no_progress => try updatePackageJSONAndInstallWithManager(ctx, manager, op, .verbose_no_progress),
+            inline else => |log_level| try updatePackageJSONAndInstallWithManager(ctx, manager, op, log_level),
         }
     }
 
@@ -6175,13 +6167,12 @@ pub const PackageManager = struct {
     ) !void {
         if (ctx.log.errors > 0) {
             if (comptime log_level != .silent) {
-                if (Output.enable_ansi_colors) {
-                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                } else {
-                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                switch (Output.enable_ansi_colors) {
+                    inline else => |enable_ansi_colors| {
+                        ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
+                    },
                 }
             }
-
             Global.crash();
         }
 
@@ -6205,10 +6196,10 @@ pub const PackageManager = struct {
 
         initializeStore();
         var current_package_json = json_parser.ParseJSONUTF8(&package_json_source, ctx.log, manager.allocator) catch |err| {
-            if (Output.enable_ansi_colors) {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+            switch (Output.enable_ansi_colors) {
+                inline else => |enable_ansi_colors| {
+                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
+                },
             }
 
             if (err == error.ParserError and ctx.log.errors > 0) {
@@ -6457,11 +6448,7 @@ pub const PackageManager = struct {
         };
 
         try switch (manager.options.log_level) {
-            .default => manager.installWithManager(ctx, package_json_contents, .default),
-            .verbose => manager.installWithManager(ctx, package_json_contents, .verbose),
-            .silent => manager.installWithManager(ctx, package_json_contents, .silent),
-            .default_no_progress => manager.installWithManager(ctx, package_json_contents, .default_no_progress),
-            .verbose_no_progress => manager.installWithManager(ctx, package_json_contents, .verbose_no_progress),
+            inline else => |log_level| manager.installWithManager(ctx, package_json_contents, log_level),
         };
     }
 
@@ -6615,10 +6602,10 @@ pub const PackageManager = struct {
                             const args = .{ name, @errorName(err) };
 
                             if (comptime log_level.showProgress()) {
-                                if (Output.enable_ansi_colors) {
-                                    this.progress.log(comptime Output.prettyFmt(fmt, true), args);
-                                } else {
-                                    this.progress.log(comptime Output.prettyFmt(fmt, false), args);
+                                switch (Output.enable_ansi_colors) {
+                                    inline else => |enable_ansi_colors| {
+                                        this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
+                                    },
                                 }
                             } else {
                                 Output.prettyErrorln(fmt, args);
@@ -6721,10 +6708,10 @@ pub const PackageManager = struct {
                                             const args = .{ alias, @errorName(err) };
 
                                             if (comptime log_level.showProgress()) {
-                                                if (Output.enable_ansi_colors) {
-                                                    this.progress.log(comptime Output.prettyFmt(fmt, true), args);
-                                                } else {
-                                                    this.progress.log(comptime Output.prettyFmt(fmt, false), args);
+                                                switch (Output.enable_ansi_colors) {
+                                                    inline else => |enable_ansi_colors| {
+                                                        this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
+                                                    },
                                                 }
                                             } else {
                                                 Output.prettyErrorln(fmt, args);
@@ -6771,10 +6758,10 @@ pub const PackageManager = struct {
                                         const args = .{ name, @errorName(err) };
 
                                         if (comptime log_level.showProgress()) {
-                                            if (Output.enable_ansi_colors) {
-                                                this.progress.log(comptime Output.prettyFmt(fmt, true), args);
-                                            } else {
-                                                this.progress.log(comptime Output.prettyFmt(fmt, false), args);
+                                            switch (Output.enable_ansi_colors) {
+                                                inline else => |enable_ansi_colors| {
+                                                    this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
+                                                },
                                             }
                                         } else {
                                             Output.prettyErrorln(fmt, args);
@@ -7258,10 +7245,10 @@ pub const PackageManager = struct {
                             const args = .{ name, @errorName(err) };
 
                             if (comptime log_level.showProgress()) {
-                                if (Output.enable_ansi_colors) {
-                                    this.progress.log(comptime Output.prettyFmt(fmt, true), args);
-                                } else {
-                                    this.progress.log(comptime Output.prettyFmt(fmt, false), args);
+                                switch (Output.enable_ansi_colors) {
+                                    inline else => |enable_ansi_colors| {
+                                        this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
+                                    },
                                 }
                             } else {
                                 Output.prettyErrorln(fmt, args);
@@ -7279,10 +7266,10 @@ pub const PackageManager = struct {
                     const args = .{lockfile.str(&names[package_id])};
 
                     if (comptime log_level.showProgress()) {
-                        if (Output.enable_ansi_colors) {
-                            this.progress.log(comptime Output.prettyFmt(fmt, true), args);
-                        } else {
-                            this.progress.log(comptime Output.prettyFmt(fmt, false), args);
+                        switch (Output.enable_ansi_colors) {
+                            inline else => |enable_ansi_colors| {
+                                this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
+                            },
                         }
                     } else {
                         Output.prettyErrorln(fmt, args);
@@ -7377,10 +7364,10 @@ pub const PackageManager = struct {
                     }
 
                     if (ctx.log.errors > 0) {
-                        if (Output.enable_ansi_colors) {
-                            try manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-                        } else {
-                            try manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
+                        switch (Output.enable_ansi_colors) {
+                            inline else => |enable_ansi_colors| {
+                                try manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors);
+                            },
                         }
                     }
                     Output.flush();
@@ -7584,10 +7571,10 @@ pub const PackageManager = struct {
             }
         }
 
-        if (Output.enable_ansi_colors) {
-            try manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-        } else {
-            try manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
+        switch (Output.enable_ansi_colors) {
+            inline else => |enable_ansi_colors| {
+                try manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors);
+            },
         }
 
         if (manager.log.hasErrors()) Global.crash();
@@ -7748,10 +7735,10 @@ pub const PackageManager = struct {
                     .successfully_installed = install_summary.successfully_installed,
                 };
 
-                if (Output.enable_ansi_colors) {
-                    try Lockfile.Printer.Tree.print(&printer, Output.WriterType, Output.writer(), true);
-                } else {
-                    try Lockfile.Printer.Tree.print(&printer, Output.WriterType, Output.writer(), false);
+                switch (Output.enable_ansi_colors) {
+                    inline else => |enable_ansi_colors| {
+                        try Lockfile.Printer.Tree.print(&printer, Output.WriterType, Output.writer(), enable_ansi_colors);
+                    },
                 }
 
                 if (!did_meta_hash_change) {

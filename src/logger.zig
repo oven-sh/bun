@@ -860,10 +860,9 @@ pub const Log = struct {
     }
 
     inline fn allocPrint(allocator: std.mem.Allocator, comptime fmt: string, args: anytype) !string {
-        return if (Output.enable_ansi_colors)
-            try std.fmt.allocPrint(allocator, Output.prettyFmt(fmt, true), args)
-        else
-            try std.fmt.allocPrint(allocator, Output.prettyFmt(fmt, false), args);
+        return try switch (Output.enable_ansi_colors) {
+            inline else => |enable_ansi_colors| std.fmt.allocPrint(allocator, Output.prettyFmt(fmt, enable_ansi_colors), args),
+        };
     }
 
     inline fn _addResolveErrorWithLevel(
@@ -1174,11 +1173,9 @@ pub const Log = struct {
     }
 
     pub fn printForLogLevel(self: *Log, to: anytype) !void {
-        if (Output.enable_ansi_colors) {
-            return self.printForLogLevelWithEnableAnsiColors(to, true);
-        } else {
-            return self.printForLogLevelWithEnableAnsiColors(to, false);
-        }
+        return switch (Output.enable_ansi_colors) {
+            inline else => |enable_ansi_colors| self.printForLogLevelWithEnableAnsiColors(to, enable_ansi_colors),
+        };
     }
 
     pub fn printForLogLevelWithEnableAnsiColors(self: *Log, to: anytype, comptime enable_ansi_colors: bool) !void {

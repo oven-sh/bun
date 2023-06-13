@@ -387,6 +387,7 @@ export function getEventSource() {
       const uri = this.#url;
       const is_tls = this.#is_tls;
       this.#state = 0;
+      let self = this;
       //@ts-ignore
       Bun.connect({
         data: this,

@@ -3250,7 +3250,7 @@ JSC_DEFINE_CUSTOM_GETTER(
     // If "this" is not the Global object, just return undefined
     // you should not be able to reset the global object's EventSource if you muck around with prototypes
     if (JSValue::decode(thisValue) != globalObject)
-        return JSValue::deocde(jsUndefined());
+        return JSValue::encode(JSC::jsUndefined());
 
     JSC::JSFunction* getSourceEvent = JSC::JSFunction::create(vm, eventSourceGetEventSourceCodeGenerator(vm), globalObject);
     RETURN_IF_EXCEPTION(scope, {});

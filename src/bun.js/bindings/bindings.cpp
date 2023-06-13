@@ -392,7 +392,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        break;
+        return true;
     }
     case JSMapType: {
         if (c2Type != JSMapType) {
@@ -474,7 +474,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        break;
+        return true;
     }
     case ArrayBufferType: {
         if (c2Type != ArrayBufferType) {
@@ -515,10 +515,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         JSC::DateInstance* left = jsCast<DateInstance*>(v1);
         JSC::DateInstance* right = jsCast<DateInstance*>(v2);
 
-        if (left->structureID() == right->structureID()) {
-            return left->internalNumber() == right->internalNumber();
-        }
-        break;
+        return left->internalNumber() == right->internalNumber();
     }
     case RegExpObjectType: {
         if (c2Type != RegExpObjectType) {
@@ -579,10 +576,18 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         return (memcmp(vector, rightVector, byteLength) == 0);
     }
     case StringObjectType: {
+        if (c2Type != StringObjectType) {
+            return false;
+        }
+
         if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
             return false;
         }
-        break;
+
+        JSString* s1 = c1->toStringInline(globalObject);
+        JSString* s2 = c2->toStringInline(globalObject);
+
+        return s1->equal(globalObject, s2);
     }
     case JSFunctionType: {
         return false;

@@ -2057,7 +2057,7 @@ pub const VirtualMachine = struct {
             top.position.expression_stop = mapping.original.columns + 1;
 
             if (strings.getLinesInText(
-                code,
+                code.slice(),
                 @intCast(u32, top.position.line),
                 JSC.ZigException.Holder.source_lines_count,
             )) |lines| {

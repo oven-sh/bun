@@ -208,6 +208,12 @@ public:
     JSC::Identifier spyIdentifier;
     unsigned spyAttributes = 0;
 
+    void setName(const WTF::String& name)
+    {
+        auto& vm = this->vm();
+        this->putDirect(vm, vm.propertyNames->name, jsString(vm, name), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
+    }
+
     void initMock()
     {
         mock.initLater(
@@ -511,7 +517,7 @@ extern "C" EncodedJSValue JSMock__spyOn(JSC::JSGlobalObject* lexicalGlobalObject
                     nameToUse = fn->name();
                 }
                 if (nameToUse.length()) {
-                    mock->putDirect(vm, vm.propertyNames->name, jsString(vm, nameToUse));
+                    mock->setName(nameToUse);
                 }
                 if (catcher.exception())
                     catcher.clearException();
@@ -987,7 +993,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockImplementation, (JSC::JSGlobalObject 
                     nameToUse = fn->name();
                 }
                 if (nameToUse.length()) {
-                    thisObject->putDirect(vm, vm.propertyNames->name, jsString(vm, nameToUse));
+                    thisObject->setName(nameToUse);
                 }
                 if (catcher.exception())
                     catcher.clearException();
@@ -1026,7 +1032,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockImplementationOnce, (JSC::JSGlobalObj
                     nameToUse = fn->name();
                 }
                 if (nameToUse.length()) {
-                    thisObject->putDirect(vm, vm.propertyNames->name, jsString(vm, nameToUse));
+                    thisObject->setName(nameToUse);
                 }
                 if (catcher.exception())
                     catcher.clearException();

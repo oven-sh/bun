@@ -80,7 +80,7 @@ pub const CommandLineReporter = struct {
     last_dot: u32 = 0,
     summary: Summary = Summary{},
     prev_file: u64 = 0,
-    repeat_count: u32 = 0,
+    repeat_count: u32 = 1,
 
     failures_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
     skips_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
@@ -202,7 +202,7 @@ pub const CommandLineReporter = struct {
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.fail;
 
         if (this.jest.bail == this.summary.fail) {
-            this.printSummary(this.summary, bun.start_time, null);
+            this.printSummary(null);
             Output.prettyError("\nBailed out after {d} failures<r>\n", .{this.jest.bail});
             Global.exit(1);
         }
@@ -253,17 +253,22 @@ pub const CommandLineReporter = struct {
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.todo;
     }
 
-    pub fn printSummary(this: *CommandLineReporter, summary: Summary, start_time: i128, total_tests: ?u32) void {
-        const runned_tests = summary.fail + summary.pass + summary.skip + summary.todo;
+    pub fn printSummary(this: *CommandLineReporter, total_tests: ?u32) void {
+        const runned_tests = this.summary.fail + this.summary.pass + this.summary.skip + this.summary.todo;
+        var fileOrFiles: []const u8 = "files";
+
+        if (this.jest.files.len == 1) {
+            fileOrFiles = "file";
+        }
 
         // if it's not null it's most likely called after all tests are done, else it bailed out.
         if (total_tests) |total| {
-            Output.prettyError("Ran {d} tests across {d} files. <d>{d} total<r> ", .{ runned_tests, this.jest.files.len, total });
+            Output.prettyError("Ran {d} tests across {d} {s}. <d>{d} total<r> ", .{ runned_tests, this.jest.files.len, fileOrFiles, total });
         } else {
-            Output.prettyError("Ran {d} tests across {d} files. ", .{ runned_tests, this.jest.files.len });
+            Output.prettyError("Ran {d} tests across {d} {s}. ", .{ runned_tests, this.jest.files.len, fileOrFiles });
         }
 
-        Output.printStartEnd(start_time, std.time.nanoTimestamp());
+        Output.printStartEnd(bun.start_time, std.time.nanoTimestamp());
     }
 };
 
@@ -663,7 +668,7 @@ pub const TestCommand = struct {
 
             const total_tests = reporter.summary.fail + reporter.summary.pass + reporter.summary.skip + reporter.summary.todo;
 
-            reporter.printSummary(reporter.summary, ctx.start_time, total_tests);
+            reporter.printSummary(total_tests);
         }
 
         Output.prettyError("\n", .{});

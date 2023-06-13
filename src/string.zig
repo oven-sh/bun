@@ -239,6 +239,17 @@ pub const String = extern struct {
     pub const dead = String{ .tag = .Dead, .value = .{ .Dead = {} } };
     pub const StringImplAllocator = Parent.StringImplAllocator;
 
+    extern fn BunString__fromLatin1(bytes: [*]const u8, len: usize) String;
+    extern fn BunString__fromBytes(bytes: [*]const u8, len: usize) String;
+
+    pub fn createLatin1(bytes: []const u8) String {
+        return BunString__fromLatin1(bytes.ptr, bytes.len);
+    }
+
+    pub fn create(bytes: []const u8) String {
+        return BunString__fromBytes(bytes.ptr, bytes.len);
+    }
+
     pub fn initWithType(comptime Type: type, value: Type) String {
         switch (comptime Type) {
             ZigString => return String{ .tag = .ZigString, .value = .{ .ZigString = value } },
@@ -271,6 +282,18 @@ pub const String = extern struct {
 
     pub fn init(value: anytype) String {
         return initWithType(@TypeOf(value), value);
+    }
+
+    extern fn BunString__createExternal(
+        bytes: [*]const u8,
+        len: usize,
+        isLatin1: bool,
+        ptr: ?*anyopaque,
+        callback: ?*const fn (*anyopaque, *anyopaque, u32) callconv(.C) void,
+    ) String;
+
+    pub fn createExternal(bytes: []const u8, isLatin1: bool, ctx: ?*anyopaque, callback: ?*const fn (*anyopaque, *anyopaque, u32) callconv(.C) void) String {
+        return BunString__createExternal(bytes.ptr, bytes.len, isLatin1, ctx, callback);
     }
 
     pub fn fromUTF8(value: []const u8) String {
@@ -339,7 +362,7 @@ pub const String = extern struct {
         if (self.tag == .Empty)
             return &[_]u16{};
         std.debug.assert(self.tag == .WTFStringImpl);
-        return self.value.WTFStringImpl.utf16();
+        return self.value.WTFStringImpl.utf16Slice();
     }
 
     pub inline fn latin1(self: String) []const u8 {
@@ -347,7 +370,7 @@ pub const String = extern struct {
             return &[_]u8{};
 
         std.debug.assert(self.tag == .WTFStringImpl);
-        return self.value.WTFStringImpl.latin1();
+        return self.value.WTFStringImpl.latin1Slice();
     }
 
     pub fn isUTF8(self: String) bool {

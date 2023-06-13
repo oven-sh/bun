@@ -2293,7 +2293,7 @@ pub const PackageManager = struct {
             return null;
         }
 
-        var arena = std.heap.ArenaAllocator.init(this.allocator);
+        var arena = @import("root").bun.ArenaAllocator.init(this.allocator);
         defer arena.deinit();
         var arena_alloc = arena.allocator();
         var stack_fallback = std.heap.stackFallback(4096, arena_alloc);

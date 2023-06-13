@@ -62,6 +62,8 @@
 #include <JavaScriptCore/JSMap.h>
 
 #include <JavaScriptCore/JSMapInlines.h>
+#include <JavaScriptCore/GetterSetter.h>
+#include "ZigSourceProvider.h"
 
 namespace Bun {
 using namespace JSC;
@@ -76,13 +78,15 @@ public:
 
     mutable JSC::WriteBarrier<JSC::Unknown> m_exportsObject;
     mutable JSC::WriteBarrier<JSC::JSString> m_id;
+    mutable JSC::WriteBarrier<JSC::EvalExecutable> m_executable;
 
-    void finishCreation(JSC::VM& vm, JSC::JSValue exportsObject, JSC::JSString* id)
+    void finishCreation(JSC::VM& vm, JSC::JSValue exportsObject, JSC::JSString* id, JSC::JSString* filename, JSC::JSValue requireFunction, JSC::EvalExecutable* executable)
     {
         Base::finishCreation(vm);
         ASSERT(inherits(vm, info()));
         m_exportsObject.set(vm, this, exportsObject);
         m_id.set(vm, this, id);
+        m_executable.set(vm, this, executable);
 
         this->putDirectOffset(
             vm,
@@ -98,16 +102,27 @@ public:
             vm,
             2,
             id);
+        this->putDirectOffset(
+            vm,
+            3,
+            filename);
+        this->putDirectOffset(
+            vm,
+            4,
+            requireFunction);
     }
 
     static JSCommonJSModule* create(
         JSC::VM& vm,
         JSC::Structure* structure,
         JSC::JSValue exportsObject,
-        JSC::JSString* id)
+        JSC::JSString* id,
+        JSC::JSString* filename,
+        JSC::JSValue requireFunction,
+        JSC::EvalExecutable* executable)
     {
         JSCommonJSModule* cell = new (NotNull, JSC::allocateCell<JSCommonJSModule>(vm)) JSCommonJSModule(vm, structure);
-        cell->finishCreation(vm, exportsObject, id);
+        cell->finishCreation(vm, exportsObject, id, filename, requireFunction, executable);
         return cell;
     }
 
@@ -240,6 +255,7 @@ void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_exportsObject);
     visitor.append(thisObject->m_id);
+    visitor.append(thisObject->m_executable);
 }
 
 DEFINE_VISIT_CHILDREN(JSCommonJSModule);
@@ -250,7 +266,9 @@ JSCommonJSModule* createCommonJSModuleObject(
     const ResolvedSource& source,
     const WTF::String& sourceURL,
     JSC::JSValue exportsObjectValue,
-    JSC::JSValue requireFunctionValue)
+    JSC::JSValue requireFunctionValue,
+    JSC::EvalExecutable* executable,
+    JSC::JSString* filename)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -260,12 +278,7 @@ JSCommonJSModule* createCommonJSModuleObject(
         vm,
         globalObject->CommonJSModuleObjectStructure(),
         exportsObjectValue,
-        jsSourceURL);
-
-    moduleObject->putDirectOffset(
-        vm,
-        3,
-        requireFunctionValue);
+        jsSourceURL, filename, requireFunctionValue, executable);
 
     return moduleObject;
 }
@@ -291,25 +304,24 @@ JSC::SourceCode createCommonJSModule(
     Zig::GlobalObject* globalObject,
     ResolvedSource source)
 {
-
     auto sourceURL = Zig::toStringCopy(source.source_url);
+    auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program);
 
     return JSC::SourceCode(
         JSC::SyntheticSourceProvider::create(
-            [source, sourceURL](JSC::JSGlobalObject* lexicalGlobalObject,
+            [source, sourceProvider = WTFMove(sourceProvider), sourceURL](JSC::JSGlobalObject* lexicalGlobalObject,
                 JSC::Identifier moduleKey,
                 Vector<JSC::Identifier, 4>& exportNames,
                 JSC::MarkedArgumentBuffer& exportValues) -> void {
-                Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+                auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
                 auto& vm = globalObject->vm();
+
                 auto throwScope = DECLARE_THROW_SCOPE(vm);
-                auto sourceCodeString = Zig::toString(source.source_code);
                 auto* requireMapKey = jsString(vm, sourceURL);
 
                 JSC::JSObject* exportsObject = source.commonJSExportsLen < 64
                     ? JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), source.commonJSExportsLen)
                     : JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
-
                 auto index = sourceURL.reverseFind('/', sourceURL.length());
                 JSString* dirname = jsEmptyString(vm);
                 JSString* filename = requireMapKey;
@@ -318,11 +330,8 @@ JSC::SourceCode createCommonJSModule(
                 }
 
                 globalObject->requireMap()->set(globalObject, requireMapKey, exportsObject);
-
                 JSC::SourceCode inputSource(
-                    JSC::StringSourceProvider::create(sourceCodeString,
-                        JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL)),
-                        sourceURL, TextPosition()));
+                    WTFMove(sourceProvider));
 
                 JSC::Structure* scopeExtensionObjectStructure = globalObject->commonJSFunctionArgumentsStructure();
                 JSC::JSObject* scopeExtensionObject = JSC::constructEmptyObject(
@@ -330,12 +339,27 @@ JSC::SourceCode createCommonJSModule(
                     scopeExtensionObjectStructure);
 
                 auto* requireFunction = Zig::ImportMetaObject::createRequireFunction(vm, globalObject, sourceURL);
+                auto* executable = JSC::DirectEvalExecutable::create(
+                    globalObject, inputSource, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
+                    false, false, EvalContextType::None, nullptr, nullptr, ECMAMode::sloppy());
+
+                if (UNLIKELY(!executable && !throwScope.exception())) {
+                    // I'm not sure if this case happens, but it's better to be safe than sorry.
+                    throwSyntaxError(globalObject, throwScope, "Failed to compile CommonJS module."_s);
+                }
+
+                if (UNLIKELY(throwScope.exception())) {
+                    globalObject->requireMap()->remove(globalObject, requireMapKey);
+                    throwScope.release();
+                    return;
+                }
 
                 auto* moduleObject = createCommonJSModuleObject(globalObject,
                     source,
                     sourceURL,
                     exportsObject,
-                    requireFunction);
+                    requireFunction, executable, filename);
+
                 scopeExtensionObject->putDirectOffset(
                     vm,
                     0,
@@ -360,15 +384,6 @@ JSC::SourceCode createCommonJSModule(
                     vm,
                     4,
                     requireFunction);
-
-                auto* executable = JSC::DirectEvalExecutable::create(
-                    globalObject, inputSource, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
-                    false, false, EvalContextType::None, nullptr, nullptr, ECMAMode::sloppy());
-
-                if (UNLIKELY(!executable && !throwScope.exception())) {
-                    // I'm not sure if this case happens, but it's better to be safe than sorry.
-                    throwSyntaxError(globalObject, throwScope, "Failed to compile CommonJS module."_s);
-                }
 
                 if (UNLIKELY(throwScope.exception())) {
                     globalObject->requireMap()->remove(globalObject, requireMapKey);
@@ -432,7 +447,12 @@ JSC::SourceCode createCommonJSModule(
                     //   - Object.defineProperty(module, 'exports', {get: getter})
                     //   - delete module.exports
                     //
-                    result = moduleObject->getIfPropertyExists(globalObject, clientData->builtinNames().exportsPublicName());
+                    if (result.isGetterSetter()) {
+                        JSC::GetterSetter* getter = jsCast<JSC::GetterSetter*>(result);
+                        result = getter->callGetter(globalObject, moduleObject);
+                    } else {
+                        result = moduleObject->getIfPropertyExists(globalObject, clientData->builtinNames().exportsPublicName());
+                    }
 
                     if (UNLIKELY(throwScope.exception())) {
                         // Unlike getters on properties of the exports object
@@ -454,17 +474,15 @@ JSC::SourceCode createCommonJSModule(
                 exportNames.append(Identifier::fromUid(vm.symbolRegistry().symbolForKey("CommonJS"_s)));
                 exportValues.append(jsNumber(0));
 
-                // This strong reference exists because otherwise it will crash when the finalizer runs.
-                exportNames.append(Identifier::fromUid(vm.symbolRegistry().symbolForKey("module"_s)));
-                exportValues.append(moduleObject);
+                moduleObject->m_executable.clear();
 
                 if (result.isObject()) {
                     auto* exports = asObject(result);
 
                     auto* structure = exports->structure();
                     uint32_t size = structure->inlineSize() + structure->outOfLineSize();
-                    exportNames.reserveCapacity(size + 3);
-                    exportValues.ensureCapacity(size + 3);
+                    exportNames.reserveCapacity(size + 2);
+                    exportValues.ensureCapacity(size + 2);
 
                     if (canPerformFastEnumeration(structure)) {
                         exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {

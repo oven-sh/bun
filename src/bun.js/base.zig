@@ -2042,8 +2042,8 @@ pub const RefString = struct {
     ptr: [*]const u8 = undefined,
     len: usize = 0,
     hash: Hash = 0,
+    impl: bun.WTF.StringImpl,
 
-    count: u32 = 0,
     allocator: std.mem.Allocator,
 
     ctx: ?*anyopaque = null,
@@ -2053,17 +2053,13 @@ pub const RefString = struct {
     pub const Map = std.HashMap(Hash, *JSC.RefString, IdentityContext(Hash), 80);
 
     pub fn toJS(this: *RefString, global: *JSC.JSGlobalObject) JSValue {
-        return JSC.ZigString.init(this.slice()).external(global, this, RefString__external);
+        return bun.String.init(this.impl).toJS(global);
     }
 
     pub const Callback = fn (ctx: *anyopaque, str: *RefString) void;
 
     pub fn computeHash(input: []const u8) u32 {
-        return @truncate(u32, std.hash.Wyhash.hash(0, input));
-    }
-
-    pub fn ref(this: *RefString) void {
-        this.count += 1;
+        return std.hash.XxHash32.hash(input);
     }
 
     pub fn slice(this: *RefString) []const u8 {
@@ -2072,25 +2068,21 @@ pub const RefString = struct {
         return this.leak();
     }
 
+    pub fn ref(this: *RefString) void {
+        this.impl.ref();
+    }
+
     pub fn leak(this: RefString) []const u8 {
         @setRuntimeSafety(false);
         return this.ptr[0..this.len];
     }
 
     pub fn deref(this: *RefString) void {
-        this.count -|= 1;
-
-        if (this.count == 0) {
-            this.deinit();
-        }
+        this.impl.deref();
     }
 
-    pub export fn RefString__free(this: *RefString, _: [*]const u8, _: usize) void {
-        this.deref();
-    }
-
-    pub export fn RefString__external(this: ?*anyopaque, _: ?*anyopaque, _: usize) void {
-        bun.cast(*RefString, this.?).deref();
+    pub export fn RefString__free(this: *anyopaque, _: *anyopaque, _: u32) void {
+        bun.cast(*RefString, this).deinit();
     }
 
     pub fn deinit(this: *RefString) void {

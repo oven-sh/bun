@@ -46,7 +46,7 @@ const Expr = JSAst.Expr;
 pub usingnamespace JSC.Codegen.JSTranspiler;
 
 bundler: Bundler.Bundler,
-arena: std.heap.ArenaAllocator,
+arena: @import("root").bun.ArenaAllocator,
 transpiler_options: TranspilerOptions,
 scan_pass_result: ScanPassResult,
 buffer_writer: ?JSPrinter.BufferWriter = null,
@@ -726,7 +726,7 @@ pub fn constructor(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
 ) callconv(.C) ?*Transpiler {
-    var temp = std.heap.ArenaAllocator.init(getAllocator(globalThis));
+    var temp = @import("root").bun.ArenaAllocator.init(getAllocator(globalThis));
     const arguments = callframe.arguments(3);
     var args = JSC.Node.ArgumentsSlice.init(
         globalThis.bunVM(),

@@ -241,7 +241,7 @@ fn testDiag(diag: Diagnostic, err: anyerror, expected: []const u8) void {
 
 pub fn Args(comptime Id: type, comptime params: []const Param(Id)) type {
     return struct {
-        arena: std.heap.ArenaAllocator,
+        arena: @import("root").bun.ArenaAllocator,
         clap: ComptimeClap(Id, params),
         exe_arg: ?[]const u8,
 

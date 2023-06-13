@@ -282,7 +282,7 @@ static JSValue handleVirtualModuleResult(
             return reject(JSValue::decode(reinterpret_cast<EncodedJSValue>(res->result.err.ptr)));
         }
 
-        auto provider = Zig::SourceProvider::create(res->result.value);
+        auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
         return resolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
     }
     case OnLoadResultTypeError: {
@@ -346,7 +346,7 @@ extern "C" void Bun__onFulfillAsyncModule(
         return promise->reject(promise->globalObject(), exception);
     }
 
-    auto provider = Zig::SourceProvider::create(res->result.value);
+    auto provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
     promise->resolve(promise->globalObject(), JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
 }
 
@@ -457,8 +457,8 @@ static JSValue fetchSourceCode(
             return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));
         }
         default: {
-            auto provider = Zig::SourceProvider::create(res->result.value);
-            return rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(WTFMove(provider))));
+            auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);
+            return rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
         }
         }
     }
@@ -488,8 +488,8 @@ static JSValue fetchSourceCode(
         return reject(exception);
     }
 
-    auto provider = Zig::SourceProvider::create(res->result.value);
-    return rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(WTFMove(provider))));
+    auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);
+    return rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
 }
 
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)

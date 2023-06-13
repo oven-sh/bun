@@ -142,7 +142,7 @@ fn jsModuleFromFile(from_path: string, comptime input: string) string {
 inline fn jsSyntheticModule(comptime name: ResolvedSource.Tag, specifier: String) ResolvedSource {
     return ResolvedSource{
         .allocator = null,
-        .source_code = ZigString.init(""),
+        .source_code = bun.String.empty,
         .specifier = specifier,
         .source_url = ZigString.init(@tagName(name)),
         .hash = 0,
@@ -185,6 +185,7 @@ pub const ModuleLoader = struct {
         loader: Api.Loader,
         hash: u32 = std.math.maxInt(u32),
         globalThis: *JSC.JSGlobalObject = undefined,
+        arena: bun.ArenaAllocator,
 
         // This is the specific state for making it async
         poll_ref: JSC.PollRef = .{},
@@ -515,6 +516,7 @@ pub const ModuleLoader = struct {
                 // .stmt_blocks = stmt_blocks,
                 // .expr_blocks = expr_blocks,
                 .globalThis = globalObject,
+                .arena = opts.arena,
             };
         }
 
@@ -809,7 +811,7 @@ pub const ModuleLoader = struct {
             }
 
             if (jsc_vm.isWatcherEnabled()) {
-                var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, bun.String.init(specifier), path.text, null);
+                var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, bun.String.init(specifier), path.text, null, false);
 
                 if (parse_result.input_fd) |fd_| {
                     if (jsc_vm.bun_watcher != null and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
@@ -841,7 +843,7 @@ pub const ModuleLoader = struct {
 
             return ResolvedSource{
                 .allocator = null,
-                .source_code = ZigString.init(try default_allocator.dupe(u8, printer.ctx.getWritten())),
+                .source_code = bun.String.createLatin1(printer.ctx.getWritten()),
                 .specifier = String.init(specifier),
                 .source_url = ZigString.init(path.text),
                 .commonjs_exports = if (commonjs_exports.len > 0)
@@ -863,10 +865,12 @@ pub const ModuleLoader = struct {
         }
 
         pub fn deinit(this: *AsyncModule) void {
+            this.promise.deinit();
             this.parse_result.deinit();
+            this.arena.deinit();
             // bun.default_allocator.free(this.stmt_blocks);
             // bun.default_allocator.free(this.expr_blocks);
-            this.promise.deinit();
+
             bun.default_allocator.free(this.string_buf);
         }
 
@@ -914,7 +918,32 @@ pub const ModuleLoader = struct {
                 jsc_vm.bundler.resetStore();
                 const hash = http.Watcher.getHash(path.text);
 
-                var allocator = if (jsc_vm.has_loaded) jsc_vm.arena.allocator() else jsc_vm.allocator;
+                var arena: bun.ArenaAllocator = undefined;
+
+                // Attempt to reuse the Arena from the parser when we can
+                // This code is potentially re-entrant, so only one Arena can be reused at a time
+                // That's why we have to check if the Arena is null
+                //
+                // Using an Arena here is a significant memory optimization when loading many files
+                if (jsc_vm.parser_arena) |shared| {
+                    arena = shared;
+                    jsc_vm.parser_arena = null;
+                    _ = arena.reset(.retain_capacity);
+                } else {
+                    arena = bun.ArenaAllocator.init(jsc_vm.allocator);
+                }
+                var give_back_arena = true;
+                defer {
+                    if (give_back_arena) {
+                        if (jsc_vm.parser_arena == null) {
+                            jsc_vm.parser_arena = arena;
+                        } else {
+                            arena.deinit();
+                        }
+                    }
+                }
+
+                var allocator = arena.allocator();
 
                 var fd: ?StoredFileDescriptorType = null;
                 var package_json: ?*PackageJSON = null;
@@ -1014,7 +1043,7 @@ pub const ModuleLoader = struct {
                 };
 
                 if (parse_result.loader == .wasm) {
-                    const wasm_result = transpileSourceCode(
+                    return transpileSourceCode(
                         jsc_vm,
                         specifier,
                         display_specifier,
@@ -1030,7 +1059,6 @@ pub const ModuleLoader = struct {
                         globalObject,
                         flags,
                     );
-                    return wasm_result;
                 }
 
                 if (comptime !disable_transpilying) {
@@ -1059,8 +1087,8 @@ pub const ModuleLoader = struct {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = switch (comptime flags) {
-                            .print_source_and_clone => ZigString.init(jsc_vm.allocator.dupe(u8, parse_result.source.contents) catch unreachable),
-                            .print_source => ZigString.init(parse_result.source.contents),
+                            .print_source_and_clone => bun.String.init(jsc_vm.allocator.dupe(u8, parse_result.source.contents) catch unreachable),
+                            .print_source => bun.String.static(parse_result.source.contents),
                             else => unreachable,
                         },
                         .specifier = input_specifier,
@@ -1072,7 +1100,7 @@ pub const ModuleLoader = struct {
                 if (parse_result.already_bundled) {
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = ZigString.init(try default_allocator.dupe(u8, parse_result.source.contents)),
+                        .source_code = bun.String.createLatin1(parse_result.source.contents),
                         .specifier = input_specifier,
                         .source_url = ZigString.init(path.text),
                         // // TODO: change hash to a bitfield
@@ -1126,8 +1154,11 @@ pub const ModuleLoader = struct {
                             .promise_ptr = promise_ptr,
                             .specifier = specifier,
                             .referrer = referrer,
+                            .arena = arena,
                         },
                     );
+                    arena = bun.ArenaAllocator.init(bun.default_allocator);
+                    give_back_arena = false;
                     return error.AsyncModule;
                 }
 
@@ -1150,12 +1181,13 @@ pub const ModuleLoader = struct {
                 };
 
                 if (written == 0) {
+
                     // if it's an empty file but there were plugins
                     // we don't want it to break if you try to import from it
                     if (has_bun_plugin) {
                         return ResolvedSource{
                             .allocator = null,
-                            .source_code = ZigString.init("// auto-generated plugin stub\nexport default undefined\n"),
+                            .source_code = String.static("// auto-generated plugin stub\nexport default undefined\n"),
                             .specifier = input_specifier,
                             .source_url = ZigString.init(path.text),
                             // // TODO: change hash to a bitfield
@@ -1178,7 +1210,7 @@ pub const ModuleLoader = struct {
                 }
 
                 if (jsc_vm.isWatcherEnabled()) {
-                    var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, input_specifier, path.text, null);
+                    var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, input_specifier, path.text, null, false);
 
                     resolved_source.commonjs_exports = if (commonjs_exports.len > 0)
                         commonjs_exports.ptr
@@ -1195,7 +1227,7 @@ pub const ModuleLoader = struct {
 
                 return .{
                     .allocator = null,
-                    .source_code = ZigString.init(try default_allocator.dupe(u8, printer.ctx.getWritten())),
+                    .source_code = bun.String.createLatin1(printer.ctx.getWritten()),
                     .specifier = input_specifier,
                     .source_url = ZigString.init(path.text),
                     .commonjs_exports = if (commonjs_exports.len > 0)
@@ -1276,7 +1308,7 @@ pub const ModuleLoader = struct {
                     }
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = ZigString.init(
+                        .source_code = bun.String.static(
                             strings.append3(
                                 bun.default_allocator,
                                 JSC.Node.fs.constants_string,
@@ -1326,7 +1358,7 @@ pub const ModuleLoader = struct {
                     writer.writeAll(";\n") catch unreachable;
                 }
 
-                const public_url = ZigString.fromUTF8(jsc_vm.allocator.dupe(u8, buf.toOwnedSliceLeaky()) catch @panic("out of memory"));
+                const public_url = bun.String.create(buf.toOwnedSliceLeaky());
                 return ResolvedSource{
                     .allocator = &jsc_vm.allocator,
                     .source_code = public_url,
@@ -1614,7 +1646,7 @@ pub const ModuleLoader = struct {
 
             return ResolvedSource{
                 .allocator = null,
-                .source_code = ZigString.init(code),
+                .source_code = bun.String.init(code),
                 .specifier = bun.String.init(JSC.bun_file_import_path),
                 .source_url = ZigString.init(JSC.bun_file_import_path[1..]),
                 .hash = 0, // TODO
@@ -1622,7 +1654,7 @@ pub const ModuleLoader = struct {
         } else if (jsc_vm.node_modules == null and specifier.eqlComptime(Runtime.Runtime.Imports.Name)) {
             return ResolvedSource{
                 .allocator = null,
-                .source_code = ZigString.init(Runtime.Runtime.sourceContentBun()),
+                .source_code = bun.String.init(Runtime.Runtime.sourceContentBun()),
                 .specifier = bun.String.init(Runtime.Runtime.Imports.Name),
                 .source_url = ZigString.init(Runtime.Runtime.Imports.Name),
                 .hash = Runtime.Runtime.versionHash(),
@@ -1636,13 +1668,35 @@ pub const ModuleLoader = struct {
                     if (comptime disable_transpilying) {
                         return ResolvedSource{
                             .allocator = null,
-                            .source_code = ZigString.fromBytes(jsc_vm.entry_point.source.contents),
+                            .source_code = bun.String.init(jsc_vm.entry_point.source.contents),
                             .specifier = bun.String.init(bun.asByteSlice(JSC.VirtualMachine.main_file_name)),
                             .source_url = ZigString.init(bun.asByteSlice(JSC.VirtualMachine.main_file_name)),
                             .hash = 0,
                         };
                     }
                     defer jsc_vm.transpiled_count += 1;
+                    var arena: bun.ArenaAllocator = undefined;
+
+                    // Attempt to reuse the Arena from the parser when we can
+                    // This code is potentially re-entrant, so only one Arena can be reused at a time
+                    // That's why we have to check if the Arena is null
+                    //
+                    // Using an Arena here is a significant memory optimization when loading many files
+                    if (jsc_vm.parser_arena) |shared| {
+                        arena = shared;
+                        jsc_vm.parser_arena = null;
+                        _ = arena.reset(.retain_capacity);
+                    } else {
+                        arena = bun.ArenaAllocator.init(jsc_vm.allocator);
+                    }
+
+                    defer {
+                        if (jsc_vm.parser_arena == null) {
+                            jsc_vm.parser_arena = arena;
+                        } else {
+                            arena.deinit();
+                        }
+                    }
 
                     var bundler = &jsc_vm.bundler;
                     var old = jsc_vm.bundler.log;
@@ -1670,7 +1724,7 @@ pub const ModuleLoader = struct {
                     opts.filepath_hash_for_hmr = 0;
                     opts.warn_about_unbundled_modules = false;
                     opts.macro_context = &jsc_vm.bundler.macro_context.?;
-                    const main_ast = ((bundler.resolver.caches.js.parse(jsc_vm.allocator, opts, bundler.options.define, bundler.log, &jsc_vm.entry_point.source) catch null) orelse {
+                    const main_ast = ((bundler.resolver.caches.js.parse(arena.allocator(), opts, bundler.options.define, bundler.log, &jsc_vm.entry_point.source) catch null) orelse {
                         return error.ParseError;
                     }).ast;
                     var parse_result = ParseResult{ .source = jsc_vm.entry_point.source, .ast = main_ast, .loader = .js, .input_fd = null };
@@ -1708,7 +1762,7 @@ pub const ModuleLoader = struct {
 
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = ZigString.init(jsc_vm.allocator.dupe(u8, printer.ctx.written) catch unreachable),
+                        .source_code = bun.String.createLatin1(printer.ctx.written),
                         .specifier = specifier,
                         .source_url = ZigString.init(bun.asByteSlice(JSC.VirtualMachine.main_file_name)),
                         .hash = 0,
@@ -1725,7 +1779,7 @@ pub const ModuleLoader = struct {
                 .@"node:fs/promises" => {
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = ZigString.init(JSC.Node.fs.constants_string ++ @embedFile("../js/out/modules/node/fs.promises.js")),
+                        .source_code = bun.String.static(comptime JSC.Node.fs.constants_string ++ @embedFile("../js/out/modules/node/fs.promises.js")),
                         .specifier = specifier,
                         .source_url = ZigString.init("node:fs/promises"),
                         .hash = 0,
@@ -1735,8 +1789,8 @@ pub const ModuleLoader = struct {
                     const shared_library_suffix = if (Environment.isMac) "dylib" else if (Environment.isLinux) "so" else if (Environment.isWindows) "dll" else "";
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = ZigString.init(
-                            "export const FFIType=" ++
+                        .source_code = bun.String.static(
+                            comptime "export const FFIType=" ++
                                 JSC.FFI.ABIType.map_to_js_object ++
                                 ";export const suffix='" ++ shared_library_suffix ++ "';" ++
                                 @embedFile("../js/out/modules/bun/ffi.js"),
@@ -1747,60 +1801,60 @@ pub const ModuleLoader = struct {
                     };
                 },
 
-                .@"bun:jsc" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"bun:jsc", "bun/jsc.js", specifier),
-                .@"bun:sqlite" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"bun:sqlite", "bun/sqlite.js", specifier),
+                .@"bun:jsc" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"bun:jsc", "bun/jsc.js", specifier),
+                .@"bun:sqlite" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"bun:sqlite", "bun/sqlite.js", specifier),
 
-                .@"node:assert" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:assert", "node/assert.js", specifier),
-                .@"node:assert/strict" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:assert/strict", "node/assert.strict.js", specifier),
-                .@"node:async_hooks" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:async_hooks", "node/async_hooks.js", specifier),
-                .@"node:child_process" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:child_process", "node/child_process.js", specifier),
-                .@"node:crypto" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:crypto", "node/crypto.js", specifier),
-                .@"node:dns" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:dns", "node/dns.js", specifier),
-                .@"node:dns/promises" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:dns/promises", "node/dns.promises.js", specifier),
-                .@"node:events" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:child_process", "node/events.js", specifier),
-                .@"node:fs" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:fs", "node/fs.js", specifier),
-                .@"node:http" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:http", "node/http.js", specifier),
-                .@"node:https" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:https", "node/https.js", specifier),
-                .@"node:net" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:net", "node/net.js", specifier),
-                .@"node:os" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:os", "node/os.js", specifier),
-                .@"node:path" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:path", "node/path.js", specifier),
-                .@"node:path/posix" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:path/posix", "node/path.posix.js", specifier),
-                .@"node:path/win32" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:path/win32", "node/path.win32.js", specifier),
-                .@"node:perf_hooks" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:perf_hooks", "node/perf_hooks.js", specifier),
-                .@"node:readline" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:readline", "node/readline.js", specifier),
-                .@"node:readline/promises" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:readline/promises", "node/readline.promises.js", specifier),
-                .@"node:stream" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:stream", "node/stream.js", specifier),
-                .@"node:stream/consumers" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:stream/consumers", "node/stream.consumers.js", specifier),
-                .@"node:stream/promises" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:stream/promises", "node/stream.promises.js", specifier),
-                .@"node:stream/web" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:stream/web", "node/stream.web.js", specifier),
-                .@"node:timers" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:timers", "node/timers.js", specifier),
-                .@"node:timers/promises" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:timers/promises", "node/timers.promises.js", specifier),
-                .@"node:tls" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:tls", "node/tls.js", specifier),
-                .@"node:url" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:url", "node/url.js", specifier),
-                .@"node:util" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:util", "node/util.js", specifier),
-                .@"node:vm" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:vm", "node/vm.js", specifier),
-                .@"node:wasi" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:wasi", "node/wasi.js", specifier),
-                .@"node:zlib" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:zlib", "node/zlib.js", specifier),
+                .@"node:assert" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:assert", "node/assert.js", specifier),
+                .@"node:assert/strict" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:assert/strict", "node/assert.strict.js", specifier),
+                .@"node:async_hooks" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:async_hooks", "node/async_hooks.js", specifier),
+                .@"node:child_process" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:child_process", "node/child_process.js", specifier),
+                .@"node:crypto" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:crypto", "node/crypto.js", specifier),
+                .@"node:dns" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:dns", "node/dns.js", specifier),
+                .@"node:dns/promises" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:dns/promises", "node/dns.promises.js", specifier),
+                .@"node:events" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:child_process", "node/events.js", specifier),
+                .@"node:fs" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:fs", "node/fs.js", specifier),
+                .@"node:http" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:http", "node/http.js", specifier),
+                .@"node:https" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:https", "node/https.js", specifier),
+                .@"node:net" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:net", "node/net.js", specifier),
+                .@"node:os" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:os", "node/os.js", specifier),
+                .@"node:path" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:path", "node/path.js", specifier),
+                .@"node:path/posix" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:path/posix", "node/path.posix.js", specifier),
+                .@"node:path/win32" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:path/win32", "node/path.win32.js", specifier),
+                .@"node:perf_hooks" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:perf_hooks", "node/perf_hooks.js", specifier),
+                .@"node:readline" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:readline", "node/readline.js", specifier),
+                .@"node:readline/promises" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:readline/promises", "node/readline.promises.js", specifier),
+                .@"node:stream" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:stream", "node/stream.js", specifier),
+                .@"node:stream/consumers" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:stream/consumers", "node/stream.consumers.js", specifier),
+                .@"node:stream/promises" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:stream/promises", "node/stream.promises.js", specifier),
+                .@"node:stream/web" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:stream/web", "node/stream.web.js", specifier),
+                .@"node:timers" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:timers", "node/timers.js", specifier),
+                .@"node:timers/promises" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:timers/promises", "node/timers.promises.js", specifier),
+                .@"node:tls" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:tls", "node/tls.js", specifier),
+                .@"node:url" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:url", "node/url.js", specifier),
+                .@"node:util" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:util", "node/util.js", specifier),
+                .@"node:vm" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:vm", "node/vm.js", specifier),
+                .@"node:wasi" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:wasi", "node/wasi.js", specifier),
+                .@"node:zlib" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:zlib", "node/zlib.js", specifier),
 
-                .@"detect-libc" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .depd, if (Environment.isLinux) "thirdparty/detect-libc.linux.js" else "thirdparty/detect-libc.js", specifier),
-                .depd => return jsResolvedSource(jsc_vm.load_builtins_from_path, .depd, "thirdparty/depd.js", specifier),
-                .undici => return jsResolvedSource(jsc_vm.load_builtins_from_path, .undici, "thirdparty/undici.js", specifier),
-                .ws => return jsResolvedSource(jsc_vm.load_builtins_from_path, .ws, "thirdparty/ws.js", specifier),
+                .@"detect-libc" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .depd, if (Environment.isLinux) "thirdparty/detect-libc.linux.js" else "thirdparty/detect-libc.js", specifier),
+                .depd => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .depd, "thirdparty/depd.js", specifier),
+                .undici => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .undici, "thirdparty/undici.js", specifier),
+                .ws => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .ws, "thirdparty/ws.js", specifier),
 
-                .@"node:cluster" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:cluster", "node/cluster.js", specifier),
-                .@"node:dgram" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:dgram", "node/dgram.js", specifier),
-                .@"node:diagnostics_channel" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:diagnostics_channel", "node/diagnostics_channel.js", specifier),
-                .@"node:http2" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:http2", "node/http2.js", specifier),
-                .@"node:inspector" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:inspector", "node/inspector.js", specifier),
-                .@"node:repl" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:repl", "node/repl.js", specifier),
-                .@"node:trace_events" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:trace_events", "node/trace_events.js", specifier),
-                .@"node:v8" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:v8", "node/v8.js", specifier),
+                .@"node:cluster" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:cluster", "node/cluster.js", specifier),
+                .@"node:dgram" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:dgram", "node/dgram.js", specifier),
+                .@"node:diagnostics_channel" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:diagnostics_channel", "node/diagnostics_channel.js", specifier),
+                .@"node:http2" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:http2", "node/http2.js", specifier),
+                .@"node:inspector" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:inspector", "node/inspector.js", specifier),
+                .@"node:repl" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:repl", "node/repl.js", specifier),
+                .@"node:trace_events" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:trace_events", "node/trace_events.js", specifier),
+                .@"node:v8" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:v8", "node/v8.js", specifier),
             }
         } else if (specifier.hasPrefixComptime(js_ast.Macro.namespaceWithColon)) {
             if (jsc_vm.macro_entry_points.get(MacroEntryPoint.generateIDFromSpecifier(specifier.byteSlice()))) |entry| {
                 return ResolvedSource{
                     .allocator = null,
-                    .source_code = ZigString.init(entry.source.contents),
+                    .source_code = bun.String.create(entry.source.contents),
                     .specifier = specifier,
                     .source_url = specifier.toZigString(),
                     .hash = 0,
@@ -1809,7 +1863,7 @@ pub const ModuleLoader = struct {
         } else if (DisabledModule.getWithEql(specifier, bun.String.eqlComptime) != null) {
             return ResolvedSource{
                 .allocator = null,
-                .source_code = ZigString.init(
+                .source_code = bun.String.static(
                     \\const symbol = Symbol.for("CommonJS");
                     \\const lazy = globalThis[Symbol.for("Bun.lazy")];
                     \\var masqueradesAsUndefined = lazy("masqueradesAsUndefined");
@@ -1827,7 +1881,7 @@ pub const ModuleLoader = struct {
             if (graph.files.get(specifier_utf8.slice())) |file| {
                 return ResolvedSource{
                     .allocator = null,
-                    .source_code = ZigString.init(file.contents),
+                    .source_code = bun.String.static(file.contents),
                     .specifier = specifier,
                     .source_url = specifier.toZigString(),
                     .hash = 0,
@@ -2199,12 +2253,16 @@ pub const DisabledModule = bun.ComptimeStringMap(
     },
 );
 
-inline fn jsResolvedSource(builtins: []const u8, comptime module: HardcodedModule, comptime input: []const u8, specifier: bun.String) ResolvedSource {
-    return ResolvedSource{
-        .allocator = null,
-        .source_code = ZigString.init(jsModuleFromFile(builtins, input)),
-        .specifier = specifier,
-        .source_url = ZigString.init(@tagName(module)),
-        .hash = 0,
-    };
+fn jsResolvedSource(vm: *JSC.VirtualMachine, builtins: []const u8, comptime module: HardcodedModule, comptime input: []const u8, specifier: bun.String) ResolvedSource {
+    // We use RefCountedResolvedSource because we want a stable StringImpl*
+    // pointer so that the SourceProviderCache has the maximum hit rate
+    return vm.refCountedResolvedSource(
+        jsModuleFromFile(builtins, input),
+        specifier,
+        @tagName(module),
+        null,
+
+        // we never want to free these
+        true,
+    );
 }

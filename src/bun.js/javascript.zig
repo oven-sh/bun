@@ -449,6 +449,8 @@ pub const VirtualMachine = struct {
     modules: ModuleLoader.AsyncModule.Queue = .{},
     aggressive_garbage_collection: GCLevel = GCLevel.none,
 
+    parser_arena: ?@import("root").bun.ArenaAllocator = null,
+
     gc_controller: JSC.GarbageCollectionController = .{},
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
@@ -780,6 +782,7 @@ pub const VirtualMachine = struct {
             .ref_strings = JSC.RefString.Map.init(allocator),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .standalone_module_graph = graph,
+            .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -876,6 +879,7 @@ pub const VirtualMachine = struct {
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
+            .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -936,11 +940,15 @@ pub const VirtualMachine = struct {
         _ = VirtualMachine.get().ref_strings.remove(ref_string.hash);
     }
 
-    pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifier: bun.String, source_url: []const u8, hash_: ?u32) ResolvedSource {
-        var source = this.refCountedString(code, hash_, true);
+    pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifier: bun.String, source_url: []const u8, hash_: ?u32, comptime add_double_ref: bool) ResolvedSource {
+        var source = this.refCountedString(code, hash_, !add_double_ref);
+        if (add_double_ref) {
+            source.ref();
+            source.ref();
+        }
 
         return ResolvedSource{
-            .source_code = ZigString.init(source.slice()),
+            .source_code = bun.String.init(source.impl),
             .specifier = specifier,
             .source_url = ZigString.init(source_url),
             .hash = source.hash,
@@ -963,6 +971,7 @@ pub const VirtualMachine = struct {
                 .allocator = this.allocator,
                 .ptr = input.ptr,
                 .len = input.len,
+                .impl = bun.String.createExternal(input, true, ref, &JSC.RefString.RefString__free).value.WTFStringImpl,
                 .hash = hash,
                 .ctx = this,
                 .onBeforeDeinit = VirtualMachine.clearRefString,
@@ -1432,9 +1441,9 @@ pub const VirtualMachine = struct {
             };
 
             if (vm.has_loaded) {
-                blobs.temporary.put(specifier_blob, .{ .ptr = result.source_code._unsafe_ptr_do_not_use, .len = result.source_code.len }) catch {};
+                blobs.temporary.put(specifier_blob, .{ .ptr = result.source_code.byteSlice().ptr, .len = result.source_code.length() }) catch {};
             } else {
-                blobs.persistent.put(specifier_blob, .{ .ptr = result.source_code._unsafe_ptr_do_not_use, .len = result.source_code.len }) catch {};
+                blobs.persistent.put(specifier_blob, .{ .ptr = result.source_code.byteSlice().ptr, .len = result.source_code.length() }) catch {};
             }
         }
 
@@ -2033,7 +2042,9 @@ pub const VirtualMachine = struct {
             var log = logger.Log.init(default_allocator);
             var errorable: ErrorableResolvedSource = undefined;
             var original_source = fetchWithoutOnLoadPlugins(this, this.global, bun.String.init(top.source_url), bun.String.empty, &log, &errorable, .print_source) catch return;
-            const code = original_source.source_code.slice();
+            const code = original_source.source_code.toUTF8(bun.default_allocator);
+            defer code.deinit();
+
             top.position.line = mapping.original.lines;
             top.position.line_start = mapping.original.lines;
             top.position.line_stop = mapping.original.lines + 1;
@@ -2046,7 +2057,7 @@ pub const VirtualMachine = struct {
             top.position.expression_stop = mapping.original.columns + 1;
 
             if (strings.getLinesInText(
-                code,
+                code.slice(),
                 @intCast(u32, top.position.line),
                 JSC.ZigException.Holder.source_lines_count,
             )) |lines| {

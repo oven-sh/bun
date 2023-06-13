@@ -48,7 +48,7 @@ test "SliceIterator" {
 pub const OsIterator = struct {
     const Error = process.ArgIterator.InitError;
 
-    arena: heap.ArenaAllocator,
+    arena: @import("root").bun.ArenaAllocator,
     args: process.ArgIterator,
 
     /// The executable path (this is the first argument passed to the program)
@@ -58,7 +58,7 @@ pub const OsIterator = struct {
 
     pub fn init(allocator: mem.Allocator) OsIterator {
         var res = OsIterator{
-            .arena = heap.ArenaAllocator.init(allocator),
+            .arena = @import("root").bun.ArenaAllocator.init(allocator),
             .args = process.args(),
             .exe_arg = undefined,
         };
@@ -83,12 +83,12 @@ pub const ShellIterator = struct {
         QuoteNotClosed,
     } || mem.Allocator.Error;
 
-    arena: heap.ArenaAllocator,
+    arena: @import("root").bun.ArenaAllocator,
     str: []const u8,
 
     pub fn init(allocator: mem.Allocator, str: []const u8) ShellIterator {
         return .{
-            .arena = heap.ArenaAllocator.init(allocator),
+            .arena = @import("root").bun.ArenaAllocator.init(allocator),
             .str = str,
         };
     }

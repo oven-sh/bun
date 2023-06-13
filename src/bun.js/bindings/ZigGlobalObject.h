@@ -388,6 +388,12 @@ public:
     BunPlugin::OnResolve onResolvePlugins[BunPluginTargetMax + 1] {};
     BunPluginTarget defaultBunPluginTarget = BunPluginTargetBun;
 
+    // This increases the cache hit rate for JSC::VM's SourceProvider cache
+    // It also avoids an extra allocation for the SourceProvider
+    // The key is a pointer to the source code
+    WTF::HashMap<uintptr_t, Ref<JSC::SourceProvider>> sourceProviderMap;
+    size_t reloadCount = 0;
+
     void reload();
 
     JSC::Structure* pendingVirtualModuleResultStructure() { return m_pendingVirtualModuleResultStructure.get(this); }

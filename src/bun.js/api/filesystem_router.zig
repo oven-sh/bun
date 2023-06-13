@@ -153,7 +153,7 @@ pub const FileSystemRouter = struct {
     origin: ?*JSC.RefString = null,
     base_dir: ?*JSC.RefString = null,
     router: Router,
-    arena: *std.heap.ArenaAllocator = undefined,
+    arena: *@import("root").bun.ArenaAllocator = undefined,
     allocator: std.mem.Allocator = undefined,
     asset_prefix: ?*JSC.RefString = null,
 
@@ -210,8 +210,8 @@ pub const FileSystemRouter = struct {
             globalThis.throwInvalidArguments("Expected dir to be a string", .{});
             return null;
         }
-        var arena = globalThis.allocator().create(std.heap.ArenaAllocator) catch unreachable;
-        arena.* = std.heap.ArenaAllocator.init(globalThis.allocator());
+        var arena = globalThis.allocator().create(@import("root").bun.ArenaAllocator) catch unreachable;
+        arena.* = @import("root").bun.ArenaAllocator.init(globalThis.allocator());
         var allocator = arena.allocator();
         var extensions = std.ArrayList(string).init(allocator);
         if (argument.get(globalThis, "fileExtensions")) |file_extensions| {
@@ -324,8 +324,8 @@ pub const FileSystemRouter = struct {
     pub fn reload(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         var this_value = callframe.this();
 
-        var arena = globalThis.allocator().create(std.heap.ArenaAllocator) catch unreachable;
-        arena.* = std.heap.ArenaAllocator.init(globalThis.allocator());
+        var arena = globalThis.allocator().create(@import("root").bun.ArenaAllocator) catch unreachable;
+        arena.* = @import("root").bun.ArenaAllocator.init(globalThis.allocator());
 
         var allocator = arena.allocator();
         var vm = globalThis.bunVM();

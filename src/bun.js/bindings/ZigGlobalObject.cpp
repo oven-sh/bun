@@ -4044,7 +4044,12 @@ void GlobalObject::reload()
 
     registry->clear(this->vm());
     this->requireMap()->clear(this->vm());
-    this->vm().heap.collectSync();
+
+    // If we run the GC every time, we will never get the SourceProvider cache hit.
+    // So we run the GC every other time.
+    if ((this->reloadCount++ + 1) % 2 == 0) {
+        this->vm().heap.collectSync();
+    }
 }
 
 extern "C" void JSC__JSGlobalObject__reload(JSC__JSGlobalObject* arg0)

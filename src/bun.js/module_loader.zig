@@ -1800,6 +1800,7 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
+
                 .@"bun:jsc" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"bun:jsc", "bun/jsc.js", specifier),
                 .@"bun:sqlite" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"bun:sqlite", "bun/sqlite.js", specifier),
 
@@ -1839,6 +1840,7 @@ pub const ModuleLoader = struct {
                 .depd => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .depd, "thirdparty/depd.js", specifier),
                 .undici => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .undici, "thirdparty/undici.js", specifier),
                 .ws => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .ws, "thirdparty/ws.js", specifier),
+
                 .@"node:cluster" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:cluster", "node/cluster.js", specifier),
                 .@"node:dgram" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:dgram", "node/dgram.js", specifier),
                 .@"node:diagnostics_channel" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:diagnostics_channel", "node/diagnostics_channel.js", specifier),
@@ -1847,197 +1849,6 @@ pub const ModuleLoader = struct {
                 .@"node:repl" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:repl", "node/repl.js", specifier),
                 .@"node:trace_events" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:trace_events", "node/trace_events.js", specifier),
                 .@"node:v8" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:v8", "node/v8.js", specifier),
-                .@"detect-libc" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, @embedFile(if (Environment.isLinux) "detect-libc.linux.js" else "detect-libc.js")),
-                        ),
-                        .specifier = ZigString.init("detect-libc"),
-                        .source_url = ZigString.init("detect-libc"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:url" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "url.exports.js")),
-                        ),
-                        .specifier = ZigString.init("node:url"),
-                        .source_url = ZigString.init("node:url"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:assert" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "assert.exports.js")),
-                        ),
-                        .specifier = ZigString.init("node:assert"),
-                        .source_url = ZigString.init("node:assert"),
-                        .hash = 0,
-                    };
-                },
-                .@"bun:sqlite" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "./bindings/sqlite/sqlite.exports.js")),
-                        ),
-                        .specifier = ZigString.init("bun:sqlite"),
-                        .source_url = ZigString.init("bun:sqlite"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:perf_hooks" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "./perf_hooks.exports.js")),
-                        ),
-                        .specifier = ZigString.init("node:perf_hooks"),
-                        .source_url = ZigString.init("node:perf_hooks"),
-                        .hash = 0,
-                    };
-                },
-                .ws => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "./ws.exports.js")),
-                        ),
-                        .specifier = ZigString.init("ws"),
-                        .source_url = ZigString.init("ws"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:timers" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "./node_timers.exports.js")),
-                        ),
-                        .specifier = ZigString.init("node:timers"),
-                        .source_url = ZigString.init("node:timers"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:timers/promises" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "./node_timers_promises.exports.js")),
-                        ),
-                        .specifier = ZigString.init("node:timers/promises"),
-                        .source_url = ZigString.init("node:timers/promises"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:stream/web" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "./node_streams_web.exports.js")),
-                        ),
-                        .specifier = ZigString.init("node:stream/web"),
-                        .source_url = ZigString.init("node:stream/web"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:stream/consumers" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "./node_streams_consumer.exports.js")),
-                        ),
-                        .specifier = ZigString.init("node:stream/consumers"),
-                        .source_url = ZigString.init("node:stream/consumers"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:util" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "./util.exports.js")),
-                        ),
-                        .specifier = ZigString.init("node:util"),
-                        .source_url = ZigString.init("node:util"),
-                        .hash = 0,
-                    };
-                },
-                .undici => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "./undici.exports.js")),
-                        ),
-                        .specifier = ZigString.init("undici"),
-                        .source_url = ZigString.init("undici"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:wasi" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            strings.append(
-                                bun.default_allocator,
-                                JSC.Node.fs.constants_string,
-                                @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "./wasi.exports.js")),
-                            ) catch unreachable,
-                        ),
-                        .specifier = ZigString.init("node:wasi"),
-                        .source_url = ZigString.init("node:wasi"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:http" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "./http.exports.js")),
-                        ),
-                        .specifier = ZigString.init("node:http"),
-                        .source_url = ZigString.init("node:http"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:https" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "./https.exports.js")),
-                        ),
-                        .specifier = ZigString.init("node:https"),
-                        .source_url = ZigString.init("node:https"),
-                        .hash = 0,
-                    };
-                },
-                .depd => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "./depd.exports.js")),
-                        ),
-                        .specifier = ZigString.init("depd"),
-                        .source_url = ZigString.init("depd"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:stream/promises" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:stream/promises", "node_streams_promises.exports.js"),
-                .@"node:vm" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:vm", "vm.exports.js"),
-                .@"node:assert/strict" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:assert/strict", "assert_strict.exports.js"),
-                .@"node:v8" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:v8", "v8.exports.js"),
-                .@"node:trace_events" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:trace_events", "trace_events.exports.js"),
-                .@"node:repl" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:repl", "repl.exports.js"),
-                .@"node:inspector" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:inspector", "inspector.exports.js"),
-                .@"node:http2" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:http2", "http2.exports.js"),
-                .@"node:diagnostics_channel" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:diagnostics_channel", "diagnostics_channel.exports.js"),
-                .@"node:dgram" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:dgram", "dgram.exports.js"),
-                .@"node:cluster" => return jsResolvedSource(jsc_vm.load_builtins_from_path, .@"node:cluster", "cluster.exports.js"),
             }
         } else if (specifier.hasPrefixComptime(js_ast.Macro.namespaceWithColon)) {
             if (jsc_vm.macro_entry_points.get(MacroEntryPoint.generateIDFromSpecifier(specifier.byteSlice()))) |entry| {
@@ -2387,6 +2198,7 @@ pub const HardcodedModule = enum {
             .{ "ws", .{ .path = "ws" } },
             .{ "ws/lib/websocket", .{ .path = "ws" } },
             .{ "zlib", .{ .path = "node:zlib" } },
+
             // These are returned in builtinModules, but probably not many packages use them
             // so we will just alias them.
             .{ "_http_agent", .{ .path = "node:http" } },

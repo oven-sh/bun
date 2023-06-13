@@ -22,8 +22,9 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
 export function getEventSource() {
+  type Socket = Awaited<ReturnType<typeof Bun.connect<EventSource>>>;
+
   class EventSource extends EventTarget {
     #url;
     #state;
@@ -31,7 +32,7 @@ export function getEventSource() {
     #onmessage;
     #onopen;
     #is_tls = false;
-    #socket = null;
+    #socket: Socket | null = null;
     #data_buffer = "";
     #send_buffer = "";
     #lastEventID = "";
@@ -40,10 +41,10 @@ export function getEventSource() {
     #received_length = 0;
     #reconnection_time = 0;
 
-    static #ConnectNextTick(self) {
+    static #ConnectNextTick(self: EventSource) {
       self.#connect();
     }
-    static #SendRequest(socket, url) {
+    static #SendRequest(socket: Socket, url: URL) {
       const self = socket.data;
       const last_event_header = self.#lastEventID ? `Last-Event-ID: ${self.#lastEventID}\r\n` : "";
       const request = `GET ${url.pathname}${url.search} HTTP/1.1\r\nHost: bun\r\nContent-type: text/event-stream\r\nContent-length: 0\r\n${last_event_header}\r\n`;
@@ -53,7 +54,7 @@ export function getEventSource() {
       }
     }
 
-    static #ProcessChunk(self, chunks, offset) {
+    static #ProcessChunk(self: EventSource, chunks : string, offset: number) {
       for (;;) {
         if (offset >= chunks.length) {
           return;
@@ -172,14 +173,14 @@ export function getEventSource() {
       }
     }
     static #Handlers = {
-      open(socket) {
+      open(socket: Socket) {
         const self = socket.data;
         self.#socket = socket;
         if (!self.#is_tls) {
           EventSource.#SendRequest(socket, self.#url);
         }
       },
-      handshake(socket, success, verifyError) {
+      handshake(socket: Socket, success : boolean, verifyError: Error) {
         const self = socket.data;
         if (success) {
           EventSource.#SendRequest(socket, self.#url);
@@ -189,7 +190,7 @@ export function getEventSource() {
           socket.end();
         }
       },
-      data(socket, buffer) {
+      data(socket: Socket, buffer: Buffer) {
         const self = socket.data;
         switch (self.#state) {
           case 0: {
@@ -338,7 +339,7 @@ export function getEventSource() {
             break;
         }
       },
-      drain(socket) {
+      drain(socket: Socket) {
         const self = socket.data;
         if (self.#state === 0) {
           const request = self.#data_buffer;
@@ -353,18 +354,18 @@ export function getEventSource() {
         }
       },
       close: EventSource.#Close,
-      end(socket) {
+      end(socket: Socket) {
         EventSource.#Close(socket).dispatchEvent(
           new ErrorEvent("error", { error: new Error("Connection closed by server") }),
         );
       },
-      timeout(socket) {
+      timeout(socket: Socket) {
         EventSource.#Close(socket).dispatchEvent(new ErrorEvent("error", { error: new Error("Timeout") }));
       },
       binaryType: "buffer",
     };
 
-    static #Close(socket) {
+    static #Close(socket: Socket) {
       const self = socket.data;
       self.#socket = null;
       self.#received_length = 0;
@@ -374,7 +375,7 @@ export function getEventSource() {
       }
       return self;
     }
-    constructor(url, options = undefined) {
+    constructor(url: string, options = undefined) {
       super();
       const uri = new URL(url);
       this.#is_tls = uri.protocol === "https:";
@@ -387,7 +388,6 @@ export function getEventSource() {
       const uri = this.#url;
       const is_tls = this.#is_tls;
       this.#state = 0;
-      let self = this;
       //@ts-ignore
       Bun.connect({
         data: this,
@@ -402,8 +402,8 @@ export function getEventSource() {
           : false,
       }).catch(err => {
         this.dispatchEvent(new ErrorEvent("error", { error: err }));
-        if (self.#reconnect) {
-          setTimeout(EventSource.#ConnectNextTick, 1000, self);
+        if (this.#reconnect) {
+          setTimeout(EventSource.#ConnectNextTick, 1000, this);
         }
       });
     }

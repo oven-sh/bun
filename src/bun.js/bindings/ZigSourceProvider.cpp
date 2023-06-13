@@ -53,7 +53,6 @@ Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, Reso
         if (providerKey) {
             auto sourceProvider = sourceProviderMap.get(providerKey);
             if (sourceProvider != nullptr) {
-
                 sourceProvider->ref();
                 return adoptRef(*reinterpret_cast<Zig::SourceProvider*>(sourceProvider));
             }

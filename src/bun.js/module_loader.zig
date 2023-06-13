@@ -920,6 +920,11 @@ pub const ModuleLoader = struct {
 
                 var arena: bun.ArenaAllocator = undefined;
 
+                // Attempt to reuse the Arena from the parser when we can
+                // This code is potentially re-entrant, so only one Arena can be reused at a time
+                // That's why we have to check if the Arena is null
+                //
+                // Using an Arena here is a significant memory optimization when loading many files
                 if (jsc_vm.parser_arena) |shared| {
                     arena = shared;
                     jsc_vm.parser_arena = null;
@@ -1680,6 +1685,11 @@ pub const ModuleLoader = struct {
                     defer jsc_vm.transpiled_count += 1;
                     var arena: bun.ArenaAllocator = undefined;
 
+                    // Attempt to reuse the Arena from the parser when we can
+                    // This code is potentially re-entrant, so only one Arena can be reused at a time
+                    // That's why we have to check if the Arena is null
+                    //
+                    // Using an Arena here is a significant memory optimization when loading many files
                     if (jsc_vm.parser_arena) |shared| {
                         arena = shared;
                         jsc_vm.parser_arena = null;
@@ -2252,6 +2262,8 @@ pub const DisabledModule = bun.ComptimeStringMap(
 );
 
 fn jsResolvedSource(vm: *JSC.VirtualMachine, builtins: []const u8, comptime module: HardcodedModule, comptime input: []const u8, specifier: bun.String) ResolvedSource {
+    // We use RefCountedResolvedSource because we want a stable StringImpl*
+    // pointer so that the SourceProviderCache has the maximum hit rate
     return vm.refCountedResolvedSource(
         jsModuleFromFile(builtins, input),
         specifier,

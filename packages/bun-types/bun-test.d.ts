@@ -63,7 +63,7 @@ declare module "bun:test" {
 
   interface Jest {
     restoreAllMocks(): void;
-    fn<T extends AnyFunction>(func: T): Mock<T>;
+    fn<T extends AnyFunction>(func?: T): Mock<T>;
   }
   export const jest: Jest;
   export namespace jest {

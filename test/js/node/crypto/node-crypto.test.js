@@ -16,6 +16,12 @@ describe("createHash", () => {
     expect(hash.digest("hex")).toBe("6a2da20943931e9834fc12cfe5bb47bbd9ae43489a30726962b576f4e3993e50");
   });
 
+  it("returns Buffer", () => {
+    const hash = crypto.createHash("sha256");
+    hash.update("some data to hash");
+    expect(Buffer.isBuffer(hash.digest())).toBeTrue();
+  });
+
   it("stream (sync)", () => {
     const hash = crypto.createHash("sha256");
     hash.write("some data to hash");

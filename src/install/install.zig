@@ -5470,7 +5470,7 @@ pub const PackageManager = struct {
 
                 // create scope if specified
                 if (name[0] == '@') {
-                    if (std.mem.indexOfScalar(u8, name, '/')) |i| {
+                    if (strings.indexOfChar(name, '/')) |i| {
                         node_modules.dir.makeDir(name[0..i]) catch |err| brk: {
                             if (err == error.PathAlreadyExists) break :brk;
                             if (manager.options.log_level != .silent)

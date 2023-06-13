@@ -281,7 +281,7 @@ pub const Bin = extern struct {
             if (name[0] != '@') return name;
             var name_ = name;
             name_ = name[1..];
-            return name_[(std.mem.indexOfScalar(u8, name_, '/') orelse return name) + 1 ..];
+            return name_[(strings.indexOfChar(name_, '/') orelse return name) + 1 ..];
         }
 
         fn setPermissions(folder: std.os.fd_t, target: [:0]const u8) void {

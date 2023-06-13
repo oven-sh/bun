@@ -159,7 +159,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     const name = this.name.slice();
     const basename = brk: {
         if (name[0] == '@') {
-            if (std.mem.indexOfScalar(u8, name, '/')) |i| {
+            if (strings.indexOfChar(name, '/')) |i| {
                 break :brk name[i + 1 ..];
             }
         }
@@ -344,7 +344,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     };
 
     // create an index storing each version of a package installed
-    if (std.mem.indexOfScalar(u8, basename, '/') == null) create_index: {
+    if (strings.indexOfChar(basename, '/') == null) create_index: {
         var index_dir = cache_dir.makeOpenPathIterable(name, .{}) catch break :create_index;
         defer index_dir.close();
         index_dir.dir.symLink(

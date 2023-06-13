@@ -62,6 +62,7 @@
 #include <JavaScriptCore/JSMap.h>
 
 #include <JavaScriptCore/JSMapInlines.h>
+#include <JavaScriptCore/GetterSetter.h>
 
 namespace Bun {
 using namespace JSC;
@@ -76,6 +77,7 @@ public:
 
     mutable JSC::WriteBarrier<JSC::Unknown> m_exportsObject;
     mutable JSC::WriteBarrier<JSC::JSString> m_id;
+    mutable JSC::WriteBarrier<JSC::EvalExecutable> m_executable;
 
     void finishCreation(JSC::VM& vm, JSC::JSValue exportsObject, JSC::JSString* id)
     {
@@ -240,6 +242,7 @@ void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_exportsObject);
     visitor.append(thisObject->m_id);
+    visitor.append(thisObject->m_executable);
 }
 
 DEFINE_VISIT_CHILDREN(JSCommonJSModule);
@@ -250,7 +253,8 @@ JSCommonJSModule* createCommonJSModuleObject(
     const ResolvedSource& source,
     const WTF::String& sourceURL,
     JSC::JSValue exportsObjectValue,
-    JSC::JSValue requireFunctionValue)
+    JSC::JSValue requireFunctionValue,
+    EvalExecutable* executable)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -266,6 +270,8 @@ JSCommonJSModule* createCommonJSModuleObject(
         vm,
         3,
         requireFunctionValue);
+
+    moduleObject->m_executable.set(vm, moduleObject, executable);
 
     return moduleObject;
 }
@@ -291,7 +297,6 @@ JSC::SourceCode createCommonJSModule(
     Zig::GlobalObject* globalObject,
     ResolvedSource source)
 {
-
     auto sourceURL = Zig::toStringCopy(source.source_url);
 
     return JSC::SourceCode(
@@ -300,8 +305,9 @@ JSC::SourceCode createCommonJSModule(
                 JSC::Identifier moduleKey,
                 Vector<JSC::Identifier, 4>& exportNames,
                 JSC::MarkedArgumentBuffer& exportValues) -> void {
-                Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+                auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
                 auto& vm = globalObject->vm();
+
                 auto throwScope = DECLARE_THROW_SCOPE(vm);
                 auto sourceCodeString = Zig::toString(source.source_code);
                 auto* requireMapKey = jsString(vm, sourceURL);
@@ -309,7 +315,6 @@ JSC::SourceCode createCommonJSModule(
                 JSC::JSObject* exportsObject = source.commonJSExportsLen < 64
                     ? JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), source.commonJSExportsLen)
                     : JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
-
                 auto index = sourceURL.reverseFind('/', sourceURL.length());
                 JSString* dirname = jsEmptyString(vm);
                 JSString* filename = requireMapKey;
@@ -330,12 +335,26 @@ JSC::SourceCode createCommonJSModule(
                     scopeExtensionObjectStructure);
 
                 auto* requireFunction = Zig::ImportMetaObject::createRequireFunction(vm, globalObject, sourceURL);
+                auto* executable = JSC::DirectEvalExecutable::create(
+                    globalObject, inputSource, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
+                    false, false, EvalContextType::None, nullptr, nullptr, ECMAMode::sloppy());
+
+                if (UNLIKELY(!executable && !throwScope.exception())) {
+                    // I'm not sure if this case happens, but it's better to be safe than sorry.
+                    throwSyntaxError(globalObject, throwScope, "Failed to compile CommonJS module."_s);
+                }
+
+                if (UNLIKELY(throwScope.exception())) {
+                    globalObject->requireMap()->remove(globalObject, requireMapKey);
+                    throwScope.release();
+                    return;
+                }
 
                 auto* moduleObject = createCommonJSModuleObject(globalObject,
                     source,
                     sourceURL,
                     exportsObject,
-                    requireFunction);
+                    requireFunction, executable);
                 scopeExtensionObject->putDirectOffset(
                     vm,
                     0,
@@ -360,15 +379,6 @@ JSC::SourceCode createCommonJSModule(
                     vm,
                     4,
                     requireFunction);
-
-                auto* executable = JSC::DirectEvalExecutable::create(
-                    globalObject, inputSource, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
-                    false, false, EvalContextType::None, nullptr, nullptr, ECMAMode::sloppy());
-
-                if (UNLIKELY(!executable && !throwScope.exception())) {
-                    // I'm not sure if this case happens, but it's better to be safe than sorry.
-                    throwSyntaxError(globalObject, throwScope, "Failed to compile CommonJS module."_s);
-                }
 
                 if (UNLIKELY(throwScope.exception())) {
                     globalObject->requireMap()->remove(globalObject, requireMapKey);
@@ -432,7 +442,12 @@ JSC::SourceCode createCommonJSModule(
                     //   - Object.defineProperty(module, 'exports', {get: getter})
                     //   - delete module.exports
                     //
-                    result = moduleObject->getIfPropertyExists(globalObject, clientData->builtinNames().exportsPublicName());
+                    if (result.isGetterSetter()) {
+                        JSC::GetterSetter* getter = jsCast<JSC::GetterSetter*>(result);
+                        result = getter->callGetter(globalObject, moduleObject);
+                    } else {
+                        result = moduleObject->getIfPropertyExists(globalObject, clientData->builtinNames().exportsPublicName());
+                    }
 
                     if (UNLIKELY(throwScope.exception())) {
                         // Unlike getters on properties of the exports object
@@ -450,21 +465,19 @@ JSC::SourceCode createCommonJSModule(
                 exportNames.append(vm.propertyNames->defaultKeyword);
                 exportValues.append(result);
 
+                moduleObject->m_executable.clear();
+
                 // This exists to tell ImportMetaObject.ts that this is a CommonJS module.
                 exportNames.append(Identifier::fromUid(vm.symbolRegistry().symbolForKey("CommonJS"_s)));
                 exportValues.append(jsNumber(0));
-
-                // This strong reference exists because otherwise it will crash when the finalizer runs.
-                exportNames.append(Identifier::fromUid(vm.symbolRegistry().symbolForKey("module"_s)));
-                exportValues.append(moduleObject);
 
                 if (result.isObject()) {
                     auto* exports = asObject(result);
 
                     auto* structure = exports->structure();
                     uint32_t size = structure->inlineSize() + structure->outOfLineSize();
-                    exportNames.reserveCapacity(size + 3);
-                    exportValues.ensureCapacity(size + 3);
+                    exportNames.reserveCapacity(size + 1);
+                    exportValues.ensureCapacity(size + 1);
 
                     if (canPerformFastEnumeration(structure)) {
                         exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {

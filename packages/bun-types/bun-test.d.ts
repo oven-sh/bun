@@ -27,6 +27,38 @@ declare module "bun:test" {
 
   export const mock: {
     <T extends AnyFunction>(Function: T): Mock<T>;
+
+    mockClear(): typeof mock;
+    mockReset(): typeof mock;
+    mockRestore(): void;
+    mockReturnValue<T extends JestMock.FunctionLike = JestMock.UnknownFunction>(
+      value: ReturnType<T>,
+    ): JestMock.MockInstance<T>;
+    mockReturnValueOnce<
+      T extends JestMock.FunctionLike = JestMock.UnknownFunction,
+    >(
+      value: ReturnType<T>,
+    ): JestMock.MockInstance<T>;
+    mockResolvedValue<
+      T extends JestMock.FunctionLike = JestMock.UnknownFunction,
+    >(
+      value: JestMock.ResolveType<T>,
+    ): JestMock.MockInstance<T>;
+    mockResolvedValueOnce<
+      T extends JestMock.FunctionLike = JestMock.UnknownFunction,
+    >(
+      value: JestMock.ResolveType<T>,
+    ): JestMock.MockInstance<T>;
+    mockRejectedValue<
+      T extends JestMock.FunctionLike = JestMock.UnknownFunction,
+    >(
+      value: JestMock.RejectType<T>,
+    ): JestMock.MockInstance<T>;
+    mockRejectedValueOnce<
+      T extends JestMock.FunctionLike = JestMock.UnknownFunction,
+    >(
+      value: JestMock.RejectType<T>,
+    ): JestMock.MockInstance<T>;
   };
 
   interface Jest {
@@ -1193,7 +1225,7 @@ declare namespace JestMock {
     ConstructorLikeKeys<T> | MethodLikeKeys<T>
   >;
 
-  type RejectType<T extends FunctionLike> =
+  export type RejectType<T extends FunctionLike> =
     ReturnType<T> extends PromiseLike<any> ? unknown : never;
 
   export interface Replaced<T = unknown> {
@@ -1227,11 +1259,8 @@ declare namespace JestMock {
     value: V,
   ) => Replaced<T[K_2]>;
 
-  type ResolveType<T extends FunctionLike> = ReturnType<T> extends PromiseLike<
-    infer U
-  >
-    ? U
-    : never;
+  export type ResolveType<T extends FunctionLike> =
+    ReturnType<T> extends PromiseLike<infer U> ? U : never;
 
   export type Spied<T extends ClassLike | FunctionLike> = T extends ClassLike
     ? SpiedClass<T>

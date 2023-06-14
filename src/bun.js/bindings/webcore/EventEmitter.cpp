@@ -171,7 +171,6 @@ Vector<JSObject*> EventEmitter::getListeners(const Identifier& eventType)
 // https://dom.spec.whatwg.org/#concept-event-listener-invoke
 void EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
-    ASSERT_WITH_SECURITY_IMPLICATION(ScriptDisallowedScope::isEventAllowedInMainThread());
 
     auto* data = eventTargetData();
     if (!data)

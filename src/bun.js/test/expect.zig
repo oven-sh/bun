@@ -33,18 +33,164 @@ pub var active_test_expectation_counter: Counter = .{};
 /// https://jestjs.io/docs/expect
 // To support async tests, we need to track the test ID
 pub const Expect = struct {
-    test_id: TestRunner.Test.ID,
-    scope: *DescribeScope,
-    op: Op.Set = Op.Set.init(.{}),
-
     pub usingnamespace JSC.Codegen.JSExpect;
 
-    pub const Op = enum(u3) {
+    test_id: TestRunner.Test.ID,
+    scope: *DescribeScope,
+    not: bool = false,
+    resolves: ?Resolves = null,
+
+    pub const Resolves = enum(u1) {
         resolves,
         rejects,
-        not,
-        pub const Set = std.EnumSet(Op);
     };
+
+    pub fn getSignature(comptime matcher_name: string, comptime args: string, comptime not: bool) string {
+        const received = "<d>expect(<r><red>received<r><d>).<r>";
+        comptime if (not) {
+            return received ++ "not<d>.<r>" ++ matcher_name ++ "<d>(<r>" ++ args ++ "<d>)<r>";
+        };
+        return received ++ matcher_name ++ "<d>(<r>" ++ args ++ "<d>)<r>";
+    }
+
+    pub fn getFullSignature(comptime matcher: string, comptime args: string, comptime not: bool, comptime resolves: ?Resolves) string {
+        const fmt = "<d>expect(<r><red>received<r><d>).<r>" ++ if (resolves) |res|
+            switch (res) {
+                .resolves => if (not) "resolves<d>.<r>not<d>.<r>" else "resolves<d>.<r>",
+                .rejects => if (not) "rejects<d>.<r>not<d>.<r>" else "rejects<d>.<r>",
+            }
+        else if (not) "not<d>.<r>" else "";
+        return fmt ++ matcher ++ "<d>(<r>" ++ args ++ "<d>)<r>";
+    }
+
+    pub fn getNot(this: *Expect, thisValue: JSValue, _: *JSGlobalObject) callconv(.C) JSValue {
+        this.not = !this.not;
+        return thisValue;
+    }
+
+    pub fn getResolves(this: *Expect, thisValue: JSValue, globalThis: *JSGlobalObject) callconv(.C) JSValue {
+        if (this.resolves) |resolves| {
+            switch (resolves) {
+                .rejects => {
+                    globalThis.throw("Cannot chain .resolves() after .rejects()", .{});
+                    return .zero;
+                },
+                .resolves => {},
+            }
+        } else {
+            this.resolves = .resolves;
+        }
+        return thisValue;
+    }
+
+    pub fn getRejects(this: *Expect, thisValue: JSValue, globalThis: *JSGlobalObject) callconv(.C) JSValue {
+        if (this.resolves) |resolves| {
+            switch (resolves) {
+                .resolves => {
+                    globalThis.throw("Cannot chain .rejects() after .resolves()", .{});
+                    return .zero;
+                },
+                .rejects => {},
+            }
+        } else {
+            this.resolves = .rejects;
+        }
+        return thisValue;
+    }
+
+    pub fn getValue(this: *Expect, globalThis: *JSGlobalObject, thisValue: JSValue, comptime matcher_name: string, comptime matcher_args: string) ?JSValue {
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("{s}() must be called in a test", .{matcher_name});
+            return null;
+        }
+
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal error: the expect(value) was garbage collected but it should not have been!", .{});
+            return null;
+        };
+        value.ensureStillAlive();
+
+        if (this.resolves) |resolves| {
+            if (value.asAnyPromise()) |promise| {
+                globalThis.bunVM().waitForPromise(promise);
+                const newValue: JSValue = promise.result(globalThis.vm());
+
+                switch (promise.status(globalThis.vm())) {
+                    .Fulfilled => switch (resolves) {
+                        .resolves => {},
+                        .rejects => {
+                            if (this.not) {
+                                const signature = comptime getFullSignature(matcher_name, matcher_args, true, .rejects);
+                                const fmt = signature ++ "\n\nExpected promise that rejects<r>\nReceived promise that resolved: <red>{any}<r>\n";
+                                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                                globalThis.throwPretty(fmt, .{newValue.toFmt(globalThis, &formatter)});
+                                return null;
+                            }
+                            const signature = comptime getFullSignature(matcher_name, matcher_args, false, .rejects);
+                            const fmt = signature ++ "\n\nExpected promise that rejects<r>\nReceived promise that resolved: <red>{any}<r>\n";
+                            var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                            globalThis.throwPretty(fmt, .{newValue.toFmt(globalThis, &formatter)});
+                            return null;
+                        },
+                    },
+                    .Rejected => switch (resolves) {
+                        .rejects => {},
+                        .resolves => {
+                            if (this.not) {
+                                const signature = comptime getFullSignature(matcher_name, matcher_args, true, .resolves);
+                                const fmt = signature ++ "\n\nExpected promise that resolves<r>\nReceived promise that rejected: <red>{any}<r>\n";
+                                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                                globalThis.throwPretty(fmt, .{newValue.toFmt(globalThis, &formatter)});
+                                return null;
+                            }
+                            const signature = comptime getFullSignature(matcher_name, matcher_args, false, .resolves);
+                            const fmt = signature ++ "\n\nExpected promise that resolves<r>\nReceived promise that rejected: <red>{any}<r>\n";
+                            var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                            globalThis.throwPretty(fmt, .{newValue.toFmt(globalThis, &formatter)});
+                            return null;
+                        },
+                    },
+                    .Pending => unreachable,
+                }
+
+                newValue.ensureStillAlive();
+                return newValue;
+            } else {
+                switch (resolves) {
+                    .resolves => {
+                        if (this.not) {
+                            const signature = comptime getFullSignature(matcher_name, matcher_args, true, .resolves);
+                            const fmt = signature ++ "\n\nExpected promise<r>\nReceived: <red>{any}<r>\n";
+                            var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                            globalThis.throwPretty(fmt, .{value.toFmt(globalThis, &formatter)});
+                            return null;
+                        }
+                        const signature = comptime getFullSignature(matcher_name, matcher_args, false, .resolves);
+                        const fmt = signature ++ "\n\nExpected promise<r>\nReceived: <red>{any}<r>\n";
+                        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                        globalThis.throwPretty(fmt, .{value.toFmt(globalThis, &formatter)});
+                        return null;
+                    },
+                    .rejects => {
+                        if (this.not) {
+                            const signature = comptime getFullSignature(matcher_name, matcher_args, true, .rejects);
+                            const fmt = signature ++ "\n\nExpected promise<r>\nReceived: <red>{any}<r>\n";
+                            var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                            globalThis.throwPretty(fmt, .{value.toFmt(globalThis, &formatter)});
+                            return null;
+                        }
+                        const signature = comptime getFullSignature(matcher_name, matcher_args, false, .rejects);
+                        const fmt = signature ++ "\n\nExpected promise<r>\nReceived: <red>{any}<r>\n";
+                        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                        globalThis.throwPretty(fmt, .{value.toFmt(globalThis, &formatter)});
+                        return null;
+                    },
+                }
+            }
+        }
+
+        return value;
+    }
 
     pub fn getSnapshotName(this: *Expect, allocator: std.mem.Allocator, hint: string) ![]const u8 {
         const test_name = this.scope.tests.items[this.test_id].label;
@@ -127,9 +273,8 @@ pub const Expect = struct {
 
     pub fn constructor(
         globalObject: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
+        _: *JSC.CallFrame,
     ) callconv(.C) ?*Expect {
-        _ = callframe.arguments(1);
         globalObject.throw("expect() cannot be called with new", .{});
         return null;
     }
@@ -150,21 +295,12 @@ pub const Expect = struct {
             return .zero;
         }
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toBe() must be called in a test", .{});
-            return .zero;
-        }
-
         active_test_expectation_counter.actual += 1;
         const right = arguments[0];
         right.ensureStillAlive();
-        const left = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        left.ensureStillAlive();
+        const left = this.getValue(globalObject, thisValue, "toBe", "<green>expected<r>") orelse return .zero;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         var pass = right.isSameValue(left, globalObject);
         if (comptime Environment.allow_assert) {
             std.debug.assert(pass == JSC.C.JSValueIsStrictEqual(globalObject, right.asObjectRef(), left.asObjectRef()));
@@ -231,14 +367,6 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn getSignature(comptime matcher_name: string, comptime args: string, comptime not: bool) string {
-        const received = "<d>expect(<r><red>received<r><d>).<r>";
-        comptime if (not) {
-            return received ++ "not<d>.<r>" ++ matcher_name ++ "<d>(<r>" ++ args ++ "<d>)<r>";
-        };
-        return received ++ matcher_name ++ "<d>(<r>" ++ args ++ "<d>)<r>";
-    }
-
     pub fn toHaveLength(
         this: *Expect,
         globalObject: *JSC.JSGlobalObject,
@@ -254,19 +382,10 @@ pub const Expect = struct {
             return .zero;
         }
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toHaveLength() must be called in a test", .{});
-            return .zero;
-        }
-
         active_test_expectation_counter.actual += 1;
 
         const expected: JSValue = arguments[0];
-        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toHaveLength", "<green>expected<r>") orelse return .zero;
 
         if (!value.isObject() and !value.isString()) {
             var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
@@ -287,7 +406,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         var pass = false;
 
         const actual_length = value.getLengthIfPropertyExistsInternal(globalObject);
@@ -349,22 +468,13 @@ pub const Expect = struct {
             return .zero;
         }
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toContain() must be called in a test", .{});
-            return .zero;
-        }
-
         active_test_expectation_counter.actual += 1;
 
         const expected = arguments[0];
         expected.ensureStillAlive();
-        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toContain", "<green>expected<r>") orelse return .zero;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         var pass = false;
 
         if (value.isIterable(globalObject)) {
@@ -422,20 +532,11 @@ pub const Expect = struct {
     pub fn toBeTruthy(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         defer this.postMatch(globalObject);
         const thisValue = callFrame.this();
-        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
-
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toBeTruthy() must be called in a test", .{});
-            return .zero;
-        }
+        const value: JSValue = this.getValue(globalObject, thisValue, "toBeTruthy", "") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         var pass = false;
 
         const truthy = value.toBooleanSlow(globalObject);
@@ -473,15 +574,11 @@ pub const Expect = struct {
     pub fn toBeUndefined(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         defer this.postMatch(globalObject);
         const thisValue = callFrame.this();
-        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toBeUndefined", "") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         var pass = false;
         if (value.isUndefined()) pass = true;
 
@@ -518,15 +615,11 @@ pub const Expect = struct {
         defer this.postMatch(globalObject);
 
         const thisValue = callFrame.this();
-        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toBeNaN", "") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         var pass = false;
         if (value.isNumber()) {
             const number = value.asNumber();
@@ -566,15 +659,11 @@ pub const Expect = struct {
         defer this.postMatch(globalObject);
 
         const thisValue = callFrame.this();
-        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toBeNull", "") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         var pass = value.isNull();
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -609,15 +698,11 @@ pub const Expect = struct {
         defer this.postMatch(globalObject);
 
         const thisValue = callFrame.this();
-        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toBeDefined", "") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         var pass = !value.isUndefined();
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -653,19 +738,11 @@ pub const Expect = struct {
 
         const thisValue = callFrame.this();
 
-        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toBeFalsy", "") orelse return .zero;
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toBeFalsy() must be called in a test", .{});
-            return .zero;
-        }
         active_test_expectation_counter.actual += 1;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         var pass = false;
 
         const truthy = value.toBooleanSlow(globalObject);
@@ -712,21 +789,12 @@ pub const Expect = struct {
             return .zero;
         }
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toEqual() must be called in a test", .{});
-            return .zero;
-        }
-
         active_test_expectation_counter.actual += 1;
 
         const expected = arguments[0];
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toEqual", "<green>expected<r>") orelse return .zero;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         var pass = value.deepEquals(expected, globalObject);
 
         if (not) pass = !pass;
@@ -765,21 +833,12 @@ pub const Expect = struct {
             return .zero;
         }
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toStrictEqual() must be called in a test", .{});
-            return .zero;
-        }
-
         active_test_expectation_counter.actual += 1;
 
         const expected = arguments[0];
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toStrictEqual", "<green>expected<r>") orelse return .zero;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         var pass = value.strictDeepEquals(expected, globalObject);
 
         if (not) pass = !pass;
@@ -821,11 +880,6 @@ pub const Expect = struct {
             return .zero;
         }
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toHaveProperty must be called in a test", .{});
-            return .zero;
-        }
-
         active_test_expectation_counter.actual += 1;
 
         const expected_property_path = arguments[0];
@@ -833,18 +887,14 @@ pub const Expect = struct {
         const expected_property: ?JSValue = if (arguments.len > 1) arguments[1] else null;
         if (expected_property) |ev| ev.ensureStillAlive();
 
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toHaveProperty", "<green>path<r><d>, <r><green>value<r>") orelse return .zero;
 
         if (!expected_property_path.isString() and !expected_property_path.isIterable(globalObject)) {
             globalObject.throw("Expected path must be a string or an array", .{});
             return .zero;
         }
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         var path_string = ZigString.Empty;
         expected_property_path.toZigString(&path_string, globalObject);
 
@@ -951,20 +1001,11 @@ pub const Expect = struct {
 
         const thisValue = callFrame.this();
 
-        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
-
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toBeEven() must be called in a test", .{});
-            return .zero;
-        }
+        const value: JSValue = this.getValue(globalObject, thisValue, "toBeEven", "") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         var pass = false;
 
         if (value.isAnyInt()) {
@@ -1031,28 +1072,19 @@ pub const Expect = struct {
             return .zero;
         }
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toBeGreaterThan() must be called in a test", .{});
-            return .zero;
-        }
-
         active_test_expectation_counter.actual += 1;
 
         const other_value = arguments[0];
         other_value.ensureStillAlive();
 
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toBeGreaterThan", "<green>expected<r>") orelse return .zero;
 
         if ((!value.isNumber() and !value.isBigInt()) or (!other_value.isNumber() and !other_value.isBigInt())) {
             globalObject.throw("Expected and actual values must be numbers or bigints", .{});
             return .zero;
         }
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         var pass = false;
 
         if (!value.isBigInt() and !other_value.isBigInt()) {
@@ -1114,28 +1146,19 @@ pub const Expect = struct {
             return .zero;
         }
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toBeGreaterThanOrEqual() must be called in a test", .{});
-            return .zero;
-        }
-
         active_test_expectation_counter.actual += 1;
 
         const other_value = arguments[0];
         other_value.ensureStillAlive();
 
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toBeGreaterThanOrEqual", "<green>expected<r>") orelse return .zero;
 
         if ((!value.isNumber() and !value.isBigInt()) or (!other_value.isNumber() and !other_value.isBigInt())) {
             globalObject.throw("Expected and actual values must be numbers or bigints", .{});
             return .zero;
         }
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         var pass = false;
 
         if (!value.isBigInt() and !other_value.isBigInt()) {
@@ -1194,28 +1217,19 @@ pub const Expect = struct {
             return .zero;
         }
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toBeLessThan() must be called in a test", .{});
-            return .zero;
-        }
-
         active_test_expectation_counter.actual += 1;
 
         const other_value = arguments[0];
         other_value.ensureStillAlive();
 
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toBeLessThan", "<green>expected<r>") orelse return .zero;
 
         if ((!value.isNumber() and !value.isBigInt()) or (!other_value.isNumber() and !other_value.isBigInt())) {
             globalObject.throw("Expected and actual values must be numbers or bigints", .{});
             return .zero;
         }
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         var pass = false;
 
         if (!value.isBigInt() and !other_value.isBigInt()) {
@@ -1274,28 +1288,19 @@ pub const Expect = struct {
             return .zero;
         }
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toBeLessThanOrEqual() must be called in a test", .{});
-            return .zero;
-        }
-
         active_test_expectation_counter.actual += 1;
 
         const other_value = arguments[0];
         other_value.ensureStillAlive();
 
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toBeLessThanOrEqual", "<green>expected<r>") orelse return .zero;
 
         if ((!value.isNumber() and !value.isBigInt()) or (!other_value.isNumber() and !other_value.isBigInt())) {
             globalObject.throw("Expected and actual values must be numbers or bigints", .{});
             return .zero;
         }
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         var pass = false;
 
         if (!value.isBigInt() and !other_value.isBigInt()) {
@@ -1371,11 +1376,7 @@ pub const Expect = struct {
             precision = precision_.asNumber();
         }
 
-        const received_: JSC.JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-
+        const received_: JSValue = this.getValue(globalObject, thisValue, "toBeCloseTo", "<green>expected<r>, precision") orelse return .zero;
         if (!received_.isNumber()) {
             globalObject.throwInvalidArgumentType("expect", "received", "number");
             return .zero;
@@ -1400,7 +1401,7 @@ pub const Expect = struct {
         const actual_diff = std.math.fabs(received - expected);
         var pass = actual_diff < expected_diff;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         if (not) pass = !pass;
 
         if (pass) return thisValue;
@@ -1445,20 +1446,11 @@ pub const Expect = struct {
 
         const thisValue = callFrame.this();
 
-        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
-
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toBeOdd() must be called in a test", .{});
-            return .zero;
-        }
+        const value: JSValue = this.getValue(globalObject, thisValue, "toBeOdd", "") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         var pass = false;
 
         if (value.isBigInt32()) {
@@ -1518,11 +1510,6 @@ pub const Expect = struct {
         const _arguments = callFrame.arguments(1);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toThrow() must be called in a test", .{});
-            return .zero;
-        }
-
         active_test_expectation_counter.actual += 1;
 
         const expected_value: JSValue = if (arguments.len > 0) brk: {
@@ -1536,18 +1523,14 @@ pub const Expect = struct {
         } else .zero;
         expected_value.ensureStillAlive();
 
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toThrow", "<green>expected<r>") orelse return .zero;
 
         if (!value.jsType().isFunction()) {
             globalObject.throw("Expected value must be a function", .{});
             return .zero;
         }
 
-        const not = this.op.contains(.not);
+        const not = this.not;
 
         const result_: ?JSValue = brk: {
             var vm = globalObject.bunVM();
@@ -1876,14 +1859,9 @@ pub const Expect = struct {
         const _arguments = callFrame.arguments(2);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toMatchSnapshot() must be called in a test", .{});
-            return .zero;
-        }
-
         active_test_expectation_counter.actual += 1;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         if (not) {
             const signature = comptime getSignature("toMatchSnapshot", "", true);
             const fmt = signature ++ "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n";
@@ -1920,10 +1898,7 @@ pub const Expect = struct {
         var hint = hint_string.toSlice(default_allocator);
         defer hint.deinit();
 
-        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
+        const value: JSValue = this.getValue(globalObject, thisValue, "toMatchSnapshot", "<green>properties<r><d>, <r>hint") orelse return .zero;
 
         if (!value.isObject() and property_matchers != null) {
             const signature = comptime getSignature("toMatchSnapshot", "<green>properties<r><d>, <r>hint", false);
@@ -1994,20 +1969,11 @@ pub const Expect = struct {
         defer this.postMatch(globalObject);
 
         const thisValue = callFrame.this();
-        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
-
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toBeEmpty() must be called in a test", .{});
-            return .zero;
-        }
+        const value: JSValue = this.getValue(globalObject, thisValue, "toBeEmpty", "") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         var pass = false;
         var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
 
@@ -2081,20 +2047,11 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
-
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("toBeNil() must be called in a test", .{});
-            return .zero;
-        }
+        const value: JSValue = this.getValue(globalThis, thisValue, "toBeNil", "") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         const pass = value.isUndefinedOrNull() != not;
 
         if (pass) return thisValue;
@@ -2117,20 +2074,11 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
-
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("toBeBoolean() must be called in a test", .{});
-            return .zero;
-        }
+        const value: JSValue = this.getValue(globalThis, thisValue, "toBeBoolean", "") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         const pass = value.isBoolean() != not;
 
         if (pass) return thisValue;
@@ -2153,20 +2101,11 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
-
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("toBeTrue() must be called in a test", .{});
-            return .zero;
-        }
+        const value: JSValue = this.getValue(globalThis, thisValue, "toBeTrue", "") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         const pass = (value.isBoolean() and value.toBoolean()) != not;
 
         if (pass) return thisValue;
@@ -2189,20 +2128,11 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
-
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("toBeFalse() must be called in a test", .{});
-            return .zero;
-        }
+        const value: JSValue = this.getValue(globalThis, thisValue, "toBeFalse", "") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         const pass = (value.isBoolean() and !value.toBoolean()) != not;
 
         if (pass) return thisValue;
@@ -2225,20 +2155,11 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
-
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("toBeNumber() must be called in a test", .{});
-            return .zero;
-        }
+        const value: JSValue = this.getValue(globalThis, thisValue, "toBeNumber", "") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         const pass = value.isNumber() != not;
 
         if (pass) return thisValue;
@@ -2261,20 +2182,11 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
-
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("toBeInteger() must be called in a test", .{});
-            return .zero;
-        }
+        const value: JSValue = this.getValue(globalThis, thisValue, "toBeInteger", "") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         const pass = value.isAnyInt() != not;
 
         if (pass) return thisValue;
@@ -2297,16 +2209,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
-
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("toBeFinite() must be called in a test", .{});
-            return .zero;
-        }
+        const value: JSValue = this.getValue(globalThis, thisValue, "toBeFinite", "") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
@@ -2316,7 +2219,7 @@ pub const Expect = struct {
             pass = std.math.isFinite(num) and !std.math.isNan(num);
         }
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         if (not) pass = !pass;
 
         if (pass) return thisValue;
@@ -2339,16 +2242,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
-
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("toBePositive() must be called in a test", .{});
-            return .zero;
-        }
+        const value: JSValue = this.getValue(globalThis, thisValue, "toBePositive", "") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
@@ -2358,7 +2252,7 @@ pub const Expect = struct {
             pass = @round(num) > 0 and !std.math.isInf(num) and !std.math.isNan(num);
         }
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         if (not) pass = !pass;
 
         if (pass) return thisValue;
@@ -2381,16 +2275,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
-
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("toBeNegative() must be called in a test", .{});
-            return .zero;
-        }
+        const value: JSValue = this.getValue(globalThis, thisValue, "toBeNegative", "") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
@@ -2400,7 +2285,7 @@ pub const Expect = struct {
             pass = @round(num) < 0 and !std.math.isInf(num) and !std.math.isNan(num);
         }
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         if (not) pass = !pass;
 
         if (pass) return thisValue;
@@ -2431,16 +2316,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("toBeWithin() must be called in a test", .{});
-            return .zero;
-        }
-
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
+        const value: JSValue = this.getValue(globalThis, thisValue, "toBeWithin", "<green>start<r><d>, <r><green>end<r>") orelse return .zero;
 
         const startValue = arguments[0];
         startValue.ensureStillAlive();
@@ -2466,7 +2342,7 @@ pub const Expect = struct {
             pass = num >= startValue.asNumber() and num < endValue.asNumber();
         }
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         if (not) pass = !pass;
 
         if (pass) return thisValue;
@@ -2495,20 +2371,11 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
-
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("toBeSymbol() must be called in a test", .{});
-            return .zero;
-        }
+        const value: JSValue = this.getValue(globalThis, thisValue, "toBeSymbol", "") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         const pass = value.isSymbol() != not;
 
         if (pass) return thisValue;
@@ -2531,20 +2398,11 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
-
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("toBeFunction() must be called in a test", .{});
-            return .zero;
-        }
+        const value: JSValue = this.getValue(globalThis, thisValue, "toBeFunction", "") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         const pass = value.isCallable(globalThis.vm()) != not;
 
         if (pass) return thisValue;
@@ -2567,20 +2425,11 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
-
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("toBeDate() must be called in a test", .{});
-            return .zero;
-        }
+        const value: JSValue = this.getValue(globalThis, thisValue, "toBeDate", "") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         const pass = value.isDate() != not;
 
         if (pass) return thisValue;
@@ -2603,20 +2452,11 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
-
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("toBeString() must be called in a test", .{});
-            return .zero;
-        }
+        const value: JSValue = this.getValue(globalThis, thisValue, "toBeString", "") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         const pass = value.isString() != not;
 
         if (pass) return thisValue;
@@ -2655,16 +2495,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
-
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("toInclude() must be called in a test", .{});
-            return .zero;
-        }
+        const value: JSValue = this.getValue(globalThis, thisValue, "toInclude", "") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
@@ -2675,7 +2506,7 @@ pub const Expect = struct {
             pass = strings.contains(value_string, expected_string) or expected_string.len == 0;
         }
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         if (not) pass = !pass;
 
         if (pass) return thisValue;
@@ -2719,16 +2550,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
-
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("toStartWith() must be called in a test", .{});
-            return .zero;
-        }
+        const value: JSValue = this.getValue(globalThis, thisValue, "toStartWith", "<green>expected<r>") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
@@ -2739,7 +2561,7 @@ pub const Expect = struct {
             pass = strings.startsWith(value_string, expected_string) or expected_string.len == 0;
         }
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         if (not) pass = !pass;
 
         if (pass) return thisValue;
@@ -2783,16 +2605,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
-
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalThis.throw("toEndWith() must be called in a test", .{});
-            return .zero;
-        }
+        const value: JSValue = this.getValue(globalThis, thisValue, "toEndWith", "<green>expected<r>") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
@@ -2803,7 +2616,7 @@ pub const Expect = struct {
             pass = strings.endsWith(value_string, expected_string) or expected_string.len == 0;
         }
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         if (not) pass = !pass;
 
         if (pass) return thisValue;
@@ -2839,11 +2652,6 @@ pub const Expect = struct {
             return .zero;
         }
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toBeInstanceOf() must be called in a test", .{});
-            return .zero;
-        }
-
         active_test_expectation_counter.actual += 1;
         var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
 
@@ -2854,13 +2662,9 @@ pub const Expect = struct {
         }
         expected_value.ensureStillAlive();
 
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toBeInstanceOf", "<green>expected<r>") orelse return .zero;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         var pass = value.isInstanceOf(globalObject, expected_value);
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -2897,11 +2701,6 @@ pub const Expect = struct {
         const _arguments = callFrame.arguments(1);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toMatch() must be called in a test", .{});
-            return .zero;
-        }
-
         if (arguments.len < 1) {
             globalObject.throwInvalidArguments("toMatch() requires 1 argument", .{});
             return .zero;
@@ -2918,18 +2717,14 @@ pub const Expect = struct {
         }
         expected_value.ensureStillAlive();
 
-        const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-        value.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toMatch", "<green>expected<r>") orelse return .zero;
 
         if (!value.isString()) {
             globalObject.throw("Received value must be a string: {any}", .{value.toFmt(globalObject, &formatter)});
             return .zero;
         }
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         var pass: bool = brk: {
             if (expected_value.isString()) {
                 break :brk value.stringIncludes(globalObject, expected_value);
@@ -2966,10 +2761,7 @@ pub const Expect = struct {
         const thisValue = callframe.this();
         defer this.postMatch(globalObject);
 
-        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
+        const value: JSValue = this.getValue(globalObject, thisValue, "toHaveBeenCalled", "") orelse return .zero;
 
         const calls = JSMockFunction__getCalls(value);
         active_test_expectation_counter.actual += 1;
@@ -2981,14 +2773,14 @@ pub const Expect = struct {
 
         var pass = calls.getLength(globalObject) > 0;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         if (not) pass = !pass;
         if (pass) return thisValue;
 
         // handle failure
         var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
         if (not) {
-            const signature = comptime getSignature("toHaveBeenCalled", "<green>expected<r>", true);
+            const signature = comptime getSignature("toHaveBeenCalled", "", true);
             const fmt = signature ++ "\n\nExpected: not <green>{any}<r>\n";
             if (Output.enable_ansi_colors) {
                 globalObject.throw(Output.prettyFmt(fmt, true), .{calls.toFmt(globalObject, &formatter)});
@@ -2997,7 +2789,7 @@ pub const Expect = struct {
             globalObject.throw(Output.prettyFmt(fmt, false), .{calls.toFmt(globalObject, &formatter)});
             return .zero;
         } else {
-            const signature = comptime getSignature("toHaveBeenCalled", "<green>expected<r>", true);
+            const signature = comptime getSignature("toHaveBeenCalled", "", true);
             const fmt = signature ++ "\n\nExpected <green>{any}<r>\n";
             if (Output.enable_ansi_colors) {
                 globalObject.throw(Output.prettyFmt(fmt, true), .{calls.toFmt(globalObject, &formatter)});
@@ -3016,10 +2808,7 @@ pub const Expect = struct {
         const arguments_ = callframe.arguments(1);
         const arguments: []const JSValue = arguments_.ptr[0..arguments_.len];
         defer this.postMatch(globalObject);
-        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
+        const value: JSValue = this.getValue(globalObject, thisValue, "toHaveBeenCalledTimes", "<green>expected<r>") orelse return .zero;
 
         active_test_expectation_counter.actual += 1;
 
@@ -3039,14 +2828,14 @@ pub const Expect = struct {
 
         var pass = @intCast(i32, calls.getLength(globalObject)) == times;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
         if (not) pass = !pass;
         if (pass) return thisValue;
 
         // handle failure
         var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
         if (not) {
-            const signature = comptime getSignature("toHaveBeenCalled", "<green>expected<r>", true);
+            const signature = comptime getSignature("toHaveBeenCalledTimes", "<green>expected<r>", true);
             const fmt = signature ++ "\n\nExpected: not <green>{any}<r>\n";
             if (Output.enable_ansi_colors) {
                 globalObject.throw(Output.prettyFmt(fmt, true), .{calls.toFmt(globalObject, &formatter)});
@@ -3055,7 +2844,7 @@ pub const Expect = struct {
             globalObject.throw(Output.prettyFmt(fmt, false), .{calls.toFmt(globalObject, &formatter)});
             return .zero;
         } else {
-            const signature = comptime getSignature("toHaveBeenCalled", "<green>expected<r>", true);
+            const signature = comptime getSignature("toHaveBeenCalledTimes", "<green>expected<r>", true);
             const fmt = signature ++ "\n\nExpected <green>{any}<r>\n";
             if (Output.enable_ansi_colors) {
                 globalObject.throw(Output.prettyFmt(fmt, true), .{calls.toFmt(globalObject, &formatter)});
@@ -3075,19 +2864,11 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const args = callFrame.arguments(1).slice();
 
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toMatchObject() must be called in a test", .{});
-            return .zero;
-        }
-
         active_test_expectation_counter.actual += 1;
 
-        const not = this.op.contains(.not);
+        const not = this.not;
 
-        const received_object = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
+        const received_object: JSValue = this.getValue(globalObject, thisValue, "toMatchObject", "<green>expected<r>") orelse return .zero;
 
         if (!received_object.isObject()) {
             const matcher_error = "\n\n<b>Matcher error<r>: <red>received<r> value must be a non-null object\n";
@@ -3157,20 +2938,6 @@ pub const Expect = struct {
     pub const getStaticNot = notImplementedStaticProp;
     pub const getStaticResolves = notImplementedStaticProp;
     pub const getStaticRejects = notImplementedStaticProp;
-
-    pub fn getNot(this: *Expect, thisValue: JSValue, globalObject: *JSGlobalObject) callconv(.C) JSValue {
-        _ = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-
-        this.op.toggle(.not);
-
-        return thisValue;
-    }
-
-    pub const getResolves = notImplementedJSCProp;
-    pub const getRejects = notImplementedJSCProp;
 
     pub fn any(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
         return ExpectAny.call(globalObject, callFrame);

@@ -1,7 +1,58 @@
-import { inspect } from "bun";
+import { sleep, inspect } from "bun";
 import { describe, test, expect } from "bun:test";
 
 describe("expect()", () => {
+  test("resolves", () => {
+    expect(Promise.resolve(1)).resolves.toBe(1);
+    expect(Promise.resolve([1, 2, 3])).resolves.toContain(2);
+    expect(Promise.resolve({ a: "b" })).resolves.not.toHaveProperty("b");
+    expect(Promise.resolve()).resolves.toBeUndefined();
+    expect(
+      (async () => {
+        await sleep(1);
+        return true;
+      })(),
+    ).resolves.toBeTrue();
+    expect(() => {
+      expect("notpromise").resolves.toBe("notpromise");
+    }).toThrow(/Expected promise/);
+    expect(() => {
+      expect(Promise.reject()).resolves.toBeUndefined();
+    }).toThrow(/Expected promise that resolves/);
+    expect(() => {
+      expect(Promise.reject("rejected")).resolves.toBe("rejected");
+    }).toThrow(/Expected promise that resolves/);
+    expect(() => {
+      expect(Promise.resolve()).resolves.rejects.toBeUndefined();
+    }).toThrow(/Cannot chain/);
+  });
+  test("rejects", () => {
+    expect(Promise.reject(1)).rejects.toBe(1);
+    expect(Promise.reject([1, 2, 3])).rejects.toContain(2);
+    expect(Promise.reject({ a: "b" })).rejects.not.toHaveProperty("b");
+    expect(Promise.reject()).rejects.toBeUndefined();
+    expect(
+      (async () => {
+        await sleep(1);
+        throw new TypeError();
+      })(),
+    ).rejects.toBeInstanceOf(TypeError);
+    expect(() => {
+      expect("notpromise").rejects.toBe("notpromise");
+    }).toThrow(/Expected promise/);
+    expect(() => {
+      expect(Promise.resolve("resolved")).rejects.toBe("resolved");
+    }).toThrow(/Expected promise that rejects/);
+    expect(() => {
+      expect(Promise.resolve()).rejects.toBeUndefined();
+    }).toThrow(/Expected promise that rejects/);
+    expect(() => {
+      expect((async () => sleep(1))()).rejects.toBeUndefined();
+    }).toThrow(/Expected promise that rejects/);
+    expect(() => {
+      expect(Promise.resolve()).rejects.resolves.toBeUndefined();
+    }).toThrow(/Cannot chain/);
+  });
   describe("toBeInstanceOf()", () => {
     class Animal {}
     class Dog extends Animal {}

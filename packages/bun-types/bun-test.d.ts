@@ -425,6 +425,20 @@ declare module "bun:test" {
      */
     not: Expect<unknown>;
     /**
+     * Expects the value to be a promise that resolves.
+     *
+     * @example
+     * expect(Promise.resolve(1)).resolves.toBe(1);
+     */
+    resolves: Expect<unknown>;
+    /**
+     * Expects the value to be a promise that rejects.
+     *
+     * @example
+     * expect(Promise.reject("error")).rejects.toBe("error");
+     */
+    rejects: Expect<unknown>;
+    /**
      * Asserts that a value equals what is expected.
      *
      * - For non-primitive values, like objects and arrays,

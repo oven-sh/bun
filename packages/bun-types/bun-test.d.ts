@@ -27,43 +27,11 @@ declare module "bun:test" {
 
   export const mock: {
     <T extends AnyFunction>(Function: T): Mock<T>;
-
-    mockClear(): typeof mock;
-    mockReset(): typeof mock;
-    mockRestore(): void;
-    mockReturnValue<T extends JestMock.FunctionLike = JestMock.UnknownFunction>(
-      value: ReturnType<T>,
-    ): JestMock.MockInstance<T>;
-    mockReturnValueOnce<
-      T extends JestMock.FunctionLike = JestMock.UnknownFunction,
-    >(
-      value: ReturnType<T>,
-    ): JestMock.MockInstance<T>;
-    mockResolvedValue<
-      T extends JestMock.FunctionLike = JestMock.UnknownFunction,
-    >(
-      value: JestMock.ResolveType<T>,
-    ): JestMock.MockInstance<T>;
-    mockResolvedValueOnce<
-      T extends JestMock.FunctionLike = JestMock.UnknownFunction,
-    >(
-      value: JestMock.ResolveType<T>,
-    ): JestMock.MockInstance<T>;
-    mockRejectedValue<
-      T extends JestMock.FunctionLike = JestMock.UnknownFunction,
-    >(
-      value: JestMock.RejectType<T>,
-    ): JestMock.MockInstance<T>;
-    mockRejectedValueOnce<
-      T extends JestMock.FunctionLike = JestMock.UnknownFunction,
-    >(
-      value: JestMock.RejectType<T>,
-    ): JestMock.MockInstance<T>;
   };
 
   interface Jest {
     restoreAllMocks(): void;
-    fn<T extends AnyFunction>(func: T): Mock<T>;
+    fn<T extends AnyFunction>(func?: T): Mock<T>;
   }
   export const jest: Jest;
   export namespace jest {

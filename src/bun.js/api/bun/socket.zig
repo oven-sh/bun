@@ -261,7 +261,7 @@ pub const SocketConfig = struct {
                 }
 
                 break :outer;
-            } else {
+            } else if (!tls.isEmptyOrUndefinedOrNull()) {
                 if (JSC.API.ServerConfig.SSLConfig.inJS(globalObject, tls, exception)) |ssl_config| {
                     ssl = ssl_config;
                 } else if (exception.* != null) {

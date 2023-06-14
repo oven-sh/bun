@@ -3050,7 +3050,7 @@ pub const Expect = struct {
         const arguments = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toBeArrayOfSize() takes 1 argument", .{});
+            globalThis.throwInvalidArguments("toBeArrayOfSize() requires 1 argument", .{});
             return .zero;
         }
 
@@ -3064,10 +3064,10 @@ pub const Expect = struct {
             return .zero;
         }
 
-        const lengthForArr = arguments[0];
-        lengthForArr.ensureStillAlive();
+        const size = arguments[0];
+        size.ensureStillAlive();
 
-        if (!lengthForArr.isAnyInt()) {
+        if (!size.isAnyInt()) {
             globalThis.throw("toBeArrayOfSize() requires the first argument to be a number", .{});
             return .zero;
         }
@@ -3075,7 +3075,7 @@ pub const Expect = struct {
         active_test_expectation_counter.actual += 1;
 
         const not = this.op.contains(.not);
-        var pass = value.jsType().isArray() and @intCast(i32, value.getLength(globalThis)) == lengthForArr.toInt32();
+        var pass = value.jsType().isArray() and @intCast(i32, value.getLength(globalThis)) == size.toInt32();
 
         if (not) pass = !pass;
         if (pass) return thisValue;

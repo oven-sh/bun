@@ -440,7 +440,7 @@ pub fn getAssetPrefix(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    return ZigString.init(VirtualMachine.get().bundler.options.routes.asset_prefix_path).toValue(ctx.ptr()).asRef();
+    return ZigString.init(VirtualMachine.get().bundler.options.routes.asset_prefix_path).toValueGC(ctx.ptr()).asRef();
 }
 
 pub fn getArgv(
@@ -450,19 +450,8 @@ pub fn getArgv(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    if (comptime Environment.isWindows) {
-        @compileError("argv not supported on windows");
-    }
-
-    var argv_list = std.heap.stackFallback(128, getAllocator(ctx));
-    var allocator = argv_list.get();
-    var argv = allocator.alloc(ZigString, std.os.argv.len) catch unreachable;
-    defer if (argv.len > 128) allocator.free(argv);
-    for (std.os.argv, 0..) |arg, i| {
-        argv[i] = ZigString.init(std.mem.span(arg));
-    }
-
-    return JSValue.createStringArray(ctx.ptr(), argv.ptr, argv.len, true).asObjectRef();
+    // TODO: cache this
+    return JSC.Node.Process.getArgv(ctx).asObjectRef();
 }
 
 pub fn getRoutesDir(

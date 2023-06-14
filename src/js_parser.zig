@@ -21181,16 +21181,72 @@ fn NewParser_(
                         logger.Loc.Empty,
                     );
                     var call_args = allocator.alloc(Expr, 6) catch unreachable;
-
+                    const this_module = p.newExpr(
+                        E.Dot{
+                            .name = "module",
+                            .target = p.newExpr(E.This{}, logger.Loc.Empty),
+                            .name_loc = logger.Loc.Empty,
+                        },
+                        logger.Loc.Empty,
+                    );
                     //
-                    // (function(module, exports, require, __dirname, __filename) {}).call(exports, module, exports, require, __dirname, __filename)
+                    // (function(module, exports, require, __dirname, __filename) {}).call(this.exports, this.module, this.exports, this.require, __dirname, __filename)
                     call_args[0..6].* = .{
-                        p.newExpr(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty),
-                        p.newExpr(E.Identifier{ .ref = p.module_ref }, logger.Loc.Empty),
-                        p.newExpr(E.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty),
-                        p.newExpr(E.Identifier{ .ref = p.require_ref }, logger.Loc.Empty),
-                        p.newExpr(E.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
-                        p.newExpr(E.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
+                        p.newExpr(
+                            E.Dot{
+                                .name = "exports",
+                                .target = p.newExpr(E.This{}, logger.Loc.Empty),
+                                .name_loc = logger.Loc.Empty,
+                            },
+                            logger.Loc.Empty,
+                        ),
+                        this_module,
+                        p.newExpr(
+                            E.Dot{
+                                .name = "exports",
+                                .target = p.newExpr(E.This{}, logger.Loc.Empty),
+                                .name_loc = logger.Loc.Empty,
+                            },
+                            logger.Loc.Empty,
+                        ),
+                        p.newExpr(
+                            E.Binary{
+                                .left = p.newExpr(
+                                    E.Dot{
+                                        .name = "require",
+                                        .target = this_module,
+                                        .name_loc = logger.Loc.Empty,
+                                    },
+                                    logger.Loc.Empty,
+                                ),
+                                .op = .bin_assign,
+                                .right = p.newExpr(
+                                    E.Dot{
+                                        .name = "require",
+                                        .target = p.newExpr(E.This{}, logger.Loc.Empty),
+                                        .name_loc = logger.Loc.Empty,
+                                    },
+                                    logger.Loc.Empty,
+                                ),
+                            },
+                            logger.Loc.Empty,
+                        ),
+                        p.newExpr(
+                            E.Dot{
+                                .name = "__dirname",
+                                .target = p.newExpr(E.This{}, logger.Loc.Empty),
+                                .name_loc = logger.Loc.Empty,
+                            },
+                            logger.Loc.Empty,
+                        ),
+                        p.newExpr(
+                            E.Dot{
+                                .name = "__filename",
+                                .target = p.newExpr(E.This{}, logger.Loc.Empty),
+                                .name_loc = logger.Loc.Empty,
+                            },
+                            logger.Loc.Empty,
+                        ),
                     };
 
                     const call = p.newExpr(

@@ -254,13 +254,11 @@ pub const SocketConfig = struct {
         var ssl: ?JSC.API.ServerConfig.SSLConfig = null;
         var default_data = JSValue.zero;
 
-        if (opts.getTruthy(globalObject, "tls")) |tls| outer: {
+        if (opts.getTruthy(globalObject, "tls")) |tls| {
             if (tls.isBoolean()) {
                 if (tls.toBoolean()) {
                     ssl = JSC.API.ServerConfig.SSLConfig.zero;
                 }
-
-                break :outer;
             } else if (!tls.isEmptyOrUndefinedOrNull()) {
                 if (JSC.API.ServerConfig.SSLConfig.inJS(globalObject, tls, exception)) |ssl_config| {
                     ssl = ssl_config;

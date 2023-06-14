@@ -33,7 +33,7 @@ describe("Server", () => {
     });
   });
 
-  test("should allow Bun.serve using null or undefined, tls option", () => {
+  test("should allow Bun.serve using null or undefined tls option", () => {
     [null, undefined].forEach(value => {
       expect(() => {
         const server = Bun.serve({

@@ -242,6 +242,9 @@ describe("expect()", () => {
     expect(class {}).toBeTypeOf("function");
     expect(new Array()).toBeTypeOf("object");
     expect(BigInt(5)).toBeTypeOf("bigint");
+    expect(/(foo|bar)/g).toBeTypeOf("object");
+    expect(new RegExp("(foo|bar)", "g")).toBeTypeOf("object");
+    expect(new Date()).toBeTypeOf("object");
 
     expect("Bun!").not.toBeTypeOf("number");
     expect(0).not.toBeTypeOf("string");
@@ -254,6 +257,9 @@ describe("expect()", () => {
     expect(function () {}).not.toBeTypeOf("boolean");
     expect(async () => {}).not.toBeTypeOf("object");
     expect(class {}).not.toBeTypeOf("bigint");
+    expect(/(foo|bar)/g).not.toBeTypeOf("string");
+    expect(new RegExp("(foo|bar)", "g")).not.toBeTypeOf("number");
+    expect(new Date()).not.toBeTypeOf("string");
   });
 
   test("toBeBoolean()", () => {

@@ -261,12 +261,12 @@ pub const SocketConfig = struct {
                 }
 
                 break :outer;
-            }
-
-            if (JSC.API.ServerConfig.SSLConfig.inJS(globalObject, tls, exception)) |ssl_config| {
-                ssl = ssl_config;
-            } else if (exception.* != null) {
-                return null;
+            } else {
+                if (JSC.API.ServerConfig.SSLConfig.inJS(globalObject, tls, exception)) |ssl_config| {
+                    ssl = ssl_config;
+                } else if (exception.* != null) {
+                    return null;
+                }
             }
         }
 

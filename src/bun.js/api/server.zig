@@ -271,7 +271,7 @@ pub const ServerConfig = struct {
         pub fn inJS(global: *JSC.JSGlobalObject, obj: JSC.JSValue, exception: JSC.C.ExceptionRef) ?SSLConfig {
             var result = zero;
             if (!obj.isObject()) {
-                JSC.throwInvalidArguments("tls argument expects a object", .{}, global, exception);
+                JSC.throwInvalidArguments("tls option expects an object", .{}, global, exception);
                 return null;
             }
 

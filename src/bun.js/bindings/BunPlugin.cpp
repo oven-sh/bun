@@ -49,7 +49,7 @@ static EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* glob
     auto clientData = WebCore::clientData(vm);
     auto& builtinNames = clientData->builtinNames();
     JSC::RegExpObject* filter = nullptr;
-    if (JSValue filterValue = filterObject->getIfPropertyExists(globalObject, builtinNames.filterPublicName())) {
+    if (JSValue filterValue = filterObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "filter"_s))) {
         if (filterValue.isCell() && filterValue.asCell()->inherits<JSC::RegExpObject>())
             filter = jsCast<JSC::RegExpObject*>(filterValue);
     }
@@ -101,7 +101,7 @@ static EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObject* g
     auto clientData = WebCore::clientData(vm);
     auto& builtinNames = clientData->builtinNames();
     JSC::RegExpObject* filter = nullptr;
-    if (JSValue filterValue = filterObject->getIfPropertyExists(globalObject, builtinNames.filterPublicName())) {
+    if (JSValue filterValue = filterObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "filter"_s))) {
         if (filterValue.isCell() && filterValue.asCell()->inherits<JSC::RegExpObject>())
             filter = jsCast<JSC::RegExpObject*>(filterValue);
     }

@@ -2,7 +2,8 @@
 #include "headers-handwritten.h"
 #include "JavaScriptCore/JSCJSValueInlines.h"
 #include "helpers.h"
-
+#include "simdutf.h"
+#include "wtf/text/ExternalStringImpl.h"
 using namespace JSC;
 
 extern "C" void Bun__WTFStringImpl__deref(WTF::StringImpl* impl)
@@ -122,6 +123,30 @@ BunString fromString(WTF::StringImpl* wtfString)
 extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject, BunString* bunString)
 {
     return JSValue::encode(Bun::toJS(globalObject, *bunString));
+}
+
+extern "C" BunString BunString__fromLatin1(const char* bytes, size_t length)
+{
+    return { BunStringTag::WTFStringImpl, { .wtf = &WTF::StringImpl::create(bytes, length).leakRef() } };
+}
+
+extern "C" BunString BunString__fromBytes(const char* bytes, size_t length)
+{
+    if (simdutf::validate_ascii(bytes, length)) {
+        return BunString__fromLatin1(bytes, length);
+    }
+
+    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(reinterpret_cast<const LChar*>(bytes), length);
+    return Bun::fromString(str);
+}
+
+extern "C" BunString BunString__createExternal(const char* bytes, size_t length, bool isLatin1, void* ctx, void (*callback)(void* arg0, void* arg1, size_t arg2))
+{
+    Ref<WTF::ExternalStringImpl> impl = isLatin1 ? WTF::ExternalStringImpl::create(reinterpret_cast<const LChar*>(bytes), length, ctx, callback) :
+
+                                                 WTF::ExternalStringImpl::create(reinterpret_cast<const UChar*>(bytes), length, ctx, callback);
+
+    return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
 
 extern "C" void BunString__toWTFString(BunString* bunString)

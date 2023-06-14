@@ -75,42 +75,20 @@ public:
     // mutable OptionSet<NodeFlag> m_nodeFlags;
 };
 
-#if ASSERT_ENABLED
-
-inline void adopted(Node* node)
-{
-    if (!node)
-        return;
-    ASSERT(!node->m_deletionHasBegun);
-    ASSERT(!node->m_inRemovedLastRefFunction);
-    node->m_adoptionIsRequired = false;
-}
-
-#endif // ASSERT_ENABLED
-
 ALWAYS_INLINE void Node::ref() const
 {
-    ASSERT(isMainThread());
-    ASSERT(!m_deletionHasBegun);
-    ASSERT(!m_inRemovedLastRefFunction);
-    ASSERT(!m_adoptionIsRequired);
+
     m_refCountAndParentBit += s_refCountIncrement;
 }
 
 ALWAYS_INLINE void Node::deref() const
 {
-    ASSERT(isMainThread());
-    ASSERT(refCount());
-    ASSERT(!m_deletionHasBegun);
-    ASSERT(!m_inRemovedLastRefFunction);
-    ASSERT(!m_adoptionIsRequired);
+
     auto updatedRefCount = m_refCountAndParentBit - s_refCountIncrement;
     if (!updatedRefCount) {
         // Don't update m_refCountAndParentBit to avoid double destruction through use of Ref<T>/RefPtr<T>.
         // (This is a security mitigation in case of programmer error. It will ASSERT in debug builds.)
-#if ASSERT_ENABLED
-        m_inRemovedLastRefFunction = true;
-#endif
+
         const_cast<Node&>(*this).removedLastRef();
         return;
     }
@@ -119,8 +97,7 @@ ALWAYS_INLINE void Node::deref() const
 
 ALWAYS_INLINE bool Node::hasOneRef() const
 {
-    ASSERT(!m_deletionHasBegun);
-    ASSERT(!m_inRemovedLastRefFunction);
+
     return refCount() == 1;
 }
 

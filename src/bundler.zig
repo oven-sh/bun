@@ -192,9 +192,9 @@ pub const PluginRunner = struct {
             return null;
         }
 
-        var file_path = path_value.getZigString(global);
+        var file_path = path_value.toBunString(global);
 
-        if (file_path.len == 0) {
+        if (file_path.length() == 0) {
             log.addError(
                 null,
                 loc,

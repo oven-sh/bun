@@ -308,7 +308,8 @@ const ExportsStringName = "exports";
 const TransposeState = struct {
     is_await_target: bool = false,
     is_then_catch_target: bool = false,
-    loc: logger.Loc,
+    is_require_immediately_assigned_to_decl: bool = false,
+    loc: logger.Loc = logger.Loc.Empty,
 };
 
 var true_args = &[_]Expr{
@@ -2248,6 +2249,10 @@ const ExprIn = struct {
     // isn't something real-world code would do but it matters for conformance
     // tests.
     assign_target: js_ast.AssignTarget = js_ast.AssignTarget.none,
+
+    // Currently this is only used when unwrapping a call to `require()`
+    // with `__toESM()`.
+    is_immediately_assigned_to_decl: bool = false,
 };
 
 const ExprOut = struct {
@@ -5102,7 +5107,7 @@ fn NewParser_(
             return state;
         }
 
-        pub fn transposeRequire(p: *P, arg: Expr, _: anytype) Expr {
+        pub fn transposeRequire(p: *P, arg: Expr, state: anytype) Expr {
             switch (arg.data) {
                 .e_string => |str| {
 
@@ -5146,6 +5151,13 @@ fn NewParser_(
                         p.import_items_for_namespace.put(p.allocator, namespace_ref, ImportItemForNamespaceMap.init(p.allocator)) catch unreachable;
                         p.ignoreUsage(p.require_ref);
                         p.recordUsage(namespace_ref);
+
+                        if (!state.is_require_immediately_assigned_to_decl) {
+                            return p.newExpr(E.Identifier{
+                                .ref = namespace_ref,
+                            }, arg.loc);
+                        }
+
                         return p.newExpr(
                             E.RequireString{
                                 .import_record_index = import_record_index,
@@ -16453,15 +16465,18 @@ fn NewParser_(
                         // error from the unbundled require() call failing.
                         if (e_.args.len == 1) {
                             const first = e_.args.first_();
+                            const state = TransposeState{
+                                .is_require_immediately_assigned_to_decl = in.is_immediately_assigned_to_decl and first.data == .e_string,
+                            };
                             switch (first.data) {
                                 .e_string => {
                                     // require(FOO) => require(FOO)
-                                    return p.transposeRequire(first, null);
+                                    return p.transposeRequire(first, state);
                                 },
                                 .e_if => {
                                     // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')
                                     // This makes static analysis later easier
-                                    return p.require_transposer.maybeTransposeIf(first, null);
+                                    return p.require_transposer.maybeTransposeIf(first, state);
                                 },
                                 else => {},
                             }
@@ -18936,7 +18951,12 @@ fn NewParser_(
                         }
                     }
 
-                    decl.value = p.visitExpr(val);
+                    if (only_scan_imports_and_do_not_visit) {
+                        @compileError("only_scan_imports_and_do_not_visit must not run this.");
+                    }
+                    decl.value = p.visitExprInOut(val, .{
+                        .is_immediately_assigned_to_decl = true,
+                    });
 
                     if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
                         if (prev_require_to_convert_count < p.imports_to_convert_from_require.items.len) {

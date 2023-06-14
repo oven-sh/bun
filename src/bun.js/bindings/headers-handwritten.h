@@ -64,7 +64,7 @@ typedef struct ErrorableString {
 } ErrorableString;
 typedef struct ResolvedSource {
     BunString specifier;
-    ZigString source_code;
+    BunString source_code;
     ZigString source_url;
     ZigString* commonJSExports;
     uint32_t commonJSExportsLen;

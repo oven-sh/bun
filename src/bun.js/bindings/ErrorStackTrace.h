@@ -94,7 +94,6 @@ public:
     bool hasBytecodeIndex() const { return (m_bytecodeIndex.offset() != UINT_MAX) && !m_isWasmFrame; }
     JSC::BytecodeIndex bytecodeIndex() const
     {
-        ASSERT(hasBytecodeOffset());
         return m_bytecodeIndex;
     }
 

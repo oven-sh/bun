@@ -242,7 +242,7 @@ pub const Blob = struct {
         allocator: std.mem.Allocator,
         form_data: *JSC.DOMFormData,
     ) Blob {
-        var arena = std.heap.ArenaAllocator.init(allocator);
+        var arena = @import("root").bun.ArenaAllocator.init(allocator);
         defer arena.deinit();
         var stack_allocator = std.heap.stackFallback(1024, arena.allocator());
         var stack_mem_all = stack_allocator.get();

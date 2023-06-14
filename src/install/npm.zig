@@ -781,7 +781,7 @@ pub const PackageManifest = struct {
         const source = logger.Source.initPathString(expected_name, json_buffer);
         initializeStore();
         defer bun.JSAst.Stmt.Data.Store.memory_allocator.?.pop();
-        var arena = std.heap.ArenaAllocator.init(allocator);
+        var arena = @import("root").bun.ArenaAllocator.init(allocator);
         defer arena.deinit();
         const json = json_parser.ParseJSONUTF8(
             &source,

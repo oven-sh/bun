@@ -470,7 +470,7 @@ pub const NumberRenamer = struct {
     allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     number_scope_pool: bun.HiveArray(NumberScope, 128).Fallback,
-    arena: std.heap.ArenaAllocator,
+    arena: @import("root").bun.ArenaAllocator,
     root: NumberScope = .{},
     name_stack_fallback: std.heap.StackFallbackAllocator(512) = undefined,
     name_temp_allocator: std.mem.Allocator = undefined,
@@ -538,7 +538,7 @@ pub const NumberRenamer = struct {
             .temp_allocator = temp_allocator,
             .names = try allocator.alloc(bun.BabyList(string), symbols.symbols_for_source.len),
             .number_scope_pool = undefined,
-            .arena = std.heap.ArenaAllocator.init(temp_allocator),
+            .arena = @import("root").bun.ArenaAllocator.init(temp_allocator),
         };
         renamer.name_stack_fallback = .{
             .buffer = undefined,

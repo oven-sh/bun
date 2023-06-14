@@ -1398,7 +1398,7 @@ fn diffCommonOverlap(text1_in: []const u8, text2_in: []const u8) usize {
 }
 
 // pub fn main() void {
-//     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+//     var arena = @import("root").bun.ArenaAllocator.init(std.heap.page_allocator);
 //     defer arena.deinit();
 
 //     var bruh = default.diff(arena.allocator(), "Hello World.", "Goodbye World.", true);
@@ -1406,7 +1406,7 @@ fn diffCommonOverlap(text1_in: []const u8, text2_in: []const u8) usize {
 // }
 
 // test {
-//     var arena = std.heap.ArenaAllocator.init(testing.allocator);
+//     var arena = @import("root").bun.ArenaAllocator.init(testing.allocator);
 //     defer arena.deinit();
 
 //     var bruh = try default.diff(arena.allocator(), "Hello World.", "Goodbye World.", true);
@@ -1455,7 +1455,7 @@ test diffCommonOverlap {
 }
 
 test diffHalfMatch {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    var arena = @import("root").bun.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
     var one_timeout = DiffMatchPatch{};
@@ -1549,7 +1549,7 @@ test diffHalfMatch {
 }
 
 test diffLinesToChars {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    var arena = @import("root").bun.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
     // Convert lines down to characters.
@@ -1611,7 +1611,7 @@ test diffLinesToChars {
 }
 
 test diffCharsToLines {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    var arena = @import("root").bun.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
     try testing.expect((Diff.init(.equal, "a")).eql(Diff.init(.equal, "a")));
@@ -1640,7 +1640,7 @@ test diffCharsToLines {
 }
 
 test diffCleanupMerge {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    var arena = @import("root").bun.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
     // Cleanup a messy diff.
@@ -1828,7 +1828,7 @@ test diffCleanupMerge {
 }
 
 test diffCleanupSemanticLossless {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    var arena = @import("root").bun.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
     var diffs = DiffList{};
@@ -1953,7 +1953,7 @@ fn rebuildtexts(allocator: std.mem.Allocator, diffs: DiffList) ![2][]const u8 {
 }
 
 test diffBisect {
-    var arena = std.heap.ArenaAllocator.init(talloc);
+    var arena = @import("root").bun.ArenaAllocator.init(talloc);
     defer arena.deinit();
 
     // Normal.
@@ -1987,7 +1987,7 @@ test diffBisect {
 
 const talloc = testing.allocator;
 test diff {
-    var arena = std.heap.ArenaAllocator.init(talloc);
+    var arena = @import("root").bun.ArenaAllocator.init(talloc);
     defer arena.deinit();
 
     // Perform a trivial diff.
@@ -2094,7 +2094,7 @@ test diff {
 }
 
 test diffCleanupSemantic {
-    var arena = std.heap.ArenaAllocator.init(talloc);
+    var arena = @import("root").bun.ArenaAllocator.init(talloc);
     defer arena.deinit();
 
     // Cleanup semantically trivial equalities.

@@ -14,4 +14,18 @@ declare var arg2: arg2;
 arg2.mock.calls[0];
 mock;
 
-type _arg3 = jest.Mock<() => number>;
+// @ts-expect-error
+jest.fn<() => Promise<string>>().mockReturnValue("asdf");
+// @ts-expect-error
+jest.fn<() => string>().mockReturnValue(24);
+jest.fn<() => string>().mockReturnValue("24");
+
+jest.fn<() => Promise<string>>().mockResolvedValue("asdf");
+// @ts-expect-error
+jest.fn<() => string>().mockResolvedValue(24);
+// @ts-expect-error
+jest.fn<() => string>().mockResolvedValue("24");
+
+jest.fn().mockClear();
+jest.fn().mockReset();
+jest.fn().mockRejectedValueOnce(new Error());

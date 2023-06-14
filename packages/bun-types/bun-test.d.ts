@@ -31,7 +31,7 @@ declare module "bun:test" {
 
   interface Jest {
     restoreAllMocks(): void;
-    fn<T extends AnyFunction>(func: T): Mock<T>;
+    fn<T extends AnyFunction>(func?: T): Mock<T>;
   }
   export const jest: Jest;
   export namespace jest {
@@ -1193,7 +1193,7 @@ declare namespace JestMock {
     ConstructorLikeKeys<T> | MethodLikeKeys<T>
   >;
 
-  type RejectType<T extends FunctionLike> =
+  export type RejectType<T extends FunctionLike> =
     ReturnType<T> extends PromiseLike<any> ? unknown : never;
 
   export interface Replaced<T = unknown> {
@@ -1227,11 +1227,8 @@ declare namespace JestMock {
     value: V,
   ) => Replaced<T[K_2]>;
 
-  type ResolveType<T extends FunctionLike> = ReturnType<T> extends PromiseLike<
-    infer U
-  >
-    ? U
-    : never;
+  export type ResolveType<T extends FunctionLike> =
+    ReturnType<T> extends PromiseLike<infer U> ? U : never;
 
   export type Spied<T extends ClassLike | FunctionLike> = T extends ClassLike
     ? SpiedClass<T>

@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "all-the-package-names": "^2.0.833",
     "esbuild": "^0.17.15",
     "eslint": "^8.20.0",
     "eslint-config-prettier": "^8.5.0",

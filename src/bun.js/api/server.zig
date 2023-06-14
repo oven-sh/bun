@@ -764,14 +764,12 @@ pub const ServerConfig = struct {
             }
 
             if (arg.getTruthy(global, "tls")) |tls| {
-                if (!tls.isEmptyOrUndefinedOrNull()) {
-                    if (SSLConfig.inJS(global, tls, exception)) |ssl_config| {
-                        args.ssl_config = ssl_config;
-                    }
+                if (SSLConfig.inJS(global, tls, exception)) |ssl_config| {
+                    args.ssl_config = ssl_config;
+                }
 
-                    if (exception.* != null) {
-                        return args;
-                    }
+                if (exception.* != null) {
+                    return args;
                 }
             }
 

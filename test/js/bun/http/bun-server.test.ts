@@ -1,6 +1,54 @@
 import { describe, expect, test } from "bun:test";
 
 describe("Server", () => {
+  test("should not allow Bun.serve without first argument being a object", () => {
+    expect(() => {
+      //@ts-ignore
+      const server = Bun.serve();
+      server.stop(true);
+    }).toThrow("Bun.serve expects an object");
+
+    [undefined, null, 1, "string", true, false, Symbol("symbol")].forEach(value => {
+      expect(() => {
+        //@ts-ignore
+        const server = Bun.serve(value);
+        server.stop(true);
+      }).toThrow("Bun.serve expects an object");
+    });
+  });
+
+  test("should not allow Bun.serve with invalid tls option", () => {
+    [1, "string", true, Symbol("symbol"), false].forEach(value => {
+      expect(() => {
+        const server = Bun.serve({
+          //@ts-ignore
+          tls: value,
+          fetch() {
+            return new Response("Hello");
+          },
+          port: 0,
+        });
+        server.stop(true);
+      }).toThrow("tls option expects an object");
+    });
+  });
+
+  test("should allow Bun.serve using null or undefined, tls option", () => {
+    [null, undefined].forEach(value => {
+      expect(() => {
+        const server = Bun.serve({
+          //@ts-ignore
+          tls: value,
+          fetch() {
+            return new Response("Hello");
+          },
+          port: 0,
+        });
+        server.stop(true);
+      }).not.toThrow("tls option expects an object");
+    });
+  });
+
   test("returns active port when initializing server with 0 port", () => {
     const server = Bun.serve({
       fetch() {

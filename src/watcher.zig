@@ -370,6 +370,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         cwd: string,
         thread: std.Thread = undefined,
         running: bool = true,
+        close_descriptors: bool = false,
 
         pub const HashType = u32;
 
@@ -404,8 +405,27 @@ pub fn NewWatcher(comptime ContextType: type) type {
             this.thread = try std.Thread.spawn(.{}, Watcher.watchLoop, .{this});
         }
 
-        pub fn stop(this: *Watcher) void {
+        pub fn stop(this: *Watcher, close_descriptors: bool) void {
             this.running = false;
+            this.close_descriptors = close_descriptors;
+        }
+
+        pub fn deinit(this: *Watcher, close_descriptors: bool) void {
+            this.running = false;
+            this.close_descriptors = close_descriptors;
+            if (this.watchloop_handle != null) {
+                std.Thread.join(this.thread);
+            } else {
+                if (this.close_descriptors) {
+                    const fds = this.watchlist.items(.fd);
+                    for (fds) |fd| {
+                        std.os.close(fd);
+                    }
+                }
+                this.watchlist.deinit(this.allocator);
+            }
+            const allocator = this.allocator;
+            allocator.destroy(this);
         }
 
         // This must only be called from the watcher thread
@@ -421,8 +441,16 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 PlatformWatcher.stop();
 
                 this.ctx.onError(err);
-                return;
             };
+
+            // deinit and close descriptors if needed
+            if (this.close_descriptors) {
+                const fds = this.watchlist.items(.fd);
+                for (fds) |fd| {
+                    std.os.close(fd);
+                }
+            }
+            this.watchlist.deinit(this.allocator);
         }
 
         var evict_list_i: WatchItemIndex = 0;

@@ -16,13 +16,13 @@ pub const FSWatcher = struct {
     const watcher = @import("../../watcher.zig");
     const options = @import("../../options.zig");
     pub const Watcher = watcher.NewWatcher(*FSWatcher);
+    const log = Output.scoped(.FSWatcher, false);
 
     onAccept: std.ArrayHashMapUnmanaged(FSWatcher.Watcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
     ctx: *VirtualMachine,
     js_watcher: ?*JSObject = null,
     watcher_instance: ?*FSWatcher.Watcher = null,
     verbose: bool = false,
-    tombstones: std.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
     file_paths: bun.BabyList(string) = .{},
 
     pub fn toJS(this: *FSWatcher) JSC.JSValue {
@@ -145,86 +145,59 @@ pub const FSWatcher = struct {
         bun.copy(u8, file_path_clone, file_path);
         ctx.file_paths.push(bun.default_allocator, file_path_clone) catch unreachable;
 
-        const entries_option = Fs.FileSystem.instance.fs.readDirectory(
-            file_path_clone,
-            null,
-            0,
-            true,
-        ) catch |err| {
-            ctx.deinit();
-            bun.default_allocator.destroy(fs_watcher);
-            return err;
-        };
-
         fs_watcher.addDirectory(fd, file_path_clone, FSWatcher.Watcher.getHash(file_path), false) catch |err| {
             ctx.deinit();
-            bun.default_allocator.destroy(fs_watcher);
+            fs_watcher.deinit(true);
             return err;
         };
-        if (entries_option.* == .entries) {
-            var entries = entries_option.entries.data.iterator();
-            while (entries.next()) |entry_iter| {
-                var entry: *Fs.FileSystem.Entry = entry_iter.value_ptr.*;
 
-                var parts = [2]string{ entry.dir, entry.base() };
-                var entry_path = Path.joinAbsStringBuf(
-                    Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(),
-                    buf,
-                    &parts,
-                    .auto,
-                );
+        var iter = (std.fs.IterableDir{ .dir = std.fs.Dir{
+            .fd = fd,
+        } }).iterate();
 
-                buf[file_path.len + 1] = 0;
-                buf[file_path.len] = 0;
-                var entry_path_z = buf[0..file_path.len :0];
+        while (iter.next() catch |err| {
+            ctx.deinit();
+            fs_watcher.deinit(true);
+            return err;
+        }) |entry| {
+            var parts = [2]string{ file_path_clone, entry.name };
+            var entry_path = Path.joinAbsStringBuf(
+                Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(),
+                buf,
+                &parts,
+                .auto,
+            );
 
-                var kind = entry.kind(&Fs.FileSystem.instance.fs, true);
+            buf[entry_path.len + 1] = 0;
+            buf[entry_path.len] = 0;
+            var entry_path_z = buf[0..entry_path.len :0];
 
-                if (kind == .dir) {
-                    if (recursive) {
-                        if (entry.cache.fd == 0) {
-                            const dir = bun.openDirForPath(entry_path_z) catch |err| {
-                                ctx.deinit();
-                                bun.default_allocator.destroy(fs_watcher);
-                                return err;
-                            };
-                            entry.cache.fd = dir.fd;
-                        }
-                        addDirectory(ctx, fs_watcher, entry.cache.fd, entry_path, recursive, buf) catch |err| {
-                            ctx.deinit();
-                            bun.default_allocator.destroy(fs_watcher);
-                            return err;
-                        };
-                    }
-                } else {
-                    if (entry.cache.fd == 0) {
-                        const file = bun.openFileForPath(entry_path_z) catch |err| {
-                            ctx.deinit();
-                            bun.default_allocator.destroy(fs_watcher);
-                            return err;
-                        };
-                        entry.cache.fd = file.handle;
-                    }
-                    file_path_clone = bun.default_allocator.alloc(u8, entry_path.len) catch unreachable;
-                    bun.copy(u8, file_path_clone, entry_path);
-                    ctx.file_paths.push(bun.default_allocator, file_path_clone) catch unreachable;
+            var fs_info = fdFromAbsolutePathZ(entry_path_z) catch |err| {
+                ctx.deinit();
+                fs_watcher.deinit(true);
+                return err;
+            };
 
-                    fs_watcher.addFile(entry.cache.fd, file_path_clone, FSWatcher.Watcher.getHash(entry_path), options.Loader.file, 0, null, false) catch |err| {
+            if (fs_info.is_file) {
+                file_path_clone = bun.default_allocator.alloc(u8, entry_path.len) catch unreachable;
+                bun.copy(u8, file_path_clone, entry_path);
+                ctx.file_paths.push(bun.default_allocator, file_path_clone) catch unreachable;
+
+                fs_watcher.addFile(fs_info.fd, file_path_clone, FSWatcher.Watcher.getHash(entry_path), options.Loader.file, 0, null, false) catch |err| {
+                    ctx.deinit();
+                    fs_watcher.deinit(true);
+                    return err;
+                };
+            } else {
+                if (recursive) {
+                    addDirectory(ctx, fs_watcher, fs_info.fd, entry_path, recursive, buf) catch |err| {
                         ctx.deinit();
-                        bun.default_allocator.destroy(fs_watcher);
+                        fs_watcher.deinit(true);
                         return err;
                     };
                 }
             }
         }
-    }
-
-    fn putTombstone(this: *FSWatcher, key: []const u8, value: *bun.fs.FileSystem.RealFS.EntriesOption) void {
-        this.tombstones.put(bun.default_allocator, key, value) catch unreachable;
-    }
-
-    fn getTombstone(this: *FSWatcher, key: []const u8) ?*bun.fs.FileSystem.RealFS.EntriesOption {
-        return this.tombstones.get(key);
     }
 
     pub fn onError(
@@ -250,7 +223,7 @@ pub const FSWatcher = struct {
         const kinds = slice.items(.kind);
         const hashes = slice.items(.hash);
         const parents = slice.items(.parent_hash);
-        var file_descriptors = slice.items(.fd);
+
         var ctx = this.watcher_instance.?;
         defer ctx.flushEvictions();
         defer Output.flush();
@@ -261,7 +234,6 @@ pub const FSWatcher = struct {
             &this.ctx.bundler;
 
         var fs: *Fs.FileSystem = bundler.fs;
-        var rfs: *Fs.FileSystem.RealFS = &fs.fs;
 
         var current_task: FSWatchTask = .{
             .ctx = this,
@@ -310,21 +282,13 @@ pub const FSWatcher = struct {
                 },
                 .directory => {
                     var affected_buf: [128][]const u8 = undefined;
-                    var entries_option: ?*Fs.FileSystem.RealFS.EntriesOption = null;
 
                     const affected = brk: {
                         if (comptime Environment.isMac) {
-                            if (rfs.entries.get(file_path)) |existing| {
-                                this.putTombstone(file_path, existing);
-                                entries_option = existing;
-                            } else if (this.getTombstone(file_path)) |existing| {
-                                entries_option = existing;
-                            }
-
                             var affected_i: usize = 0;
 
                             // if a file descriptor is stale, we need to close it
-                            if (event.op.delete and entries_option != null) {
+                            if (event.op.delete) {
                                 for (parents, 0..) |parent_hash, entry_id| {
                                     if (parent_hash == id) {
                                         const affected_path = file_paths[entry_id];
@@ -347,92 +311,42 @@ pub const FSWatcher = struct {
                         break :brk event.names(changed_files);
                     };
 
-                    if (affected.len > 0 and !Environment.isMac) {
-                        if (rfs.entries.get(file_path)) |existing| {
-                            this.putTombstone(file_path, existing);
-                            entries_option = existing;
-                        } else if (this.getTombstone(file_path)) |existing| {
-                            entries_option = existing;
-                        }
-                    }
+                    var last_file_hash: FSWatcher.Watcher.HashType = std.math.maxInt(FSWatcher.Watcher.HashType);
 
-                    if (entries_option) |dir_ent| {
-                        var last_file_hash: FSWatcher.Watcher.HashType = std.math.maxInt(FSWatcher.Watcher.HashType);
+                    for (affected) |changed_name_| {
+                        const changed_name: []const u8 = if (comptime Environment.isMac)
+                            changed_name_
+                        else
+                            bun.asByteSlice(changed_name_.?);
+                        if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
 
-                        for (affected) |changed_name_| {
-                            const changed_name: []const u8 = if (comptime Environment.isMac)
-                                changed_name_
-                            else
-                                bun.asByteSlice(changed_name_.?);
-                            if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
+                        var file_hash: FSWatcher.Watcher.HashType = last_file_hash;
+                        const abs_path: string = brk: {
+                            var file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
+                            const file_path_without_trailing_slash_buf = bun.default_allocator.alloc(u8, file_path_without_trailing_slash.len + changed_name.len + 1) catch unreachable;
 
-                            const loader = (bundler.options.loaders.get(Fs.PathName.init(changed_name).ext) orelse .file);
-                            var prev_entry_id: usize = std.math.maxInt(usize);
-                            if (loader != .file) {
-                                var path_string: bun.PathString = undefined;
-                                var file_hash: FSWatcher.Watcher.HashType = last_file_hash;
-                                const abs_path: string = brk: {
-                                    if (dir_ent.entries.get(@ptrCast([]const u8, changed_name))) |file_ent| {
-                                        // reset the file descriptor
-                                        file_ent.entry.cache.fd = 0;
-                                        file_ent.entry.need_stat = true;
-                                        path_string = file_ent.entry.abs_path;
-                                        file_hash = FSWatcher.Watcher.getHash(path_string.slice());
-                                        for (hashes, 0..) |hash, entry_id| {
-                                            if (hash == file_hash) {
-                                                if (file_descriptors[entry_id] != 0) {
-                                                    if (prev_entry_id != entry_id) {
-                                                        ctx.removeAtIndex(
-                                                            @truncate(u16, entry_id),
-                                                            0,
-                                                            &.{},
-                                                            .file,
-                                                        );
-                                                    }
-                                                }
+                            @memcpy(file_path_without_trailing_slash_buf.ptr, file_path_without_trailing_slash.ptr, file_path_without_trailing_slash.len);
+                            file_path_without_trailing_slash_buf[file_path_without_trailing_slash.len] = std.fs.path.sep;
 
-                                                prev_entry_id = entry_id;
-                                                break;
-                                            }
-                                        }
-                                        const path_slice = path_string.slice();
-                                        if (path_slice.len > 0) {
-                                            if (event.op.rename or event.op.move_to) {
-                                                current_task.append(path_slice, .rename, false);
-                                            } else {
-                                                current_task.append(path_slice, .change, false);
-                                            }
-                                            break :brk path_slice;
-                                        }
-                                    }
+                            @memcpy(file_path_without_trailing_slash_buf[file_path_without_trailing_slash.len + 1 ..].ptr, changed_name.ptr, changed_name.len);
+                            const path_slice = file_path_without_trailing_slash_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
+                            file_hash = FSWatcher.Watcher.getHash(path_slice);
 
-                                    var file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
-                                    const file_path_without_trailing_slash_buf = bun.default_allocator.alloc(u8, file_path_without_trailing_slash.len + changed_name.len + 1) catch unreachable;
-
-                                    @memcpy(file_path_without_trailing_slash_buf.ptr, file_path_without_trailing_slash.ptr, file_path_without_trailing_slash.len);
-                                    file_path_without_trailing_slash_buf[file_path_without_trailing_slash.len] = std.fs.path.sep;
-
-                                    @memcpy(file_path_without_trailing_slash_buf[file_path_without_trailing_slash.len + 1 ..].ptr, changed_name.ptr, changed_name.len);
-                                    const path_slice = file_path_without_trailing_slash_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
-                                    file_hash = FSWatcher.Watcher.getHash(path_slice);
-
-                                    if (event.op.rename or event.op.move_to) {
-                                        current_task.append(file_path_without_trailing_slash_buf, .rename, true);
-                                    } else {
-                                        current_task.append(file_path_without_trailing_slash_buf, .change, true);
-                                    }
-
-                                    break :brk path_slice;
-                                };
-
-                                // skip consecutive duplicates
-                                if (last_file_hash == file_hash) continue;
-                                last_file_hash = file_hash;
-
-                                if (this.verbose)
-                                    Output.prettyErrorln("<r> <d>File change: {s}<r>", .{fs.relativeTo(abs_path)});
+                            if (event.op.rename or event.op.move_to) {
+                                current_task.append(file_path_without_trailing_slash_buf, .rename, true);
+                            } else {
+                                current_task.append(file_path_without_trailing_slash_buf, .change, true);
                             }
-                        }
+
+                            break :brk path_slice;
+                        };
+
+                        // skip consecutive duplicates
+                        if (last_file_hash == file_hash) continue;
+                        last_file_hash = file_hash;
+
+                        if (this.verbose)
+                            Output.prettyErrorln("<r> <d>Dir change: {s}<r>", .{fs.relativeTo(abs_path)});
                     }
 
                     if (this.verbose) {
@@ -751,7 +665,7 @@ pub const FSWatcher = struct {
                     signal.detach(this);
                 }
                 this.closed = true;
-                this.manager.stop();
+                this.manager.stop(true);
                 this.js_this.unprotect();
                 this.unref();
                 if (emitEvent) {
@@ -769,8 +683,7 @@ pub const FSWatcher = struct {
             this.manager.ctx.js_watcher = null;
             this.js_this = .zero;
             this.globalThis = null;
-            this.manager.stop();
-            this.manager.thread.join();
+            this.manager.stop(true);
 
             if (this.signal) |signal| {
                 this.signal = null;
@@ -781,11 +694,46 @@ pub const FSWatcher = struct {
                 this.persistent = false;
                 this.poll_ref.unref(this.manager.ctx.ctx);
             }
-            bun.default_allocator.destroy(this.manager.ctx);
-            bun.default_allocator.destroy(this.manager);
+            this.manager.ctx.deinit();
+            this.manager.deinit(true);
             bun.default_allocator.destroy(this);
         }
     };
+
+    const PathResult = struct {
+        fd: StoredFileDescriptorType = 0,
+        is_file: bool = true,
+    };
+
+    fn fdFromAbsolutePathZ(
+        absolute_path_z: [:0]const u8,
+    ) !PathResult {
+        var stat = try bun.C.lstat_absolute(absolute_path_z);
+        var result = PathResult{};
+
+        switch (stat.kind) {
+            .SymLink => {
+                var file = try std.fs.openFileAbsoluteZ(absolute_path_z, .{ .mode = .read_only });
+                result.fd = file.handle;
+                const _stat = try file.stat();
+
+                result.is_file = _stat.kind == .Directory;
+            },
+            .Directory => {
+                const dir = (try std.fs.openIterableDirAbsoluteZ(absolute_path_z, .{
+                    .access_sub_paths = true,
+                })).dir;
+                result.fd = dir.fd;
+                result.is_file = false;
+            },
+            else => {
+                const file = try bun.openFileForPath(absolute_path_z);
+                result.fd = file.handle;
+                result.is_file = true;
+            },
+        }
+        return result;
+    }
 
     pub fn init(args: Arguments) !*FSWatcher {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -805,7 +753,7 @@ pub const FSWatcher = struct {
         buf[file_path.len] = 0;
         var file_path_z = buf[0..file_path.len :0];
 
-        var fs_type = try Fs.FileSystem.instance.fs.kindFromAbsolute(file_path_z, 0, true);
+        var fs_type = try fdFromAbsolutePathZ(file_path_z);
 
         var ctx = try bun.default_allocator.create(FSWatcher);
         const vm = args.global_this.bunVM();
@@ -829,53 +777,33 @@ pub const FSWatcher = struct {
 
         ctx.watcher_instance = fs_watcher;
 
-        if (fs_type.kind == .file) {
-            if (fs_type.fd == 0) {
-                const file = bun.openFileForPath(file_path_z) catch |err| {
-                    ctx.deinit();
-                    bun.default_allocator.destroy(fs_watcher);
-                    return err;
-                };
-                fs_type.fd = file.handle;
-            }
-
+        if (fs_type.is_file) {
             var file_path_clone = bun.default_allocator.alloc(u8, file_path.len) catch unreachable;
             bun.copy(u8, file_path_clone, file_path);
             ctx.file_paths.push(bun.default_allocator, file_path_clone) catch unreachable;
             fs_watcher.addFile(fs_type.fd, file_path_clone, FSWatcher.Watcher.getHash(file_path), options.Loader.file, 0, null, false) catch |err| {
                 ctx.deinit();
-                bun.default_allocator.destroy(fs_watcher);
-                return err;
-            };
-        } else if (fs_type.kind == .dir) {
-            if (fs_type.fd == 0) {
-                const dir = bun.openDirForPath(file_path_z) catch |err| {
-                    ctx.deinit();
-                    bun.default_allocator.destroy(fs_watcher);
-                    return err;
-                };
-                fs_type.fd = dir.fd;
-            }
-            addDirectory(ctx, fs_watcher, fs_type.fd, file_path, args.recursive, &buf) catch |err| {
-                ctx.deinit();
-                bun.default_allocator.destroy(fs_watcher);
+                fs_watcher.deinit(true);
                 return err;
             };
         } else {
-            ctx.deinit();
-            bun.default_allocator.destroy(fs_watcher);
-            return error.UnableToFindDirectory;
+            addDirectory(ctx, fs_watcher, fs_type.fd, file_path, args.recursive, &buf) catch |err| {
+                ctx.deinit();
+                fs_watcher.deinit(true);
+                return err;
+            };
         }
 
         fs_watcher.start() catch |err| {
             ctx.deinit();
-            bun.default_allocator.destroy(fs_watcher);
+
+            fs_watcher.deinit(true);
             return err;
         };
 
         ctx.js_watcher = JSObject.init(args.global_this, fs_watcher, args.signal, args.listener, args.persistent, args.encoding) catch |err| {
             ctx.deinit();
-            bun.default_allocator.destroy(fs_watcher);
+            fs_watcher.deinit(true);
             return err;
         };
 

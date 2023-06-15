@@ -5,17 +5,11 @@
  */
 
 const isBun = typeof Bun !== "undefined";
-if (isBun) {
-  // const assert = require("assert");
-  // const bunTest = Bun.jest(__filename);
-  // assert(bunTest.mock === bunTest.jest.fn);
-} else {
+if (!isBun) {
   const extended = require("jest-extended");
   expect.extend(extended);
   test.todo = test;
 }
-
-//
 
 const spyOn = jest.spyOn;
 

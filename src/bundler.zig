@@ -176,13 +176,13 @@ pub const PluginRunner = struct {
         var global = this.global_object;
         const namespace_slice = extractNamespace(specifier);
         const namespace = if (namespace_slice.len > 0 and !strings.eqlComptime(namespace_slice, "file"))
-            JSC.ZigString.init(namespace_slice)
+            bun.String.init(namespace_slice)
         else
-            JSC.ZigString.init("");
+            bun.String.empty;
         const on_resolve_plugin = global.runOnResolvePlugins(
             namespace,
-            JSC.ZigString.init(specifier).substring(if (namespace.len > 0) namespace.len + 1 else 0, 0),
-            JSC.ZigString.init(importer),
+            bun.String.init(specifier).substring(if (namespace.length() > 0) namespace.length() + 1 else 0),
+            bun.String.init(importer),
             target,
         ) orelse return null;
         const path_value = on_resolve_plugin.get(global, "path") orelse return null;
@@ -192,9 +192,9 @@ pub const PluginRunner = struct {
             return null;
         }
 
-        var file_path = path_value.getZigString(global);
+        var file_path = path_value.toBunString(global);
 
-        if (file_path.len == 0) {
+        if (file_path.length() == 0) {
             log.addError(
                 null,
                 loc,
@@ -216,28 +216,28 @@ pub const PluginRunner = struct {
             return null;
         }
         var static_namespace = true;
-        const user_namespace: JSC.ZigString = brk: {
+        const user_namespace: bun.String = brk: {
             if (on_resolve_plugin.get(global, "namespace")) |namespace_value| {
                 if (!namespace_value.isString()) {
                     log.addError(null, loc, "Expected \"namespace\" to be a string") catch unreachable;
                     return null;
                 }
 
-                const namespace_str = namespace_value.getZigString(global);
-                if (namespace_str.len == 0) {
-                    break :brk JSC.ZigString.init("file");
+                const namespace_str = namespace_value.toBunString(global);
+                if (namespace_str.length() == 0) {
+                    break :brk bun.String.init("file");
                 }
 
                 if (namespace_str.eqlComptime("file")) {
-                    break :brk JSC.ZigString.init("file");
+                    break :brk bun.String.init("file");
                 }
 
                 if (namespace_str.eqlComptime("bun")) {
-                    break :brk JSC.ZigString.init("bun");
+                    break :brk bun.String.init("bun");
                 }
 
                 if (namespace_str.eqlComptime("node")) {
-                    break :brk JSC.ZigString.init("node");
+                    break :brk bun.String.init("node");
                 }
 
                 static_namespace = false;
@@ -245,13 +245,13 @@ pub const PluginRunner = struct {
                 break :brk namespace_str;
             }
 
-            break :brk JSC.ZigString.init("file");
+            break :brk bun.String.init("file");
         };
 
         if (static_namespace) {
             return Fs.Path.initWithNamespace(
                 std.fmt.allocPrint(this.allocator, "{any}", .{file_path}) catch unreachable,
-                user_namespace.slice(),
+                user_namespace.byteSlice(),
             );
         } else {
             return Fs.Path.initWithNamespace(
@@ -263,17 +263,17 @@ pub const PluginRunner = struct {
 
     pub fn onResolveJSC(
         this: *const PluginRunner,
-        namespace: JSC.ZigString,
-        specifier: JSC.ZigString,
-        importer: JSC.ZigString,
+        namespace: bun.String,
+        specifier: bun.String,
+        importer: bun.String,
         target: JSC.JSGlobalObject.BunPluginTarget,
-    ) ?JSC.ErrorableZigString {
+    ) ?JSC.ErrorableString {
         var global = this.global_object;
         const on_resolve_plugin = global.runOnResolvePlugins(
-            if (namespace.len > 0 and !namespace.eqlComptime("file"))
+            if (namespace.length() > 0 and !namespace.eqlComptime("file"))
                 namespace
             else
-                JSC.ZigString.init(""),
+                bun.String.static(""),
             specifier,
             importer,
             target,
@@ -281,18 +281,18 @@ pub const PluginRunner = struct {
         const path_value = on_resolve_plugin.get(global, "path") orelse return null;
         if (path_value.isEmptyOrUndefinedOrNull()) return null;
         if (!path_value.isString()) {
-            return JSC.ErrorableZigString.err(
+            return JSC.ErrorableString.err(
                 error.JSErrorObject,
-                JSC.ZigString.init("Expected \"path\" to be a string in onResolve plugin").toErrorInstance(this.global_object).asVoid(),
+                bun.String.static("Expected \"path\" to be a string in onResolve plugin").toErrorInstance(this.global_object).asVoid(),
             );
         }
 
-        const file_path = path_value.getZigString(global);
+        const file_path = path_value.toBunString(global);
 
-        if (file_path.len == 0) {
-            return JSC.ErrorableZigString.err(
+        if (file_path.length() == 0) {
+            return JSC.ErrorableString.err(
                 error.JSErrorObject,
-                JSC.ZigString.init("Expected \"path\" to be a non-empty string in onResolve plugin").toErrorInstance(this.global_object).asVoid(),
+                bun.String.static("Expected \"path\" to be a non-empty string in onResolve plugin").toErrorInstance(this.global_object).asVoid(),
             );
         } else if
         // TODO: validate this better
@@ -301,36 +301,36 @@ pub const PluginRunner = struct {
             file_path.eqlComptime("...") or
             file_path.eqlComptime(" "))
         {
-            return JSC.ErrorableZigString.err(
+            return JSC.ErrorableString.err(
                 error.JSErrorObject,
-                JSC.ZigString.init("\"path\" is invalid in onResolve plugin").toErrorInstance(this.global_object).asVoid(),
+                bun.String.static("\"path\" is invalid in onResolve plugin").toErrorInstance(this.global_object).asVoid(),
             );
         }
         var static_namespace = true;
-        const user_namespace: JSC.ZigString = brk: {
+        const user_namespace: bun.String = brk: {
             if (on_resolve_plugin.get(global, "namespace")) |namespace_value| {
                 if (!namespace_value.isString()) {
-                    return JSC.ErrorableZigString.err(
+                    return JSC.ErrorableString.err(
                         error.JSErrorObject,
-                        JSC.ZigString.init("Expected \"namespace\" to be a string").toErrorInstance(this.global_object).asVoid(),
+                        bun.String.static("Expected \"namespace\" to be a string").toErrorInstance(this.global_object).asVoid(),
                     );
                 }
 
-                const namespace_str = namespace_value.getZigString(global);
-                if (namespace_str.len == 0) {
-                    break :brk JSC.ZigString.init("file");
+                const namespace_str = namespace_value.toBunString(global);
+                if (namespace_str.length() == 0) {
+                    break :brk bun.String.static("file");
                 }
 
                 if (namespace_str.eqlComptime("file")) {
-                    break :brk JSC.ZigString.init("file");
+                    break :brk bun.String.static("file");
                 }
 
                 if (namespace_str.eqlComptime("bun")) {
-                    break :brk JSC.ZigString.init("bun");
+                    break :brk bun.String.static("bun");
                 }
 
                 if (namespace_str.eqlComptime("node")) {
-                    break :brk JSC.ZigString.init("node");
+                    break :brk bun.String.static("node");
                 }
 
                 static_namespace = false;
@@ -338,7 +338,7 @@ pub const PluginRunner = struct {
                 break :brk namespace_str;
             }
 
-            break :brk JSC.ZigString.init("file");
+            break :brk bun.String.static("file");
         };
 
         // Our super slow way of cloning the string into memory owned by JSC
@@ -347,9 +347,10 @@ pub const PluginRunner = struct {
             "{any}:{any}",
             .{ user_namespace, file_path },
         ) catch unreachable;
-        const out = JSC.ZigString.init(combined_string).toValueGC(this.global_object).getZigString(this.global_object);
+        var out_ = bun.String.init(combined_string);
+        const out = out_.toJS(this.global_object).toBunString(this.global_object);
         this.allocator.free(combined_string);
-        return JSC.ErrorableZigString.ok(out);
+        return JSC.ErrorableString.ok(out);
     }
 };
 

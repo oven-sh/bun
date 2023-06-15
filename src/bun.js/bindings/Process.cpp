@@ -1022,16 +1022,12 @@ JSC_DEFINE_CUSTOM_GETTER(Process_getArgv, (JSC::JSGlobalObject * globalObject, J
     if (!thisObject) {
         return JSValue::encode(JSC::jsUndefined());
     }
-    auto clientData = WebCore::clientData(vm);
-
-    if (JSC::JSValue argv = thisObject->getIfPropertyExists(
-            globalObject, clientData->builtinNames().argvPrivateName())) {
-        return JSValue::encode(argv);
-    }
 
     JSC::EncodedJSValue argv_ = Bun__Process__getArgv(globalObject);
-    thisObject->putDirect(vm, clientData->builtinNames().argvPrivateName(),
-        JSC::JSValue::decode(argv_));
+    auto clientData = WebCore::clientData(vm);
+
+    thisObject->putDirect(vm, clientData->builtinNames().argvPublicName(),
+        JSC::JSValue::decode(argv_), 0);
 
     return argv_;
 }
@@ -1049,7 +1045,7 @@ JSC_DEFINE_CUSTOM_SETTER(Process_setArgv,
 
     auto clientData = WebCore::clientData(vm);
 
-    return thisObject->putDirect(vm, clientData->builtinNames().argvPrivateName(),
+    return thisObject->putDirect(vm, clientData->builtinNames().argvPublicName(),
         JSC::JSValue::decode(value));
 }
 

@@ -51,6 +51,10 @@ declare module "bun" {
    *
    */
   export const env: Env;
+  /**
+   * The raw arguments passed to the process, including flags passed to Bun. If you want to easily read flags passed to your script, consider using `process.argv` instead.
+   */
+  export const argv: string[];
   export const origin: string;
 
   /**
@@ -743,6 +747,14 @@ declare module "bun" {
     /** @default false */
     strict?: boolean,
   ): boolean;
+
+  /**
+   * Returns true if all properties in the subset exist in the
+   * other and have equal values.
+   *
+   * This also powers expect().toMatchObject in `bun:test`
+   */
+  export function deepMatch(subset: unknown, a: unknown): boolean;
 
   /**
    * tsconfig.json options supported by Bun

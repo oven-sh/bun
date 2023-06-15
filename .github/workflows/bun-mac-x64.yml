@@ -173,8 +173,8 @@ jobs:
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         run: |
           brew install rust ccache llvm@15 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
-          echo "export PATH=$(brew --prefix coreutils)/libexec/gnubin:\$PATH" >> $GITHUB_ENV
-          echo "export PATH=$(brew --prefix llvm@15)/bin:\$PATH" >> $GITHUB_ENV
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
+          echo "$(brew --prefix llvm@15)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@15
       - name: Download WebKit
         if: matrix.compile_obj
@@ -294,8 +294,8 @@ jobs:
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         run: |
           brew install rust ccache llvm@15 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
-          echo "export PATH=$(brew --prefix coreutils)/libexec/gnubin:\$PATH" >> $GITHUB_ENV
-          echo "export PATH=$(brew --prefix llvm@15)/bin:\$PATH" >> $GITHUB_ENV
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
+          echo "$(brew --prefix llvm@15)/bin" >> $GITHUB_PATH
           brew link --overwrite llvm@15
       - name: Download WebKit
         env:
@@ -432,8 +432,8 @@ jobs:
           unzip ${{matrix.tag}}.zip
           cd ${{matrix.tag}}
           chmod +x bun
-          sudo mv bun /usr/local/bin/bun
-          bun --version
+          pwd >> $GITHUB_PATH
+          ./bun --version
       - id: test
         name: Test (node runner)
         # if: ${{github.event.inputs.use_bun == 'false'}}

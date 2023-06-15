@@ -72,6 +72,37 @@ pub fn initializeStore() void {
     JSAst.Stmt.Data.Store.create(default_allocator);
 }
 
+/// The default store we use pre-allocates around 16 MB of memory per thread
+/// That adds up in multi-threaded scenarios.
+/// ASTMemoryAllocator uses a smaller fixed buffer allocator
+pub fn initializeMiniStore() void {
+    const MiniStore = struct {
+        heap: bun.MimallocArena,
+        memory_allocator: JSAst.ASTMemoryAllocator,
+
+        pub threadlocal var instance: ?*@This() = null;
+    };
+    if (MiniStore.instance == null) {
+        var mini_store = bun.default_allocator.create(MiniStore) catch @panic("OOM");
+        mini_store.* = .{
+            .heap = bun.MimallocArena.init() catch @panic("OOM"),
+            .memory_allocator = undefined,
+        };
+        mini_store.memory_allocator = .{ .allocator = mini_store.heap.allocator() };
+        mini_store.memory_allocator.reset();
+        MiniStore.instance = mini_store;
+        mini_store.memory_allocator.push();
+    } else {
+        var mini_store = MiniStore.instance.?;
+        if (mini_store.memory_allocator.stack_allocator.fixed_buffer_allocator.end_index >= mini_store.memory_allocator.stack_allocator.fixed_buffer_allocator.buffer.len -| 1) {
+            mini_store.heap.reset();
+            mini_store.memory_allocator.allocator = mini_store.heap.allocator();
+        }
+        mini_store.memory_allocator.reset();
+        mini_store.memory_allocator.push();
+    }
+}
+
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 const NetworkQueue = std.fifo.LinearFifo(*NetworkTask, .{ .Static = 32 });
@@ -558,10 +589,16 @@ const Task = struct {
         switch (this.tag) {
             .package_manifest => {
                 var allocator = bun.default_allocator;
+                const body = this.request.package_manifest.network.response_buffer.move();
+
+                defer {
+                    this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                    bun.default_allocator.free(body);
+                }
                 const package_manifest = Npm.Registry.getPackageMetadata(
                     allocator,
                     this.request.package_manifest.network.http.response.?,
-                    this.request.package_manifest.network.response_buffer.toOwnedSliceLeaky(),
+                    body,
                     &this.log,
                     this.request.package_manifest.name.slice(),
                     this.request.package_manifest.network.callback.package_manifest.loaded_manifest,
@@ -574,18 +611,15 @@ const Task = struct {
                     }
                     this.err = err;
                     this.status = Status.fail;
-                    this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                    this.data = .{ .package_manifest = .{} };
                     return;
                 };
-
-                this.data = .{ .package_manifest = .{} };
 
                 switch (package_manifest) {
                     .cached => unreachable,
                     .fresh => |manifest| {
-                        this.data = .{ .package_manifest = manifest };
                         this.status = Status.success;
-                        this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                        this.data = .{ .package_manifest = manifest };
                         return;
                     },
                     .not_found => {
@@ -593,14 +627,21 @@ const Task = struct {
                             this.request.package_manifest.name.slice(),
                         }) catch unreachable;
                         this.status = Status.fail;
-                        this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                        this.data = .{ .package_manifest = .{} };
                         return;
                     },
                 }
             },
             .extract => {
+                const bytes = this.request.extract.network.response_buffer.move();
+
+                defer {
+                    this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                    bun.default_allocator.free(bytes);
+                }
+
                 const result = this.request.extract.tarball.run(
-                    this.request.extract.network.response_buffer.toOwnedSliceLeaky(),
+                    bytes,
                 ) catch |err| {
                     if (comptime Environment.isDebug) {
                         if (@errorReturnTrace()) |trace| {
@@ -611,13 +652,11 @@ const Task = struct {
                     this.err = err;
                     this.status = Status.fail;
                     this.data = .{ .extract = .{} };
-                    this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
                     return;
                 };
 
                 this.data = .{ .extract = result };
                 this.status = Status.success;
-                this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
             },
             .git_clone => {
                 const manager = this.package_manager;
@@ -1690,6 +1729,7 @@ pub const PackageManager = struct {
 
     pub fn sleep(this: *PackageManager) void {
         if (this.wait_count.swap(0, .Monotonic) > 0) return;
+        bun.Mimalloc.mi_collect(false);
         _ = this.waiter.wait() catch 0;
     }
 
@@ -2253,7 +2293,7 @@ pub const PackageManager = struct {
             return null;
         }
 
-        var arena = std.heap.ArenaAllocator.init(this.allocator);
+        var arena = @import("root").bun.ArenaAllocator.init(this.allocator);
         defer arena.deinit();
         var arena_alloc = arena.allocator();
         var stack_fallback = std.heap.stackFallback(4096, arena_alloc);
@@ -4928,37 +4968,46 @@ pub const PackageManager = struct {
         }
     };
 
+    // Corresponds to possible commands from the CLI.
+    pub const Subcommand = enum {
+        install,
+        pm,
+        add,
+        remove,
+        link,
+        unlink,
+    };
+
     pub fn init(
         ctx: Command.Context,
         package_json_file_: ?std.fs.File,
-        comptime params: []const ParamType,
+        comptime subcommand: Subcommand,
     ) !*PackageManager {
-        return initMaybeInstall(ctx, package_json_file_, params, false);
+        return initMaybeInstall(ctx, package_json_file_, subcommand);
     }
 
     fn initMaybeInstall(
         ctx: Command.Context,
         package_json_file_: ?std.fs.File,
-        comptime params: []const ParamType,
-        comptime is_install: bool,
+        comptime subcommand: Subcommand,
     ) !*PackageManager {
-        const cli = try CommandLineArguments.parse(ctx.allocator, params);
+        const cli = try CommandLineArguments.parse(ctx.allocator, subcommand);
 
-        if (comptime is_install) {
+        if (comptime subcommand == .install) {
             if (cli.positionals.len > 1) {
                 return error.SwitchToBunAdd;
             }
         }
 
         var _ctx = ctx;
-        return initWithCLI(&_ctx, package_json_file_, cli, is_install);
+        return initWithCLI(&_ctx, package_json_file_, cli, subcommand);
     }
 
     fn initWithCLI(
         ctx: *Command.Context,
         package_json_file_: ?std.fs.File,
         cli: CommandLineArguments,
-        comptime is_install: bool,
+        comptime subcommand: Subcommand,
     ) !*PackageManager {
         // assume that spawning a thread will take a lil so we do that asap
         try HTTP.HTTPThread.init();
@@ -5046,7 +5095,7 @@ pub const PackageManager = struct {
                     for (workspace_names.keys()) |path| {
                         if (strings.eql(child_cwd, path)) {
                             fs.top_level_dir = parent;
-                            if (comptime is_install) {
+                            if (comptime subcommand == .install) {
                                 found = true;
                                 child_json.close();
                                 break :brk json_file;
@@ -5283,31 +5332,35 @@ pub const PackageManager = struct {
         return manager;
     }
 
+    fn attemptToCreatePackageJSON() !std.fs.File {
+        var package_json_file = std.fs.cwd().createFileZ("package.json", .{ .read = true }) catch |err| {
+            Output.prettyErrorln("<r><red>error:<r> {s} create package.json", .{@errorName(err)});
+            Global.crash();
+        };
+        try package_json_file.pwriteAll("{\"dependencies\": {}}", 0);
+        return package_json_file;
+    }
+
     pub inline fn add(
         ctx: Command.Context,
     ) !void {
-        try updatePackageJSONAndInstall(ctx, .add, &add_params);
+        try updatePackageJSONAndInstall(ctx, .add, .add);
     }
 
     pub inline fn remove(
         ctx: Command.Context,
     ) !void {
-        try updatePackageJSONAndInstall(ctx, .remove, &remove_params);
+        try updatePackageJSONAndInstall(ctx, .remove, .remove);
     }
 
     pub inline fn link(
         ctx: Command.Context,
     ) !void {
-        var manager = PackageManager.init(ctx, null, &link_params) catch |err| brk: {
+        var manager = PackageManager.init(ctx, null, .link) catch |err| brk: {
             switch (err) {
                 error.MissingPackageJSON => {
-                    var package_json_file = std.fs.cwd().createFileZ("package.json", .{ .read = true }) catch |err2| {
-                        Output.prettyErrorln("<r><red>error:<r> {s} create package.json", .{@errorName(err2)});
-                        Global.crash();
-                    };
-                    try package_json_file.pwriteAll("{\"dependencies\": {}}", 0);
-
-                    break :brk try PackageManager.init(ctx, package_json_file, &link_params);
+                    var package_json_file = try attemptToCreatePackageJSON();
+                    break :brk try PackageManager.init(ctx, package_json_file, .link);
                 },
                 else => return err,
             }
@@ -5462,16 +5515,11 @@ pub const PackageManager = struct {
     pub inline fn unlink(
         ctx: Command.Context,
     ) !void {
-        var manager = PackageManager.init(ctx, null, &unlink_params) catch |err| brk: {
+        var manager = PackageManager.init(ctx, null, .unlink) catch |err| brk: {
             switch (err) {
                 error.MissingPackageJSON => {
-                    var package_json_file = std.fs.cwd().createFileZ("package.json", .{ .read = true }) catch |err2| {
-                        Output.prettyErrorln("<r><red>error:<r> {s} create package.json", .{@errorName(err2)});
-                        Global.crash();
-                    };
-                    try package_json_file.pwriteAll("{\"dependencies\": {}}", 0);
-
-                    break :brk try PackageManager.init(ctx, package_json_file, &unlink_params);
+                    var package_json_file = try attemptToCreatePackageJSON();
+                    break :brk try PackageManager.init(ctx, package_json_file, .unlink);
                 },
                 else => return err,
             }
@@ -5593,11 +5641,12 @@ pub const PackageManager = struct {
     else
         "Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\"";
 
-    pub const install_params_ = [_]ParamType{
+    const install_params_ = [_]ParamType{
         clap.parseParam("-c, --config <STR>?               Load config (bunfig.toml)") catch unreachable,
         clap.parseParam("-y, --yarn                        Write a yarn.lock file (yarn v1)") catch unreachable,
         clap.parseParam("-p, --production                  Don't install devDependencies") catch unreachable,
         clap.parseParam("--no-save                         Don't save a lockfile") catch unreachable,
+        clap.parseParam("--save                            Save to package.json") catch unreachable,
         clap.parseParam("--dry-run                         Don't install anything") catch unreachable,
         clap.parseParam("--lockfile <PATH>                  Store & load a lockfile at a specific filepath") catch unreachable,
         clap.parseParam("-f, --force                       Always request the latest versions from the registry & reinstall all dependencies") catch unreachable,
@@ -5620,27 +5669,29 @@ pub const PackageManager = struct {
         clap.parseParam("--help                            Print this help menu") catch unreachable,
     };
 
-    pub const install_params = install_params_ ++ [_]ParamType{
+    const install_params = install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         ") catch unreachable,
     };
 
-    pub const add_params = install_params_ ++ [_]ParamType{
+    const pm_params = install_params_ ++ [_]ParamType{
+        clap.parseParam("<POS> ...                         ") catch unreachable,
+    };
+
+    const add_params = install_params_ ++ [_]ParamType{
         clap.parseParam("-d, --development                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of packages to install") catch unreachable,
     };
 
-    pub const remove_params = install_params_ ++ [_]ParamType{
+    const remove_params = install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" of packages to remove from package.json") catch unreachable,
     };
 
-    pub const link_params = install_params_ ++ [_]ParamType{
-        clap.parseParam("--save                            Save to package.json") catch unreachable,
+    const link_params = install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" install package as a link") catch unreachable,
     };
 
-    pub const unlink_params = install_params_ ++ [_]ParamType{
-        clap.parseParam("--save                            Save to package.json") catch unreachable,
+    const unlink_params = install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" uninstall package as a link") catch unreachable,
     };
 
@@ -5692,7 +5743,16 @@ pub const PackageManager = struct {
             }
         };
 
-        pub fn parse(allocator: std.mem.Allocator, comptime params: []const ParamType) !CommandLineArguments {
+        pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !CommandLineArguments {
+            comptime var params: []const ParamType = &switch (subcommand) {
+                .install => install_params,
+                .pm => pm_params,
+                .add => add_params,
+                .remove => remove_params,
+                .link => link_params,
+                .unlink => unlink_params,
+            };
+
             var diag = clap.Diagnostic{};
 
             var args = clap.parse(clap.Help, params, .{
@@ -5717,7 +5777,6 @@ pub const PackageManager = struct {
             var cli = CommandLineArguments{};
             cli.yarn = args.flag("--yarn");
             cli.production = args.flag("--production");
-            cli.no_save = args.flag("--no-save");
             cli.no_progress = args.flag("--no-progress");
             cli.dry_run = args.flag("--dry-run");
             cli.global = args.flag("--global");
@@ -5729,12 +5788,13 @@ pub const PackageManager = struct {
             cli.verbose = args.flag("--verbose");
             cli.ignore_scripts = args.flag("--ignore-scripts");
             cli.no_summary = args.flag("--no-summary");
-            if (comptime @TypeOf(args).hasFlag("--save")) {
-                cli.no_save = true;
 
-                if (args.flag("--save")) {
-                    cli.no_save = false;
-                }
+            // link and unlink default to not saving, all others default to
+            // saving.
+            if (comptime subcommand == .link or subcommand == .unlink) {
+                cli.no_save = !args.flag("--save");
+            } else {
+                cli.no_save = args.flag("--no-save");
             }
 
             if (args.option("--config")) |opt| {
@@ -5743,7 +5803,7 @@ pub const PackageManager = struct {
 
             cli.link_native_bins = args.options("--link-native-bins");
 
-            if (comptime params.len == add_params.len) {
+            if (comptime subcommand == .add) {
                 cli.development = args.flag("--development");
                 cli.optional = args.flag("--optional");
             }
@@ -5921,19 +5981,14 @@ pub const PackageManager = struct {
     fn updatePackageJSONAndInstall(
         ctx: Command.Context,
         comptime op: Lockfile.Package.Diff.Op,
-        comptime params: []const ParamType,
+        comptime subcommand: Subcommand,
     ) !void {
-        var manager = PackageManager.init(ctx, null, params) catch |err| brk: {
+        var manager = PackageManager.init(ctx, null, subcommand) catch |err| brk: {
             switch (err) {
                 error.MissingPackageJSON => {
                     if (op == .add or op == .update) {
-                        var package_json_file = std.fs.cwd().createFileZ("package.json", .{ .read = true }) catch |err2| {
-                            Output.prettyErrorln("<r><red>error:<r> {s} create package.json", .{@errorName(err2)});
-                            Global.crash();
-                        };
-                        try package_json_file.pwriteAll("{\"dependencies\": {}}", 0);
-
-                        break :brk try PackageManager.init(ctx, package_json_file, params);
+                        var package_json_file = try attemptToCreatePackageJSON();
+                        break :brk try PackageManager.init(ctx, package_json_file, subcommand);
                     }
 
                     Output.prettyErrorln("<r>No package.json, so nothing to remove\n", .{});
@@ -6220,6 +6275,7 @@ pub const PackageManager = struct {
 
         var buffer_writer = try JSPrinter.BufferWriter.init(ctx.allocator);
         try buffer_writer.buffer.list.ensureTotalCapacity(ctx.allocator, current_package_json_buf.len + 1);
+        buffer_writer.append_newline = preserve_trailing_newline_at_eof_for_package_json;
         var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
 
         var written = JSPrinter.printJSON(@TypeOf(&package_json_writer), &package_json_writer, current_package_json, &package_json_source) catch |err| {
@@ -6344,7 +6400,7 @@ pub const PackageManager = struct {
     var package_json_cwd: string = "";
 
     pub inline fn install(ctx: Command.Context) !void {
-        var manager = initMaybeInstall(ctx, null, &install_params, true) catch |err| {
+        var manager = initMaybeInstall(ctx, null, .install) catch |err| {
             if (err == error.SwitchToBunAdd) {
                 return add(ctx);
             }
@@ -6647,6 +6703,63 @@ pub const PackageManager = struct {
                                     }
                                 }
                             }
+                        }
+
+                        var scripts = this.lockfile.packages.items(.scripts)[package_id];
+                        if (scripts.hasAny()) {
+                            var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                            const path_str = Path.joinAbsString(
+                                bun.getFdPath(this.node_modules_folder.dir.fd, &path_buf) catch unreachable,
+                                &[_]string{destination_dir_subpath},
+                                .posix,
+                            );
+
+                            scripts.enqueue(this.lockfile, buf, path_str);
+                        } else if (!scripts.filled and switch (resolution.tag) {
+                            .folder => Features.folder.scripts,
+                            .npm => Features.npm.scripts,
+                            .git, .github, .gitlab, .local_tarball, .remote_tarball => Features.tarball.scripts,
+                            .symlink => Features.link.scripts,
+                            .workspace => Features.workspace.scripts,
+                            else => false,
+                        }) {
+                            var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                            const path_str = Path.joinAbsString(
+                                bun.getFdPath(this.node_modules_folder.dir.fd, &path_buf) catch unreachable,
+                                &[_]string{destination_dir_subpath},
+                                .posix,
+                            );
+
+                            scripts.enqueueFromPackageJSON(
+                                this.manager.log,
+                                this.lockfile,
+                                this.node_modules_folder.dir,
+                                destination_dir_subpath,
+                                path_str,
+                            ) catch |err| {
+                                if (comptime log_level != .silent) {
+                                    const fmt = "\n<r><red>error:<r> failed to parse life-cycle scripts for <b>{s}<r>: {s}\n";
+                                    const args = .{ name, @errorName(err) };
+
+                                    if (comptime log_level.showProgress()) {
+                                        if (Output.enable_ansi_colors) {
+                                            this.progress.log(comptime Output.prettyFmt(fmt, true), args);
+                                        } else {
+                                            this.progress.log(comptime Output.prettyFmt(fmt, false), args);
+                                        }
+                                    } else {
+                                        Output.prettyErrorln(fmt, args);
+                                    }
+                                }
+
+                                if (this.manager.options.enable.fail_early) {
+                                    Global.exit(1);
+                                }
+
+                                Output.flush();
+                                this.summary.fail += 1;
+                                return;
+                            };
                         }
                     },
                     .fail => |cause| {
@@ -7269,7 +7382,13 @@ pub const PackageManager = struct {
                         package_json_source,
                         Features.main,
                     );
-                    manager.lockfile.scripts = lockfile.scripts;
+                    if (!root.scripts.filled) {
+                        maybe_root.scripts.enqueue(
+                            manager.lockfile,
+                            lockfile.buffers.string_bytes.items,
+                            strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir),
+                        );
+                    }
                     var mapping = try manager.lockfile.allocator.alloc(PackageID, maybe_root.dependencies.len);
                     std.mem.set(PackageID, mapping, invalid_package_id);
 
@@ -7521,37 +7640,12 @@ pub const PackageManager = struct {
             }
         }
 
-        // Install script order for npm 8.3.0:
-        // 1. preinstall
-        // 2. install
-        // 3. postinstall
-        // 4. preprepare
-        // 5. prepare
-        // 6. postprepare
-
-        const run_lifecycle_scripts = manager.options.do.run_scripts and manager.lockfile.scripts.hasAny() and manager.options.do.install_packages;
-        const has_pre_lifecycle_scripts = manager.lockfile.scripts.preinstall.items.len > 0;
-        const needs_configure_bundler_for_run = run_lifecycle_scripts and !has_pre_lifecycle_scripts;
-
-        if (run_lifecycle_scripts and has_pre_lifecycle_scripts) {
-            // We need to figure out the PATH and other environment variables
-            // to do that, we re-use the code from bun run
-            // this is expensive, it traverses the entire directory tree going up to the root
-            // so we really only want to do it when strictly necessary
-            {
-                var this_bundler: bundler.Bundler = undefined;
-                var ORIGINAL_PATH: string = "";
-                _ = try RunCommand.configureEnvForRun(
-                    ctx,
-                    &this_bundler,
-                    manager.env,
-                    &ORIGINAL_PATH,
-                    log_level != .silent,
-                    false,
-                );
-            }
-
-            try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "preinstall");
+        if (root.scripts.hasAny()) {
+            root.scripts.enqueue(
+                manager.lockfile,
+                manager.lockfile.buffers.string_bytes.items,
+                strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir),
+            );
         }
 
         var install_summary = PackageInstall.Summary{};
@@ -7560,6 +7654,34 @@ pub const PackageManager = struct {
                 manager.lockfile,
                 log_level,
             );
+        }
+
+        // Install script order for npm 8.3.0:
+        // 1. preinstall
+        // 2. install
+        // 3. postinstall
+        // 4. preprepare
+        // 5. prepare
+        // 6. postprepare
+        const run_lifecycle_scripts = manager.options.do.run_scripts and manager.lockfile.scripts.hasAny() and manager.options.do.install_packages;
+        if (run_lifecycle_scripts) {
+            // We need to figure out the PATH and other environment variables
+            // to do that, we re-use the code from bun run
+            // this is expensive, it traverses the entire directory tree going up to the root
+            // so we really only want to do it when strictly necessary
+            var this_bundler: bundler.Bundler = undefined;
+            var ORIGINAL_PATH: string = "";
+            _ = try RunCommand.configureEnvForRun(
+                ctx,
+                &this_bundler,
+                manager.env,
+                &ORIGINAL_PATH,
+                log_level != .silent,
+                false,
+            );
+
+            // 1. preinstall
+            try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "preinstall");
         }
 
         if (needs_new_lockfile) {
@@ -7665,44 +7787,6 @@ pub const PackageManager = struct {
         }
 
         if (run_lifecycle_scripts and install_summary.fail == 0) {
-            // We need to figure out the PATH and other environment variables
-            // to do that, we re-use the code from bun run
-            // this is expensive, it traverses the entire directory tree going up to the root
-            // so we really only want to do it when strictly necessary
-            if (needs_configure_bundler_for_run) {
-                var this_bundler: bundler.Bundler = undefined;
-                var ORIGINAL_PATH: string = "";
-                _ = try RunCommand.configureEnvForRun(
-                    ctx,
-                    &this_bundler,
-                    manager.env,
-                    &ORIGINAL_PATH,
-                    log_level != .silent,
-                    false,
-                );
-            } else {
-                // bun install may have installed new bins, so we need to update the PATH
-                // this can happen if node_modules/.bin didn't previously exist
-                // note: it is harmless to have the same directory in the PATH multiple times
-                const current_path = manager.env.map.get("PATH") orelse "";
-
-                // TODO: windows
-                const cwd_without_trailing_slash = if (Fs.FileSystem.instance.top_level_dir.len > 1 and Fs.FileSystem.instance.top_level_dir[Fs.FileSystem.instance.top_level_dir.len - 1] == '/')
-                    Fs.FileSystem.instance.top_level_dir[0 .. Fs.FileSystem.instance.top_level_dir.len - 1]
-                else
-                    Fs.FileSystem.instance.top_level_dir;
-
-                try manager.env.map.put("PATH", try std.fmt.allocPrint(
-                    ctx.allocator,
-                    "{s}:{s}/node_modules/.bin",
-                    .{
-                        current_path,
-                        cwd_without_trailing_slash,
-                    },
-                ));
-            }
-
-            // 1. preinstall
             // 2. install
             // 3. postinstall
             try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "install");

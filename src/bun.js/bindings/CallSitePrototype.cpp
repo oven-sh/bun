@@ -89,7 +89,7 @@ const JSC::ClassInfo CallSitePrototype::s_info = { "CallSite"_s, &Base::s_info, 
 void CallSitePrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    ASSERT(inherits(vm, info()));
+    ASSERT(inherits(info()));
 
     reifyStaticProperties(vm, CallSite::info(), CallSitePrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();

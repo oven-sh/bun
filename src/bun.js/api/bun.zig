@@ -77,7 +77,7 @@ const VirtualMachine = JSC.VirtualMachine;
 const IOTask = JSC.IOTask;
 const zlib = @import("../../zlib.zig");
 const Which = @import("../../which.zig");
-
+const ErrorableString = JSC.ErrorableString;
 const is_bindgen = JSC.is_bindgen;
 const max_addressible_memory = std.math.maxInt(u56);
 
@@ -440,7 +440,7 @@ pub fn getAssetPrefix(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    return ZigString.init(VirtualMachine.get().bundler.options.routes.asset_prefix_path).toValue(ctx.ptr()).asRef();
+    return ZigString.init(VirtualMachine.get().bundler.options.routes.asset_prefix_path).toValueGC(ctx.ptr()).asRef();
 }
 
 pub fn getArgv(
@@ -450,19 +450,8 @@ pub fn getArgv(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    if (comptime Environment.isWindows) {
-        @compileError("argv not supported on windows");
-    }
-
-    var argv_list = std.heap.stackFallback(128, getAllocator(ctx));
-    var allocator = argv_list.get();
-    var argv = allocator.alloc(ZigString, std.os.argv.len) catch unreachable;
-    defer if (argv.len > 128) allocator.free(argv);
-    for (std.os.argv, 0..) |arg, i| {
-        argv[i] = ZigString.init(std.mem.span(arg));
-    }
-
-    return JSValue.createStringArray(ctx.ptr(), argv.ptr, argv.len, true).asObjectRef();
+    // TODO: cache this
+    return JSC.Node.Process.getArgv(ctx).asObjectRef();
 }
 
 pub fn getRoutesDir(
@@ -982,18 +971,18 @@ fn doResolve(
         }
     }
 
-    return doResolveWithArgs(ctx, specifier.getZigString(ctx.ptr()), from.getZigString(ctx.ptr()), exception, is_esm, false);
+    return doResolveWithArgs(ctx, specifier.toBunString(ctx.ptr()), from.toBunString(ctx.ptr()), exception, is_esm, false);
 }
 
 fn doResolveWithArgs(
     ctx: js.JSContextRef,
-    specifier: ZigString,
-    from: ZigString,
+    specifier: bun.String,
+    from: bun.String,
     exception: js.ExceptionRef,
     is_esm: bool,
     comptime is_file_path: bool,
 ) ?JSC.JSValue {
-    var errorable: ErrorableZigString = undefined;
+    var errorable: ErrorableString = undefined;
     var query_string = ZigString.Empty;
 
     if (comptime is_file_path) {
@@ -1037,7 +1026,7 @@ fn doResolveWithArgs(
         return ZigString.initUTF8(arraylist.items).toValueGC(ctx);
     }
 
-    return errorable.result.value.toValue(ctx);
+    return errorable.result.value.toJS(ctx);
 }
 
 pub fn resolveSync(
@@ -1076,7 +1065,7 @@ export fn Bun__resolve(
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
     var exception = &exception_;
-    const value = doResolveWithArgs(global, specifier.getZigString(global), source.getZigString(global), exception, is_esm, true) orelse {
+    const value = doResolveWithArgs(global, specifier.toBunString(global), source.toBunString(global), exception, is_esm, true) orelse {
         return JSC.JSPromise.rejectedPromiseValue(global, JSC.JSValue.fromRef(exception[0]));
     };
     return JSC.JSPromise.resolvedPromiseValue(global, value);
@@ -1090,7 +1079,7 @@ export fn Bun__resolveSync(
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
     var exception = &exception_;
-    return doResolveWithArgs(global, specifier.getZigString(global), source.getZigString(global), exception, is_esm, true) orelse {
+    return doResolveWithArgs(global, specifier.toBunString(global), source.toBunString(global), exception, is_esm, true) orelse {
         return JSC.JSValue.fromRef(exception[0]);
     };
 }
@@ -1098,12 +1087,12 @@ export fn Bun__resolveSync(
 export fn Bun__resolveSyncWithSource(
     global: *JSGlobalObject,
     specifier: JSValue,
-    source: *ZigString,
+    source: *bun.String,
     is_esm: bool,
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
     var exception = &exception_;
-    return doResolveWithArgs(global, specifier.getZigString(global), source.*, exception, is_esm, true) orelse {
+    return doResolveWithArgs(global, specifier.toBunString(global), source.*, exception, is_esm, true) orelse {
         return JSC.JSValue.fromRef(exception[0]);
     };
 }
@@ -1533,7 +1522,6 @@ pub const Crypto = struct {
             var ctx: BoringSSL.EVP_MD_CTX = undefined;
             BoringSSL.EVP_MD_CTX_init(&ctx);
             _ = BoringSSL.EVP_DigestInit_ex(&ctx, md, engine);
-
             return .{
                 .ctx = ctx,
                 .md = md,
@@ -1614,6 +1602,11 @@ pub const Crypto = struct {
             var name_str = name.toSlice(global.allocator());
             defer name_str.deinit();
             return byNameAndEngine(global.bunVM().rareData().boringEngine(), name_str.slice());
+        }
+
+        pub fn deinit(this: *EVP) void {
+            // https://github.com/oven-sh/bun/issues/3250
+            _ = BoringSSL.EVP_MD_CTX_cleanup(&this.ctx);
         }
     };
 
@@ -1867,6 +1860,7 @@ pub const Crypto = struct {
                     // we use SHA512 to hash the password if it's longer than 72 bytes
                     if (password.len > 72) {
                         var sha_256 = bun.sha.SHA512.init();
+                        defer sha_256.deinit();
                         sha_256.update(password);
                         sha_256.final(outbuf[0..bun.sha.SHA512.digest]);
                         password_to_use = outbuf[0..bun.sha.SHA512.digest];
@@ -2469,10 +2463,11 @@ pub const Crypto = struct {
         fn hashToEncoding(
             globalThis: *JSGlobalObject,
             evp: *EVP,
-            input: JSC.Node.StringOrBuffer,
+            input: JSC.Node.SliceOrBuffer,
             encoding: JSC.Node.Encoding,
         ) JSC.JSValue {
             var output_digest_buf: Digest = undefined;
+            defer input.deinit();
 
             const len = evp.hash(globalThis.bunVM().rareData().boringEngine(), input.slice(), &output_digest_buf) orelse {
                 const err = BoringSSL.ERR_get_error();
@@ -2487,11 +2482,12 @@ pub const Crypto = struct {
         fn hashToBytes(
             globalThis: *JSGlobalObject,
             evp: *EVP,
-            input: JSC.Node.StringOrBuffer,
+            input: JSC.Node.SliceOrBuffer,
             output: ?JSC.ArrayBuffer,
         ) JSC.JSValue {
             var output_digest_buf: Digest = undefined;
             var output_digest_slice: []u8 = &output_digest_buf;
+            defer input.deinit();
             if (output) |output_buf| {
                 const size = evp.size();
                 var bytes = output_buf.byteSlice();
@@ -2513,21 +2509,22 @@ pub const Crypto = struct {
             if (output) |output_buf| {
                 return output_buf.value;
             } else {
-                var array_buffer_out = JSC.ArrayBuffer.fromBytes(bun.default_allocator.dupe(u8, output_digest_slice[0..len]) catch unreachable, .Uint8Array);
-                return array_buffer_out.toJSUnchecked(globalThis, null);
+                // Clone to GC-managed memory
+                return JSC.ArrayBuffer.create(globalThis, output_digest_slice[0..len], .Buffer);
             }
         }
 
         pub fn hash_(
             globalThis: *JSGlobalObject,
             algorithm: ZigString,
-            input: JSC.Node.StringOrBuffer,
+            input: JSC.Node.SliceOrBuffer,
             output: ?JSC.Node.StringOrBuffer,
         ) JSC.JSValue {
             var evp = EVP.byName(algorithm, globalThis) orelse {
                 globalThis.throwInvalidArguments("Unsupported algorithm \"{any}\"", .{algorithm});
                 return .zero;
             };
+            defer evp.deinit();
 
             if (output) |string_or_buffer| {
                 switch (string_or_buffer) {
@@ -2624,13 +2621,14 @@ pub const Crypto = struct {
         pub fn digest_(
             this: *@This(),
             globalThis: *JSGlobalObject,
-            output: ?JSC.Node.StringOrBuffer,
+            output: ?JSC.Node.SliceOrBuffer,
         ) JSC.JSValue {
             if (output) |string_or_buffer| {
                 switch (string_or_buffer) {
                     .string => |str| {
-                        const encoding = JSC.Node.Encoding.from(str) orelse {
-                            globalThis.throwInvalidArguments("Unknown encoding: {s}", .{str});
+                        defer str.deinit();
+                        const encoding = JSC.Node.Encoding.from(str.slice()) orelse {
+                            globalThis.throwInvalidArguments("Unknown encoding: {}", .{str});
                             return JSC.JSValue.zero;
                         };
 
@@ -2667,8 +2665,8 @@ pub const Crypto = struct {
             if (output) |output_buf| {
                 return output_buf.value;
             } else {
-                var array_buffer_out = JSC.ArrayBuffer.fromBytes(bun.default_allocator.dupe(u8, result) catch unreachable, .Uint8Array);
-                return array_buffer_out.toJSUnchecked(globalThis, null);
+                // Clone to GC-managed memory
+                return JSC.ArrayBuffer.create(globalThis, result, .Buffer);
             }
         }
 
@@ -2683,7 +2681,10 @@ pub const Crypto = struct {
         }
 
         pub fn finalize(this: *CryptoHasher) callconv(.C) void {
-            VirtualMachine.get().allocator.destroy(this);
+            // https://github.com/oven-sh/bun/issues/3250
+            this.evp.deinit();
+
+            bun.default_allocator.destroy(this);
         }
     };
 
@@ -3590,7 +3591,7 @@ pub const TOML = struct {
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
-        var arena = std.heap.ArenaAllocator.init(getAllocator(ctx));
+        var arena = @import("root").bun.ArenaAllocator.init(getAllocator(ctx));
         var allocator = arena.allocator();
         defer arena.deinit();
         var log = logger.Log.init(default_allocator);

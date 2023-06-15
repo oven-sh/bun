@@ -56,8 +56,9 @@ typedef void* JSClassRef;
 #ifndef __cplusplus
  typedef bJSC__CatchScope JSC__CatchScope; // JSC::CatchScope
   typedef ErrorableResolvedSource ErrorableResolvedSource;
+  typedef BunString BunString;
+  typedef ErrorableString ErrorableString;
  typedef bJSC__ThrowScope JSC__ThrowScope; // JSC::ThrowScope
-  typedef ErrorableZigString ErrorableZigString;
  typedef bJSC__JSObject JSC__JSObject; // JSC::JSObject
   typedef WebSocketClient WebSocketClient;
  typedef struct WebCore__AbortSignal WebCore__AbortSignal; // WebCore::AbortSignal
@@ -109,7 +110,8 @@ typedef void* JSClassRef;
   }
 
   typedef ErrorableResolvedSource ErrorableResolvedSource;
-  typedef ErrorableZigString ErrorableZigString;
+  typedef BunString BunString;
+  typedef ErrorableString ErrorableString;
   typedef WebSocketClient WebSocketClient;
   typedef WebSocketHTTPSClient WebSocketHTTPSClient;
   typedef JSClassRef JSClassRef;
@@ -216,7 +218,7 @@ CPP_DECL void JSC__JSString__toZigString(JSC__JSString* arg0, JSC__JSGlobalObjec
 #pragma mark - JSC::JSModuleLoader
 
 CPP_DECL JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* arg0, const unsigned char* arg1, size_t arg2, const unsigned char* arg3, size_t arg4, const unsigned char* arg5, size_t arg6, JSC__JSValue JSValue7, JSC__JSValue* arg8);
-CPP_DECL JSC__JSInternalPromise* JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* arg0, const ZigString* arg1);
+CPP_DECL JSC__JSInternalPromise* JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* arg0, const BunString* arg1);
 
 #pragma mark - WebCore::AbortSignal
 
@@ -316,6 +318,7 @@ CPP_DECL JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject* arg0,
 CPP_DECL JSC__JSValue JSC__JSValue__createTypeError(const ZigString* arg0, const ZigString* arg1, JSC__JSGlobalObject* arg2);
 CPP_DECL JSC__JSValue JSC__JSValue__createUninitializedUint8Array(JSC__JSGlobalObject* arg0, size_t arg1);
 CPP_DECL bool JSC__JSValue__deepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2);
+CPP_DECL bool JSC__JSValue__deepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2, bool arg3);
 CPP_DECL bool JSC__JSValue__eqlCell(JSC__JSValue JSValue0, JSC__JSCell* arg1);
 CPP_DECL bool JSC__JSValue__eqlValue(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
 CPP_DECL JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, unsigned char arg2);
@@ -573,12 +576,12 @@ CPP_DECL bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* arg
 
 #ifdef __cplusplus
 
-ZIG_DECL void Zig__GlobalObject__fetch(ErrorableResolvedSource* arg0, JSC__JSGlobalObject* arg1, ZigString* arg2, ZigString* arg3);
-ZIG_DECL ErrorableZigString Zig__GlobalObject__import(JSC__JSGlobalObject* arg0, ZigString* arg1, ZigString* arg2);
+ZIG_DECL void Zig__GlobalObject__fetch(ErrorableResolvedSource* arg0, JSC__JSGlobalObject* arg1, BunString* arg2, BunString* arg3);
+ZIG_DECL ErrorableString Zig__GlobalObject__import(JSC__JSGlobalObject* arg0, BunString* arg1, BunString* arg2);
 ZIG_DECL void Zig__GlobalObject__onCrash();
 ZIG_DECL JSC__JSValue Zig__GlobalObject__promiseRejectionTracker(JSC__JSGlobalObject* arg0, JSC__JSPromise* arg1, uint32_t JSPromiseRejectionOperation2);
 ZIG_DECL JSC__JSValue Zig__GlobalObject__reportUncaughtException(JSC__JSGlobalObject* arg0, JSC__Exception* arg1);
-ZIG_DECL void Zig__GlobalObject__resolve(ErrorableZigString* arg0, JSC__JSGlobalObject* arg1, ZigString* arg2, ZigString* arg3, ZigString* arg4);
+ZIG_DECL void Zig__GlobalObject__resolve(ErrorableString* arg0, JSC__JSGlobalObject* arg1, BunString* arg2, BunString* arg3, ZigString* arg4);
 
 #endif
 

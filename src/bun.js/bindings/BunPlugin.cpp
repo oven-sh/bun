@@ -49,7 +49,7 @@ static EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* glob
     auto clientData = WebCore::clientData(vm);
     auto& builtinNames = clientData->builtinNames();
     JSC::RegExpObject* filter = nullptr;
-    if (JSValue filterValue = filterObject->getIfPropertyExists(globalObject, builtinNames.filterPublicName())) {
+    if (JSValue filterValue = filterObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "filter"_s))) {
         if (filterValue.isCell() && filterValue.asCell()->inherits<JSC::RegExpObject>())
             filter = jsCast<JSC::RegExpObject*>(filterValue);
     }
@@ -101,7 +101,7 @@ static EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObject* g
     auto clientData = WebCore::clientData(vm);
     auto& builtinNames = clientData->builtinNames();
     JSC::RegExpObject* filter = nullptr;
-    if (JSValue filterValue = filterObject->getIfPropertyExists(globalObject, builtinNames.filterPublicName())) {
+    if (JSValue filterValue = filterObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "filter"_s))) {
         if (filterValue.isCell() && filterValue.asCell()->inherits<JSC::RegExpObject>())
             filter = jsCast<JSC::RegExpObject*>(filterValue);
     }
@@ -366,15 +366,15 @@ JSFunction* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, String& pa
     return nullptr;
 }
 
-EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, ZigString* namespaceString, ZigString* path)
+EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path)
 {
-    Group* groupPtr = this->group(namespaceString ? Zig::toString(*namespaceString) : String());
+    Group* groupPtr = this->group(namespaceString ? Bun::toWTFString(*namespaceString) : String());
     if (groupPtr == nullptr) {
         return JSValue::encode(jsUndefined());
     }
     Group& group = *groupPtr;
 
-    auto pathString = Zig::toString(*path);
+    auto pathString = Bun::toWTFString(*path);
 
     JSC::JSFunction* function = group.find(globalObject, pathString);
     if (!function) {
@@ -428,9 +428,9 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, ZigStri
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 
-EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, ZigString* namespaceString, ZigString* path, ZigString* importer)
+EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* importer)
 {
-    Group* groupPtr = this->group(namespaceString ? Zig::toString(*namespaceString) : String());
+    Group* groupPtr = this->group(namespaceString ? Bun::toWTFString(*namespaceString) : String());
     if (groupPtr == nullptr) {
         return JSValue::encode(jsUndefined());
     }
@@ -443,7 +443,7 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, ZigS
 
     auto& callbacks = group.callbacks;
 
-    WTF::String pathString = Zig::toString(*path);
+    WTF::String pathString = Bun::toWTFString(*path);
     for (size_t i = 0; i < filters.size(); i++) {
         if (!filters[i].get()->match(globalObject, pathString, 0)) {
             continue;
@@ -461,10 +461,10 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, ZigS
         auto& builtinNames = clientData->builtinNames();
         paramsObject->putDirect(
             vm, clientData->builtinNames().pathPublicName(),
-            Zig::toJSStringValue(*path, globalObject));
+            Bun::toJS(globalObject, *path));
         paramsObject->putDirect(
             vm, clientData->builtinNames().importerPublicName(),
-            Zig::toJSStringValue(*importer, globalObject));
+            Bun::toJS(globalObject, *importer));
         arguments.append(paramsObject);
 
         auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -515,12 +515,12 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, ZigS
 
 } // namespace Zig
 
-extern "C" JSC::EncodedJSValue Bun__runOnResolvePlugins(Zig::GlobalObject* globalObject, ZigString* namespaceString, ZigString* path, ZigString* from, BunPluginTarget target)
+extern "C" JSC::EncodedJSValue Bun__runOnResolvePlugins(Zig::GlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* from, BunPluginTarget target)
 {
     return globalObject->onResolvePlugins[target].run(globalObject, namespaceString, path, from);
 }
 
-extern "C" JSC::EncodedJSValue Bun__runOnLoadPlugins(Zig::GlobalObject* globalObject, ZigString* namespaceString, ZigString* path, BunPluginTarget target)
+extern "C" JSC::EncodedJSValue Bun__runOnLoadPlugins(Zig::GlobalObject* globalObject, BunString* namespaceString, BunString* path, BunPluginTarget target)
 {
     return globalObject->onLoadPlugins[target].run(globalObject, namespaceString, path);
 }

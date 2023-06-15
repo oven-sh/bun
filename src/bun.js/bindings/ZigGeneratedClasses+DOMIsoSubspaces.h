@@ -5,6 +5,9 @@ std::unique_ptr<IsoSubspace> m_subspaceForBuildMessageConstructor;std::unique_pt
 std::unique_ptr<IsoSubspace> m_subspaceForCryptoHasherConstructor;std::unique_ptr<IsoSubspace> m_subspaceForDirent;
 std::unique_ptr<IsoSubspace> m_subspaceForDirentConstructor;std::unique_ptr<IsoSubspace> m_subspaceForExpect;
 std::unique_ptr<IsoSubspace> m_subspaceForExpectConstructor;std::unique_ptr<IsoSubspace> m_subspaceForExpectAny;
+std::unique_ptr<IsoSubspace> m_subspaceForExpectAnything;
+std::unique_ptr<IsoSubspace> m_subspaceForExpectStringContaining;
+std::unique_ptr<IsoSubspace> m_subspaceForExpectStringMatching;
 std::unique_ptr<IsoSubspace> m_subspaceForFileSystemRouter;
 std::unique_ptr<IsoSubspace> m_subspaceForFileSystemRouterConstructor;std::unique_ptr<IsoSubspace> m_subspaceForListener;
 std::unique_ptr<IsoSubspace> m_subspaceForMD4;

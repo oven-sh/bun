@@ -217,7 +217,7 @@ pub const ThreadPool = struct {
 
         deinit_task: ThreadPoolLib.Task = .{ .callback = deinitCallback },
 
-        temporary_arena: std.heap.ArenaAllocator = undefined,
+        temporary_arena: @import("root").bun.ArenaAllocator = undefined,
         stmt_list: LinkerContext.StmtList = undefined,
 
         pub fn deinitCallback(task: *ThreadPoolLib.Task) void {
@@ -301,7 +301,7 @@ pub const ThreadPool = struct {
             this.data.bundler.linker.resolver = &this.data.bundler.resolver;
             this.data.bundler.macro_context = js_ast.Macro.MacroContext.init(&this.data.bundler);
             this.data.macro_context = this.data.bundler.macro_context.?;
-            this.temporary_arena = std.heap.ArenaAllocator.init(this.allocator);
+            this.temporary_arena = @import("root").bun.ArenaAllocator.init(this.allocator);
             this.stmt_list = LinkerContext.StmtList.init(this.allocator);
 
             const CacheSet = @import("../cache.zig");
@@ -3793,7 +3793,7 @@ const LinkerContext = struct {
 
         var stack_fallback = std.heap.stackFallback(4096, this.allocator);
         var stack_all = stack_fallback.get();
-        var arena = std.heap.ArenaAllocator.init(stack_all);
+        var arena = @import("root").bun.ArenaAllocator.init(stack_all);
         defer arena.deinit();
 
         var temp_allocator = arena.allocator();
@@ -6407,7 +6407,7 @@ const LinkerContext = struct {
 
         defer chunk.renamer.deinit(bun.default_allocator);
 
-        var arena = std.heap.ArenaAllocator.init(worker.allocator);
+        var arena = @import("root").bun.ArenaAllocator.init(worker.allocator);
         defer arena.deinit();
 
         // Also generate the cross-chunk binding code

@@ -11,6 +11,7 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const ErrorableString = bun.JSC.ErrorableString;
 const Arena = @import("../mimalloc_arena.zig").Arena;
 const C = bun.C;
 const NetworkThread = @import("root").bun.HTTP.NetworkThread;
@@ -47,6 +48,7 @@ const WebCore = @import("root").bun.JSC.WebCore;
 const Request = WebCore.Request;
 const Response = WebCore.Response;
 const Headers = WebCore.Headers;
+const String = bun.String;
 const Fetch = WebCore.Fetch;
 const FetchEvent = WebCore.FetchEvent;
 const js = @import("root").bun.JSC.C;
@@ -447,6 +449,8 @@ pub const VirtualMachine = struct {
     modules: ModuleLoader.AsyncModule.Queue = .{},
     aggressive_garbage_collection: GCLevel = GCLevel.none,
 
+    parser_arena: ?@import("root").bun.ArenaAllocator = null,
+
     gc_controller: JSC.GarbageCollectionController = .{},
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
@@ -778,6 +782,7 @@ pub const VirtualMachine = struct {
             .ref_strings = JSC.RefString.Map.init(allocator),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .standalone_module_graph = graph,
+            .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -874,6 +879,7 @@ pub const VirtualMachine = struct {
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
+            .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -934,12 +940,16 @@ pub const VirtualMachine = struct {
         _ = VirtualMachine.get().ref_strings.remove(ref_string.hash);
     }
 
-    pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifier: []const u8, source_url: []const u8, hash_: ?u32) ResolvedSource {
-        var source = this.refCountedString(code, hash_, true);
+    pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifier: bun.String, source_url: []const u8, hash_: ?u32, comptime add_double_ref: bool) ResolvedSource {
+        var source = this.refCountedString(code, hash_, !add_double_ref);
+        if (add_double_ref) {
+            source.ref();
+            source.ref();
+        }
 
         return ResolvedSource{
-            .source_code = ZigString.init(source.slice()),
-            .specifier = ZigString.init(specifier),
+            .source_code = bun.String.init(source.impl),
+            .specifier = specifier,
             .source_url = ZigString.init(source_url),
             .hash = source.hash,
             .allocator = source,
@@ -961,6 +971,7 @@ pub const VirtualMachine = struct {
                 .allocator = this.allocator,
                 .ptr = input.ptr,
                 .len = input.len,
+                .impl = bun.String.createExternal(input, true, ref, &JSC.RefString.RefString__free).value.WTFStringImpl,
                 .hash = hash,
                 .ctx = this,
                 .onBeforeDeinit = VirtualMachine.clearRefString,
@@ -994,20 +1005,26 @@ pub const VirtualMachine = struct {
     pub fn fetchWithoutOnLoadPlugins(
         jsc_vm: *VirtualMachine,
         globalObject: *JSC.JSGlobalObject,
-        _specifier: string,
-        referrer: string,
+        _specifier: String,
+        referrer: String,
         log: *logger.Log,
         ret: *ErrorableResolvedSource,
         comptime flags: FetchFlags,
-    ) !ResolvedSource {
+    ) anyerror!ResolvedSource {
         std.debug.assert(VirtualMachine.isLoaded());
 
         if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier, log, comptime flags.disableTranspiling())) |builtin| {
             return builtin;
         }
-        var display_specifier = _specifier;
-        var specifier = ModuleLoader.normalizeSpecifier(jsc_vm, _specifier, &display_specifier);
-        var path = Fs.Path.init(specifier);
+        var display_specifier = _specifier.toUTF8(bun.default_allocator);
+        defer display_specifier.deinit();
+        var specifier_clone = _specifier.toUTF8(bun.default_allocator);
+        defer specifier_clone.deinit();
+        var display_slice = display_specifier.slice();
+        var specifier = ModuleLoader.normalizeSpecifier(jsc_vm, specifier_clone.slice(), &display_slice);
+        const referrer_clone = referrer.toUTF8(bun.default_allocator);
+        defer referrer_clone.deinit();
+        var path = Fs.Path.init(specifier_clone.slice());
         const loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
             if (strings.eqlLong(specifier, jsc_vm.main, true)) {
                 break :brk options.Loader.js;
@@ -1018,9 +1035,10 @@ pub const VirtualMachine = struct {
 
         return try ModuleLoader.transpileSourceCode(
             jsc_vm,
-            specifier,
-            display_specifier,
-            referrer,
+            specifier_clone.slice(),
+            display_slice,
+            referrer_clone.slice(),
+            _specifier,
             path,
             loader,
             log,
@@ -1214,10 +1232,10 @@ pub const VirtualMachine = struct {
     }
 
     pub fn resolveForAPI(
-        res: *ErrorableZigString,
+        res: *ErrorableString,
         global: *JSGlobalObject,
-        specifier: ZigString,
-        source: ZigString,
+        specifier: bun.String,
+        source: bun.String,
         query_string: *ZigString,
         is_esm: bool,
     ) void {
@@ -1225,10 +1243,10 @@ pub const VirtualMachine = struct {
     }
 
     pub fn resolveFilePathForAPI(
-        res: *ErrorableZigString,
+        res: *ErrorableString,
         global: *JSGlobalObject,
-        specifier: ZigString,
-        source: ZigString,
+        specifier: bun.String,
+        source: bun.String,
         query_string: *ZigString,
         is_esm: bool,
     ) void {
@@ -1236,10 +1254,10 @@ pub const VirtualMachine = struct {
     }
 
     pub fn resolve(
-        res: *ErrorableZigString,
+        res: *ErrorableString,
         global: *JSGlobalObject,
-        specifier: ZigString,
-        source: ZigString,
+        specifier: bun.String,
+        source: bun.String,
         query_string: *ZigString,
         is_esm: bool,
     ) void {
@@ -1255,10 +1273,10 @@ pub const VirtualMachine = struct {
     }
 
     fn resolveMaybeNeedsTrailingSlash(
-        res: *ErrorableZigString,
+        res: *ErrorableString,
         global: *JSGlobalObject,
-        specifier: ZigString,
-        source: ZigString,
+        specifier: bun.String,
+        source: bun.String,
         query_string: ?*ZigString,
         is_esm: bool,
         comptime is_a_file_path: bool,
@@ -1266,27 +1284,32 @@ pub const VirtualMachine = struct {
     ) void {
         var result = ResolveFunctionResult{ .path = "", .result = null };
         var jsc_vm = VirtualMachine.get();
-        if (jsc_vm.plugin_runner) |plugin_runner| {
-            if (PluginRunner.couldBePlugin(specifier.slice())) {
-                const namespace = PluginRunner.extractNamespace(specifier.slice());
-                const after_namespace = if (namespace.len == 0)
-                    specifier
-                else
-                    specifier.substring(namespace.len + 1, specifier.len);
+        const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
+        defer specifier_utf8.deinit();
 
-                if (plugin_runner.onResolveJSC(ZigString.init(namespace), after_namespace, source, .bun)) |resolved_path| {
+        const source_utf8 = source.toUTF8(bun.default_allocator);
+        defer source_utf8.deinit();
+        if (jsc_vm.plugin_runner) |plugin_runner| {
+            if (PluginRunner.couldBePlugin(specifier_utf8.slice())) {
+                const namespace = PluginRunner.extractNamespace(specifier_utf8.slice());
+                const after_namespace = if (namespace.len == 0)
+                    specifier_utf8.slice()
+                else
+                    specifier_utf8.slice()[namespace.len + 1 .. specifier_utf8.len];
+
+                if (plugin_runner.onResolveJSC(bun.String.init(namespace), bun.String.fromUTF8(after_namespace), source, .bun)) |resolved_path| {
                     res.* = resolved_path;
                     return;
                 }
             }
         }
 
-        if (JSC.HardcodedModule.Aliases.getWithEql(specifier, ZigString.eqlComptime)) |hardcoded| {
+        if (JSC.HardcodedModule.Aliases.getWithEql(specifier, bun.String.eqlComptime)) |hardcoded| {
             if (hardcoded.tag == .none) {
                 resolveMaybeNeedsTrailingSlash(
                     res,
                     global,
-                    ZigString.init(hardcoded.path),
+                    bun.String.init(hardcoded.path),
                     source,
                     query_string,
                     is_esm,
@@ -1296,7 +1319,7 @@ pub const VirtualMachine = struct {
                 return;
             }
 
-            res.* = ErrorableZigString.ok(ZigString.init(hardcoded.path));
+            res.* = ErrorableString.ok(bun.String.init(hardcoded.path));
             return;
         }
 
@@ -1311,7 +1334,7 @@ pub const VirtualMachine = struct {
             jsc_vm.bundler.linker.log = old_log;
             jsc_vm.bundler.resolver.log = old_log;
         }
-        _resolve(&result, global, specifier.slice(), normalizeSource(source.slice()), is_esm, is_a_file_path, realpath) catch |err_| {
+        _resolve(&result, global, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path, realpath) catch |err_| {
             var err = err_;
             const msg: logger.Msg = brk: {
                 var msgs: []logger.Msg = log.msgs.items;
@@ -1325,8 +1348,8 @@ pub const VirtualMachine = struct {
 
                 const printed = ResolveMessage.fmt(
                     jsc_vm.allocator,
-                    specifier.slice(),
-                    source.slice(),
+                    specifier_utf8.slice(),
+                    source_utf8.slice(),
                     err,
                 ) catch unreachable;
                 break :brk logger.Msg{
@@ -1337,13 +1360,13 @@ pub const VirtualMachine = struct {
                     ),
                     .metadata = .{
                         // import_kind is wrong probably
-                        .resolve = .{ .specifier = logger.BabyString.in(printed, specifier.slice()), .import_kind = .stmt },
+                        .resolve = .{ .specifier = logger.BabyString.in(printed, specifier_utf8.slice()), .import_kind = .stmt },
                     },
                 };
             };
 
             {
-                res.* = ErrorableZigString.err(err, ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source.slice()).asVoid());
+                res.* = ErrorableString.err(err, ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice()).asVoid());
             }
 
             return;
@@ -1353,7 +1376,7 @@ pub const VirtualMachine = struct {
             query.* = ZigString.init(result.query_string);
         }
 
-        res.* = ErrorableZigString.ok(ZigString.init(result.path));
+        res.* = ErrorableString.ok(bun.String.init(result.path));
     }
 
     // // This double prints
@@ -1368,28 +1391,20 @@ pub const VirtualMachine = struct {
 
     pub const main_file_name: string = "bun:main";
 
-    pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) void {
+    pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: bun.String, source: bun.String) callconv(.C) void {
         var jsc_vm: *VirtualMachine = if (comptime Environment.isLinux)
             VirtualMachine.get()
         else
             global.bunVM();
 
         var log = logger.Log.init(jsc_vm.bundler.allocator);
-        var spec = specifier.toSlice(jsc_vm.allocator);
-        defer spec.deinit();
-        var refer = source.toSlice(jsc_vm.allocator);
-        defer refer.deinit();
 
-        const result = if (!jsc_vm.bundler.options.disable_transpilation)
-            @call(.always_inline, fetchWithoutOnLoadPlugins, .{ jsc_vm, global, spec.slice(), refer.slice(), &log, ret, .transpile }) catch |err| {
+        const result = switch (!jsc_vm.bundler.options.disable_transpilation) {
+            inline else => |is_disabled| fetchWithoutOnLoadPlugins(jsc_vm, global, specifier, source, &log, ret, if (comptime is_disabled) .print_source_and_clone else .transpile) catch |err| {
                 processFetchLog(global, specifier, source, &log, ret, err);
                 return;
-            }
-        else
-            fetchWithoutOnLoadPlugins(jsc_vm, global, spec.slice(), refer.slice(), &log, ret, .print_source_and_clone) catch |err| {
-                processFetchLog(global, specifier, source, &log, ret, err);
-                return;
-            };
+            },
+        };
 
         if (log.errors > 0) {
             processFetchLog(global, specifier, source, &log, ret, error.LinkError);
@@ -1417,6 +1432,7 @@ pub const VirtualMachine = struct {
         var vm = get();
 
         if (vm.blobs) |blobs| {
+            const spec = specifier.toUTF8(bun.default_allocator);
             const specifier_blob = brk: {
                 if (strings.hasPrefix(spec.slice(), VirtualMachine.get().bundler.fs.top_level_dir)) {
                     break :brk spec.slice()[VirtualMachine.get().bundler.fs.top_level_dir.len..];
@@ -1425,16 +1441,16 @@ pub const VirtualMachine = struct {
             };
 
             if (vm.has_loaded) {
-                blobs.temporary.put(specifier_blob, .{ .ptr = result.source_code._unsafe_ptr_do_not_use, .len = result.source_code.len }) catch {};
+                blobs.temporary.put(specifier_blob, .{ .ptr = result.source_code.byteSlice().ptr, .len = result.source_code.length() }) catch {};
             } else {
-                blobs.persistent.put(specifier_blob, .{ .ptr = result.source_code._unsafe_ptr_do_not_use, .len = result.source_code.len }) catch {};
+                blobs.persistent.put(specifier_blob, .{ .ptr = result.source_code.byteSlice().ptr, .len = result.source_code.length() }) catch {};
             }
         }
 
         ret.success = true;
     }
 
-    pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: ZigString, referrer: ZigString, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
+    pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, referrer: bun.String, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
         switch (log.msgs.items.len) {
             0 => {
                 const msg: logger.Msg = brk: {
@@ -1443,13 +1459,13 @@ pub const VirtualMachine = struct {
                             .data = logger.rangeData(
                                 null,
                                 logger.Range.None,
-                                std.fmt.allocPrint(globalThis.allocator(), "Unexpected pending import in \"{s}\". To automatically install npm packages with Bun, please use an import statement instead of require() or dynamic import().\nThis error can also happen if dependencies import packages which are not referenced anywhere. Worst case, run `bun install` and opt-out of the node_modules folder until we come up with a better way to handle this error.", .{specifier.slice()}) catch unreachable,
+                                std.fmt.allocPrint(globalThis.allocator(), "Unexpected pending import in \"{}\". To automatically install npm packages with Bun, please use an import statement instead of require() or dynamic import().\nThis error can also happen if dependencies import packages which are not referenced anywhere. Worst case, run `bun install` and opt-out of the node_modules folder until we come up with a better way to handle this error.", .{specifier}) catch unreachable,
                             ),
                         };
                     }
 
                     break :brk logger.Msg{
-                        .data = logger.rangeData(null, logger.Range.None, std.fmt.allocPrint(globalThis.allocator(), "{s} while building {s}", .{ @errorName(err), specifier.slice() }) catch unreachable),
+                        .data = logger.rangeData(null, logger.Range.None, std.fmt.allocPrint(globalThis.allocator(), "{s} while building {}", .{ @errorName(err), specifier }) catch unreachable),
                     };
                 };
                 {
@@ -1466,7 +1482,7 @@ pub const VirtualMachine = struct {
                         globalThis,
                         globalThis.allocator(),
                         msg,
-                        referrer.slice(),
+                        referrer.toUTF8(bun.default_allocator).slice(),
                     ).asVoid(),
                 });
                 return;
@@ -1476,14 +1492,14 @@ pub const VirtualMachine = struct {
 
                 var errors = errors_stack[0..@min(log.msgs.items.len, errors_stack.len)];
 
-                for (log.msgs.items, 0..) |msg, i| {
-                    errors[i] = switch (msg.metadata) {
+                for (log.msgs.items, errors) |msg, *current| {
+                    current.* = switch (msg.metadata) {
                         .build => BuildMessage.create(globalThis, globalThis.allocator(), msg).asVoid(),
                         .resolve => ResolveMessage.create(
                             globalThis,
                             globalThis.allocator(),
                             msg,
-                            referrer.slice(),
+                            referrer.toUTF8(bun.default_allocator).slice(),
                         ).asVoid(),
                     };
                 }
@@ -1494,9 +1510,9 @@ pub const VirtualMachine = struct {
                         errors.ptr,
                         @intCast(u16, errors.len),
                         &ZigString.init(
-                            std.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{s}\"", .{
+                            std.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{}\"", .{
                                 errors.len,
-                                specifier.slice(),
+                                referrer,
                             }) catch unreachable,
                         ),
                     ).asVoid(),
@@ -1582,7 +1598,7 @@ pub const VirtualMachine = struct {
             // The contents of the node_modules bundle are lazy, so hopefully this should be pretty quick.
             if (this.node_modules != null and !this.has_loaded_node_modules) {
                 this.has_loaded_node_modules = true;
-                promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.static(bun_file_import_path));
+                promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.static(bun_file_import_path));
                 this.waitForPromise(JSC.AnyPromise{
                     .Internal = promise,
                 });
@@ -1627,7 +1643,7 @@ pub const VirtualMachine = struct {
                             return error.ModuleNotFound;
                         },
                     };
-                    promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(result.path().?.text));
+                    promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.fromBytes(result.path().?.text));
 
                     this.pending_internal_promise = promise;
                     JSValue.fromCell(promise).protect();
@@ -1663,11 +1679,11 @@ pub const VirtualMachine = struct {
             // only load preloads once
             this.preload.len = 0;
 
-            promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.static(main_file_name));
+            promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(main_file_name));
             this.pending_internal_promise = promise;
             JSC.JSValue.fromCell(promise).ensureStillAlive();
         } else {
-            promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(this.main));
+            promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(this.main));
             this.pending_internal_promise = promise;
             JSC.JSValue.fromCell(promise).ensureStillAlive();
         }
@@ -1743,7 +1759,7 @@ pub const VirtualMachine = struct {
     pub inline fn _loadMacroEntryPoint(this: *VirtualMachine, entry_path: string) *JSInternalPromise {
         var promise: *JSInternalPromise = undefined;
 
-        promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(entry_path));
+        promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(entry_path));
         this.waitForPromise(JSC.AnyPromise{
             .Internal = promise,
         });
@@ -2025,8 +2041,10 @@ pub const VirtualMachine = struct {
         )) |mapping| {
             var log = logger.Log.init(default_allocator);
             var errorable: ErrorableResolvedSource = undefined;
-            var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url.slice(), "", &log, &errorable, .print_source) catch return;
-            const code = original_source.source_code.slice();
+            var original_source = fetchWithoutOnLoadPlugins(this, this.global, bun.String.init(top.source_url), bun.String.empty, &log, &errorable, .print_source) catch return;
+            const code = original_source.source_code.toUTF8(bun.default_allocator);
+            defer code.deinit();
+
             top.position.line = mapping.original.lines;
             top.position.line_start = mapping.original.lines;
             top.position.line_stop = mapping.original.lines + 1;
@@ -2039,7 +2057,7 @@ pub const VirtualMachine = struct {
             top.position.expression_stop = mapping.original.columns + 1;
 
             if (strings.getLinesInText(
-                code,
+                code.slice(),
                 @intCast(u32, top.position.line),
                 JSC.ZigException.Holder.source_lines_count,
             )) |lines| {

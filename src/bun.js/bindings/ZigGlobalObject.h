@@ -41,6 +41,7 @@ class DOMWrapperWorld;
 
 #include "DOMConstructors.h"
 #include "BunPlugin.h"
+#include "JSMockFunction.h"
 
 namespace WebCore {
 class SubtleCrypto;
@@ -362,6 +363,7 @@ public:
     mutable WriteBarrier<Unknown> m_JSURLSearchParamsSetterValue;
     mutable WriteBarrier<Unknown> m_JSWebSocketSetterValue;
     mutable WriteBarrier<Unknown> m_JSDOMFormDataSetterValue;
+    mutable WriteBarrier<Unknown> m_BunCommonJSModuleValue;
 
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
 
@@ -387,6 +389,12 @@ public:
     BunPlugin::OnResolve onResolvePlugins[BunPluginTargetMax + 1] {};
     BunPluginTarget defaultBunPluginTarget = BunPluginTargetBun;
 
+    // This increases the cache hit rate for JSC::VM's SourceProvider cache
+    // It also avoids an extra allocation for the SourceProvider
+    // The key is a pointer to the source code
+    WTF::HashMap<uintptr_t, Ref<JSC::SourceProvider>> sourceProviderMap;
+    size_t reloadCount = 0;
+
     void reload();
 
     JSC::Structure* pendingVirtualModuleResultStructure() { return m_pendingVirtualModuleResultStructure.get(this); }
@@ -404,6 +412,8 @@ public:
     void* napiInstanceData = nullptr;
     void* napiInstanceDataFinalizer = nullptr;
     void* napiInstanceDataFinalizerHint = nullptr;
+
+    Bun::JSMockModule mockModule;
 
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 

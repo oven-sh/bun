@@ -2,6 +2,17 @@ import { define } from "../scripts/class-definitions";
 
 export default [
   define({
+    name: "ExpectAnything",
+    construct: false,
+    noConstructor: true,
+    call: true,
+    finalize: true,
+    JSType: "0b11101110",
+    configurable: false,
+    klass: {},
+    proto: {},
+  }),
+  define({
     name: "ExpectAny",
     construct: false,
     noConstructor: true,
@@ -9,6 +20,30 @@ export default [
     finalize: true,
     JSType: "0b11101110",
     values: ["constructorValue"],
+    configurable: false,
+    klass: {},
+    proto: {},
+  }),
+  define({
+    name: "ExpectStringContaining",
+    construct: false,
+    noConstructor: true,
+    call: true,
+    finalize: true,
+    JSType: "0b11101110",
+    values: ["stringValue"],
+    configurable: false,
+    klass: {},
+    proto: {},
+  }),
+  define({
+    name: "ExpectStringMatching",
+    construct: false,
+    noConstructor: true,
+    call: true,
+    finalize: true,
+    JSType: "0b11101110",
+    values: ["testValue"],
     configurable: false,
     klass: {},
     proto: {},
@@ -76,6 +111,10 @@ export default [
       toBe: {
         fn: "toBe",
         length: 1,
+      },
+      toHaveBeenCalled: {
+        fn: "toHaveBeenCalled",
+        length: 0,
       },
       toHaveBeenCalledTimes: {
         fn: "toHaveBeenCalledTimes",

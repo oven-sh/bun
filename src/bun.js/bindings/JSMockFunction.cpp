@@ -1106,6 +1106,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockReturnThis, (JSC::JSGlobalObject * gl
     }
 
     HANDLE_STATIC_CALL;
+
     pushImpl(thisObject, globalObject, JSMockImplementation::Kind::ReturnThis, jsUndefined());
 
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
@@ -1119,11 +1120,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockReturnValue, (JSC::JSGlobalObject * g
         throwTypeError(globalObject, scope, "Expected Mock"_s);
     }
 
-    if (callframe->argumentCount() < 1) {
-        pushImpl(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, jsUndefined());
-    } else {
-        pushImpl(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, callframe->argument(0));
-    }
+    pushImpl(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, callframe->argument(0));
 
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
 }
@@ -1137,32 +1134,21 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockReturnValueOnce, (JSC::JSGlobalObject
     }
 
     HANDLE_STATIC_CALL;
-    if (callframe->argumentCount() < 1) {
-        pushImplOnce(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, jsUndefined());
-    } else {
-        pushImplOnce(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, callframe->argument(0));
-    }
+
+    pushImplOnce(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, callframe->argument(0));
 
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
 }
-JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockResolvedValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockResolvedValue, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     JSMockFunction* thisObject = jsDynamicCast<JSMockFunction*>(callframe->thisValue().toThis(globalObject, JSC::ECMAMode::strict()));
     auto& vm = globalObject->vm();
-
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (UNLIKELY(!thisObject)) {
         throwTypeError(globalObject, scope, "Expected Mock"_s);
     }
 
-    HANDLE_STATIC_CALL;
-
-    if (callframe->argumentCount() < 1) {
-        pushImpl(thisObject, globalObject, JSMockImplementation::Kind::Promise, JSC::JSPromise::resolvedPromise(globalObject, jsUndefined()));
-    } else {
-        pushImpl(thisObject, globalObject, JSMockImplementation::Kind::Promise, JSC::JSPromise::resolvedPromise(globalObject, callframe->argument(0)));
-    }
+    pushImpl(thisObject, globalObject, JSMockImplementation::Kind::Promise, JSC::JSPromise::resolvedPromise(globalObject, callframe->argument(0)));
 
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
 }
@@ -1175,13 +1161,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockResolvedValueOnce, (JSC::JSGlobalObje
         throwTypeError(globalObject, scope, "Expected Mock"_s);
     }
 
-    HANDLE_STATIC_CALL;
-
-    if (callframe->argumentCount() < 1) {
-        pushImplOnce(thisObject, globalObject, JSMockImplementation::Kind::Promise, JSC::JSPromise::resolvedPromise(globalObject, jsUndefined()));
-    } else {
-        pushImplOnce(thisObject, globalObject, JSMockImplementation::Kind::Promise, JSC::JSPromise::resolvedPromise(globalObject, callframe->argument(0)));
-    }
+    pushImplOnce(thisObject, globalObject, JSMockImplementation::Kind::Promise, JSC::JSPromise::resolvedPromise(globalObject, callframe->argument(0)));
 
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
 }
@@ -1194,13 +1174,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockRejectedValue, (JSC::JSGlobalObject *
         throwTypeError(globalObject, scope, "Expected Mock"_s);
     }
 
-    HANDLE_STATIC_CALL;
-
-    if (callframe->argumentCount() < 1) {
-        pushImpl(thisObject, globalObject, JSMockImplementation::Kind::Promise, JSC::JSPromise::rejectedPromise(globalObject, jsUndefined()));
-    } else {
-        pushImpl(thisObject, globalObject, JSMockImplementation::Kind::Promise, JSC::JSPromise::rejectedPromise(globalObject, callframe->argument(0)));
-    }
+    pushImpl(thisObject, globalObject, JSMockImplementation::Kind::Promise, JSC::JSPromise::rejectedPromise(globalObject, callframe->argument(0)));
 
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
 }
@@ -1213,13 +1187,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockRejectedValueOnce, (JSC::JSGlobalObje
         throwTypeError(globalObject, scope, "Expected Mock"_s);
     }
 
-    HANDLE_STATIC_CALL;
-
-    if (callframe->argumentCount() < 1) {
-        pushImplOnce(thisObject, globalObject, JSMockImplementation::Kind::Promise, JSC::JSPromise::rejectedPromise(globalObject, jsUndefined()));
-    } else {
-        pushImplOnce(thisObject, globalObject, JSMockImplementation::Kind::Promise, JSC::JSPromise::resolvedPromise(globalObject, callframe->argument(0)));
-    }
+    pushImplOnce(thisObject, globalObject, JSMockImplementation::Kind::Promise, JSC::JSPromise::rejectedPromise(globalObject, callframe->argument(0)));
 
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
 }

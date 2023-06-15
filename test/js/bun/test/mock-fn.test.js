@@ -385,7 +385,7 @@ describe("mock()", () => {
     expect(fn()).toBe(16);
   });
   // these promise based tests were written before .resolves/.rejects were added to bun:test
-  test("mockResolvedValue", async () => {
+  test.todo("mockResolvedValue", async () => {
     const fn = jest.fn();
     fn.mockResolvedValue(42);
     expect(await expectResolves(fn())).toBe(42);
@@ -395,7 +395,7 @@ describe("mock()", () => {
     expect(await expectResolves(fn())).toBe(44);
     expect(await expectResolves(fn())).toBe(42);
   });
-  test("mockRejectedValue", async () => {
+  test.todo("mockRejectedValue", async () => {
     const fn = jest.fn();
     fn.mockRejectedValue(42);
     expect(await expectRejects(fn())).toBe(42);

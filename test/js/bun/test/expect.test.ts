@@ -355,11 +355,46 @@ describe("expect()", () => {
   });
 
   test("toIncludeRepeated()", () => {
-    expect("123").toIncludeRepeated("1", 1);
-    expect("abc abc").toIncludeRepeated("abc", 2);
-    expect("123").not.toIncludeRepeated("1", 2);
-    expect("abc abc").not.toIncludeRepeated("abc", 3);
+    // 0
+    expect("a").toIncludeRepeated("b", 0)
+    expect("b").not.toIncludeRepeated("b", 0);
+
+    // 1
+    expect("abc").toIncludeRepeated("a", 1);
+    expect("abc").not.toIncludeRepeated("d", 1);
+
+    // Any other number
+    expect("abc abc abc").toIncludeRepeated("abc", 1);
     expect("abc abc abc").toIncludeRepeated("abc", 2);
+    expect("abc abc abc").toIncludeRepeated("abc", 3);
+    expect("abc abc abc").not.toIncludeRepeated("abc", 4);
+
+    // Emojis/Unicode
+    expect("😘🥳😤😘🥳").toIncludeRepeated("😘", 1);
+    expect("😘🥳😤😘🥳").toIncludeRepeated("🥳", 2);
+    expect("😘🥳😤😘🥳").not.toIncludeRepeated("😘", 3);
+    expect("😘🥳😤😘🥳").not.toIncludeRepeated("😶‍🌫️", 1);
+
+    // Empty string
+    expect("").not.toIncludeRepeated("a", 1);
+
+    // if toIncludeRepeated() is called with a empty string, it should throw an error or else it segfaults
+    expect(() => expect("a").not.toIncludeRepeated("", 1)).toThrow()
+
+    // Just to make sure it doesn't throw an error
+    expect("").not.toIncludeRepeated("a", 1)
+    expect("").not.toIncludeRepeated("😶‍🌫️", 1)
+
+    // Expect them to throw an error
+    const tstErr = (y: any) => { return expect("").toIncludeRepeated("a", y) };
+
+    expect(() => tstErr(1.23)).toThrow();
+    expect(() => tstErr(Infinity)).toThrow();
+    expect(() => tstErr(NaN)).toThrow();
+    expect(() => tstErr(-0)).toThrow(); // -0 and below (-1, -2, ...)
+    expect(() => tstErr(null)).toThrow();
+    expect(() => tstErr(undefined)).toThrow();
+    expect(() => tstErr({})).toThrow();
   });
 
   test("toSatisfy()", () => {
@@ -379,6 +414,10 @@ describe("expect()", () => {
     // Inline functions
     expect([]).toSatisfy((value: unknown) => (value as unknown[]).length === 0);
     expect([]).not.toSatisfy((value: unknown) => (value as unknown[]).length > 0);
+
+    // Test errors
+    // @ts-expect-error
+    expect(() => expect(1).toSatisfy(() => new Error('Bun!'))).toThrow();
   });
 
   test("toStartWith()", () => {

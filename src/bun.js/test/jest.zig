@@ -3615,7 +3615,7 @@ pub const Expect = struct {
         const count = arguments[1];
         count.ensureStillAlive();
 
-        if (!count.isNumber()) {
+        if (!count.isAnyInt()) {
             globalThis.throw("toIncludeRepeated() requires the second argument to be a number", .{});
             return .zero;
         }
@@ -3636,7 +3636,28 @@ pub const Expect = struct {
         }
 
         const not = this.op.contains(.not);
-        var pass = std.mem.containsAtLeast(u8, expect_string.toString(globalThis).toSlice(globalThis, default_allocator).slice(), countAsNum, substring.toString(globalThis).toSlice(globalThis, default_allocator).slice());
+        var pass = false;
+
+        const _expectStringAsStr = expect_string.toSliceOrNull(globalThis) orelse return .zero;
+        const _subStringAsStr = substring.toSliceOrNull(globalThis) orelse return .zero;
+
+        defer {
+            _expectStringAsStr.deinit();
+            _subStringAsStr.deinit();
+        }
+
+        var expectStringAsStr = _expectStringAsStr.slice();
+        var subStringAsStr = _subStringAsStr.slice();
+
+        if (subStringAsStr.len == 0) {
+            globalThis.throw("toIncludeRepeated() requires the first argument to be a non-empty string", .{});
+            return .zero;
+        }
+
+        if (countAsNum == 0)
+            pass = !strings.contains(expectStringAsStr, subStringAsStr)
+        else
+            pass = std.mem.containsAtLeast(u8, expectStringAsStr, countAsNum, subStringAsStr);
 
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -3646,18 +3667,40 @@ pub const Expect = struct {
         const substring_fmt = substring.toFmt(globalThis, &formatter);
         const times_fmt = count.toFmt(globalThis, &formatter);
 
+        const received_line = "Received: <red>{any}<r>\n";
+
         if (not) {
-            const expected_line = "Expected to not include: <green>{any}<r> <green>{any}<r> times\n";
-            const received_line = "Received: <red>{any}<r>\n";
-            const fmt = comptime getSignature("toIncludeRepeated", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
-            globalThis.throwPretty(fmt, .{ substring_fmt, times_fmt, expect_string_fmt });
+            if (countAsNum == 0) {
+                const expected_line = "Expected to include: <green>{any}<r> \n";
+                const fmt = comptime getSignature("toIncludeRepeated", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
+                globalThis.throwPretty(fmt, .{ substring_fmt, expect_string_fmt });
+            } else if (countAsNum == 1) {
+                const expected_line = "Expected not to include: <green>{any}<r> \n";
+                const fmt = comptime getSignature("toIncludeRepeated", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
+                globalThis.throwPretty(fmt, .{ substring_fmt, expect_string_fmt });
+            } else {
+                const expected_line = "Expected not to include: <green>{any}<r> <green>{any}<r> times \n";
+                const fmt = comptime getSignature("toIncludeRepeated", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
+                globalThis.throwPretty(fmt, .{ substring_fmt, times_fmt, expect_string_fmt });
+            }
+
             return .zero;
         }
 
-        const expected_line = "Expected to include: <green>{any}<r> <green>{any}<r> times \n";
-        const received_line = "Received: <red>{any}<r>\n";
-        const fmt = comptime getSignature("toIncludeRepeated", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
-        globalThis.throwPretty(fmt, .{ substring_fmt, times_fmt, expect_string_fmt });
+        if (countAsNum == 0) {
+            const expected_line = "Expected to not include: <green>{any}<r>\n";
+            const fmt = comptime getSignature("toIncludeRepeated", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+            globalThis.throwPretty(fmt, .{ substring_fmt, expect_string_fmt });
+        } else if (countAsNum == 1) {
+            const expected_line = "Expected to include: <green>{any}<r>\n";
+            const fmt = comptime getSignature("toIncludeRepeated", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+            globalThis.throwPretty(fmt, .{ substring_fmt, expect_string_fmt });
+        } else {
+            const expected_line = "Expected to include: <green>{any}<r> <green>{any}<r> times \n";
+            const fmt = comptime getSignature("toIncludeRepeated", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+            globalThis.throwPretty(fmt, .{ substring_fmt, times_fmt, expect_string_fmt });
+        }
+
         return .zero;
     }
 
@@ -3669,7 +3712,7 @@ pub const Expect = struct {
         const arguments = arguments_.ptr[0..arguments_.len];
 
         if (arguments.len < 1) {
-            globalThis.throwInvalidArguments("toSatisfy() takes 1 argument", .{});
+            globalThis.throwInvalidArguments("toSatisfy() requires 1 argument", .{});
             return .zero;
         }
 
@@ -3680,36 +3723,48 @@ pub const Expect = struct {
 
         active_test_expectation_counter.actual += 1;
 
-        const right = arguments[0];
-        right.ensureStillAlive();
+        const predicate = arguments[0];
+        predicate.ensureStillAlive();
 
-        if (!right.jsType().isFunction()) {
+        if (!predicate.isCallable(globalThis.vm())) {
             globalThis.throw("toSatisfy() argument must be a function", .{});
             return .zero;
         }
 
-        const left = Expect.capturedValueGetCached(thisValue) orelse {
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
             globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
             return .zero;
         };
-        left.ensureStillAlive();
+        value.ensureStillAlive();
+
+        const result = predicate.call(globalThis, &.{value});
+
+        if (result.toError()) |err| {
+            var errors: [1]*anyopaque = undefined;
+            var _err = errors[0..errors.len];
+
+            _err[0] = err.asVoid();
+
+            const fmt = ZigString.init("toSatisfy() predicate threw an exception");
+            globalThis.vm().throwError(globalThis, globalThis.createAggregateError(_err.ptr, _err.len, &fmt));
+            return .zero;
+        }
 
         const not = this.op.contains(.not);
-        var pass = right.call(globalThis, &.{left}).toBoolean();
+        const pass = (result.isBoolean() and result.toBoolean()) != not;
 
-        if (not) pass = !pass;
         if (pass) return thisValue;
 
-        // handle failure
         var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+
         if (not) {
             const signature = comptime getSignature("toSatisfy", "<green>expected<r>", true);
             const fmt = signature ++ "\n\nExpected: not <green>{any}<r>\n";
             if (Output.enable_ansi_colors) {
-                globalThis.throw(Output.prettyFmt(fmt, true), .{right.toFmt(globalThis, &formatter)});
+                globalThis.throw(Output.prettyFmt(fmt, true), .{predicate.toFmt(globalThis, &formatter)});
                 return .zero;
             }
-            globalThis.throw(Output.prettyFmt(fmt, false), .{right.toFmt(globalThis, &formatter)});
+            globalThis.throw(Output.prettyFmt(fmt, false), .{predicate.toFmt(globalThis, &formatter)});
             return .zero;
         }
 
@@ -3719,15 +3774,15 @@ pub const Expect = struct {
 
         if (Output.enable_ansi_colors) {
             globalThis.throw(Output.prettyFmt(fmt, true), .{
-                right.toFmt(globalThis, &formatter),
-                left.toFmt(globalThis, &formatter),
+                predicate.toFmt(globalThis, &formatter),
+                value.toFmt(globalThis, &formatter),
             });
             return .zero;
         }
 
         globalThis.throw(Output.prettyFmt(fmt, false), .{
-            right.toFmt(globalThis, &formatter),
-            left.toFmt(globalThis, &formatter),
+            predicate.toFmt(globalThis, &formatter),
+            value.toFmt(globalThis, &formatter),
         });
 
         return .zero;

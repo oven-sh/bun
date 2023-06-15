@@ -21180,22 +21180,24 @@ fn NewParser_(
                         },
                         logger.Loc.Empty,
                     );
+                    const cjsGlobal = p.newSymbol(.unbound, "$_BunCommonJSModule_$") catch unreachable;
                     var call_args = allocator.alloc(Expr, 6) catch unreachable;
                     const this_module = p.newExpr(
                         E.Dot{
                             .name = "module",
-                            .target = p.newExpr(E.This{}, logger.Loc.Empty),
+                            .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
                             .name_loc = logger.Loc.Empty,
                         },
                         logger.Loc.Empty,
                     );
+
                     //
                     // (function(module, exports, require, __dirname, __filename) {}).call(this.exports, this.module, this.exports, this.require, __dirname, __filename)
                     call_args[0..6].* = .{
                         p.newExpr(
                             E.Dot{
                                 .name = "exports",
-                                .target = p.newExpr(E.This{}, logger.Loc.Empty),
+                                .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
                                 .name_loc = logger.Loc.Empty,
                             },
                             logger.Loc.Empty,
@@ -21204,7 +21206,7 @@ fn NewParser_(
                         p.newExpr(
                             E.Dot{
                                 .name = "exports",
-                                .target = p.newExpr(E.This{}, logger.Loc.Empty),
+                                .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
                                 .name_loc = logger.Loc.Empty,
                             },
                             logger.Loc.Empty,
@@ -21223,7 +21225,7 @@ fn NewParser_(
                                 .right = p.newExpr(
                                     E.Dot{
                                         .name = "require",
-                                        .target = p.newExpr(E.This{}, logger.Loc.Empty),
+                                        .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
                                         .name_loc = logger.Loc.Empty,
                                     },
                                     logger.Loc.Empty,
@@ -21234,7 +21236,7 @@ fn NewParser_(
                         p.newExpr(
                             E.Dot{
                                 .name = "__dirname",
-                                .target = p.newExpr(E.This{}, logger.Loc.Empty),
+                                .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
                                 .name_loc = logger.Loc.Empty,
                             },
                             logger.Loc.Empty,
@@ -21242,7 +21244,7 @@ fn NewParser_(
                         p.newExpr(
                             E.Dot{
                                 .name = "__filename",
-                                .target = p.newExpr(E.This{}, logger.Loc.Empty),
+                                .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
                                 .name_loc = logger.Loc.Empty,
                             },
                             logger.Loc.Empty,

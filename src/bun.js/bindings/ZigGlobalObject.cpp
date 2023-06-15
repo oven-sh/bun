@@ -3168,6 +3168,15 @@ extern "C" void Bun__setOnEachMicrotaskTick(JSC::VM* vm, void* ptr, void (*callb
     });
 }
 
+JSC_DEFINE_CUSTOM_GETTER(BunCommonJSModule_getter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    Zig::GlobalObject* bunGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
+    JSValue returnValue = bunGlobalObject->m_BunCommonJSModuleValue.get();
+    if (!returnValue) {
+        returnValue = jsUndefined();
+    }
+    return JSValue::encode(returnValue);
+}
 // This implementation works the same as setTimeout(myFunction, 0)
 // TODO: make it more efficient
 // https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate
@@ -3525,6 +3534,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "CloseEvent"_s), JSC::CustomGetterSetter::create(vm, JSCloseEvent_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "$_BunCommonJSModule_$"_s), JSC::CustomGetterSetter::create(vm, BunCommonJSModule_getter, nullptr),
+        JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     auto bufferAccessor = JSC::CustomGetterSetter::create(vm, JSBuffer_getter, JSBuffer_setter);
     auto realBufferAccessor = JSC::CustomGetterSetter::create(vm, JSBuffer_privateGetter, nullptr);
@@ -3935,6 +3947,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     }
 
     thisObject->visitGeneratedLazyClasses<Visitor>(thisObject, visitor);
+    visitor.append(thisObject->m_BunCommonJSModuleValue);
 
     ScriptExecutionContext* context = thisObject->scriptExecutionContext();
     visitor.addOpaqueRoot(context);

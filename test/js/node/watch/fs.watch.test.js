@@ -2,13 +2,15 @@ import fs from "fs";
 import path from "path";
 import { createTest } from "node-harness";
 import { tempDirWithFiles, bunRun, bunRunAsScript } from "harness";
+import { pathToFileURL } from "bun";
+
 const { describe, expect, test, createDoneDotAll } = createTest(import.meta.path);
 // Because macOS (and possibly other operating systems) can return a watcher
 // before it is actually watching, we need to repeat the operation to avoid
 // a race condition.
 function repeat(fn) {
-  setImmediate(fn);
-  const interval = setInterval(fn, 2000);
+  setTimeout(fn, 100);
+  const interval = setInterval(fn, 500);
   return interval;
 }
 const encodingFileName = `新建文夹件.txt`;
@@ -16,6 +18,7 @@ const testDir = tempDirWithFiles("watch", {
   "watch.txt": "hello",
   "relative.txt": "hello",
   "abort.txt": "hello",
+  "url.txt": "hello",
   [encodingFileName]: "hello",
 });
 
@@ -40,6 +43,67 @@ describe("fs.watch", () => {
     }
   });
 
+  test("add file/folder to folder", done => {
+    let count = 0;
+    const root = path.join(testDir, "add-directory");
+    try {
+      fs.mkdirSync(root);
+    } catch {}
+    const watcher = fs.watch(root, { signal: AbortSignal.timeout(3000) });
+    watcher.on("change", (event, filename) => {
+      count++;
+      try {
+        expect(event).toBe("rename");
+        expect(["new-file.txt", "new-folder.txt"]).toContain(filename);
+        if (count >= 2) done();
+      } catch (e) {
+        done(e);
+      }
+      watcher.close();
+    });
+    watcher.on("error", () => done(err));
+    watcher.on("close", () => {
+      clearInterval(interval);
+    });
+
+    const interval = repeat(() => {
+      fs.writeFileSync(path.join(root, "new-file.txt"), "hello");
+      fs.mkdirSync(path.join(root, "new-folder.txt"));
+      fs.rmdirSync(path.join(root, "new-folder.txt"));
+    });
+  }, 4000);
+
+  test("add file/folder to subfolder", done => {
+    let count = 0;
+    const root = path.join(testDir, "add-directory");
+    try {
+      fs.mkdirSync(root);
+    } catch {}
+    const subfolder = path.join(root, "subfolder");
+    fs.mkdirSync(subfolder);
+    const watcher = fs.watch(root, { recursive: true, signal: AbortSignal.timeout(3000) });
+    watcher.on("change", (event, filename) => {
+      count++;
+      try {
+        expect(event).toBe("rename");
+        expect(["new-file.txt", "new-folder.txt"]).toContain(path.basename(filename));
+        if (count >= 2) done();
+      } catch (e) {
+        done(e);
+      }
+      watcher.close();
+    });
+    watcher.on("error", () => done(err));
+    watcher.on("close", () => {
+      clearInterval(interval);
+    });
+
+    const interval = repeat(() => {
+      fs.writeFileSync(path.join(subfolder, "new-file.txt"), "hello");
+      fs.mkdirSync(path.join(subfolder, "new-folder.txt"));
+      fs.rmdirSync(path.join(subfolder, "new-folder.txt"));
+    });
+  }, 4000);
   test("should emit event when file is deleted", done => {
     const testsubdir = tempDirWithFiles("subdir", {
       "deleted.txt": "hello",
@@ -116,10 +180,13 @@ describe("fs.watch", () => {
     }
   });
 
-  // TODO: these encodings are broken
-  // "utf16le", "ucs2", "ucs-2", "latin1", "binary",
+  const encodings = ["utf8", "buffer", "hex", "ascii", "utf-8", "base64"];
+  const brokenEncodings = ["utf16le", "ucs2", "ucs-2", "latin1", "binary"];
 
-  test("should work with different encodings", done => {
+  test.todo(`should work with encodings ${brokenEncodings.join(", ")}`, done => {
+    done(new Error("TODO: implement"));
+  });
+  test(`should work with encodings ${encodings.join(", ")}`, done => {
     const createDone = createDoneDotAll(err => {
       watchers.forEach(w => w.close());
       clearInterval(interval);
@@ -129,7 +196,7 @@ describe("fs.watch", () => {
     const watchers = [];
     const filepath = path.join(testDir, encodingFileName);
 
-    ["utf8", "buffer", "hex", "ascii", "utf-8", "base64"].forEach(name => {
+    encodings.forEach(name => {
       const encodeDone = createDone();
       const encoded_filename =
         name !== "buffer" ? Buffer.from(encodingFileName, "utf8").toString(name) : Buffer.from(encodingFileName);
@@ -158,6 +225,34 @@ describe("fs.watch", () => {
     });
   }, 30000);
 
+  test.todo(
+    "should work with url",
+    done => {
+      const filepath = path.join(testDir, "url.txt");
+      try {
+        const watcher = fs.watch(pathToFileURL(filepath));
+        watcher.on("change", function (event, filename) {
+          try {
+            expect(event).toBe("change");
+            expect(filename).toBe("watch.txt");
+            done();
+          } catch (e) {
+            done(e);
+          } finally {
+            clearInterval(interval);
+            watcher.close();
+          }
+        });
+
+        const interval = repeat(() => {
+          fs.writeFileSync(filepath, "world");
+        });
+      } catch (e) {
+        done(e);
+      }
+    },
+    4000,
+  );
   test.todo(
     "should close when root is deleted",
     done => {

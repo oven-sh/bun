@@ -156,15 +156,15 @@ pub const FSWatcher = struct {
     ) void);
 
     fn addDirectory(ctx: *FSWatcher, fs_watcher: *FSWatcher.Watcher, fd: StoredFileDescriptorType, file_path: string, recursive: bool, buf: *[bun.MAX_PATH_BYTES]u8, is_entry_path: bool) !void {
-        var file_path_clone = bun.default_allocator.dupe(u8, file_path) catch unreachable;
+        var dir_path_clone = bun.default_allocator.dupe(u8, file_path) catch unreachable;
 
         if (is_entry_path) {
-            ctx.entry_path = file_path_clone;
-            ctx.entry_dir = file_path_clone;
+            ctx.entry_path = dir_path_clone;
+            ctx.entry_dir = dir_path_clone;
         } else {
-            ctx.file_paths.push(bun.default_allocator, file_path_clone) catch unreachable;
+            ctx.file_paths.push(bun.default_allocator, dir_path_clone) catch unreachable;
         }
-        fs_watcher.addDirectory(fd, file_path_clone, FSWatcher.Watcher.getHash(file_path), false) catch |err| {
+        fs_watcher.addDirectory(fd, dir_path_clone, FSWatcher.Watcher.getHash(file_path), false) catch |err| {
             ctx.deinit();
             fs_watcher.deinit(true);
             return err;
@@ -179,7 +179,7 @@ pub const FSWatcher = struct {
             fs_watcher.deinit(true);
             return err;
         }) |entry| {
-            var parts = [2]string{ file_path_clone, entry.name };
+            var parts = [2]string{ dir_path_clone, entry.name };
             var entry_path = Path.joinAbsStringBuf(
                 Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(),
                 buf,
@@ -198,7 +198,7 @@ pub const FSWatcher = struct {
             };
 
             if (fs_info.is_file) {
-                file_path_clone = bun.default_allocator.dupe(u8, entry_path) catch unreachable;
+                const file_path_clone = bun.default_allocator.dupe(u8, entry_path) catch unreachable;
 
                 ctx.file_paths.push(bun.default_allocator, file_path_clone) catch unreachable;
 
@@ -295,7 +295,7 @@ pub const FSWatcher = struct {
                     var file_hash: FSWatcher.Watcher.HashType = FSWatcher.Watcher.getHash(file_path);
 
                     if (event.op.write or event.op.delete or event.op.rename) {
-                        const event_type: FSWatchTask.EventType = if (event.op.delete or event.op.rename) .rename else .change;
+                        const event_type: FSWatchTask.EventType = if (event.op.delete or event.op.rename or event.op.move_to) .rename else .change;
                         // skip consecutive duplicates
                         if ((this.last_change_event.time_stamp == 0 or time_diff > 1) or this.last_change_event.event_type != event_type and this.last_change_event.hash != file_hash) {
                             this.last_change_event.time_stamp = time_stamp;
@@ -369,7 +369,7 @@ pub const FSWatcher = struct {
                         };
 
                         // skip consecutive duplicates
-                        const event_type: FSWatchTask.EventType = if (event.op.delete or event.op.rename or event.op.move_to) .rename else .change;
+                        const event_type: FSWatchTask.EventType = .rename; // renaming folders, creating folder or files will be always be rename
                         if ((this.last_change_event.time_stamp == 0 or time_diff > 1) or this.last_change_event.event_type != event_type and this.last_change_event.hash != file_hash) {
                             const relative_path = bun.default_allocator.dupe(u8, relative_slice) catch unreachable;
 

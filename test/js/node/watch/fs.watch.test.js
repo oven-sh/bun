@@ -1,9 +1,8 @@
 import fs from "fs";
 import path from "path";
+import { createTest } from "node-harness";
 import { tempDirWithFiles, bunRun, bunRunAsScript } from "harness";
-import { describe, expect, test } from "bun:test";
-import exp from "constants";
-
+const { describe, expect, test, createDoneDotAll } = createTest(import.meta.path);
 // Because macOS (and possibly other operating systems) can return a watcher
 // before it is actually watching, we need to repeat the operation to avoid
 // a race condition.
@@ -12,10 +11,12 @@ function repeat(fn) {
   const interval = setInterval(fn, 2000);
   return interval;
 }
+const encodingFileName = `新建文夹件.txt`;
 const testDir = tempDirWithFiles("watch", {
   "watch.txt": "hello",
   "relative.txt": "hello",
   "abort.txt": "hello",
+  [encodingFileName]: "hello",
 });
 
 describe("fs.watch", () => {
@@ -45,12 +46,16 @@ describe("fs.watch", () => {
     });
     const filepath = path.join(testsubdir, "deleted.txt");
     const watcher = fs.watch(testsubdir, function (event, filename) {
-      expect(event).toBe("rename");
-      expect(filename).toBe("deleted.txt");
-
-      clearInterval(interval);
-      watcher.close();
-      done();
+      try {
+        expect(event).toBe("rename");
+        expect(filename).toBe("deleted.txt");
+        done();
+      } catch (e) {
+        done(e);
+      } finally {
+        clearInterval(interval);
+        watcher.close();
+      }
     });
 
     const interval = repeat(() => {
@@ -65,11 +70,16 @@ describe("fs.watch", () => {
 
     const watcher = fs.watch(filepath);
     watcher.on("change", function (event, filename) {
-      expect(event).toBe("change");
-      expect(filename).toBe("watch.txt");
-      clearInterval(interval);
-      watcher.close();
-      done();
+      try {
+        expect(event).toBe("change");
+        expect(filename).toBe("watch.txt");
+        done();
+      } catch (e) {
+        done(e);
+      } finally {
+        clearInterval(interval);
+        watcher.close();
+      }
     });
 
     const interval = repeat(() => {
@@ -97,12 +107,56 @@ describe("fs.watch", () => {
   test("should error on invalid path", done => {
     try {
       fs.watch(path.join(testDir, "404.txt"));
+      done(new Error("should not reach here"));
     } catch (err) {
       expect(err).toBeInstanceOf(Error);
       expect(err.code).toBe("ENOENT");
+      expect(err.syscall).toBe("watch");
       done();
     }
   });
+
+  // TODO: these encodings are broken
+  // "utf16le", "ucs2", "ucs-2", "latin1", "binary",
+
+  test("should work with different encodings", done => {
+    const createDone = createDoneDotAll(err => {
+      watchers.forEach(w => w.close());
+      clearInterval(interval);
+      done(err);
+    });
+
+    const watchers = [];
+    const filepath = path.join(testDir, encodingFileName);
+
+    ["utf8", "buffer", "hex", "ascii", "utf-8", "base64"].forEach(name => {
+      const encodeDone = createDone();
+      const encoded_filename =
+        name !== "buffer" ? Buffer.from(encodingFileName, "utf8").toString(name) : Buffer.from(encodingFileName);
+      watchers.push(
+        fs.watch(filepath, { encoding: name }, (event, filename) => {
+          try {
+            expect(event).toBe("change");
+
+            if (name !== "buffer") {
+              expect(filename).toBe(encoded_filename);
+            } else {
+              expect(filename).toBeInstanceOf(Buffer);
+              expect(filename.toString("utf8")).toBe(encodingFileName);
+            }
+
+            encodeDone();
+          } catch (e) {
+            encodeDone(e);
+          }
+        }),
+      );
+    });
+
+    const interval = repeat(() => {
+      fs.writeFileSync(filepath, "world");
+    });
+  }, 30000);
 
   test.todo(
     "should close when root is deleted",

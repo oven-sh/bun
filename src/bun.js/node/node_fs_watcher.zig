@@ -3,6 +3,8 @@ const JSC = @import("root").bun.JSC;
 const bun = @import("root").bun;
 const Fs = @import("../../fs.zig");
 const Path = @import("../../resolver/resolve_path.zig");
+const Encoder = JSC.WebCore.Encoder;
+
 const VirtualMachine = JSC.VirtualMachine;
 const EventLoop = JSC.EventLoop;
 const PathLike = JSC.Node.PathLike;
@@ -650,8 +652,8 @@ pub const FSWatcher = struct {
                             else if (this.encoding == .utf8) {
                                 filename = JSC.ZigString.fromUTF8(file_name).toValueGC(globalThis);
                             } else {
-                                // TODO: this is correct?
-                                filename = JSC.ZigString.fromUTF8(JSC.ZigString.fromUTF8(file_name).encode(this.encoding)).toValue(globalThis);
+                                // convert to desired encoding
+                                filename = Encoder.toStringAtRuntime(file_name.ptr, file_name.len, globalThis, this.encoding);
                             }
                         }
                         var args = [_]JSC.JSValue{

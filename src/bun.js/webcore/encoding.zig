@@ -802,7 +802,20 @@ pub const Encoder = struct {
     // pub fn writeUTF16AsUTF8(utf16: [*]const u16, len: usize, to: [*]u8, to_len: usize) callconv(.C) i32 {
     //     return @intCast(i32, strings.copyUTF16IntoUTF8(to[0..to_len], []const u16, utf16[0..len], true).written);
     // }
+    pub fn toStringAtRuntime(input: [*]const u8, len: usize, globalObject: *JSGlobalObject, encoding: JSC.Node.Encoding) JSValue {
+        return switch (encoding) {
+            .ucs2 => toString(input, len, globalObject, .utf16le),
+            .utf16le => toString(input, len, globalObject, .utf16le),
+            .utf8 => toString(input, len, globalObject, .utf8),
+            .ascii => toString(input, len, globalObject, .ascii),
+            .hex => toString(input, len, globalObject, .hex),
+            .base64 => toString(input, len, globalObject, .base64),
+            .base64url => toString(input, len, globalObject, .base64url),
 
+            // treat everything else as utf8
+            else => toString(input, len, globalObject, .utf8),
+        };
+    }
     pub fn toString(input_ptr: [*]const u8, len: usize, global: *JSGlobalObject, comptime encoding: JSC.Node.Encoding) JSValue {
         if (len == 0)
             return ZigString.Empty.toValue(global);

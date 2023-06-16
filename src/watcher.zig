@@ -411,12 +411,12 @@ pub fn NewWatcher(comptime ContextType: type) type {
         }
 
         pub fn deinit(this: *Watcher, close_descriptors: bool) void {
-            this.running = false;
             this.close_descriptors = close_descriptors;
             if (this.watchloop_handle != null) {
+                this.running = false;
                 std.Thread.join(this.thread);
             } else {
-                if (this.close_descriptors) {
+                if (this.close_descriptors and this.running) {
                     const fds = this.watchlist.items(.fd);
                     for (fds) |fd| {
                         std.os.close(fd);

@@ -18,12 +18,21 @@ pub const FSWatcher = struct {
     pub const Watcher = watcher.NewWatcher(*FSWatcher);
     const log = Output.scoped(.FSWatcher, false);
 
+    pub const ChangeEvent = struct {
+        hash: Watcher.HashType = 0,
+        event_type: FSWatchTask.EventType = .change,
+        time_stamp: i64 = 0,
+    };
+
     onAccept: std.ArrayHashMapUnmanaged(FSWatcher.Watcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
     ctx: *VirtualMachine,
     js_watcher: ?*JSObject = null,
     watcher_instance: ?*FSWatcher.Watcher = null,
     verbose: bool = false,
     file_paths: bun.BabyList(string) = .{},
+    entry_path: ?string = null,
+    entry_dir: string = "",
+    last_change_event: ChangeEvent = .{},
 
     pub fn toJS(this: *FSWatcher) JSC.JSValue {
         return if (this.js_watcher) |js| js.js_this else JSC.JSValue.jsUndefined();
@@ -42,6 +51,10 @@ pub const FSWatcher = struct {
             bun.default_allocator.destroy(file_path);
         }
         this.file_paths.deinitWithAllocator(bun.default_allocator);
+        if (this.entry_path) |path| {
+            this.entry_path = null;
+            bun.default_allocator.destroy(path);
+        }
         bun.default_allocator.destroy(this);
     }
 
@@ -140,11 +153,15 @@ pub const FSWatcher = struct {
         specifier: []const u8,
     ) void);
 
-    fn addDirectory(ctx: *FSWatcher, fs_watcher: *FSWatcher.Watcher, fd: StoredFileDescriptorType, file_path: string, recursive: bool, buf: *[bun.MAX_PATH_BYTES]u8) !void {
-        var file_path_clone = bun.default_allocator.alloc(u8, file_path.len) catch unreachable;
-        bun.copy(u8, file_path_clone, file_path);
-        ctx.file_paths.push(bun.default_allocator, file_path_clone) catch unreachable;
+    fn addDirectory(ctx: *FSWatcher, fs_watcher: *FSWatcher.Watcher, fd: StoredFileDescriptorType, file_path: string, recursive: bool, buf: *[bun.MAX_PATH_BYTES]u8, is_entry_path: bool) !void {
+        var file_path_clone = bun.default_allocator.dupe(u8, file_path) catch unreachable;
 
+        if (is_entry_path) {
+            ctx.entry_path = file_path_clone;
+            ctx.entry_dir = file_path_clone;
+        } else {
+            ctx.file_paths.push(bun.default_allocator, file_path_clone) catch unreachable;
+        }
         fs_watcher.addDirectory(fd, file_path_clone, FSWatcher.Watcher.getHash(file_path), false) catch |err| {
             ctx.deinit();
             fs_watcher.deinit(true);
@@ -179,8 +196,8 @@ pub const FSWatcher = struct {
             };
 
             if (fs_info.is_file) {
-                file_path_clone = bun.default_allocator.alloc(u8, entry_path.len) catch unreachable;
-                bun.copy(u8, file_path_clone, entry_path);
+                file_path_clone = bun.default_allocator.dupe(u8, entry_path) catch unreachable;
+
                 ctx.file_paths.push(bun.default_allocator, file_path_clone) catch unreachable;
 
                 fs_watcher.addFile(fs_info.fd, file_path_clone, FSWatcher.Watcher.getHash(entry_path), options.Loader.file, 0, null, false) catch |err| {
@@ -190,7 +207,7 @@ pub const FSWatcher = struct {
                 };
             } else {
                 if (recursive) {
-                    addDirectory(ctx, fs_watcher, fs_info.fd, entry_path, recursive, buf) catch |err| {
+                    addDirectory(ctx, fs_watcher, fs_info.fd, entry_path, recursive, buf, false) catch |err| {
                         ctx.deinit();
                         fs_watcher.deinit(true);
                         return err;
@@ -219,10 +236,12 @@ pub const FSWatcher = struct {
     ) void {
         var slice = watchlist.slice();
         const file_paths = slice.items(.file_path);
+
         var counts = slice.items(.count);
         const kinds = slice.items(.kind);
         const hashes = slice.items(.hash);
         const parents = slice.items(.parent_hash);
+        var _on_file_update_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
         var ctx = this.watcher_instance.?;
         defer ctx.flushEvictions();
@@ -239,6 +258,9 @@ pub const FSWatcher = struct {
             .ctx = this,
         };
         defer current_task.enqueue();
+
+        const time_stamp = std.time.milliTimestamp();
+        const time_diff = time_stamp - this.last_change_event.time_stamp;
 
         for (events) |event| {
             const file_path = file_paths[event.index];
@@ -268,15 +290,25 @@ pub const FSWatcher = struct {
                         );
                     }
 
-                    if (this.verbose)
-                        Output.prettyErrorln("<r><d>File changed: {s}<r>", .{fs.relativeTo(file_path)});
+                    var file_hash: FSWatcher.Watcher.HashType = FSWatcher.Watcher.getHash(file_path);
 
                     if (event.op.write or event.op.delete or event.op.rename) {
-                        // if is deleted we actually emit as rename like node.js
-                        if (event.op.delete or event.op.rename) {
-                            current_task.append(file_path, .rename, false);
-                        } else {
-                            current_task.append(file_path, .change, false);
+                        const event_type: FSWatchTask.EventType = if (event.op.delete or event.op.rename) .rename else .change;
+                        // skip consecutive duplicates
+                        if ((this.last_change_event.time_stamp == 0 or time_diff > 1) or this.last_change_event.event_type != event_type and this.last_change_event.hash != file_hash) {
+                            this.last_change_event.time_stamp = time_stamp;
+                            this.last_change_event.event_type = event_type;
+                            this.last_change_event.hash = file_hash;
+
+                            const relative_slice = fs.relative(this.entry_dir, file_path);
+
+                            if (this.verbose)
+                                Output.prettyErrorln("<r><d>File changed: {s}<r>", .{relative_slice});
+
+                            const relative_path = bun.default_allocator.dupe(u8, relative_slice) catch unreachable;
+
+                            // if is deleted we actually emit as rename like node.js
+                            current_task.append(relative_path, event_type, true);
                         }
                     }
                 },
@@ -311,8 +343,6 @@ pub const FSWatcher = struct {
                         break :brk event.names(changed_files);
                     };
 
-                    var last_file_hash: FSWatcher.Watcher.HashType = std.math.maxInt(FSWatcher.Watcher.HashType);
-
                     for (affected) |changed_name_| {
                         const changed_name: []const u8 = if (comptime Environment.isMac)
                             changed_name_
@@ -320,37 +350,40 @@ pub const FSWatcher = struct {
                             bun.asByteSlice(changed_name_.?);
                         if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
 
-                        var file_hash: FSWatcher.Watcher.HashType = last_file_hash;
-                        const abs_path: string = brk: {
+                        var file_hash: FSWatcher.Watcher.HashType = 0;
+                        const relative_slice: string = brk: {
                             var file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
-                            const file_path_without_trailing_slash_buf = bun.default_allocator.alloc(u8, file_path_without_trailing_slash.len + changed_name.len + 1) catch unreachable;
 
-                            @memcpy(file_path_without_trailing_slash_buf.ptr, file_path_without_trailing_slash.ptr, file_path_without_trailing_slash.len);
-                            file_path_without_trailing_slash_buf[file_path_without_trailing_slash.len] = std.fs.path.sep;
+                            @memcpy(&_on_file_update_path_buf, file_path_without_trailing_slash.ptr, file_path_without_trailing_slash.len);
+                            _on_file_update_path_buf[file_path_without_trailing_slash.len] = std.fs.path.sep;
 
-                            @memcpy(file_path_without_trailing_slash_buf[file_path_without_trailing_slash.len + 1 ..].ptr, changed_name.ptr, changed_name.len);
-                            const path_slice = file_path_without_trailing_slash_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
+                            @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len + 1 ..].ptr, changed_name.ptr, changed_name.len);
+                            const path_slice = _on_file_update_path_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
                             file_hash = FSWatcher.Watcher.getHash(path_slice);
 
-                            if (event.op.rename or event.op.move_to) {
-                                current_task.append(file_path_without_trailing_slash_buf, .rename, true);
-                            } else {
-                                current_task.append(file_path_without_trailing_slash_buf, .change, true);
-                            }
+                            const relative = fs.relative(this.entry_dir, path_slice);
 
-                            break :brk path_slice;
+                            break :brk relative;
                         };
 
                         // skip consecutive duplicates
-                        if (last_file_hash == file_hash) continue;
-                        last_file_hash = file_hash;
+                        const event_type: FSWatchTask.EventType = if (event.op.delete or event.op.rename or event.op.move_to) .rename else .change;
+                        if ((this.last_change_event.time_stamp == 0 or time_diff > 1) or this.last_change_event.event_type != event_type and this.last_change_event.hash != file_hash) {
+                            const relative_path = bun.default_allocator.dupe(u8, relative_slice) catch unreachable;
 
-                        if (this.verbose)
-                            Output.prettyErrorln("<r> <d>Dir change: {s}<r>", .{fs.relativeTo(abs_path)});
+                            this.last_change_event.time_stamp = time_stamp;
+                            this.last_change_event.event_type = event_type;
+                            this.last_change_event.hash = file_hash;
+
+                            current_task.append(relative_path, event_type, true);
+
+                            if (this.verbose)
+                                Output.prettyErrorln("<r> <d>Dir change: {s}<r>", .{relative_path});
+                        }
                     }
 
-                    if (this.verbose) {
-                        Output.prettyErrorln("<r> <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
+                    if (this.verbose and affected.len == 0) {
+                        Output.prettyErrorln("<r> <d>Dir change: {s}<r>", .{fs.relative(this.entry_dir, file_path)});
                     }
                 },
             }
@@ -544,21 +577,30 @@ pub const FSWatcher = struct {
             obj.js_this.protect();
 
             if (signal) |s| {
+                obj.signal = s.ref();
                 // already aborted?
                 if (s.aborted()) {
-                    const err = s.abortReason();
-                    obj.emitAbort(err);
+                    if (bun.uws.Loop.get()) |loop| {
+                        loop.nextTick(*JSObject, obj, JSObject._abortNextTick);
+                    }
                 } else {
                     // watch for abortion
-                    obj.signal = s.ref().listen(JSObject, obj, JSObject.emitAbort);
+                    _ = s.listen(JSObject, obj, JSObject.emitAbort);
                 }
             }
             return obj;
         }
 
+        fn _abortNextTick(this: *JSObject) void {
+            if (this.signal) |s| {
+                const err = s.abortReason();
+                this.emitAbort(err);
+            }
+        }
+
         pub fn emitAbort(this: *JSObject, err: JSC.JSValue) void {
             if (this.closed) return;
-            defer this.close(false);
+            defer this.close(true);
 
             err.ensureStillAlive();
 
@@ -579,7 +621,7 @@ pub const FSWatcher = struct {
         }
         pub fn emitError(this: *JSObject, err: string) void {
             if (this.closed) return;
-            defer this.close(false);
+            defer this.close(true);
 
             if (this.globalThis) |globalThis| {
                 if (this.js_this != .zero) {
@@ -665,13 +707,23 @@ pub const FSWatcher = struct {
                     signal.detach(this);
                 }
                 this.closed = true;
-                this.manager.stop(true);
-                this.js_this.unprotect();
-                this.unref();
                 if (emitEvent) {
                     this.emit("", "close");
                 }
+
+                this.manager.stop(true);
+
+                // will actually unref the watcher only nextTick so we receive close message
+                if (bun.uws.Loop.get()) |loop| {
+                    loop.nextTick(*JSObject, this, JSObject._detachNextTick);
+                }
             }
+        }
+
+        fn _detachNextTick(this: *JSObject) void {
+            this.js_this.unprotect();
+            this.js_this = .zero;
+            this.unref();
         }
 
         pub fn doClose(this: *JSObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -680,20 +732,21 @@ pub const FSWatcher = struct {
         }
 
         pub fn finalize(this: *JSObject) callconv(.C) void {
+            this.unref();
+
+            if (this.js_this != .zero) {
+                this.js_this.unprotect();
+                this.js_this = .zero;
+            }
+
             this.manager.ctx.js_watcher = null;
-            this.js_this = .zero;
             this.globalThis = null;
-            this.manager.stop(true);
 
             if (this.signal) |signal| {
                 this.signal = null;
                 signal.detach(this);
             }
 
-            if (this.persistent) {
-                this.persistent = false;
-                this.poll_ref.unref(this.manager.ctx.ctx);
-            }
             this.manager.ctx.deinit();
             this.manager.deinit(true);
             bun.default_allocator.destroy(this);
@@ -778,16 +831,18 @@ pub const FSWatcher = struct {
         ctx.watcher_instance = fs_watcher;
 
         if (fs_type.is_file) {
-            var file_path_clone = bun.default_allocator.alloc(u8, file_path.len) catch unreachable;
-            bun.copy(u8, file_path_clone, file_path);
-            ctx.file_paths.push(bun.default_allocator, file_path_clone) catch unreachable;
+            var file_path_clone = bun.default_allocator.dupe(u8, file_path) catch unreachable;
+
+            ctx.entry_path = file_path_clone;
+            ctx.entry_dir = std.fs.path.dirname(file_path_clone) orelse file_path_clone;
+
             fs_watcher.addFile(fs_type.fd, file_path_clone, FSWatcher.Watcher.getHash(file_path), options.Loader.file, 0, null, false) catch |err| {
                 ctx.deinit();
                 fs_watcher.deinit(true);
                 return err;
             };
         } else {
-            addDirectory(ctx, fs_watcher, fs_type.fd, file_path, args.recursive, &buf) catch |err| {
+            addDirectory(ctx, fs_watcher, fs_type.fd, file_path, args.recursive, &buf, true) catch |err| {
                 ctx.deinit();
                 fs_watcher.deinit(true);
                 return err;

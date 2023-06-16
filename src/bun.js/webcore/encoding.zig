@@ -811,7 +811,7 @@ pub const Encoder = struct {
             .hex => toString(input, len, globalObject, .hex),
             .base64 => toString(input, len, globalObject, .base64),
             .base64url => toString(input, len, globalObject, .base64url),
-
+            .latin1 => toString(input, len, globalObject, .latin1),
             // treat everything else as utf8
             else => toString(input, len, globalObject, .utf8),
         };

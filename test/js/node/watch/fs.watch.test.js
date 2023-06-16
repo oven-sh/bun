@@ -196,12 +196,7 @@ describe("fs.watch", () => {
     }
   });
 
-  const encodings = ["utf8", "buffer", "hex", "ascii", "base64", "utf16le", "ucs2"];
-  const brokenEncodings = ["latin1", "binary"];
-
-  test.todo(`should work with encodings ${brokenEncodings.join(", ")}`, done => {
-    done(new Error("TODO: implement"));
-  });
+  const encodings = ["utf8", "buffer", "hex", "ascii", "base64", "utf16le", "ucs2", "latin1", "binary"];
 
   test(`should work with encodings ${encodings.join(", ")}`, async () => {
     const watchers = [];

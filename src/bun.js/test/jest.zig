@@ -247,7 +247,7 @@ pub const TestRunner = struct {
         pub const ID = u32;
         pub const List = std.MultiArrayList(Test);
 
-        pub const Status = enum(u3) {https://github.com/oven-sh/bun/pull/3316/commits/82035c6ff6d479ec17b0f4ded18c08cfa0d908b3#diff-cb065bd9f1b454dc56d163a6f72bbd84d8d73fd50de0a96980a1b4e3d0da12acR3437
+        pub const Status = enum(u3) {
             pending,
             pass,
             fail,

@@ -20,4 +20,4 @@ watcher.on("error", err => {
 
 const interval = setInterval(() => {
   fs.writeFileSync("relative.txt", "world");
-}, 1000);
+}, 10);

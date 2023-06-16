@@ -405,16 +405,13 @@ pub fn NewWatcher(comptime ContextType: type) type {
             this.thread = try std.Thread.spawn(.{}, Watcher.watchLoop, .{this});
         }
 
-        pub fn stop(this: *Watcher, close_descriptors: bool) void {
-            this.running = false;
-            this.close_descriptors = close_descriptors;
-        }
-
         pub fn deinit(this: *Watcher, close_descriptors: bool) void {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+
             this.close_descriptors = close_descriptors;
             if (this.watchloop_handle != null) {
                 this.running = false;
-                std.Thread.join(this.thread);
             } else {
                 if (this.close_descriptors and this.running) {
                     const fds = this.watchlist.items(.fd);
@@ -423,9 +420,9 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     }
                 }
                 this.watchlist.deinit(this.allocator);
+                const allocator = this.allocator;
+                allocator.destroy(this);
             }
-            const allocator = this.allocator;
-            allocator.destroy(this);
         }
 
         // This must only be called from the watcher thread
@@ -439,8 +436,9 @@ pub fn NewWatcher(comptime ContextType: type) type {
             this._watchLoop() catch |err| {
                 this.watchloop_handle = null;
                 PlatformWatcher.stop();
-
-                this.ctx.onError(err);
+                if (this.running) {
+                    this.ctx.onError(err);
+                }
             };
 
             // deinit and close descriptors if needed
@@ -451,6 +449,9 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 }
             }
             this.watchlist.deinit(this.allocator);
+
+            const allocator = this.allocator;
+            allocator.destroy(this);
         }
 
         var evict_list_i: WatchItemIndex = 0;
@@ -573,8 +574,9 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
                     this.mutex.lock();
                     defer this.mutex.unlock();
-
-                    this.ctx.onFileUpdate(watchevents, this.changed_filepaths[0..watchevents.len], this.watchlist);
+                    if (this.running) {
+                        this.ctx.onFileUpdate(watchevents, this.changed_filepaths[0..watchevents.len], this.watchlist);
+                    }
                 }
             } else if (Environment.isLinux) {
                 restart: while (this.running) {
@@ -643,9 +645,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
                         this.mutex.lock();
                         defer this.mutex.unlock();
-
-                        this.ctx.onFileUpdate(all_events[0 .. last_event_index + 1], this.changed_filepaths[0 .. name_off + 1], this.watchlist);
-                        remaining_events -= slice.len;
+                        if (this.running) {
+                            this.ctx.onFileUpdate(all_events[0 .. last_event_index + 1], this.changed_filepaths[0 .. name_off + 1], this.watchlist);
+                            remaining_events -= slice.len;
+                        }
                     }
                 }
             }

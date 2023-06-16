@@ -1,16 +1,14 @@
 import fs from "fs";
 import path from "path";
-import { createTest } from "node-harness";
 import { tempDirWithFiles, bunRun, bunRunAsScript } from "harness";
 import { pathToFileURL } from "bun";
 
-const { describe, expect, test, createDoneDotAll } = createTest(import.meta.path);
+import { describe, expect, test } from "bun:test";
 // Because macOS (and possibly other operating systems) can return a watcher
 // before it is actually watching, we need to repeat the operation to avoid
 // a race condition.
 function repeat(fn) {
-  setTimeout(fn, 100);
-  const interval = setInterval(fn, 500);
+  const interval = setInterval(fn, 20);
   return interval;
 }
 const encodingFileName = `新建文夹件.txt`;
@@ -23,8 +21,7 @@ const testDir = tempDirWithFiles("watch", {
 });
 
 describe("fs.watch", () => {
-  // TODO: sometimes Subprocess never ends and test hangs
-  test.skip("non-persistent watcher should not block the event loop", done => {
+  test("non-persistent watcher should not block the event loop", done => {
     try {
       // https://github.com/joyent/node/issues/2293 - non-persistent watcher should not block the event loop
       bunRun(path.join(import.meta.dir, "fixtures", "persistent.js"));
@@ -33,8 +30,26 @@ describe("fs.watch", () => {
       done(e);
     }
   });
-  // TODO: sometimes Subprocess never ends and test hangs
-  test.skip("should work with relative files", done => {
+
+  test("watcher should close and not block the event loop", done => {
+    try {
+      bunRun(path.join(import.meta.dir, "fixtures", "close.js"));
+      done();
+    } catch (e) {
+      done(e);
+    }
+  });
+
+  test("unref watcher should not block the event loop", done => {
+    try {
+      bunRun(path.join(import.meta.dir, "fixtures", "unref.js"));
+      done();
+    } catch (e) {
+      done(e);
+    }
+  });
+
+  test("should work with relative files", done => {
     try {
       bunRunAsScript(testDir, path.join(import.meta.dir, "fixtures", "relative.js"));
       done();
@@ -49,21 +64,26 @@ describe("fs.watch", () => {
     try {
       fs.mkdirSync(root);
     } catch {}
+    let err = undefined;
     const watcher = fs.watch(root, { signal: AbortSignal.timeout(3000) });
     watcher.on("change", (event, filename) => {
       count++;
       try {
         expect(event).toBe("rename");
         expect(["new-file.txt", "new-folder.txt"]).toContain(filename);
-        if (count >= 2) done();
+        if (count >= 2) {
+          watcher.close();
+        }
       } catch (e) {
-        done(e);
+        err = e;
+        watcher.close();
       }
-      watcher.close();
     });
-    watcher.on("error", () => done(err));
+
+    watcher.on("error", e => (err = e));
     watcher.on("close", () => {
       clearInterval(interval);
+      done(err);
     });
 
     const interval = repeat(() => {
@@ -71,31 +91,35 @@ describe("fs.watch", () => {
       fs.mkdirSync(path.join(root, "new-folder.txt"));
       fs.rmdirSync(path.join(root, "new-folder.txt"));
     });
-  }, 4000);
+  });
 
   test("add file/folder to subfolder", done => {
     let count = 0;
-    const root = path.join(testDir, "add-directory");
+    const root = path.join(testDir, "add-subdirectory");
     try {
       fs.mkdirSync(root);
     } catch {}
     const subfolder = path.join(root, "subfolder");
     fs.mkdirSync(subfolder);
     const watcher = fs.watch(root, { recursive: true, signal: AbortSignal.timeout(3000) });
+    let err = undefined;
     watcher.on("change", (event, filename) => {
       count++;
       try {
         expect(event).toBe("rename");
         expect(["new-file.txt", "new-folder.txt"]).toContain(path.basename(filename));
-        if (count >= 2) done();
+        if (count >= 2) {
+          watcher.close();
+        }
       } catch (e) {
-        done(e);
+        err = e;
+        watcher.close();
       }
-      watcher.close();
     });
-    watcher.on("error", () => done(err));
+    watcher.on("error", () => (err = e));
     watcher.on("close", () => {
       clearInterval(interval);
+      done(err);
     });
 
     const interval = repeat(() => {
@@ -103,23 +127,28 @@ describe("fs.watch", () => {
       fs.mkdirSync(path.join(subfolder, "new-folder.txt"));
       fs.rmdirSync(path.join(subfolder, "new-folder.txt"));
     });
-  }, 4000);
+  });
+
   test("should emit event when file is deleted", done => {
     const testsubdir = tempDirWithFiles("subdir", {
       "deleted.txt": "hello",
     });
     const filepath = path.join(testsubdir, "deleted.txt");
+    let err = undefined;
     const watcher = fs.watch(testsubdir, function (event, filename) {
       try {
         expect(event).toBe("rename");
         expect(filename).toBe("deleted.txt");
-        done();
       } catch (e) {
-        done(e);
+        err = e;
       } finally {
         clearInterval(interval);
         watcher.close();
       }
+    });
+
+    watcher.once("close", () => {
+      done(err);
     });
 
     const interval = repeat(() => {
@@ -127,46 +156,33 @@ describe("fs.watch", () => {
       const fd = fs.openSync(filepath, "w");
       fs.closeSync(fd);
     });
-  }, 4000);
+  });
 
   test("should emit 'change' event when file is modified", done => {
     const filepath = path.join(testDir, "watch.txt");
 
     const watcher = fs.watch(filepath);
+    let err = undefined;
     watcher.on("change", function (event, filename) {
       try {
         expect(event).toBe("change");
         expect(filename).toBe("watch.txt");
-        done();
       } catch (e) {
-        done(e);
+        err = e;
       } finally {
         clearInterval(interval);
         watcher.close();
       }
     });
 
+    watcher.once("close", () => {
+      done(err);
+    });
+
     const interval = repeat(() => {
       fs.writeFileSync(filepath, "world");
     });
-  }, 4000);
-
-  test("Signal aborted after creating the watcher", done => {
-    const filepath = path.join(testDir, "abort.txt");
-
-    const ac = new AbortController();
-    const watcher = fs.watch(filepath, { signal: ac.signal });
-    watcher.once("close", () => done());
-    setImmediate(() => ac.abort());
-  }, 1000);
-
-  test("Signal aborted before creating the watcher", done => {
-    const filepath = path.join(testDir, "abort.txt");
-
-    const signal = AbortSignal.abort();
-    const watcher = fs.watch(filepath, { signal });
-    watcher.once("close", () => done());
-  }, 1000);
+  });
 
   test("should error on invalid path", done => {
     try {
@@ -180,42 +196,42 @@ describe("fs.watch", () => {
     }
   });
 
-  const encodings = ["utf8", "buffer", "hex", "ascii", "utf-8", "base64"];
-  const brokenEncodings = ["utf16le", "ucs2", "ucs-2", "latin1", "binary"];
+  const encodings = ["utf8", "buffer", "hex", "ascii", "base64", "utf16le", "ucs2"];
+  const brokenEncodings = ["latin1", "binary"];
 
   test.todo(`should work with encodings ${brokenEncodings.join(", ")}`, done => {
     done(new Error("TODO: implement"));
   });
-  test(`should work with encodings ${encodings.join(", ")}`, done => {
-    const createDone = createDoneDotAll(err => {
-      watchers.forEach(w => w.close());
-      clearInterval(interval);
-      done(err);
-    });
 
+  test(`should work with encodings ${encodings.join(", ")}`, async () => {
     const watchers = [];
     const filepath = path.join(testDir, encodingFileName);
 
+    const promises = [];
     encodings.forEach(name => {
-      const encodeDone = createDone();
       const encoded_filename =
         name !== "buffer" ? Buffer.from(encodingFileName, "utf8").toString(name) : Buffer.from(encodingFileName);
-      watchers.push(
-        fs.watch(filepath, { encoding: name }, (event, filename) => {
-          try {
-            expect(event).toBe("change");
 
-            if (name !== "buffer") {
-              expect(filename).toBe(encoded_filename);
-            } else {
-              expect(filename).toBeInstanceOf(Buffer);
-              expect(filename.toString("utf8")).toBe(encodingFileName);
-            }
+      promises.push(
+        new Promise((resolve, reject) => {
+          watchers.push(
+            fs.watch(filepath, { encoding: name }, (event, filename) => {
+              try {
+                expect(event).toBe("change");
 
-            encodeDone();
-          } catch (e) {
-            encodeDone(e);
-          }
+                if (name !== "buffer") {
+                  expect(filename).toBe(encoded_filename);
+                } else {
+                  expect(filename).toBeInstanceOf(Buffer);
+                  expect(filename.toString("utf8")).toBe(encodingFileName);
+                }
+
+                resolve();
+              } catch (e) {
+                reject(e);
+              }
+            }),
+          );
         }),
       );
     });
@@ -223,51 +239,186 @@ describe("fs.watch", () => {
     const interval = repeat(() => {
       fs.writeFileSync(filepath, "world");
     });
-  }, 30000);
 
-  test.todo(
-    "should work with url",
-    done => {
-      const filepath = path.join(testDir, "url.txt");
-      try {
-        const watcher = fs.watch(pathToFileURL(filepath));
-        watcher.on("change", function (event, filename) {
-          try {
-            expect(event).toBe("change");
-            expect(filename).toBe("watch.txt");
-            done();
-          } catch (e) {
-            done(e);
-          } finally {
+    try {
+      await Promise.all(promises);
+    } finally {
+      clearInterval(interval);
+      watchers.forEach(watcher => watcher.close());
+    }
+  });
+
+  test.todo("should work with url", done => {
+    const filepath = path.join(testDir, "url.txt");
+    try {
+      const watcher = fs.watch(pathToFileURL(filepath));
+      let err = undefined;
+      watcher.on("change", function (event, filename) {
+        try {
+          expect(event).toBe("change");
+          expect(filename).toBe("watch.txt");
+        } catch (e) {
+          err = e;
+        } finally {
+          clearInterval(interval);
+          watcher.close();
+        }
+      });
+
+      watcher.once("close", () => {
+        done(err);
+      });
+
+      const interval = repeat(() => {
+        fs.writeFileSync(filepath, "world");
+      });
+    } catch (e) {
+      done(e);
+    }
+  });
+
+  test("Signal aborted after creating the watcher", async () => {
+    const filepath = path.join(testDir, "abort.txt");
+
+    const ac = new AbortController();
+    const promise = new Promise((resolve, reject) => {
+      const watcher = fs.watch(filepath, { signal: ac.signal });
+      watcher.once("error", err => (err.message === "The operation was aborted." ? resolve() : reject(err)));
+      watcher.once("close", () => reject());
+    });
+    await Bun.sleep(10);
+    ac.abort();
+    await promise;
+  });
+
+  test("Signal aborted before creating the watcher", async () => {
+    const filepath = path.join(testDir, "abort.txt");
+
+    const signal = AbortSignal.abort();
+    await new Promise((resolve, reject) => {
+      const watcher = fs.watch(filepath, { signal });
+      watcher.once("error", err => (err.message === "The operation was aborted." ? resolve() : reject(err)));
+      watcher.once("close", () => reject());
+    });
+  });
+});
+
+describe("fs.promises.watchFile", () => {
+  test("add file/folder to folder", async () => {
+    let count = 0;
+    const root = path.join(testDir, "add-promise-directory");
+    try {
+      fs.mkdirSync(root);
+    } catch {}
+    let success = false;
+    let err = undefined;
+    try {
+      const ac = new AbortController();
+      const watcher = fs.promises.watch(root, { signal: ac.signal });
+
+      const interval = repeat(() => {
+        fs.writeFileSync(path.join(root, "new-file.txt"), "hello");
+        fs.mkdirSync(path.join(root, "new-folder.txt"));
+        fs.rmdirSync(path.join(root, "new-folder.txt"));
+      });
+
+      for await (const event of watcher) {
+        count++;
+        try {
+          expect(event.eventType).toBe("rename");
+          expect(["new-file.txt", "new-folder.txt"]).toContain(event.filename);
+
+          if (count >= 2) {
+            success = true;
             clearInterval(interval);
-            watcher.close();
+            ac.abort();
           }
-        });
-
-        const interval = repeat(() => {
-          fs.writeFileSync(filepath, "world");
-        });
-      } catch (e) {
-        done(e);
+        } catch (e) {
+          err = e;
+          clearInterval(interval);
+          ac.abort();
+        }
       }
-    },
-    4000,
-  );
-  test.todo(
-    "should close when root is deleted",
-    done => {
-      const root = path.join(testDir, "watched-directory");
-      try {
-        fs.mkdirSync(root);
-      } catch {}
-      const watcher = fs.watch(root, { signal: AbortSignal.timeout(3000) });
-      watcher.on("close", () => done());
-      watcher.on("error", () => done(err));
+    } catch (e) {
+      if (!success) {
+        throw err || e;
+      }
+    }
+  });
 
-      setTimeout(() => {
-        fs.mkdirSync(root);
-      }, 1000);
-    },
-    4000,
-  );
+  test("add file/folder to subfolder", async () => {
+    let count = 0;
+    const root = path.join(testDir, "add-promise-subdirectory");
+    try {
+      fs.mkdirSync(root);
+    } catch {}
+    const subfolder = path.join(root, "subfolder");
+    fs.mkdirSync(subfolder);
+    let success = false;
+    let err = undefined;
+
+    try {
+      const ac = new AbortController();
+      const watcher = fs.promises.watch(root, { recursive: true, signal: ac.signal });
+
+      const interval = repeat(() => {
+        fs.writeFileSync(path.join(subfolder, "new-file.txt"), "hello");
+        fs.mkdirSync(path.join(subfolder, "new-folder.txt"));
+        fs.rmdirSync(path.join(subfolder, "new-folder.txt"));
+      });
+      for await (const event of watcher) {
+        count++;
+        try {
+          expect(event.eventType).toBe("rename");
+          expect(["new-file.txt", "new-folder.txt"]).toContain(path.basename(event.filename));
+
+          if (count >= 2) {
+            success = true;
+            clearInterval(interval);
+            ac.abort();
+          }
+        } catch (e) {
+          err = e;
+          clearInterval(interval);
+          ac.abort();
+        }
+      }
+    } catch (e) {
+      if (!success) {
+        throw err || e;
+      }
+    }
+  });
+
+  test("Signal aborted after creating the watcher", async () => {
+    const filepath = path.join(testDir, "abort.txt");
+
+    const ac = new AbortController();
+    const watcher = fs.promises.watch(filepath, { signal: ac.signal });
+
+    const promise = (async () => {
+      try {
+        for await (const _ of watcher);
+      } catch (e) {
+        expect(e.message).toBe("The operation was aborted.");
+      }
+    })();
+    await Bun.sleep(10);
+    ac.abort();
+    await promise;
+  });
+
+  test("Signal aborted before creating the watcher", async () => {
+    const filepath = path.join(testDir, "abort.txt");
+
+    const signal = AbortSignal.abort();
+    const watcher = fs.promises.watch(filepath, { signal });
+    await (async () => {
+      try {
+        for await (const _ of watcher);
+      } catch (e) {
+        expect(e.message).toBe("The operation was aborted.");
+      }
+    })();
+  });
 });

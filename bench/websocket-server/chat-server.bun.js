@@ -32,6 +32,7 @@ const server = Bun.serve({
     },
 
     perMessageDeflate: false,
+    publishToSelf: true
   },
 
   fetch(req, server) {

@@ -1354,7 +1354,7 @@ const StaticSymbolName = struct {
 
     pub const List = struct {
         fn NewStaticSymbol(comptime basename: string) StaticSymbolName {
-            const hash_value = std.hash.Wyhash.hash(0, basename);
+            const hash_value = bun.hash(basename);
             return comptime StaticSymbolName{
                 .internal = basename ++ "_" ++ std.fmt.comptimePrint("{any}", .{bun.fmt.hexIntLower(hash_value)}),
                 .primary = basename,
@@ -1363,7 +1363,7 @@ const StaticSymbolName = struct {
         }
 
         fn NewStaticSymbolWithBackup(comptime basename: string, comptime backup: string) StaticSymbolName {
-            const hash_value = std.hash.Wyhash.hash(0, basename);
+            const hash_value = bun.hash(basename);
             return comptime StaticSymbolName{
                 .internal = basename ++ "_" ++ std.fmt.comptimePrint("{any}", .{bun.fmt.hexIntLower(hash_value)}),
                 .primary = basename,
@@ -1555,7 +1555,7 @@ pub const SideEffects = enum(u1) {
                 // can be removed. The annotation causes us to ignore the target.
                 if (call.can_be_unwrapped_if_unused) {
                     if (call.args.len > 0) {
-                        return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, simpifyUnusedExpr, p.allocator);
+                        // return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, simpifyUnusedExpr, p.allocator);
                     }
                 }
             },
@@ -1679,13 +1679,13 @@ pub const SideEffects = enum(u1) {
 
                 // Otherwise, the array can be completely removed. We only need to keep any
                 // array items with side effects. Apply this simplification recursively.
-                return Expr.joinAllWithCommaCallback(
-                    items,
-                    @TypeOf(p),
-                    p,
-                    simpifyUnusedExpr,
-                    p.allocator,
-                );
+                // return Expr.joinAllWithCommaCallback(
+                //     items,
+                //     @TypeOf(p),
+                //     p,
+                //     simpifyUnusedExpr,
+                //     p.allocator,
+                // );
             },
 
             .e_new => |call| {
@@ -1693,13 +1693,13 @@ pub const SideEffects = enum(u1) {
                 // can be removed. The annotation causes us to ignore the target.
                 if (call.can_be_unwrapped_if_unused) {
                     if (call.args.len > 0) {
-                        return Expr.joinAllWithCommaCallback(
-                            call.args.slice(),
-                            @TypeOf(p),
-                            p,
-                            simpifyUnusedExpr,
-                            p.allocator,
-                        );
+                        // return Expr.joinAllWithCommaCallback(
+                        //     call.args.slice(),
+                        //     @TypeOf(p),
+                        //     p,
+                        //     simpifyUnusedExpr,
+                        //     p.allocator,
+                        // );
                     }
 
                     return null;
@@ -4173,7 +4173,7 @@ pub const Parser = struct {
                 i += 1;
             }
 
-            std.sort.sort(
+            std.sort.insertion(
                 u8,
                 runtime_imports[0..i],
                 {},
@@ -5181,10 +5181,7 @@ fn NewParser_(
                     const symbol_name = p.import_records.items[import_record_index].path.name.nonUniqueNameString(p.allocator) catch unreachable;
                     const hash_value = @truncate(
                         u16,
-                        std.hash.Wyhash.hash(
-                            0,
-                            p.import_records.items[import_record_index].path.text,
-                        ),
+                        bun.hash(p.import_records.items[import_record_index].path.text),
                     );
 
                     const cjs_import_name = std.fmt.allocPrint(
@@ -14207,7 +14204,7 @@ fn NewParser_(
             // Use NextInsideJSXElement() not Next() so we can parse a JSX-style string literal
             try p.lexer.nextInsideJSXElement();
             if (p.lexer.token == .t_string_literal) {
-                previous_string_with_backslash_loc.start = std.math.max(p.lexer.loc().start, p.lexer.previous_backslash_quote_in_jsx.loc.start);
+                previous_string_with_backslash_loc.start = @max(p.lexer.loc().start, p.lexer.previous_backslash_quote_in_jsx.loc.start);
                 const expr = p.newExpr(p.lexer.toEString(), previous_string_with_backslash_loc.*);
 
                 try p.lexer.nextInsideJSXElement();
@@ -21345,7 +21342,7 @@ fn NewParser_(
                         // in release: print ";" instead.
                         // this should never happen regardless, but i'm just being cautious here.
                         if (comptime !Environment.isDebug) {
-                            std.mem.set(Stmt, _stmts, Stmt.empty());
+                            @memset(_stmts, Stmt.empty());
                         }
 
                         // Second pass: move any imports from the part's stmts array to the new stmts

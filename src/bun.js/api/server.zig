@@ -168,7 +168,7 @@ pub const ServerConfig = struct {
 
         pub fn asUSockets(this_: ?SSLConfig) uws.us_bun_socket_context_options_t {
             var ctx_opts: uws.us_bun_socket_context_options_t = undefined;
-            @memset(@ptrCast([*]u8, &ctx_opts), 0, @sizeOf(uws.us_bun_socket_context_options_t));
+            bun.oldMemset(@ptrCast([*]u8, &ctx_opts), 0, @sizeOf(uws.us_bun_socket_context_options_t));
 
             if (this_) |ssl_config| {
                 if (ssl_config.key_file_name != null)
@@ -2874,7 +2874,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         const prev_len = bytes.items.len;
                         bytes.items.len = total;
                         var slice = bytes.items[prev_len..];
-                        @memcpy(slice.ptr, chunk.ptr, chunk.len);
+                        bun.oldMemcpy(slice.ptr, chunk.ptr, chunk.len);
                         body.value = .{
                             .InternalBlob = .{
                                 .bytes = bytes.toManaged(this.allocator),
@@ -3200,7 +3200,7 @@ pub const WebSocketServer = struct {
                     globalObject.throwInvalidArguments("websocket expects maxPayloadLength to be an integer", .{});
                     return null;
                 }
-                server.maxPayloadLength = @intCast(u32, @truncate(i33, @max(value.toInt64(), 0)));
+                server.maxPayloadLength = @intCast(u32, @max(value.toInt64(), 0));
             }
         }
         if (object.get(globalObject, "idleTimeout")) |value| {
@@ -3220,7 +3220,7 @@ pub const WebSocketServer = struct {
                     return null;
                 }
 
-                server.backpressureLimit = @intCast(u32, @truncate(i33, @max(value.toInt64(), 0)));
+                server.backpressureLimit = @intCast(u32, @max(value.toInt64(), 0));
             }
         }
         // if (object.get(globalObject, "sendPings")) |value| {
@@ -4947,7 +4947,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                         if (reason.len == 0) {
                             break;
                         }
-                        @memcpy(output_buf[written..].ptr, reason.ptr, reason.len);
+                        bun.oldMemcpy(output_buf[written..].ptr, reason.ptr, reason.len);
                         written += reason.len;
                     }
 
@@ -4958,7 +4958,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                         if (reason.len > 0) {
                             output_buf[written..][0.." via ".len].* = " via ".*;
                             written += " via ".len;
-                            @memcpy(output_buf[written..].ptr, reason.ptr, reason.len);
+                            bun.oldMemcpy(output_buf[written..].ptr, reason.ptr, reason.len);
                             written += reason.len;
                         }
                     }
@@ -4970,7 +4970,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                         if (reason.len > 0) {
                             output_buf[written..][0] = ' ';
                             written += 1;
-                            @memcpy(output_buf[written..].ptr, reason.ptr, reason.len);
+                            bun.oldMemcpy(output_buf[written..].ptr, reason.ptr, reason.len);
                             written += reason.len;
                         }
                     }

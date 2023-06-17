@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+// const bun = @import("root").bun;
 const assert = std.debug.assert;
 const meta = std.meta;
 const mem = std.mem;
@@ -97,7 +98,7 @@ pub fn MultiArrayList(comptime S: type) type {
                     return lhs.alignment > rhs.alignment;
                 }
             };
-            std.sort.sort(Data, &data, {}, Sort.lessThan);
+            std.sort.insertion(Data, &data, {}, Sort.lessThan);
             var sizes_bytes: [fields.len]usize = undefined;
             var field_indexes: [fields.len]usize = undefined;
             for (data, 0..) |elem, i| {
@@ -299,11 +300,10 @@ pub fn MultiArrayList(comptime S: type) type {
                     if (@sizeOf(field_info.type) != 0) {
                         const field = @intToEnum(Field, i);
                         const dest_slice = self_slice.items(field)[new_len..];
-                        const byte_count = dest_slice.len * @sizeOf(field_info.type);
                         // We use memset here for more efficient codegen in safety-checked,
                         // valgrind-enabled builds. Otherwise the valgrind client request
                         // will be repeated for every element.
-                        @memset(@ptrCast([*]u8, dest_slice.ptr), undefined, byte_count);
+                        @memset(dest_slice, undefined);
                     }
                 }
                 self.len = new_len;
@@ -432,7 +432,7 @@ pub fn MultiArrayList(comptime S: type) type {
                 }
             };
 
-            std.sort.sortContext(self.len, SortContext{
+            std.sort.insertionContext(0, self.len, SortContext{
                 .sub_ctx = ctx,
                 .slice = self.slice(),
             });
@@ -475,7 +475,7 @@ pub fn MultiArrayList(comptime S: type) type {
         pub fn zero(this: *Self) void {
             var allocated = this.allocatedBytes();
             if (allocated.len > 0) {
-                @memset(allocated.ptr, 0, allocated.len);
+                @memset(allocated, 0);
             }
         }
 

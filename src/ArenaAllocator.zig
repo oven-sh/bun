@@ -111,7 +111,7 @@ pub const ArenaAllocator = struct {
         // value.
         const requested_capacity = switch (mode) {
             .retain_capacity => self.queryCapacity(),
-            .retain_with_limit => |limit| std.math.min(limit, self.queryCapacity()),
+            .retain_with_limit => |limit| @min(limit, self.queryCapacity()),
             .free_all => 0,
         };
         if (requested_capacity == 0) {

@@ -225,7 +225,7 @@ pub const NodeModuleBundle = struct {
                 const lhs_name = context.moduleName(&lhs);
                 const rhs_name = context.moduleName(&rhs);
 
-                const traversal_length = std.math.min(lhs_name.len, rhs_name.len);
+                const traversal_length = @min(lhs_name.len, rhs_name.len);
 
                 for (lhs_name[0..traversal_length], 0..) |char, i| {
                     switch (std.math.order(char, rhs_name[i])) {
@@ -283,7 +283,7 @@ pub const NodeModuleBundle = struct {
                 const lhs_name = context.moduleName(&lhs);
                 const rhs_name = context.moduleName(&rhs);
 
-                const traversal_length = std.math.min(lhs_name.len, rhs_name.len);
+                const traversal_length = @min(lhs_name.len, rhs_name.len);
 
                 for (lhs_name[0..traversal_length], 0..) |char, i| {
                     switch (std.math.order(char, rhs_name[i])) {
@@ -459,7 +459,7 @@ pub const NodeModuleBundle = struct {
                 var read_amount: i64 = 99999;
                 while (remain > 0 and read_amount > 0) {
                     read_amount = @intCast(i64, in.read(&buf) catch 0);
-                    remain -= @intCast(i64, try out.write(buf[0..@intCast(usize, std.math.min(read_amount, remain))]));
+                    remain -= @intCast(i64, try out.write(buf[0..@intCast(usize, @min(read_amount, remain))]));
                 }
             }
         };

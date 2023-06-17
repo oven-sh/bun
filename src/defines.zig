@@ -188,8 +188,8 @@ pub const DotDefine = struct {
 };
 
 // var nan_val = try allocator.create(js_ast.E.Number);
-const nan_val = js_ast.E.Number{ .value = std.math.nan_f64 };
-const inf_val = js_ast.E.Number{ .value = std.math.inf_f64 };
+const nan_val = js_ast.E.Number{ .value = std.math.nan(f64) };
+const inf_val = js_ast.E.Number{ .value = std.math.inf(f64) };
 
 pub const Define = struct {
     identifiers: bun.StringHashMap(IdentifierDefine),

@@ -264,7 +264,7 @@ pub const BufferReadStream = struct {
         const remaining = this.bufLeft();
         if (remaining.len == 0) return 0;
 
-        const diff = std.math.min(remaining.len, this.block_size);
+        const diff = @min(remaining.len, this.block_size);
         buffer.* = remaining[0..diff].ptr;
         this.pos += diff;
         return @intCast(isize, diff);
@@ -281,7 +281,7 @@ pub const BufferReadStream = struct {
         const pos = @intCast(isize, this.pos);
 
         const proposed = pos + offset;
-        const new_pos = std.math.min(std.math.max(proposed, 0), buflen - 1);
+        const new_pos = @min(@max(proposed, 0), buflen - 1);
         this.pos = @intCast(usize, this.pos);
         return new_pos - pos;
     }
@@ -299,17 +299,17 @@ pub const BufferReadStream = struct {
 
         switch (@intToEnum(Seek, whence)) {
             Seek.current => {
-                const new_pos = std.math.max(std.math.min(pos + offset, buflen - 1), 0);
+                const new_pos = @max(@min(pos + offset, buflen - 1), 0);
                 this.pos = @intCast(usize, new_pos);
                 return new_pos;
             },
             Seek.end => {
-                const new_pos = std.math.max(std.math.min(buflen - offset, buflen), 0);
+                const new_pos = @max(@min(buflen - offset, buflen), 0);
                 this.pos = @intCast(usize, new_pos);
                 return new_pos;
             },
             Seek.set => {
-                const new_pos = std.math.max(std.math.min(offset, buflen - 1), 0);
+                const new_pos = @max(@min(offset, buflen - 1), 0);
                 this.pos = @intCast(usize, new_pos);
                 return new_pos;
             },
@@ -379,7 +379,7 @@ pub const Archive = struct {
         pub fn init(filepath: string, estimated_size: usize, allocator: std.mem.Allocator) !Plucker {
             return Plucker{
                 .contents = try MutableString.init(allocator, estimated_size),
-                .filename_hash = std.hash.Wyhash.hash(0, filepath),
+                .filename_hash = bun.hash(filepath),
                 .fd = 0,
                 .found = false,
             };
@@ -434,7 +434,7 @@ pub const Archive = struct {
                     pathname = std.mem.sliceTo(pathname_.ptr[0..pathname_.len :0], 0);
                     const dirname = std.mem.trim(u8, std.fs.path.dirname(bun.asByteSlice(pathname)) orelse "", std.fs.path.sep_str);
 
-                    const size = @intCast(usize, std.math.max(lib.archive_entry_size(entry), 0));
+                    const size = @intCast(usize, @max(lib.archive_entry_size(entry), 0));
                     if (size > 0) {
                         var opened = dir.dir.openFileZ(pathname, .{ .mode = .write_only }) catch continue :loop;
                         var stat = try opened.stat();
@@ -527,7 +527,7 @@ pub const Archive = struct {
                     count += 1;
 
                     switch (kind) {
-                        Kind.Directory => {
+                        Kind.directory => {
                             var mode = @intCast(i32, lib.archive_entry_perm(entry));
 
                             // if dirs are readable, then they should be listable
@@ -545,7 +545,7 @@ pub const Archive = struct {
                                 try std.os.mkdiratZ(dir_fd, pathname, 0o777);
                             };
                         },
-                        Kind.SymLink => {
+                        Kind.sym_link => {
                             const link_target = lib.archive_entry_symlink(entry).?;
 
                             std.os.symlinkatZ(link_target, dir_fd, pathname) catch |err| brk: {
@@ -560,7 +560,7 @@ pub const Archive = struct {
                                 }
                             };
                         },
-                        Kind.File => {
+                        Kind.file => {
                             const mode = @intCast(std.os.mode_t, lib.archive_entry_perm(entry));
                             const file = dir.createFileZ(pathname, .{ .truncate = true, .mode = mode }) catch |err| brk: {
                                 switch (err) {
@@ -583,7 +583,7 @@ pub const Archive = struct {
                             if (size > 0) {
                                 if (ctx) |ctx_| {
                                     const hash: u64 = if (ctx_.pluckers.len > 0)
-                                        std.hash.Wyhash.hash(0, slice)
+                                        bun.hash(slice)
                                     else
                                         @as(u64, 0);
 

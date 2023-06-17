@@ -48,7 +48,7 @@ pub const PackageManagerCommand = struct {
     pub fn printHash(ctx: Command.Context, lockfile_: []const u8) !void {
         @setCold(true);
         var lockfile_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
-        @memcpy(&lockfile_buffer, lockfile_.ptr, lockfile_.len);
+        bun.oldMemcpy(&lockfile_buffer, lockfile_.ptr, lockfile_.len);
         lockfile_buffer[lockfile_.len] = 0;
         var lockfile = lockfile_buffer[0..lockfile_.len :0];
         var pm = try PackageManager.init(ctx, null, PackageManager.Subcommand.pm);
@@ -224,7 +224,7 @@ pub const PackageManagerCommand = struct {
                 for (sorted_dependencies, 0..) |*dep, i| {
                     dep.* = @truncate(DependencyID, root_deps.off + i);
                 }
-                std.sort.sort(DependencyID, sorted_dependencies, ByName{
+                std.sort.insertion(DependencyID, sorted_dependencies, ByName{
                     .dependencies = dependencies,
                     .buf = string_bytes,
                 }, ByName.isLessThan);
@@ -336,7 +336,7 @@ fn printNodeModulesFolderStructure(
     const sorted_dependencies = try allocator.alloc(DependencyID, directory.dependencies.len);
     defer allocator.free(sorted_dependencies);
     bun.copy(DependencyID, sorted_dependencies, directory.dependencies);
-    std.sort.sort(DependencyID, sorted_dependencies, ByName{
+    std.sort.insertion(DependencyID, sorted_dependencies, ByName{
         .dependencies = dependencies,
         .buf = string_bytes,
     }, ByName.isLessThan);

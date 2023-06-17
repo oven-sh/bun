@@ -751,7 +751,7 @@ pub const DynamicBitSetUnmanaged = struct {
             // fill in any new masks
             if (new_masks > old_masks) {
                 const fill_value = std.math.boolMask(MaskInt, fill);
-                std.mem.set(MaskInt, self.masks[old_masks..new_masks], fill_value);
+                @memset(self.masks[old_masks..new_masks], fill_value);
             }
         }
 

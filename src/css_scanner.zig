@@ -698,7 +698,7 @@ pub const Scanner = struct {
                             scanner.step();
                         }
                         if (import_behavior == .scan or import_behavior == .keep) {
-                            chunk.range.len = @intCast(i32, scanner.end) - std.math.max(chunk.range.loc.start, 0);
+                            chunk.range.len = @intCast(i32, scanner.end) - @max(chunk.range.loc.start, 0);
                             chunk.content = .{ .t_import = import };
                             try writeChunk(writer, chunk);
                         }

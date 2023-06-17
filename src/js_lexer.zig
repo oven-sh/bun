@@ -1784,7 +1784,7 @@ fn NewLexer_(
 
         pub fn unexpected(lexer: *LexerType) !void {
             const found = finder: {
-                lexer.start = std.math.min(lexer.start, lexer.end);
+                lexer.start = @min(lexer.start, lexer.end);
 
                 if (lexer.start == lexer.source.contents.len) {
                     break :finder "end of file";

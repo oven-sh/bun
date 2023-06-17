@@ -270,7 +270,7 @@ pub const MacroEntryPoint = struct {
     }
 
     pub fn generateIDFromSpecifier(specifier: string) i32 {
-        return @bitCast(i32, @truncate(u32, std.hash.Wyhash.hash(0, specifier)));
+        return @bitCast(i32, @truncate(u32, bun.hash(specifier)));
     }
 
     pub fn generate(

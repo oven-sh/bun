@@ -59,7 +59,7 @@ pub const PackageJSON = struct {
 
     pub fn generateHash(package_json: *PackageJSON) void {
         var hashy: [1024]u8 = undefined;
-        std.mem.set(u8, &hashy, 0);
+        @memset(&hashy, 0);
         var used: usize = 0;
         bun.copy(u8, &hashy, package_json.name);
         used = package_json.name.len;
@@ -1148,7 +1148,7 @@ pub const ExportsMap = struct {
                     // PATTERN_KEY_COMPARE which orders in descending order of specificity.
                     const GlobLengthSorter: type = strings.NewGlobLengthSorter(Entry.Data.Map.MapEntry, "key");
                     var sorter = GlobLengthSorter{};
-                    std.sort.sort(Entry.Data.Map.MapEntry, expansion_keys, sorter, GlobLengthSorter.lessThan);
+                    std.sort.insertion(Entry.Data.Map.MapEntry, expansion_keys, sorter, GlobLengthSorter.lessThan);
 
                     return Entry{
                         .data = .{

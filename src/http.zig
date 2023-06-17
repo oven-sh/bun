@@ -559,7 +559,7 @@ pub const RequestContext = struct {
             var stat = file.stat() catch return null;
             var absolute_path = resolve_path.joinAbs(this.bundler.options.routes.static_dir, .auto, relative_unrooted_path);
 
-            if (stat.kind == .SymLink) {
+            if (stat.kind == .sym_link) {
                 file.* = std.fs.openFileAbsolute(absolute_path, .{ .mode = .read_only }) catch return null;
 
                 absolute_path = bun.getFdPath(
@@ -570,7 +570,7 @@ pub const RequestContext = struct {
                 stat = file.stat() catch return null;
             }
 
-            if (stat.kind != .File) {
+            if (stat.kind != .file) {
                 file.close();
                 return null;
             }
@@ -2000,7 +2000,7 @@ pub const RequestContext = struct {
                                 // sometimes the final byte has incorrect data
                                 // we never end up using all those bytes
                                 if (handler.message_buffer.list.items.len > 0) {
-                                    @memset(
+                                    bun.oldMemset(
                                         handler.message_buffer.list.items.ptr,
                                         0,
                                         @min(handler.message_buffer.list.items.len, 128),
@@ -2087,7 +2087,7 @@ pub const RequestContext = struct {
                                                 socket_buffers[2] = iovec(build_result.bytes);
                                                 // we reuse the accept key buffer
                                                 // so we have a pointer that is not stack memory
-                                                handler.accept_key[0..@sizeOf(usize)].* = @bitCast([@sizeOf(usize)]u8, std.hash.Wyhash.hash(0, build_result.bytes));
+                                                handler.accept_key[0..@sizeOf(usize)].* = @bitCast([@sizeOf(usize)]u8, bun.hash(build_result.bytes));
                                                 socket_buffers[3] = iovec(handler.accept_key[0..4]);
                                                 socket_buffer_count = 4;
                                             }
@@ -2187,7 +2187,7 @@ pub const RequestContext = struct {
     };
 
     pub fn writeETag(this: *RequestContext, buffer: anytype) !bool {
-        const strong_etag = std.hash.Wyhash.hash(0, buffer);
+        const strong_etag = bun.hash(buffer);
         const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, .upper, .{});
 
         this.appendHeader("ETag", etag_content_slice);
@@ -2404,7 +2404,7 @@ pub const RequestContext = struct {
                             // Always cache css & json files, even big ones
                             // css is especially important because we want to try and skip having the browser parse it whenever we can
                             if (buf.len < 16 * 16 * 16 * 16 or chunky._loader == .css or chunky._loader == .json) {
-                                const strong_etag = std.hash.Wyhash.hash(0, buf);
+                                const strong_etag = bun.hash(buf);
                                 const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, .upper, .{});
                                 chunky.rctx.appendHeader("ETag", etag_content_slice);
 
@@ -2538,7 +2538,7 @@ pub const RequestContext = struct {
                         .css => try ctx.sendNoContent(),
                         .toml, .js, .jsx, .ts, .tsx, .json => {
                             const buf = "export default {};";
-                            const strong_etag = comptime std.hash.Wyhash.hash(0, buf);
+                            const strong_etag = comptime bun.hash(buf);
                             const etag_content_slice = std.fmt.bufPrintIntToSlice(strong_etag_buffer[0..49], strong_etag, 16, .upper, .{});
                             ctx.appendHeader("ETag", etag_content_slice);
 
@@ -3388,10 +3388,10 @@ pub const Server = struct {
                                         break :brk path_string.slice();
                                     } else {
                                         var file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
-                                        @memcpy(&_on_file_update_path_buf, file_path_without_trailing_slash.ptr, file_path_without_trailing_slash.len);
+                                        bun.oldMemcpy(&_on_file_update_path_buf, file_path_without_trailing_slash.ptr, file_path_without_trailing_slash.len);
                                         _on_file_update_path_buf[file_path_without_trailing_slash.len] = std.fs.path.sep;
 
-                                        @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len + 1 ..].ptr, changed_name.ptr, changed_name.len);
+                                        bun.oldMemcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len + 1 ..].ptr, changed_name.ptr, changed_name.len);
                                         const path_slice = _on_file_update_path_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
                                         file_hash = Watcher.getHash(path_slice);
                                         break :brk path_slice;
@@ -3445,12 +3445,9 @@ pub const Server = struct {
             .kernel_backlog = 1280,
         });
         defer listener.deinit();
-        server.websocket_threadpool.stack_size = @truncate(
-            u32,
-            @min(
-                @max(128_000, Fs.FileSystem.RealFS.Limit.stack),
-                4_000_000,
-            ),
+        server.websocket_threadpool.stack_size = @min(
+            @max(128_000, Fs.FileSystem.RealFS.Limit.stack),
+            4_000_000,
         );
 
         // listener.setFastOpen(true) catch {};

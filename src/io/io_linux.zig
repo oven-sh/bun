@@ -463,7 +463,7 @@ has_queued: usize = 0,
 wakeup_completion: Completion = undefined,
 
 fn queueForWakeup(this: *@This(), comptime Type: type, ctx: Type, comptime cb: anytype) void {
-    @memset(&this.eventfd_buf, 0, this.eventfd_buf.len);
+    bun.oldMemset(&this.eventfd_buf, 0, this.eventfd_buf.len);
     const Callback = struct {
         pub fn callback(that: Type, completion: *Completion, _: ReadError!usize) void {
             var io = @fieldParentPtr(IO, "wakeup_completion", completion);
@@ -640,7 +640,7 @@ fn flush(self: *IO, wait_nr: u32, timeouts: *usize, etime: *bool) !void {
 fn flush_completions(self: *IO, wait_nr: u32, timeouts: *usize, etime: *bool) !void {
     var cqes: [256]std.os.linux.io_uring_cqe = undefined;
     var completion_byttes = std.mem.asBytes(&cqes);
-    @memset(completion_byttes, 0, completion_byttes.len);
+    bun.oldMemset(completion_byttes, 0, completion_byttes.len);
     var wait_remaining = wait_nr;
     while (true) {
         // Guard against waiting indefinitely (if there are too few requests inflight),

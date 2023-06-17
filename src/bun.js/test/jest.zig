@@ -210,13 +210,13 @@ pub const TestRunner = struct {
         const start = @truncate(Test.ID, this.tests.len);
         this.tests.len += count;
         var statuses = this.tests.items(.status)[start..][0..count];
-        std.mem.set(Test.Status, statuses, Test.Status.pending);
+        @memset(statuses, Test.Status.pending);
         this.callback.onUpdateCount(this.callback, count, count + start);
         return start;
     }
 
     pub fn getOrPutFile(this: *TestRunner, file_path: string) *DescribeScope {
-        var entry = this.index.getOrPut(this.allocator, @truncate(u32, std.hash.Wyhash.hash(0, file_path))) catch unreachable;
+        var entry = this.index.getOrPut(this.allocator, @truncate(u32, bun.hash(file_path))) catch unreachable;
         if (entry.found_existing) {
             return this.files.items(.module_scope)[entry.value_ptr.*];
         }
@@ -317,7 +317,7 @@ pub const Snapshots = struct {
         name_with_counter[name.len] = ' ';
         bun.copy(u8, name_with_counter[name.len + 1 ..], counter_string);
 
-        const name_hash = std.hash.Wyhash.hash(0, name_with_counter);
+        const name_hash = bun.hash(name_with_counter);
         if (this.values.get(name_hash)) |expected| {
             return expected;
         }
@@ -416,7 +416,7 @@ pub const Snapshots = struct {
                                         }
                                         const value_clone = try this.allocator.alloc(u8, value.len);
                                         bun.copy(u8, value_clone, value);
-                                        const name_hash = std.hash.Wyhash.hash(0, key);
+                                        const name_hash = bun.hash(key);
                                         try this.values.put(name_hash, value_clone);
                                     }
                                 }

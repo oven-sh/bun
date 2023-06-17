@@ -583,7 +583,7 @@ pub const PathLike = union(Tag) {
             }
         }
 
-        @memcpy(buf, sliced.ptr, sliced.len);
+        bun.oldMemcpy(buf, sliced.ptr, sliced.len);
         buf[sliced.len] = 0;
         return buf[0..sliced.len :0];
     }
@@ -902,8 +902,8 @@ pub const PathOrFileDescriptor = union(Tag) {
 
     pub fn hash(this: JSC.Node.PathOrFileDescriptor) u64 {
         return switch (this) {
-            .path => std.hash.Wyhash.hash(0, this.path.slice()),
-            .fd => std.hash.Wyhash.hash(0, std.mem.asBytes(&this.fd)),
+            .path => bun.hash(this.path.slice()),
+            .fd => bun.hash(std.mem.asBytes(&this.fd)),
         };
     }
 
@@ -1360,49 +1360,49 @@ pub const Dirent = struct {
         _: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.BlockDevice);
+        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.block_device);
     }
     pub fn isCharacterDevice(
         this: *Dirent,
         _: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.CharacterDevice);
+        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.character_device);
     }
     pub fn isDirectory(
         this: *Dirent,
         _: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.Directory);
+        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.directory);
     }
     pub fn isFIFO(
         this: *Dirent,
         _: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.NamedPipe or this.kind == std.fs.File.Kind.EventPort);
+        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.named_pipe or this.kind == std.fs.File.Kind.event_port);
     }
     pub fn isFile(
         this: *Dirent,
         _: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.File);
+        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.file);
     }
     pub fn isSocket(
         this: *Dirent,
         _: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.UnixDomainSocket);
+        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.unix_domain_socket);
     }
     pub fn isSymbolicLink(
         this: *Dirent,
         _: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.SymLink);
+        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.sym_link);
     }
 
     pub fn finalize(this: *Dirent) callconv(.C) void {

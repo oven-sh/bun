@@ -653,8 +653,7 @@ pub fn clean(old: *Lockfile, updates: []PackageManager.UpdateRequest) !*Lockfile
     const root = old.rootPackage() orelse return error.NoPackage;
 
     var package_id_mapping = try old.allocator.alloc(PackageID, old.packages.len);
-    std.mem.set(
-        PackageID,
+    @memset(
         package_id_mapping,
         invalid_package_id,
     );
@@ -954,7 +953,7 @@ pub const Printer = struct {
             const dependencies_buffer: []const Dependency = this.lockfile.buffers.dependencies.items;
             const string_buf = this.lockfile.buffers.string_bytes.items;
             var id_map = try default_allocator.alloc(DependencyID, this.updates.len);
-            std.mem.set(DependencyID, id_map, invalid_package_id);
+            @memset(id_map, invalid_package_id);
             defer if (id_map.len > 0) default_allocator.free(id_map);
 
             visited.set(0);
@@ -1172,7 +1171,7 @@ pub const Printer = struct {
                 }
             }
 
-            std.sort.sort(
+            std.sort.insertion(
                 PackageID,
                 alphabetized_names,
                 Lockfile.Package.Alphabetizer{
@@ -2064,7 +2063,7 @@ pub const Package = extern struct {
             if (comptime Environment.allow_assert) std.debug.assert(dependencies_list.items.len == resolutions_list.items.len);
 
             var dependencies: []Dependency = dependencies_list.items.ptr[dependencies_list.items.len..total_len];
-            std.mem.set(Dependency, dependencies, Dependency{});
+            @memset(dependencies, Dependency{});
 
             const package_dependencies = package_json.dependencies.map.values();
             const source_buf = package_json.dependencies.source_buf;
@@ -2091,7 +2090,7 @@ pub const Package = extern struct {
 
             const new_length = package.dependencies.len + dependencies_list.items.len;
 
-            std.mem.set(PackageID, resolutions_list.items.ptr[package.dependencies.off .. package.dependencies.off + package.dependencies.len], invalid_package_id);
+            @memset(resolutions_list.items.ptr[package.dependencies.off .. package.dependencies.off + package.dependencies.len], invalid_package_id);
 
             dependencies_list.items = dependencies_list.items.ptr[0..new_length];
             resolutions_list.items = resolutions_list.items.ptr[0..new_length];
@@ -2208,7 +2207,7 @@ pub const Package = extern struct {
             if (comptime Environment.allow_assert) std.debug.assert(dependencies_list.items.len == resolutions_list.items.len);
 
             var dependencies = dependencies_list.items.ptr[dependencies_list.items.len..total_len];
-            std.mem.set(Dependency, dependencies, .{});
+            @memset(dependencies, .{});
 
             total_dependencies_count = 0;
             inline for (dependency_groups) |group| {
@@ -2279,7 +2278,7 @@ pub const Package = extern struct {
 
             const new_length = package.dependencies.len + dependencies_list.items.len;
 
-            std.mem.set(PackageID, resolutions_list.items.ptr[package.dependencies.off .. package.dependencies.off + package.dependencies.len], invalid_package_id);
+            @memset(resolutions_list.items.ptr[package.dependencies.off .. package.dependencies.off + package.dependencies.len], invalid_package_id);
 
             dependencies_list.items = dependencies_list.items.ptr[0..new_length];
             resolutions_list.items = resolutions_list.items.ptr[0..new_length];
@@ -3276,7 +3275,7 @@ pub const Package = extern struct {
             }
         }
 
-        std.sort.sort(
+        std.sort.insertion(
             Dependency,
             package_dependencies[0..total_dependencies_count],
             lockfile.buffers.string_bytes.items,
@@ -3288,7 +3287,7 @@ pub const Package = extern struct {
 
         package.resolutions = @bitCast(@TypeOf(package.resolutions), package.dependencies);
 
-        std.mem.set(PackageID, lockfile.buffers.resolutions.items.ptr[off..total_len], invalid_package_id);
+        @memset(lockfile.buffers.resolutions.items.ptr[off..total_len], invalid_package_id);
 
         const new_len = off + total_dependencies_count;
         lockfile.buffers.dependencies.items = lockfile.buffers.dependencies.items.ptr[0..new_len];
@@ -3353,7 +3352,7 @@ pub const Package = extern struct {
                 }
             };
             var trash: i32 = undefined; // workaround for stage1 compiler bug
-            std.sort.sort(Data, &data, &trash, Sort.lessThan);
+            std.sort.insertion(Data, &data, &trash, Sort.lessThan);
             var sizes_bytes: [fields.len]usize = undefined;
             var field_indexes: [fields.len]usize = undefined;
             var Types: [fields.len]type = undefined;
@@ -3448,10 +3447,10 @@ pub const Package = extern struct {
                 var bytes = std.mem.sliceAsBytes(sliced.items(@field(Lockfile.Package.List.Field, field.name)));
                 const end_pos = stream.pos + bytes.len;
                 if (end_pos <= end_at) {
-                    @memcpy(bytes.ptr, stream.buffer[stream.pos..].ptr, bytes.len);
+                    bun.oldMemcpy(bytes.ptr, stream.buffer[stream.pos..].ptr, bytes.len);
                     stream.pos = end_pos;
                 } else if (comptime strings.eqlComptime(field.name, "scripts")) {
-                    @memset(bytes.ptr, 0, bytes.len);
+                    bun.oldMemset(bytes.ptr, 0, bytes.len);
                 } else {
                     return error.@"Lockfile validation failed: invalid package list range";
                 }
@@ -3520,7 +3519,7 @@ const Buffers = struct {
             }
         };
         var trash: i32 = undefined; // workaround for stage1 compiler bug
-        std.sort.sort(Data, &data, &trash, Sort.lessThan);
+        std.sort.insertion(Data, &data, &trash, Sort.lessThan);
         var sizes_bytes: [fields.len]usize = undefined;
         var names: [fields.len][]const u8 = undefined;
         var types: [fields.len]type = undefined;
@@ -3884,7 +3883,7 @@ fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash 
         }
     }
 
-    std.sort.sort(
+    std.sort.insertion(
         PackageID,
         alphabetized_names,
         Lockfile.Package.Alphabetizer{

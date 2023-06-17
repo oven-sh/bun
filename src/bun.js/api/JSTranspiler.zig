@@ -877,7 +877,7 @@ fn getParseResult(this: *Transpiler, allocator: std.mem.Allocator, code: []const
         for (res.ast.import_records.slice()) |*import| {
             if (import.kind.isCommonJS()) {
                 import.do_commonjs_transform_in_printer = true;
-                import.module_id = @truncate(u32, std.hash.Wyhash.hash(0, import.path.pretty));
+                import.module_id = @truncate(u32, bun.hash(import.path.pretty));
             }
         }
     }

@@ -28,7 +28,7 @@ pub const ThreadPool = struct {
 
         errdefer self.deinit();
 
-        const num_workers = std.math.max(1, config.max_threads orelse std.Thread.cpuCount() catch 1);
+        const num_workers = @max(1, config.max_threads orelse std.Thread.cpuCount() catch 1);
         self.workers = try self.allocator.alloc(Worker, num_workers);
 
         for (&self.workers) |*worker| {

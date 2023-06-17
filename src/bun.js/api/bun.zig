@@ -600,7 +600,7 @@ pub fn readFileAsStringCallback(
         return js.JSValueMakeUndefined(ctx);
     };
 
-    if (stat.kind != .File) {
+    if (stat.kind != .file) {
         JSError(getAllocator(ctx), "Can't read a {s} as a string (\"{s}\")", .{ @tagName(stat.kind), path }, ctx, exception);
         return js.JSValueMakeUndefined(ctx);
     }
@@ -641,7 +641,7 @@ pub fn readFileAsBytesCallback(
         return js.JSValueMakeUndefined(ctx);
     };
 
-    if (stat.kind != .File) {
+    if (stat.kind != .file) {
         JSError(allocator, "Can't read a {s} as a string (\"{s}\")", .{ @tagName(stat.kind), path }, ctx, exception);
         return js.JSValueMakeUndefined(ctx);
     }
@@ -1612,7 +1612,7 @@ pub const Crypto = struct {
 
     fn createCryptoError(globalThis: *JSC.JSGlobalObject, err_code: u32) JSValue {
         var outbuf: [128 + 1 + "BoringSSL error: ".len]u8 = undefined;
-        @memset(&outbuf, 0, outbuf.len);
+        bun.oldMemset(&outbuf, 0, outbuf.len);
         outbuf[0.."BoringSSL error: ".len].* = "BoringSSL error: ".*;
         var message_buf = outbuf["BoringSSL error: ".len..];
 

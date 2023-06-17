@@ -38,8 +38,8 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
     var max_size = 0;
     var max_align = 1;
     for (Union) |kind| {
-        max_size = std.math.max(@sizeOf(kind), max_size);
-        max_align = if (@sizeOf(kind) == 0) max_align else std.math.max(@alignOf(kind), max_align);
+        max_size = @max(@sizeOf(kind), max_size);
+        max_align = if (@sizeOf(kind) == 0) max_align else @max(@alignOf(kind), max_align);
     }
 
     const UnionValueType = [max_size]u8;
@@ -156,7 +156,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
                 if (comptime Environment.isDebug) {
                     // ensure we crash if we use a freed value
                     var bytes = std.mem.asBytes(&b.items);
-                    @memset(bytes, undefined, bytes.len);
+                    @memset(bytes, undefined);
                 }
                 b.used = 0;
             }
@@ -666,7 +666,7 @@ pub const CharFreq = struct {
             break :brk _array;
         };
 
-        std.sort.sort(CharAndCount, &array, {}, CharAndCount.lessThan);
+        std.sort.insertion(CharAndCount, &array, {}, CharAndCount.lessThan);
 
         var minifier = NameMinifier.init(allocator);
         minifier.head.ensureTotalCapacityPrecise(NameMinifier.default_head.len) catch unreachable;
@@ -2057,11 +2057,11 @@ pub const E = struct {
         }
 
         pub fn alphabetizeProperties(this: *Object) void {
-            std.sort.sort(G.Property, this.properties.slice(), {}, Sorter.isLessThan);
+            std.sort.insertion(G.Property, this.properties.slice(), {}, Sorter.isLessThan);
         }
 
         pub fn packageJSONSort(this: *Object) void {
-            std.sort.sort(G.Property, this.properties.slice(), {}, PackageJSONSort.Fields.isLessThan);
+            std.sort.insertion(G.Property, this.properties.slice(), {}, PackageJSONSort.Fields.isLessThan);
         }
 
         const PackageJSONSort = struct {
@@ -2343,10 +2343,10 @@ pub const E = struct {
 
             if (s.isUTF8()) {
                 // hash utf-8
-                return std.hash.Wyhash.hash(0, s.data);
+                return bun.hash(s.data);
             } else {
                 // hash utf-16
-                return std.hash.Wyhash.hash(0, @ptrCast([*]const u8, s.slice16().ptr)[0 .. s.slice16().len * 2]);
+                return bun.hash(@ptrCast([*]const u8, s.slice16().ptr)[0 .. s.slice16().len * 2]);
             }
         }
 
@@ -7868,7 +7868,7 @@ pub const Macro = struct {
                 const Enum: std.builtin.Type.Enum = @typeInfo(Tag).Enum;
                 var max_value: u8 = 0;
                 for (Enum.fields) |field| {
-                    max_value = std.math.max(@as(u8, field.value), max_value);
+                    max_value = @max(@as(u8, field.value), max_value);
                 }
                 break :brk max_value;
             };
@@ -7877,7 +7877,7 @@ pub const Macro = struct {
                 const Enum: std.builtin.Type.Enum = @typeInfo(Tag).Enum;
                 var min: u8 = 255;
                 for (Enum.fields) |field| {
-                    min = std.math.min(@as(u8, field.value), min);
+                    min = @min(@as(u8, field.value), min);
                 }
                 break :brk min;
             };
@@ -9000,7 +9000,7 @@ pub const Macro = struct {
                             var nextArg = writer.eatArg() orelse return false;
                             if (js.JSValueIsArray(writer.ctx, nextArg.asRef())) {
                                 const extras = @truncate(u32, nextArg.getLength(writer.ctx.ptr()));
-                                count += std.math.max(@truncate(@TypeOf(count), extras), 1) - 1;
+                                count += @max(@truncate(@TypeOf(count), extras), 1) - 1;
                                 items.ensureUnusedCapacity(extras) catch unreachable;
                                 items.expandToCapacity();
                                 var new_writer = writer.*;

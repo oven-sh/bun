@@ -497,7 +497,7 @@ pub const StandaloneModuleGraph = struct {
         if (offsets.byte_count <= 1024 * 3) {
             // we already have the bytes
             end -= offsets.byte_count;
-            @memcpy(to_read.ptr, end, offsets.byte_count);
+            bun.oldMemcpy(to_read.ptr, end, offsets.byte_count);
             if (comptime Environment.allow_assert) {
                 std.debug.assert(bun.strings.eqlLong(to_read, end[0..offsets.byte_count], true));
             }

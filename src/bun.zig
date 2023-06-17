@@ -485,7 +485,7 @@ pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
         @ptrToInt(output.ptr) + output.len > @ptrToInt(input.ptr));
 
     if (!does_input_or_output_overlap) {
-        @memcpy(output.ptr, input.ptr, input.len);
+        @memcpy(output[0..input.len], input);
     } else {
         C.memmove(output.ptr, input.ptr, input.len);
     }
@@ -561,10 +561,38 @@ pub fn assertDefined(val: anytype) void {
 
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
 
+pub fn oldMemcpy(a: anytype, b: anytype, length: usize) void {
+    @memcpy(a[0..length], b[0..length]);
+}
+
+pub fn oldMemset(a: anytype, element: anytype, length: usize) void {
+    @memset(a[0..length], element);
+}
+
 /// hash a string
 pub fn hash(content: []const u8) u64 {
     return std.hash.Wyhash.hash(0, content);
 }
+
+pub fn hashWithSeed(seed: u64, content: []const u8) u64 {
+    return std.hash.Wyhash.hash(seed, content);
+}
+
+// pub const BunHash = struct {
+//     state: Stateless,
+
+//     buf: [32]u8,
+//     buf_len: usize,
+
+//     pub fn init(seed: u64) BunHash {
+//         const wyhash = std.hash.Wyhash.init(seed);
+//         return BunHash{
+//             .state = wyhash.state,
+//             .buf = wyhash.buf,
+//             .buf_len = wyhash.buf_len,
+//         };
+//     }
+// };
 
 pub fn hash32(content: []const u8) u32 {
     const res = hash(content);
@@ -612,7 +640,7 @@ pub fn isReadable(fd: std.os.fd_t) PollFlag {
 
 pub const PollFlag = enum { ready, not_ready, hup };
 pub fn isWritable(fd: std.os.fd_t) PollFlag {
-    var polls = &[_]std.os.pollfd{
+    var polls = [_]std.os.pollfd{
         .{
             .fd = fd,
             .events = std.os.POLL.OUT,
@@ -620,7 +648,7 @@ pub fn isWritable(fd: std.os.fd_t) PollFlag {
         },
     };
 
-    const result = (std.os.poll(polls, 0) catch 0) != 0;
+    const result = (std.os.poll(&polls, 0) catch 0) != 0;
     global_scope_log("poll({d}) writable: {any} ({d})", .{ fd, result, polls[0].revents });
     if (result and polls[0].revents & std.os.POLL.HUP != 0) {
         return PollFlag.hup;
@@ -961,7 +989,7 @@ pub fn ComptimeEnumMap(comptime T: type) type {
 /// Ignores default struct values.
 pub fn zero(comptime Type: type) Type {
     var out: [@sizeOf(Type)]u8 align(@alignOf(Type)) = undefined;
-    @memset(@ptrCast([*]u8, &out), 0, out.len);
+    oldMemset(@ptrCast([*]u8, &out), 0, out.len);
     return @bitCast(Type, out);
 }
 pub const c_ares = @import("./deps/c_ares.zig");
@@ -1532,3 +1560,5 @@ pub const WTF = struct {
 };
 
 pub const ArenaAllocator = @import("./ArenaAllocator.zig").ArenaAllocator;
+
+pub const Wyhash = @import("./wyhash.zig").Wyhash;

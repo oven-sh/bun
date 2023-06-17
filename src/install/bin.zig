@@ -482,7 +482,7 @@ pub const Bin = extern struct {
                     while (iter.next() catch null) |entry_| {
                         const entry: std.fs.IterableDir.Entry = entry_;
                         switch (entry.kind) {
-                            std.fs.IterableDir.Entry.Kind.SymLink, std.fs.IterableDir.Entry.Kind.File => {
+                            std.fs.IterableDir.Entry.Kind.sym_link, std.fs.IterableDir.Entry.Kind.file => {
                                 target_buf_remain = prev_target_buf_remain;
                                 bun.copy(u8, target_buf_remain, entry.name);
                                 target_buf_remain = target_buf_remain[entry.name.len..];
@@ -519,7 +519,7 @@ pub const Bin = extern struct {
                     return;
                 }
 
-                @memcpy(&target_buf, this.global_bin_path.ptr, this.global_bin_path.len);
+                bun.oldMemcpy(&target_buf, this.global_bin_path.ptr, this.global_bin_path.len);
                 from_remain = target_buf[this.global_bin_path.len..];
                 from_remain[0] = std.fs.path.sep;
                 from_remain = from_remain[1..];
@@ -634,7 +634,7 @@ pub const Bin = extern struct {
                     while (iter.next() catch null) |entry_| {
                         const entry: std.fs.IterableDir.Entry = entry_;
                         switch (entry.kind) {
-                            std.fs.IterableDir.Entry.Kind.SymLink, std.fs.IterableDir.Entry.Kind.File => {
+                            std.fs.IterableDir.Entry.Kind.sym_link, std.fs.IterableDir.Entry.Kind.file => {
                                 target_buf_remain = prev_target_buf_remain;
                                 bun.copy(u8, target_buf_remain, entry.name);
                                 target_buf_remain = target_buf_remain[entry.name.len..];

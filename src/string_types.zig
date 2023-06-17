@@ -84,7 +84,7 @@ pub const HashedString = struct {
         return HashedString{
             .ptr = buf.ptr,
             .len = @truncate(u32, buf.len),
-            .hash = @truncate(u32, std.hash.Wyhash.hash(0, buf)),
+            .hash = @truncate(u32, bun.hash(buf)),
         };
     }
 
@@ -106,7 +106,7 @@ pub const HashedString = struct {
                 return ((@max(this.hash, other.hash) > 0 and this.hash == other.hash) or (this.ptr == other.ptr)) and this.len == other.len;
             },
             else => {
-                return @as(usize, this.len) == other.len and @truncate(u32, std.hash.Wyhash.hash(0, other[0..other.len])) == this.hash;
+                return @as(usize, this.len) == other.len and @truncate(u32, bun.hash(other[0..other.len])) == this.hash;
             },
         }
     }

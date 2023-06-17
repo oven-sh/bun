@@ -741,7 +741,7 @@ fn NewPrinter(
 
         pub fn writeByteNTimes(self: *Printer, byte: u8, n: usize) !void {
             var bytes: [256]u8 = undefined;
-            std.mem.set(u8, bytes[0..], byte);
+            @memset(bytes[0..], byte);
 
             var remaining: usize = n;
             while (remaining > 0) {
@@ -5779,7 +5779,7 @@ pub fn printAst(
             }
         }
 
-        std.sort.sort(rename.StableSymbolCount, top_level_symbols.items, {}, rename.StableSymbolCount.lessThan);
+        std.sort.insertion(rename.StableSymbolCount, top_level_symbols.items, {}, rename.StableSymbolCount.lessThan);
 
         try minify_renamer.allocateTopLevelSymbolSlots(top_level_symbols);
         var minifier = tree.char_freq.?.compile(allocator);
@@ -5861,9 +5861,9 @@ pub fn printJSON(
     var stmt = Stmt{ .loc = logger.Loc.Empty, .data = .{
         .s_expr = &s_expr,
     } };
-    var stmts = &[_]js_ast.Stmt{stmt};
-    var parts = &[_]js_ast.Part{.{ .stmts = stmts }};
-    const ast = Ast.initTest(parts);
+    var stmts = [_]js_ast.Stmt{stmt};
+    var parts = [_]js_ast.Part{.{ .stmts = &stmts }};
+    const ast = Ast.initTest(&parts);
     var list = js_ast.Symbol.List.init(ast.symbols.slice());
     var nested_list = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{list});
     var renamer = rename.NoOpRenamer.init(js_ast.Symbol.Map.initList(nested_list), source);

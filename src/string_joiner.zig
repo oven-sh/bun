@@ -43,7 +43,7 @@ pub fn done(this: *Joiner, allocator: Allocator) ![]u8 {
     var el_ = this.head;
     while (el_) |join| {
         const to_join = join.data.slice[join.data.offset..];
-        @memcpy(remaining.ptr, to_join.ptr, to_join.len);
+        bun.oldMemcpy(remaining.ptr, to_join.ptr, to_join.len);
 
         remaining = remaining[@min(remaining.len, to_join.len)..];
 
@@ -67,7 +67,7 @@ pub fn doneWithEnd(this: *Joiner, allocator: Allocator, end: []const u8) ![]u8 {
 
     if (this.head == null) {
         var slice = try allocator.alloc(u8, end.len);
-        @memcpy(slice.ptr, end.ptr, end.len);
+        bun.oldMemcpy(slice.ptr, end.ptr, end.len);
         return slice;
     }
 
@@ -76,7 +76,7 @@ pub fn doneWithEnd(this: *Joiner, allocator: Allocator, end: []const u8) ![]u8 {
     var el_ = this.head;
     while (el_) |join| {
         const to_join = join.data.slice[join.data.offset..];
-        @memcpy(remaining.ptr, to_join.ptr, to_join.len);
+        bun.oldMemcpy(remaining.ptr, to_join.ptr, to_join.len);
 
         remaining = remaining[@min(remaining.len, to_join.len)..];
 
@@ -90,7 +90,7 @@ pub fn doneWithEnd(this: *Joiner, allocator: Allocator, end: []const u8) ![]u8 {
         if (this.use_pool) prev.release();
     }
 
-    @memcpy(remaining.ptr, end.ptr, end.len);
+    bun.oldMemcpy(remaining.ptr, end.ptr, end.len);
 
     remaining = remaining[@min(remaining.len, end.len)..];
 

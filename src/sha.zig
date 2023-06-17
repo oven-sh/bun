@@ -212,7 +212,7 @@ pub fn main() anyerror!void {
 
     {
         var clock1 = try std.time.Timer.start();
-        std.mem.doNotOptimizeAway(std.hash.Wyhash.hash(0, bytes));
+        std.mem.doNotOptimizeAway(bun.hash(bytes));
         const zig_time = clock1.read();
         std.debug.print(
             "Wyhash:\n\n     zig: {any}\n\n",
@@ -251,10 +251,10 @@ pub fn main() anyerror!void {
         var digest2: DigestType = undefined;
         var digest3: DigestType = undefined;
         var digest4: DigestType = undefined;
-        @memset(&digest1, 0, @sizeOf(DigestType));
-        @memset(&digest2, 0, @sizeOf(DigestType));
-        @memset(&digest3, 0, @sizeOf(DigestType));
-        @memset(&digest4, 0, @sizeOf(DigestType));
+        bun.oldMemset(&digest1, 0, @sizeOf(DigestType));
+        bun.oldMemset(&digest2, 0, @sizeOf(DigestType));
+        bun.oldMemset(&digest3, 0, @sizeOf(DigestType));
+        bun.oldMemset(&digest4, 0, @sizeOf(DigestType));
         defer {
             std.mem.doNotOptimizeAway(&digest1);
             std.mem.doNotOptimizeAway(&digest2);

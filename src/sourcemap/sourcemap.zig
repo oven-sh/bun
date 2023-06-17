@@ -1081,7 +1081,7 @@ pub const Chunk = struct {
             filename = filename[FileSystem.instance.top_level_dir.len - 1 ..];
         } else if (filename.len > 0 and filename[0] != '/') {
             filename_buf[0] = '/';
-            @memcpy(filename_buf[1..], filename.ptr, filename.len);
+            bun.oldMemcpy(filename_buf[1..], filename.ptr, filename.len);
             filename = filename_buf[0 .. filename.len + 1];
         }
 

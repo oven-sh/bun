@@ -780,13 +780,13 @@ pub const StreamResult = union(Tag) {
             .temporary => |temp| {
                 var array = JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);
                 var slice_ = array.asArrayBuffer(globalThis).?.slice();
-                @memcpy(slice_.ptr, temp.ptr, temp.len);
+                bun.oldMemcpy(slice_.ptr, temp.ptr, temp.len);
                 return array;
             },
             .temporary_and_done => |temp| {
                 var array = JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);
                 var slice_ = array.asArrayBuffer(globalThis).?.slice();
-                @memcpy(slice_.ptr, temp.ptr, temp.len);
+                bun.oldMemcpy(slice_.ptr, temp.ptr, temp.len);
                 return array;
             },
             .into_array => |array| {
@@ -961,7 +961,7 @@ pub const Sink = struct {
 
             if (stack_size >= str.len) {
                 var buf: [stack_size]u8 = undefined;
-                @memcpy(&buf, str.ptr, str.len);
+                bun.oldMemcpy(&buf, str.ptr, str.len);
                 strings.replaceLatin1WithUTF8(buf[0..str.len]);
                 if (input.isDone()) {
                     const result = writeFn(ctx, .{ .temporary_and_done = bun.ByteList.init(buf[0..str.len]) });
@@ -974,7 +974,7 @@ pub const Sink = struct {
 
             {
                 var slice = bun.default_allocator.alloc(u8, str.len) catch return .{ .err = Syscall.Error.oom };
-                @memcpy(slice.ptr, str.ptr, str.len);
+                bun.oldMemcpy(slice.ptr, str.ptr, str.len);
                 strings.replaceLatin1WithUTF8(slice[0..str.len]);
                 if (input.isDone()) {
                     return writeFn(ctx, .{ .owned_and_done = bun.ByteList.init(slice) });
@@ -3127,7 +3127,7 @@ pub const ByteBlobLoader = struct {
         this.remain -|= copied;
         this.offset +|= copied;
         std.debug.assert(buffer.ptr != temporary.ptr);
-        @memcpy(buffer.ptr, temporary.ptr, temporary.len);
+        bun.oldMemcpy(buffer.ptr, temporary.ptr, temporary.len);
         if (this.remain == 0) {
             return .{ .into_array_and_done = .{ .value = array, .len = copied } };
         }
@@ -3231,7 +3231,7 @@ pub const ByteStream = struct {
         }
 
         if (this.has_received_last_chunk) {
-            return .{ .chunk_size = @truncate(Blob.SizeType, @min(1024 * 1024 * 2, this.buffer.items.len)) };
+            return .{ .chunk_size = @min(1024 * 1024 * 2, this.buffer.items.len) };
         }
 
         if (this.highWaterMark == 0) {
@@ -3292,7 +3292,7 @@ pub const ByteStream = struct {
             var to_copy = this.pending_buffer[0..@min(chunk.len, this.pending_buffer.len)];
             const pending_buffer_len = this.pending_buffer.len;
             std.debug.assert(to_copy.ptr != chunk.ptr);
-            @memcpy(to_copy.ptr, chunk.ptr, to_copy.len);
+            bun.oldMemcpy(to_copy.ptr, chunk.ptr, to_copy.len);
             this.pending_buffer = &.{};
 
             const is_really_done = this.has_received_last_chunk and to_copy.len <= pending_buffer_len;
@@ -3382,7 +3382,7 @@ pub const ByteStream = struct {
             );
             var remaining_in_buffer = this.buffer.items[this.offset..][0..to_write];
 
-            @memcpy(buffer.ptr, this.buffer.items.ptr + this.offset, to_write);
+            bun.oldMemcpy(buffer.ptr, this.buffer.items.ptr + this.offset, to_write);
 
             if (this.offset + to_write == this.buffer.items.len) {
                 this.offset = 0;

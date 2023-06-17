@@ -65,7 +65,7 @@ export fn OPENSSL_memory_alloc(size: usize) ?*anyopaque {
 
 // BoringSSL always expects memory to be zero'd
 export fn OPENSSL_memory_free(ptr: *anyopaque) void {
-    @memset(@ptrCast([*]u8, ptr), 0, bun.Mimalloc.mi_usable_size(ptr));
+    bun.oldMemset(@ptrCast([*]u8, ptr), 0, bun.Mimalloc.mi_usable_size(ptr));
     bun.Mimalloc.mi_free(ptr);
 }
 

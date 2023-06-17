@@ -121,9 +121,9 @@ pub const Registry = struct {
                     if (registry.username.len > 0 and registry.password.len > 0 and auth.len == 0) {
                         var output_buf = try allocator.alloc(u8, registry.username.len + registry.password.len + 1 + std.base64.standard.Encoder.calcSize(registry.username.len + registry.password.len + 1));
                         var input_buf = output_buf[0 .. registry.username.len + registry.password.len + 1];
-                        @memcpy(input_buf.ptr, registry.username.ptr, registry.username.len);
+                        bun.oldMemcpy(input_buf.ptr, registry.username.ptr, registry.username.len);
                         input_buf[registry.username.len] = ':';
-                        @memcpy(input_buf[registry.username.len + 1 ..].ptr, registry.password.ptr, registry.password.len);
+                        bun.oldMemcpy(input_buf[registry.username.len + 1 ..].ptr, registry.password.ptr, registry.password.len);
                         output_buf = output_buf[input_buf.len..];
                         auth = std.base64.standard.Encoder.encode(output_buf, input_buf);
                         break :outer;
@@ -496,7 +496,7 @@ pub const PackageManifest = struct {
                 }
             };
             var trash: i32 = undefined; // workaround for stage1 compiler bug
-            std.sort.sort(Data, &data, &trash, Sort.lessThan);
+            std.sort.insertion(Data, &data, &trash, Sort.lessThan);
             var sizes_bytes: [fields.len]usize = undefined;
             var names: [fields.len][]const u8 = undefined;
             for (data, 0..) |elem, i| {
@@ -571,7 +571,7 @@ pub const PackageManifest = struct {
         }
 
         pub fn save(this: *const PackageManifest, tmpdir: std.fs.IterableDir, cache_dir: std.fs.IterableDir) !void {
-            const file_id = std.hash.Wyhash.hash(0, this.name());
+            const file_id = bun.Wyhash.hash(0, this.name());
             var dest_path_buf: [512 + 64]u8 = undefined;
             var out_path_buf: ["-18446744073709551615".len + ".npm".len + 1]u8 = undefined;
             var dest_path_stream = std.io.fixedBufferStream(&dest_path_buf);
@@ -588,7 +588,7 @@ pub const PackageManifest = struct {
         }
 
         pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.IterableDir, package_name: string) !?PackageManifest {
-            const file_id = std.hash.Wyhash.hash(0, package_name);
+            const file_id = bun.Wyhash.hash(0, package_name);
             var file_path_buf: [512 + 64]u8 = undefined;
             const hex_fmt = bun.fmt.hexIntLower(file_id);
             var file_path = try std.fmt.bufPrintZ(&file_path_buf, "{any}.npm", .{hex_fmt});
@@ -961,19 +961,19 @@ pub const PackageManifest = struct {
 
         if (versioned_packages.len > 0) {
             var versioned_packages_bytes = std.mem.sliceAsBytes(versioned_packages);
-            @memset(versioned_packages_bytes.ptr, 0, versioned_packages_bytes.len);
+            bun.oldMemset(versioned_packages_bytes.ptr, 0, versioned_packages_bytes.len);
         }
         if (all_semver_versions.len > 0) {
             var all_semver_versions_bytes = std.mem.sliceAsBytes(all_semver_versions);
-            @memset(all_semver_versions_bytes.ptr, 0, all_semver_versions_bytes.len);
+            bun.oldMemset(all_semver_versions_bytes.ptr, 0, all_semver_versions_bytes.len);
         }
         if (all_extern_strings.len > 0) {
             var all_extern_strings_bytes = std.mem.sliceAsBytes(all_extern_strings);
-            @memset(all_extern_strings_bytes.ptr, 0, all_extern_strings_bytes.len);
+            bun.oldMemset(all_extern_strings_bytes.ptr, 0, all_extern_strings_bytes.len);
         }
         if (version_extern_strings.len > 0) {
             var version_extern_strings_bytes = std.mem.sliceAsBytes(version_extern_strings);
-            @memset(version_extern_strings_bytes.ptr, 0, version_extern_strings_bytes.len);
+            bun.oldMemset(version_extern_strings_bytes.ptr, 0, version_extern_strings_bytes.len);
         }
 
         var versioned_package_releases = versioned_packages[0..release_versions_len];
@@ -998,7 +998,7 @@ pub const PackageManifest = struct {
         var string_buf: string = "";
         if (string_builder.ptr) |ptr| {
             // 0 it out for better determinism
-            @memset(ptr, 0, string_builder.cap);
+            bun.oldMemset(ptr, 0, string_builder.cap);
 
             string_buf = ptr[0..string_builder.cap];
         }
@@ -1495,7 +1495,7 @@ pub const PackageManifest = struct {
             if (src.len > 0) {
                 var dst = std.mem.sliceAsBytes(all_extern_strings[all_extern_strings.len - extern_strings.len ..]);
                 std.debug.assert(dst.len >= src.len);
-                @memcpy(dst.ptr, src.ptr, src.len);
+                bun.oldMemcpy(dst.ptr, src.ptr, src.len);
             }
 
             all_extern_strings = all_extern_strings[0 .. all_extern_strings.len - extern_strings.len];

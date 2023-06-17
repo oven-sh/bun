@@ -406,7 +406,7 @@ pub const Runtime = struct {
                     return std.mem.order(u8, a, b) == .lt;
                 }
             };
-            std.sort.sort(string, &list, {}, Sorter.compare);
+            std.sort.insertion(string, &list, {}, Sorter.compare);
             break :brk list;
         };
 

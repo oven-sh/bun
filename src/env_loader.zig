@@ -422,7 +422,7 @@ pub const Loader = struct {
 
     pub fn getNodePath(this: *Loader, fs: *Fs.FileSystem, buf: *Fs.PathBuffer) ?[:0]const u8 {
         if (this.get("NODE") orelse this.get("npm_node_execpath")) |node| {
-            @memcpy(buf, node.ptr, node.len);
+            bun.oldMemcpy(buf, node.ptr, node.len);
             buf[node.len] = 0;
             return buf[0..node.len :0];
         }
@@ -556,7 +556,7 @@ pub const Loader = struct {
         var string_map_hashes = try allocator.alloc(u64, framework_defaults.keys.len);
         defer allocator.free(string_map_hashes);
         const invalid_hash = std.math.maxInt(u64) - 1;
-        std.mem.set(u64, string_map_hashes, invalid_hash);
+        @memset(string_map_hashes, invalid_hash);
 
         var key_buf: []u8 = "";
         // Frameworks determine an allowlist of values
@@ -564,7 +564,7 @@ pub const Loader = struct {
         for (framework_defaults.keys, 0..) |key, i| {
             if (key.len > "process.env.".len and strings.eqlComptime(key[0.."process.env.".len], "process.env.")) {
                 const hashable_segment = key["process.env.".len..];
-                string_map_hashes[i] = std.hash.Wyhash.hash(0, hashable_segment);
+                string_map_hashes[i] = bun.hash(hashable_segment);
             }
         }
 
@@ -632,7 +632,7 @@ pub const Loader = struct {
                             );
                             e_strings = e_strings[1..];
                         } else {
-                            const hash = std.hash.Wyhash.hash(0, entry.key_ptr.*);
+                            const hash = bun.hash(entry.key_ptr.*);
 
                             std.debug.assert(hash != invalid_hash);
 

@@ -180,7 +180,7 @@ pub const Location = struct {
             var data = source.initErrorPosition(r.loc);
             var full_line = source.contents[data.line_start..data.line_end];
             if (full_line.len > 80 + data.column_count) {
-                full_line = full_line[std.math.max(data.column_count, 40) - 40 .. std.math.min(data.column_count + 40, full_line.len - 40) + 40];
+                full_line = full_line[@max(data.column_count, 40) - 40 .. @min(data.column_count + 40, full_line.len - 40) + 40];
             }
 
             bun.assertDefined(source.path.text);
@@ -194,7 +194,7 @@ pub const Location = struct {
                 .column = usize2Loc(data.column_count).start,
                 .length = full_line.len,
                 .line_text = full_line,
-                .offset = @intCast(usize, std.math.max(r.loc.start, 0)),
+                .offset = @intCast(usize, @max(r.loc.start, 0)),
             };
         } else {
             return null;
@@ -293,7 +293,7 @@ pub const Data = struct {
             if (location.line_text) |line_text_| {
                 const line_text = std.mem.trimRight(u8, line_text_, "\r\n\t");
 
-                const location_in_line_text = @intCast(u32, std.math.max(location.column, 1) - 1);
+                const location_in_line_text = @intCast(u32, @max(location.column, 1) - 1);
                 const has_position = location.column > -1 and line_text.len > 0 and location_in_line_text < line_text.len;
 
                 if (has_position) {
@@ -1372,7 +1372,7 @@ pub const Source = struct {
 
     pub fn initErrorPosition(self: *const Source, _offset: Loc) ErrorPosition {
         var prev_code_point: i32 = 0;
-        var offset: usize = std.math.min(if (_offset.start < 0) 0 else @intCast(usize, _offset.start), @max(self.contents.len, 1) - 1);
+        var offset: usize = @min(if (_offset.start < 0) 0 else @intCast(usize, _offset.start), @max(self.contents.len, 1) - 1);
 
         const contents = self.contents;
 

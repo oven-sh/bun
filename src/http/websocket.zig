@@ -261,7 +261,7 @@ pub const Websocket = struct {
     }
 
     pub fn read(self: *Websocket) !WebsocketDataFrame {
-        @memset(&self.buf, 0, self.buf.len);
+        bun.oldMemset(&self.buf, 0, self.buf.len);
 
         // Read and retry if we hit the end of the stream buffer
         var start = try self.stream.read(&self.buf);
@@ -274,7 +274,7 @@ pub const Websocket = struct {
     }
 
     pub fn eatAt(self: *Websocket, offset: usize, _len: usize) []u8 {
-        const len = std.math.min(self.read_stream.buffer.len, _len);
+        const len = @min(self.read_stream.buffer.len, _len);
         self.read_stream.pos = len;
         return self.read_stream.buffer[offset..len];
     }

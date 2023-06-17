@@ -1,4 +1,5 @@
 const std = @import("std");
+const Wyhash = @import("./src/wyhash.zig").Wyhash;
 
 fn moduleSource(comptime out: []const u8) FileSource {
     if (comptime std.fs.path.dirname(@src().file)) |base| {
@@ -76,13 +77,13 @@ const BunBuildOptions = struct {
 
     pub fn updateRuntime(this: *BunBuildOptions) anyerror!void {
         var runtime_out_file = try std.fs.cwd().openFile("src/runtime.out.js", .{ .mode = .read_only });
-        const runtime_hash = std.hash.Wyhash.hash(
+        const runtime_hash = Wyhash.hash(
             0,
             try runtime_out_file.readToEndAlloc(std.heap.page_allocator, try runtime_out_file.getEndPos()),
         );
         this.runtime_js_version = runtime_hash;
         var fallback_out_file = try std.fs.cwd().openFile("src/fallback.out.js", .{ .mode = .read_only });
-        const fallback_hash = std.hash.Wyhash.hash(
+        const fallback_hash = Wyhash.hash(
             0,
             try fallback_out_file.readToEndAlloc(std.heap.page_allocator, try fallback_out_file.getEndPos()),
         );

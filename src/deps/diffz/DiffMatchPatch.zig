@@ -178,7 +178,7 @@ fn diffInternal(
 }
 
 fn diffCommonPrefix(before: []const u8, after: []const u8) usize {
-    const n = std.math.min(before.len, after.len);
+    const n = @min(before.len, after.len);
     var i: usize = 0;
 
     while (i < n) : (i += 1) {
@@ -191,7 +191,7 @@ fn diffCommonPrefix(before: []const u8, after: []const u8) usize {
 }
 
 fn diffCommonSuffix(before: []const u8, after: []const u8) usize {
-    const n = std.math.min(before.len, after.len);
+    const n = @min(before.len, after.len);
     var i: usize = 1;
 
     while (i <= n) : (i += 1) {
@@ -996,8 +996,8 @@ fn diffCleanupSemantic(allocator: std.mem.Allocator, diffs: *DiffList) DiffError
             // Eliminate an equality that is smaller or equal to the edits on both
             // sides of it.
             if (last_equality != null and
-                (last_equality.?.len <= std.math.max(length_insertions1, length_deletions1)) and
-                (last_equality.?.len <= std.math.max(length_insertions2, length_deletions2)))
+                (last_equality.?.len <= @max(length_insertions1, length_deletions1)) and
+                (last_equality.?.len <= @max(length_insertions2, length_deletions2)))
             {
                 // Duplicate record.
                 try diffs.insert(

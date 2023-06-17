@@ -59,8 +59,8 @@ pub const Config = struct {
 /// Statically initialize the thread pool using the configuration.
 pub fn init(config: Config) ThreadPool {
     return .{
-        .stack_size = std.math.max(1, config.stack_size),
-        .max_threads = std.math.max(1, config.max_threads),
+        .stack_size = @max(1, config.stack_size),
+        .max_threads = @max(1, config.max_threads),
     };
 }
 

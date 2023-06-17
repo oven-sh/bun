@@ -305,7 +305,7 @@ pub const Arguments = struct {
         defer ctx.debug.loaded_bunfig = true;
         var config_path: [:0]u8 = undefined;
         if (config_path_[0] == '/') {
-            @memcpy(&config_buf, config_path_.ptr, config_path_.len);
+            bun.oldMemcpy(&config_buf, config_path_.ptr, config_path_.len);
             config_buf[config_path_.len] = 0;
             config_path = config_buf[0..config_path_.len :0];
         } else {
@@ -1497,11 +1497,11 @@ pub const Command = struct {
                 const file_pathZ = brk2: {
                     if (!strings.hasPrefix(file_path, "./")) {
                         script_name_buf[0..2].* = "./".*;
-                        @memcpy(script_name_buf[2..], file_path.ptr, file_path.len);
+                        bun.oldMemcpy(script_name_buf[2..], file_path.ptr, file_path.len);
                         script_name_buf[file_path.len + 2] = 0;
                         break :brk2 script_name_buf[0 .. file_path.len + 2 :0];
                     } else {
-                        @memcpy(&script_name_buf, file_path.ptr, file_path.len);
+                        bun.oldMemcpy(&script_name_buf, file_path.ptr, file_path.len);
                         script_name_buf[file_path.len] = 0;
                         break :brk2 script_name_buf[0..file_path.len :0];
                     }

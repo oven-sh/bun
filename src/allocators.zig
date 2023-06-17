@@ -2,7 +2,6 @@ const std = @import("std");
 
 const FeatureFlags = @import("./feature_flags.zig");
 const Environment = @import("./env.zig");
-const Wyhash = std.hash.Wyhash;
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const constStrToU8 = @import("root").bun.constStrToU8;
 const bun = @import("root").bun;
@@ -53,7 +52,6 @@ pub const Result = struct {
         return r.index >= count;
     }
 };
-const Seed = 999;
 
 pub const NotFound = IndexType{
     .index = std.math.maxInt(u31),
@@ -488,7 +486,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
 
         pub fn getOrPut(self: *Self, denormalized_key: []const u8) !Result {
             const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, "/") else denormalized_key;
-            const _key = Wyhash.hash(Seed, key);
+            const _key = bun.hash(key);
 
             self.mutex.lock();
             defer self.mutex.unlock();
@@ -516,7 +514,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
 
         pub fn get(self: *Self, denormalized_key: []const u8) ?*ValueType {
             const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, "/") else denormalized_key;
-            const _key = Wyhash.hash(Seed, key);
+            const _key = bun.hash(key);
             self.mutex.lock();
             defer self.mutex.unlock();
             const index = self.index.get(_key) orelse return null;
@@ -577,7 +575,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
 
             const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, "/") else denormalized_key;
 
-            const _key = Wyhash.hash(Seed, key);
+            const _key = bun.hash(key);
             _ = self.index.remove(_key);
             // const index = self.index.get(_key) orelse return;
             // switch (index) {

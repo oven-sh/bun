@@ -775,18 +775,18 @@ pub const ZigException = extern struct {
         pub const Zero: Holder = Holder{
             .frames = brk: {
                 var _frames: [frame_count]ZigStackFrame = undefined;
-                std.mem.set(ZigStackFrame, &_frames, ZigStackFrame.Zero);
+                @memset(&_frames, ZigStackFrame.Zero);
                 break :brk _frames;
             },
             .source_line_numbers = brk: {
                 var lines: [source_lines_count]i32 = undefined;
-                std.mem.set(i32, &lines, -1);
+                @memset(&lines, -1);
                 break :brk lines;
             },
 
             .source_lines = brk: {
                 var lines: [source_lines_count]ZigString = undefined;
-                std.mem.set(ZigString, &lines, ZigString.Empty);
+                @memset(&lines, ZigString.Empty);
                 break :brk lines;
             },
             .zig_exception = undefined,
@@ -3002,7 +3002,7 @@ pub const ZigConsoleClient = struct {
         chars: [*]const u8,
         len: usize,
     ) callconv(.C) void {
-        const id = std.hash.Wyhash.hash(0, chars[0..len]);
+        const id = bun.hash(chars[0..len]);
         if (!pending_time_logs_loaded) {
             pending_time_logs = PendingTimers.init(default_allocator);
             pending_time_logs_loaded = true;
@@ -3026,7 +3026,7 @@ pub const ZigConsoleClient = struct {
             return;
         }
 
-        const id = std.hash.Wyhash.hash(0, chars[0..len]);
+        const id = bun.hash(chars[0..len]);
         var result = (pending_time_logs.fetchPut(id, null) catch null) orelse return;
         var value: std.time.Timer = result.value orelse return;
         // get the duration in microseconds
@@ -3056,7 +3056,7 @@ pub const ZigConsoleClient = struct {
             return;
         }
 
-        const id = std.hash.Wyhash.hash(0, chars[0..len]);
+        const id = bun.hash(chars[0..len]);
         var value: std.time.Timer = (pending_time_logs.get(id) orelse return) orelse return;
         // get the duration in microseconds
         // then display it in milliseconds

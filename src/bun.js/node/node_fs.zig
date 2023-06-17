@@ -2895,7 +2895,7 @@ pub const NodeFS = struct {
                     .err => |err| {
                         switch (err.getErrno()) {
                             else => {
-                                @memcpy(&this.sync_error_buf, path.ptr, len);
+                                bun.oldMemcpy(&this.sync_error_buf, path.ptr, len);
                                 return .{ .err = err.withPath(this.sync_error_buf[0..len]) };
                             },
 
@@ -2912,7 +2912,7 @@ pub const NodeFS = struct {
                 }
 
                 var working_mem = &this.sync_error_buf;
-                @memcpy(working_mem, path.ptr, len);
+                bun.oldMemcpy(working_mem, path.ptr, len);
 
                 var i: u16 = len - 1;
 
@@ -3015,7 +3015,7 @@ pub const NodeFS = struct {
         const prefix_slice = args.prefix.slice();
         const len = @min(prefix_slice.len, prefix_buf.len -| 7);
         if (len > 0) {
-            @memcpy(prefix_buf, prefix_slice.ptr, len);
+            bun.oldMemcpy(prefix_buf, prefix_slice.ptr, len);
         }
         prefix_buf[len..][0..6].* = "XXXXXX".*;
         prefix_buf[len..][6] = 0;
@@ -3681,7 +3681,7 @@ pub const NodeFS = struct {
                                     .NOENT => return Maybe(Return.Rmdir).success,
                                     .MLINK => {
                                         var copy: [bun.MAX_PATH_BYTES]u8 = undefined;
-                                        @memcpy(&copy, dest.ptr, dest.len);
+                                        bun.oldMemcpy(&copy, dest.ptr, dest.len);
                                         copy[dest.len] = 0;
                                         var dest_copy = copy[0..dest.len :0];
                                         switch (Syscall.unlink(dest_copy).getErrno()) {
@@ -3775,7 +3775,7 @@ pub const NodeFS = struct {
 
                                 .MLINK => {
                                     var copy: [bun.MAX_PATH_BYTES]u8 = undefined;
-                                    @memcpy(&copy, dest.ptr, dest.len);
+                                    bun.oldMemcpy(&copy, dest.ptr, dest.len);
                                     copy[dest.len] = 0;
                                     var dest_copy = copy[0..dest.len :0];
                                     switch (Syscall.unlink(dest_copy).getErrno()) {

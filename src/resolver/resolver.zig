@@ -27,7 +27,6 @@ const CacheSet = cache.Set;
 const DataURL = @import("./data_url.zig").DataURL;
 pub const DirInfo = @import("./dir_info.zig");
 const HTTPWatcher = if (Environment.isTest or Environment.isWasm) void else @import("../http.zig").Watcher;
-const Wyhash = std.hash.Wyhash;
 const ResolvePath = @import("./resolve_path.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const Mutex = @import("../lock.zig").Lock;
@@ -283,10 +282,10 @@ pub const Result = struct {
         if (strings.lastIndexOf(module, node_module_root)) |end_| {
             var end: usize = end_ + node_module_root.len;
 
-            return @truncate(u32, std.hash.Wyhash.hash(0, module[end..]));
+            return @truncate(u32, bun.hash(module[end..]));
         }
 
-        return @truncate(u32, std.hash.Wyhash.hash(0, this.path_pair.primary.text));
+        return @truncate(u32, bun.hash(this.path_pair.primary.text));
     }
 };
 

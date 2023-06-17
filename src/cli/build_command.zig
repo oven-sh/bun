@@ -320,8 +320,8 @@ pub const BuildCommand = struct {
                     var from_path = resolve_path.longestCommonPath(all_paths);
 
                     for (output_files) |f| {
-                        max_path_len = std.math.max(
-                            std.math.max(from_path.len, f.dest_path.len) + 2 - from_path.len,
+                        max_path_len = @max(
+                            @max(from_path.len, f.dest_path.len) + 2 - from_path.len,
                             max_path_len,
                         );
                     }
@@ -446,7 +446,7 @@ pub const BuildCommand = struct {
 
                         // Print summary
                         _ = try writer.write("\n");
-                        const padding_count = 2 + (std.math.max(rel_path.len, max_path_len) - rel_path.len);
+                        const padding_count = 2 + (@max(rel_path.len, max_path_len) - rel_path.len);
                         try writer.writeByteNTimes(' ', 2);
                         try writer.writeAll(rel_path);
                         try writer.writeByteNTimes(' ', padding_count);

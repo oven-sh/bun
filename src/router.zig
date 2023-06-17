@@ -28,7 +28,7 @@ const URLPath = @import("./http/url_path.zig");
 const PathnameScanner = @import("./url.zig").PathnameScanner;
 const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 
-const index_route_hash = @truncate(u32, std.hash.Wyhash.hash(0, "$$/index-route$$-!(@*@#&*%-901823098123"));
+const index_route_hash = @truncate(u32, bun.hash("$$/index-route$$-!(@*@#&*%-901823098123"));
 const arbitrary_max_route = 4096;
 
 pub const Param = struct {
@@ -356,7 +356,7 @@ const RouteLoader = struct {
             .allocator = allocator,
         };
 
-        std.sort.sort(*Route, this.all_routes.items, Route.Sorter{}, Route.Sorter.sortByName);
+        std.sort.insertion(*Route, this.all_routes.items, Route.Sorter{}, Route.Sorter.sortByName);
 
         var route_list = RouteIndex.List{};
         route_list.setCapacity(allocator, this.all_routes.items.len) catch unreachable;
@@ -770,7 +770,7 @@ pub const Route = struct {
             .full_hash = if (is_index)
                 index_route_hash
             else
-                @truncate(u32, std.hash.Wyhash.hash(0, name)),
+                @truncate(u32, bun.hash(name)),
             .param_count = validation_result.param_count,
             .kind = validation_result.kind,
             .abs_path = entry.abs_path,

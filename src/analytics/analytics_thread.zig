@@ -261,7 +261,7 @@ pub const GenerateHeader = struct {
     pub const GeneratePlatform = struct {
         var osversion_name: [32]u8 = undefined;
         pub fn forMac() Analytics.Platform {
-            @memset(&osversion_name, 0, osversion_name.len);
+            bun.oldMemset(&osversion_name, 0, osversion_name.len);
 
             var platform = Analytics.Platform{ .os = Analytics.OperatingSystem.macos, .version = &[_]u8{}, .arch = platform_arch };
             var len = osversion_name.len - 1;
@@ -340,7 +340,7 @@ pub const GenerateHeader = struct {
             offset = std.mem.indexOfScalar(u8, out, '"') orelse return Analytics.Uint64{};
             out = out[0..offset];
 
-            const hash = std.hash.Wyhash.hash(0, std.mem.trim(u8, out, "\n\r "));
+            const hash = bun.hash(std.mem.trim(u8, out, "\n\r "));
             var hash_bytes = std.mem.asBytes(&hash);
             return Analytics.Uint64{
                 .first = std.mem.readIntNative(u32, hash_bytes[0..4]),
@@ -357,7 +357,7 @@ pub const GenerateHeader = struct {
             defer file.close();
             var read_count = try file.read(&linux_machine_id);
 
-            const hash = std.hash.Wyhash.hash(0, std.mem.trim(u8, linux_machine_id[0..read_count], "\n\r "));
+            const hash = bun.hash(std.mem.trim(u8, linux_machine_id[0..read_count], "\n\r "));
             var hash_bytes = std.mem.asBytes(&hash);
             return Analytics.Uint64{
                 .first = std.mem.readIntNative(u32, hash_bytes[0..4]),

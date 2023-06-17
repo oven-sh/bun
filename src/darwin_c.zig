@@ -573,7 +573,7 @@ pub extern fn get_process_priority(pid: c_uint) i32;
 pub extern fn set_process_priority(pid: c_uint, priority: c_int) i32;
 
 pub fn get_version(buf: []u8) []const u8 {
-    @memset(buf.ptr, 0, buf.len);
+    bun.oldMemset(buf.ptr, 0, buf.len);
 
     var size: usize = buf.len;
 
@@ -589,7 +589,7 @@ pub fn get_version(buf: []u8) []const u8 {
 }
 
 pub fn get_release(buf: []u8) []const u8 {
-    @memset(buf.ptr, 0, buf.len);
+    bun.oldMemset(buf.ptr, 0, buf.len);
 
     var size: usize = buf.len;
 

@@ -1079,10 +1079,10 @@ const PackageInstall = struct {
                 var stackpath: [bun.MAX_PATH_BYTES]u8 = undefined;
                 while (try walker.next()) |entry| {
                     switch (entry.kind) {
-                        .Directory => {
+                        .directory => {
                             std.os.mkdirat(destination_dir_.dir.fd, entry.path, 0o755) catch {};
                         },
-                        .File => {
+                        .file => {
                             bun.copy(u8, &stackpath, entry.path);
                             stackpath[entry.path.len] = 0;
                             var path: [:0]u8 = stackpath[0..entry.path.len :0];
@@ -1190,7 +1190,7 @@ const PackageInstall = struct {
             ) !u32 {
                 var real_file_count: u32 = 0;
                 while (try walker.next()) |entry| {
-                    if (entry.kind != .File) continue;
+                    if (entry.kind != .file) continue;
                     real_file_count += 1;
 
                     var outfile = destination_dir_.createFile(entry.path, .{}) catch brk: {
@@ -1268,10 +1268,10 @@ const PackageInstall = struct {
                 var real_file_count: u32 = 0;
                 while (try walker.next()) |entry| {
                     switch (entry.kind) {
-                        .Directory => {
+                        .directory => {
                             std.os.mkdirat(destination_dir_.dir.fd, entry.path, 0o755) catch {};
                         },
-                        .File => {
+                        .file => {
                             try std.os.linkat(entry.dir.dir.fd, entry.basename, destination_dir_.dir.fd, entry.path, 0);
                             real_file_count += 1;
                         },
@@ -1351,16 +1351,16 @@ const PackageInstall = struct {
                 while (try walker.next()) |entry| {
                     switch (entry.kind) {
                         // directories are created
-                        .Directory => {
+                        .directory => {
                             std.os.mkdirat(dest_dir_fd, entry.path, 0o755) catch {};
                         },
                         // but each file in the directory is a symlink
-                        .File => {
-                            @memcpy(remain.ptr, entry.path.ptr, entry.path.len);
+                        .file => {
+                            bun.oldMemcpy(remain.ptr, entry.path.ptr, entry.path.len);
                             remain[entry.path.len] = 0;
                             var from_path = buf[0 .. cache_dir_offset + entry.path.len :0];
 
-                            @memcpy(dest_remaining.ptr, entry.path.ptr, entry.path.len);
+                            bun.oldMemcpy(dest_remaining.ptr, entry.path.ptr, entry.path.len);
                             dest_remaining[entry.path.len] = 0;
                             var to_path = dest_buf[0 .. dest_dir_offset + entry.path.len :0];
 
@@ -1830,7 +1830,7 @@ pub const PackageManager = struct {
         const offset = this.preinstall_state.items.len;
         try this.preinstall_state.ensureTotalCapacity(this.allocator, count);
         this.preinstall_state.expandToCapacity();
-        std.mem.set(PreinstallState, this.preinstall_state.items[offset..], PreinstallState.unknown);
+        @memset(this.preinstall_state.items[offset..], PreinstallState.unknown);
     }
 
     pub fn setPreinstallState(this: *PackageManager, package_id: PackageID, lockfile: *Lockfile, value: PreinstallState) void {
@@ -2263,7 +2263,7 @@ pub const PackageManager = struct {
         var iter = dir.iterate();
 
         while (try iter.next()) |entry| {
-            if (entry.kind != .Directory and entry.kind != .SymLink) continue;
+            if (entry.kind != .directory and entry.kind != .sym_link) continue;
             const name = entry.name;
             const sliced = SlicedString.init(name, name);
             const parsed = Semver.Version.parse(sliced, allocator);
@@ -2305,7 +2305,7 @@ pub const PackageManager = struct {
         };
 
         // TODO: make this fewer passes
-        std.sort.sort(
+        std.sort.insertion(
             Semver.Version,
             installed_versions.items,
             @as([]const u8, tags_buf.items),
@@ -4814,7 +4814,7 @@ pub const PackageManager = struct {
 
                 var new_dependencies = try allocator.alloc(G.Property, dependencies.len + remaining - replacing);
                 bun.copy(G.Property, new_dependencies, dependencies);
-                std.mem.set(G.Property, new_dependencies[dependencies.len..], G.Property{});
+                @memset(new_dependencies[dependencies.len..], G.Property{});
 
                 outer: for (updates) |*update| {
                     if (update.e_string != null) continue;
@@ -6372,7 +6372,7 @@ pub const PackageManager = struct {
                     var iter: std.fs.IterableDir.Iterator = node_modules_bin.iterate();
                     iterator: while (iter.next() catch null) |entry| {
                         switch (entry.kind) {
-                            std.fs.IterableDir.Entry.Kind.SymLink => {
+                            std.fs.IterableDir.Entry.Kind.sym_link => {
 
                                 // any symlinks which we are unable to open are assumed to be dangling
                                 // note that using access won't work here, because access doesn't resolve symlinks
@@ -6547,7 +6547,7 @@ pub const PackageManager = struct {
                     if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
                         installer.cache_dir_subpath = ".";
                     } else {
-                        @memcpy(&this.folder_path_buf, folder.ptr, folder.len);
+                        bun.oldMemcpy(&this.folder_path_buf, folder.ptr, folder.len);
                         this.folder_path_buf[folder.len] = 0;
                         installer.cache_dir_subpath = this.folder_path_buf[0..folder.len :0];
                     }
@@ -6567,7 +6567,7 @@ pub const PackageManager = struct {
                     if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
                         installer.cache_dir_subpath = ".";
                     } else {
-                        @memcpy(&this.folder_path_buf, folder.ptr, folder.len);
+                        bun.oldMemcpy(&this.folder_path_buf, folder.ptr, folder.len);
                         this.folder_path_buf[folder.len] = 0;
                         installer.cache_dir_subpath = this.folder_path_buf[0..folder.len :0];
                     }
@@ -6608,13 +6608,13 @@ pub const PackageManager = struct {
                         const global_link_dir = this.manager.globalLinkDirPath() catch unreachable;
                         var ptr = &this.folder_path_buf;
                         var remain: []u8 = this.folder_path_buf[0..];
-                        @memcpy(ptr, global_link_dir.ptr, global_link_dir.len);
+                        bun.oldMemcpy(ptr, global_link_dir.ptr, global_link_dir.len);
                         remain = remain[global_link_dir.len..];
                         if (global_link_dir[global_link_dir.len - 1] != std.fs.path.sep) {
                             remain[0] = std.fs.path.sep;
                             remain = remain[1..];
                         }
-                        @memcpy(remain.ptr, folder.ptr, folder.len);
+                        bun.oldMemcpy(remain.ptr, folder.ptr, folder.len);
                         remain = remain[folder.len..];
                         remain[0] = 0;
                         const len = @ptrToInt(remain.ptr) - @ptrToInt(ptr);
@@ -7390,7 +7390,7 @@ pub const PackageManager = struct {
                         );
                     }
                     var mapping = try manager.lockfile.allocator.alloc(PackageID, maybe_root.dependencies.len);
-                    std.mem.set(PackageID, mapping, invalid_package_id);
+                    @memset(mapping, invalid_package_id);
 
                     manager.summary = try Package.Diff.generate(
                         ctx.allocator,
@@ -7443,8 +7443,8 @@ pub const PackageManager = struct {
                         var resolutions = manager.lockfile.buffers.resolutions.items.ptr[off .. off + len];
 
                         // It is too easy to accidentally undefined memory
-                        std.mem.set(PackageID, resolutions, invalid_package_id);
-                        std.mem.set(Dependency, dependencies, Dependency{});
+                        @memset(resolutions, invalid_package_id);
+                        @memset(dependencies, Dependency{});
 
                         manager.lockfile.buffers.dependencies.items = manager.lockfile.buffers.dependencies.items.ptr[0 .. off + len];
                         manager.lockfile.buffers.resolutions.items = manager.lockfile.buffers.resolutions.items.ptr[0 .. off + len];

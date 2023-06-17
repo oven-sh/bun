@@ -41,7 +41,7 @@ pub const Integrity = extern struct {
         var i: usize = 0;
 
         {
-            std.mem.set(u8, &integrity.value, 0);
+            @memset(&integrity.value, 0);
         }
 
         while (i < end) {

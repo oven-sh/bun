@@ -157,10 +157,10 @@ pub const FileSystem = struct {
 
         pub fn addEntry(dir: *DirEntry, prev_map: ?*EntryMap, entry: std.fs.IterableDir.Entry, allocator: std.mem.Allocator, comptime Iterator: type, iterator: Iterator) !void {
             const _kind: Entry.Kind = switch (entry.kind) {
-                .Directory => .dir,
+                .directory => .dir,
                 // This might be wrong!
-                .SymLink => .file,
-                .File => .file,
+                .sym_link => .file,
+                .file => .file,
                 else => return,
             };
 
@@ -207,7 +207,7 @@ pub const FileSystem = struct {
                     // Call "stat" lazily for performance. The "@material-ui/icons" package
                     // contains a directory with over 11,000 entries in it and running "stat"
                     // for each entry was a big performance issue for that package.
-                    .need_stat = entry.kind == .SymLink,
+                    .need_stat = entry.kind == .sym_link,
                     .cache = .{
                         .symlink = PathString.empty,
                         .kind = _kind,
@@ -768,7 +768,7 @@ pub const FileSystem = struct {
                 hash_bytes_remain = hash_bytes_remain[@sizeOf(@TypeOf(this.mtime))..];
                 std.debug.assert(hash_bytes_remain.len == 8);
                 hash_bytes_remain[0..8].* = @bitCast([8]u8, @as(u64, 0));
-                return std.hash.Wyhash.hash(0, &hash_bytes);
+                return bun.hash(&hash_bytes);
             }
 
             pub fn generate(_: *RealFS, _: string, file: std.fs.File) anyerror!ModKey {
@@ -1127,7 +1127,7 @@ pub const FileSystem = struct {
             const absolute_path_c: [:0]const u8 = outpath[0..entry_path.len :0];
 
             var stat = try C.lstat_absolute(absolute_path_c);
-            const is_symlink = stat.kind == std.fs.File.Kind.SymLink;
+            const is_symlink = stat.kind == std.fs.File.Kind.sym_link;
             var _kind = stat.kind;
             var cache = Entry.Cache{
                 .kind = Entry.Kind.file,
@@ -1158,9 +1158,9 @@ pub const FileSystem = struct {
                 _kind = _stat.kind;
             }
 
-            std.debug.assert(_kind != .SymLink);
+            std.debug.assert(_kind != .sym_link);
 
-            if (_kind == .Directory) {
+            if (_kind == .directory) {
                 cache.kind = .dir;
             } else {
                 cache.kind = .file;

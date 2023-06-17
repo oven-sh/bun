@@ -539,7 +539,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn sortDesc(slice_: []ZigString) void {
-        std.sort.sort(ZigString, slice_, {}, cmpDesc);
+        std.sort.insertion(ZigString, slice_, {}, cmpDesc);
     }
 
     pub fn cmpDesc(_: void, a: ZigString, b: ZigString) bool {
@@ -547,7 +547,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn sortAsc(slice_: []ZigString) void {
-        std.sort.sort(ZigString, slice_, {}, cmpAsc);
+        std.sort.insertion(ZigString, slice_, {}, cmpAsc);
     }
 
     pub fn cmpAsc(_: void, a: ZigString, b: ZigString) bool {
@@ -4549,7 +4549,7 @@ pub const JSValue = enum(JSValueReprInt) {
     /// If the "length" property does not exist, this function will return 0.
     pub fn getLength(this: JSValue, globalThis: *JSGlobalObject) u64 {
         const len = this.getLengthIfPropertyExistsInternal(globalThis);
-        if (len == std.math.f64_max) {
+        if (len == std.math.floatMax(f64)) {
             return 0;
         }
 
@@ -4570,7 +4570,7 @@ pub const JSValue = enum(JSValueReprInt) {
     /// If the "length" property does not exist, this function will return null.
     pub fn tryGetLength(this: JSValue, globalThis: *JSGlobalObject) ?f64 {
         const len = this.getLengthIfPropertyExistsInternal(globalThis);
-        if (len == std.math.f64_max) {
+        if (len == std.math.floatMax(f64)) {
             return null;
         }
 
@@ -5110,16 +5110,15 @@ pub const CallFrame = opaque {
     pub fn arguments(self: *const CallFrame, comptime max: usize) Arguments(max) {
         const len = self.argumentsCount();
         var ptr = self.argumentsPtr();
-        return switch (@min(len, max)) {
+        return switch (@as(u4, @min(len, max))) {
             0 => .{ .ptr = undefined, .len = 0 },
-            1 => Arguments(max).init(1, ptr),
-            2 => Arguments(max).init(@min(2, max), ptr),
-            3 => Arguments(max).init(@min(3, max), ptr),
-            4 => Arguments(max).init(@min(4, max), ptr),
-            5 => Arguments(max).init(@min(5, max), ptr),
-            6 => Arguments(max).init(@min(6, max), ptr),
-            7 => Arguments(max).init(@min(7, max), ptr),
-            8 => Arguments(max).init(@min(8, max), ptr),
+            4 => Arguments(max).init(comptime @min(4, max), ptr),
+            2 => Arguments(max).init(comptime @min(2, max), ptr),
+            6 => Arguments(max).init(comptime @min(6, max), ptr),
+            3 => Arguments(max).init(comptime @min(3, max), ptr),
+            8 => Arguments(max).init(comptime @min(8, max), ptr),
+            5 => Arguments(max).init(comptime @min(5, max), ptr),
+            7 => Arguments(max).init(comptime @min(7, max), ptr),
             else => unreachable,
         };
     }

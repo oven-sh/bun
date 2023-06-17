@@ -367,7 +367,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         var evict_list: [WATCHER_MAX_LIST]WatchItemIndex = undefined;
 
         pub fn getHash(filepath: string) HashType {
-            return @truncate(HashType, std.hash.Wyhash.hash(0, filepath));
+            return @truncate(HashType, bun.hash(filepath));
         }
 
         pub fn init(ctx: ContextType, fs: *Fs.FileSystem, allocator: std.mem.Allocator) !*Watcher {
@@ -434,7 +434,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             // swapRemove messes up the order
             // But, it only messes up the order if any elements in the list appear after the item being removed
             // So if we just sort the list by the biggest index first, that should be fine
-            std.sort.sort(
+            std.sort.insertion(
                 WatchItemIndex,
                 evict_list[0..evict_list_i],
                 {},
@@ -577,7 +577,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                         }
 
                         var all_events = watchevents[0..watch_event_id];
-                        std.sort.sort(WatchEvent, all_events, {}, WatchEvent.sortByIndex);
+                        std.sort.insertion(WatchEvent, all_events, {}, WatchEvent.sortByIndex);
 
                         var last_event_index: usize = 0;
                         var last_event_id: INotify.EventListIndex = std.math.maxInt(INotify.EventListIndex);

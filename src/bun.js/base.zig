@@ -1282,8 +1282,7 @@ pub fn NewClassWithInstanceType(
 
         const static_properties: [property_names.len + 1]js.JSStaticValue = brk: {
             var props: [property_names.len + 1]js.JSStaticValue = undefined;
-            std.mem.set(
-                js.JSStaticValue,
+            @memset(
                 &props,
                 js.JSStaticValue{
                     .name = @intToPtr([*c]const u8, 0),
@@ -1295,7 +1294,7 @@ pub fn NewClassWithInstanceType(
             for (property_name_literals, 0..) |lit, i| {
                 props[i] = brk2: {
                     var static_prop = JSC.C.JSStaticValue{
-                        .name = lit.ptr[0..lit.len :0],
+                        .name = lit.ptr,
                         .getProperty = null,
                         .setProperty = null,
                         .attributes = @intToEnum(js.JSPropertyAttributes, 0),
@@ -2059,7 +2058,7 @@ pub const RefString = struct {
     pub const Callback = fn (ctx: *anyopaque, str: *RefString) void;
 
     pub fn computeHash(input: []const u8) u32 {
-        return std.hash.XxHash32.hash(input);
+        return std.hash.XxHash32.hash(0, input);
     }
 
     pub fn slice(this: *RefString) []const u8 {

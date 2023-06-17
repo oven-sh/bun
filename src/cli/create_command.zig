@@ -523,7 +523,7 @@ pub const CreateCommand = struct {
                         );
                         for (archive_context.overwrite_list.keys()) |path| {
                             if (strings.endsWith(path, std.fs.path.sep_str)) {
-                                Output.prettyError("<r>  <blue>{s}<r>", .{path[0 .. std.math.max(path.len, 1) - 1]});
+                                Output.prettyError("<r>  <blue>{s}<r>", .{path[0 .. @max(path.len, 1) - 1]});
                                 Output.prettyErrorln(std.fs.path.sep_str, .{});
                             } else {
                                 Output.prettyErrorln("<r>  {s}", .{path});
@@ -1692,7 +1692,7 @@ pub const Example = struct {
     var app_name_buf: [512]u8 = undefined;
     pub fn print(examples: []const Example, default_app_name: ?string) void {
         for (examples) |example| {
-            var app_name = default_app_name orelse (std.fmt.bufPrint(&app_name_buf, "./{s}-app", .{example.name[0..std.math.min(example.name.len, 492)]}) catch unreachable);
+            var app_name = default_app_name orelse (std.fmt.bufPrint(&app_name_buf, "./{s}-app", .{example.name[0..@min(example.name.len, 492)]}) catch unreachable);
 
             if (example.description.len > 0) {
                 Output.pretty("  <r># {s}<r>\n  <b>bun create <cyan>{s}<r><b> {s}<r>\n<d>  \n\n", .{

@@ -5798,8 +5798,7 @@ fn NewParser_(
 
             if (p.options.features.inlining) {
                 if (p.const_values.get(ref)) |replacement| {
-                    // TODO:
-                    // p.ignoreUsage(ref);
+                    p.ignoreUsage(ref);
                     return replacement;
                 }
             }
@@ -20427,7 +20426,8 @@ fn NewParser_(
                                     var end: usize = 0;
                                     for (decls) |decl| {
                                         if (decl.binding.data == .b_identifier) {
-                                            if (p.const_values.contains(decl.binding.data.b_identifier.ref)) {
+                                            const symbol = p.symbols.items[decl.binding.data.b_identifier.ref.innerIndex()];
+                                            if (p.const_values.contains(decl.binding.data.b_identifier.ref) and symbol.use_count_estimate == 0) {
                                                 continue;
                                             }
                                         }

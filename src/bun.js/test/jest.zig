@@ -989,15 +989,10 @@ pub const Expect = struct {
     }
 
     pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        const arguments_ = callframe.arguments(1);
-        if (arguments_.len < 1) {
-            globalObject.throw("expect() requires one argument\n", .{});
-            return .zero;
-        }
-        const arguments = arguments_.ptr[0..arguments_.len];
+        const arguments = callframe.arguments(1);
+        const value = if (arguments.len < 1) JSC.JSValue.jsUndefined() else arguments.ptr[0];
 
         var expect = globalObject.bunVM().allocator.create(Expect) catch unreachable;
-        const value = arguments[0];
 
         if (Jest.runner.?.pending_test == null) {
             const err = globalObject.createErrorInstance("expect() must be called in a test", .{});

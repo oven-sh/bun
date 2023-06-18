@@ -1570,7 +1570,7 @@ void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC__JSGlobalObject* global,
 
 void JSC__VM__collectAsync(JSC__VM* vm)
 {
-    vm->heap.reportAbandonedObjectGraph();
+    vm->heap.collectAsync();
 }
 
 size_t JSC__VM__heapSize(JSC__VM* arg0)

@@ -207,6 +207,15 @@ pub const To = struct {
 
                     return array;
                 },
+                []const bun.String => {
+                    defer {
+                        for (value) |out| {
+                            out.deref();
+                        }
+                        bun.default_allocator.free(value);
+                    }
+                    return bun.String.toJSArray(context, value).asObjectRef();
+                },
                 []const PathString, []const []const u8, []const []u8, [][]const u8, [][:0]const u8, [][:0]u8 => {
                     if (value.len == 0)
                         return JSC.C.JSObjectMakeArray(context, 0, null, exception);

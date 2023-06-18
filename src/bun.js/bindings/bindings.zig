@@ -933,6 +933,10 @@ pub const DOMURL = opaque {
         return out;
     }
 
+    pub fn fileSystemPath(this: *DOMURL) bun.String {
+        return shim.cppFn("fileSystemPath", .{this});
+    }
+
     pub fn pathname_(this: *DOMURL, out: *ZigString) void {
         return shim.cppFn("pathname_", .{ this, out });
     }
@@ -947,6 +951,7 @@ pub const DOMURL = opaque {
         "cast_",
         "href_",
         "pathname_",
+        "fileSystemPath",
     };
 };
 

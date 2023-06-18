@@ -1192,6 +1192,16 @@ void WebCore__DOMURL__pathname_(WebCore__DOMURL* domURL, ZigString* arg1)
     *arg1 = Zig::toZigString(pathname);
 }
 
+BunString WebCore__DOMURL__fileSystemPath(WebCore__DOMURL* arg0)
+{
+    const WTF::URL& url = arg0->href();
+    if (url.isLocalFile()) {
+        return Bun::toString(url.fileSystemPath());
+    }
+
+    return BunStringEmpty;
+}
+
 extern "C" JSC__JSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JSGlobalObject* globalObject)
 {
     auto str = Zig::toString(*strPtr);
@@ -1560,7 +1570,7 @@ void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC__JSGlobalObject* global,
 
 void JSC__VM__collectAsync(JSC__VM* vm)
 {
-    vm->heap.collectAsync();
+    vm->heap.reportAbandonedObjectGraph();
 }
 
 size_t JSC__VM__heapSize(JSC__VM* arg0)
@@ -3690,12 +3700,10 @@ JSC__JSValue JSC__VM__runGC(JSC__VM* vm, bool sync)
     JSC::JSLockHolder lock(vm);
 
     vm->finalizeSynchronousJSExecution();
-
     WTF::releaseFastMallocFreeMemory();
 
     if (sync) {
         vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
-        WTF::releaseFastMallocFreeMemory();
     } else {
         vm->heap.collectSync(JSC::CollectionScope::Full);
     }

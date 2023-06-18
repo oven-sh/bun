@@ -149,6 +149,39 @@ extern "C" BunString BunString__createExternal(const char* bytes, size_t length,
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
 
+extern "C" EncodedJSValue BunString__createArray(
+    JSC::JSGlobalObject* globalObject,
+    const BunString* ptr, size_t length)
+{
+    if (length == 0)
+        return JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr));
+
+    JSC::VM& vm = globalObject->vm();
+
+    JSC::ObjectInitializationScope scope(vm);
+    const BunString* end = ptr + length;
+    unsigned i = 0;
+
+    // fast path:
+    if (JSC::JSArray* array = JSC::JSArray::tryCreateUninitializedRestricted(
+            scope,
+            globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
+            length)) {
+
+        for (const BunString* it = ptr; it != end; ++it) {
+            array->initializeIndex(scope, i++, Bun::toJS(globalObject, *it));
+        }
+        return JSValue::encode(array);
+    }
+
+    JSC::JSArray* array = JSC::constructEmptyArray(globalObject, nullptr);
+    for (const BunString* it = ptr; it != end; ++it) {
+        array->push(globalObject, Bun::toJS(globalObject, *it));
+    }
+
+    return JSValue::encode(array);
+}
+
 extern "C" void BunString__toWTFString(BunString* bunString)
 {
     if (bunString->tag == BunStringTag::ZigString) {

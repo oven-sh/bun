@@ -181,13 +181,19 @@ extern "C" EncodedJSValue BunString__createArray(
     JSC::ObjectInitializationScope scope(vm);
     GCDeferralContext context(vm);
 
+    // We must do this or Bun.gc(true) in a loop creating large arrays of strings will crash due to GC'ing.
+    MarkedArgumentBuffer arguments;
+    arguments.fill(length, [&](JSC::JSValue* value) {
+        *value = Bun::toJS(globalObject, *ptr++);
+    });
+
     if (JSC::JSArray* array = JSC::JSArray::tryCreateUninitializedRestricted(
             scope,
             globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
             length)) {
 
         for (size_t i = 0; i < length; ++i) {
-            array->initializeIndex(scope, i, Bun::toJS(globalObject, *ptr++));
+            array->initializeIndex(scope, i, arguments.at(i));
         }
         return JSValue::encode(array);
     }

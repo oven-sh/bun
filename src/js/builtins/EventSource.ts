@@ -25,6 +25,12 @@
 export function getEventSource() {
   type Socket = Awaited<ReturnType<typeof Bun.connect<EventSource>>>;
 
+  class ConnectionError extends Error {}
+  Object.defineProperty(ConnectionError.prototype, "name", { value: "ConnectionError" });
+
+  class ProtocolError extends Error {}
+  Object.defineProperty(ProtocolError.prototype, "name", { value: "ProtocolError" });
+
   class EventSource extends EventTarget {
     #url;
     #state;
@@ -48,7 +54,7 @@ export function getEventSource() {
     static #SendRequest(socket: Socket, url: URL) {
       const self = socket.data;
       const last_event_header = self.#lastEventID ? `Last-Event-ID: ${self.#lastEventID}\r\n` : "";
-      const request = `GET ${url.pathname}${url.search} HTTP/1.1\r\nHost: bun\r\nContent-type: text/event-stream\r\nContent-length: 0\r\n${last_event_header}\r\n`;
+      const request = `GET ${url.pathname}${url.search} HTTP/1.1\r\nHost: ${url.host}\r\nConnection: Close\r\nContent-Type: text/event-stream\r\nContent-Length: 0\r\n${last_event_header}\r\n`;
       const sended = socket.write(request);
       if (sended !== request.length) {
         self.#send_buffer = request.substring(sended);
@@ -176,6 +182,7 @@ export function getEventSource() {
     static #Handlers = {
       open(socket: Socket) {
         const self = socket.data;
+        socket.timeout(999_999_999);
         self.#socket = socket;
         if (!self.#is_tls) {
           EventSource.#SendRequest(socket, self.#url);
@@ -196,6 +203,7 @@ export function getEventSource() {
         switch (self.#state) {
           case 0: {
             let text = buffer.toString();
+
             const headers_idx = text.indexOf("\r\n\r\n");
             if (headers_idx === -1) {
               // wait headers
@@ -213,14 +221,18 @@ export function getEventSource() {
 
             if (status_idx === -1) {
               self.#state = 2;
-              self.dispatchEvent(new ErrorEvent("error", { error: new Error("Invalid HTTP request") }));
+              self.dispatchEvent(new ErrorEvent("error", { error: new ProtocolError("Invalid HTTP request") }));
               socket.end();
               return;
             }
             const status = headers.substring(0, status_idx);
             if (status !== "HTTP/1.1 200 OK") {
               self.#state = 2;
-              self.dispatchEvent(new ErrorEvent("error", { error: new Error(status) }));
+              self.dispatchEvent(
+                new ErrorEvent("error", {
+                  error: new ProtocolError("Unexpected status line\n" + JSON.stringify(headers)),
+                }),
+              );
               socket.end();
               return;
             }
@@ -237,8 +249,8 @@ export function getEventSource() {
                     self.#state = 2;
                     self.dispatchEvent(
                       new ErrorEvent("error", {
-                        error: new Error(
-                          `EventSource's response has no MIME type and "text/event-stream" is required. Aborting the connection.`,
+                        error: new ProtocolError(
+                          `EventSource HTTP response must have \"Content-Type\" header set to "text/event-stream". Aborting the connection.`,
                         ),
                       }),
                     );
@@ -265,8 +277,8 @@ export function getEventSource() {
                   self.#state = 2;
                   self.dispatchEvent(
                     new ErrorEvent("error", {
-                      error: new Error(
-                        `EventSource's response has a MIME type that is not "text/event-stream". Aborting the connection.`,
+                      error: new ProtocolError(
+                        `EventSource HTTP response must have \"Content-Type\" header set to "text/event-stream". Aborting the connection.`,
                       ),
                     }),
                   );
@@ -297,7 +309,9 @@ export function getEventSource() {
                     if (header.substring(header_name_idx + 1).trim() !== "chunked") {
                       self.dispatchEvent(
                         new ErrorEvent("error", {
-                          error: new Error(`EventSource's Transfer-Encoding is invalid. Aborting the connection.`),
+                          error: new ProtocolError(
+                            `EventSource's Transfer-Encoding is invalid. Aborting the connection.`,
+                          ),
                         }),
                       );
                       socket.end();
@@ -418,7 +432,7 @@ export function getEventSource() {
             }
           : false,
       }).catch(err => {
-        super.dispatchEvent(new ErrorEvent("error", { error: err }));
+        this.dispatchEvent(new ErrorEvent("error", { error: err }));
         if (this.#reconnect) {
           if (this.#reconnection_timer) {
             this.#reconnection_timer.unref?.();

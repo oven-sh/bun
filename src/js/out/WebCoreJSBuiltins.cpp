@@ -701,6 +701,32 @@ JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
 WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 #undef DEFINE_BUILTIN_GENERATOR
 
+/* Module.ts */
+// require
+const JSC::ConstructAbility s_moduleRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_moduleRequireCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_moduleRequireCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_moduleRequireCodeLength = 398;
+static const JSC::Intrinsic s_moduleRequireCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_moduleRequireCode = "(function (r){\"use strict\";const _=@requireMap.@get(r)||@requireMap.@get(r=@resolveSync(r,this.id,!1));if(_)return _.exports;if(r.endsWith(\".json\")||r.endsWith(\".toml\")||r.endsWith(\".node\"))return @internalRequire(r);const a=this.@require(r);if(a===-1)return @internalRequire(r);const c=@requireMap.@get(r);if(c)return c.exports;return @requireMap.@set(r,{id:r,exports:a,loaded:!0,filename:r}),a})\n";
+
+// requireResolve
+const JSC::ConstructAbility s_moduleRequireResolveCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_moduleRequireResolveCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_moduleRequireResolveCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_moduleRequireResolveCodeLength = 63;
+static const JSC::Intrinsic s_moduleRequireResolveCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_moduleRequireResolveCode = "(function (a){\"use strict\";return @resolveSync(a,this.id,!1)})\n";
+
+#define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
+JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
+{\
+    JSVMClientData* clientData = static_cast<JSVMClientData*>(vm.clientData); \
+    return clientData->builtinFunctions().moduleBuiltins().codeName##Executable()->link(vm, nullptr, clientData->builtinFunctions().moduleBuiltins().codeName##Source(), std::nullopt, s_##codeName##Intrinsic); \
+}
+WEBCORE_FOREACH_MODULE_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
+#undef DEFINE_BUILTIN_GENERATOR
+
 /* JSBufferPrototype.ts */
 // setBigUint64
 const JSC::ConstructAbility s_jsBufferPrototypeSetBigUint64CodeConstructAbility = JSC::ConstructAbility::CannotConstruct;

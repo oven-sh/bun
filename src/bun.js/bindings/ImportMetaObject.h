@@ -18,6 +18,9 @@ namespace Zig {
 using namespace JSC;
 using namespace WebCore;
 
+JSC_DECLARE_CUSTOM_GETTER(jsRequireCacheGetter);
+JSC_DECLARE_CUSTOM_SETTER(jsRequireCacheSetter);
+
 class ImportMetaObject final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
@@ -29,8 +32,7 @@ public:
         return ptr;
     }
 
-    static JSC::Structure* createResolveFunctionStructure(JSC::VM& vm, Zig::GlobalObject* globalObject);
-    static JSValue createResolveFunctionPrototype(JSC::VM& vm, Zig::GlobalObject* globalObject);
+    static JSC::Structure* createRequireFunctionStructure(JSC::VM& vm, JSGlobalObject* globalObject);
     static JSObject* createRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString);
 
     static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSC::JSValue key);

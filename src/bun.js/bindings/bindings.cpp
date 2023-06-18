@@ -3900,36 +3900,6 @@ void JSC__VM__throwError(JSC__VM* vm_, JSC__JSGlobalObject* arg1, JSC__JSValue v
     scope.throwException(arg1, exception);
 }
 
-#pragma mark - JSC::ThrowScope
-
-void JSC__ThrowScope__clearException(JSC__ThrowScope* arg0)
-{
-    arg0->clearException();
-};
-bJSC__ThrowScope JSC__ThrowScope__declare(JSC__VM* arg0, unsigned char* arg1, unsigned char* arg2,
-    size_t arg3)
-{
-    Wrap<JSC::ThrowScope, bJSC__ThrowScope> wrapped = Wrap<JSC::ThrowScope, bJSC__ThrowScope>();
-    wrapped.cpp = new (wrapped.alignedBuffer()) JSC::ThrowScope(reinterpret_cast<JSC::VM&>(arg0));
-    return wrapped.result;
-};
-JSC__Exception* JSC__ThrowScope__exception(JSC__ThrowScope* arg0) { return arg0->exception(); }
-void JSC__ThrowScope__release(JSC__ThrowScope* arg0) { arg0->release(); }
-
-#pragma mark - JSC::CatchScope
-
-void JSC__CatchScope__clearException(JSC__CatchScope* arg0)
-{
-    arg0->clearException();
-}
-bJSC__CatchScope JSC__CatchScope__declare(JSC__VM* arg0, unsigned char* arg1, unsigned char* arg2,
-    size_t arg3)
-{
-    JSC::CatchScope scope = JSC::CatchScope(reinterpret_cast<JSC::VM&>(arg0));
-    return cast<bJSC__CatchScope>(&scope);
-}
-JSC__Exception* JSC__CatchScope__exception(JSC__CatchScope* arg0) { return arg0->exception(); }
-
 JSC__JSValue JSC__JSPromise__rejectedPromiseValue(JSC__JSGlobalObject* arg0,
     JSC__JSValue JSValue1)
 {

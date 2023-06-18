@@ -21248,24 +21248,10 @@ fn NewParser_(
                             logger.Loc.Empty,
                         ),
                         p.newExpr(
-                            E.Binary{
-                                .left = p.newExpr(
-                                    E.Dot{
-                                        .name = "require",
-                                        .target = this_module,
-                                        .name_loc = logger.Loc.Empty,
-                                    },
-                                    logger.Loc.Empty,
-                                ),
-                                .op = .bin_assign,
-                                .right = p.newExpr(
-                                    E.Dot{
-                                        .name = "require",
-                                        .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
-                                        .name_loc = logger.Loc.Empty,
-                                    },
-                                    logger.Loc.Empty,
-                                ),
+                            E.Dot{
+                                .name = "require",
+                                .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
+                                .name_loc = logger.Loc.Empty,
                             },
                             logger.Loc.Empty,
                         ),

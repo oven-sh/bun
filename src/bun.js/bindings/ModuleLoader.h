@@ -91,4 +91,9 @@ JSValue fetchSourceCodeAsync(
     BunString* specifier,
     BunString* referrer);
 
+JSValue fetchCommonJSModule(
+    Zig::GlobalObject* globalObject,
+    BunString* specifier,
+    BunString* referrer);
+
 } // namespace Bun

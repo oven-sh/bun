@@ -219,7 +219,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::useJITCage() = false;
         JSC::Options::useShadowRealm() = true;
         JSC::Options::useResizableArrayBuffer() = true;
-        JSC::Options::showPrivateScriptsInStackTraces() = true;
+        JSC::Options::showPrivateScriptsInStackTraces() = false;
         JSC::Options::useSetMethods() = true;
 
         /*
@@ -361,8 +361,8 @@ JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
         &specifier,
         &specifier);
 
-    if (result.isUndefined() || !result) {
-        return JSValue::encode(result);
+    if (scope.exception() || !result) {
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
     }
 
     globalObject->moduleLoader()->provideFetch(globalObject, key, jsCast<JSC::JSSourceCode*>(result)->sourceCode());
@@ -2721,7 +2721,7 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(
                 globalObject,
                 globalObject->objectPrototype(),
-                5);
+                6);
             JSC::PropertyOffset offset;
             auto& vm = globalObject->vm();
 
@@ -2742,6 +2742,13 @@ void GlobalObject::finishCreation(VM& vm)
             structure = structure->addPropertyTransition(
                 vm,
                 structure,
+                JSC::Identifier::fromString(vm, "require"_s),
+                PropertyAttribute::Builtin | PropertyAttribute::Function | 0,
+                offset);
+
+            structure = structure->addPropertyTransition(
+                vm,
+                structure,
                 JSC::Identifier::fromString(vm, "__dirname"_s),
                 0,
                 offset);
@@ -2751,13 +2758,6 @@ void GlobalObject::finishCreation(VM& vm)
                 structure,
                 JSC::Identifier::fromString(vm, "__filename"_s),
                 0,
-                offset);
-
-            structure = structure->addPropertyTransition(
-                vm,
-                structure,
-                JSC::Identifier::fromString(vm, "require"_s),
-                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::Builtin | 0,
                 offset);
 
             init.set(structure);
@@ -2979,14 +2979,9 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(structure);
         });
 
-    m_requireResolveFunctionStructure.initLater(
+    m_importMetaRequireStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
-            init.set(Zig::ImportMetaObject::createResolveFunctionStructure(init.vm, jsCast<Zig::GlobalObject*>(init.owner)));
-        });
-
-    m_resolveFunctionPrototype.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            init.set(Zig::ImportMetaObject::createResolveFunctionPrototype(init.vm, jsCast<Zig::GlobalObject*>(init.owner)).getObject());
+            init.set(Zig::ImportMetaObject::createRequireFunctionStructure(init.vm, jsCast<Zig::GlobalObject*>(init.owner)));
         });
 
     m_JSFileSinkClassStructure.initLater(
@@ -4023,8 +4018,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_emitReadableNextTickFunction.visit(visitor);
     thisObject->m_JSBufferSubclassStructure.visit(visitor);
 
-    thisObject->m_requireResolveFunctionStructure.visit(visitor);
-    thisObject->m_resolveFunctionPrototype.visit(visitor);
+    thisObject->m_importMetaRequireStructure.visit(visitor);
     thisObject->m_dnsObject.visit(visitor);
     thisObject->m_lazyRequireCacheObject.visit(visitor);
     thisObject->m_vmModuleContextMap.visit(visitor);

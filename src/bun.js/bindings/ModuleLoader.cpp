@@ -36,6 +36,11 @@
 #include "../modules/TTYModule.h"
 #include "node_util_types.h"
 #include "CommonJSModuleRecord.h"
+#include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/Completion.h>
+#include <JavaScriptCore/JSModuleNamespaceObject.h>
+#include <JavaScriptCore/JSMap.h>
+#include <JavaScriptCore/JSMapInlines.h>
 
 namespace Bun {
 using namespace Zig;
@@ -348,6 +353,92 @@ extern "C" void Bun__onFulfillAsyncModule(
 
     auto provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
     promise->resolve(promise->globalObject(), JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
+}
+
+JSValue fetchCommonJSModule(
+    Zig::GlobalObject* globalObject,
+    BunString* specifier,
+    BunString* referrer)
+{
+    void* bunVM = globalObject->bunVM();
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ErrorableResolvedSource resValue;
+    ErrorableResolvedSource* res = &resValue;
+
+    auto synthetic = [specifier, globalObject, referrer](const SyntheticSourceProvider::SyntheticSourceGenerator& generator) -> JSValue {
+        return JSCommonJSModule::create(
+            globalObject,
+            Bun::toWTFString(*specifier),
+            Bun::toWTFString(*referrer),
+            generator);
+    };
+
+    if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, referrer, res)) {
+        if (!res->success) {
+            throwException(scope, res->result.err, globalObject);
+            RELEASE_AND_RETURN(scope, JSValue());
+        }
+
+        auto moduleKey = Bun::toWTFString(*specifier);
+
+        switch (res->result.value.tag) {
+        case SyntheticModuleType::Module: {
+            return synthetic(generateNodeModuleModule);
+        }
+
+        case SyntheticModuleType::Buffer: {
+            return synthetic(generateBufferSourceCode);
+        }
+        case SyntheticModuleType::TTY: {
+            return synthetic(generateTTYSourceCode);
+        }
+        case SyntheticModuleType::NodeUtilTypes: {
+            return synthetic(Bun::generateNodeUtilTypesSourceCode);
+        }
+        case SyntheticModuleType::Process: {
+            return synthetic(generateProcessSourceCode);
+        }
+        case SyntheticModuleType::Events: {
+            return synthetic(generateEventsSourceCode);
+        }
+        case SyntheticModuleType::StringDecoder: {
+            return synthetic(generateStringDecoderSourceCode);
+        }
+        default: {
+            return jsNumber(-1);
+        }
+        }
+    }
+
+    // if (JSC::JSValue virtualModuleResult = JSValue::decode(Bun__runVirtualModule(globalObject, specifier))) {
+    //     return handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer);
+    // }
+
+    Bun__transpileFile(bunVM, globalObject, specifier, referrer, res, false);
+
+    if (res->success && res->result.value.commonJSExportsLen) {
+        RELEASE_AND_RETURN(scope, Bun::JSCommonJSModule::create(globalObject, Bun::toWTFString(*specifier), res->result.value));
+    }
+
+    if (!res->success) {
+        throwException(scope, res->result.err, globalObject);
+        RELEASE_AND_RETURN(scope, {});
+    }
+
+    return jsNumber(-1);
+
+    // auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);
+    // JSMap* map = jsCast<JSMap*>(globalObject->moduleLoader()->getDirect(vm, Identifier::fromString(vm, "registry"_s)));
+    // auto id = Bun::toWTFString(*specifier);
+    // Identifier moduleKey = Identifier::fromString(vm, id);
+    // globalObject->moduleLoader()->provideFetch(globalObject, jsString(vm, id), JSC::SourceCode(provider));
+    // globalObject->moduleLoader()->parse(globalObject, jsString(vm, id), JSC::SourceCode(provider));
+    // RETURN_IF_EXCEPTION(scope, {});
+    // JSC::linkAndEvaluateModule(globalObject, moduleKey, jsUndefined());
+    // RETURN_IF_EXCEPTION(scope, {});
+    // auto moduleRecord = map->get(globalObject, identifierToJSValue(vm, moduleKey));
+    // RELEASE_AND_RETURN(scope, JSCommonJSModule::create(globalObject, id, id, globalObject->moduleLoader()->getModuleNamespaceObject(globalObject, moduleRecord)));
 }
 
 template<bool allowPromise>

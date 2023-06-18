@@ -254,6 +254,11 @@ pub const String = extern struct {
         return this.tag == .Empty or this.length() == 0;
     }
 
+    pub fn dupeRef(this: String) String {
+        this.ref();
+        return this;
+    }
+
     pub fn initWithType(comptime Type: type, value: Type) String {
         switch (comptime Type) {
             ZigString => return String{ .tag = .ZigString, .value = .{ .ZigString = value } },
@@ -339,6 +344,12 @@ pub const String = extern struct {
         JSC.markBinding(@src());
 
         return BunString__toJS(globalObject, this);
+    }
+
+    pub fn toJSConst(this: *const String, globalObject: *bun.JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        var a = this.*;
+        return toJS(&a, globalObject);
     }
 
     extern fn BunString__createArray(

@@ -248,6 +248,61 @@ pub const StringOrBuffer = union(Tag) {
     }
 };
 
+pub const StringOrBunStringOrBuffer = union(enum) {
+    BunString: bun.String,
+    string: string,
+    buffer: Buffer,
+
+    pub fn toJS(this: StringOrBunStringOrBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        return switch (this) {
+            .string => {
+                if (this.string.len == 0)
+                    return JSC.ZigString.Empty.toValue(ctx).asObjectRef();
+
+                const input = this.string;
+                if (strings.toUTF16Alloc(bun.default_allocator, input, false) catch null) |utf16| {
+                    bun.default_allocator.free(bun.constStrToU8(input));
+                    return JSC.ZigString.toExternalU16(utf16.ptr, utf16.len, ctx.ptr()).asObjectRef();
+                }
+
+                return JSC.ZigString.init(input).toExternalValue(ctx.ptr()).asObjectRef();
+            },
+            .buffer => this.buffer.toJSObjectRef(ctx, exception),
+            .BunString => {
+                defer this.BunString.deref();
+                return this.BunString.toJSConst(ctx).asObjectRef();
+            },
+        };
+    }
+
+    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?StringOrBuffer {
+        return switch (value.jsType()) {
+            JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
+                var zig_str = value.toSlice(global, allocator);
+                return StringOrBuffer{ .string = zig_str.slice() };
+            },
+
+            .ArrayBuffer,
+            .Int8Array,
+            .Uint8Array,
+            .Uint8ClampedArray,
+            .Int16Array,
+            .Uint16Array,
+            .Int32Array,
+            .Uint32Array,
+            .Float32Array,
+            .Float64Array,
+            .BigInt64Array,
+            .BigUint64Array,
+            .DataView,
+            => StringOrBuffer{
+                .buffer = Buffer.fromArrayBuffer(global, value, exception),
+            },
+            else => null,
+        };
+    }
+};
+
 /// Like StringOrBuffer but actually returns a Node.js Buffer
 pub const StringOrNodeBuffer = union(Tag) {
     string: string,

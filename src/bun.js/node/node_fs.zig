@@ -2464,8 +2464,8 @@ const Return = struct {
         buffer: JSC.Node.Buffer,
         null_terminated: [:0]const u8,
     };
-    pub const Readlink = StringOrBuffer;
-    pub const Realpath = StringOrBuffer;
+    pub const Readlink = JSC.Node.StringOrBunStringOrBuffer;
+    pub const Realpath = JSC.Node.StringOrBunStringOrBuffer;
     pub const RealpathNative = Realpath;
     pub const Rename = void;
     pub const Rmdir = void;
@@ -3707,9 +3707,15 @@ pub const NodeFS = struct {
                         .buffer => .{
                             .buffer = Buffer.fromString(outbuf[0..len], bun.default_allocator) catch unreachable,
                         },
-                        else => .{
-                            .string = bun.default_allocator.dupe(u8, outbuf[0..len]) catch unreachable,
-                        },
+                        else => if (args.path == .slice_with_underlying_string and
+                            strings.eqlLong(args.path.slice_with_underlying_string.slice(), outbuf[0..len], true))
+                            .{
+                                .BunString = args.path.slice_with_underlying_string.underlying.dupeRef(),
+                            }
+                        else
+                            .{
+                                .BunString = bun.String.create(outbuf[0..len]),
+                            },
                     },
                 };
             },
@@ -3761,9 +3767,15 @@ pub const NodeFS = struct {
                         .buffer => .{
                             .buffer = Buffer.fromString(buf, bun.default_allocator) catch unreachable,
                         },
-                        else => .{
-                            .string = bun.default_allocator.dupe(u8, buf) catch unreachable,
-                        },
+                        else => if (args.path == .slice_with_underlying_string and
+                            strings.eqlLong(args.path.slice_with_underlying_string.slice(), buf, true))
+                            .{
+                                .BunString = args.path.slice_with_underlying_string.underlying.dupeRef(),
+                            }
+                        else
+                            .{
+                                .BunString = bun.String.create(buf),
+                            },
                     },
                 };
             },

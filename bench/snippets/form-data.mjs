@@ -3,11 +3,9 @@ import { bench, run } from "../node_modules/mitata/src/cli.mjs";
 
 const blob = new Blob(["foo", "bar", "baz"]);
 bench("FormData.append", () => {
-  for (let i = 0; i < 10_000; i++) {
-    const data = new FormData();
-    data.append("foo", "bar");
-    data.append("baz", blob);
-  }
+  const data = new FormData();
+  data.append("foo", "bar");
+  data.append("baz", blob);
 });
 
 const data = new FormData();

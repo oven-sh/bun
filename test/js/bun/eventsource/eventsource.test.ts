@@ -10,7 +10,7 @@ function sse(req: Request) {
           await controller.write(`event: lines\ndata: Line 1!\ndata: Line 2!\n\n`);
           await controller.write(`event: id_test\nid:1\n\n`);
           await controller.flush();
-          await Bun.sleep(1000);
+          await Bun.sleep(100);
         }
         controller.close();
       },
@@ -60,8 +60,8 @@ function sseServer(
     evtSource = new EventSource(`http://localhost:${server.port}${pathname}`);
     callback(evtSource, err => {
       try {
-        evtSource?.close();
         done(err);
+        evtSource?.close();
       } catch (err) {
         done(err);
       } finally {

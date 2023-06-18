@@ -293,6 +293,7 @@ pub const String = extern struct {
     ) String;
 
     pub fn createExternal(bytes: []const u8, isLatin1: bool, ctx: ?*anyopaque, callback: ?*const fn (*anyopaque, *anyopaque, u32) callconv(.C) void) String {
+        JSC.markBinding(@src());
         return BunString__createExternal(bytes.ptr, bytes.len, isLatin1, ctx, callback);
     }
 
@@ -348,6 +349,8 @@ pub const String = extern struct {
     }
 
     pub fn toWTF(this: *String) void {
+        JSC.markBinding(@src());
+
         BunString__toWTFString(this);
     }
 

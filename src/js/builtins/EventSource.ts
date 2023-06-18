@@ -418,7 +418,7 @@ export function getEventSource() {
             }
           : false,
       }).catch(err => {
-        this.dispatchEvent(new ErrorEvent("error", { error: err }));
+        super.dispatchEvent(new ErrorEvent("error", { error: err }));
         if (this.#reconnect) {
           if (this.#reconnection_timer) {
             this.#reconnection_timer.unref?.();
@@ -440,6 +440,7 @@ export function getEventSource() {
     close() {
       this.#reconnect = false;
       this.#state = 2;
+      this.#socket?.unref();
       this.#socket?.end();
     }
 
@@ -455,25 +456,25 @@ export function getEventSource() {
 
     set onopen(cb) {
       if (this.#onopen) {
-        this.removeEventListener("close", this.#onopen);
+        super.removeEventListener("close", this.#onopen);
       }
-      this.addEventListener("open", cb);
+      super.addEventListener("open", cb);
       this.#onopen = cb;
     }
 
     set onerror(cb) {
       if (this.#onerror) {
-        this.removeEventListener("error", this.#onerror);
+        super.removeEventListener("error", this.#onerror);
       }
-      this.addEventListener("error", cb);
+      super.addEventListener("error", cb);
       this.#onerror = cb;
     }
 
     set onmessage(cb) {
       if (this.#onmessage) {
-        this.removeEventListener("message", this.#onmessage);
+        super.removeEventListener("message", this.#onmessage);
       }
-      this.addEventListener("message", cb);
+      super.addEventListener("message", cb);
       this.#onmessage = cb;
     }
   }

@@ -51,7 +51,7 @@ export function getEventSource() {
     static #SendRequest(socket: Socket, url: URL) {
       const self = socket.data;
       const last_event_header = self.#lastEventID ? `Last-Event-ID: ${self.#lastEventID}\r\n` : "";
-      const request = `GET ${url.pathname}${url.search} HTTP/1.1\r\nHost: ${url.host}\r\nConnection: Close\r\nContent-Type: text/event-stream\r\nContent-Length: 0\r\n${last_event_header}\r\n`;
+      const request = `GET ${url.pathname}${url.search} HTTP/1.1\r\nHost: ${url.host}\r\nUser-Agent: ${navigator.userAgent}\r\nConnection: Close\r\nContent-Type: text/event-stream\r\nContent-Length: 0\r\n${last_event_header}\r\n`;
       const sended = socket.write(request);
       if (sended !== request.length) {
         self.#send_buffer = request.substring(sended);

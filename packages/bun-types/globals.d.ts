@@ -3276,3 +3276,18 @@ declare var EventSource: {
   readonly CONNECTING: number;
   readonly OPEN: number;
 };
+
+declare var navigator: {
+  /**
+   * `User-Agent` string used by {@link fetch} and {@link EventSource}
+   * 
+   * To get the current version of Bun, consider {@link Bun.version} instead.
+   */
+  readonly userAgent: string;
+
+  /**
+   * Number of logical processors available to run threads on the user's
+   * computer.
+   */
+  readonly hardwareConcurrency: number;
+};

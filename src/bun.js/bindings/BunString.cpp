@@ -144,7 +144,9 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
 
 extern "C" BunString BunString__fromLatin1(const char* bytes, size_t length)
 {
-    return { BunStringTag::WTFStringImpl, { .wtf = &WTF::StringImpl::create(bytes, length).leakRef() } };
+    auto impl = WTF::StringImpl::create(bytes, length);
+    impl->ref();
+    return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
 
 extern "C" BunString BunString__fromBytes(const char* bytes, size_t length)

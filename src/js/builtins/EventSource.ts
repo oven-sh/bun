@@ -387,6 +387,19 @@ export function getEventSource() {
       this.#state = 2;
       process.nextTick(EventSource.#ConnectNextTick, this);
     }
+
+    // Not web standard
+    ref() {
+      this.#reconnection_timer?.ref();
+      this.#socket?.ref();
+    }
+
+    // Not web standard
+    unref() {
+      this.#reconnection_timer?.unref();
+      this.#socket?.unref();
+    }
+
     #connect() {
       if (this.#state !== 2) return;
       const uri = this.#url;

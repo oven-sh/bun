@@ -40,6 +40,7 @@ export function getEventSource() {
     #content_length = 0; // 0 means chunked -1 means not informed aka no auto end
     #received_length = 0;
     #reconnection_time = 0;
+    #reconnection_timer: Timer | null = null;
 
     static #ConnectNextTick(self: EventSource) {
       self.#connect();
@@ -371,7 +372,10 @@ export function getEventSource() {
       self.#received_length = 0;
       self.#state = 2;
       if (self.#reconnect) {
-        setTimeout(EventSource.#ConnectNextTick, self.#reconnection_time, self);
+        if (self.#reconnection_timer) {
+          clearTimeout(self.#reconnection_timer);
+        }
+        self.#reconnection_timer = setTimeout(EventSource.#ConnectNextTick, self.#reconnection_time, self);
       }
       return self;
     }
@@ -403,7 +407,11 @@ export function getEventSource() {
       }).catch(err => {
         this.dispatchEvent(new ErrorEvent("error", { error: err }));
         if (this.#reconnect) {
-          setTimeout(EventSource.#ConnectNextTick, 1000, this);
+          if (this.#reconnection_timer) {
+            this.#reconnection_timer.unref?.();
+          }
+
+          this.#reconnection_timer = setTimeout(EventSource.#ConnectNextTick, 1000, this);
         }
       });
     }

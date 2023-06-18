@@ -3271,7 +3271,7 @@ JSC_DEFINE_CUSTOM_GETTER(
     RETURN_IF_EXCEPTION(scope, {});
 
     if (LIKELY(result)) {
-        thisObject->putDirect(vm, property, result, 0);
+        globalObject->putDirect(vm, property, result, 0);
     }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(result));

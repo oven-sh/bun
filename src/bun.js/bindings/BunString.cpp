@@ -174,19 +174,19 @@ extern "C" EncodedJSValue BunString__createArray(
     if (length == 0)
         return JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr));
 
-    JSC::VM& vm = globalObject->vm();
-
-    const BunString* end = ptr + length;
-
+    auto& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    JSC::ObjectInitializationScope scope(vm);
-    GCDeferralContext context(vm);
 
     // We must do this or Bun.gc(true) in a loop creating large arrays of strings will crash due to GC'ing.
     MarkedArgumentBuffer arguments;
+    JSC::ObjectInitializationScope scope(vm);
+    GCDeferralContext context(vm);
+
     arguments.fill(length, [&](JSC::JSValue* value) {
-        *value = Bun::toJS(globalObject, *ptr++);
+        const BunString* end = ptr + length;
+        while (ptr != end) {
+            *value++ = Bun::toJS(globalObject, *ptr++);
+        }
     });
 
     if (JSC::JSArray* array = JSC::JSArray::tryCreateUninitializedRestricted(

@@ -386,10 +386,6 @@ pub const GarbageCollectionController = struct {
         }
     }
 
-    pub fn onMicrotaskCallback(this: *GarbageCollectionController, vm: *JSC.VM, this_heap_size: usize) callconv(.C) void {
-        this.processGCTimerWithHeapSize(vm, this_heap_size);
-    }
-
     pub fn performGC(this: *GarbageCollectionController) void {
         var vm = this.bunVM().global.vm();
         vm.collectAsync();
@@ -401,12 +397,6 @@ pub const GarbageCollectionController = struct {
         scheduled,
         run_on_next_tick,
     };
-
-    comptime {
-        if (!JSC.is_bindgen) {
-            @export(onMicrotaskCallback, .{ .name = "EventLoop__onMicrotaskCallback" });
-        }
-    }
 };
 
 pub const EventLoop = struct {

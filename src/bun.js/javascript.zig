@@ -957,6 +957,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
+        JSC.markBinding(@src());
         const hash = hash_ orelse JSC.RefString.computeHash(input_);
 
         var entry = this.ref_strings.getOrPut(hash) catch unreachable;

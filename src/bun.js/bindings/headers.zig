@@ -167,6 +167,7 @@ pub extern fn JSC__JSPromise__resolvedPromise(arg0: *bindings.JSGlobalObject, JS
 pub extern fn JSC__JSPromise__resolvedPromiseValue(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) JSC__JSValue;
 pub extern fn JSC__JSPromise__resolveOnNextTick(arg0: ?*bindings.JSPromise, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__JSPromise__result(arg0: ?*bindings.JSPromise, arg1: *bindings.VM) JSC__JSValue;
+pub extern fn JSC__JSPromise__setHandled(arg0: ?*bindings.JSPromise, arg1: *bindings.VM) void;
 pub extern fn JSC__JSPromise__status(arg0: [*c]const JSC__JSPromise, arg1: *bindings.VM) u32;
 pub extern fn JSC__JSInternalPromise__create(arg0: *bindings.JSGlobalObject) [*c]bindings.JSInternalPromise;
 pub extern fn JSC__JSInternalPromise__isHandled(arg0: [*c]const JSC__JSInternalPromise, arg1: *bindings.VM) bool;
@@ -178,6 +179,7 @@ pub extern fn JSC__JSInternalPromise__rejectWithCaughtException(arg0: [*c]bindin
 pub extern fn JSC__JSInternalPromise__resolve(arg0: [*c]bindings.JSInternalPromise, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__JSInternalPromise__resolvedPromise(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) [*c]bindings.JSInternalPromise;
 pub extern fn JSC__JSInternalPromise__result(arg0: [*c]const JSC__JSInternalPromise, arg1: *bindings.VM) JSC__JSValue;
+pub extern fn JSC__JSInternalPromise__setHandled(arg0: [*c]bindings.JSInternalPromise, arg1: *bindings.VM) void;
 pub extern fn JSC__JSInternalPromise__status(arg0: [*c]const JSC__JSInternalPromise, arg1: *bindings.VM) u32;
 pub extern fn JSC__JSFunction__optimizeSoon(JSValue0: JSC__JSValue) void;
 pub extern fn JSC__JSGlobalObject__bunVM(arg0: *bindings.JSGlobalObject) ?*bindings.VirtualMachine;

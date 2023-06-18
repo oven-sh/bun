@@ -2494,6 +2494,12 @@ bool JSC__JSPromise__isHandled(const JSC__JSPromise* arg0, JSC__VM* arg1)
 {
     return arg0->isHandled(reinterpret_cast<JSC::VM&>(arg1));
 }
+void JSC__JSPromise__setHandled(JSC__JSPromise* promise, JSC__VM* arg1)
+{
+    auto& vm = *arg1;
+    auto flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
+    promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isHandledFlag));
+}
 
 #pragma mark - JSC::JSInternalPromise
 
@@ -2566,6 +2572,12 @@ uint32_t JSC__JSInternalPromise__status(const JSC__JSInternalPromise* arg0, JSC_
 bool JSC__JSInternalPromise__isHandled(const JSC__JSInternalPromise* arg0, JSC__VM* arg1)
 {
     return arg0->isHandled(reinterpret_cast<JSC::VM&>(arg1));
+}
+void JSC__JSInternalPromise__setHandled(JSC__JSInternalPromise* promise, JSC__VM* arg1)
+{
+    auto& vm = *arg1;
+    auto flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
+    promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isHandledFlag));
 }
 
 #pragma mark - JSC::JSGlobalObject

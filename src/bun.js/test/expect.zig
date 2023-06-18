@@ -112,10 +112,13 @@ pub const Expect = struct {
 
         if (this.resolves) |resolves| {
             if (value.asAnyPromise()) |promise| {
-                globalThis.bunVM().waitForPromise(promise);
-                const newValue: JSValue = promise.result(globalThis.vm());
+                var vm = globalThis.vm();
 
-                switch (promise.status(globalThis.vm())) {
+                promise.setHandled(vm);
+                globalThis.bunVM().waitForPromise(promise);
+                const newValue = promise.result(vm);
+
+                switch (promise.status(vm)) {
                     .Fulfilled => switch (resolves) {
                         .resolves => {},
                         .rejects => {

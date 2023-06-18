@@ -3389,7 +3389,7 @@ pub const NodeFS = struct {
                     switch (comptime ExpectedType) {
                         Dirent => {
                             entries.append(.{
-                                .name = bun.String.fromBytes(utf8_name),
+                                .name = bun.String.create(utf8_name),
                                 .kind = current.kind,
                             }) catch unreachable;
                         },
@@ -3397,7 +3397,7 @@ pub const NodeFS = struct {
                             entries.append(Buffer.fromString(utf8_name, bun.default_allocator) catch unreachable) catch unreachable;
                         },
                         bun.String => {
-                            entries.append(bun.String.fromBytes(utf8_name)) catch unreachable;
+                            entries.append(bun.String.create(utf8_name)) catch unreachable;
                         },
                         else => unreachable,
                     }

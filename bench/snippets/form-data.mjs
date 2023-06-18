@@ -3,18 +3,20 @@ import { bench, run } from "../node_modules/mitata/src/cli.mjs";
 
 const blob = new Blob(["foo", "bar", "baz"]);
 bench("FormData.append", () => {
-  const data = new FormData();
-  data.append("foo", "bar");
-  data.append("baz", blob);
+  for (let i = 0; i < 10_000; i++) {
+    const data = new FormData();
+    data.append("foo", "bar");
+    data.append("baz", blob);
+  }
 });
 
 const data = new FormData();
 data.append("foo", "bar");
 data.append("baz", blob);
 
-const formText =
-  // single field form data
-  "--Form\r\n" + 'Content-Disposition: form-data; name="foo"\r\n\r\n' + "bar\r\n" + "--Form--\r\n";
+// const formText =
+//   // single field form data
+//   "--Form\r\n" + 'Content-Disposition: form-data; name="foo"\r\n\r\n' + "bar\r\n" + "--Form--\r\n";
 
 bench("response.formData()", async () => {
   await new Response(formText, {

@@ -4,6 +4,7 @@
 #include "helpers.h"
 #include "simdutf.h"
 #include "wtf/text/ExternalStringImpl.h"
+#include "GCDefferalContext.h"
 using namespace JSC;
 
 extern "C" void Bun__WTFStringImpl__deref(WTF::StringImpl* impl)
@@ -125,6 +126,22 @@ extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject
     return JSValue::encode(Bun::toJS(globalObject, *bunString));
 }
 
+extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
+{
+    if (simdutf::validate_utf8(bytes, length)) {
+        size_t u16Length = simdutf::utf16_length_from_utf8(bytes, length);
+        UChar* ptr;
+        auto impl = WTF::StringImpl::createUninitialized(static_cast<unsigned int>(u16Length), ptr);
+        RELEASE_ASSERT(simdutf::convert_utf8_to_utf16(bytes, length, ptr) == u16Length);
+        impl->ref();
+        return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
+    }
+
+    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(reinterpret_cast<const LChar*>(bytes), length);
+    str.impl()->ref();
+    return Bun::fromString(str);
+}
+
 extern "C" BunString BunString__fromLatin1(const char* bytes, size_t length)
 {
     return { BunStringTag::WTFStringImpl, { .wtf = &WTF::StringImpl::create(bytes, length).leakRef() } };
@@ -136,8 +153,7 @@ extern "C" BunString BunString__fromBytes(const char* bytes, size_t length)
         return BunString__fromLatin1(bytes, length);
     }
 
-    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(reinterpret_cast<const LChar*>(bytes), length);
-    return Bun::fromString(str);
+    return BunString__fromUTF8(bytes, length);
 }
 
 extern "C" BunString BunString__createExternal(const char* bytes, size_t length, bool isLatin1, void* ctx, void (*callback)(void* arg0, void* arg1, size_t arg2))
@@ -158,28 +174,26 @@ extern "C" EncodedJSValue BunString__createArray(
 
     JSC::VM& vm = globalObject->vm();
 
-    JSC::ObjectInitializationScope scope(vm);
     const BunString* end = ptr + length;
-    unsigned i = 0;
 
-    // fast path:
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::ObjectInitializationScope scope(vm);
+    GCDeferralContext context(vm);
+
     if (JSC::JSArray* array = JSC::JSArray::tryCreateUninitializedRestricted(
             scope,
             globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
             length)) {
 
-        for (const BunString* it = ptr; it != end; ++it) {
-            array->initializeIndex(scope, i++, Bun::toJS(globalObject, *it));
+        for (size_t i = 0; i < length; ++i) {
+            array->initializeIndex(scope, i, Bun::toJS(globalObject, *ptr++));
         }
         return JSValue::encode(array);
     }
 
-    JSC::JSArray* array = JSC::constructEmptyArray(globalObject, nullptr);
-    for (const BunString* it = ptr; it != end; ++it) {
-        array->push(globalObject, Bun::toJS(globalObject, *it));
-    }
-
-    return JSValue::encode(array);
+    JSC::throwOutOfMemoryError(globalObject, throwScope);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSValue()));
 }
 
 extern "C" void BunString__toWTFString(BunString* bunString)

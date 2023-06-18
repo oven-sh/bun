@@ -25,9 +25,6 @@
 export function getEventSource() {
   type Socket = Awaited<ReturnType<typeof Bun.connect<EventSource>>>;
 
-  class ConnectionError extends Error {}
-  Object.defineProperty(ConnectionError.prototype, "name", { value: "ConnectionError" });
-
   class ProtocolError extends Error {}
   Object.defineProperty(ProtocolError.prototype, "name", { value: "ProtocolError" });
 

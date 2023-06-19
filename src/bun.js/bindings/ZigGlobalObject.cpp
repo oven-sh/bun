@@ -222,25 +222,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::showPrivateScriptsInStackTraces() = true;
         JSC::Options::useSetMethods() = true;
 
-        bool didSetForceRAMSize = false;
-
-        if (LIKELY(envc > 0)) {
-            while (envc--) {
-                const char* env = (const char*)envp[envc];
-                // need to check for \0 so we might as well make this single pass
-                // strlen would check the end of the string
-                if (LIKELY(!(env[0] == 'B' && env[1] == 'U' && env[2] == 'N' && env[3] == '_' && env[4] == 'J' && env[5] == 'S' && env[6] == 'C' && env[7] == '_'))) {
-                    continue;
-                }
-
-                if (UNLIKELY(!JSC::Options::setOption(env + 8))) {
-                    onCrash(env, strlen(env));
-                }
-
-                didSetForceRAMSize = didSetForceRAMSize || strcmp(env + 8, "forceRAMSize") == 0;
-            }
-        }
-
         /*
          * The Magic "Use Less RAM" button
          */
@@ -298,13 +279,25 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         // crypto.createHash("sha256")     964 ns/iter    (946.02 ns … 1.1 µs) 962.95 ns    1.1 µs    1.1 µs
         // crypto.createHash("sha1")    985.26 ns/iter    (956.7 ns … 1.12 µs)      1 µs   1.12 µs   1.12 µs
         // Peak memory usage: 56 MB
+        size_t ramSize = WTF::ramSize();
+        ramSize /= 1024;
 
-        if (!didSetForceRAMSize) {
-            size_t ramSize = WTF::ramSize();
-            ramSize /= 1024;
+        if (ramSize > 0) {
+            JSC::Options::forceRAMSize() = ramSize;
+        }
 
-            if (ramSize > 0) {
-                JSC::Options::forceRAMSize() = ramSize;
+        if (LIKELY(envc > 0)) {
+            while (envc--) {
+                const char* env = (const char*)envp[envc];
+                // need to check for \0 so we might as well make this single pass
+                // strlen would check the end of the string
+                if (LIKELY(!(env[0] == 'B' && env[1] == 'U' && env[2] == 'N' && env[3] == '_' && env[4] == 'J' && env[5] == 'S' && env[6] == 'C' && env[7] == '_'))) {
+                    continue;
+                }
+
+                if (UNLIKELY(!JSC::Options::setOption(env + 8))) {
+                    onCrash(env, strlen(env));
+                }
             }
         }
 

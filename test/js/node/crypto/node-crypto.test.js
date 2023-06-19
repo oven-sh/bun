@@ -8,6 +8,13 @@ it("crypto.randomBytes should return a Buffer", () => {
   expect(Buffer.isBuffer(crypto.randomBytes(1))).toBe(true);
 });
 
+it("crypto.randomInt should return a number", () => {
+  const result = crypto.randomInt(0, 10);
+  expect(typeof result).toBe("number");
+  expect(result).toBeGreaterThanOrEqual(0);
+  expect(result).toBeLessThanOrEqual(10);
+});
+
 // https://github.com/oven-sh/bun/issues/1839
 describe("createHash", () => {
   it("update & digest", () => {

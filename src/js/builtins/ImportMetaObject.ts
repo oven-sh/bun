@@ -24,8 +24,8 @@ export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
     // so we just pull it out of the promise here once again
     // But, this time we do it a little more carefully because this is a JSC function call and not bun source code
     var moduleRecordPromise = loader.parseModule(key, sourceCodeObject);
-    var module = entry.module;
-    if (!module && moduleRecordPromise && $isPromise(moduleRecordPromise)) {
+    var mod = entry.module;
+    if (!mod && moduleRecordPromise && $isPromise(moduleRecordPromise)) {
       var reactionsOrResult = $getPromiseInternalField(moduleRecordPromise, $promiseFieldReactionsOrResult);
       var flags = $getPromiseInternalField(moduleRecordPromise, $promiseFieldFlags);
       var state = flags & $promiseStateMask;
@@ -43,15 +43,15 @@ export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
 
         throw reactionsOrResult;
       }
-      entry.module = module = reactionsOrResult;
-    } else if (moduleRecordPromise && !module) {
-      entry.module = module = moduleRecordPromise as LoaderModule;
+      entry.module = mod = reactionsOrResult;
+    } else if (moduleRecordPromise && !mod) {
+      entry.module = mod = moduleRecordPromise as LoaderModule;
     }
 
     // This is very similar to "requestInstantiate" in ModuleLoader.js in JavaScriptCore.
     $setStateToMax(entry, $ModuleLink);
-    var dependenciesMap = module.dependenciesMap;
-    var requestedModules = loader.requestedModules(module);
+    var dependenciesMap = mod.dependenciesMap;
+    var requestedModules = loader.requestedModules(mod);
     var dependencies = $newArrayWithSize<string>(requestedModules.length);
     for (var i = 0, length = requestedModules.length; i < length; ++i) {
       var depName = requestedModules[i];
@@ -249,7 +249,7 @@ export function createRequireCache() {
 
 $sloppy;
 export function require(this: ImportMetaObject, name) {
-  var from = this?.path ?? arguments.callee.path;
+  var from = this?.path ?? arguments.callee?.path;
 
   if (typeof name !== "string") {
     throw new TypeError("require(name) must be a string");

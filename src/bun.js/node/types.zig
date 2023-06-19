@@ -483,6 +483,7 @@ pub const Encoding = enum(u8) {
         .{ "utf-8", Encoding.utf8 },
         .{ "utf8", Encoding.utf8 },
         .{ "ucs-2", Encoding.utf16le },
+        .{ "ucs2", Encoding.utf16le },
         .{ "utf16-le", Encoding.utf16le },
         .{ "utf16le", Encoding.utf16le },
         .{ "binary", Encoding.latin1 },

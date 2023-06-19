@@ -1,11 +1,11 @@
 import { spawnSync } from "bun";
 import { describe, it, expect, test } from "bun:test";
-import { bunExe } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 test("esbuild", () => {
   const { exitCode, stderr, stdout } = spawnSync([bunExe(), import.meta.dir + "/esbuild-test.js"], {
     env: {
-      BUN_DEBUG_QUIET_LOGS: "1",
+      ...bunEnv,
     },
   });
   const out = "" + stderr?.toString() + stdout?.toString();

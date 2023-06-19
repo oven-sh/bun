@@ -69,6 +69,24 @@
 #include "CommonJSModuleRecord.h"
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 
+namespace JSC {
+
+class IndirectEvalExecutable final : public EvalExecutable {
+public:
+    static IndirectEvalExecutable* tryCreate(JSGlobalObject*, const SourceCode&, DerivedContextType, bool isArrowFunctionContext, EvalContextType);
+    static IndirectEvalExecutable* create(JSGlobalObject*, const SourceCode&, DerivedContextType, bool isArrowFunctionContext, EvalContextType, NakedPtr<JSObject>&);
+
+private:
+    template<typename ErrorHandlerFunctor>
+    inline static IndirectEvalExecutable* createImpl(JSGlobalObject*, const SourceCode&, DerivedContextType, bool isArrowFunctionContext, EvalContextType, ErrorHandlerFunctor);
+
+    IndirectEvalExecutable(JSGlobalObject*, const SourceCode&, DerivedContextType, bool isArrowFunctionContext, EvalContextType);
+};
+
+static_assert(sizeof(IndirectEvalExecutable) == sizeof(EvalExecutable));
+
+} // namespace JSC
+
 namespace Bun {
 using namespace JSC;
 
@@ -600,6 +618,7 @@ JSCommonJSModule* runCommonJSModule(
         ArgList(),
         1,
         jsString(vm, WTF::String("require"_s)));
+
     boundRequire->putDirect(vm, Identifier::fromString(vm, "id"_s), requireMapKey, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
 
     thisObject->putDirectOffset(
@@ -618,14 +637,19 @@ JSCommonJSModule* runCommonJSModule(
         filename);
 
     {
-        WTF::NakedPtr<Exception> exception;
         globalObject->m_BunCommonJSModuleValue.set(vm, globalObject, thisObject);
 
         globalObject->requireMap()->set(globalObject, requireMapKey, moduleObject);
-        JSC::evaluate(globalObject, inputSource, globalObject->globalThis(), exception);
 
-        if (exception.get()) {
-            throwException(globalObject, throwScope, exception.get());
+        EvalExecutable* eval = IndirectEvalExecutable::tryCreate(globalObject, inputSource, DerivedContextType::None, false, EvalContextType::None);
+        JSC::Strong<EvalExecutable> strongEval(vm, eval);
+        if (throwScope.exception()) {
+            return nullptr;
+        }
+
+        JSC::JSValue result = vm.interpreter.executeEval(eval, thisObject, globalObject->globalScope());
+
+        if (throwScope.exception()) {
             return nullptr;
         }
     }

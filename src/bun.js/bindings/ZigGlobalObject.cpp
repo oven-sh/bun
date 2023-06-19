@@ -2984,6 +2984,11 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(Zig::ImportMetaObject::createRequireFunctionStructure(init.vm, jsCast<Zig::GlobalObject*>(init.owner)));
         });
 
+    m_importMetaObjectStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
+            init.set(Zig::ImportMetaObject::createStructure(init.vm, jsCast<Zig::GlobalObject*>(init.owner)));
+        });
+
     m_JSFileSinkClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FileSink);
@@ -4019,6 +4024,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSBufferSubclassStructure.visit(visitor);
 
     thisObject->m_importMetaRequireStructure.visit(visitor);
+    thisObject->m_importMetaObjectStructure.visit(visitor);
+
     thisObject->m_dnsObject.visit(visitor);
     thisObject->m_lazyRequireCacheObject.visit(visitor);
     thisObject->m_vmModuleContextMap.visit(visitor);

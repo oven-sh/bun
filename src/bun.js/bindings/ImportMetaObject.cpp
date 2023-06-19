@@ -190,10 +190,6 @@ public:
     }
 };
 
-static const HashTableValue RequireFunctionPrototypeValues[] = {
-    { "cache"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, Zig::jsRequireCacheGetter, Zig::jsRequireCacheSetter } },
-};
-
 class ResolveFunction final : public JSC::InternalFunction {
 
 public:
@@ -228,90 +224,19 @@ public:
     }
 };
 
-class RequireFunctionPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static RequireFunctionPrototype* create(
-        JSC::JSGlobalObject* globalObject)
-    {
-        auto& vm = globalObject->vm();
-
-        auto* structure = RequireFunctionPrototype::createStructure(vm, globalObject, globalObject->functionPrototype());
-        RequireFunctionPrototype* prototype = new (NotNull, JSC::allocateCell<RequireFunctionPrototype>(vm)) RequireFunctionPrototype(vm, structure);
-        prototype->finishCreation(vm);
-
-        auto* resolveFunction = ResolveFunction::create(globalObject);
-
-        prototype->putDirect(vm, clientData(vm)->builtinNames().resolvePublicName(), resolveFunction, JSC::PropertyAttribute::Function | 0);
-
-        return prototype;
-    }
-
-    RequireFunctionPrototype(
-        JSC::VM& vm,
-        JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    DECLARE_INFO;
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.functionSpace();
-    }
-
-    void finishCreation(JSC::VM& vm)
-    {
-        Base::finishCreation(vm);
-        ASSERT(inherits(vm, info()));
-
-        reifyStaticProperties(vm, info(), RequireFunctionPrototypeValues, *this);
-        this->putDirect(vm, JSC::Identifier::fromString(vm, "main"_s), jsUndefined(), 0);
-        this->putDirect(vm, JSC::Identifier::fromString(vm, "extensions"_s), constructEmptyObject(globalObject()), 0);
-    }
-};
-
-class RequireFunction final : public JSC::InternalFunction {
-
-public:
-    using Base = JSC::InternalFunction;
-    static RequireFunction* create(JSGlobalObject* globalObject, Structure* structure)
-    {
-        auto* fn = new (NotNull, JSC::allocateCell<RequireFunction>(globalObject->vm())) RequireFunction(globalObject->vm(), structure);
-        fn->finishCreation(globalObject->vm(), 1, "require"_s, PropertyAdditionMode::WithStructureTransition);
-    }
-
-    DECLARE_INFO;
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.internalFunctionSpace();
-    }
-
-    RequireFunction(
-        JSC::VM& vm,
-        JSC::Structure* structure)
-        : InternalFunction(vm, structure, jsFunctionRequireResolve, nullptr)
-    {
-    }
-};
-
 Structure* Zig::ImportMetaObject::createRequireFunctionStructure(VM& vm, JSGlobalObject* globalObject)
 {
-    RequireFunctionPrototype* prototype = RequireFunctionPrototype::create(globalObject);
-    auto* structure = Structure::create(vm, globalObject, prototype, TypeInfo(InternalFunctionType, StructureFlags), RequireFunction::info(), NonArray, 3);
 
-    JSC::PropertyOffset offset;
-    auto clientData = WebCore::clientData(vm);
-    structure = structure->addPropertyTransition(
-        vm,
-        structure,
-        WebCore::clientData(vm)->builtinNames().pathPublicName(),
-        PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0,
-        offset);
+    JSFunction* requireFunction = JSFunction::create(vm, importMetaObjectRequireCodeGenerator(vm), globalObject);
+    requireFunction->putDirect(vm, JSC::Identifier::fromString(vm, "main"_s), jsUndefined(), 0);
+    requireFunction->putDirect(vm, JSC::Identifier::fromString(vm, "extensions"_s), constructEmptyObject(globalObject), 0);
+    requireFunction->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "cache"_s), JSC::CustomGetterSetter::create(vm, Zig::jsRequireCacheGetter, Zig::jsRequireCacheSetter), 0);
+    requireFunction->putDirect(vm, JSC::Identifier::fromString(vm, "resolve"_s), ResolveFunction::create(globalObject), 0);
+
+    auto* structure = JSC::Structure::create(vm, globalObject, requireFunction, JSC::TypeInfo(JSC::JSFunctionType, StructureFlags), JSFunction::info(), NonArray, 1);
+
+    PropertyOffset offset;
+    structure = structure->addPropertyTransition(vm, structure, clientData(vm)->builtinNames().pathPublicName(), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0, offset);
 
     return structure;
 }
@@ -320,15 +245,14 @@ JSObject* Zig::ImportMetaObject::createRequireFunction(VM& vm, JSGlobalObject* l
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     Structure* structure = globalObject->importMetaRequireStructure();
-    JSFunction* requireFunction = JSFunction::create(vm, importMetaObjectRequireCodeGenerator(vm), lexicalGlobalObject->globalScope(), structure);
+    JSFunction* requireFunction = JSFunction::create(vm, importMetaObjectRequireCodeGenerator(vm), lexicalGlobalObject, structure);
 
-    requireFunction->putDirect(vm, clientData(vm)->builtinNames().pathPublicName(), jsString(vm, pathString), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
+    requireFunction->putDirectOffset(vm, 0, jsString(vm, pathString));
     return requireFunction;
 }
 
 const JSC::ClassInfo RequireResolveFunctionPrototype::s_info = { "resolve"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RequireResolveFunctionPrototype) };
 const JSC::ClassInfo ResolveFunction::s_info = { "resolve"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ResolveFunction) };
-const JSC::ClassInfo RequireFunctionPrototype::s_info = { "require"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RequireFunctionPrototype) };
 
 extern "C" EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
@@ -457,73 +381,81 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     }
 }
 
-class ImportMetaObjectPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
+enum class ImportMetaPropertyOffset : uint32_t {
+    url,
+    dir,
+    file,
+    path,
+    primordials,
+    require,
 
-    static ImportMetaObjectPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        ImportMetaObjectPrototype* ptr = new (NotNull, JSC::allocateCell<ImportMetaObjectPrototype>(vm)) ImportMetaObjectPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm, globalObject);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    ImportMetaObjectPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 };
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(ImportMetaObjectPrototype, ImportMetaObjectPrototype::Base);
+static constexpr uint32_t numberOfImportMetaProperties = 6;
 
-JSObject* ImportMetaObject::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
+Zig::ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* jslobalObject, JSC::JSString* keyString)
 {
-    return ImportMetaObjectPrototype::create(vm, &globalObject, ImportMetaObjectPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
-}
+    auto* globalObject = jsCast<Zig::GlobalObject*>(jslobalObject);
+    auto& vm = globalObject->vm();
+    auto view = keyString->value(globalObject);
+    JSString* dirString = jsEmptyString(vm);
+    JSString* fileString = jsEmptyString(vm);
+    JSString* pathString = keyString;
+    JSString* urlString = keyString;
+    JSValue primordials = jsUndefined();
+    auto* requireFunction = Zig::ImportMetaObject::createRequireFunction(vm, globalObject, view);
 
-void ImportMetaObjectPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject_)
-{
-    Base::finishCreation(vm);
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
     auto clientData = WebCore::clientData(vm);
-
     auto& builtinNames = clientData->builtinNames();
 
-    this->putDirect(vm, builtinNames.filePublicName(), jsEmptyString(vm), 0);
-    this->putDirect(vm, builtinNames.dirPublicName(), jsEmptyString(vm), 0);
-    this->putDirect(vm, builtinNames.pathPublicName(), jsEmptyString(vm), 0);
-    this->putDirect(vm, builtinNames.urlPublicName(), jsEmptyString(vm), 0);
+    auto index = view.reverseFind('/', view.length());
+    if (index != WTF::notFound) {
+        dirString = JSC::jsSubstring(globalObject, keyString, 0, index);
+        fileString = JSC::jsSubstring(globalObject, keyString, index + 1, view.length() - index - 1);
+    } else {
+        fileString = keyString;
+    }
 
-    this->putDirect(
+    if (view.startsWith('/')) {
+        urlString = JSC::jsString(vm, WTF::URL::fileURLWithFileSystemPath(view).string());
+    } else {
+        if (view.startsWith("node:"_s) || view.startsWith("bun:"_s)) {
+            primordials = reinterpret_cast<Zig::GlobalObject*>(globalObject)->primordialsObject();
+        }
+    }
+
+    JSC::Structure* structure = globalObject->ImportMetaObjectStructure();
+
+    Zig::ImportMetaObject* meta = Zig::ImportMetaObject::create(vm, globalObject, structure);
+    if (UNLIKELY(!meta)) {
+        return nullptr;
+    }
+
+    meta->putDirect(vm, builtinNames.urlPublicName(), urlString, PropertyAttribute::ReadOnly | 0);
+    meta->putDirect(vm, builtinNames.dirPublicName(), dirString, PropertyAttribute::ReadOnly | 0);
+    meta->putDirect(vm, builtinNames.filePublicName(), fileString, PropertyAttribute::ReadOnly | 0);
+    meta->putDirect(vm, builtinNames.pathPublicName(), pathString, PropertyAttribute::ReadOnly | 0);
+    meta->putDirect(vm, Identifier::fromString(vm, "primordials"_s), primordials, PropertyAttribute::DontEnum | 0);
+    meta->putDirect(vm, builtinNames.requirePublicName(), requireFunction, PropertyAttribute::Builtin | 0);
+
+    return meta;
+}
+
+JSC::Structure* ImportMetaObject::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    JSObject* prototype = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
+    auto clientData = WebCore::clientData(vm);
+    auto& builtinNames = clientData->builtinNames();
+    prototype->putDirect(
         vm,
         builtinNames.mainPublicName(),
         GetterSetter::create(vm, globalObject, JSFunction::create(vm, importMetaObjectMainCodeGenerator(vm), globalObject), nullptr),
         JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin | 0);
-
-    this->putDirect(vm, Identifier::fromString(vm, "primordials"_s), jsUndefined(), JSC::PropertyAttribute::DontEnum | 0);
-
-    String requireString = "[[require]]"_s;
-    this->putDirect(vm, builtinNames.requirePublicName(), Zig::ImportMetaObject::createRequireFunction(vm, globalObject, requireString), PropertyAttribute::Builtin | PropertyAttribute::Function | 0);
-
-    this->putDirectNativeFunction(vm, globalObject, builtinNames.resolvePublicName(), 1,
+    prototype->putDirectNativeFunction(vm, globalObject, builtinNames.resolvePublicName(), 1,
         functionImportMeta__resolve,
         ImplementationVisibility::Public,
         NoIntrinsic,
         JSC::PropertyAttribute::Function | 0);
-    this->putDirectNativeFunction(
+    prototype->putDirectNativeFunction(
         vm, globalObject, builtinNames.resolveSyncPublicName(),
         1,
         functionImportMeta__resolveSync,
@@ -531,7 +463,17 @@ void ImportMetaObjectPrototype::finishCreation(VM& vm, JSGlobalObject* globalObj
         NoIntrinsic,
         JSC::PropertyAttribute::Function | 0);
 
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, prototype, numberOfImportMetaProperties);
+    PropertyOffset offset;
+
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "url"_s), PropertyAttribute::ReadOnly | 0, offset);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "dir"_s), PropertyAttribute::ReadOnly | 0, offset);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "file"_s), PropertyAttribute::ReadOnly | 0, offset);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "path"_s), PropertyAttribute::ReadOnly | 0, offset);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "primordials"_s), PropertyAttribute::DontEnum | 0, offset);
+    structure = Structure::addPropertyTransition(vm, structure, Identifier::fromString(vm, "require"_s), PropertyAttribute::Builtin | PropertyAttribute::Function, offset);
+
+    return structure;
 }
 
 void ImportMetaObject::finishCreation(VM& vm)
@@ -549,9 +491,6 @@ void ImportMetaObject::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     // }
     Base::analyzeHeap(cell, analyzer);
 }
-
-const JSC::ClassInfo ImportMetaObjectPrototype::s_info = { "ImportMeta"_s, &Base::s_info, nullptr, nullptr,
-    CREATE_METHOD_TABLE(ImportMetaObjectPrototype) };
 
 const JSC::ClassInfo ImportMetaObject::s_info = { "ImportMeta"_s, &Base::s_info, nullptr, nullptr,
     CREATE_METHOD_TABLE(ImportMetaObject) };

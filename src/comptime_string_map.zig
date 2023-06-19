@@ -77,6 +77,8 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             break :blk k[0..];
         };
 
+        pub const Value = V;
+
         pub fn keys() []const []const KeyType {
             return keys_list;
         }
@@ -131,6 +133,25 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             return null;
         }
 
+        pub fn getWithLengthAndEqlList(str: anytype, comptime len: usize, comptime eqls: anytype) ?V {
+            const end = comptime brk: {
+                var i = len_indexes[len];
+                @setEvalBranchQuota(99999);
+
+                while (i < kvs.len and kvs[i].key.len == len) : (i += 1) {}
+
+                break :brk i;
+            };
+
+            const start = comptime len_indexes[len];
+            const range = comptime keys()[start..end];
+            if (eqls(str, range)) |k| {
+                return kvs[start + k].value;
+            }
+
+            return null;
+        }
+
         pub fn get(str: []const KeyType) ?V {
             if (str.len < precomputed.min_len or str.len > precomputed.max_len)
                 return null;
@@ -155,6 +176,22 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             inline while (i <= precomputed.max_len) : (i += 1) {
                 if (length == i) {
                     return getWithLengthAndEql(input, i, eql);
+                }
+            }
+
+            return null;
+        }
+
+        pub fn getWithEqlList(input: anytype, comptime eql: anytype) ?V {
+            const Input = @TypeOf(input);
+            const length = if (comptime std.meta.trait.isSlice(Input) or std.meta.trait.isZigString(Input)) input.len else input.length();
+            if (length < precomputed.min_len or length > precomputed.max_len)
+                return null;
+
+            comptime var i: usize = precomputed.min_len;
+            inline while (i <= precomputed.max_len) : (i += 1) {
+                if (length == i) {
+                    return getWithLengthAndEqlList(input, i, eql);
                 }
             }
 

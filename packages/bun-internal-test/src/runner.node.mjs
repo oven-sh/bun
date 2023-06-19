@@ -4,8 +4,16 @@ import { fsyncSync, rmSync, writeFileSync, writeSync } from "fs";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
+import { totalmem } from "os";
 import { relative } from "path";
 import { fileURLToPath } from "url";
+
+const nativeMemory = totalmem();
+const BUN_JSC_forceRAMSizeNumber = parseInt(process.env["BUN_JSC_forceRAMSize"] || "0", 10);
+let BUN_JSC_forceRAMSize = Number(BigInt(nativeMemory) >> BigInt(2)) + "";
+if (!(Number.isSafeInteger(BUN_JSC_forceRAMSizeNumber) && BUN_JSC_forceRAMSizeNumber > 0)) {
+  BUN_JSC_forceRAMSize = BUN_JSC_forceRAMSizeNumber + "";
+}
 
 const cwd = resolve(fileURLToPath(import.meta.url), "../../../../");
 process.chdir(cwd);
@@ -39,6 +47,8 @@ async function runTest(path) {
       env: {
         ...process.env,
         FORCE_COLOR: "1",
+        BUN_GARBAGE_COLLECTOR_LEVEL: "1",
+        BUN_JSC_forceRAMSize,
       },
     });
   } catch (e) {

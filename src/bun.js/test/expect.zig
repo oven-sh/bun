@@ -113,11 +113,19 @@ pub const Expect = struct {
         if (this.resolves) |resolves| {
             if (value.asAnyPromise()) |promise| {
                 var vm = globalThis.vm();
-
                 promise.setHandled(vm);
-                globalThis.bunVM().waitForPromise(promise);
-                const newValue = promise.result(vm);
 
+                const now = std.time.Instant.now() catch unreachable;
+                const pending_test = Jest.runner.?.pending_test.?;
+                const elapsed = @divFloor(now.since(pending_test.started_at), std.time.ns_per_ms);
+                const remaining = @truncate(u32, Jest.runner.?.last_test_timeout_timer_duration -| elapsed);
+
+                if (!globalThis.bunVM().waitForPromiseWithTimeout(promise, remaining)) {
+                    pending_test.timeout();
+                    return null;
+                }
+
+                const newValue = promise.result(vm);
                 switch (promise.status(vm)) {
                     .Fulfilled => switch (resolves) {
                         .resolves => {},

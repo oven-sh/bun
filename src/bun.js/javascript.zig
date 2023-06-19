@@ -653,6 +653,10 @@ pub const VirtualMachine = struct {
         this.eventLoop().waitForPromise(promise);
     }
 
+    pub fn waitForPromiseWithTimeout(this: *VirtualMachine, promise: JSC.AnyPromise, timeout: u32) bool {
+        return this.eventLoop().waitForPromiseWithTimeout(promise, timeout);
+    }
+
     pub fn waitForTasks(this: *VirtualMachine) void {
         this.eventLoop().waitForTasks();
     }

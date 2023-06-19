@@ -12,6 +12,19 @@ export const randomUUID = () => {
   return crypto.randomUUID();
 };
 
+export const randomInt = (minimum, maximum) => {
+    const values = new Uint32Array(1);
+
+    crypto.getRandomValues(values);
+
+    const result = values[0] / (0xff_ff_ff_ff + 1);
+
+    minimum = Math.ceil(minimum);
+    maximum = Math.floor(maximum);
+
+    return Math.floor(result * (maximum - minimum + 1)) + minimum;
+};
+
 export const timingSafeEqual =
   "timingSafeEqual" in crypto
     ? (a, b) => {

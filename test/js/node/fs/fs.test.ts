@@ -1221,3 +1221,75 @@ it("existsSync with invalid path doesn't throw", () => {
   expect(existsSync(undefined as any)).toBe(false);
   expect(existsSync({ invalid: 1 } as any)).toBe(false);
 });
+
+describe("utimesSync", () => {
+  it("works", () => {
+    const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
+    writeFileSync(tmp, "test");
+    const prevStats = fs.statSync(tmp);
+    const prevModifiedTime = prevStats.mtime;
+    const prevAccessTime = prevStats.atime;
+
+    prevModifiedTime.setMilliseconds(0);
+    prevAccessTime.setMilliseconds(0);
+
+    prevModifiedTime.setFullYear(1996);
+    prevAccessTime.setFullYear(1996);
+
+    // Get the current time to change the timestamps
+    const newModifiedTime = new Date();
+    const newAccessTime = new Date();
+
+    newModifiedTime.setMilliseconds(0);
+    newAccessTime.setMilliseconds(0);
+
+    fs.utimesSync(tmp, newAccessTime, newModifiedTime);
+
+    const newStats = fs.statSync(tmp);
+
+    expect(newStats.mtime).toEqual(newModifiedTime);
+    expect(newStats.atime).toEqual(newAccessTime);
+
+    fs.utimesSync(tmp, prevAccessTime, prevModifiedTime);
+
+    const finalStats = fs.statSync(tmp);
+
+    expect(finalStats.mtime).toEqual(prevModifiedTime);
+    expect(finalStats.atime).toEqual(prevAccessTime);
+  });
+
+  it("accepts a Number(value).toString()", () => {
+    const tmp = join(tmpdir(), "utimesSync-test-file2-" + Math.random().toString(36).slice(2));
+    writeFileSync(tmp, "test");
+    const prevStats = fs.statSync(tmp);
+    const prevModifiedTime = prevStats.mtime;
+    const prevAccessTime = prevStats.atime;
+
+    prevModifiedTime.setMilliseconds(0);
+    prevAccessTime.setMilliseconds(0);
+
+    prevModifiedTime.setFullYear(1996);
+    prevAccessTime.setFullYear(1996);
+
+    // Get the current time to change the timestamps
+    const newModifiedTime = new Date();
+    const newAccessTime = new Date();
+
+    newModifiedTime.setMilliseconds(0);
+    newAccessTime.setMilliseconds(0);
+
+    fs.utimesSync(tmp, newAccessTime.getTime() / 1000 + "", newModifiedTime.getTime() / 1000 + "");
+
+    const newStats = fs.statSync(tmp);
+
+    expect(newStats.mtime).toEqual(newModifiedTime);
+    expect(newStats.atime).toEqual(newAccessTime);
+
+    fs.utimesSync(tmp, prevAccessTime.getTime() / 1000 + "", prevModifiedTime.getTime() / 1000 + "");
+
+    const finalStats = fs.statSync(tmp);
+
+    expect(finalStats.mtime).toEqual(prevModifiedTime);
+    expect(finalStats.atime).toEqual(prevAccessTime);
+  });
+});

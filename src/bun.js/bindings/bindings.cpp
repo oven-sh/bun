@@ -3111,6 +3111,19 @@ int32_t JSC__JSValue__toInt32(JSC__JSValue JSValue0)
     return JSC::JSValue::decode(JSValue0).asInt32();
 }
 
+CPP_DECL double JSC__JSValue__coerceToDouble(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    auto catchScope = DECLARE_CATCH_SCOPE(arg1->vm());
+    double result = value.toNumber(arg1);
+    if (catchScope.exception()) {
+        result = PNaN;
+        catchScope.clearException();
+    }
+
+    return result;
+}
+
 // truncates values larger than int32
 int32_t JSC__JSValue__coerceToInt32(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
 {
@@ -4372,6 +4385,16 @@ extern "C" JSC__JSValue WebCore__AbortSignal__createTimeoutError(const ZigString
     }
 
     return JSC::JSValue::encode(error);
+}
+
+CPP_DECL double JSC__JSValue__getUnixTimestamp(JSC__JSValue timeValue)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(timeValue);
+    JSC::DateInstance* date = JSC::jsDynamicCast<JSC::DateInstance*>(decodedValue);
+    if (!date)
+        return PNaN;
+
+    return date->internalNumber();
 }
 
 #pragma mark - WebCore::DOMFormData

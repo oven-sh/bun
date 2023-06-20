@@ -15063,6 +15063,24 @@ fn NewParser_(
                                 if (e_.tag) |_tag| {
                                     break :tagger p.visitExpr(_tag);
                                 } else {
+                                    if (p.options.jsx.runtime == .classic) {
+                                        const fragment = p.options.jsx.getFragment();
+                                        const symbol_name = if (strings.indexOfChar(fragment, '.')) |j| fragment[0..j] else fragment;
+
+                                        const result = p.findSymbol(expr.loc, symbol_name) catch unreachable;
+                                        break :tagger p.handleIdentifier(
+                                            expr.loc,
+                                            E.Identifier{
+                                                .ref = result.ref,
+                                                .can_be_removed_if_unused = true,
+                                            },
+                                            fragment,
+                                            .{
+                                                .was_originally_identifier = true,
+                                            },
+                                        );
+                                    }
+
                                     break :tagger p.jsxImport(.Fragment, expr.loc);
                                 }
                             };
@@ -15136,9 +15154,25 @@ fn NewParser_(
                                         i += @intCast(usize, @boolToInt(args[i].data != .e_missing));
                                     }
 
+                                    const factory = p.options.jsx.getFactory();
+                                    const symbol_name = if (strings.indexOfChar(factory, '.')) |j| factory[0..j] else factory;
+
+                                    const result = p.findSymbol(expr.loc, symbol_name) catch unreachable;
+                                    const target = p.handleIdentifier(
+                                        expr.loc,
+                                        E.Identifier{
+                                            .ref = result.ref,
+                                            .can_be_removed_if_unused = true,
+                                        },
+                                        factory,
+                                        .{
+                                            .was_originally_identifier = true,
+                                        },
+                                    );
+
                                     // Call createElement()
                                     return p.newExpr(E.Call{
-                                        .target = p.jsxImport(.createElement, expr.loc),
+                                        .target = target,
                                         .args = ExprNodeList.init(args[0..i]),
                                         // Enable tree shaking
                                         .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,

@@ -323,4 +323,35 @@ describe("bundler", () => {
       `,
     },
   });
+  itBundledDevAndProd("jsx/FactoryImport", {
+    todo: false,
+    files: {
+      "/index.jsx": /* js*/ `
+      import { h, fragment } from './jsx.ts';
+      const Fragment = 123;
+      
+      import { print } from 'bun-test-helpers'
+      print([<div props={123}>Hello World</div>, <>Fragment</>])
+      `,
+      "/jsx.ts": /* ts */ `
+        export const h = () => 'hello factory';
+        export const fragment = () => 'hello fragment';
+      `,
+      ...helpers,
+    },
+    target: "bun",
+    jsx: {
+      runtime: "classic",
+      factory: "h",
+      fragment: "fragment",
+    },
+    run: {
+      stdout: `
+        [\"hello factory\",\"hello factory\"]
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("out.js")).toContain("h(fragment");
+    },
+  });
 });

@@ -4445,7 +4445,7 @@ pub const PackageManager = struct {
 
                 if (bun_install.frozen_lockfile) |frozen_lockfile| {
                     if (frozen_lockfile) {
-                        this.enable.frozen_lockfile = frozen_lockfile;
+                        this.enable.frozen_lockfile = true;
                     }
                 }
 

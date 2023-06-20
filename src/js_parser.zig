@@ -5044,74 +5044,6 @@ fn NewParser_(
 
         const_values: js_ast.Ast.ConstValuesMap = .{},
 
-        jsx_factory_symbol: ?JSXSymbol = null,
-        jsx_fragment_symbol: ?JSXSymbol = null,
-
-        pub const JSXSymbol = struct {
-            symbol_name: string,
-            full_name: string,
-        };
-
-        pub fn getJSXImportSymbol(p: *P, comptime jsx_type: @Type(.EnumLiteral)) JSXSymbol {
-            const symbol = if (jsx_type == .factory) p.jsx_factory_symbol else p.jsx_fragment_symbol;
-            return symbol orelse {
-                const parts = if (jsx_type == .factory) p.options.jsx.factory else p.options.jsx.fragment;
-                if (parts.len == 1) {
-                    var full_name = parts[0];
-                    const symbol_name = if (strings.indexOfChar(full_name, '.')) |j| full_name[0..j] else full_name;
-
-                    if (jsx_type == .factory) {
-                        p.jsx_factory_symbol = .{
-                            .symbol_name = symbol_name,
-                            .full_name = full_name,
-                        };
-                        return p.jsx_factory_symbol.?;
-                    }
-
-                    p.jsx_fragment_symbol = .{
-                        .symbol_name = symbol_name,
-                        .full_name = full_name,
-                    };
-                    return p.jsx_fragment_symbol.?;
-                }
-
-                // merge
-                var len: usize = 0;
-                for (parts, 0..) |part, i| {
-                    len += part.len;
-                    if (i < parts.len - 1) {
-                        len += 1;
-                    }
-                }
-                var full_name = p.allocator.alloc(u8, len) catch unreachable;
-                var remain = full_name;
-                bun.copy(u8, remain, parts[0]);
-                remain = remain[parts[0].len..];
-                const symbol_name_end = parts[0].len;
-                for (parts[1..]) |part| {
-                    remain[0] = '.';
-                    bun.copy(u8, remain[1..], part);
-                    remain = remain[part.len + 1 ..];
-                }
-
-                const symbol_name = full_name[0..symbol_name_end];
-
-                if (jsx_type == .factory) {
-                    p.jsx_factory_symbol = .{
-                        .symbol_name = symbol_name,
-                        .full_name = full_name,
-                    };
-                    return p.jsx_factory_symbol.?;
-                }
-
-                p.jsx_fragment_symbol = .{
-                    .symbol_name = symbol_name,
-                    .full_name = full_name,
-                };
-                return p.jsx_fragment_symbol.?;
-            };
-        }
-
         pub fn transposeImport(p: *P, arg: Expr, state: anytype) Expr {
             // The argument must be a string
             if (@as(Expr.Tag, arg.data) == .e_string) {
@@ -6515,6 +6447,14 @@ fn NewParser_(
             p.fn_or_arrow_data_visit.is_outside_fn_or_arrow = true;
             p.module_scope = p.current_scope;
             p.has_es_module_syntax = p.has_es_module_syntax or p.esm_import_keyword.len > 0 or p.esm_export_keyword.len > 0 or p.top_level_await_keyword.len > 0;
+
+            if (p.options.jsx.factory.len == 1) {
+                p.options.jsx.factory = options.JSX.Pragma.memberListToComponentsIfDifferent(p.allocator, p.options.jsx.factory, p.options.jsx.factory[0]) catch unreachable;
+            }
+
+            if (p.options.jsx.fragment.len == 1) {
+                p.options.jsx.fragment = options.JSX.Pragma.memberListToComponentsIfDifferent(p.allocator, p.options.jsx.fragment, p.options.jsx.fragment[0]) catch unreachable;
+            }
 
             if (p.lexer.jsx_pragma.jsx()) |factory| {
                 p.options.jsx.factory = options.JSX.Pragma.memberListToComponentsIfDifferent(p.allocator, p.options.jsx.factory, factory.text) catch unreachable;
@@ -15132,19 +15072,7 @@ fn NewParser_(
                                     break :tagger p.visitExpr(_tag);
                                 } else {
                                     if (p.options.jsx.runtime == .classic) {
-                                        const fragment = p.getJSXImportSymbol(.fragment);
-                                        const result = p.findSymbol(expr.loc, fragment.symbol_name) catch unreachable;
-                                        break :tagger p.handleIdentifier(
-                                            expr.loc,
-                                            E.Identifier{
-                                                .ref = result.ref,
-                                                .can_be_removed_if_unused = true,
-                                            },
-                                            fragment.full_name,
-                                            .{
-                                                .was_originally_identifier = true,
-                                            },
-                                        );
+                                        break :tagger p.jsxStringsToMemberExpression(expr.loc, p.options.jsx.fragment) catch unreachable;
                                     }
 
                                     break :tagger p.jsxImport(.Fragment, expr.loc);
@@ -15220,19 +15148,7 @@ fn NewParser_(
                                         i += @intCast(usize, @boolToInt(args[i].data != .e_missing));
                                     }
 
-                                    const factory = p.getJSXImportSymbol(.factory);
-                                    const result = p.findSymbol(expr.loc, factory.symbol_name) catch unreachable;
-                                    const target = p.handleIdentifier(
-                                        expr.loc,
-                                        E.Identifier{
-                                            .ref = result.ref,
-                                            .can_be_removed_if_unused = true,
-                                        },
-                                        factory.full_name,
-                                        .{
-                                            .was_originally_identifier = true,
-                                        },
-                                    );
+                                    const target = p.jsxStringsToMemberExpression(expr.loc, p.options.jsx.factory) catch unreachable;
 
                                     // Call createElement()
                                     return p.newExpr(E.Call{

@@ -51,6 +51,10 @@ declare module "bun" {
    *
    */
   export const env: Env;
+  /**
+   * The raw arguments passed to the process, including flags passed to Bun. If you want to easily read flags passed to your script, consider using `process.argv` instead.
+   */
+  export const argv: string[];
   export const origin: string;
 
   /**

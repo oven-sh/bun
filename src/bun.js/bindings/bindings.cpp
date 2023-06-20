@@ -1229,6 +1229,16 @@ void WebCore__DOMURL__pathname_(WebCore__DOMURL* domURL, ZigString* arg1)
     *arg1 = Zig::toZigString(pathname);
 }
 
+BunString WebCore__DOMURL__fileSystemPath(WebCore__DOMURL* arg0)
+{
+    const WTF::URL& url = arg0->href();
+    if (url.isLocalFile()) {
+        return Bun::toString(url.fileSystemPath());
+    }
+
+    return BunStringEmpty;
+}
+
 extern "C" JSC__JSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JSGlobalObject* globalObject)
 {
     auto str = Zig::toString(*strPtr);
@@ -3168,6 +3178,19 @@ int32_t JSC__JSValue__toInt32(JSC__JSValue JSValue0)
     return JSC::JSValue::decode(JSValue0).asInt32();
 }
 
+CPP_DECL double JSC__JSValue__coerceToDouble(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    auto catchScope = DECLARE_CATCH_SCOPE(arg1->vm());
+    double result = value.toNumber(arg1);
+    if (catchScope.exception()) {
+        result = PNaN;
+        catchScope.clearException();
+    }
+
+    return result;
+}
+
 // truncates values larger than int32
 int32_t JSC__JSValue__coerceToInt32(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
 {
@@ -3757,12 +3780,10 @@ JSC__JSValue JSC__VM__runGC(JSC__VM* vm, bool sync)
     JSC::JSLockHolder lock(vm);
 
     vm->finalizeSynchronousJSExecution();
-
     WTF::releaseFastMallocFreeMemory();
 
     if (sync) {
         vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
-        WTF::releaseFastMallocFreeMemory();
     } else {
         vm->heap.collectSync(JSC::CollectionScope::Full);
     }
@@ -4431,6 +4452,16 @@ extern "C" JSC__JSValue WebCore__AbortSignal__createTimeoutError(const ZigString
     }
 
     return JSC::JSValue::encode(error);
+}
+
+CPP_DECL double JSC__JSValue__getUnixTimestamp(JSC__JSValue timeValue)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(timeValue);
+    JSC::DateInstance* date = JSC::jsDynamicCast<JSC::DateInstance*>(decodedValue);
+    if (!date)
+        return PNaN;
+
+    return date->internalNumber();
 }
 
 #pragma mark - WebCore::DOMFormData

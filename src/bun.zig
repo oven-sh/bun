@@ -1525,6 +1525,7 @@ pub const StringPointer = Schema.Api.StringPointer;
 pub const StandaloneModuleGraph = @import("./standalone_bun.zig").StandaloneModuleGraph;
 
 pub const String = @import("./string.zig").String;
+pub const SliceWithUnderlyingString = @import("./string.zig").SliceWithUnderlyingString;
 
 pub const WTF = struct {
     /// The String type from WebKit's WTF library.

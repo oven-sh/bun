@@ -270,6 +270,11 @@ pub const ServerConfig = struct {
 
         pub fn inJS(global: *JSC.JSGlobalObject, obj: JSC.JSValue, exception: JSC.C.ExceptionRef) ?SSLConfig {
             var result = zero;
+            if (!obj.isObject()) {
+                JSC.throwInvalidArguments("tls option expects an object", .{}, global, exception);
+                return null;
+            }
+
             var any = false;
 
             // Required
@@ -688,7 +693,7 @@ pub const ServerConfig = struct {
         }
 
         if (arguments.next()) |arg| {
-            if (arg.isUndefinedOrNull() or !arg.isObject()) {
+            if (!arg.isObject()) {
                 JSC.throwInvalidArguments("Bun.serve expects an object", .{}, global, exception);
                 return args;
             }
@@ -812,6 +817,9 @@ pub const ServerConfig = struct {
                 }
                 return args;
             }
+        } else {
+            JSC.throwInvalidArguments("Bun.serve expects an object", .{}, global, exception);
+            return args;
         }
 
         if (args.base_uri.len > 0) {

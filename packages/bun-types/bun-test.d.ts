@@ -27,43 +27,11 @@ declare module "bun:test" {
 
   export const mock: {
     <T extends AnyFunction>(Function: T): Mock<T>;
-
-    mockClear(): typeof mock;
-    mockReset(): typeof mock;
-    mockRestore(): void;
-    mockReturnValue<T extends JestMock.FunctionLike = JestMock.UnknownFunction>(
-      value: ReturnType<T>,
-    ): JestMock.MockInstance<T>;
-    mockReturnValueOnce<
-      T extends JestMock.FunctionLike = JestMock.UnknownFunction,
-    >(
-      value: ReturnType<T>,
-    ): JestMock.MockInstance<T>;
-    mockResolvedValue<
-      T extends JestMock.FunctionLike = JestMock.UnknownFunction,
-    >(
-      value: JestMock.ResolveType<T>,
-    ): JestMock.MockInstance<T>;
-    mockResolvedValueOnce<
-      T extends JestMock.FunctionLike = JestMock.UnknownFunction,
-    >(
-      value: JestMock.ResolveType<T>,
-    ): JestMock.MockInstance<T>;
-    mockRejectedValue<
-      T extends JestMock.FunctionLike = JestMock.UnknownFunction,
-    >(
-      value: JestMock.RejectType<T>,
-    ): JestMock.MockInstance<T>;
-    mockRejectedValueOnce<
-      T extends JestMock.FunctionLike = JestMock.UnknownFunction,
-    >(
-      value: JestMock.RejectType<T>,
-    ): JestMock.MockInstance<T>;
   };
 
   interface Jest {
     restoreAllMocks(): void;
-    fn<T extends AnyFunction>(func: T): Mock<T>;
+    fn<T extends AnyFunction>(func?: T): Mock<T>;
   }
   export const jest: Jest;
   export namespace jest {
@@ -473,6 +441,24 @@ declare module "bun:test" {
      */
     toBe(expected: T): void;
     /**
+     * Asserts that a number is odd.
+     * 
+     * @link https://jest-extended.jestcommunity.dev/docs/matchers/number/#tobeodd
+     * @example
+     * expect(1).toBeOdd();
+     * expect(2).not.toBeOdd();
+     */
+    toBeOdd(): void;
+    /**
+     * Asserts that a number is even.
+     * 
+     * @link https://jest-extended.jestcommunity.dev/docs/matchers/number/#tobeeven
+     * @example
+     * expect(2).toBeEven();
+     * expect(1).not.toBeEven();
+     */
+    toBeEven(): void;
+    /**
      * Asserts that value is close to the expected by floating point precision.
      *
      * For example, the following fails because arithmetic on decimal (base 10)
@@ -753,6 +739,27 @@ declare module "bun:test" {
      */
     toBeNil(): void;
     /**
+     * Asserts that a value is a `array`.
+     * 
+     * @link https://jest-extended.jestcommunity.dev/docs/matchers/array/#tobearray
+     * @example
+     * expect([1]).toBeArray();
+     * expect(new Array(1)).toBeArray();
+     * expect({}).not.toBeArray();
+     */
+    toBeArray(): void;
+    /**
+     * Asserts that a value is a `array` of a certain length.
+     * 
+     * @link https://jest-extended.jestcommunity.dev/docs/matchers/array/#tobearrayofsize
+     * @example 
+     * expect([]).toBeArrayOfSize(0);
+     * expect([1]).toBeArrayOfSize(1);
+     * expect(new Array(1)).toBeArrayOfSize(1);
+     * expect({}).not.toBeArrayOfSize(0);
+     */
+    toBeArrayOfSize(size: number): void;
+    /**
      * Asserts that a value is a `boolean`.
      *
      * @example
@@ -771,6 +778,16 @@ declare module "bun:test" {
      * expect(1).not.toBeTrue();
      */
     toBeTrue(): void;
+    /**
+     * Asserts that a value matches a specific type.
+     * 
+     * @link https://vitest.dev/api/expect.html#tobetypeof
+     * @example
+     * expect(1).toBeTypeOf("number");
+     * expect("hello").toBeTypeOf("string");
+     * expect([]).not.toBeTypeOf("boolean");
+     */
+    toBeTypeOf(type: 'bigint' | 'boolean' | 'function' | 'number' | 'object' | 'string' | 'symbol' | 'undefined'): void;
     /**
      * Asserts that a value is `false`.
      *

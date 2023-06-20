@@ -348,7 +348,10 @@ pub const GarbageCollectionController = struct {
 
     pub fn processGCTimer(this: *GarbageCollectionController) void {
         var vm = this.bunVM().global.vm();
-        const this_heap_size = vm.blockBytesAllocated();
+        this.processGCTimerWithHeapSize(vm, vm.blockBytesAllocated());
+    }
+
+    pub fn processGCTimerWithHeapSize(this: *GarbageCollectionController, vm: *JSC.VM, this_heap_size: usize) void {
         const prev = this.gc_last_heap_size;
 
         switch (this.gc_timer_state) {

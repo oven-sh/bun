@@ -44,12 +44,16 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 
             const args = if (comptime Arguments != void)
                 (Arguments.fromJS(globalObject, &slice, &exceptionref) orelse {
-                    std.debug.assert(exceptionref != null);
-                    globalObject.throwValue(JSC.JSValue.c(exceptionref));
+                    // we might've already thrown
+                    if (exceptionref != null)
+                        globalObject.throwValue(JSC.JSValue.c(exceptionref));
                     return .zero;
                 })
             else
                 Arguments{};
+            defer {
+                if (comptime Arguments != void and @hasDecl(Arguments, "deinit")) args.deinit();
+            }
 
             const exception1 = JSC.JSValue.c(exceptionref);
 

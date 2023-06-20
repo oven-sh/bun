@@ -204,6 +204,64 @@ describe("expect()", () => {
     expect({}).not.toBeNil();
   });
 
+  test("toBeArray()", () => {
+    expect([]).toBeArray();
+    expect([1, 2, 3, "🫓"]).toBeArray();
+    expect(new Array()).toBeArray();
+    expect(new Array(1, 2, 3)).toBeArray();
+    expect({}).not.toBeArray();
+    expect("🫓").not.toBeArray();
+    expect(0).not.toBeArray();
+    expect(true).not.toBeArray();
+    expect(null).not.toBeArray();
+  });
+
+  test("toBeArrayOfSize()", () => {
+    expect([]).toBeArrayOfSize(0);
+    expect(new Array()).toBeArrayOfSize(0);
+    expect([1, 2, 3, "🫓"]).toBeArrayOfSize(4);
+    expect(new Array<string | number>(1, 2, 3, "🫓")).toBeArrayOfSize(4);
+    expect({}).not.toBeArrayOfSize(1);
+    expect("").not.toBeArrayOfSize(1);
+    expect(0).not.toBeArrayOfSize(1);
+  });
+
+  test("toBeTypeOf()", () => {
+    expect("Bun! 🫓").toBeTypeOf("string");
+    expect(0).toBeTypeOf("number");
+    expect(true).toBeTypeOf("boolean");
+    expect([]).toBeTypeOf("object");
+    expect({}).toBeTypeOf("object");
+    expect(null).toBeTypeOf("object");
+    expect(undefined).toBeTypeOf("undefined");
+    expect(() => {}).toBeTypeOf("function");
+    expect(function () {}).toBeTypeOf("function");
+    expect(async () => {}).toBeTypeOf("function");
+    expect(async function () {}).toBeTypeOf("function");
+    expect(function* () {}).toBeTypeOf("function");
+    expect(class {}).toBeTypeOf("function");
+    expect(new Array()).toBeTypeOf("object");
+    expect(BigInt(5)).toBeTypeOf("bigint");
+    expect(/(foo|bar)/g).toBeTypeOf("object");
+    expect(new RegExp("(foo|bar)", "g")).toBeTypeOf("object");
+    expect(new Date()).toBeTypeOf("object");
+
+    expect("Bun!").not.toBeTypeOf("number");
+    expect(0).not.toBeTypeOf("string");
+    expect(true).not.toBeTypeOf("number");
+    expect([]).not.toBeTypeOf("string");
+    expect({}).not.toBeTypeOf("number");
+    expect(null).not.toBeTypeOf("string");
+    expect(undefined).not.toBeTypeOf("boolean");
+    expect(() => {}).not.toBeTypeOf("string");
+    expect(function () {}).not.toBeTypeOf("boolean");
+    expect(async () => {}).not.toBeTypeOf("object");
+    expect(class {}).not.toBeTypeOf("bigint");
+    expect(/(foo|bar)/g).not.toBeTypeOf("string");
+    expect(new RegExp("(foo|bar)", "g")).not.toBeTypeOf("number");
+    expect(new Date()).not.toBeTypeOf("string");
+  });
+
   test("toBeBoolean()", () => {
     expect(true).toBeBoolean();
     expect(false).toBeBoolean();

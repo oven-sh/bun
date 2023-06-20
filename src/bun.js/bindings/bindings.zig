@@ -933,6 +933,10 @@ pub const DOMURL = opaque {
         return out;
     }
 
+    pub fn fileSystemPath(this: *DOMURL) bun.String {
+        return shim.cppFn("fileSystemPath", .{this});
+    }
+
     pub fn pathname_(this: *DOMURL, out: *ZigString) void {
         return shim.cppFn("pathname_", .{ this, out });
     }
@@ -947,6 +951,7 @@ pub const DOMURL = opaque {
         "cast_",
         "href_",
         "pathname_",
+        "fileSystemPath",
     };
 };
 
@@ -3347,10 +3352,24 @@ pub const JSValue = enum(JSValueReprInt) {
         cppFn("forEachPropertyOrdered", .{ this, globalObject, ctx, callback });
     }
 
+    pub fn coerceToDouble(
+        this: JSValue,
+        globalObject: *JSC.JSGlobalObject,
+    ) f64 {
+        return cppFn("coerceToDouble", .{ this, globalObject });
+    }
+
     pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) T {
         return switch (T) {
             ZigString => this.getZigString(globalThis),
             bool => this.toBooleanSlow(globalThis),
+            f64 => {
+                if (this.isNumber()) {
+                    return this.asDouble();
+                }
+
+                return this.coerceToDouble(globalThis);
+            },
             i32 => {
                 if (this.isInt32()) {
                     return this.asInt32();
@@ -4439,6 +4458,14 @@ pub const JSValue = enum(JSValueReprInt) {
         });
     }
 
+    /// Get the internal number of the `JSC::DateInstance` object
+    /// Returns NaN if the value is not a `JSC::DateInstance` (`Date` in JS)
+     pub fn getUnixTimestamp(this: JSValue) f64 {
+        return cppFn("getUnixTimestamp", .{
+            this,
+        });
+    }
+
     pub fn toFmt(
         this: JSValue,
         global: *JSGlobalObject,
@@ -4680,6 +4707,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "asObject",
         "asPromise",
         "asString",
+        "coerceToDouble",
         "coerceToInt32",
         "coerceToInt64",
         "createEmptyArray",
@@ -4692,10 +4720,11 @@ pub const JSValue = enum(JSValueReprInt) {
         "createTypeError",
         "createUninitializedUint8Array",
         "deepEquals",
+        "deepMatch",
         "eqlCell",
         "eqlValue",
-        "fastGet_",
         "fastGetDirect_",
+        "fastGet_",
         "forEach",
         "forEachProperty",
         "forEachPropertyOrdered",
@@ -4715,6 +4744,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "getPrototype",
         "getStaticProperty",
         "getSymbolDescription",
+        "getUnixTimestamp",
         "hasProperty",
         "isAggregateError",
         "isAnyError",
@@ -4724,11 +4754,13 @@ pub const JSValue = enum(JSValueReprInt) {
         "isBoolean",
         "isCallable",
         "isClass",
+        "isConstructor",
         "isCustomGetterSetter",
         "isError",
         "isException",
         "isGetterSetter",
         "isHeapBigInt",
+        "isInstanceOf",
         "isInt32",
         "isInt32AsAnyInt",
         "isIterable",
@@ -4758,6 +4790,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "putIndex",
         "putRecord",
         "strictDeepEquals",
+        "stringIncludes",
         "symbolFor",
         "symbolKeyFor",
         "toBoolean",
@@ -4765,6 +4798,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "toError_",
         "toInt32",
         "toInt64",
+        "toMatch",
         "toObject",
         "toPropertyKeyValue",
         "toString",

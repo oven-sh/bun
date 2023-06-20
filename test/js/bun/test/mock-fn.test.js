@@ -49,13 +49,26 @@ describe("mock()", () => {
     const obj = { fn };
     expect(obj.fn()).toBe(obj);
   });
-  test("jest.fn .call passes this value", () => {
+  if (isBun) {
+    test("jest.fn(10) return value shorthand", () => {
+      expect(jest.fn(10)()).toBe(10);
+      expect(jest.fn(null)()).toBe(null);
+    });
+  }
+  test("blank function still logs a return", () => {
+    const fn = jest.fn();
+    expect(fn()).toBe(undefined);
+    expect(fn.mock.results[0]).toEqual({
+      type: "return",
+      value: undefined,
+    });
+  });
+  test(".call passes this value", () => {
     const fn = jest.fn(function () {
       return this;
     });
     expect(fn.call(123)).toBe(123);
   });
-
   test(".call works", () => {
     const fn = jest.fn(function hey() {
       return this;
@@ -111,6 +124,10 @@ describe("mock()", () => {
     }
     expect(typeof fn.name).toBe("string");
   });
+  test(".name without implementation", () => {
+    const fn = jest.fn();
+    expect(fn.name).toBe("mockConstructor");
+  });
   test(".name throwing doesnt segfault", () => {
     function baddie() {
       return this;
@@ -123,7 +140,7 @@ describe("mock()", () => {
     const fn = jest.fn(baddie);
     expect(typeof fn.name).toBe("string");
   });
-  test.todo(".length works", () => {
+  test(".length works", () => {
     const fn = jest.fn(function hey(a, b, c) {
       // @ts-expect-error
       return this;
@@ -152,7 +169,7 @@ describe("mock()", () => {
     });
     expect(fn.mock.calls[0]).toEqual([43]);
   });
-  test.todo("mockReset works", () => {
+  test("mockReset works", () => {
     const instance = new Error("foo");
     const fn = jest.fn(f => {
       throw instance;
@@ -168,12 +185,16 @@ describe("mock()", () => {
     expect(fn.mock.results).toBeEmpty();
     expect(fn.mock.instances).toBeEmpty();
     expect(fn).not.toHaveBeenCalled();
+    expect(() => expect(fn).toHaveBeenCalled()).toThrow();
     expect(fn(43)).toBe(undefined);
-    expect(fn.mock.results[0]).toEqual({
-      type: "return",
-      value: undefined,
-    });
-    expect(fn.mock.calls[0]).toEqual([43]);
+    console.log(fn.mock);
+    expect(fn.mock.results).toEqual([
+      {
+        type: "return",
+        value: undefined,
+      },
+    ]);
+    expect(fn.mock.calls).toEqual([[43]]);
   });
   test("mockClear works", () => {
     const instance = new Error("foo");
@@ -199,7 +220,7 @@ describe("mock()", () => {
     expect(fn.mock.calls[0]).toEqual([43]);
   });
   // this is an implementation detail i don't think we *need* to support
-  test.todo("mockClear doesnt update existing object", () => {
+  test("mockClear doesnt update existing object", () => {
     const instance = new Error("foo");
     const fn = jest.fn(f => {
       throw instance;
@@ -218,7 +239,7 @@ describe("mock()", () => {
     expect(fn.mock.results).toBeEmpty();
     expect(stolen.results).not.toBeEmpty();
     expect(fn.mock.instances).toBeEmpty();
-    expect(stolen.instances).not.toBeEmpty();
+    expect(stolen.instances).not.toBe(fn.mock.instances);
     expect(fn).not.toHaveBeenCalled();
     expect(() => fn(43)).toThrow("foo");
     expect(fn.mock.results[0]).toEqual({
@@ -308,17 +329,19 @@ describe("mock()", () => {
       value: 47,
     });
   });
-  test.todo("mockReturnValueOnce with no implementation", () => {
+  test("mockReturnValueOnce with no implementation", () => {
     const fn = jest.fn();
-    fn.mockReturnValueOnce(10).mockReturnValueOnce("x").mockReturnValue(true);
+    fn.mockReturnValueOnce(10);
     expect(fn()).toBe(10);
+    expect(fn()).toBe(undefined);
+    fn.mockReturnValueOnce("x").mockReturnValue(true);
     expect(fn()).toBe("x");
     expect(fn()).toBe(true);
     expect(fn()).toBe(true);
     fn.mockReturnValue("y");
     expect(fn()).toBe("y");
   });
-  test.todo("mockReturnValue then mockReturnValueOnce", () => {
+  test("mockReturnValue then mockReturnValueOnce", () => {
     const fn = jest.fn();
     fn.mockReturnValue(true).mockReturnValueOnce(10).mockReturnValueOnce("x");
     expect(fn()).toBe(10);
@@ -326,7 +349,7 @@ describe("mock()", () => {
     expect(fn()).toBe(true);
     expect(fn()).toBe(true);
   });
-  test.todo("mockReturnValue then fallback to original", () => {
+  test("mockReturnValue then fallback to original", () => {
     const fn = jest.fn(() => "fallback");
     fn.mockReturnValueOnce(true).mockReturnValueOnce(10).mockReturnValueOnce("x");
     expect(fn()).toBe(true);
@@ -334,7 +357,7 @@ describe("mock()", () => {
     expect(fn()).toBe("x");
     expect(fn()).toBe("fallback");
   });
-  test.todo("mockImplementation", () => {
+  test("mockImplementation", () => {
     const fn = jest.fn();
     fn.mockImplementation(a => !a);
     expect(fn()).toBe(true);
@@ -342,7 +365,7 @@ describe("mock()", () => {
     fn.mockImplementation(a => a + 2);
     expect(fn(8)).toBe(10);
   });
-  test.todo("mockImplementationOnce", () => {
+  test("mockImplementationOnce", () => {
     const fn = jest.fn();
     fn.mockImplementationOnce(a => ["a", a]);
     fn.mockImplementationOnce(a => ["b", a]);
@@ -362,7 +385,7 @@ describe("mock()", () => {
     expect(fn(8)).toEqual(["g", 8]);
     expect(fn(9)).toEqual(["g", 9]);
   });
-  test.todo("mockImplementation falls back", () => {
+  test("mockImplementation falls back", () => {
     const fn = jest.fn(() => "fallback");
     fn.mockImplementationOnce(a => ["a", a]);
     fn.mockImplementationOnce(a => ["b", a]);
@@ -370,7 +393,7 @@ describe("mock()", () => {
     expect(fn(2)).toEqual(["b", 2]);
     expect(fn(3)).toEqual("fallback");
   });
-  test.todo("mixing mockImplementation and mockReturnValue", () => {
+  test("mixing mockImplementation and mockReturnValue", () => {
     const fn = jest.fn(() => "fallback");
     fn.mockReturnValueOnce(true).mockImplementationOnce(() => 12);
     expect(fn()).toBe(true);
@@ -385,7 +408,7 @@ describe("mock()", () => {
     expect(fn()).toBe(16);
   });
   // these promise based tests were written before .resolves/.rejects were added to bun:test
-  test.todo("mockResolvedValue", async () => {
+  test("mockResolvedValue", async () => {
     const fn = jest.fn();
     fn.mockResolvedValue(42);
     expect(await expectResolves(fn())).toBe(42);
@@ -395,15 +418,48 @@ describe("mock()", () => {
     expect(await expectResolves(fn())).toBe(44);
     expect(await expectResolves(fn())).toBe(42);
   });
-  test.todo("mockRejectedValue", async () => {
+  test("mockRejectedValue", async () => {
     const fn = jest.fn();
     fn.mockRejectedValue(42);
+    expect(await expectRejects(fn())).toBe(42);
     expect(await expectRejects(fn())).toBe(42);
     fn.mockRejectedValueOnce(43);
     fn.mockRejectedValueOnce(44);
     expect(await expectRejects(fn())).toBe(43);
     expect(await expectRejects(fn())).toBe(44);
     expect(await expectRejects(fn())).toBe(42);
+  });
+  test("withImplementation (sync)", () => {
+    const fn = jest.fn(() => "1");
+    expect(fn()).toBe("1");
+    const result = fn.withImplementation(
+      () => "2",
+      function () {
+        expect(fn()).toBe("2");
+        expect(fn()).toBe("2");
+        expect(this).toBe(undefined);
+        return "3";
+      },
+    );
+    expect(result).toBe(undefined);
+    expect(fn()).toBe("1");
+  });
+  test("withImplementation (async)", async () => {
+    const fn = jest.fn(() => "1");
+    expect(fn()).toBe("1");
+    const result = fn.withImplementation(
+      () => "2",
+      async function () {
+        expect(fn()).toBe("2");
+        expect(fn()).toBe("2");
+        await new Promise(resolve => setTimeout(resolve, 10));
+        expect(fn()).toBe("2");
+        expect(this).toBe(undefined);
+        return "3";
+      },
+    );
+    expect(await expectResolves(result)).toBe(undefined);
+    expect(fn()).toBe("1");
   });
 });
 

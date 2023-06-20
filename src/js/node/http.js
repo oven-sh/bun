@@ -1,10 +1,11 @@
 // Hardcoded module "node:http"
-const { EventEmitter } = import.meta.require("node:events");
-const { isIPv6 } = import.meta.require("node:net");
-const { Readable, Writable, Duplex } = import.meta.require("node:stream");
-const { URL } = import.meta.require("node:url");
+import { EventEmitter } from "node:events";
+import { isIPv6 } from "node:net";
+import { Readable, Writable, Duplex } from "node:stream";
+import { URL } from "node:url";
+import { isTypedArray } from "util/types";
+
 const { newArrayWithSize, String, Object, Array } = import.meta.primordials;
-const { isTypedArray } = import.meta.require("util/types");
 
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;

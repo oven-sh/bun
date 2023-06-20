@@ -5,10 +5,11 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf,
   __hasOwnProp = Object.prototype.hasOwnProperty;
+import { StringDecoder } from "node:string_decoder";
 
 const MAX_STRING_LENGTH = 536870888;
+var Buffer = globalThis.Buffer;
 
-var __require = id => import.meta.require(id);
 const crypto = globalThis.crypto;
 const globalCrypto = crypto;
 
@@ -48,7 +49,7 @@ var __export = (target, all) => {
 // node_modules/safe-buffer/index.js
 var require_safe_buffer = __commonJS({
   "node_modules/safe-buffer/index.js"(exports, module) {
-    var buffer = __require("buffer"),
+    var buffer = BufferModule,
       Buffer2 = buffer.Buffer;
     function copyProps(src, dst) {
       for (var key in src) dst[key] = src[key];
@@ -146,7 +147,7 @@ var require_hash_base = __commonJS({
   "node_modules/hash-base/index.js"(exports, module) {
     "use strict";
     var Buffer2 = require_safe_buffer().Buffer,
-      Transform = __require("readable-stream").Transform,
+      Transform = stream_exports.Transform,
       inherits = require_inherits_browser();
     function throwIfNotStringOrBuffer(val, prefix) {
       if (!Buffer2.isBuffer(val) && typeof val != "string")
@@ -341,7 +342,7 @@ var require_md5 = __commonJS({
 var require_ripemd160 = __commonJS({
   "node_modules/ripemd160/index.js"(exports, module) {
     "use strict";
-    var Buffer2 = __require("buffer").Buffer,
+    var Buffer2 = BufferModule.Buffer,
       inherits = require_inherits_browser(),
       HashBase = require_hash_base(),
       ARRAY16 = new Array(16),
@@ -1064,14 +1065,13 @@ var require_sha2 = __commonJS({
 });
 
 // stream.js
-var stream_exports = import.meta.require("node:stream");
+import * as stream_exports from "node:stream";
 
 // node_modules/cipher-base/index.js
 var require_cipher_base = __commonJS({
   "node_modules/cipher-base/index.js"(exports, module) {
     var Buffer2 = require_safe_buffer().Buffer,
       Transform = stream_exports.Transform,
-      StringDecoder = __require("string_decoder").StringDecoder,
       inherits = require_inherits_browser();
     function CipherBase(hashMode) {
       Transform.call(this),
@@ -3330,12 +3330,7 @@ var require_bn = __commonJS({
             this._init(number || 0, base || 10, endian || "be"));
       }
       typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN), (BN.BN = BN), (BN.wordSize = 26);
-      var Buffer2;
-      try {
-        typeof window < "u" && typeof window.Buffer < "u"
-          ? (Buffer2 = window.Buffer)
-          : (Buffer2 = __require("buffer").Buffer);
-      } catch {}
+      var Buffer2 = Buffer;
       (BN.isBN = function (num) {
         return num instanceof BN
           ? !0
@@ -5322,12 +5317,7 @@ var require_bn2 = __commonJS({
             this._init(number || 0, base || 10, endian || "be"));
       }
       typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN), (BN.BN = BN), (BN.wordSize = 26);
-      var Buffer2;
-      try {
-        typeof window < "u" && typeof window.Buffer < "u"
-          ? (Buffer2 = window.Buffer)
-          : (Buffer2 = __require("buffer").Buffer);
-      } catch {}
+      var Buffer2 = Buffer;
       (BN.isBN = function (num) {
         return num instanceof BN
           ? !0
@@ -7670,12 +7660,7 @@ var require_bn3 = __commonJS({
             this._init(number || 0, base || 10, endian || "be"));
       }
       typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN), (BN.BN = BN), (BN.wordSize = 26);
-      var Buffer2;
-      try {
-        typeof window < "u" && typeof window.Buffer < "u"
-          ? (Buffer2 = window.Buffer)
-          : (Buffer2 = __require("buffer").Buffer);
-      } catch {}
+      var Buffer2 = Buffer;
       (BN.isBN = function (num) {
         return num instanceof BN
           ? !0
@@ -9797,12 +9782,7 @@ var require_bn4 = __commonJS({
             this._init(number || 0, base || 10, endian || "be"));
       }
       typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN), (BN.BN = BN), (BN.wordSize = 26);
-      var Buffer2;
-      try {
-        typeof window < "u" && typeof window.Buffer < "u"
-          ? (Buffer2 = window.Buffer)
-          : (Buffer2 = __require("buffer").Buffer);
-      } catch {}
+      var Buffer2 = Buffer;
       (BN.isBN = function (num) {
         return num instanceof BN
           ? !0
@@ -15491,12 +15471,8 @@ var require_bn5 = __commonJS({
             this._init(number || 0, base || 10, endian || "be"));
       }
       typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN), (BN.BN = BN), (BN.wordSize = 26);
-      var Buffer2;
-      try {
-        typeof window < "u" && typeof window.Buffer < "u"
-          ? (Buffer2 = window.Buffer)
-          : (Buffer2 = __require("buffer").Buffer);
-      } catch {}
+      var Buffer2 = Buffer;
+
       (BN.isBN = function (num) {
         return num instanceof BN
           ? !0
@@ -17461,7 +17437,7 @@ var require_bn5 = __commonJS({
 var require_safer = __commonJS({
   "node_modules/safer-buffer/safer.js"(exports, module) {
     "use strict";
-    var buffer = __require("buffer"),
+    var buffer = BufferModule,
       Buffer2 = buffer.Buffer,
       safer = {},
       key;
@@ -19334,7 +19310,7 @@ var require_browser8 = __commonJS({
   "node_modules/browserify-sign/browser/index.js"(exports, module) {
     var Buffer2 = require_safe_buffer().Buffer,
       createHash = require_browser2(),
-      stream = __require("readable-stream"),
+      stream = stream_exports,
       inherits = require_inherits_browser(),
       sign = require_sign(),
       verify = require_verify(),
@@ -19423,12 +19399,7 @@ var require_bn6 = __commonJS({
             this._init(number || 0, base || 10, endian || "be"));
       }
       typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN), (BN.BN = BN), (BN.wordSize = 26);
-      var Buffer2;
-      try {
-        typeof window < "u" && typeof window.Buffer < "u"
-          ? (Buffer2 = window.Buffer)
-          : (Buffer2 = __require("buffer").Buffer);
-      } catch {}
+      var Buffer2 = Buffer;
       (BN.isBN = function (num) {
         return num instanceof BN
           ? !0

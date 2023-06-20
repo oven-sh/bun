@@ -1,5 +1,5 @@
 // Hardcoded module "node:stream"
-var { promises } = import.meta.require("node:stream");
+import { promises } from "node:stream";
 
 export var { pipeline, finished } = promises;
 

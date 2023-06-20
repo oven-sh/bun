@@ -1,4 +1,5 @@
 // Hardcoded module "node:util"
+import * as types from "node:util/types";
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __commonJS = (cb, mod) =>
   function __require() {
@@ -388,7 +389,7 @@ function reduceToSingleString(output, base, braces) {
   }
   return braces[0] + base + " " + output.join(", ") + " " + braces[1];
 }
-const types = import.meta.require("node:util/types");
+
 exports.types = types;
 function isArray(ar) {
   return Array.isArray(ar);

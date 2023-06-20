@@ -1,13 +1,11 @@
 // Hardcoded module "node:child_process"
-const EventEmitter = import.meta.require("node:events");
-const {
-  Readable: { fromWeb: ReadableFromWeb },
-  NativeWritable,
-} = import.meta.require("node:stream");
-const {
-  constants: { signals },
-} = import.meta.require("node:os");
-const { promisify } = import.meta.require("node:util");
+import EventEmitter from "node:events";
+import { Readable, NativeWritable } from "node:stream";
+import { constants } from "node:os";
+import { promisify } from "node:util";
+
+const ReadableFromWeb = Readable.fromWeb;
+const signals = constants.signals;
 
 const { ArrayBuffer, Uint8Array, String, Object, Buffer, Promise } = import.meta.primordials;
 

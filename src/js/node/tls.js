@@ -81,7 +81,8 @@ function createSecureContext(options) {
   return new SecureContext(options);
 }
 
-const { [Symbol.for("::bunternal::")]: InternalTCPSocket, Server: NetServer } = import.meta.require("net");
+import NodeNet from "node:net";
+const { [Symbol.for("::bunternal::")]: InternalTCPSocket, Server: NetServer } = NodeNet;
 
 const buntls = Symbol.for("::buntls::");
 

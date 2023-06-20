@@ -1,8 +1,8 @@
 // Hardcoded module "node:fs"
 var { direct, isPromise, isCallable } = import.meta.primordials;
-var promises = import.meta.require("node:fs/promises");
+import promises from "node:fs/promises";
 
-var { Readable, NativeWritable, _getNativeReadableStreamPrototype, eos: eos_ } = import.meta.require("node:stream");
+import { Readable, NativeWritable, _getNativeReadableStreamPrototype, eos as eos_ } from "node:stream";
 var NativeReadable = _getNativeReadableStreamPrototype(2, Readable); // 2 means native type is a file here
 
 var fs = Bun.fs();
@@ -152,8 +152,7 @@ export var access = function access(...args) {
   rmSync = fs.rmSync.bind(fs),
   rmdirSync = fs.rmdirSync.bind(fs),
   Dirent = fs.Dirent,
-  Stats = fs.Stats,
-  promises = import.meta.require("node:fs/promises");
+  Stats = fs.Stats;
 
 function callbackify(fsFunction, args) {
   try {

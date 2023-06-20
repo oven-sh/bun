@@ -26,9 +26,9 @@
 // Section: Imports
 // ----------------------------------------------------------------------------
 var { Array, RegExp, String, Bun } = import.meta.primordials;
-var EventEmitter = import.meta.require("node:events");
-var { clearTimeout, setTimeout } = import.meta.require("timers");
-var { StringDecoder } = import.meta.require("string_decoder");
+import EventEmitter from "node:events";
+import { clearTimeout, setTimeout } from "timers";
+import { StringDecoder } from "string_decoder";
 var isWritable;
 
 var { inspect } = Bun;

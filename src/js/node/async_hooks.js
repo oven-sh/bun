@@ -1,8 +1,5 @@
 // Hardcoded module "node:async_hooks"
-var drainMicrotasks = () => {
-  ({ drainMicrotasks } = import.meta.require("bun:jsc"));
-  drainMicrotasks();
-};
+import { drainMicrotasks } from "bun:jsc";
 
 var notImplemented = () => {
   console.warn(

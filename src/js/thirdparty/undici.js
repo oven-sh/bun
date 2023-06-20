@@ -1,9 +1,9 @@
 // const { Object } = import.meta.primordials;
-const { EventEmitter } = import.meta.require("events");
-const {
-  Readable,
-  [Symbol.for("::bunternal::")]: { _ReadableFromWeb },
-} = import.meta.require("node:stream");
+import { EventEmitter } from "events";
+import * as NodeStreamModule from "node:stream";
+import { Readable } from "node:stream";
+
+const _ReadableFromWeb = NodeStreamModule.default[Symbol.for("::bunternal::")];
 
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);

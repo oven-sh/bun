@@ -3425,8 +3425,28 @@ pub const Parser = struct {
                 .esm => {
                     exports_kind = .esm;
                 },
-                else => {
-                    exports_kind = .esm;
+                .unknown => {
+                    // Divergence from esbuild and Node.js: we default to ESM
+                    // when there are no exports.
+                    //
+                    // However, this breaks certain packages. 
+                    // For example, the checkpoint-client used by
+                    // Prisma does an eval("__dirname") but does not export
+                    // anything. 
+                    //
+                    // Our CommonJS detection assumes that usage of
+                    // CommonJS features means it is CommonJS Instead, we have
+                    // to rely on usages of other things. 
+                    //
+                    // This still doesn't
+                    // handle the case eval("__dirname") alone, but it is pretty
+                    // uncommon to use Node.js without any require() or exports
+                    // usages in a CommonJS file.
+                    if (p.symbols.items[p.require_ref.innerIndex()].use_count_estimate > 0 or uses_dirname or uses_filename) {
+                        exports_kind = .cjs;
+                    } else {
+                        exports_kind = .esm;
+                    }
                 },
             }
         }

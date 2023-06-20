@@ -3429,25 +3429,38 @@ pub const Parser = struct {
                     // Divergence from esbuild and Node.js: we default to ESM
                     // when there are no exports.
                     //
-                    // However, this breaks certain packages. 
+                    // However, this breaks certain packages.
                     // For example, the checkpoint-client used by
                     // Prisma does an eval("__dirname") but does not export
-                    // anything. 
+                    // anything.
                     //
-                    // Our CommonJS detection assumes that usage of
-                    // CommonJS features means it is CommonJS Instead, we have
-                    // to rely on usages of other things. 
-                    //
-                    // This still doesn't
-                    // handle the case eval("__dirname") alone, but it is pretty
-                    // uncommon to use Node.js without any require() or exports
-                    // usages in a CommonJS file.
-                    if (p.symbols.items[p.require_ref.innerIndex()].use_count_estimate > 0 or uses_dirname or uses_filename) {
+                    // If they use an import statement, we say it's ESM because that's not allowed in CommonJS files.
+                    const uses_any_import_statements = brk: {
+                        for (p.import_records.items) |*import_record| {
+                            if (import_record.is_internal or import_record.is_unused) continue;
+                            if (import_record.kind == .stmt) break :brk true;
+                        }
+
+                        break :brk false;
+                    };
+
+                    if (uses_any_import_statements) {
+                        exports_kind = .esm;
+
+                        // Otherwise, if they use CommonJS features its CommonJS
+                    } else if (p.symbols.items[p.require_ref.innerIndex()].use_count_estimate > 0 or uses_dirname or uses_filename) {
                         exports_kind = .cjs;
                     } else {
+                        // If unknown, we default to ESM
                         exports_kind = .esm;
                     }
                 },
+            }
+
+            if (exports_kind == .cjs and p.options.features.commonjs_at_runtime) {
+                wrapper_expr = .{
+                    .bun_js = {},
+                };
             }
         }
 

@@ -4443,6 +4443,12 @@ pub const PackageManager = struct {
                     }
                 }
 
+                if (bun_install.frozen_lockfile) |frozen_lockfile| {
+                    if (frozen_lockfile) {
+                        this.enable.frozen_lockfile = frozen_lockfile;
+                    }
+                }
+
                 if (bun_install.save_optional) |save| {
                     this.remote_package_features.optional_dependencies = save;
                     this.local_package_features.optional_dependencies = save;
@@ -4673,6 +4679,10 @@ pub const PackageManager = struct {
                 if (cli.production) {
                     this.local_package_features.dev_dependencies = false;
                     this.enable.fail_early = true;
+                    this.enable.frozen_lockfile = true;
+                }
+
+                if (cli.frozen_lockfile) {
                     this.enable.frozen_lockfile = true;
                 }
 
@@ -5649,6 +5659,7 @@ pub const PackageManager = struct {
         clap.parseParam("--save                            Save to package.json") catch unreachable,
         clap.parseParam("--dry-run                         Don't install anything") catch unreachable,
         clap.parseParam("--lockfile <PATH>                  Store & load a lockfile at a specific filepath") catch unreachable,
+        clap.parseParam("--frozen-lockfile                 Disallow changes to lockfile") catch unreachable,
         clap.parseParam("-f, --force                       Always request the latest versions from the registry & reinstall all dependencies") catch unreachable,
         clap.parseParam("--cache-dir <PATH>                 Store & load cached data from a specific directory path") catch unreachable,
         clap.parseParam("--no-cache                        Ignore manifest cache entirely") catch unreachable,
@@ -5709,6 +5720,7 @@ pub const PackageManager = struct {
 
         yarn: bool = false,
         production: bool = false,
+        frozen_lockfile: bool = false,
         no_save: bool = false,
         dry_run: bool = false,
         force: bool = false,
@@ -5777,6 +5789,7 @@ pub const PackageManager = struct {
             var cli = CommandLineArguments{};
             cli.yarn = args.flag("--yarn");
             cli.production = args.flag("--production");
+            cli.frozen_lockfile = args.flag("--frozen-lockfile");
             cli.no_progress = args.flag("--no-progress");
             cli.dry_run = args.flag("--dry-run");
             cli.global = args.flag("--global");

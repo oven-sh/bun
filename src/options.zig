@@ -995,14 +995,6 @@ pub const JSX = struct {
             };
         }
 
-        pub fn getFactory(this: *const Pragma) string {
-            return this.factory[if (this.factory.len > 1) 1 else 0];
-        }
-
-        pub fn getFragment(this: *const Pragma) string {
-            return this.fragment[if (this.factory.len > 1) 1 else 0];
-        }
-
         pub fn parsePackageName(str: string) string {
             if (str[0] == '@') {
                 if (strings.indexOfChar(str[1..], '/')) |first_slash| {

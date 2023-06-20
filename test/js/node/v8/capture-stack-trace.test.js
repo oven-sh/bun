@@ -1,5 +1,10 @@
 import { test, expect } from "bun:test";
 
+const origPrepareStackTrace = Error.prepareStackTrace;
+afterEach(() => {
+  Error.prepareStackTrace = origPrepareStackTrace;
+});
+
 test("capture stack trace", () => {
   function f1() {
     f2();
@@ -317,14 +322,14 @@ test("sanity check", () => {
     Error.prepareStackTrace = (e, s) => {
       // getThis returns undefined in strict mode
       expect(s[0].getThis()).toBe(undefined);
-      expect(s[0].getTypeName()).toBe('undefined');
+      expect(s[0].getTypeName()).toBe("undefined");
       // getFunction returns undefined in strict mode
       expect(s[0].getFunction()).toBe(undefined);
-      expect(s[0].getFunctionName()).toBe('f3');
-      expect(s[0].getMethodName()).toBe('f3');
-      expect(typeof s[0].getLineNumber()).toBe('number');
-      expect(typeof s[0].getColumnNumber()).toBe('number');
-      expect(s[0].getFileName().includes('capture-stack-trace.test.js')).toBe(true);
+      expect(s[0].getFunctionName()).toBe("f3");
+      expect(s[0].getMethodName()).toBe("f3");
+      expect(typeof s[0].getLineNumber()).toBe("number");
+      expect(typeof s[0].getColumnNumber()).toBe("number");
+      expect(s[0].getFileName().includes("capture-stack-trace.test.js")).toBe(true);
 
       expect(s[0].getEvalOrigin()).toBe(undefined);
       expect(s[0].isToplevel()).toBe(true);
@@ -334,7 +339,6 @@ test("sanity check", () => {
       expect(s[0].isAsync()).toBe(false);
       expect(s[0].isPromiseAll()).toBe(false);
       expect(s[0].getPromiseIndex()).toBe(null);
-
     };
     Error.captureStackTrace(e);
     expect(e.stack === undefined).toBe(true);
@@ -344,10 +348,10 @@ test("sanity check", () => {
   f1();
 });
 
-test("CallFrame.p.getThis\getFunction: works in sloppy mode", () => {
+test("CallFrame.p.getThisgetFunction: works in sloppy mode", () => {
   let prevPrepareStackTrace = Error.prepareStackTrace;
-  const sloppyFn = new Function('let e=new Error();Error.captureStackTrace(e);return e.stack');
-  sloppyFn.displayName = 'sloppyFnWow';
+  const sloppyFn = new Function("let e=new Error();Error.captureStackTrace(e);return e.stack");
+  sloppyFn.displayName = "sloppyFnWow";
   const that = {};
 
   Error.prepareStackTrace = (e, s) => {
@@ -369,11 +373,11 @@ test("CallFrame.p.getThis\getFunction: works in sloppy mode", () => {
   Error.prepareStackTrace = prevPrepareStackTrace;
 });
 
-test("CallFrame.p.getThis\getFunction: strict/sloppy mode interaction", () => {
+test("CallFrame.p.getThisgetFunction: strict/sloppy mode interaction", () => {
   let prevPrepareStackTrace = Error.prepareStackTrace;
 
   const strictFn = new Function('"use strict";let e=new Error();Error.captureStackTrace(e);return e.stack');
-  const sloppyFn = new Function('x', 'x()');
+  const sloppyFn = new Function("x", "x()");
   const that = {};
 
   Error.prepareStackTrace = (e, s) => {
@@ -395,7 +399,7 @@ test("CallFrame.p.isConstructor", () => {
 
   class C {
     constructor() {
-      Error.captureStackTrace(new Error(''));
+      Error.captureStackTrace(new Error(""));
     }
   }
 
@@ -420,7 +424,7 @@ test("CallFrame.p.isNative", () => {
     expect(s[1].isNative()).toBe(true);
   };
   [1, 2].sort(() => {
-    Error.captureStackTrace(new Error(''));
+    Error.captureStackTrace(new Error(""));
     return 0;
   });
   Error.prepareStackTrace = prevPrepareStackTrace;
@@ -448,7 +452,9 @@ test.todo("err.stack should invoke prepareStackTrace", () => {
   // This is V8's behavior.
   let prevPrepareStackTrace = Error.prepareStackTrace;
   let wasCalled = false;
-  Error.prepareStackTrace = (e, s) => { wasCalled = true; };
+  Error.prepareStackTrace = (e, s) => {
+    wasCalled = true;
+  };
   const e = new Error();
   e.stack;
   expect(wasCalled).toBe(true);

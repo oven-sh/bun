@@ -206,7 +206,7 @@ describe("expect()", () => {
 
   test("toBeArray()", () => {
     expect([]).toBeArray();
-    expect([1, 2, 3, '🫓']).toBeArray();
+    expect([1, 2, 3, "🫓"]).toBeArray();
     expect(new Array()).toBeArray();
     expect(new Array(1, 2, 3)).toBeArray();
     expect({}).not.toBeArray();
@@ -219,11 +219,11 @@ describe("expect()", () => {
   test("toBeArrayOfSize()", () => {
     expect([]).toBeArrayOfSize(0);
     expect(new Array()).toBeArrayOfSize(0);
-    expect([1, 2, 3, '🫓']).toBeArrayOfSize(4);
-    expect(new Array<string | number>(1, 2, 3, '🫓')).toBeArrayOfSize(4);
+    expect([1, 2, 3, "🫓"]).toBeArrayOfSize(4);
+    expect(new Array<string | number>(1, 2, 3, "🫓")).toBeArrayOfSize(4);
     expect({}).not.toBeArrayOfSize(1);
     expect("").not.toBeArrayOfSize(1);
-    expect(0).not.toBeArrayOfSize(1)
+    expect(0).not.toBeArrayOfSize(1);
   });
 
   test("toBeTypeOf()", () => {

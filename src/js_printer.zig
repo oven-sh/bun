@@ -4372,10 +4372,10 @@ fn NewPrinter(
                                 p.printGlobalBunImportStatement(s.*);
                                 return;
                             },
-                            .hardcoded => {
-                                p.printHardcodedImportStatement(s.*);
-                                return;
-                            },
+                            // .hardcoded => {
+                            //     p.printHardcodedImportStatement(s.*);
+                            //     return;
+                            // },
                             else => {},
                         }
                     }

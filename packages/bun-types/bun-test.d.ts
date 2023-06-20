@@ -441,6 +441,24 @@ declare module "bun:test" {
      */
     toBe(expected: T): void;
     /**
+     * Asserts that a number is odd.
+     * 
+     * @link https://jest-extended.jestcommunity.dev/docs/matchers/number/#tobeodd
+     * @example
+     * expect(1).toBeOdd();
+     * expect(2).not.toBeOdd();
+     */
+    toBeOdd(): void;
+    /**
+     * Asserts that a number is even.
+     * 
+     * @link https://jest-extended.jestcommunity.dev/docs/matchers/number/#tobeeven
+     * @example
+     * expect(2).toBeEven();
+     * expect(1).not.toBeEven();
+     */
+    toBeEven(): void;
+    /**
      * Asserts that value is close to the expected by floating point precision.
      *
      * For example, the following fails because arithmetic on decimal (base 10)

@@ -248,6 +248,61 @@ pub const StringOrBuffer = union(Tag) {
     }
 };
 
+pub const StringOrBunStringOrBuffer = union(enum) {
+    BunString: bun.String,
+    string: string,
+    buffer: Buffer,
+
+    pub fn toJS(this: StringOrBunStringOrBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        return switch (this) {
+            .string => {
+                if (this.string.len == 0)
+                    return JSC.ZigString.Empty.toValue(ctx).asObjectRef();
+
+                const input = this.string;
+                if (strings.toUTF16Alloc(bun.default_allocator, input, false) catch null) |utf16| {
+                    bun.default_allocator.free(bun.constStrToU8(input));
+                    return JSC.ZigString.toExternalU16(utf16.ptr, utf16.len, ctx.ptr()).asObjectRef();
+                }
+
+                return JSC.ZigString.init(input).toExternalValue(ctx.ptr()).asObjectRef();
+            },
+            .buffer => this.buffer.toJSObjectRef(ctx, exception),
+            .BunString => {
+                defer this.BunString.deref();
+                return this.BunString.toJSConst(ctx).asObjectRef();
+            },
+        };
+    }
+
+    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?StringOrBuffer {
+        return switch (value.jsType()) {
+            JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
+                var zig_str = value.toSlice(global, allocator);
+                return StringOrBuffer{ .string = zig_str.slice() };
+            },
+
+            .ArrayBuffer,
+            .Int8Array,
+            .Uint8Array,
+            .Uint8ClampedArray,
+            .Int16Array,
+            .Uint16Array,
+            .Int32Array,
+            .Uint32Array,
+            .Float32Array,
+            .Float64Array,
+            .BigInt64Array,
+            .BigUint64Array,
+            .DataView,
+            => StringOrBuffer{
+                .buffer = Buffer.fromArrayBuffer(global, value, exception),
+            },
+            else => null,
+        };
+    }
+};
+
 /// Like StringOrBuffer but actually returns a Node.js Buffer
 pub const StringOrNodeBuffer = union(Tag) {
     string: string,
@@ -388,14 +443,7 @@ pub const SliceOrBuffer = union(Tag) {
         const encoding: Encoding = brk: {
             if (encoding_value.isEmptyOrUndefinedOrNull())
                 break :brk .utf8;
-            var encoding_str = encoding_value.toSlice(global, allocator);
-            if (encoding_str.len == 0)
-                break :brk .utf8;
-
-            defer encoding_str.deinit();
-
-            // TODO: better error
-            break :brk Encoding.from(encoding_str.slice()) orelse return null;
+            break :brk Encoding.fromJS(encoding_value, global) orelse .utf8;
         };
 
         if (encoding == .utf8) {
@@ -431,6 +479,22 @@ pub const Encoding = enum(u8) {
     /// Refer to the buffer's encoding
     buffer,
 
+    pub const map = bun.ComptimeStringMap(Encoding, .{
+        .{ "utf-8", Encoding.utf8 },
+        .{ "utf8", Encoding.utf8 },
+        .{ "ucs-2", Encoding.utf16le },
+        .{ "ucs2", Encoding.utf16le },
+        .{ "utf16-le", Encoding.utf16le },
+        .{ "utf16le", Encoding.utf16le },
+        .{ "binary", Encoding.latin1 },
+        .{ "latin1", Encoding.latin1 },
+        .{ "ascii", Encoding.ascii },
+        .{ "base64", Encoding.base64 },
+        .{ "hex", Encoding.hex },
+        .{ "buffer", Encoding.buffer },
+        .{ "base64url", Encoding.base64url },
+    });
+
     pub fn isBinaryToText(this: Encoding) bool {
         return switch (this) {
             .hex, .base64, .base64url => true,
@@ -438,39 +502,18 @@ pub const Encoding = enum(u8) {
         };
     }
 
-    const Eight = strings.ExactSizeMatcher(8);
     /// Caller must verify the value is a string
-    pub fn fromStringValue(value: JSC.JSValue, global: *JSC.JSGlobalObject) ?Encoding {
-        var sliced = value.toSlice(global, bun.default_allocator);
-        defer sliced.deinit();
-        return from(sliced.slice());
+    pub fn fromJS(value: JSC.JSValue, global: *JSC.JSGlobalObject) ?Encoding {
+        if (bun.String.tryFromJS(value, global)) |str| {
+            return str.inMapCaseInsensitive(map);
+        }
+
+        return null;
     }
 
     /// Caller must verify the value is a string
     pub fn from(slice: []const u8) ?Encoding {
-        return switch (slice.len) {
-            0...2 => null,
-            else => switch (Eight.matchLower(slice)) {
-                Eight.case("utf-8"), Eight.case("utf8") => Encoding.utf8,
-                Eight.case("ucs-2"), Eight.case("ucs2") => Encoding.ucs2,
-                Eight.case("utf16-le"), Eight.case("utf16le") => Encoding.utf16le,
-
-                // "binary" is an alias for "latin1"
-                Eight.case("binary"), Eight.case("latin1") => Encoding.latin1,
-
-                Eight.case("ascii") => Encoding.ascii,
-                Eight.case("base64") => Encoding.base64,
-                Eight.case("hex") => Encoding.hex,
-                Eight.case("buffer") => Encoding.buffer,
-                else => null,
-            },
-            "base64url".len => brk: {
-                if (strings.eqlCaseInsensitiveASCII(slice, "base64url", false)) {
-                    break :brk Encoding.base64url;
-                }
-                break :brk null;
-            },
-        };
+        return strings.inMapCaseInsensitive(slice, map);
     }
 
     pub fn encodeWithSize(encoding: Encoding, globalThis: *JSC.JSGlobalObject, comptime size: usize, input: *const [size]u8) JSC.JSValue {
@@ -557,17 +600,23 @@ pub fn CallbackTask(comptime Result: type) type {
 }
 
 pub const PathLike = union(Tag) {
-    string: PathString,
+    string: bun.PathString,
     buffer: Buffer,
-    url: void,
+    slice_with_underlying_string: bun.SliceWithUnderlyingString,
 
-    pub const Tag = enum { string, buffer, url };
+    pub const Tag = enum { string, buffer, slice_with_underlying_string };
+
+    pub fn deinit(this: *const PathLike) void {
+        if (this.* == .slice_with_underlying_string) {
+            this.slice_with_underlying_string.deinit();
+        }
+    }
 
     pub inline fn slice(this: PathLike) string {
         return switch (this) {
             .string => this.string.slice(),
             .buffer => this.buffer.slice(),
-            else => unreachable, // TODO:
+            .slice_with_underlying_string => this.slice_with_underlying_string.slice(),
         };
     }
 
@@ -603,6 +652,7 @@ pub const PathLike = union(Tag) {
         return switch (this) {
             .string => this.string.toJS(ctx, exception),
             .buffer => this.buffer.toJSObjectRef(ctx, exception),
+            .slice_with_underlying_string => this.slice_with_underlying_string.toJS(ctx).asObjectRef(),
             else => unreachable,
         };
     }
@@ -638,31 +688,35 @@ pub const PathLike = union(Tag) {
             JSC.JSValue.JSType.StringObject,
             JSC.JSValue.JSType.DerivedStringObject,
             => {
-                var zig_str = arg.toSlice(ctx, allocator);
+                var str = arg.toBunString(ctx);
 
-                if (!Valid.pathSlice(zig_str, ctx, exception)) {
-                    zig_str.deinit();
+                arguments.eat();
+
+                if (!Valid.pathStringLength(str.length(), ctx, exception)) {
                     return null;
                 }
 
-                arguments.eat();
-                arg.ensureStillAlive();
+                str.ref();
 
-                return PathLike{ .string = PathString.init(zig_str.slice()) };
+                return PathLike{ .slice_with_underlying_string = str.toSlice(allocator) };
             },
             else => {
                 if (arg.as(JSC.DOMURL)) |domurl| {
-                    var zig_str = domurl.pathname();
-                    if (!Valid.pathString(zig_str, ctx, exception)) return null;
+                    const path_str: bun.String = domurl.fileSystemPath();
+                    if (path_str.isEmpty()) {
+                        JSC.throwInvalidArguments("URL must be a non-empty \"file:\" path", .{}, ctx, exception);
+                        return null;
+                    }
+                    arguments.eat();
 
-                    arguments.protectEat();
-
-                    if (zig_str.is16Bit()) {
-                        var printed = bun.asByteSlice(std.fmt.allocPrintZ(arguments.arena.allocator(), "{}", .{zig_str}) catch unreachable);
-                        return PathLike{ .string = PathString.init(printed.ptr[0 .. printed.len + 1]) };
+                    if (!Valid.pathStringLength(path_str.length(), ctx, exception)) {
+                        defer path_str.deref();
+                        return null;
                     }
 
-                    return PathLike{ .string = PathString.init(zig_str.slice()) };
+                    return PathLike{
+                        .slice_with_underlying_string = path_str.toSlice(allocator),
+                    };
                 }
 
                 return null;
@@ -703,8 +757,8 @@ pub const Valid = struct {
         unreachable;
     }
 
-    pub fn pathString(zig_str: JSC.ZigString, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
-        switch (zig_str.len) {
+    pub fn pathStringLength(len: usize, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
+        switch (len) {
             0 => {
                 JSC.throwInvalidArguments("Invalid path string: can't be empty", .{}, ctx, exception);
                 return false;
@@ -723,6 +777,10 @@ pub const Valid = struct {
         }
 
         unreachable;
+    }
+
+    pub fn pathString(zig_str: JSC.ZigString, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
+        return pathStringLength(zig_str.len, ctx, exception);
     }
 
     pub fn pathBuffer(buffer: Buffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
@@ -899,6 +957,14 @@ pub const PathOrFileDescriptor = union(Tag) {
     fd: bun.FileDescriptor,
 
     pub const Tag = enum { fd, path };
+
+    /// This will unref() the path string if it is a PathLike.
+    /// Does nothing for file descriptors, **does not** close file descriptors.
+    pub fn deinit(this: PathOrFileDescriptor) void {
+        if (this == .path) {
+            this.path.deinit();
+        }
+    }
 
     pub fn hash(this: JSC.Node.PathOrFileDescriptor) u64 {
         return switch (this) {
@@ -1339,7 +1405,7 @@ pub const Stats = union(enum) {
 /// closed after the iterator exits.
 /// @since v12.12.0
 pub const Dirent = struct {
-    name: PathString,
+    name: bun.String,
     // not publicly exposed
     kind: Kind,
 
@@ -1352,7 +1418,7 @@ pub const Dirent = struct {
     }
 
     pub fn getName(this: *Dirent, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        return JSC.ZigString.fromUTF8(this.name.slice()).toValueGC(globalObject);
+        return this.name.toJS(globalObject);
     }
 
     pub fn isBlockDevice(
@@ -1406,7 +1472,7 @@ pub const Dirent = struct {
     }
 
     pub fn finalize(this: *Dirent) callconv(.C) void {
-        bun.default_allocator.free(this.name.slice());
+        this.name.deref();
         bun.default_allocator.destroy(this);
     }
 };

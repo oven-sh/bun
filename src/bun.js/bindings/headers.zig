@@ -99,6 +99,7 @@ pub extern fn ZigString__toTypeErrorInstance(arg0: [*c]const ZigString, arg1: *b
 pub extern fn ZigString__toValue(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toValueGC(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn WebCore__DOMURL__cast_(JSValue0: JSC__JSValue, arg1: *bindings.VM) ?*bindings.DOMURL;
+pub extern fn WebCore__DOMURL__fileSystemPath(arg0: ?*bindings.DOMURL) BunString;
 pub extern fn WebCore__DOMURL__href_(arg0: ?*bindings.DOMURL, arg1: [*c]ZigString) void;
 pub extern fn WebCore__DOMURL__pathname_(arg0: ?*bindings.DOMURL, arg1: [*c]ZigString) void;
 pub extern fn WebCore__DOMFormData__append(arg0: ?*bindings.DOMFormData, arg1: [*c]ZigString, arg2: [*c]ZigString) void;

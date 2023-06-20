@@ -17,7 +17,12 @@ const mem = std.mem;
 const strings = @import("root").bun.strings;
 const Maybe = JSC.Maybe;
 const File = std.fs.File;
-const Result = Maybe(?Entry);
+const IteratorResult = struct {
+    name: PathString,
+    kind: Entry.Kind,
+};
+
+const Result = Maybe(?IteratorResult);
 
 const Entry = JSC.Node.Dirent;
 
@@ -84,7 +89,7 @@ pub const Iterator = switch (builtin.os.tag) {
                     else => Entry.Kind.unknown,
                 };
                 return .{
-                    .result = Entry{
+                    .result = IteratorResult{
                         .name = PathString.init(name),
                         .kind = entry_kind,
                     },
@@ -139,7 +144,7 @@ pub const Iterator = switch (builtin.os.tag) {
                     else => Entry.Kind.unknown,
                 };
                 return .{
-                    .result = Entry{
+                    .result = IteratorResult{
                         .name = PathString.init(name),
                         .kind = entry_kind,
                     },
@@ -213,7 +218,7 @@ pub const Iterator = switch (builtin.os.tag) {
                     break :blk Entry.Kind.file;
                 };
                 return .{
-                    .result = Entry{
+                    .result = IteratorResult{
                         .name = PathString.init(name_utf8),
                         .kind = kind,
                     },
@@ -278,7 +283,7 @@ pub const Iterator = switch (builtin.os.tag) {
                     .SOCKET_STREAM, .SOCKET_DGRAM => Entry.Kind.unix_domain_socket,
                     else => Entry.Kind.unknown,
                 };
-                return Entry{
+                return IteratorResult{
                     .name = name,
                     .kind = entry_kind,
                 };

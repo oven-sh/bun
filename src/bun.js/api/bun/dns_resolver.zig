@@ -385,7 +385,7 @@ pub const GetAddrInfo = struct {
                 return .unspecified;
 
             if (value.isNumber()) {
-                return switch (value.to(i32)) {
+                return switch (value.coerce(i32, globalObject)) {
                     0 => .unspecified,
                     4 => .inet,
                     6 => .inet6,
@@ -394,11 +394,11 @@ pub const GetAddrInfo = struct {
             }
 
             if (value.isString()) {
-                const str = value.getZigString(globalObject);
-                if (str.len == 0)
+                const str = value.toBunString(globalObject);
+                if (str.isEmpty())
                     return .unspecified;
 
-                return map.getWithEql(str, JSC.ZigString.eqlComptime) orelse return error.InvalidFamily;
+                return str.inMap(map) orelse return error.InvalidFamily;
             }
 
             return error.InvalidFamily;

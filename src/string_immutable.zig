@@ -74,6 +74,10 @@ pub inline fn containsComptime(self: string, comptime str: string) bool {
 }
 pub const includes = contains;
 
+pub fn inMapCaseInsensitive(self: string, comptime ComptimeStringMap: anytype) ?ComptimeStringMap.Value {
+    return bun.String.static(self).inMapCaseInsensitive(ComptimeStringMap);
+}
+
 pub inline fn containsAny(in: anytype, target: string) bool {
     for (in) |str| if (contains(if (@TypeOf(str) == u8) &[1]u8{str} else bun.span(str), target)) return true;
     return false;
@@ -1071,7 +1075,11 @@ pub fn index(self: string, str: string) i32 {
 }
 
 pub fn eqlUtf16(comptime self: string, other: []const u16) bool {
-    return std.mem.eql(u16, toUTF16Literal(self), other);
+    if (self.len != other.len) return false;
+
+    if (self.len == 0) return true;
+
+    return bun.C.memcmp(bun.cast([*]const u8, self.ptr), bun.cast([*]const u8, other.ptr), self.len * @sizeOf(u16)) == 0;
 }
 
 pub fn toUTF8Alloc(allocator: std.mem.Allocator, js: []const u16) !string {

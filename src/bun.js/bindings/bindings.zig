@@ -4413,6 +4413,11 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("deepMatch", .{ this, subset, global, replace_props_with_asymmetric_matchers });
     }
 
+    /// same as `JSValue.deepMatch`, but with jest asymmetric matchers enabled
+    pub fn jestDeepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject, replace_props_with_asymmetric_matchers: bool) bool {
+        return cppFn("jestDeepMatch", .{ this, subset, global, replace_props_with_asymmetric_matchers });
+    }
+
     pub const DiffMethod = enum(u8) {
         none,
         character,
@@ -4775,6 +4780,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "deepMatch",
         "jestDeepEquals",
         "jestStrictDeepEquals",
+        "jestDeepMatch",
     };
 };
 

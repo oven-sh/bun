@@ -2046,9 +2046,9 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, J
         return JSValue::encode(jsUndefined());
     }
 
-    bool isEqual = Bun__deepMatch(object, subset, globalObject, &scope, false);
+    bool match = Bun__deepMatch<false>(object, subset, globalObject, &scope, false);
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsBoolean(isEqual));
+    return JSValue::encode(jsBoolean(match));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionBunNanoseconds);

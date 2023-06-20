@@ -842,10 +842,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     return true;
 }
 
-{
-
-}
-
+template<bool enableAsymmetricMatchers>
 bool Bun__deepMatch(JSValue objValue, JSValue subsetValue, JSGlobalObject* globalObject, ThrowScope* throwScope, bool replacePropsWithAsymmetricMatchers)
 {
     VM& vm = globalObject->vm();
@@ -886,36 +883,38 @@ bool Bun__deepMatch(JSValue objValue, JSValue subsetValue, JSGlobalObject* globa
         JSCell* subsetPropCell = subsetProp.asCell();
         JSCell* propCell = prop.asCell();
 
-        if (subsetProp.isCell() && !subsetProp.isEmpty() && subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
-            switch (matchAsymmetricMatcher(globalObject, subsetPropCell, prop, throwScope)) {
-            case AsymmetricMatcherResult::FAIL:
-                return false;
-            case AsymmetricMatcherResult::PASS:
-                if (replacePropsWithAsymmetricMatchers) {
-                    obj->putDirect(vm, subsetProps[i], subsetProp);
+        if constexpr (enableAsymmetricMatchers) {
+            if (subsetProp.isCell() && !subsetProp.isEmpty() && subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
+                switch (matchAsymmetricMatcher(globalObject, subsetPropCell, prop, throwScope)) {
+                case AsymmetricMatcherResult::FAIL:
+                    return false;
+                case AsymmetricMatcherResult::PASS:
+                    if (replacePropsWithAsymmetricMatchers) {
+                        obj->putDirect(vm, subsetProps[i], subsetProp);
+                    }
+                    // continue to next subset prop
+                    continue;
+                case AsymmetricMatcherResult::NOT_MATCHER:
+                    break;
                 }
-                // continue to next subset prop
-                continue;
-            case AsymmetricMatcherResult::NOT_MATCHER:
-                break;
-            }
-        } else if (prop.isCell() && !prop.isEmpty() && propCell->type() == JSC::JSType(JSDOMWrapperType)) {
-            switch (matchAsymmetricMatcher(globalObject, propCell, subsetProp, throwScope)) {
-            case AsymmetricMatcherResult::FAIL:
-                return false;
-            case AsymmetricMatcherResult::PASS:
-                if (replacePropsWithAsymmetricMatchers) {
-                    subsetObj->putDirect(vm, subsetProps[i], prop);
+            } else if (prop.isCell() && !prop.isEmpty() && propCell->type() == JSC::JSType(JSDOMWrapperType)) {
+                switch (matchAsymmetricMatcher(globalObject, propCell, subsetProp, throwScope)) {
+                case AsymmetricMatcherResult::FAIL:
+                    return false;
+                case AsymmetricMatcherResult::PASS:
+                    if (replacePropsWithAsymmetricMatchers) {
+                        subsetObj->putDirect(vm, subsetProps[i], prop);
+                    }
+                    // continue to next subset prop
+                    continue;
+                case AsymmetricMatcherResult::NOT_MATCHER:
+                    break;
                 }
-                // continue to next subset prop
-                continue;
-            case AsymmetricMatcherResult::NOT_MATCHER:
-                break;
             }
         }
 
         if (subsetProp.isObject() and prop.isObject()) {
-            if (!Bun__deepMatch(prop, subsetProp, globalObject, throwScope, replacePropsWithAsymmetricMatchers)) {
+            if (!Bun__deepMatch<enableAsymmetricMatchers>(prop, subsetProp, globalObject, throwScope, replacePropsWithAsymmetricMatchers)) {
                 return false;
             }
         } else {
@@ -1690,7 +1689,17 @@ bool JSC__JSValue__deepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__
 
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
-    return Bun__deepMatch(obj, subset, globalObject, &scope, replacePropsWithAsymmetricMatchers);
+    return Bun__deepMatch<false>(obj, subset, globalObject, &scope, replacePropsWithAsymmetricMatchers);
+}
+
+bool JSC__JSValue__jestDeepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject, bool replacePropsWithAsymmetricMatchers)
+{
+    JSValue obj = JSValue::decode(JSValue0);
+    JSValue subset = JSValue::decode(JSValue1);
+
+    ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    return Bun__deepMatch<true>(obj, subset, globalObject, &scope, replacePropsWithAsymmetricMatchers);
 }
 
 // This is the same as the C API version, except it returns a JSValue which may be a *Exception

@@ -1983,6 +1983,9 @@ pub const VirtualMachine = struct {
             )) |mapping| {
                 frames[i].position.line = mapping.original.lines;
                 frames[i].position.column_start = mapping.original.columns;
+                frames[i].remapped = true;
+            } else {
+                frames[i].remapped = true;
             }
         }
     }

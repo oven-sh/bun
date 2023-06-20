@@ -354,4 +354,49 @@ describe("bundler", () => {
       expect(api.readFile("out.js")).toContain("h(fragment");
     },
   });
+  itBundledDevAndProd("jsx/FactoryImportExplicitReactDefault", {
+    todo: false,
+    files: {
+      "/index.jsx": /* js*/ `
+      import { print } from 'bun-test-helpers'
+      import * as React from 'react';
+      print([<div props={123}>Hello World</div>, <>Fragment</>])
+      `,
+      ...helpers,
+    },
+    target: "bun",
+    jsx: {
+      runtime: "classic",
+      factory: "React.createElement",
+      fragment: "React.Fragment",
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("out.js")).toContain(" createElement");
+      expect(api.readFile("out.js")).toContain("(Fragment");
+    },
+  });
+  itBundledDevAndProd("jsx/FactoryImportExplicitReactDefaultExternal", {
+    todo: false,
+    files: {
+      "/index.jsx": /* js*/ `
+      import { print } from 'bun-test-helpers'
+      import * as React from 'react';
+      print([<div props={123}>Hello World</div>, <>Fragment</>])
+      `,
+      ...helpers,
+    },
+    target: "bun",
+    jsx: {
+      runtime: "classic",
+      factory: "React.createElement",
+      fragment: "React.Fragment",
+    },
+    external: ["react"],
+    onAfterBundle(api) {
+      const file = api.readFile("out.js");
+      expect(file).toContain("React.createElement");
+      expect(file).toContain("React.Fragment");
+      expect(file).toContain('import * as React from "react"');
+    },
+  });
 });

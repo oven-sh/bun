@@ -6448,14 +6448,6 @@ fn NewParser_(
             p.module_scope = p.current_scope;
             p.has_es_module_syntax = p.has_es_module_syntax or p.esm_import_keyword.len > 0 or p.esm_export_keyword.len > 0 or p.top_level_await_keyword.len > 0;
 
-            if (p.options.jsx.factory.len == 1) {
-                p.options.jsx.factory = options.JSX.Pragma.memberListToComponentsIfDifferent(p.allocator, p.options.jsx.factory, p.options.jsx.factory[0]) catch unreachable;
-            }
-
-            if (p.options.jsx.fragment.len == 1) {
-                p.options.jsx.fragment = options.JSX.Pragma.memberListToComponentsIfDifferent(p.allocator, p.options.jsx.fragment, p.options.jsx.fragment[0]) catch unreachable;
-            }
-
             if (p.lexer.jsx_pragma.jsx()) |factory| {
                 p.options.jsx.factory = options.JSX.Pragma.memberListToComponentsIfDifferent(p.allocator, p.options.jsx.factory, factory.text) catch unreachable;
             }

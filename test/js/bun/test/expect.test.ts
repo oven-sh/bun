@@ -415,9 +415,18 @@ describe("expect()", () => {
     expect([]).toSatisfy((value: unknown) => (value as unknown[]).length === 0);
     expect([]).not.toSatisfy((value: unknown) => (value as unknown[]).length > 0);
 
+    // Some other types
+    const fooIsBar = (value: unknown) => (value as any)?.foo === "bar";
+
+    expect({ foo: "bar" }).toSatisfy(fooIsBar);
+    expect({ foo: "bun" }).not.toSatisfy(fooIsBar);
+    expect({ bar: "foo" }).not.toSatisfy(fooIsBar);
+
     // Test errors
     // @ts-expect-error
-    expect(() => expect(1).toSatisfy(() => new Error('Bun!'))).toThrow();
+    expect(() => expect(1).toSatisfy(() => new Error('Bun!'))).toThrow('predicate threw an exception');
+    // @ts-expect-error
+    expect(() => expect(1).not.toSatisfy(() => new Error('Bun!'))).toThrow('predicate threw an exception');
   });
 
   test("toStartWith()", () => {

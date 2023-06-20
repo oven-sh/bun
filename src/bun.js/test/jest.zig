@@ -3604,6 +3604,13 @@ pub const Expect = struct {
             return .zero;
         }
 
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toIncludeRepeated() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
         const substring = arguments[0];
         substring.ensureStillAlive();
 
@@ -3620,10 +3627,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        const countAsNum = std.fmt.parseInt(u32, count.toString(globalThis).toSlice(globalThis, default_allocator).slice(), 10) catch {
-            globalThis.throw("toIncludeRepeated() requires the second argument to be a number", .{});
-            return .zero;
-        };
+        const countAsNum = count.toU32();
 
         const expect_string = Expect.capturedValueGetCached(thisValue) orelse {
             globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});

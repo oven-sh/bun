@@ -878,6 +878,10 @@ pub const JSExpect = struct {
             @compileLog("Expected Expect.getResolves to be a getter with thisValue");
         if (@TypeOf(Expect.toBe) != CallbackType)
             @compileLog("Expected Expect.toBe to be a callback but received " ++ @typeName(@TypeOf(Expect.toBe)));
+        if (@TypeOf(Expect.toBeArray) != CallbackType)
+            @compileLog("Expected Expect.toBeArray to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeArray)));
+        if (@TypeOf(Expect.toBeArrayOfSize) != CallbackType)
+            @compileLog("Expected Expect.toBeArrayOfSize to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeArrayOfSize)));
         if (@TypeOf(Expect.toBeBoolean) != CallbackType)
             @compileLog("Expected Expect.toBeBoolean to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeBoolean)));
         if (@TypeOf(Expect.toBeCloseTo) != CallbackType)
@@ -932,6 +936,8 @@ pub const JSExpect = struct {
             @compileLog("Expected Expect.toBeTrue to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeTrue)));
         if (@TypeOf(Expect.toBeTruthy) != CallbackType)
             @compileLog("Expected Expect.toBeTruthy to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeTruthy)));
+        if (@TypeOf(Expect.toBeTypeOf) != CallbackType)
+            @compileLog("Expected Expect.toBeTypeOf to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeTypeOf)));
         if (@TypeOf(Expect.toBeUndefined) != CallbackType)
             @compileLog("Expected Expect.toBeUndefined to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeUndefined)));
         if (@TypeOf(Expect.toBeWithin) != CallbackType)
@@ -1038,6 +1044,8 @@ pub const JSExpect = struct {
             @export(Expect.stringContaining, .{ .name = "ExpectClass__stringContaining" });
             @export(Expect.stringMatching, .{ .name = "ExpectClass__stringMatching" });
             @export(Expect.toBe, .{ .name = "ExpectPrototype__toBe" });
+            @export(Expect.toBeArray, .{ .name = "ExpectPrototype__toBeArray" });
+            @export(Expect.toBeArrayOfSize, .{ .name = "ExpectPrototype__toBeArrayOfSize" });
             @export(Expect.toBeBoolean, .{ .name = "ExpectPrototype__toBeBoolean" });
             @export(Expect.toBeCloseTo, .{ .name = "ExpectPrototype__toBeCloseTo" });
             @export(Expect.toBeDate, .{ .name = "ExpectPrototype__toBeDate" });
@@ -1065,6 +1073,7 @@ pub const JSExpect = struct {
             @export(Expect.toBeSymbol, .{ .name = "ExpectPrototype__toBeSymbol" });
             @export(Expect.toBeTrue, .{ .name = "ExpectPrototype__toBeTrue" });
             @export(Expect.toBeTruthy, .{ .name = "ExpectPrototype__toBeTruthy" });
+            @export(Expect.toBeTypeOf, .{ .name = "ExpectPrototype__toBeTypeOf" });
             @export(Expect.toBeUndefined, .{ .name = "ExpectPrototype__toBeUndefined" });
             @export(Expect.toBeWithin, .{ .name = "ExpectPrototype__toBeWithin" });
             @export(Expect.toContain, .{ .name = "ExpectPrototype__toContain" });

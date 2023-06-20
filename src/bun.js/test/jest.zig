@@ -698,26 +698,25 @@ pub const Jest = struct {
             Expect.getConstructor(globalObject),
         );
 
-        const mock_object = JSMockFunction__createObject(globalObject);
+        const mock_fn = JSMockFunction__createConstructor(globalObject);
         const spyOn = JSC.NewFunction(globalObject, ZigString.static("spyOn"), 2, JSMock__spyOn, false);
         const restoreAllMocks = JSC.NewFunction(globalObject, ZigString.static("restoreAllMocks"), 2, jsFunctionResetSpies, false);
-        module.put(
-            globalObject,
-            ZigString.static("mock"),
-            mock_object,
-        );
+        module.put(globalObject, ZigString.static("mock"), mock_fn);
 
         const jest = JSValue.createEmptyObject(globalObject, 3);
-        jest.put(globalObject, ZigString.static("fn"), mock_object);
+        jest.put(globalObject, ZigString.static("fn"), mock_fn);
         jest.put(globalObject, ZigString.static("spyOn"), spyOn);
         jest.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
         module.put(globalObject, ZigString.static("jest"), jest);
         module.put(globalObject, ZigString.static("spyOn"), spyOn);
 
+        const vi = JSValue.createEmptyObject(globalObject, 1);
+        vi.put(globalObject, ZigString.static("fn"), mock_fn);
+
         return module;
     }
 
-    extern fn JSMockFunction__createObject(*JSC.JSGlobalObject) JSC.JSValue;
+    extern fn JSMockFunction__createConstructor(*JSC.JSGlobalObject) JSC.JSValue;
 
     extern fn Bun__Jest__testPreloadObject(*JSC.JSGlobalObject) JSC.JSValue;
     extern fn Bun__Jest__testModuleObject(*JSC.JSGlobalObject) JSC.JSValue;

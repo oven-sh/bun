@@ -22,6 +22,27 @@
 
 namespace Bun {
 
+/**
+ * intended to be used in an if statement as an abstraction over this double if statement
+ *
+ * if(jsValue) {
+ *   if(auto value = jsDynamicCast(jsValue)) {
+ *     ...
+ *   }
+ * }
+ *
+ * the reason this is needed is because jsDynamicCast will segfault if given a zero JSValue
+ */
+template<typename To>
+inline To tryJSDynamicCast(JSValue from)
+{
+    if (UNLIKELY(!from))
+        return nullptr;
+    if (UNLIKELY(!from.isCell()))
+        return nullptr;
+    return jsDynamicCast<To>(from.asCell());
+}
+
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionCall);
 JSC_DECLARE_CUSTOM_GETTER(jsMockFunctionGetter_protoImpl);
 JSC_DECLARE_CUSTOM_GETTER(jsMockFunctionGetter_mock);
@@ -372,23 +393,19 @@ static void pushImpl(JSMockFunction* fn, JSGlobalObject* jsGlobalObject, JSMockI
     Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(jsGlobalObject);
     auto& vm = globalObject->vm();
 
-    if (auto currentFallback = fn->fallbackImplmentation.get()) {
-        if (auto* current = jsDynamicCast<JSMockImplementation*>(currentFallback)) {
-            current->underlyingValue.set(vm, current, value);
-            current->kind = kind;
-            return;
-        }
+    if (auto* current = tryJSDynamicCast<JSMockImplementation*>(fn->fallbackImplmentation.get())) {
+        current->underlyingValue.set(vm, current, value);
+        current->kind = kind;
+        return;
     }
 
     JSMockImplementation* impl = JSMockImplementation::create(globalObject, globalObject->mockModule.mockImplementationStructure.getInitializedOnMainThread(globalObject), kind, value, false);
     fn->fallbackImplmentation.set(vm, fn, impl);
-    if (auto currentTail = fn->tail.get()) {
-        if (auto* current = jsDynamicCast<JSMockImplementation*>(currentTail)) {
-            current->nextValueOrSentinel.set(vm, current, impl);
-            return;
-        }
+    if (auto* tail = tryJSDynamicCast<JSMockImplementation*>(fn->tail.get())) {
+        tail->nextValueOrSentinel.set(vm, tail, impl);
+    } else {
+        fn->implementation.set(vm, fn, impl);
     }
-    fn->implementation.set(vm, fn, impl);
 }
 
 static void pushImplOnce(JSMockFunction* fn, JSGlobalObject* jsGlobalObject, JSMockImplementation::Kind kind, JSValue value)
@@ -401,10 +418,8 @@ static void pushImplOnce(JSMockFunction* fn, JSGlobalObject* jsGlobalObject, JSM
     if (!fn->implementation.get()) {
         fn->implementation.set(vm, fn, impl);
     }
-    if (auto currentTail = fn->tail.get()) {
-        if (auto* current = jsDynamicCast<JSMockImplementation*>(currentTail)) {
-            current->nextValueOrSentinel.set(vm, current, impl);
-        }
+    if (auto* tail = tryJSDynamicCast<JSMockImplementation*>(fn->tail.get())) {
+        tail->nextValueOrSentinel.set(vm, tail, impl);
     } else {
         fn->implementation.set(vm, fn, impl);
     }
@@ -560,7 +575,7 @@ extern "C" EncodedJSValue JSMock__spyOn(JSC::JSGlobalObject* lexicalGlobalObject
             if (hasValue)
                 attributes = slot.attributes();
 
-            // mock->copyNameAndLength(vm, globalObject, value);
+            mock->copyNameAndLength(vm, globalObject, value);
 
             attributes |= PropertyAttribute::Function;
             object->putDirect(vm, propertyKey, mock, attributes);
@@ -896,8 +911,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsMockFunctionGetter_protoImpl, (JSC::JSGlobalObject * 
             if (impl->kind == JSMockImplementation::Kind::Call) {
                 return JSValue::encode(impl->underlyingValue.get());
             }
-
-            return JSValue::encode(jsUndefined());
         }
     }
 
@@ -938,7 +951,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstructor, (JSC::JSGlobalObject * lexic
     return JSValue::encode(thisObject);
 }
 
-extern "C" EncodedJSValue JSMockFunction__createObject(Zig::GlobalObject* globalObject)
+extern "C" EncodedJSValue JSMockFunction__createConstructor(Zig::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
     return JSValue::encode(JSC::JSFunction::create(vm, globalObject, 0, "mock"_s, jsMockFunctionConstructor, ImplementationVisibility::Public));

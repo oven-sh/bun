@@ -343,6 +343,32 @@ pub const Tree = struct {
         dependencies: []const Dependency,
         resolution_lists: []const Lockfile.DependencyIDSlice,
         queue: Lockfile.TreeFiller,
+        log: ?*logger.Log = null,
+        old_lockfile: ?*Lockfile = null,
+
+        pub fn maybeReportError(this: *Builder, comptime fmt: string, args: anytype) void {
+            var log = this.log orelse return;
+            if (this.old_lockfile == null) return;
+
+            log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
+        }
+
+        pub fn buf(this: *const Builder) []const u8 {
+            var lockfile = this.old_lockfile orelse return "";
+            return lockfile.buffers.string_bytes.items;
+        }
+
+        pub fn packageName(this: *Builder, id: PackageID) String.Formatter {
+            var lockfile = this.old_lockfile orelse return undefined;
+
+            return lockfile.packages.items(.name)[id].fmt(lockfile.buffers.string_bytes.items);
+        }
+
+        pub fn packageVersion(this: *Builder, id: PackageID) Resolution.Formatter {
+            var lockfile = this.old_lockfile orelse return undefined;
+
+            return lockfile.packages.items(.resolution)[id].fmt(lockfile.buffers.string_bytes.items);
+        }
 
         pub const Entry = struct {
             tree: Tree,
@@ -472,7 +498,18 @@ pub const Tree = struct {
             const dep = builder.dependencies[dep_id];
             if (dep.name_hash != dependency.name_hash) continue;
             if (builder.resolutions[dep_id] != package_id) {
-                if (as_defined and !dep.behavior.isPeer()) return error.DependencyLoop;
+                if (as_defined and !dep.behavior.isPeer()) {
+                    if (builder.log != null)
+                        builder.maybeReportError("Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"", .{
+                            builder.packageName(package_id),
+                            builder.packageVersion(package_id),
+                            builder.packageName(builder.resolutions[dep_id]),
+                            builder.packageVersion(builder.resolutions[dep_id]),
+                            dependency.name.fmt(builder.buf()),
+                            dependency.version.literal.fmt(builder.buf()),
+                        });
+                    return error.DependencyLoop;
+                }
                 // ignore versioning conflicts caused by peer dependencies
                 return dependency_loop;
             }
@@ -591,8 +628,11 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
         }
     }
 }
-
 pub fn clean(old: *Lockfile, updates: []PackageManager.UpdateRequest) !*Lockfile {
+    return old.cleanWithLogger(updates, null);
+}
+
+pub fn cleanWithLogger(old: *Lockfile, updates: []PackageManager.UpdateRequest, log: ?*logger.Log) !*Lockfile {
     const old_scripts = old.scripts;
     // We will only shrink the number of packages here.
     // never grow
@@ -664,6 +704,7 @@ pub fn clean(old: *Lockfile, updates: []PackageManager.UpdateRequest) !*Lockfile
         .lockfile = new,
         .mapping = package_id_mapping,
         .clone_queue = clone_queue_,
+        .log = log,
     };
     // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
     _ = try root.clone(old, new, package_id_mapping, &cloner);
@@ -740,6 +781,7 @@ const Cloner = struct {
     mapping: []PackageID,
     trees: Tree.List = Tree.List{},
     trees_count: u32 = 1,
+    log: ?*logger.Log = null,
 
     pub fn flush(this: *Cloner) anyerror!void {
         const max_package_id = this.old.packages.len;
@@ -783,6 +825,8 @@ const Cloner = struct {
             .resolutions = this.lockfile.buffers.resolutions.items,
             .allocator = allocator,
             .dependencies = this.lockfile.buffers.dependencies.items,
+            .log = this.log,
+            .old_lockfile = this.old,
         };
 
         try (Tree{}).processSubtree(Tree.root_dep_id, &builder);

@@ -15096,6 +15096,10 @@ fn NewParser_(
                                 if (e_.tag) |_tag| {
                                     break :tagger p.visitExpr(_tag);
                                 } else {
+                                    if (p.options.jsx.runtime == .classic) {
+                                        break :tagger p.jsxStringsToMemberExpression(expr.loc, p.options.jsx.fragment) catch unreachable;
+                                    }
+
                                     break :tagger p.jsxImport(.Fragment, expr.loc);
                                 }
                             };
@@ -15169,9 +15173,11 @@ fn NewParser_(
                                         i += @intCast(usize, @boolToInt(args[i].data != .e_missing));
                                     }
 
+                                    const target = p.jsxStringsToMemberExpression(expr.loc, p.options.jsx.factory) catch unreachable;
+
                                     // Call createElement()
                                     return p.newExpr(E.Call{
-                                        .target = p.jsxImport(.createElement, expr.loc),
+                                        .target = target,
                                         .args = ExprNodeList.init(args[0..i]),
                                         // Enable tree shaking
                                         .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,

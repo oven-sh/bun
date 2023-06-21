@@ -88,6 +88,15 @@ describe("CryptoHasher", () => {
       expect(copy.digest("hex")).not.toBe(orig.digest("hex"));
     });
 
+    it(`CryptoHasher ${alg} copy can be used after digest()`, () => {
+      const orig = new CryptoHasher(alg);
+      orig.update("hello");
+      orig.digest("hex");
+      const copy = orig.copy();
+
+      expect(() => copy.digest("hex")).not.toThrow();
+    });
+
     it(`CryptoHasher ${alg} copy updates the same`, () => {
       const orig = new CryptoHasher(alg);
       orig.update("hello");

@@ -904,7 +904,7 @@ pub fn timeLikeFromJS(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, _: JS
             return null;
         }
 
-        return @truncate(TimeLike, @floatToInt(i64, milliseconds / @as(f64, std.time.ms_per_s)));
+        return @truncate(TimeLike, @intFromFloat(i64, milliseconds / @as(f64, std.time.ms_per_s)));
     }
 
     if (!value.isNumber() and !value.isString()) {

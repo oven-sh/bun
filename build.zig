@@ -193,12 +193,12 @@ pub fn build(b: *Build) !void {
     else
         "root.zig";
 
-    const min_version: std.builtin.Version = if (target.getOsTag() != .freestanding)
+    const min_version: std.SemanticVersion = if (target.getOsTag() != .freestanding)
         target.getOsVersionMin().semver
     else
         .{ .major = 0, .minor = 0, .patch = 0 };
 
-    const max_version: std.builtin.Version = if (target.getOsTag() != .freestanding)
+    const max_version: std.SemanticVersion = if (target.getOsTag() != .freestanding)
         target.getOsVersionMax().semver
     else
         .{ .major = 0, .minor = 0, .patch = 0 };

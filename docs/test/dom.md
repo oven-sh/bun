@@ -1,3 +1,7 @@
+Bun's test runner plays well with existing component and DOM testing libraries, including React Testing Library and [`happy-dom`](https://github.com/capricorn86/happy-dom).
+
+## `happy-dom`
+
 For writing headless tests for your frontend code and components, we recommend [`happy-dom`](https://github.com/capricorn86/happy-dom). Happy DOM implements a complete set of HTML and DOM APIs in plain JavaScript, making it possible to simulate a browser environment with high fidelity.
 
 To get started install the `@happy-dom/global-registrator` package as a dev dependency.
@@ -61,3 +65,11 @@ dom.test.ts:
  1 expect() calls
 Ran 1 tests across 1 files. 1 total [125.00ms]
 ```
+
+<!-- ## React Testing Library
+
+Once you've set up `happy-dom` as described above, you can use it with React Testing Library. To get started, install the `@testing-library/react` package as a dev dependency.
+
+```bash
+$ bun add -d @testing-library/react
+``` -->

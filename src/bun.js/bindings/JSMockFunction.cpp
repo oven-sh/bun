@@ -181,17 +181,6 @@ enum class CallbackKind : uint8_t {
     GetterSetter,
 };
 
-static NativeFunction jsMockFunctionForCallbackKind(CallbackKind kind)
-{
-    switch (kind) {
-    case CallbackKind::GetterSetter:
-    case CallbackKind::Call:
-        return jsMockFunctionCall;
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-}
-
 const ClassInfo JSMockImplementation::s_info = { "MockImpl"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockImplementation) };
 
 class JSMockFunction : public JSC::InternalFunction {
@@ -299,9 +288,11 @@ public:
         this->clear();
 
         if (auto* target = this->spyTarget.get()) {
-            JSValue implValue = jsUndefined();
+            JSValue implValue;
             if (auto* impl = jsDynamicCast<JSMockImplementation*>(this->implementation.get())) {
                 implValue = impl->underlyingValue.get();
+            } else {
+                implValue = jsUndefined();
             }
 
             // Reset the spy back to the original value.
@@ -364,7 +355,7 @@ public:
     }
 
     JSMockFunction(JSC::VM& vm, JSC::Structure* structure, CallbackKind wrapKind)
-        : Base(vm, structure, jsMockFunctionForCallbackKind(wrapKind), jsMockFunctionForCallbackKind(wrapKind))
+        : Base(vm, structure, jsMockFunctionCall, jsMockFunctionCall)
     {
         initMock();
     }
@@ -423,8 +414,8 @@ static void pushImplOnce(JSMockFunction* fn, JSGlobalObject* jsGlobalObject, JSM
     } else {
         fn->implementation.set(vm, fn, impl);
     }
-    if (auto currentFallback = fn->fallbackImplmentation.get()) {
-        impl->nextValueOrSentinel.set(vm, impl, currentFallback);
+    if (auto fallback = fn->fallbackImplmentation.get()) {
+        impl->nextValueOrSentinel.set(vm, impl, fallback);
     }
     fn->tail.set(vm, fn, impl);
 }
@@ -575,7 +566,7 @@ extern "C" EncodedJSValue JSMock__spyOn(JSC::JSGlobalObject* lexicalGlobalObject
             if (hasValue)
                 attributes = slot.attributes();
 
-            mock->copyNameAndLength(vm, globalObject, value);
+            // mock->copyNameAndLength(vm, globalObject, value);
 
             attributes |= PropertyAttribute::Function;
             object->putDirect(vm, propertyKey, mock, attributes);
@@ -588,7 +579,7 @@ extern "C" EncodedJSValue JSMock__spyOn(JSC::JSGlobalObject* lexicalGlobalObject
 
             attributes |= PropertyAttribute::Accessor;
             object->putDirect(vm, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes);
-            mock->setName(propertyKey.publicName());
+            // mock->setName(propertyKey.publicName());
             RETURN_IF_EXCEPTION(scope, {});
 
             pushImpl(mock, globalObject, JSMockImplementation::Kind::ReturnValue, value);
@@ -616,7 +607,6 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
     mock.mockFunctionStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
             auto* prototype = JSMockFunctionPrototype::create(init.vm, init.owner, JSMockFunctionPrototype::createStructure(init.vm, init.owner, init.owner->functionPrototype()));
-
             init.set(JSMockFunction::createStructure(init.vm, init.owner, prototype));
         });
     mock.mockResultStructure.initLater(
@@ -792,64 +782,62 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
         }
     };
 
-    if (auto implementationValue = fn->implementation.get()) {
-        if (auto* impl = jsDynamicCast<JSMockImplementation*>(implementationValue)) {
-            if (impl->isOnce()) {
-                auto next = impl->nextValueOrSentinel.get();
-                fn->implementation.set(vm, fn, next);
-                if (next.isNumber() || !jsDynamicCast<JSMockImplementation*>(next)->isOnce()) {
-                    fn->tail.clear();
-                }
+    if (auto* impl = tryJSDynamicCast<JSMockImplementation*>(fn->implementation.get())) {
+        if (impl->isOnce()) {
+            auto next = impl->nextValueOrSentinel.get();
+            fn->implementation.set(vm, fn, next);
+            if (next.isNumber() || !jsDynamicCast<JSMockImplementation*>(next)->isOnce()) {
+                fn->tail.clear();
+            }
+        }
+
+        switch (impl->kind) {
+        case JSMockImplementation::Kind::Call: {
+            JSValue result = impl->underlyingValue.get();
+            JSC::CallData callData = JSC::getCallData(result);
+            if (UNLIKELY(callData.type == JSC::CallData::Type::None)) {
+                throwTypeError(globalObject, scope, "Expected mock implementation to be callable"_s);
+                return {};
             }
 
-            switch (impl->kind) {
-            case JSMockImplementation::Kind::Call: {
-                JSValue result = impl->underlyingValue.get();
-                JSC::CallData callData = JSC::getCallData(result);
-                if (UNLIKELY(callData.type == JSC::CallData::Type::None)) {
-                    throwTypeError(globalObject, scope, "Expected mock implementation to be callable"_s);
+            setReturnValue(createMockResult(vm, globalObject, "incomplete"_s, jsUndefined()));
+
+            WTF::NakedPtr<JSC::Exception> exception;
+
+            JSValue returnValue = call(globalObject, result, callData, thisValue, args, exception);
+
+            if (auto* exc = exception.get()) {
+                if (auto* returnValuesArray = fn->returnValues.get()) {
+                    returnValuesArray->putDirectIndex(globalObject, returnValueIndex, createMockResult(vm, globalObject, "throw"_s, exc->value()));
+                    fn->returnValues.set(vm, fn, returnValuesArray);
+                    JSC::throwException(globalObject, scope, exc);
                     return {};
                 }
-
-                setReturnValue(createMockResult(vm, globalObject, "incomplete"_s, jsUndefined()));
-
-                WTF::NakedPtr<JSC::Exception> exception;
-
-                JSValue returnValue = call(globalObject, result, callData, thisValue, args, exception);
-
-                if (auto* exc = exception.get()) {
-                    if (auto* returnValuesArray = fn->returnValues.get()) {
-                        returnValuesArray->putDirectIndex(globalObject, returnValueIndex, createMockResult(vm, globalObject, "throw"_s, exc->value()));
-                        fn->returnValues.set(vm, fn, returnValuesArray);
-                        JSC::throwException(globalObject, scope, exc);
-                        return {};
-                    }
-                }
-
-                if (UNLIKELY(!returnValue)) {
-                    returnValue = jsUndefined();
-                }
-
-                if (auto* returnValuesArray = fn->returnValues.get()) {
-                    returnValuesArray->putDirectIndex(globalObject, returnValueIndex, createMockResult(vm, globalObject, "return"_s, returnValue));
-                    fn->returnValues.set(vm, fn, returnValuesArray);
-                }
-
-                return JSValue::encode(returnValue);
             }
-            case JSMockImplementation::Kind::ReturnValue: {
-                JSValue returnValue = impl->underlyingValue.get();
-                setReturnValue(createMockResult(vm, globalObject, "return"_s, returnValue));
-                return JSValue::encode(returnValue);
+
+            if (UNLIKELY(!returnValue)) {
+                returnValue = jsUndefined();
             }
-            case JSMockImplementation::Kind::ReturnThis: {
-                setReturnValue(createMockResult(vm, globalObject, "return"_s, thisValue));
-                return JSValue::encode(thisValue);
+
+            if (auto* returnValuesArray = fn->returnValues.get()) {
+                returnValuesArray->putDirectIndex(globalObject, returnValueIndex, createMockResult(vm, globalObject, "return"_s, returnValue));
+                fn->returnValues.set(vm, fn, returnValuesArray);
             }
-            default: {
-                RELEASE_ASSERT_NOT_REACHED();
-            }
-            }
+
+            return JSValue::encode(returnValue);
+        }
+        case JSMockImplementation::Kind::ReturnValue: {
+            JSValue returnValue = impl->underlyingValue.get();
+            setReturnValue(createMockResult(vm, globalObject, "return"_s, returnValue));
+            return JSValue::encode(returnValue);
+        }
+        case JSMockImplementation::Kind::ReturnThis: {
+            setReturnValue(createMockResult(vm, globalObject, "return"_s, thisValue));
+            return JSValue::encode(thisValue);
+        }
+        default: {
+            RELEASE_ASSERT_NOT_REACHED();
+        }
         }
     }
 
@@ -875,8 +863,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetMockImplementation, (JSC::JSGlobalObje
         throwTypeError(globalObject, scope, "Expected Mock"_s);
     }
 
-    JSValue impl = thisObject->implementation.get();
-    if (auto* implementation = jsDynamicCast<JSMockImplementation*>(impl)) {
+    if (auto* implementation = tryJSDynamicCast<JSMockImplementation*>(thisObject->implementation.get())) {
         if (implementation->kind == JSMockImplementation::Kind::Call) {
             RELEASE_AND_RETURN(scope, JSValue::encode(implementation->underlyingValue.get()));
         }
@@ -906,11 +893,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsMockFunctionGetter_protoImpl, (JSC::JSGlobalObject * 
         return {};
     }
 
-    if (auto implValue = thisObject->implementation.get()) {
-        if (auto* impl = jsDynamicCast<JSMockImplementation*>(implValue)) {
-            if (impl->kind == JSMockImplementation::Kind::Call) {
-                return JSValue::encode(impl->underlyingValue.get());
-            }
+    if (auto* impl = tryJSDynamicCast<JSMockImplementation*>(thisObject->implementation.get())) {
+        if (impl->kind == JSMockImplementation::Kind::Call) {
+            return JSValue::encode(impl->underlyingValue.get());
         }
     }
 
@@ -951,7 +936,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstructor, (JSC::JSGlobalObject * lexic
     return JSValue::encode(thisObject);
 }
 
-extern "C" EncodedJSValue JSMockFunction__createConstructor(Zig::GlobalObject* globalObject)
+extern "C" EncodedJSValue JSMockFunction__createObject(Zig::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
     return JSValue::encode(JSC::JSFunction::create(vm, globalObject, 0, "mock"_s, jsMockFunctionConstructor, ImplementationVisibility::Public));
@@ -959,10 +944,8 @@ extern "C" EncodedJSValue JSMockFunction__createConstructor(Zig::GlobalObject* g
 extern "C" EncodedJSValue JSMockFunction__getCalls(EncodedJSValue encodedValue)
 {
     JSValue value = JSValue::decode(encodedValue);
-    if (value) {
-        if (auto* mock = jsDynamicCast<JSMockFunction*>(value)) {
-            return JSValue::encode(mock->getCalls());
-        }
+    if (auto* mock = tryJSDynamicCast<JSMockFunction*>(value)) {
+        return JSValue::encode(mock->getCalls());
     }
 
     return JSValue::encode({});
@@ -970,10 +953,8 @@ extern "C" EncodedJSValue JSMockFunction__getCalls(EncodedJSValue encodedValue)
 extern "C" EncodedJSValue JSMockFunction__getReturns(EncodedJSValue encodedValue)
 {
     JSValue value = JSValue::decode(encodedValue);
-    if (value) {
-        if (auto* mock = jsDynamicCast<JSMockFunction*>(value)) {
-            return JSValue::encode(mock->getReturnValues());
-        }
+    if (auto* mock = tryJSDynamicCast<JSMockFunction*>(value)) {
+        return JSValue::encode(mock->getReturnValues());
     }
 
     return JSValue::encode({});
@@ -988,12 +969,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetMockName, (JSC::JSGlobalObject * globa
         throwTypeError(globalObject, scope, "Expected Mock"_s);
     }
 
-    JSValue implValue = thisObject->implementation.get();
-    if (!implValue) {
-        implValue = jsUndefined();
-    }
-
-    if (auto* impl = jsDynamicCast<JSMockImplementation*>(implValue)) {
+    if (auto* impl = tryJSDynamicCast<JSMockImplementation*>(thisObject->implementation.get())) {
         if (impl->kind == JSMockImplementation::Kind::Call) {
             JSObject* object = impl->underlyingValue.get().asCell()->getObject();
             if (auto nameValue = object->getIfPropertyExists(globalObject, PropertyName(vm.propertyNames->name))) {
@@ -1088,58 +1064,6 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockImplementationOnce, (JSC::JSGlobalObj
     }
 
     return JSValue::encode(thisObject);
-}
-JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject * jsGlobalObject, JSC::CallFrame* callframe))
-{
-    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(jsGlobalObject);
-
-    JSMockFunction* thisObject = jsDynamicCast<JSMockFunction*>(callframe->thisValue().toThis(globalObject, JSC::ECMAMode::strict()));
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (UNLIKELY(!thisObject)) {
-        throwTypeError(globalObject, scope, "Expected Mock"_s);
-        return {};
-    }
-
-    JSValue tempImplValue = callframe->argument(0);
-    JSValue callback = callframe->argument(1);
-    JSC::CallData callData = JSC::getCallData(callback);
-    if (UNLIKELY(callData.type == JSC::CallData::Type::None)) {
-        throwTypeError(globalObject, scope, "Expected mock implementation to be callable"_s);
-        return {};
-    }
-
-    auto lastImpl = thisObject->implementation.get();
-    auto lastTail = thisObject->tail.get();
-    auto lastFallback = thisObject->fallbackImplmentation.get();
-
-    JSMockImplementation* impl = JSMockImplementation::create(
-        globalObject,
-        globalObject->mockModule.mockImplementationStructure.getInitializedOnMainThread(globalObject),
-        JSMockImplementation::Kind::Call,
-        tempImplValue,
-        false);
-
-    thisObject->implementation.set(vm, thisObject, impl);
-    thisObject->fallbackImplmentation.clear();
-    thisObject->tail.clear();
-
-    JSC::ArgList args;
-    JSValue returnValue = call(globalObject, callback, callData, jsUndefined(), args);
-
-    if (!returnValue) {
-        return JSC::JSValue::encode(jsUndefined());
-    }
-
-    if (auto promise = jsDynamicCast<JSC::JSPromise*>(returnValue)) {
-        // TODO: handle promise
-        return JSC::JSValue::encode(jsUndefined());
-    } else {
-        thisObject->implementation.set(vm, thisObject, lastImpl);
-        thisObject->tail.set(vm, thisObject, lastImpl);
-        thisObject->fallbackImplmentation.set(vm, thisObject, lastFallback);
-        return JSC::JSValue::encode(jsUndefined());
-    }
 }
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockName, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
@@ -1259,5 +1183,95 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockRejectedValueOnce, (JSC::JSGlobalObje
     pushImplOnce(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, JSC::JSPromise::rejectedPromise(globalObject, callframe->argument(0)));
 
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
+}
+
+JSC_DECLARE_HOST_FUNCTION(jsMockFunctionWithImplementationCleanup);
+
+JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementationCleanup, (JSC::JSGlobalObject * jsGlobalObject, JSC::CallFrame* callframe))
+{
+    auto& vm = jsGlobalObject->vm();
+    auto ctx = jsDynamicCast<JSC::JSArray*>(callframe->argument(1));
+    auto fn = (ctx->getDirectIndex(jsGlobalObject, 0));
+    auto lastImpl = ctx->getDirectIndex(jsGlobalObject, 1);
+    auto lastTail = ctx->getDirectIndex(jsGlobalObject, 2);
+    auto lastFallback = ctx->getDirectIndex(jsGlobalObject, 3);
+
+    // fn->implementation.set(vm, fn, lastImpl);
+    // fn->tail.set(vm, fn, lastTail);
+    // fn->fallbackImplmentation.set(vm, fn, lastFallback);
+
+    return JSValue::encode(jsUndefined());
+}
+JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject * jsGlobalObject, JSC::CallFrame* callframe))
+{
+    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(jsGlobalObject);
+
+    JSMockFunction* thisObject = jsDynamicCast<JSMockFunction*>(callframe->thisValue().toThis(globalObject, JSC::ECMAMode::strict()));
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (UNLIKELY(!thisObject)) {
+        throwTypeError(globalObject, scope, "Expected Mock"_s);
+        return {};
+    }
+
+    JSValue tempImplValue = callframe->argument(0);
+    JSValue callback = callframe->argument(1);
+    JSC::CallData callData = JSC::getCallData(callback);
+    if (UNLIKELY(callData.type == JSC::CallData::Type::None)) {
+        throwTypeError(globalObject, scope, "Expected mock implementation to be callable"_s);
+        return {};
+    }
+
+    auto lastImpl = thisObject->implementation.get();
+    auto lastTail = thisObject->tail.get();
+    auto lastFallback = thisObject->fallbackImplmentation.get();
+
+    JSMockImplementation* impl = JSMockImplementation::create(
+        globalObject,
+        globalObject->mockModule.mockImplementationStructure.getInitializedOnMainThread(globalObject),
+        JSMockImplementation::Kind::Call,
+        tempImplValue,
+        false);
+
+    thisObject->implementation.set(vm, thisObject, impl);
+    thisObject->fallbackImplmentation.clear();
+    thisObject->tail.clear();
+
+    JSC::ArgList args;
+    NakedPtr<Exception> exception;
+    JSValue returnValue = call(globalObject, callback, callData, jsUndefined(), args, exception);
+
+    if (auto promise = tryJSDynamicCast<JSC::JSPromise*>(returnValue)) {
+        auto capability = JSC::JSPromise::createNewPromiseCapability(globalObject, globalObject->promiseConstructor());
+
+        JSFunction* func = JSC::JSFunction::create(vm, globalObject, 2,
+            String(), jsMockFunctionWithImplementationCleanup, ImplementationVisibility::Public);
+
+        auto ctx = JSC::constructEmptyArray(globalObject, nullptr, 4);
+        ctx->putDirectIndex(globalObject, 0, thisObject);
+        ctx->putDirectIndex(globalObject, 1, lastImpl);
+        ctx->putDirectIndex(globalObject, 2, lastTail);
+        ctx->putDirectIndex(globalObject, 3, lastFallback);
+
+        JSFunction* performPromiseThenFunction = globalObject->performPromiseThenFunction();
+        auto callData = JSC::getCallData(performPromiseThenFunction);
+
+        MarkedArgumentBuffer arguments;
+        arguments.append(promise);
+        arguments.append(func);
+        arguments.append(func);
+        arguments.append(capability);
+        arguments.append(ctx);
+        ASSERT(!arguments.hasOverflowed());
+        call(globalObject, performPromiseThenFunction, callData, jsUndefined(), arguments);
+
+        return JSC::JSValue::encode(promise);
+    }
+
+    thisObject->implementation.set(vm, thisObject, lastImpl);
+    thisObject->tail.set(vm, thisObject, lastImpl);
+    thisObject->fallbackImplmentation.set(vm, thisObject, lastFallback);
+
+    return JSC::JSValue::encode(jsUndefined());
 }
 }

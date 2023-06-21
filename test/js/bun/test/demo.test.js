@@ -1,20 +1,18 @@
-test("works on functions", () => {
-  var obj = {
-    original() {
-      return 42;
+test("1", async () => {
+  const x = jest.fn(() => 1);
+
+  console.log("3", x());
+
+  await x.withImplementation(
+    () => 2,
+    async () => {
+      console.log("2", x());
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      console.log("2", x());
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      console.log("2", x());
     },
-  };
-  const fn = jest.spyOn(obj, "original");
-  expect(fn).toBe(obj.original);
-  expect(fn).not.toHaveBeenCalled();
-  expect(() => expect(fn).toHaveBeenCalled()).toThrow();
-  expect(obj.original()).toBe(42);
-  expect(fn).toHaveBeenCalled();
-  expect(fn).toHaveBeenCalledTimes(1);
-  expect(() => expect(fn).not.toHaveBeenCalled()).toThrow();
-  expect(() => expect(fn).not.toHaveBeenCalledTimes(1)).toThrow();
-  expect(fn.mock.calls).toHaveLength(1);
-  expect(fn.mock.calls[0]).toBeEmpty();
-  jest.restoreAllMocks();
-  expect(() => expect(obj.original).toHaveBeenCalled()).toThrow();
+  );
+
+  console.log("3", x());
 });

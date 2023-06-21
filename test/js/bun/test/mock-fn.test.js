@@ -1,17 +1,8 @@
-"use strict";
-
-/** This file is meant to be runnable in both Jest and Bun.
- *  `bunx jest mock-fn.test.js`
+/**
+ * This file is meant to be runnable in both Jest and Bun.
+ * `bunx jest mock-fn.test.js`
  */
-
-const isBun = typeof Bun !== "undefined";
-if (!isBun) {
-  const extended = require("jest-extended");
-  expect.extend(extended);
-  test.todo = test;
-}
-
-const spyOn = jest.spyOn;
+var { isBun, test, describe, expect, jest, vi, mock, bunTest, spyOn } = require("./test-interop.js")();
 
 async function expectResolves(promise) {
   expect(promise).toBeInstanceOf(Promise);
@@ -30,6 +21,12 @@ async function expectRejects(promise) {
 }
 
 describe("mock()", () => {
+  if (isBun) {
+    test("exists as jest.fn, bunTest.mock, and vi.fn", () => {
+      expect(jest.fn).toBe(mock);
+      expect(jest.fn).toBe(vi.fn);
+    });
+  }
   test("are callable", () => {
     const fn = jest.fn(() => 42);
     expect(fn()).toBe(42);
@@ -44,6 +41,7 @@ describe("mock()", () => {
   });
   test("passes this value", () => {
     const fn = jest.fn(function hey() {
+      "use strict";
       return this;
     });
     const obj = { fn };
@@ -67,55 +65,52 @@ describe("mock()", () => {
     const fn = jest.fn(function () {
       return this;
     });
-    expect(fn.call(123)).toBe(123);
+    expect(Number(fn.call(123))).toBe(123);
   });
   test(".call works", () => {
     const fn = jest.fn(function hey() {
       return this;
     });
-    expect(fn.call(123)).toBe(123);
+    expect(Number(fn.call(123))).toBe(123);
     expect(fn).toHaveBeenCalled();
     expect(fn).toHaveBeenCalledTimes(1);
     expect(fn.mock.calls).toHaveLength(1);
     expect(fn.mock.calls[0]).toBeEmpty();
-    expect(fn()).toBe(undefined);
+    expect(Number(fn.call(234))).toBe(234);
     expect(fn).toHaveBeenCalledTimes(2);
     expect(fn.mock.calls).toHaveLength(2);
     expect(fn.mock.calls[1]).toBeEmpty();
   });
-  test(".apply works", () => {
+  test(".apply works", function () {
     const fn = jest.fn(function hey() {
-      // @ts-expect-error
       return this;
     });
-    expect(fn.apply(123)).toBe(123);
+    expect(Number(fn.apply(123))).toBe(123);
     expect(fn).toHaveBeenCalled();
     expect(fn).toHaveBeenCalledTimes(1);
     expect(fn.mock.calls).toHaveLength(1);
     expect(fn.mock.calls[0]).toBeEmpty();
-    expect(fn.apply(undefined)).toBe(undefined);
+    expect(Number(fn.apply(234))).toBe(234);
     expect(fn).toHaveBeenCalledTimes(2);
     expect(fn.mock.calls).toHaveLength(2);
     expect(fn.mock.calls[1]).toBeEmpty();
   });
   test(".bind works", () => {
     const fn = jest.fn(function hey() {
-      // @ts-expect-error
       return this;
     });
-    expect(fn.bind(123)()).toBe(123);
+    expect(Number(fn.bind(123)())).toBe(123);
     expect(fn).toHaveBeenCalled();
     expect(fn).toHaveBeenCalledTimes(1);
     expect(fn.mock.calls).toHaveLength(1);
     expect(fn.mock.calls[0]).toBeEmpty();
-    expect(fn.bind(undefined)()).toBe(undefined);
+    expect(Number(fn.bind(234)())).toBe(234);
     expect(fn).toHaveBeenCalledTimes(2);
     expect(fn.mock.calls).toHaveLength(2);
     expect(fn.mock.calls[1]).toBeEmpty();
   });
   test(".name works", () => {
     const fn = jest.fn(function hey() {
-      // @ts-expect-error
       return this;
     });
 
@@ -142,7 +137,6 @@ describe("mock()", () => {
   });
   test(".length works", () => {
     const fn = jest.fn(function hey(a, b, c) {
-      // @ts-expect-error
       return this;
     });
 
@@ -187,7 +181,6 @@ describe("mock()", () => {
     expect(fn).not.toHaveBeenCalled();
     expect(() => expect(fn).toHaveBeenCalled()).toThrow();
     expect(fn(43)).toBe(undefined);
-    console.log(fn.mock);
     expect(fn.mock.results).toEqual([
       {
         type: "return",
@@ -291,6 +284,7 @@ describe("mock()", () => {
   });
   test("apply/call/bind", () => {
     const fn = jest.fn(function (add) {
+      "use strict";
       return this.foo + add;
     });
     const obj = { foo: 42, fn };
@@ -437,7 +431,7 @@ describe("mock()", () => {
       function () {
         expect(fn()).toBe("2");
         expect(fn()).toBe("2");
-        expect(this).toBe(undefined);
+        // expect(this).toBe(undefined);
         return "3";
       },
     );

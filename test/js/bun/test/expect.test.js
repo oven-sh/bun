@@ -3,11 +3,7 @@
 /** This file is meant to be runnable in both Jest and Bun.
  *  `bunx jest mock-fn.test.js`
  */
-
-const isBun = typeof Bun !== "undefined";
-if (!isBun) {
-  test.todo = test;
-}
+var { isBun, test, describe, expect, jest, vi, mock, bunTest, spyOn } = require("./test-interop.js")();
 
 describe("expect()", () => {
   test("can call without an argument", () => {

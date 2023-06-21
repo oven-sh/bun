@@ -1300,6 +1300,9 @@ pub fn NewClassWithInstanceType(
                     .attributes = js.JSPropertyAttributes.kJSPropertyAttributeNone,
                 },
             );
+            if (property_name_literals.len > 0 and @TypeOf(property_name_literals[0]) == [:0]const u8) {
+                @compileError("@typeInfo() struct field names are null-terminated");
+            }
             for (property_name_literals, 0..) |lit, i| {
                 props[i] = brk2: {
                     var static_prop = JSC.C.JSStaticValue{

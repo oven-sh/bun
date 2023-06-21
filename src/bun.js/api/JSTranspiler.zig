@@ -893,7 +893,7 @@ pub fn scan(
     JSC.markBinding(@src());
     const arguments = callframe.arguments(3);
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.ptr[0..arguments.len]);
-    defer args.arena.deinit();
+    defer args.deinit();
     const code_arg = args.next() orelse {
         globalThis.throwInvalidArgumentType("scan", "code", "string or Uint8Array");
         return .zero;
@@ -905,7 +905,7 @@ pub fn scan(
     };
 
     const code = code_holder.slice();
-    args.eat();
+    args.protectEat();
     var exception_ref = [_]JSC.C.JSValueRef{null};
     var exception: JSC.C.ExceptionRef = &exception_ref;
 
@@ -940,7 +940,7 @@ pub fn scan(
         JSAst.Expr.Data.Store.reset();
     }
 
-    const parse_result = getParseResult(this, arena.allocator(), code, loader, Bundler.MacroJSValueType.zero) orelse {
+    var parse_result = getParseResult(this, arena.allocator(), code, loader, Bundler.MacroJSValueType.zero) orelse {
         if ((this.bundler.log.warnings + this.bundler.log.errors) > 0) {
             globalThis.throwValue(this.bundler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));
             return .zero;
@@ -969,7 +969,7 @@ pub fn scan(
 
     const named_exports_value = namedExportsToJS(
         globalThis,
-        parse_result.ast.named_exports,
+        &parse_result.ast.named_exports,
     );
     return JSC.JSValue.createObject2(globalThis, imports_label, exports_label, named_imports_value, named_exports_value);
 }
@@ -1174,25 +1174,27 @@ pub fn transformSync(
     return out.toValueGC(globalThis);
 }
 
-fn namedExportsToJS(global: *JSGlobalObject, named_exports: JSAst.Ast.NamedExports) JSC.JSValue {
+fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExports) JSC.JSValue {
     if (named_exports.count() == 0)
         return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArray(global, 0, null, null));
 
     var named_exports_iter = named_exports.iterator();
-    var stack_fallback = std.heap.stackFallback(@sizeOf(JSC.ZigString) * 32, getAllocator(global));
+    var stack_fallback = std.heap.stackFallback(@sizeOf(bun.String) * 32, getAllocator(global));
     var allocator = stack_fallback.get();
     var names = allocator.alloc(
-        JSC.ZigString,
+        bun.String,
         named_exports.count(),
     ) catch unreachable;
     defer allocator.free(names);
+    named_exports.sort(strings.StringArrayByIndexSorter{
+        .keys = named_exports.keys(),
+    });
     var i: usize = 0;
     while (named_exports_iter.next()) |entry| {
-        names[i] = JSC.ZigString.init(entry.key_ptr.*);
+        names[i] = bun.String.create(entry.key_ptr.*);
         i += 1;
     }
-    JSC.ZigString.sortAsc(names[0..i]);
-    return JSC.JSValue.createStringArray(global, names.ptr, names.len, true);
+    return bun.String.toJSArray(global, names);
 }
 
 const ImportRecord = @import("../../import_record.zig").ImportRecord;
@@ -1200,30 +1202,24 @@ const ImportRecord = @import("../../import_record.zig").ImportRecord;
 fn namedImportsToJS(
     global: *JSGlobalObject,
     import_records: []const ImportRecord,
-    exception: JSC.C.ExceptionRef,
+    _: JSC.C.ExceptionRef,
 ) JSC.JSValue {
-    var stack_fallback = std.heap.stackFallback(@sizeOf(JSC.C.JSObjectRef) * 32, getAllocator(global));
-    var allocator = stack_fallback.get();
-
-    var i: usize = 0;
     const path_label = JSC.ZigString.static("path");
     const kind_label = JSC.ZigString.static("kind");
-    var array_items = allocator.alloc(
-        JSC.C.JSValueRef,
-        import_records.len,
-    ) catch unreachable;
-    defer allocator.free(array_items);
 
-    for (import_records) |record| {
+    const array = JSC.JSValue.createEmptyArray(global, import_records.len);
+    array.ensureStillAlive();
+
+    for (import_records, 0..) |record, i| {
         if (record.is_internal) continue;
 
+        array.ensureStillAlive();
         const path = JSC.ZigString.init(record.path.text).toValueGC(global);
-        const kind = JSC.ZigString.init(record.kind.label()).toValue(global);
-        array_items[i] = JSC.JSValue.createObject2(global, path_label, kind_label, path, kind).asObjectRef();
-        i += 1;
+        const kind = JSC.ZigString.init(record.kind.label()).toValueGC(global);
+        array.putIndex(global, @truncate(u32, i), JSC.JSValue.createObject2(global, path_label, kind_label, path, kind));
     }
 
-    return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArray(global, i, array_items.ptr, exception));
+    return array;
 }
 
 pub fn scanImports(
@@ -1235,6 +1231,8 @@ pub fn scanImports(
     var exception_val = [_]JSC.C.JSValueRef{null};
     var exception: JSC.C.ExceptionRef = &exception_val;
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.ptr[0..arguments.len]);
+    defer args.deinit();
+
     const code_arg = args.next() orelse {
         globalThis.throwInvalidArgumentType("scanImports", "code", "string or Uint8Array");
         return .zero;
@@ -1249,7 +1247,7 @@ pub fn scanImports(
 
         return .zero;
     };
-    args.eat();
+    args.protectEat();
     const code = code_holder.slice();
 
     var loader: Loader = this.transpiler_options.default_loader;

@@ -1863,11 +1863,11 @@ pub const Package = extern struct {
         field: string,
         behavior: Behavior,
 
-        pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = @intToEnum(Behavior, Behavior.normal) };
-        pub const dev = DependencyGroup{ .prop = "devDependencies", .field = "dev_dependencies", .behavior = @intToEnum(Behavior, Behavior.dev) };
-        pub const optional = DependencyGroup{ .prop = "optionalDependencies", .field = "optional_dependencies", .behavior = @intToEnum(Behavior, Behavior.optional) };
-        pub const peer = DependencyGroup{ .prop = "peerDependencies", .field = "peer_dependencies", .behavior = @intToEnum(Behavior, Behavior.peer) };
-        pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = @intToEnum(Behavior, Behavior.workspace) };
+        pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = @enumFromInt(Behavior, Behavior.normal) };
+        pub const dev = DependencyGroup{ .prop = "devDependencies", .field = "dev_dependencies", .behavior = @enumFromInt(Behavior, Behavior.dev) };
+        pub const optional = DependencyGroup{ .prop = "optionalDependencies", .field = "optional_dependencies", .behavior = @enumFromInt(Behavior, Behavior.optional) };
+        pub const peer = DependencyGroup{ .prop = "peerDependencies", .field = "peer_dependencies", .behavior = @enumFromInt(Behavior, Behavior.peer) };
+        pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = @enumFromInt(Behavior, Behavior.workspace) };
     };
 
     pub inline fn isDisabled(this: *const Lockfile.Package) bool {
@@ -1987,7 +1987,7 @@ pub const Package = extern struct {
 
         builder.clamp();
 
-        cloner.trees_count += @as(u32, @boolToInt(old_resolutions.len > 0));
+        cloner.trees_count += @as(u32, @intFromBool(old_resolutions.len > 0));
 
         for (old_resolutions, 0..) |old_resolution, i| {
             if (old_resolution >= max_package_id) continue;
@@ -2115,10 +2115,10 @@ pub const Package = extern struct {
 
         const dependency_groups = comptime brk: {
             var out_groups: [
-                @as(usize, @boolToInt(features.dependencies)) +
-                    @as(usize, @boolToInt(features.dev_dependencies)) +
-                    @as(usize, @boolToInt(features.optional_dependencies)) +
-                    @as(usize, @boolToInt(features.peer_dependencies))
+                @as(usize, @intFromBool(features.dependencies)) +
+                    @as(usize, @intFromBool(features.dev_dependencies)) +
+                    @as(usize, @intFromBool(features.optional_dependencies)) +
+                    @as(usize, @intFromBool(features.peer_dependencies))
             ]DependencyGroup = undefined;
             var out_group_i: usize = 0;
 
@@ -2921,11 +2921,11 @@ pub const Package = extern struct {
 
         const dependency_groups = comptime brk: {
             var out_groups: [
-                @as(usize, @boolToInt(features.dependencies)) +
-                    @as(usize, @boolToInt(features.dev_dependencies)) +
-                    @as(usize, @boolToInt(features.optional_dependencies)) +
-                    @as(usize, @boolToInt(features.peer_dependencies)) +
-                    @as(usize, @boolToInt(features.workspaces))
+                @as(usize, @intFromBool(features.dependencies)) +
+                    @as(usize, @intFromBool(features.dev_dependencies)) +
+                    @as(usize, @intFromBool(features.optional_dependencies)) +
+                    @as(usize, @intFromBool(features.peer_dependencies)) +
+                    @as(usize, @intFromBool(features.workspaces))
             ]DependencyGroup = undefined;
             var out_group_i: usize = 0;
 
@@ -3763,7 +3763,7 @@ pub const Serializer = struct {
 
         var writer = stream.writer();
         try writer.writeAll(header_bytes);
-        try writer.writeIntLittle(u32, @enumToInt(this.format));
+        try writer.writeIntLittle(u32, @intFromEnum(this.format));
 
         try writer.writeAll(&this.meta_hash);
 
@@ -3795,7 +3795,7 @@ pub const Serializer = struct {
         }
 
         var format = try reader.readIntLittle(u32);
-        if (format != @enumToInt(Lockfile.FormatVersion.current)) {
+        if (format != @intFromEnum(Lockfile.FormatVersion.current)) {
             return error.@"Outdated lockfile version";
         }
 

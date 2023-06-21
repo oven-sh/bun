@@ -370,11 +370,11 @@ pub const ZigString = extern struct {
     }
 
     pub fn markStatic(this: *ZigString) void {
-        this.ptr = @intToPtr([*]const u8, @ptrToInt(this.ptr) | (1 << 60));
+        this.ptr = @ptrFromInt([*]const u8, @intFromPtr(this.ptr) | (1 << 60));
     }
 
     pub fn isStatic(this: *const ZigString) bool {
-        return @ptrToInt(this.ptr) & (1 << 60) != 0;
+        return @intFromPtr(this.ptr) & (1 << 60) != 0;
     }
 
     pub const Slice = struct {
@@ -483,7 +483,7 @@ pub const ZigString = extern struct {
         }
 
         pub fn mut(this: Slice) []u8 {
-            return @intToPtr([*]u8, @ptrToInt(this.ptr))[0..this.len];
+            return @ptrFromInt([*]u8, @intFromPtr(this.ptr))[0..this.len];
         }
 
         /// Does nothing if the slice is not allocated
@@ -504,7 +504,7 @@ pub const ZigString = extern struct {
     pub const namespace = "";
 
     pub inline fn is16Bit(this: *const ZigString) bool {
-        return (@ptrToInt(this._unsafe_ptr_do_not_use) & (1 << 63)) != 0;
+        return (@intFromPtr(this._unsafe_ptr_do_not_use) & (1 << 63)) != 0;
     }
 
     pub inline fn utf16Slice(this: *const ZigString) []align(1) const u16 {
@@ -641,15 +641,15 @@ pub const ZigString = extern struct {
     }
 
     pub fn isUTF8(this: ZigString) bool {
-        return (@ptrToInt(this._unsafe_ptr_do_not_use) & (1 << 61)) != 0;
+        return (@intFromPtr(this._unsafe_ptr_do_not_use) & (1 << 61)) != 0;
     }
 
     pub fn markUTF8(this: *ZigString) void {
-        this._unsafe_ptr_do_not_use = @intToPtr([*]const u8, @ptrToInt(this._unsafe_ptr_do_not_use) | (1 << 61));
+        this._unsafe_ptr_do_not_use = @ptrFromInt([*]const u8, @intFromPtr(this._unsafe_ptr_do_not_use) | (1 << 61));
     }
 
     pub fn markUTF16(this: *ZigString) void {
-        this._unsafe_ptr_do_not_use = @intToPtr([*]const u8, @ptrToInt(this._unsafe_ptr_do_not_use) | (1 << 63));
+        this._unsafe_ptr_do_not_use = @ptrFromInt([*]const u8, @intFromPtr(this._unsafe_ptr_do_not_use) | (1 << 63));
     }
 
     pub fn setOutputEncoding(this: *ZigString) void {
@@ -658,7 +658,7 @@ pub const ZigString = extern struct {
     }
 
     pub inline fn isGloballyAllocated(this: ZigString) bool {
-        return (@ptrToInt(this._unsafe_ptr_do_not_use) & (1 << 62)) != 0;
+        return (@intFromPtr(this._unsafe_ptr_do_not_use) & (1 << 62)) != 0;
     }
 
     pub inline fn deinitGlobal(this: ZigString) void {
@@ -668,7 +668,7 @@ pub const ZigString = extern struct {
     pub const mark = markGlobal;
 
     pub inline fn markGlobal(this: *ZigString) void {
-        this._unsafe_ptr_do_not_use = @intToPtr([*]const u8, @ptrToInt(this._unsafe_ptr_do_not_use) | (1 << 62));
+        this._unsafe_ptr_do_not_use = @ptrFromInt([*]const u8, @intFromPtr(this._unsafe_ptr_do_not_use) | (1 << 62));
     }
 
     pub fn format(self: ZigString, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -694,7 +694,7 @@ pub const ZigString = extern struct {
     inline fn untagged(ptr: [*]const u8) [*]const u8 {
         // this can be null ptr, so long as it's also a 0 length string
         @setRuntimeSafety(false);
-        return @intToPtr([*]const u8, @truncate(u53, @ptrToInt(ptr)));
+        return @ptrFromInt([*]const u8, @truncate(u53, @intFromPtr(ptr)));
     }
 
     pub fn slice(this: *const ZigString) []const u8 {
@@ -1303,7 +1303,7 @@ pub const FetchHeaders = opaque {
         this: *FetchHeaders,
         name_: HTTPHeaderName,
     ) bool {
-        return fastHas_(this, @enumToInt(name_));
+        return fastHas_(this, @intFromEnum(name_));
     }
 
     pub fn fastGet(
@@ -1311,7 +1311,7 @@ pub const FetchHeaders = opaque {
         name_: HTTPHeaderName,
     ) ?ZigString {
         var str = ZigString.init("");
-        fastGet_(this, @enumToInt(name_), &str);
+        fastGet_(this, @intFromEnum(name_), &str);
         if (str.len == 0) {
             return null;
         }
@@ -1441,7 +1441,7 @@ pub const FetchHeaders = opaque {
         this: *FetchHeaders,
         header: HTTPHeaderName,
     ) void {
-        return fastRemove_(this, @enumToInt(header));
+        return fastRemove_(this, @intFromEnum(header));
     }
 
     pub fn fastRemove_(
@@ -1611,11 +1611,11 @@ pub const Sizes = @import("../bindings/sizes.zig");
 pub const JSUint8Array = opaque {
     pub const name = "Uint8Array_alias";
     pub fn ptr(this: *JSUint8Array) [*]u8 {
-        return @intToPtr(*[*]u8, @ptrToInt(this) + Sizes.Bun_FFI_PointerOffsetToTypedArrayVector).*;
+        return @ptrFromInt(*[*]u8, @intFromPtr(this) + Sizes.Bun_FFI_PointerOffsetToTypedArrayVector).*;
     }
 
     pub fn len(this: *JSUint8Array) usize {
-        return @intToPtr(*usize, @ptrToInt(this) + Sizes.Bun_FFI_PointerOffsetToTypedArrayLength).*;
+        return @ptrFromInt(*usize, @intFromPtr(this) + Sizes.Bun_FFI_PointerOffsetToTypedArrayLength).*;
     }
 
     pub fn slice(this: *JSUint8Array) []u8 {
@@ -3156,7 +3156,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
         pub fn isObject(this: JSType) bool {
             // inline constexpr bool isObjectType(JSType type) { return type >= ObjectType; }
-            return @enumToInt(this) >= @enumToInt(JSType.Object);
+            return @intFromEnum(this) >= @intFromEnum(JSType.Object);
         }
 
         pub fn isFunction(this: JSType) bool {
@@ -3311,7 +3311,7 @@ pub const JSValue = enum(JSValueReprInt) {
     };
 
     pub inline fn cast(ptr: anytype) JSValue {
-        return @intToEnum(JSValue, @bitCast(i64, @ptrToInt(ptr)));
+        return @enumFromInt(JSValue, @bitCast(i64, @intFromPtr(ptr)));
     }
 
     pub fn coerceToInt32(this: JSValue, globalThis: *JSC.JSGlobalObject) i32 {
@@ -3794,7 +3794,7 @@ pub const JSValue = enum(JSValueReprInt) {
             return jsNumberFromInt32(@intCast(i32, i));
         }
 
-        return jsNumberFromDouble(@intToFloat(f64, @truncate(i52, i)));
+        return jsNumberFromDouble(@floatFromInt(f64, @truncate(i52, i)));
     }
 
     pub inline fn toJS(this: JSValue, _: *const JSGlobalObject) JSValue {
@@ -3806,7 +3806,7 @@ pub const JSValue = enum(JSValueReprInt) {
             return jsNumberFromInt32(@intCast(i32, i));
         }
 
-        return jsNumberFromDouble(@intToFloat(f64, @intCast(i52, @truncate(u51, i))));
+        return jsNumberFromDouble(@floatFromInt(f64, @intCast(i52, @truncate(u51, i))));
     }
 
     pub fn coerceDoubleTruncatingIntoInt64(this: JSValue) i64 {
@@ -3820,7 +3820,7 @@ pub const JSValue = enum(JSValueReprInt) {
             return if (double_value < 0) @as(i64, std.math.minInt(i64)) else @as(i64, std.math.maxInt(i64));
         }
 
-        return @floatToInt(
+        return @intFromFloat(
             i64,
             double_value,
         );
@@ -3857,26 +3857,26 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub inline fn isUndefined(this: JSValue) bool {
-        return @enumToInt(this) == 0xa;
+        return @intFromEnum(this) == 0xa;
     }
     pub inline fn isNull(this: JSValue) bool {
-        return @enumToInt(this) == 0x2;
+        return @intFromEnum(this) == 0x2;
     }
     pub inline fn isEmptyOrUndefinedOrNull(this: JSValue) bool {
-        return switch (@enumToInt(this)) {
+        return switch (@intFromEnum(this)) {
             0, 0xa, 0x2 => true,
             else => false,
         };
     }
     pub fn isUndefinedOrNull(this: JSValue) bool {
-        return switch (@enumToInt(this)) {
+        return switch (@intFromEnum(this)) {
             0xa, 0x2 => true,
             else => false,
         };
     }
     /// Empty as in "JSValue {}" rather than an empty string
     pub inline fn isEmpty(this: JSValue) bool {
-        return switch (@enumToInt(this)) {
+        return switch (@intFromEnum(this)) {
             0 => true,
             else => false,
         };
@@ -4002,7 +4002,7 @@ pub const JSValue = enum(JSValueReprInt) {
     pub inline fn isCell(this: JSValue) bool {
         return switch (this) {
             .zero, .undefined, .null, .true, .false => false,
-            else => (@bitCast(u64, @enumToInt(this)) & FFI.NotCellMask) == 0,
+            else => (@bitCast(u64, @intFromEnum(this)) & FFI.NotCellMask) == 0,
         };
     }
 
@@ -4165,7 +4165,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
     // intended to be more lightweight than ZigString
     pub fn fastGet(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
-        const result = fastGet_(this, global, @enumToInt(builtin_name));
+        const result = fastGet_(this, global, @intFromEnum(builtin_name));
         if (result == .zero) {
             return null;
         }
@@ -4174,7 +4174,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn fastGetDirect(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
-        const result = fastGetDirect_(this, global, @enumToInt(builtin_name));
+        const result = fastGetDirect_(this, global, @intFromEnum(builtin_name));
         if (result == .zero) {
             return null;
         }
@@ -4229,7 +4229,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn get(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
         const value = getIfPropertyExistsImpl(this, global, property.ptr, @intCast(u32, property.len));
-        return if (@enumToInt(value) != 0) value else return null;
+        return if (@intFromEnum(value) != 0) value else return null;
     }
 
     pub fn implementsToString(this: JSValue, global: *JSGlobalObject) bool {
@@ -4393,7 +4393,7 @@ pub const JSValue = enum(JSValueReprInt) {
     /// This algorithm differs from the IsStrictlyEqual Algorithm by treating all NaN values as equivalent and by differentiating +0𝔽 from -0𝔽.
     /// https://tc39.es/ecma262/#sec-samevalue
     pub fn isSameValue(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
-        return @enumToInt(this) == @enumToInt(other) or cppFn("isSameValue", .{ this, other, global });
+        return @intFromEnum(this) == @intFromEnum(other) or cppFn("isSameValue", .{ this, other, global });
     }
 
     pub fn deepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
@@ -4455,7 +4455,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn asNumber(this: JSValue) f64 {
         if (this.isInt32()) {
-            return @intToFloat(f64, this.asInt32());
+            return @floatFromInt(f64, this.asInt32());
         }
 
         if (isNumber(this)) {
@@ -4478,19 +4478,19 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn asPtr(this: JSValue, comptime Pointer: type) *Pointer {
-        return @intToPtr(*Pointer, this.asPtrAddress());
+        return @ptrFromInt(*Pointer, this.asPtrAddress());
     }
 
     pub fn fromPtrAddress(addr: anytype) JSValue {
-        return jsNumber(@intToFloat(f64, @bitCast(usize, @as(usize, addr))));
+        return jsNumber(@floatFromInt(f64, @bitCast(usize, @as(usize, addr))));
     }
 
     pub fn asPtrAddress(this: JSValue) usize {
-        return @bitCast(usize, @floatToInt(usize, this.asDouble()));
+        return @bitCast(usize, @intFromFloat(usize, this.asDouble()));
     }
 
     pub fn fromPtr(addr: anytype) JSValue {
-        return fromPtrAddress(@ptrToInt(addr));
+        return fromPtrAddress(@intFromPtr(addr));
     }
 
     pub fn toBooleanSlow(this: JSValue, global: *JSGlobalObject) bool {
@@ -4515,7 +4515,7 @@ pub const JSValue = enum(JSValueReprInt) {
         }
 
         if (this.isNumber()) {
-            return @truncate(i32, @floatToInt(i64, asDouble(this)));
+            return @truncate(i32, @intFromFloat(i64, asDouble(this)));
         }
 
         if (comptime bun.Environment.allow_assert) {
@@ -4558,7 +4558,7 @@ pub const JSValue = enum(JSValueReprInt) {
             return 0;
         }
 
-        return @floatToInt(u64, @max(len, 0));
+        return @intFromFloat(u64, @max(len, 0));
     }
 
     /// This function supports:
@@ -4579,7 +4579,7 @@ pub const JSValue = enum(JSValueReprInt) {
             return null;
         }
 
-        return @floatToInt(u64, @max(len, 0));
+        return @intFromFloat(u64, @max(len, 0));
     }
 
     /// Do not use this directly!
@@ -4624,15 +4624,15 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub inline fn asRef(this: JSValue) C_API.JSValueRef {
-        return @intToPtr(C_API.JSValueRef, @bitCast(usize, @enumToInt(this)));
+        return @ptrFromInt(C_API.JSValueRef, @bitCast(usize, @intFromEnum(this)));
     }
 
     pub inline fn c(this: C_API.JSValueRef) JSValue {
-        return @intToEnum(JSValue, @bitCast(JSValue.Type, @ptrToInt(this)));
+        return @enumFromInt(JSValue, @bitCast(JSValue.Type, @intFromPtr(this)));
     }
 
     pub inline fn fromRef(this: C_API.JSValueRef) JSValue {
-        return @intToEnum(JSValue, @bitCast(JSValue.Type, @ptrToInt(this)));
+        return @enumFromInt(JSValue, @bitCast(JSValue.Type, @intFromPtr(this)));
     }
 
     pub inline fn asObjectRef(this: JSValue) C_API.JSObjectRef {
@@ -4648,12 +4648,12 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub inline fn asNullableVoid(this: JSValue) ?*anyopaque {
-        return @intToPtr(?*anyopaque, @bitCast(usize, @enumToInt(this)));
+        return @ptrFromInt(?*anyopaque, @bitCast(usize, @intFromEnum(this)));
     }
 
     pub inline fn asVoid(this: JSValue) *anyopaque {
         if (comptime bun.Environment.allow_assert) {
-            if (@enumToInt(this) == 0) {
+            if (@intFromEnum(this) == 0) {
                 @panic("JSValue is null");
             }
         }
@@ -4815,7 +4815,7 @@ pub const Exception = extern struct {
     pub fn create(globalObject: *JSGlobalObject, object: *JSObject, stack_capture: StackCaptureAction) *Exception {
         return cppFn(
             "create",
-            .{ globalObject, object, @enumToInt(stack_capture) },
+            .{ globalObject, object, @intFromEnum(stack_capture) },
         );
     }
 
@@ -4851,7 +4851,7 @@ pub const VM = extern struct {
         LargeHeap = 1,
     };
     pub fn create(heap_type: HeapType) *VM {
-        return cppFn("create", .{@enumToInt(heap_type)});
+        return cppFn("create", .{@intFromEnum(heap_type)});
     }
 
     pub fn deinit(vm: *VM, global_object: *JSGlobalObject) void {

@@ -1318,8 +1318,8 @@ pub const PathName = struct {
         // so we extend the original slice's length by one
         return if (this.dir.len == 0) "./" else this.dir.ptr[0 .. this.dir.len + @intCast(
             usize,
-            @boolToInt(
-                this.dir[this.dir.len - 1] != std.fs.path.sep_posix and (@ptrToInt(this.dir.ptr) + this.dir.len + 1) == @ptrToInt(this.base.ptr),
+            @intFromBool(
+                this.dir[this.dir.len - 1] != std.fs.path.sep_posix and (@intFromPtr(this.dir.ptr) + this.dir.len + 1) == @intFromPtr(this.base.ptr),
             ),
         )];
     }

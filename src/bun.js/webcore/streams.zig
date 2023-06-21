@@ -247,7 +247,7 @@ pub const ReadableStream = struct {
 
     pub fn fromNative(globalThis: *JSGlobalObject, id: Tag, ptr: *anyopaque) JSC.JSValue {
         JSC.markBinding(@src());
-        return ZigGlobalObject__createNativeReadableStream(globalThis, JSValue.fromPtr(ptr), JSValue.jsNumber(@enumToInt(id)));
+        return ZigGlobalObject__createNativeReadableStream(globalThis, JSValue.fromPtr(ptr), JSValue.jsNumber(@intFromEnum(id)));
     }
 
     pub fn fromBlob(globalThis: *JSGlobalObject, blob: *const Blob, recommended_chunk_size: Blob.SizeType) JSC.JSValue {
@@ -329,11 +329,11 @@ pub const ReadableStream = struct {
             const filedes_ = @bitCast([8]u8, @as(usize, @truncate(u56, @intCast(usize, filedes))));
             bytes[1..8].* = filedes_[0..7].*;
 
-            return @intToEnum(StreamTag, @bitCast(u64, bytes));
+            return @enumFromInt(StreamTag, @bitCast(u64, bytes));
         }
 
         pub fn fd(this: StreamTag) bun.FileDescriptor {
-            var bytes = @bitCast([8]u8, @enumToInt(this));
+            var bytes = @bitCast([8]u8, @intFromEnum(this));
             if (bytes[0] != 1) {
                 return bun.invalid_fd;
             }
@@ -820,7 +820,7 @@ pub const Signal = struct {
     ptr: *anyopaque = dead,
     vtable: VTable = VTable.Dead,
 
-    pub const dead = @intToPtr(*anyopaque, 0xaaaaaaaa);
+    pub const dead = @ptrFromInt(*anyopaque, 0xaaaaaaaa);
 
     pub fn clear(this: *Signal) void {
         this.ptr = dead;
@@ -922,7 +922,7 @@ pub const Sink = struct {
     used: bool = false,
 
     pub const pending = Sink{
-        .ptr = @intToPtr(*anyopaque, 0xaaaaaaaa),
+        .ptr = @ptrFromInt(*anyopaque, 0xaaaaaaaa),
         .vtable = undefined,
     };
 
@@ -1266,7 +1266,7 @@ pub const FileSink = struct {
 
         const initial_remain = remain;
         defer {
-            std.debug.assert(total - initial == @ptrToInt(remain.ptr) - @ptrToInt(initial_remain.ptr));
+            std.debug.assert(total - initial == @intFromPtr(remain.ptr) - @intFromPtr(initial_remain.ptr));
 
             if (remain.len == 0) {
                 this.head = 0;
@@ -1912,15 +1912,15 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             pub fn init(cpp: JSValue) Signal {
                 // this one can be null
                 @setRuntimeSafety(false);
-                return Signal.initWithType(SinkSignal, @intToPtr(*SinkSignal, @bitCast(usize, @enumToInt(cpp))));
+                return Signal.initWithType(SinkSignal, @ptrFromInt(*SinkSignal, @bitCast(usize, @intFromEnum(cpp))));
             }
 
             pub fn close(this: *@This(), _: ?Syscall.Error) void {
-                onClose(@bitCast(SinkSignal, @ptrToInt(this)).cpp, JSValue.jsUndefined());
+                onClose(@bitCast(SinkSignal, @intFromPtr(this)).cpp, JSValue.jsUndefined());
             }
 
             pub fn ready(this: *@This(), _: ?Blob.SizeType, _: ?Blob.SizeType) void {
-                onReady(@bitCast(SinkSignal, @ptrToInt(this)).cpp, JSValue.jsUndefined(), JSValue.jsUndefined());
+                onReady(@bitCast(SinkSignal, @intFromPtr(this)).cpp, JSValue.jsUndefined(), JSValue.jsUndefined());
             }
 
             pub fn start(_: *@This()) void {}
@@ -1996,7 +1996,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             if (this.sink.signal.isDead())
                 return;
             this.sink.signal.clear();
-            const value = @intToEnum(JSValue, @bitCast(JSC.JSValueReprInt, @ptrToInt(ptr)));
+            const value = @enumFromInt(JSValue, @bitCast(JSC.JSValueReprInt, @intFromPtr(ptr)));
             value.unprotect();
             detachPtr(value);
         }
@@ -4075,7 +4075,7 @@ pub const File = struct {
                     this.pending.result = .{
                         .err = Syscall.Error{
                             // this is too hacky
-                            .errno = @truncate(Syscall.Error.Int, @intCast(u16, @max(1, @errorToInt(err)))),
+                            .errno = @truncate(Syscall.Error.Int, @intCast(u16, @max(1, @intFromError(err)))),
                             .syscall = .read,
                         },
                     };

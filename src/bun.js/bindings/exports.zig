@@ -112,11 +112,11 @@ pub const ErrorCode = enum(ErrorCodeInt) {
     _,
 
     pub inline fn from(code: anyerror) ErrorCode {
-        return @intToEnum(ErrorCode, @errorToInt(code));
+        return @enumFromInt(ErrorCode, @intFromError(code));
     }
 
-    pub const ParserError = @enumToInt(ErrorCode.from(error.ParserError));
-    pub const JSErrorObject = @enumToInt(ErrorCode.from(error.JSErrorObject));
+    pub const ParserError = @intFromEnum(ErrorCode.from(error.ParserError));
+    pub const JSErrorObject = @intFromEnum(ErrorCode.from(error.JSErrorObject));
 
     pub const Type = ErrorCodeInt;
 };
@@ -244,7 +244,7 @@ export fn ZigString__free(raw: [*]const u8, len: usize, allocator_: ?*anyopaque)
 }
 
 export fn ZigString__free_global(ptr: [*]const u8, len: usize) void {
-    var untagged = @intToPtr(*anyopaque, @ptrToInt(ZigString.init(ptr[0..len]).slice().ptr));
+    var untagged = @ptrFromInt(*anyopaque, @intFromPtr(ZigString.init(ptr[0..len]).slice().ptr));
     if (comptime Environment.allow_assert) {
         std.debug.assert(Mimalloc.mi_is_in_heap_region(ptr));
     }
@@ -561,7 +561,7 @@ pub const ZigStackFrame = extern struct {
         frame.position.source_offset = this.position.source_offset;
 
         // For remapped code, we add 1 to the line number
-        frame.position.line = this.position.line + @as(i32, @boolToInt(this.remapped));
+        frame.position.line = this.position.line + @as(i32, @intFromBool(this.remapped));
 
         frame.position.line_start = this.position.line_start;
         frame.position.line_stop = this.position.line_stop;
@@ -569,7 +569,7 @@ pub const ZigStackFrame = extern struct {
         frame.position.column_stop = this.position.column_stop;
         frame.position.expression_start = this.position.expression_start;
         frame.position.expression_stop = this.position.expression_stop;
-        frame.scope = @intToEnum(Api.StackFrameScope, @enumToInt(this.code_type));
+        frame.scope = @enumFromInt(Api.StackFrameScope, @intFromEnum(this.code_type));
 
         return frame;
     }
@@ -800,7 +800,7 @@ pub const ZigException = extern struct {
         pub fn zigException(this: *Holder) *ZigException {
             if (!this.loaded) {
                 this.zig_exception = ZigException{
-                    .code = @intToEnum(JSErrorCode, 255),
+                    .code = @enumFromInt(JSErrorCode, 255),
                     .runtime_type = JSRuntimeType.Nothing,
                     .name = ZigString.Empty,
                     .message = ZigString.Empty,
@@ -836,8 +836,8 @@ pub const ZigException = extern struct {
 
         var is_empty = true;
         var api_exception = Api.JsException{
-            .runtime_type = @enumToInt(this.runtime_type),
-            .code = @enumToInt(this.code),
+            .runtime_type = @intFromEnum(this.runtime_type),
+            .code = @intFromEnum(this.code),
         };
 
         if (_name.len > 0) {
@@ -1314,7 +1314,7 @@ pub const ZigConsoleClient = struct {
             };
 
             pub fn getAdvanced(value: JSValue, globalThis: *JSGlobalObject, opts: Options) Result {
-                switch (@enumToInt(value)) {
+                switch (@intFromEnum(value)) {
                     0, 0xa => return Result{
                         .tag = .Undefined,
                     },
@@ -1878,7 +1878,7 @@ pub const ZigConsoleClient = struct {
                     this.map = this.map_node.?.data;
                 }
 
-                var entry = this.map.getOrPut(@enumToInt(value)) catch unreachable;
+                var entry = this.map.getOrPut(@intFromEnum(value)) catch unreachable;
                 if (entry.found_existing) {
                     writer.writeAll(comptime Output.prettyFmt("<r><cyan>[Circular]<r>", enable_ansi_colors));
                     return;
@@ -1887,7 +1887,7 @@ pub const ZigConsoleClient = struct {
 
             defer {
                 if (comptime Format.canHaveCircularReferences()) {
-                    _ = this.map.remove(@enumToInt(value));
+                    _ = this.map.remove(@intFromEnum(value));
                 }
             }
 
@@ -1959,7 +1959,7 @@ pub const ZigConsoleClient = struct {
                             i = -i;
                         }
                         const digits = if (i != 0)
-                            bun.fmt.fastDigitCount(@intCast(usize, i)) + @as(usize, @boolToInt(is_negative))
+                            bun.fmt.fastDigitCount(@intCast(usize, i)) + @as(usize, @intFromBool(is_negative))
                         else
                             1;
                         this.addForNewLine(digits);
@@ -2559,7 +2559,7 @@ pub const ZigConsoleClient = struct {
                             {
                                 this.indent += 1;
                                 defer this.indent -|= 1;
-                                const count_without_children = props_iter.len - @as(usize, @boolToInt(children_prop != null));
+                                const count_without_children = props_iter.len - @as(usize, @intFromBool(children_prop != null));
 
                                 while (props_iter.next()) |prop| {
                                     if (prop.eqlComptime("children"))
@@ -3031,7 +3031,7 @@ pub const ZigConsoleClient = struct {
         var value: std.time.Timer = result.value orelse return;
         // get the duration in microseconds
         // then display it in milliseconds
-        Output.printElapsed(@intToFloat(f64, value.read() / std.time.ns_per_us) / std.time.us_per_ms);
+        Output.printElapsed(@floatFromInt(f64, value.read() / std.time.ns_per_us) / std.time.us_per_ms);
         switch (len) {
             0 => Output.printErrorln("\n", .{}),
             else => Output.printErrorln(" {s}", .{chars[0..len]}),
@@ -3060,7 +3060,7 @@ pub const ZigConsoleClient = struct {
         var value: std.time.Timer = (pending_time_logs.get(id) orelse return) orelse return;
         // get the duration in microseconds
         // then display it in milliseconds
-        Output.printElapsed(@intToFloat(f64, value.read() / std.time.ns_per_us) / std.time.us_per_ms);
+        Output.printElapsed(@floatFromInt(f64, value.read() / std.time.ns_per_us) / std.time.us_per_ms);
         switch (len) {
             0 => Output.printErrorln("\n", .{}),
             else => Output.printErrorln(" {s}", .{chars[0..len]}),

@@ -871,14 +871,14 @@ pub const LineOffsetTable = struct {
             if (column == 0) {
                 line_byte_offset = @truncate(
                     u32,
-                    @ptrToInt(remaining.ptr) - @ptrToInt(contents.ptr),
+                    @intFromPtr(remaining.ptr) - @intFromPtr(contents.ptr),
                 );
             }
 
             if (c > 0x7F and columns_for_non_ascii.items.len == 0) {
-                std.debug.assert(@ptrToInt(
+                std.debug.assert(@intFromPtr(
                     remaining.ptr,
-                ) >= @ptrToInt(
+                ) >= @intFromPtr(
                     contents.ptr,
                 ));
                 // we have a non-ASCII character, so we need to keep track of the
@@ -886,9 +886,9 @@ pub const LineOffsetTable = struct {
                 columns_for_non_ascii.appendAssumeCapacity(column);
                 column_byte_offset = @intCast(
                     u32,
-                    (@ptrToInt(
+                    (@intFromPtr(
                         remaining.ptr,
-                    ) - @ptrToInt(
+                    ) - @intFromPtr(
                         contents.ptr,
                     )) - line_byte_offset,
                 );
@@ -899,7 +899,7 @@ pub const LineOffsetTable = struct {
             if (columns_for_non_ascii.items.len > 0) {
                 const line_bytes_so_far = @intCast(u32, @truncate(
                     u32,
-                    @ptrToInt(remaining.ptr) - @ptrToInt(contents.ptr),
+                    @intFromPtr(remaining.ptr) - @intFromPtr(contents.ptr),
                 )) - line_byte_offset;
                 columns_for_non_ascii.ensureUnusedCapacity((line_bytes_so_far - column_byte_offset) + 1) catch unreachable;
                 while (column_byte_offset <= line_bytes_so_far) : (column_byte_offset += 1) {
@@ -956,7 +956,7 @@ pub const LineOffsetTable = struct {
                 },
                 else => {
                     // Mozilla's "source-map" library counts columns using UTF-16 code units
-                    column += @as(i32, @boolToInt(c > 0xFFFF)) + 1;
+                    column += @as(i32, @intFromBool(c > 0xFFFF)) + 1;
                 },
             }
 
@@ -1032,7 +1032,7 @@ pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: 
         @as(u32, vlq[1].len) +
         @as(u32, vlq[2].len) +
         @as(u32, vlq[3].len);
-    buffer.growIfNeeded(total_len + @as(u32, @boolToInt(needs_comma))) catch unreachable;
+    buffer.growIfNeeded(total_len + @as(u32, @intFromBool(needs_comma))) catch unreachable;
 
     // Put commas in between mappings
     if (needs_comma) {
@@ -1086,7 +1086,7 @@ pub const Chunk = struct {
         }
 
         output.growIfNeeded(
-            filename.len + 2 + (source.contents.len * @as(usize, @boolToInt(include_sources_contents))) + chunk.buffer.list.items.len + 32 + 39 + 29 + 22 + 20,
+            filename.len + 2 + (source.contents.len * @as(usize, @intFromBool(include_sources_contents))) + chunk.buffer.list.items.len + 32 + 39 + 29 + 22 + 20,
         ) catch unreachable;
         try output.append("{\n  \"version\":3,\n  \"sources\": [");
 
@@ -1288,7 +1288,7 @@ pub const Chunk = struct {
 
                         else => {
                             // Mozilla's "source-map" library counts columns using UTF-16 code units
-                            b.generated_column += @as(i32, @boolToInt(c > 0xFFFF)) + 1;
+                            b.generated_column += @as(i32, @intFromBool(c > 0xFFFF)) + 1;
                         },
                     }
                 }

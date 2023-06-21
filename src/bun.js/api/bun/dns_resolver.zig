@@ -123,7 +123,7 @@ const LibInfo = struct {
                 this.vm.uws_event_loop.?,
                 .machport,
                 true,
-                @ptrToInt(request.backend.libinfo.machport),
+                @intFromPtr(request.backend.libinfo.machport),
             ) == .result,
         );
 
@@ -230,7 +230,7 @@ fn addrInfoCount(addrinfo: *std.c.addrinfo) u32 {
     var count: u32 = 1;
     var current: ?*std.c.addrinfo = addrinfo.next;
     while (current != null) : (current = current.?.next) {
-        count += @boolToInt(current.?.addr != null);
+        count += @intFromBool(current.?.addr != null);
     }
     return count;
 }
@@ -793,7 +793,7 @@ pub const GetAddrInfoRequest = struct {
         addr_info: ?*std.c.addrinfo,
         arg: ?*anyopaque,
     ) callconv(.C) void {
-        const this = @intToPtr(*GetAddrInfoRequest, @ptrToInt(arg));
+        const this = @ptrFromInt(*GetAddrInfoRequest, @intFromPtr(arg));
         log("getAddrInfoAsyncCallback: status={d}", .{status});
 
         if (this.backend == .libinfo) {
@@ -846,8 +846,8 @@ pub const GetAddrInfoRequest = struct {
                     err,
                     debug_timer,
                 });
-                if (@enumToInt(err) != 0 or addrinfo == null) {
-                    this.* = .{ .err = @enumToInt(err) };
+                if (@intFromEnum(err) != 0 or addrinfo == null) {
+                    this.* = .{ .err = @intFromEnum(err) };
                     return;
                 }
 

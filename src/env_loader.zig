@@ -52,7 +52,7 @@ pub const Lexer = struct {
     pub inline fn step(this: *Lexer) void {
         const ended = !this.iter.next(&this.cursor);
         if (ended) this.cursor.c = -1;
-        this.current = this.cursor.i + @as(usize, @boolToInt(ended));
+        this.current = this.cursor.i + @as(usize, @intFromBool(ended));
     }
 
     pub fn eatNestedValue(
@@ -73,7 +73,7 @@ pub const Lexer = struct {
                     i += 1;
                     const start = i;
 
-                    const curly_braces_offset = @as(usize, @boolToInt(variable.value[i] == '{'));
+                    const curly_braces_offset = @as(usize, @intFromBool(variable.value[i] == '{'));
                     i += curly_braces_offset;
 
                     while (i < variable.value.len) {
@@ -616,7 +616,7 @@ pub const Loader = struct {
 
                             e_strings[0] = js_ast.E.String{
                                 .data = if (value.len > 0)
-                                    @intToPtr([*]u8, @ptrToInt(value.ptr))[0..value.len]
+                                    @ptrFromInt([*]u8, @intFromPtr(value.ptr))[0..value.len]
                                 else
                                     &[_]u8{},
                             };
@@ -639,7 +639,7 @@ pub const Loader = struct {
                             if (std.mem.indexOfScalar(u64, string_map_hashes, hash)) |key_i| {
                                 e_strings[0] = js_ast.E.String{
                                     .data = if (value.len > 0)
-                                        @intToPtr([*]u8, @ptrToInt(value.ptr))[0..value.len]
+                                        @ptrFromInt([*]u8, @intFromPtr(value.ptr))[0..value.len]
                                     else
                                         &[_]u8{},
                                 };
@@ -665,7 +665,7 @@ pub const Loader = struct {
 
                         e_strings[0] = js_ast.E.String{
                             .data = if (entry.value_ptr.*.len > 0)
-                                @intToPtr([*]u8, @ptrToInt(entry.value_ptr.*.ptr))[0..value.len]
+                                @ptrFromInt([*]u8, @intFromPtr(entry.value_ptr.*.ptr))[0..value.len]
                             else
                                 &[_]u8{},
                         };
@@ -803,17 +803,17 @@ pub const Loader = struct {
 
     pub fn printLoaded(this: *Loader, start: i128) void {
         const count =
-            @intCast(u8, @boolToInt(this.@".env.development.local" != null)) +
-            @intCast(u8, @boolToInt(this.@".env.production.local" != null)) +
-            @intCast(u8, @boolToInt(this.@".env.test.local" != null)) +
-            @intCast(u8, @boolToInt(this.@".env.local" != null)) +
-            @intCast(u8, @boolToInt(this.@".env.development" != null)) +
-            @intCast(u8, @boolToInt(this.@".env.production" != null)) +
-            @intCast(u8, @boolToInt(this.@".env.test" != null)) +
-            @intCast(u8, @boolToInt(this.@".env" != null));
+            @intCast(u8, @intFromBool(this.@".env.development.local" != null)) +
+            @intCast(u8, @intFromBool(this.@".env.production.local" != null)) +
+            @intCast(u8, @intFromBool(this.@".env.test.local" != null)) +
+            @intCast(u8, @intFromBool(this.@".env.local" != null)) +
+            @intCast(u8, @intFromBool(this.@".env.development" != null)) +
+            @intCast(u8, @intFromBool(this.@".env.production" != null)) +
+            @intCast(u8, @intFromBool(this.@".env.test" != null)) +
+            @intCast(u8, @intFromBool(this.@".env" != null));
 
         if (count == 0) return;
-        const elapsed = @intToFloat(f64, (std.time.nanoTimestamp() - start)) / std.time.ns_per_ms;
+        const elapsed = @floatFromInt(f64, (std.time.nanoTimestamp() - start)) / std.time.ns_per_ms;
 
         const all = [_]string{
             ".env.development.local",

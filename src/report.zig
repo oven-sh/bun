@@ -190,7 +190,7 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
         }
 
         if (msg_) |msg| {
-            const msg_ptr = @ptrToInt(msg.ptr);
+            const msg_ptr = @intFromPtr(msg.ptr);
             if (msg_ptr > 0) {
                 const len = @max(@min(msg.len, 1024), 0);
 

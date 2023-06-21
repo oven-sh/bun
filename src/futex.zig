@@ -209,7 +209,7 @@ const DarwinFutex = struct {
         };
 
         if (status >= 0) return;
-        switch (@intToEnum(std.os.E, -status)) {
+        switch (@enumFromInt(std.os.E, -status)) {
             .INTR => {},
             // Address of the futex is paged out. This is unlikely, but possible in theory, and
             // pthread/libdispatch on darwin bother to handle it. In this case we'll return
@@ -231,7 +231,7 @@ const DarwinFutex = struct {
             const status = darwin.__ulock_wake(flags, addr, 0);
 
             if (status >= 0) return;
-            switch (@intToEnum(std.os.E, -status)) {
+            switch (@enumFromInt(std.os.E, -status)) {
                 .INTR => continue, // spurious wake()
                 .FAULT => continue, // address of the lock was paged out
                 .NOENT => return, // nothing was woken up
@@ -244,7 +244,7 @@ const DarwinFutex = struct {
 
 const PosixFutex = struct {
     fn wait(ptr: *const Atomic(u32), expect: u32, timeout: ?u64) error{TimedOut}!void {
-        const address = @ptrToInt(ptr);
+        const address = @intFromPtr(ptr);
         const bucket = Bucket.from(address);
         var waiter: List.Node = undefined;
 
@@ -282,7 +282,7 @@ const PosixFutex = struct {
     }
 
     fn wake(ptr: *const Atomic(u32), num_waiters: u32) void {
-        const address = @ptrToInt(ptr);
+        const address = @intFromPtr(ptr);
         const bucket = Bucket.from(address);
         var can_notify = num_waiters;
 

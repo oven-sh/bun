@@ -443,12 +443,12 @@ pub fn compareString(input: []const u8) !void {
     if (TestEnum2.map.has(str) != TestEnum2.official.has(str)) {
         std.debug.panic("{s} - TestEnum2.map.has(str) ({d}) != TestEnum2.official.has(str) ({d})", .{
             str,
-            @boolToInt(TestEnum2.map.has(str)),
-            @boolToInt(TestEnum2.official.has(str)),
+            @intFromBool(TestEnum2.map.has(str)),
+            @intFromBool(TestEnum2.official.has(str)),
         });
     }
 
-    std.debug.print("For string: \"{s}\" (has a match? {d})\n", .{ str, @boolToInt(TestEnum2.map.has(str)) });
+    std.debug.print("For string: \"{s}\" (has a match? {d})\n", .{ str, @intFromBool(TestEnum2.map.has(str)) });
 
     var i: usize = 0;
     var is_eql = false;

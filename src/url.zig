@@ -290,7 +290,7 @@ pub const URL = struct {
             const trimmed = std.mem.trim(u8, url.path, "/");
             if (trimmed.len > 1) {
                 url.path = url.path[@min(
-                    @max(@ptrToInt(trimmed.ptr) - @ptrToInt(url.path.ptr), 1) - 1,
+                    @max(@intFromPtr(trimmed.ptr) - @intFromPtr(url.path.ptr), 1) - 1,
                     hash_offset,
                 )..];
             } else {
@@ -1126,7 +1126,7 @@ pub const FormData = struct {
                                         break;
                                     },
                                     '\\' => {
-                                        i += @boolToInt(field_value.len > i + 1 and field_value[i + 1] == '"');
+                                        i += @intFromBool(field_value.len > i + 1 and field_value[i + 1] == '"');
                                     },
                                     // the spec requires a end quote, but some browsers don't send it
                                     else => {},

@@ -263,7 +263,7 @@ pub const String = extern struct {
             std.debug.assert(bun.isSliceInBuffer(in, buf));
 
             return Pointer{
-                .off = @truncate(u32, @ptrToInt(in.ptr) - @ptrToInt(buf.ptr)),
+                .off = @truncate(u32, @intFromPtr(in.ptr) - @intFromPtr(buf.ptr)),
                 .len = @truncate(u32, in.len),
             };
         }
@@ -557,10 +557,10 @@ pub const BigExternalString = extern struct {
     }
 
     pub inline fn init(buf: string, in: string, hash: u64) BigExternalString {
-        std.debug.assert(@ptrToInt(buf.ptr) <= @ptrToInt(in.ptr) and ((@ptrToInt(in.ptr) + in.len) <= (@ptrToInt(buf.ptr) + buf.len)));
+        std.debug.assert(@intFromPtr(buf.ptr) <= @intFromPtr(in.ptr) and ((@intFromPtr(in.ptr) + in.len) <= (@intFromPtr(buf.ptr) + buf.len)));
 
         return BigExternalString{
-            .off = @truncate(u32, @ptrToInt(in.ptr) - @ptrToInt(buf.ptr)),
+            .off = @truncate(u32, @intFromPtr(in.ptr) - @intFromPtr(buf.ptr)),
             .len = @truncate(u32, in.len),
             .hash = hash,
         };
@@ -580,19 +580,19 @@ pub const SlicedString = struct {
     }
 
     pub inline fn external(this: SlicedString) ExternalString {
-        if (comptime Environment.allow_assert) std.debug.assert(@ptrToInt(this.buf.ptr) <= @ptrToInt(this.slice.ptr) and ((@ptrToInt(this.slice.ptr) + this.slice.len) <= (@ptrToInt(this.buf.ptr) + this.buf.len)));
+        if (comptime Environment.allow_assert) std.debug.assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
 
         return ExternalString.init(this.buf, this.slice, bun.Wyhash.hash(0, this.slice));
     }
 
     pub inline fn value(this: SlicedString) String {
-        if (comptime Environment.allow_assert) std.debug.assert(@ptrToInt(this.buf.ptr) <= @ptrToInt(this.slice.ptr) and ((@ptrToInt(this.slice.ptr) + this.slice.len) <= (@ptrToInt(this.buf.ptr) + this.buf.len)));
+        if (comptime Environment.allow_assert) std.debug.assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
 
         return String.init(this.buf, this.slice);
     }
 
     pub inline fn sub(this: SlicedString, input: string) SlicedString {
-        std.debug.assert(@ptrToInt(this.buf.ptr) <= @ptrToInt(this.buf.ptr) and ((@ptrToInt(input.ptr) + input.len) <= (@ptrToInt(this.buf.ptr) + this.buf.len)));
+        std.debug.assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.buf.ptr) and ((@intFromPtr(input.ptr) + input.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
         return SlicedString{ .buf = this.buf, .slice = input };
     }
 };
@@ -1814,7 +1814,7 @@ pub const Query = struct {
                 };
 
                 if (!hyphenate) i = rollback;
-                i += @as(usize, @boolToInt(!hyphenate));
+                i += @as(usize, @intFromBool(!hyphenate));
 
                 if (hyphenate) {
                     const second_parsed = Version.parse(sliced.sub(input[i..]), allocator);

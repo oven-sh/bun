@@ -73,7 +73,7 @@ pub const INotify = struct {
             // it includes alignment / padding
             // but it is a sentineled value
             // so we can just trim it to the first null byte
-            return bun.sliceTo(@intToPtr([*:0]u8, @ptrToInt(&this.name_len) + @sizeOf(u32)), 0)[0.. :0];
+            return bun.sliceTo(@ptrFromInt([*:0]u8, @intFromPtr(&this.name_len) + @sizeOf(u32)), 0)[0.. :0];
         }
     };
     pub var inotify_fd: EventListIndex = 0;
@@ -570,8 +570,8 @@ pub fn NewWatcher(comptime ContextType: type) type {
                             else
                                 null;
                             watchevents[watch_event_id].name_off = temp_name_off;
-                            watchevents[watch_event_id].name_len = @as(u8, @boolToInt((event.name_len > 0)));
-                            temp_name_off += @as(u8, @boolToInt((event.name_len > 0)));
+                            watchevents[watch_event_id].name_len = @as(u8, @intFromBool((event.name_len > 0)));
+                            temp_name_off += @as(u8, @intFromBool((event.name_len > 0)));
 
                             watch_event_id += 1;
                         }
@@ -859,7 +859,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     }
                 }
             }
-            try this.watchlist.ensureUnusedCapacity(this.allocator, 1 + @intCast(usize, @boolToInt(parent_watch_item == null)));
+            try this.watchlist.ensureUnusedCapacity(this.allocator, 1 + @intCast(usize, @intFromBool(parent_watch_item == null)));
 
             if (autowatch_parent_dir) {
                 parent_watch_item = parent_watch_item orelse try this.appendDirectoryAssumeCapacity(dir_fd, parent_dir, parent_dir_hash, copy_file_path);

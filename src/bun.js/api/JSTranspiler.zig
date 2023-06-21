@@ -85,7 +85,7 @@ const TranspilerOptions = struct {
 // This is going to be hard to not leak
 pub const TransformTask = struct {
     input_code: ZigString = ZigString.init(""),
-    protected_input_value: JSC.JSValue = @intToEnum(JSC.JSValue, 0),
+    protected_input_value: JSC.JSValue = @enumFromInt(JSC.JSValue, 0),
     output_code: ZigString = ZigString.init(""),
     bundler: Bundler.Bundler = undefined,
     log: logger.Log,
@@ -220,8 +220,8 @@ pub const TransformTask = struct {
 
         finish(this.output_code, this.global, promise);
 
-        if (@enumToInt(this.protected_input_value) != 0) {
-            this.protected_input_value = @intToEnum(JSC.JSValue, 0);
+        if (@intFromEnum(this.protected_input_value) != 0) {
+            this.protected_input_value = @enumFromInt(JSC.JSValue, 0);
         }
         this.deinit();
     }
@@ -611,7 +611,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 while (length_iter.next()) |value| {
                     if (value.isString()) {
                         const length = @truncate(u32, value.getLength(globalThis));
-                        string_count += @as(u32, @boolToInt(length > 0));
+                        string_count += @as(u32, @intFromBool(length > 0));
                         total_name_buf_len += length;
                     }
                 }

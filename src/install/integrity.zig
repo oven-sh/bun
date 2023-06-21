@@ -111,7 +111,7 @@ pub const Integrity = extern struct {
         _,
 
         pub inline fn isSupported(this: Tag) bool {
-            return @enumToInt(this) >= @enumToInt(Tag.sha1) and @enumToInt(this) <= @enumToInt(Tag.sha512);
+            return @intFromEnum(this) >= @intFromEnum(Tag.sha1) and @intFromEnum(this) <= @intFromEnum(Tag.sha512);
         }
 
         pub fn parse(buf: []const u8) Tag {

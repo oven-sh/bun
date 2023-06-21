@@ -211,7 +211,7 @@ pub const Os = struct {
         if (local_bindings.host_processor_info(std.c.mach_host_self(), local_bindings.PROCESSOR_CPU_LOAD_INFO, &num_cpus, @ptrCast(*local_bindings.processor_info_array_t, &info), &info_size) != .SUCCESS) {
             return error.no_processor_info;
         }
-        defer _ = std.c.vm_deallocate(std.c.mach_task_self(), @ptrToInt(info), info_size);
+        defer _ = std.c.vm_deallocate(std.c.mach_task_self(), @intFromPtr(info), info_size);
 
         // Ensure we got the amount of data we expected to guard against buffer overruns
         if (info_size != C.PROCESSOR_CPU_LOAD_INFO_COUNT * num_cpus) {
@@ -380,7 +380,7 @@ pub const Os = struct {
             const err = JSC.SystemError{
                 .message = JSC.ZigString.init("A system error occurred: getifaddrs returned an error"),
                 .code = JSC.ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
-                .errno = @enumToInt(std.os.errno(rc)),
+                .errno = @intFromEnum(std.os.errno(rc)),
                 .syscall = JSC.ZigString.init("getifaddrs"),
             };
 
@@ -461,7 +461,7 @@ pub const Os = struct {
                 var cidr = JSC.JSValue.null;
                 if (maybe_suffix) |suffix| {
                     //NOTE addr_str might not start at buf[0] due to slicing in formatIp
-                    const start = @ptrToInt(addr_str.ptr) - @ptrToInt(&buf[0]);
+                    const start = @intFromPtr(addr_str.ptr) - @intFromPtr(&buf[0]);
                     // Start writing the suffix immediately after the address
                     const suffix_str = std.fmt.bufPrint(buf[start + addr_str.len ..], "/{}", .{suffix}) catch unreachable;
                     // The full cidr value is the address + the suffix

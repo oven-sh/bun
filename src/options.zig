@@ -1699,7 +1699,7 @@ pub const BundleOptions = struct {
                                 opts.node_modules_bundle_pretty_path = try allocator.dupe(u8, pretty_path);
                             }
 
-                            const elapsed = @intToFloat(f64, (std.time.nanoTimestamp() - time_start)) / std.time.ns_per_ms;
+                            const elapsed = @floatFromInt(f64, (std.time.nanoTimestamp() - time_start)) / std.time.ns_per_ms;
                             Output.printElapsed(elapsed);
                             Output.prettyErrorln(
                                 " <b><d>\"{s}\"<r><d> - {d} modules, {d} packages<r>",
@@ -2779,7 +2779,7 @@ pub const PathTemplate = struct {
                 };
 
                 if (count == 0) {
-                    end_len = @ptrToInt(c) - @ptrToInt(remain.ptr);
+                    end_len = @intFromPtr(c) - @intFromPtr(remain.ptr);
                     std.debug.assert(end_len <= remain.len);
                     break;
                 }

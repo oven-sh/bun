@@ -1232,7 +1232,7 @@ pub const Blob = struct {
                                 }).toSystemError();
 
                                 // assert we never end up reusing the memory
-                                std.debug.assert(@ptrToInt(this.system_error.?.path.slice().ptr) != @ptrToInt(path_buffer));
+                                std.debug.assert(@intFromPtr(this.system_error.?.path.slice().ptr) != @intFromPtr(path_buffer));
 
                                 callback(this, null_fd);
                                 return;
@@ -1739,12 +1739,12 @@ pub const Blob = struct {
         };
 
         const unsupported_directory_error = SystemError{
-            .errno = @intCast(c_int, @enumToInt(bun.C.SystemErrno.EISDIR)),
+            .errno = @intCast(c_int, @intFromEnum(bun.C.SystemErrno.EISDIR)),
             .message = ZigString.init("That doesn't work on folders"),
             .syscall = ZigString.init("fstat"),
         };
         const unsupported_non_regular_file_error = SystemError{
-            .errno = @intCast(c_int, @enumToInt(bun.C.SystemErrno.ENOTSUP)),
+            .errno = @intCast(c_int, @intFromEnum(bun.C.SystemErrno.ENOTSUP)),
             .message = ZigString.init("Non-regular files aren't supported yet"),
             .syscall = ZigString.init("fstat"),
         };
@@ -1978,14 +1978,14 @@ pub const Blob = struct {
                             }
 
                             this.system_error = (JSC.Node.Syscall.Error{
-                                .errno = @intCast(JSC.Node.Syscall.Error.Int, @enumToInt(linux.E.INVAL)),
+                                .errno = @intCast(JSC.Node.Syscall.Error.Int, @intFromEnum(linux.E.INVAL)),
                                 .syscall = TryWith.tag.get(use).?,
                             }).toSystemError();
                             return AsyncIO.asError(linux.E.INVAL);
                         },
                         else => |errno| {
                             this.system_error = (JSC.Node.Syscall.Error{
-                                .errno = @intCast(JSC.Node.Syscall.Error.Int, @enumToInt(errno)),
+                                .errno = @intCast(JSC.Node.Syscall.Error.Int, @intFromEnum(errno)),
                                 .syscall = TryWith.tag.get(use).?,
                             }).toSystemError();
                             return AsyncIO.asError(errno);

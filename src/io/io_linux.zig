@@ -428,7 +428,7 @@ pub const errno_map: [135]Errno = brk: {
 };
 pub fn asError(err: anytype) Errno {
     const errnum = if (@typeInfo(@TypeOf(err)) == .Enum)
-        @enumToInt(err)
+        @intFromEnum(err)
     else
         err;
     return switch (errnum) {
@@ -660,7 +660,7 @@ fn flush_completions(self: *IO, wait_nr: u32, timeouts: *usize, etime: *bool) !v
                 if (-cqe.res == os.ETIME) etime.* = true;
                 continue;
             }
-            const completion = @intToPtr(*Completion, @intCast(usize, cqe.user_data));
+            const completion = @ptrFromInt(*Completion, @intCast(usize, cqe.user_data));
             completion.result = cqe.res;
             // We do not run the completion here (instead appending to a linked list) to avoid:
             // * recursion through `flush_submissions()` and `flush_completions()`,
@@ -780,7 +780,7 @@ pub const Completion = struct {
                 );
             },
         }
-        sqe.user_data = @ptrToInt(completion);
+        sqe.user_data = @intFromPtr(completion);
     }
 
     fn complete(completion: *Completion) void {
@@ -1107,9 +1107,9 @@ pub fn accept(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @intToPtr(Context, @ptrToInt(ctx)),
+                    @ptrFromInt(Context, @intFromPtr(ctx)),
                     comp,
-                    @intToPtr(*const AcceptError!os.socket_t, @ptrToInt(res)).*,
+                    @ptrFromInt(*const AcceptError!os.socket_t, @intFromPtr(res)).*,
                 );
             }
         }.wrapper,
@@ -1149,9 +1149,9 @@ pub fn close(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @intToPtr(Context, @ptrToInt(ctx)),
+                    @ptrFromInt(Context, @intFromPtr(ctx)),
                     comp,
-                    @intToPtr(*const CloseError!void, @ptrToInt(res)).*,
+                    @ptrFromInt(*const CloseError!void, @intFromPtr(res)).*,
                 );
             }
         }.wrapper,
@@ -1206,9 +1206,9 @@ pub fn connect(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @intToPtr(Context, @ptrToInt(ctx)),
+                    @ptrFromInt(Context, @intFromPtr(ctx)),
                     comp,
-                    @intToPtr(*const ConnectError!void, @ptrToInt(res)).*,
+                    @ptrFromInt(*const ConnectError!void, @intFromPtr(res)).*,
                 );
             }
         }.wrapper,
@@ -1257,9 +1257,9 @@ pub fn fsync(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @intToPtr(Context, @ptrToInt(ctx)),
+                    @ptrFromInt(Context, @intFromPtr(ctx)),
                     comp,
-                    @intToPtr(*const FsyncError!void, @ptrToInt(res)).*,
+                    @ptrFromInt(*const FsyncError!void, @intFromPtr(res)).*,
                 );
             }
         }.wrapper,
@@ -1303,9 +1303,9 @@ pub fn read(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @intToPtr(Context, @ptrToInt(ctx)),
+                    @ptrFromInt(Context, @intFromPtr(ctx)),
                     comp,
-                    @intToPtr(*const ReadError!usize, @ptrToInt(res)).*,
+                    @ptrFromInt(*const ReadError!usize, @intFromPtr(res)).*,
                 );
             }
         }.wrapper,
@@ -1355,9 +1355,9 @@ pub fn recv(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @intToPtr(Context, @ptrToInt(ctx)),
+                    @ptrFromInt(Context, @intFromPtr(ctx)),
                     comp,
-                    @intToPtr(*const RecvError!usize, @ptrToInt(res)).*,
+                    @ptrFromInt(*const RecvError!usize, @intFromPtr(res)).*,
                 );
             }
         }.wrapper,
@@ -1390,9 +1390,9 @@ pub fn readev(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @intToPtr(Context, @ptrToInt(ctx)),
+                    @ptrFromInt(Context, @intFromPtr(ctx)),
                     comp,
-                    @intToPtr(*const RecvError!usize, @ptrToInt(res)).*,
+                    @ptrFromInt(*const RecvError!usize, @intFromPtr(res)).*,
                 );
             }
         }.wrapper,
@@ -1446,9 +1446,9 @@ pub fn send(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @intToPtr(Context, @ptrToInt(ctx)),
+                    @ptrFromInt(Context, @intFromPtr(ctx)),
                     comp,
-                    @intToPtr(*const SendError!usize, @ptrToInt(res)).*,
+                    @ptrFromInt(*const SendError!usize, @intFromPtr(res)).*,
                 );
             }
         }.wrapper,
@@ -1538,9 +1538,9 @@ pub fn open(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @intToPtr(Context, @ptrToInt(ctx)),
+                    @ptrFromInt(Context, @intFromPtr(ctx)),
                     comp,
-                    @intToPtr(*const OpenError!linux.fd_t, @ptrToInt(res)).*,
+                    @ptrFromInt(*const OpenError!linux.fd_t, @intFromPtr(res)).*,
                 );
             }
         }.wrapper,
@@ -1575,9 +1575,9 @@ pub fn writev(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @intToPtr(Context, @ptrToInt(ctx)),
+                    @ptrFromInt(Context, @intFromPtr(ctx)),
                     comp,
-                    @intToPtr(*const SendError!usize, @ptrToInt(res)).*,
+                    @ptrFromInt(*const SendError!usize, @intFromPtr(res)).*,
                 );
             }
         }.wrapper,
@@ -1613,9 +1613,9 @@ pub fn timeout(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @intToPtr(Context, @ptrToInt(ctx)),
+                    @ptrFromInt(Context, @intFromPtr(ctx)),
                     comp,
-                    @intToPtr(*const TimeoutError!void, @ptrToInt(res)).*,
+                    @ptrFromInt(*const TimeoutError!void, @intFromPtr(res)).*,
                 );
             }
         }.wrapper,
@@ -1662,9 +1662,9 @@ pub fn write(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @intToPtr(Context, @ptrToInt(ctx)),
+                    @ptrFromInt(Context, @intFromPtr(ctx)),
                     comp,
-                    @intToPtr(*const WriteError!usize, @ptrToInt(res)).*,
+                    @ptrFromInt(*const WriteError!usize, @intFromPtr(res)).*,
                 );
             }
         }.wrapper,
@@ -1712,7 +1712,7 @@ const Syscall = struct {
             .NOMEM => return error.SystemResources,
             .PROTONOSUPPORT => return error.ProtocolNotSupported,
             .PROTOTYPE => return error.SocketTypeNotSupported,
-            else => |err| return asError(@enumToInt(err)),
+            else => |err| return asError(@intFromEnum(err)),
         };
     }
 };

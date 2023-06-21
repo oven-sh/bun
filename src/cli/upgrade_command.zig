@@ -344,7 +344,7 @@ pub const UpgradeCommand = struct {
 
                         if (asset.asProperty("size")) |size_| {
                             if (size_.expr.data == .e_number) {
-                                version.size = @intCast(u32, @max(@floatToInt(i32, std.math.ceil(size_.expr.data.e_number.value)), 0));
+                                version.size = @intCast(u32, @max(@intFromFloat(i32, std.math.ceil(size_.expr.data.e_number.value)), 0));
                             }
                         }
                         return version;

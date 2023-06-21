@@ -104,7 +104,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
         count += 1;
     }
 
-    const npm_args = 2 * @intCast(usize, @boolToInt(npm_client != null));
+    const npm_args = 2 * @intCast(usize, @intFromBool(npm_client != null));
     const total = count + npm_args;
     var argv = allocator.alloc(string, total) catch return;
     var proc: std.ChildProcess = undefined;
@@ -491,7 +491,7 @@ pub const CreateCommand = struct {
                     [1]Archive.Plucker{undefined};
 
                 var archive_context = Archive.Context{
-                    .pluckers = pluckers[0..@intCast(usize, @boolToInt(!create_options.skip_package_json))],
+                    .pluckers = pluckers[0..@intCast(usize, @intFromBool(!create_options.skip_package_json))],
                     .all_files = undefined,
                     .overwrite_list = bun.StringArrayHashMap(void).init(ctx.allocator),
                 };
@@ -736,7 +736,7 @@ pub const CreateCommand = struct {
                 if (package_json_expr.asProperty("name")) |name_expr| {
                     if (name_expr.expr.data == .e_string) {
                         var basename = std.fs.path.basename(destination);
-                        name_expr.expr.data.e_string.data = @intToPtr([*]u8, @ptrToInt(basename.ptr))[0..basename.len];
+                        name_expr.expr.data.e_string.data = @ptrFromInt([*]u8, @intFromPtr(basename.ptr))[0..basename.len];
                     }
                 }
 
@@ -778,7 +778,7 @@ pub const CreateCommand = struct {
                             const key = list[i].key.?.data.e_string.data;
 
                             const do_prune = packages.has(key);
-                            prune_count += @intCast(u16, @boolToInt(do_prune));
+                            prune_count += @intCast(u16, @intFromBool(do_prune));
 
                             if (!do_prune) {
                                 list[out_i] = list[i];
@@ -902,14 +902,14 @@ pub const CreateCommand = struct {
                 var needs_to_inject_dev_dependency = needs.react_refresh or needs.bun_macro_relay;
                 var needs_to_inject_dependency = needs.bun_framework_next;
 
-                const dependencies_to_inject_count = @intCast(usize, @boolToInt(needs.bun_framework_next));
+                const dependencies_to_inject_count = @intCast(usize, @intFromBool(needs.bun_framework_next));
 
-                const dev_dependencies_to_inject_count = @intCast(usize, @boolToInt(needs.react_refresh)) +
-                    @intCast(usize, @boolToInt(needs.bun_macro_relay));
+                const dev_dependencies_to_inject_count = @intCast(usize, @intFromBool(needs.react_refresh)) +
+                    @intCast(usize, @intFromBool(needs.bun_macro_relay));
 
-                const new_properties_count = @intCast(usize, @boolToInt(needs_to_inject_dev_dependency and dev_dependencies == null)) +
-                    @intCast(usize, @boolToInt(needs_to_inject_dependency and dependencies == null)) +
-                    @intCast(usize, @boolToInt(needs_bun_prop));
+                const new_properties_count = @intCast(usize, @intFromBool(needs_to_inject_dev_dependency and dev_dependencies == null)) +
+                    @intCast(usize, @intFromBool(needs_to_inject_dependency and dependencies == null)) +
+                    @intCast(usize, @intFromBool(needs_bun_prop));
 
                 if (new_properties_count != 0) {
                     try properties_list.ensureUnusedCapacity(new_properties_count);
@@ -1463,7 +1463,7 @@ pub const CreateCommand = struct {
         }
 
         if (create_options.verbose) {
-            Output.prettyErrorln("Has dependencies? {d}", .{@boolToInt(has_dependencies)});
+            Output.prettyErrorln("Has dependencies? {d}", .{@intFromBool(has_dependencies)});
         }
 
         var npm_client_: ?NPMClient = null;

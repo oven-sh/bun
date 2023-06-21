@@ -540,8 +540,8 @@ pub const EventList = struct {
         }
 
         @atomicStore(bool, &is_stuck, retry_remaining == 0, .Release);
-        stuck_count += @intCast(u8, @boolToInt(retry_remaining == 0));
-        stuck_count *= @intCast(u8, @boolToInt(retry_remaining == 0));
+        stuck_count += @intCast(u8, @intFromBool(retry_remaining == 0));
+        stuck_count *= @intCast(u8, @intFromBool(retry_remaining == 0));
         disabled = disabled or stuck_count > 4;
 
         this.in_buffer.reset();

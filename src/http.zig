@@ -437,7 +437,7 @@ pub const RequestContext = struct {
             .reason = step,
             .cwd = this.bundler.fs.top_level_dir,
             .problems = Api.Problems{
-                .code = @truncate(u16, @errorToInt(err)),
+                .code = @truncate(u16, @intFromError(err)),
                 .name = @errorName(err),
                 .exceptions = exceptions,
                 .build = try log.toAPI(allocator),
@@ -1431,7 +1431,7 @@ pub const RequestContext = struct {
             JavaScript.API.Bun.flushCSSImports();
             vm.flush();
 
-            Output.printElapsed(@intToFloat(f64, (handler.start_timer.read())) / std.time.ns_per_ms);
+            Output.printElapsed(@floatFromInt(f64, (handler.start_timer.read())) / std.time.ns_per_ms);
 
             if (vm.bundler.options.framework.?.display_name.len > 0) {
                 Output.prettyError(
@@ -2106,7 +2106,7 @@ pub const RequestContext = struct {
                             else => {
                                 Output.prettyErrorln(
                                     "<r>[Websocket]: Unknown cmd: <b>{d}<r>. This might be a version mismatch. Try updating your node_modules.bun",
-                                    .{@enumToInt(cmd.kind)},
+                                    .{@intFromEnum(cmd.kind)},
                                 );
                             },
                         }

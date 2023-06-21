@@ -95,7 +95,7 @@ pub const FolderResolution = union(Tag) {
                 .global, .cache_folder => {
                     const path = if (global_or_relative == .global) global_or_relative.global else global_or_relative.cache_folder;
                     if (path.len > 0) {
-                        const offset = path.len -| @as(usize, @boolToInt(path[path.len -| 1] == std.fs.path.sep));
+                        const offset = path.len -| @as(usize, @intFromBool(path[path.len -| 1] == std.fs.path.sep));
                         if (offset > 0)
                             @memcpy(remain[0..offset], path[0..offset]);
                         remain = remain[offset..];

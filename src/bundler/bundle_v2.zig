@@ -1363,8 +1363,8 @@ pub const BundleV2 = struct {
             },
             .err => |err| {
                 log.msgs.append(err) catch unreachable;
-                log.errors += @as(usize, @boolToInt(err.kind == .err));
-                log.warnings += @as(usize, @boolToInt(err.kind == .warn));
+                log.errors += @as(usize, @intFromBool(err.kind == .err));
+                log.warnings += @as(usize, @intFromBool(err.kind == .warn));
 
                 // An error ocurred, prevent spinning the event loop forever
                 _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .Monotonic);
@@ -1519,8 +1519,8 @@ pub const BundleV2 = struct {
             },
             .err => |err| {
                 log.msgs.append(err) catch unreachable;
-                log.errors += @as(usize, @boolToInt(err.kind == .err));
-                log.warnings += @as(usize, @boolToInt(err.kind == .warn));
+                log.errors += @as(usize, @intFromBool(err.kind == .err));
+                log.warnings += @as(usize, @intFromBool(err.kind == .warn));
             },
             .pending, .consumed => unreachable,
         }
@@ -1818,7 +1818,7 @@ pub const BundleV2 = struct {
                 import_record.source_index = Index.invalid;
             }
 
-            estimated_resolve_queue_count += @as(usize, @boolToInt(!(import_record.is_internal or import_record.is_unused or import_record.source_index.isValid())));
+            estimated_resolve_queue_count += @as(usize, @intFromBool(!(import_record.is_internal or import_record.is_unused or import_record.source_index.isValid())));
         }
         var resolve_queue = ResolveQueue.init(this.graph.allocator);
         resolve_queue.ensureTotalCapacity(estimated_resolve_queue_count) catch @panic("OOM");
@@ -4447,13 +4447,13 @@ const LinkerContext = struct {
                 var wrap_cjs_count: usize = 0;
                 var wrap_esm_count: usize = 0;
                 for (exports_kind) |kind| {
-                    cjs_count += @boolToInt(kind == .cjs);
-                    esm_count += @boolToInt(kind == .esm);
+                    cjs_count += @intFromBool(kind == .cjs);
+                    esm_count += @intFromBool(kind == .esm);
                 }
 
                 for (flags) |flag| {
-                    wrap_cjs_count += @boolToInt(flag.wrap == .cjs);
-                    wrap_esm_count += @boolToInt(flag.wrap == .esm);
+                    wrap_cjs_count += @intFromBool(flag.wrap == .cjs);
+                    wrap_esm_count += @intFromBool(flag.wrap == .esm);
                 }
 
                 debug("Step 1: {d} CommonJS modules (+ {d} wrapped), {d} ES modules (+ {d} wrapped)", .{
@@ -4842,7 +4842,7 @@ const LinkerContext = struct {
                     const add_wrapper = wrap != .none;
                     var dependencies = std.ArrayList(js_ast.Dependency).initCapacity(
                         this.allocator,
-                        @as(usize, @boolToInt(force_include_exports)) + @as(usize, @boolToInt(add_wrapper)),
+                        @as(usize, @intFromBool(force_include_exports)) + @as(usize, @intFromBool(add_wrapper)),
                     ) catch unreachable;
                     var resolved_exports_list: *ResolvedExports = &this.graph.meta.items(.resolved_exports)[id];
                     for (aliases) |alias| {
@@ -4873,7 +4873,7 @@ const LinkerContext = struct {
                         }
                     }
 
-                    dependencies.ensureUnusedCapacity(@as(usize, @boolToInt(force_include_exports)) + @as(usize, @boolToInt(add_wrapper))) catch unreachable;
+                    dependencies.ensureUnusedCapacity(@as(usize, @intFromBool(force_include_exports)) + @as(usize, @intFromBool(add_wrapper))) catch unreachable;
 
                     // Ensure "exports" is included if the current output format needs it
                     if (force_include_exports) {
@@ -5169,9 +5169,9 @@ const LinkerContext = struct {
             // 2 statements for every export
             export_aliases.len * 2 +
             // + 1 if there are non-zero exports
-            @as(usize, @boolToInt(export_aliases.len > 0)) +
+            @as(usize, @intFromBool(export_aliases.len > 0)) +
             // + 1 if we need to inject the exports variable
-            @as(usize, @boolToInt(needs_exports_variable));
+            @as(usize, @intFromBool(needs_exports_variable));
 
         var stmts = js_ast.Stmt.Batcher.init(allocator_, stmts_count) catch unreachable;
         defer stmts.done();
@@ -5273,7 +5273,7 @@ const LinkerContext = struct {
 
         var declared_symbols = js_ast.DeclaredSymbol.List{};
         var exports_ref = c.graph.ast.items(.exports_ref)[id];
-        var all_export_stmts: []js_ast.Stmt = stmts.head[0 .. @as(usize, @boolToInt(needs_exports_variable)) + @as(usize, @boolToInt(properties.items.len > 0))];
+        var all_export_stmts: []js_ast.Stmt = stmts.head[0 .. @as(usize, @intFromBool(needs_exports_variable)) + @as(usize, @intFromBool(properties.items.len > 0))];
         stmts.head = stmts.head[all_export_stmts.len..];
         var remaining_stmts = all_export_stmts;
         defer std.debug.assert(remaining_stmts.len == 0); // all must be used
@@ -7701,7 +7701,7 @@ const LinkerContext = struct {
 
                                 // Prefix this module with "__reExport(exports, ns, module.exports)"
                                 const export_star_ref = c.runtimeFunction("__reExport");
-                                var args = try allocator.alloc(Expr, 2 + @as(usize, @boolToInt(module_exports_for_export != null)));
+                                var args = try allocator.alloc(Expr, 2 + @as(usize, @intFromBool(module_exports_for_export != null)));
                                 args[0..2].* = .{
                                     Expr.init(
                                         E.Identifier,
@@ -7799,7 +7799,7 @@ const LinkerContext = struct {
 
                                 // Prefix this module with "__reExport(exports, require(path), module.exports)"
                                 const export_star_ref = c.runtimeFunction("__reExport");
-                                var args = try allocator.alloc(Expr, 2 + @as(usize, @boolToInt(module_exports_for_export != null)));
+                                var args = try allocator.alloc(Expr, 2 + @as(usize, @intFromBool(module_exports_for_export != null)));
                                 args[0..2].* = .{
                                     Expr.init(
                                         E.Identifier,
@@ -8890,7 +8890,7 @@ const LinkerContext = struct {
             bun.default_allocator,
             (if (c.options.source_maps == .external) chunks.len * 2 else chunks.len) + @as(
                 usize,
-                @boolToInt(react_client_components_manifest.len > 0) + c.parse_graph.additional_output_files.items.len,
+                @intFromBool(react_client_components_manifest.len > 0) + c.parse_graph.additional_output_files.items.len,
             ),
         ) catch unreachable;
 

@@ -308,7 +308,7 @@ pub fn IntegerBitSet(comptime size: u16) type {
         }
         fn boolMaskBit(index: usize, value: bool) MaskInt {
             if (MaskInt == u0) return 0;
-            return @as(MaskInt, @boolToInt(value)) << @intCast(ShiftInt, index);
+            return @as(MaskInt, @intFromBool(value)) << @intCast(ShiftInt, index);
         }
     };
 }
@@ -653,7 +653,7 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
             return index >> @bitSizeOf(ShiftInt);
         }
         inline fn boolMaskBit(index: usize, value: bool) MaskInt {
-            return @as(MaskInt, @boolToInt(value)) << @intCast(ShiftInt, index);
+            return @as(MaskInt, @intFromBool(value)) << @intCast(ShiftInt, index);
         }
     };
 }
@@ -1088,7 +1088,7 @@ pub const DynamicBitSetUnmanaged = struct {
         return index >> @bitSizeOf(ShiftInt);
     }
     fn boolMaskBit(index: usize, value: bool) MaskInt {
-        return @as(MaskInt, @boolToInt(value)) << @intCast(ShiftInt, index);
+        return @as(MaskInt, @intFromBool(value)) << @intCast(ShiftInt, index);
     }
     fn numMasks(bit_length: usize) usize {
         return (bit_length + (@bitSizeOf(MaskInt) - 1)) / @bitSizeOf(MaskInt);

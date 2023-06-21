@@ -1210,8 +1210,8 @@ pub const Error = enum(i32) {
     ESERVICE = ARES_ESERVICE,
 
     pub fn initEAI(rc: i32) ?Error {
-        return switch (@intToEnum(std.os.system.EAI, rc)) {
-            @intToEnum(std.os.system.EAI, 0) => return null,
+        return switch (@enumFromInt(std.os.system.EAI, rc)) {
+            @enumFromInt(std.os.system.EAI, 0) => return null,
             .ADDRFAMILY => Error.EBADFAMILY,
             .BADFLAGS => Error.EBADFLAGS, // Invalid hints
             .FAIL => Error.EBADRESP,
@@ -1284,8 +1284,8 @@ pub const Error = enum(i32) {
     pub fn get(rc: i32) ?Error {
         return switch (rc) {
             0 => null,
-            1...ARES_ESERVICE => @intToEnum(Error, rc),
-            -ARES_ESERVICE...-1 => @intToEnum(Error, -rc),
+            1...ARES_ESERVICE => @enumFromInt(Error, rc),
+            -ARES_ESERVICE...-1 => @enumFromInt(Error, -rc),
             else => unreachable,
         };
     }

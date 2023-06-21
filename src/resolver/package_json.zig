@@ -390,7 +390,7 @@ pub const PackageJSON = struct {
                             var count: usize = 0;
                             const items = array.items.slice();
                             for (items) |item| {
-                                count += @boolToInt(item.data == .e_string and item.data.e_string.data.len > 0);
+                                count += @intFromBool(item.data == .e_string and item.data.e_string.data.len > 0);
                             }
                             switch (count) {
                                 0 => {},
@@ -888,10 +888,10 @@ pub const PackageJSON = struct {
 
                 const dependency_groups = comptime brk: {
                     var out_groups: [
-                        @as(usize, @boolToInt(features.dependencies)) +
-                            @as(usize, @boolToInt(features.dev_dependencies)) +
-                            @as(usize, @boolToInt(features.optional_dependencies)) +
-                            @as(usize, @boolToInt(features.peer_dependencies))
+                        @as(usize, @intFromBool(features.dependencies)) +
+                            @as(usize, @intFromBool(features.dev_dependencies)) +
+                            @as(usize, @intFromBool(features.optional_dependencies)) +
+                            @as(usize, @intFromBool(features.peer_dependencies))
                     ]DependencyGroup = undefined;
                     var out_group_i: usize = 0;
                     if (features.dependencies) {
@@ -989,7 +989,7 @@ pub const PackageJSON = struct {
                             const key = prop.key.?.asString(allocator) orelse continue;
                             const value = prop.value.?.asString(allocator) orelse continue;
 
-                            count += @as(usize, @boolToInt(key.len > 0 and value.len > 0));
+                            count += @as(usize, @intFromBool(key.len > 0 and value.len > 0));
                         }
 
                         if (count == 0) break :read_scripts;

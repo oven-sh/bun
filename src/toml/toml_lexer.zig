@@ -166,7 +166,7 @@ pub const Lexer = struct {
     inline fn step(lexer: *Lexer) void {
         lexer.code_point = lexer.nextCodepoint();
 
-        lexer.line_number += @as(u32, @boolToInt(lexer.code_point == '\n'));
+        lexer.line_number += @as(u32, @intFromBool(lexer.code_point == '\n'));
     }
 
     pub const Error = error{
@@ -466,7 +466,7 @@ pub const Lexer = struct {
                 for (text) |c| {
                     number = number * 10 + @intCast(u32, c - '0');
                 }
-                lexer.number = @intToFloat(f64, number);
+                lexer.number = @floatFromInt(f64, number);
             } else {
                 // Parse a double-precision floating-point number;
                 if (std.fmt.parseFloat(f64, text)) |num| {
@@ -1215,5 +1215,5 @@ pub fn isLatin1Identifier(comptime Buffer: type, name: Buffer) bool {
 }
 
 inline fn float64(num: anytype) f64 {
-    return @intToFloat(f64, num);
+    return @floatFromInt(f64, num);
 }

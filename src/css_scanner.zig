@@ -139,7 +139,7 @@ pub const Scanner = struct {
 
     pub fn step(scanner: *Scanner) void {
         scanner.codepoint = scanner.nextCodepoint();
-        scanner.approximate_newline_count += @boolToInt(scanner.codepoint == '\n');
+        scanner.approximate_newline_count += @intFromBool(scanner.codepoint == '\n');
     }
     pub fn raw(_: *Scanner) string {}
 

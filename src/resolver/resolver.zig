@@ -608,7 +608,7 @@ pub const Resolver = struct {
         if (r.debug_logs) |*debug| {
             if (flush_mode == DebugLogs.FlushMode.fail) {
                 try r.log.addRangeDebugWithNotes(null, logger.Range{ .loc = logger.Loc{} }, debug.what, try debug.notes.toOwnedSlice());
-            } else if (@enumToInt(r.log.level) <= @enumToInt(logger.Log.Level.verbose)) {
+            } else if (@intFromEnum(r.log.level) <= @intFromEnum(logger.Log.Level.verbose)) {
                 try r.log.addVerboseWithNotes(null, logger.Loc.Empty, debug.what, try debug.notes.toOwnedSlice());
             }
         }
@@ -1264,7 +1264,7 @@ pub const Resolver = struct {
                 if (NodeFallbackModules.Map.get(import_path_without_node_prefix)) |*fallback_module| {
                     result.path_pair.primary = fallback_module.path;
                     result.module_type = .cjs;
-                    result.package_json = @intToPtr(*PackageJSON, @ptrToInt(fallback_module.package_json));
+                    result.package_json = @ptrFromInt(*PackageJSON, @intFromPtr(fallback_module.package_json));
                     result.is_from_node_modules = true;
                     return .{ .success = result };
                     // "node:*
@@ -1695,7 +1695,7 @@ pub const Resolver = struct {
                 // check the global cache directory for a package.json file.
                 var manager = r.getPackageManager();
                 var dependency_version: Dependency.Version = .{};
-                var dependency_behavior = @intToEnum(Dependency.Behavior, Dependency.Behavior.normal);
+                var dependency_behavior = @enumFromInt(Dependency.Behavior, Dependency.Behavior.normal);
 
                 // const initial_pending_tasks = manager.pending_tasks;
                 var resolved_package_id: Install.PackageID = brk: {
@@ -2628,7 +2628,7 @@ pub const Resolver = struct {
 
                 // Directories must always end in a trailing slash or else various bugs can occur.
                 // This covers "what happens when the trailing"
-                end += @intCast(usize, @boolToInt(safe_path.len > end and end > 0 and safe_path[end - 1] != std.fs.path.sep and safe_path[end] == std.fs.path.sep));
+                end += @intCast(usize, @intFromBool(safe_path.len > end and end > 0 and safe_path[end - 1] != std.fs.path.sep and safe_path[end] == std.fs.path.sep));
                 break :brk safe_path[dir_path_i..end];
             };
 

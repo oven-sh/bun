@@ -135,7 +135,7 @@ pub fn Maybe(comptime ResultType: type) type {
         pub inline fn getErrno(this: @This()) os.E {
             return switch (this) {
                 .result => os.E.SUCCESS,
-                .err => |err| @intToEnum(os.E, err.errno),
+                .err => |err| @enumFromInt(os.E, err.errno),
             };
         }
 
@@ -144,7 +144,7 @@ pub fn Maybe(comptime ResultType: type) type {
                 .SUCCESS => null,
                 else => |err| @This(){
                     // always truncate
-                    .err = .{ .errno = @truncate(Syscall.Error.Int, @enumToInt(err)) },
+                    .err = .{ .errno = @truncate(Syscall.Error.Int, @intFromEnum(err)) },
                 },
             };
         }
@@ -154,7 +154,7 @@ pub fn Maybe(comptime ResultType: type) type {
                 .SUCCESS => null,
                 else => |err| @This(){
                     // always truncate
-                    .err = .{ .errno = @truncate(Syscall.Error.Int, @enumToInt(err)), .syscall = syscall },
+                    .err = .{ .errno = @truncate(Syscall.Error.Int, @intFromEnum(err)), .syscall = syscall },
                 },
             };
         }
@@ -165,7 +165,7 @@ pub fn Maybe(comptime ResultType: type) type {
                 else => |err| @This(){
                     // always truncate
                     .err = .{
-                        .errno = @truncate(Syscall.Error.Int, @enumToInt(err)),
+                        .errno = @truncate(Syscall.Error.Int, @intFromEnum(err)),
                         .syscall = syscall,
                         .fd = @intCast(i32, fd),
                     },
@@ -178,7 +178,7 @@ pub fn Maybe(comptime ResultType: type) type {
                 .SUCCESS => null,
                 else => |err| @This(){
                     // always truncate
-                    .err = .{ .errno = @truncate(Syscall.Error.Int, @enumToInt(err)), .syscall = syscall, .path = bun.asByteSlice(path) },
+                    .err = .{ .errno = @truncate(Syscall.Error.Int, @intFromEnum(err)), .syscall = syscall, .path = bun.asByteSlice(path) },
                 },
             };
         }
@@ -916,7 +916,7 @@ pub fn timeLikeFromJS(ctx: JSC.C.JSContextRef, value_: JSC.JSValue, exception: J
         return null;
     }
 
-    return @floatToInt(TimeLike, @max(@floor(seconds), std.math.minInt(TimeLike)));
+    return @intFromFloat(TimeLike, @max(@floor(seconds), std.math.minInt(TimeLike)));
 }
 
 pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Mode {
@@ -1104,7 +1104,7 @@ pub const FileSystemFlags = enum(Mode) {
     pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue, exception: JSC.C.ExceptionRef) ?FileSystemFlags {
         if (val.isNumber()) {
             const number = val.coerce(i32, ctx);
-            return @intToEnum(FileSystemFlags, @intCast(Mode, @max(number, 0)));
+            return @enumFromInt(FileSystemFlags, @intCast(Mode, @max(number, 0)));
         }
 
         const jsType = val.jsType();
@@ -1160,7 +1160,7 @@ pub const FileSystemFlags = enum(Mode) {
                 return null;
             };
 
-            return @intToEnum(FileSystemFlags, @intCast(Mode, flags));
+            return @enumFromInt(FileSystemFlags, @intCast(Mode, flags));
         }
 
         return null;
@@ -1172,7 +1172,7 @@ pub const Date = enum(u64) {
     _,
 
     pub fn toJS(this: Date, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        const seconds = @floatCast(f64, @intToFloat(f64, @enumToInt(this)) * 1000.0);
+        const seconds = @floatCast(f64, @floatFromInt(f64, @intFromEnum(this)) * 1000.0);
         const unix_timestamp = JSC.JSValue.jsNumber(seconds);
         const array: [1]JSC.C.JSValueRef = .{unix_timestamp.asObjectRef()};
         const obj = JSC.C.JSObjectMakeDate(ctx, 1, &array, exception);
@@ -1219,12 +1219,12 @@ fn StatsDataType(comptime T: type) type {
                 .size = @truncate(T, @intCast(i64, stat_.size)),
                 .blksize = @truncate(T, @intCast(i64, stat_.blksize)),
                 .blocks = @truncate(T, @intCast(i64, stat_.blocks)),
-                .atime_ms = (@intToFloat(f64, @max(atime.tv_sec, 0)) * std.time.ms_per_s) + (@intToFloat(f64, @intCast(usize, @max(atime.tv_nsec, 0))) / std.time.ns_per_ms),
-                .mtime_ms = (@intToFloat(f64, @max(mtime.tv_sec, 0)) * std.time.ms_per_s) + (@intToFloat(f64, @intCast(usize, @max(mtime.tv_nsec, 0))) / std.time.ns_per_ms),
-                .ctime_ms = (@intToFloat(f64, @max(ctime.tv_sec, 0)) * std.time.ms_per_s) + (@intToFloat(f64, @intCast(usize, @max(ctime.tv_nsec, 0))) / std.time.ns_per_ms),
-                .atime = @intToEnum(Date, @intCast(u64, @max(atime.tv_sec, 0))),
-                .mtime = @intToEnum(Date, @intCast(u64, @max(mtime.tv_sec, 0))),
-                .ctime = @intToEnum(Date, @intCast(u64, @max(ctime.tv_sec, 0))),
+                .atime_ms = (@floatFromInt(f64, @max(atime.tv_sec, 0)) * std.time.ms_per_s) + (@floatFromInt(f64, @intCast(usize, @max(atime.tv_nsec, 0))) / std.time.ns_per_ms),
+                .mtime_ms = (@floatFromInt(f64, @max(mtime.tv_sec, 0)) * std.time.ms_per_s) + (@floatFromInt(f64, @intCast(usize, @max(mtime.tv_nsec, 0))) / std.time.ns_per_ms),
+                .ctime_ms = (@floatFromInt(f64, @max(ctime.tv_sec, 0)) * std.time.ms_per_s) + (@floatFromInt(f64, @intCast(usize, @max(ctime.tv_nsec, 0))) / std.time.ns_per_ms),
+                .atime = @enumFromInt(Date, @intCast(u64, @max(atime.tv_sec, 0))),
+                .mtime = @enumFromInt(Date, @intCast(u64, @max(mtime.tv_sec, 0))),
+                .ctime = @enumFromInt(Date, @intCast(u64, @max(ctime.tv_sec, 0))),
 
                 // Linux doesn't include this info in stat
                 // maybe it does in statx, but do you really need birthtime? If you do please file an issue.
@@ -1234,9 +1234,9 @@ fn StatsDataType(comptime T: type) type {
                     @truncate(T, @intCast(i64, if (stat_.birthtime().tv_nsec > 0) (@intCast(usize, stat_.birthtime().tv_nsec) / std.time.ns_per_ms) else 0)),
 
                 .birthtime = if (Environment.isLinux)
-                    @intToEnum(Date, 0)
+                    @enumFromInt(Date, 0)
                 else
-                    @intToEnum(Date, @intCast(u64, @max(stat_.birthtime().tv_sec, 0))),
+                    @enumFromInt(Date, @intCast(u64, @max(stat_.birthtime().tv_sec, 0))),
             };
         }
     };
@@ -1490,14 +1490,14 @@ pub const Emitter = struct {
             pub fn append(this: *List, allocator: std.mem.Allocator, ctx: JSC.C.JSContextRef, listener: Listener) !void {
                 JSC.C.JSValueProtect(ctx, listener.callback.asObjectRef());
                 try this.list.append(allocator, listener);
-                this.once_count +|= @as(u32, @boolToInt(listener.once));
+                this.once_count +|= @as(u32, @intFromBool(listener.once));
             }
 
             pub fn prepend(this: *List, allocator: std.mem.Allocator, ctx: JSC.C.JSContextRef, listener: Listener) !void {
                 JSC.C.JSValueProtect(ctx, listener.callback.asObjectRef());
                 try this.list.ensureUnusedCapacity(allocator, 1);
                 this.list.insertAssumeCapacity(0, listener);
-                this.once_count +|= @as(u32, @boolToInt(listener.once));
+                this.once_count +|= @as(u32, @intFromBool(listener.once));
             }
 
             // removeListener() will remove, at most, one instance of a listener from the
@@ -1510,7 +1510,7 @@ pub const Emitter = struct {
                 for (callbacks, 0..) |item, i| {
                     if (callback.eqlValue(item)) {
                         JSC.C.JSValueUnprotect(ctx, callback.asObjectRef());
-                        this.once_count -|= @as(u32, @boolToInt(this.list.items(.once)[i]));
+                        this.once_count -|= @as(u32, @intFromBool(this.list.items(.once)[i]));
                         this.list.orderedRemove(i);
                         return true;
                     }

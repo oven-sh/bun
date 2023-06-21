@@ -2264,7 +2264,7 @@ pub const Arguments = struct {
             return CopyFile{
                 .src = src,
                 .dest = dest,
-                .mode = @intToEnum(Constants.Copyfile, mode),
+                .mode = @enumFromInt(Constants.Copyfile, mode),
             };
         }
     };
@@ -2498,7 +2498,7 @@ pub const NodeFS = struct {
 
     pub fn access(this: *NodeFS, args: Arguments.Access, comptime _: Flavor) Maybe(Return.Access) {
         var path = args.path.sliceZ(&this.sync_error_buf);
-        const rc = Syscall.system.access(path, @enumToInt(args.mode));
+        const rc = Syscall.system.access(path, @intFromEnum(args.mode));
         return Maybe(Return.Access).errnoSysP(rc, .access, path) orelse Maybe(Return.Access).success;
     }
 
@@ -2528,7 +2528,7 @@ pub const NodeFS = struct {
                 const path = path_.sliceZ(&this.sync_error_buf);
                 switch (comptime flavor) {
                     .sync => {
-                        const fd = switch (Syscall.open(path, @enumToInt(FileSystemFlags.a), 0o000666)) {
+                        const fd = switch (Syscall.open(path, @intFromEnum(FileSystemFlags.a), 0o000666)) {
                             .result => |result| result,
                             .err => |err| return .{ .err = err },
                         };
@@ -2594,7 +2594,7 @@ pub const NodeFS = struct {
                         };
 
                         if (!os.S.ISREG(stat_.mode)) {
-                            return Maybe(Return.CopyFile){ .err = .{ .errno = @enumToInt(C.SystemErrno.ENOTSUP) } };
+                            return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP) } };
                         }
 
                         // 64 KB is about the break-even point for clonefile() to be worth it
@@ -2723,7 +2723,7 @@ pub const NodeFS = struct {
                     };
 
                     if (!os.S.ISREG(stat_.mode)) {
-                        return Maybe(Return.CopyFile){ .err = .{ .errno = @enumToInt(C.SystemErrno.ENOTSUP) } };
+                        return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP) } };
                     }
 
                     var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY;
@@ -3162,15 +3162,15 @@ pub const NodeFS = struct {
             };
         }
         // std.c.getErrno(rc) returns SUCCESS if rc is null so we call std.c._errno() directly
-        const errno = @intToEnum(std.c.E, std.c._errno().*);
-        return .{ .err = Syscall.Error{ .errno = @truncate(Syscall.Error.Int, @enumToInt(errno)), .syscall = .mkdtemp } };
+        const errno = @enumFromInt(std.c.E, std.c._errno().*);
+        return .{ .err = Syscall.Error{ .errno = @truncate(Syscall.Error.Int, @intFromEnum(errno)), .syscall = .mkdtemp } };
     }
     pub fn open(this: *NodeFS, args: Arguments.Open, comptime flavor: Flavor) Maybe(Return.Open) {
         switch (comptime flavor) {
             // The sync version does no allocation except when returning the path
             .sync => {
                 const path = args.path.sliceZ(&this.sync_error_buf);
-                return switch (Syscall.open(path, @enumToInt(args.flags), args.mode)) {
+                return switch (Syscall.open(path, @intFromEnum(args.flags), args.mode)) {
                     .err => |err| .{
                         .err = err.withPath(args.path.slice()),
                     },
@@ -3605,7 +3605,7 @@ pub const NodeFS = struct {
                 break :brk switch (Syscall.openat(
                     args.dirfd,
                     path,
-                    @enumToInt(args.flag) | os.O.NOCTTY,
+                    @intFromEnum(args.flag) | os.O.NOCTTY,
                     args.mode,
                 )) {
                     .err => |err| return .{
@@ -3672,7 +3672,7 @@ pub const NodeFS = struct {
         }
 
         // https://github.com/oven-sh/bun/issues/2931
-        if ((@enumToInt(args.flag) & std.os.O.APPEND) == 0) {
+        if ((@intFromEnum(args.flag) & std.os.O.APPEND) == 0) {
             _ = ftruncateSync(.{ .fd = fd, .len = @truncate(JSC.WebCore.Blob.SizeType, written) });
         }
 
@@ -3819,7 +3819,7 @@ pub const NodeFS = struct {
 
                         while (true) {
                             if (Maybe(Return.Rmdir).errnoSys(bun.C.darwin.removefileat(std.os.AT.FDCWD, dest, null, flags), .rmdir)) |errno| {
-                                switch (@intToEnum(os.E, errno.err.errno)) {
+                                switch (@enumFromInt(os.E, errno.err.errno)) {
                                     .AGAIN, .INTR => continue,
                                     .NOENT => return Maybe(Return.Rmdir).success,
                                     .MLINK => {
@@ -3906,7 +3906,7 @@ pub const NodeFS = struct {
                         }
 
                         if (Maybe(Return.Rm).errnoSys(bun.C.darwin.removefileat(std.os.AT.FDCWD, dest, null, flags), .unlink)) |errno| {
-                            switch (@intToEnum(os.E, errno.err.errno)) {
+                            switch (@enumFromInt(os.E, errno.err.errno)) {
                                 .AGAIN, .INTR => continue,
                                 .NOENT => {
                                     if (args.force) {

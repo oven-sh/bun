@@ -335,7 +335,7 @@ const RouteLoader = struct {
 
         const relative_dir = FileSystem.instance.relative(base_dir, config.dir);
         if (!strings.hasPrefixComptime(relative_dir, "..")) {
-            route_dirname_len = @truncate(u16, relative_dir.len + @as(usize, @boolToInt(config.dir[config.dir.len - 1] != std.fs.path.sep)));
+            route_dirname_len = @truncate(u16, relative_dir.len + @as(usize, @intFromBool(config.dir[config.dir.len - 1] != std.fs.path.sep)));
         }
 
         var this = RouteLoader{
@@ -365,7 +365,7 @@ const RouteLoader = struct {
         var index_id: ?usize = null;
 
         for (this.all_routes.items, 0..) |route, i| {
-            if (@enumToInt(route.kind) > @enumToInt(Pattern.Tag.static) and dynamic_start == null) {
+            if (@intFromEnum(route.kind) > @intFromEnum(Pattern.Tag.static) and dynamic_start == null) {
                 dynamic_start = i;
             }
 
@@ -521,14 +521,14 @@ pub const TinyPtr = packed struct {
     pub fn from(parent: string, in: string) TinyPtr {
         if (in.len == 0 or parent.len == 0) return TinyPtr{};
 
-        const right = @ptrToInt(in.ptr) + in.len;
-        const end = @ptrToInt(parent.ptr) + parent.len;
+        const right = @intFromPtr(in.ptr) + in.len;
+        const end = @intFromPtr(parent.ptr) + parent.len;
         if (comptime Environment.isDebug) {
             std.debug.assert(end < right);
         }
 
         const length = @max(end, right) - right;
-        const offset = @max(@ptrToInt(in.ptr), @ptrToInt(parent.ptr)) - @ptrToInt(parent.ptr);
+        const offset = @max(@intFromPtr(in.ptr), @intFromPtr(parent.ptr)) - @intFromPtr(parent.ptr);
         return TinyPtr{ .offset = @truncate(u16, offset), .len = @truncate(u16, length) };
     }
 };
@@ -605,7 +605,7 @@ pub const Route = struct {
             // - static routes go first because we match those first
             // - dynamic, catch-all, and optional catch all routes are sorted lexicographically, except "[", "]" appear last so that deepest routes are tested first
             // - catch-all & optional catch-all appear at the end because we want to test those at the end.
-            return switch (std.math.order(@enumToInt(a.kind), @enumToInt(b.kind))) {
+            return switch (std.math.order(@intFromEnum(a.kind), @intFromEnum(b.kind))) {
                 .eq => switch (a.kind) {
                     // static + dynamic are sorted alphabetically
                     .static, .dynamic => @call(
@@ -676,7 +676,7 @@ pub const Route = struct {
             buf = buf[base.len..];
             bun.copy(u8, buf, extname);
             buf = buf[extname.len..];
-            break :brk route_file_buf[0 .. @ptrToInt(buf.ptr) - @ptrToInt(&route_file_buf)];
+            break :brk route_file_buf[0 .. @intFromPtr(buf.ptr) - @intFromPtr(&route_file_buf)];
         };
 
         var name = public_path[0 .. public_path.len - extname.len];
@@ -711,7 +711,7 @@ pub const Route = struct {
                 has_uppercase = public_path[name_i] >= 'A' and public_path[name_i] <= 'Z';
             }
 
-            const name_offset = @ptrToInt(name.ptr) - @ptrToInt(public_path.ptr);
+            const name_offset = @intFromPtr(name.ptr) - @intFromPtr(public_path.ptr);
 
             if (has_uppercase) {
                 public_path = FileSystem.DirnameStore.instance.append(@TypeOf(public_path), public_path) catch unreachable;
@@ -1183,7 +1183,7 @@ const Pattern = struct {
         var count: u16 = 0;
         var offset: RoutePathInt = 0;
         std.debug.assert(input.len > 0);
-        var kind: u4 = @enumToInt(Tag.static);
+        var kind: u4 = @intFromEnum(Tag.static);
         const end = @truncate(u32, input.len - 1);
         while (offset < end) {
             const pattern: Pattern = Pattern.initUnhashed(input, offset) catch |err| {
@@ -1247,11 +1247,11 @@ const Pattern = struct {
                 return null;
             };
             offset = pattern.len;
-            kind = @max(@enumToInt(@as(Pattern.Tag, pattern.value)), kind);
-            count += @intCast(u16, @boolToInt(@enumToInt(@as(Pattern.Tag, pattern.value)) > @enumToInt(Pattern.Tag.static)));
+            kind = @max(@intFromEnum(@as(Pattern.Tag, pattern.value)), kind);
+            count += @intCast(u16, @intFromBool(@intFromEnum(@as(Pattern.Tag, pattern.value)) > @intFromEnum(Pattern.Tag.static)));
         }
 
-        return ValidationResult{ .param_count = count, .kind = @intToEnum(Tag, kind) };
+        return ValidationResult{ .param_count = count, .kind = @enumFromInt(Tag, kind) };
     }
 
     pub fn eql(a: Pattern, b: Pattern) bool {
@@ -1369,7 +1369,7 @@ const Pattern = struct {
                         i += 1;
                     }
 
-                    if (@enumToInt(tag) > @enumToInt(Tag.dynamic) and i <= end) return error.CatchAllMustBeAtTheEnd;
+                    if (@intFromEnum(tag) > @intFromEnum(Tag.dynamic) and i <= end) return error.CatchAllMustBeAtTheEnd;
 
                     return Pattern{
                         .len = @min(i + 1, end),

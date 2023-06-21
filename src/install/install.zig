@@ -146,12 +146,12 @@ pub fn ExternalSliceAligned(comptime Type: type, comptime alignment_: ?u29) type
 
         pub fn init(buf: []const Type, in: []const Type) Slice {
             // if (comptime Environment.allow_assert) {
-            //     std.debug.assert(@ptrToInt(buf.ptr) <= @ptrToInt(in.ptr));
-            //     std.debug.assert((@ptrToInt(in.ptr) + in.len) <= (@ptrToInt(buf.ptr) + buf.len));
+            //     std.debug.assert(@intFromPtr(buf.ptr) <= @intFromPtr(in.ptr));
+            //     std.debug.assert((@intFromPtr(in.ptr) + in.len) <= (@intFromPtr(buf.ptr) + buf.len));
             // }
 
             return Slice{
-                .off = @truncate(u32, (@ptrToInt(in.ptr) - @ptrToInt(buf.ptr)) / @sizeOf(Type)),
+                .off = @truncate(u32, (@intFromPtr(in.ptr) - @intFromPtr(buf.ptr)) / @sizeOf(Type)),
                 .len = @truncate(u32, in.len),
             };
         }
@@ -351,7 +351,7 @@ const NetworkTask = struct {
                 },
             );
             header_builder.header_count = 1;
-            header_builder.content = GlobalStringBuilder{ .ptr = @intToPtr([*]u8, @ptrToInt(bun.span(default_headers_buf).ptr)), .len = default_headers_buf.len, .cap = default_headers_buf.len };
+            header_builder.content = GlobalStringBuilder{ .ptr = @ptrFromInt([*]u8, @intFromPtr(bun.span(default_headers_buf).ptr)), .len = default_headers_buf.len, .cap = default_headers_buf.len };
         }
 
         this.response_buffer = try MutableString.init(allocator, 0);
@@ -474,12 +474,12 @@ pub const Features = struct {
 
     pub fn behavior(this: Features) Behavior {
         var out: u8 = 0;
-        out |= @as(u8, @boolToInt(this.dependencies)) << 1;
-        out |= @as(u8, @boolToInt(this.optional_dependencies)) << 2;
-        out |= @as(u8, @boolToInt(this.dev_dependencies)) << 3;
-        out |= @as(u8, @boolToInt(this.peer_dependencies)) << 4;
-        out |= @as(u8, @boolToInt(this.workspaces)) << 5;
-        return @intToEnum(Behavior, out);
+        out |= @as(u8, @intFromBool(this.dependencies)) << 1;
+        out |= @as(u8, @intFromBool(this.optional_dependencies)) << 2;
+        out |= @as(u8, @intFromBool(this.dev_dependencies)) << 3;
+        out |= @as(u8, @intFromBool(this.peer_dependencies)) << 4;
+        out |= @as(u8, @intFromBool(this.workspaces)) << 5;
+        return @enumFromInt(Behavior, out);
     }
 
     pub const main = Features{
@@ -3752,7 +3752,7 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.isVerbose()) {
                         Output.prettyError("    ", .{});
-                        Output.printElapsed(@intToFloat(f64, task.http.elapsed) / std.time.ns_per_ms);
+                        Output.printElapsed(@floatFromInt(f64, task.http.elapsed) / std.time.ns_per_ms);
                         Output.prettyError("\n <d>Downloaded <r><green>{s}<r> versions\n", .{name.slice()});
                         Output.flush();
                     }
@@ -3886,7 +3886,7 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.isVerbose()) {
                         Output.prettyError("    ", .{});
-                        Output.printElapsed(@floatCast(f64, @intToFloat(f64, task.http.elapsed) / std.time.ns_per_ms));
+                        Output.printElapsed(@floatCast(f64, @floatFromInt(f64, task.http.elapsed) / std.time.ns_per_ms));
                         Output.prettyError(" <d>Downloaded <r><green>{s}<r> tarball\n", .{extract.name.slice()});
                         Output.flush();
                     }
@@ -6617,7 +6617,7 @@ pub const PackageManager = struct {
                         @memcpy(remain[0..folder.len], folder);
                         remain = remain[folder.len..];
                         remain[0] = 0;
-                        const len = @ptrToInt(remain.ptr) - @ptrToInt(ptr);
+                        const len = @intFromPtr(remain.ptr) - @intFromPtr(ptr);
                         installer.cache_dir_subpath = this.folder_path_buf[0..len :0];
                         installer.cache_dir = directory;
                     }
@@ -6626,7 +6626,7 @@ pub const PackageManager = struct {
             }
 
             const needs_install = this.force_install or this.skip_verify_installed_version_number or !installer.verify(resolution, buf);
-            this.summary.skipped += @as(u32, @boolToInt(!needs_install));
+            this.summary.skipped += @as(u32, @intFromBool(!needs_install));
 
             if (needs_install) {
                 const result: PackageInstall.Result = switch (resolution.tag) {
@@ -6637,7 +6637,7 @@ pub const PackageManager = struct {
                 switch (result) {
                     .success => {
                         const is_duplicate = this.successfully_installed.isSet(package_id);
-                        this.summary.success += @as(u32, @boolToInt(!is_duplicate));
+                        this.summary.success += @as(u32, @intFromBool(!is_duplicate));
                         this.successfully_installed.set(package_id);
 
                         if (comptime log_level.showProgress()) {

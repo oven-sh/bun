@@ -431,9 +431,9 @@ pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptim
 pub fn dlsym(comptime Type: type, comptime name: [:0]const u8) ?Type {
     const handle_getter = struct {
         const RTLD_DEFAULT = if (bun.Environment.isMac)
-            @intToPtr(?*anyopaque, @bitCast(usize, @as(isize, -2)))
+            @ptrFromInt(?*anyopaque, @bitCast(usize, @as(isize, -2)))
         else
-            @intToPtr(?*anyopaque, @as(usize, 0));
+            @ptrFromInt(?*anyopaque, @as(usize, 0));
 
         pub fn getter() ?*anyopaque {
             return RTLD_DEFAULT;

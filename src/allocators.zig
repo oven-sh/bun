@@ -6,14 +6,14 @@ const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const constStrToU8 = @import("root").bun.constStrToU8;
 const bun = @import("root").bun;
 pub fn isSliceInBuffer(slice: anytype, buffer: anytype) bool {
-    return (@ptrToInt(&buffer) <= @ptrToInt(slice.ptr) and (@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(buffer) + buffer.len));
+    return (@intFromPtr(&buffer) <= @intFromPtr(slice.ptr) and (@intFromPtr(slice.ptr) + slice.len) <= (@intFromPtr(buffer) + buffer.len));
 }
 
 pub fn sliceRange(slice: []const u8, buffer: []const u8) ?[2]u32 {
-    return if (@ptrToInt(buffer.ptr) <= @ptrToInt(slice.ptr) and
-        (@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(buffer.ptr) + buffer.len))
+    return if (@intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and
+        (@intFromPtr(slice.ptr) + slice.len) <= (@intFromPtr(buffer.ptr) + buffer.len))
         [2]u32{
-            @truncate(u32, @ptrToInt(slice.ptr) - @ptrToInt(buffer.ptr)),
+            @truncate(u32, @intFromPtr(slice.ptr) - @intFromPtr(buffer.ptr)),
             @truncate(u32, slice.len),
         }
     else

@@ -259,9 +259,9 @@ pub const OperatingSystem = enum(u16) {
 
     pub fn isMatch(this: OperatingSystem) bool {
         if (comptime Environment.isLinux) {
-            return (@enumToInt(this) & linux) != 0;
+            return (@intFromEnum(this) & linux) != 0;
         } else if (comptime Environment.isMac) {
-            return (@enumToInt(this) & darwin) != 0;
+            return (@intFromEnum(this) & darwin) != 0;
         } else {
             return false;
         }
@@ -282,7 +282,7 @@ pub const OperatingSystem = enum(u16) {
         if (str.len == 0) {
             return this_;
         }
-        const this = @enumToInt(this_);
+        const this = @intFromEnum(this_);
 
         const is_not = str[0] == '!';
         const offset: usize = if (str[0] == '!') 1 else 0;
@@ -290,9 +290,9 @@ pub const OperatingSystem = enum(u16) {
         const field: u16 = NameMap.get(str[offset..]) orelse return this_;
 
         if (is_not) {
-            return @intToEnum(OperatingSystem, this & ~field);
+            return @enumFromInt(OperatingSystem, this & ~field);
         } else {
-            return @intToEnum(OperatingSystem, this | field);
+            return @enumFromInt(OperatingSystem, this | field);
         }
     }
 };
@@ -334,9 +334,9 @@ pub const Architecture = enum(u16) {
 
     pub fn isMatch(this: Architecture) bool {
         if (comptime Environment.isAarch64) {
-            return (@enumToInt(this) & arm64) != 0;
+            return (@intFromEnum(this) & arm64) != 0;
         } else if (comptime Environment.isX64) {
-            return (@enumToInt(this) & x64) != 0;
+            return (@intFromEnum(this) & x64) != 0;
         } else {
             return false;
         }
@@ -346,7 +346,7 @@ pub const Architecture = enum(u16) {
         if (str.len == 0) {
             return this_;
         }
-        const this = @enumToInt(this_);
+        const this = @intFromEnum(this_);
 
         const is_not = str[0] == '!';
         const offset: usize = if (str[0] == '!') 1 else 0;
@@ -355,9 +355,9 @@ pub const Architecture = enum(u16) {
         const field: u16 = NameMap.get(input) orelse return this_;
 
         if (is_not) {
-            return @intToEnum(Architecture, this & ~field);
+            return @enumFromInt(Architecture, this & ~field);
         } else {
-            return @intToEnum(Architecture, this | field);
+            return @enumFromInt(Architecture, this | field);
         }
     }
 };
@@ -851,7 +851,7 @@ pub const PackageManifest = struct {
                         pre_versions_len += 1;
                         extern_string_count += 1;
                     } else {
-                        extern_string_count += @as(usize, @boolToInt(std.mem.indexOfScalar(u8, version_name, '+') != null));
+                        extern_string_count += @as(usize, @intFromBool(std.mem.indexOfScalar(u8, version_name, '+') != null));
                         release_versions_len += 1;
                     }
 
@@ -862,7 +862,7 @@ pub const PackageManifest = struct {
                             if (tarball_prop.data == .e_string) {
                                 const tarball = tarball_prop.data.e_string.slice(allocator);
                                 string_builder.count(tarball);
-                                tarball_urls_count += @as(usize, @boolToInt(tarball.len > 0));
+                                tarball_urls_count += @as(usize, @intFromBool(tarball.len > 0));
                             }
                         }
                     }

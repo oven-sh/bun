@@ -42,7 +42,7 @@ const HiveArray = @import("./hive_array.zig").HiveArray;
 const Batch = NetworkThread.Batch;
 const TaggedPointerUnion = @import("./tagged_pointer.zig").TaggedPointerUnion;
 const DeadSocket = opaque {};
-var dead_socket = @intToPtr(*DeadSocket, 1);
+var dead_socket = @ptrFromInt(*DeadSocket, 1);
 //TODO: this needs to be freed when Worker Threads are implemented
 var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, *uws.Socket).init(bun.default_allocator);
 var async_http_id: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0);
@@ -208,7 +208,7 @@ const ProxyTunnel = struct {
                 _ = BoringSSL.BIO_push(out_bio, proxy_bio);
             } else {
                 // socket output bio for non-TLS -> TLS
-                var fd = @intCast(c_int, @ptrToInt(socket.getNativeHandle()));
+                var fd = @intCast(c_int, @intFromPtr(socket.getNativeHandle()));
                 out_bio = BoringSSL.BIO_new_fd(fd, BoringSSL.BIO_NOCLOSE);
             }
 
@@ -306,7 +306,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             HTTPClient,
             PooledSocket,
         });
-        const ssl_int = @as(c_int, @boolToInt(ssl));
+        const ssl_int = @as(c_int, @intFromBool(ssl));
 
         const MAX_KEEPALIVE_HOSTNAME = 128;
 
@@ -338,7 +338,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
         /// Attempt to keep the socket alive by reusing it for another request.
         /// If no space is available, close the socket.
         pub fn releaseSocket(this: *@This(), socket: HTTPSocket, hostname: []const u8, port: u16) void {
-            log("releaseSocket(0x{})", .{bun.fmt.hexIntUpper(@ptrToInt(socket.socket))});
+            log("releaseSocket(0x{})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
 
             if (comptime Environment.allow_assert) {
                 std.debug.assert(!socket.isClosed());
@@ -359,7 +359,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     pending.hostname_len = @truncate(u8, hostname.len);
                     pending.port = port;
 
-                    log("Keep-Alive release {s}:{d} (0x{})", .{ hostname, port, @ptrToInt(socket.socket) });
+                    log("Keep-Alive release {s}:{d} (0x{})", .{ hostname, port, @intFromPtr(socket.socket) });
                     return;
                 }
             }
@@ -2583,8 +2583,8 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
     if (this.state.encoding.isCompressed()) {
         var body_buffer = this.state.body_out_str.?;
         if (body_buffer.list.capacity == 0) {
-            const min = @min(@ceil(@intToFloat(f64, incoming_data.len) * 1.5), @as(f64, 1024 * 1024 * 2));
-            try body_buffer.growBy(@max(@floatToInt(usize, min), 32));
+            const min = @min(@ceil(@floatFromInt(f64, incoming_data.len) * 1.5), @as(f64, 1024 * 1024 * 2));
+            try body_buffer.growBy(@max(@intFromFloat(usize, min), 32));
         }
 
         try ZlibPool.decompress(incoming_data, body_buffer, default_allocator);
@@ -2872,7 +2872,7 @@ pub fn handleResponseMetadata(
                             return error.UnsupportedRedirectProtocol;
                         }
 
-                        if ((protocol_name.len * @as(usize, @boolToInt(is_protocol_relative))) + location.len > url_buf.data.len) {
+                        if ((protocol_name.len * @as(usize, @intFromBool(is_protocol_relative))) + location.len > url_buf.data.len) {
                             return error.RedirectURLTooLong;
                         }
 

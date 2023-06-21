@@ -1333,7 +1333,7 @@ fn NewPrinter(
                 // In JavaScript, numbers are represented as 64 bit floats
                 // However, they could also be signed or unsigned int 32 (when doing bit shifts)
                 // In this case, it's always going to unsigned since that conversion has already happened.
-                const val = @floatToInt(u64, float);
+                const val = @intFromFloat(u64, float);
                 switch (val) {
                     0 => {
                         p.print("0");
@@ -2395,7 +2395,7 @@ fn NewPrinter(
 
                     // This is more efficient than creating a new Part just for the JSX auto imports when bundling
                     if (comptime rewrite_esm_to_cjs) {
-                        if (@ptrToInt(p.options.prepend_part_key) > 0 and @ptrToInt(e.body.stmts.ptr) == @ptrToInt(p.options.prepend_part_key)) {
+                        if (@intFromPtr(p.options.prepend_part_key) > 0 and @intFromPtr(e.body.stmts.ptr) == @intFromPtr(p.options.prepend_part_key)) {
                             p.printTwoBlocksInOne(e.body.loc, e.body.stmts, p.options.prepend_part_value.?.stmts);
                             wasPrinted = true;
                         }
@@ -2527,7 +2527,7 @@ fn NewPrinter(
                     p.print("{");
                     const props = expr.data.e_object.properties.slice();
                     if (props.len > 0) {
-                        p.options.indent += @as(usize, @boolToInt(!e.is_single_line));
+                        p.options.indent += @as(usize, @intFromBool(!e.is_single_line));
 
                         if (e.is_single_line) {
                             p.printSpace();
@@ -3465,7 +3465,7 @@ fn NewPrinter(
                 .b_array => |b| {
                     p.print("[");
                     if (b.items.len > 0) {
-                        p.options.indent += @as(usize, @boolToInt(!b.is_single_line));
+                        p.options.indent += @as(usize, @intFromBool(!b.is_single_line));
 
                         for (b.items, 0..) |*item, i| {
                             if (i != 0) {
@@ -3508,7 +3508,7 @@ fn NewPrinter(
                     p.print("{");
                     if (b.properties.len > 0) {
                         p.options.indent +=
-                            @as(usize, @boolToInt(!b.is_single_line));
+                            @as(usize, @intFromBool(!b.is_single_line));
 
                         for (b.properties, 0..) |*property, i| {
                             if (i != 0) {
@@ -5561,13 +5561,13 @@ pub const BufferWriter = struct {
     }
     pub fn writeByte(ctx: *BufferWriter, byte: u8) anyerror!usize {
         try ctx.buffer.appendChar(byte);
-        ctx.approximate_newline_count += @boolToInt(byte == '\n');
+        ctx.approximate_newline_count += @intFromBool(byte == '\n');
         ctx.last_bytes = .{ ctx.last_bytes[1], byte };
         return 1;
     }
     pub fn writeAll(ctx: *BufferWriter, bytes: anytype) anyerror!usize {
         try ctx.buffer.append(bytes);
-        ctx.approximate_newline_count += @boolToInt(bytes.len > 0 and bytes[bytes.len - 1] == '\n');
+        ctx.approximate_newline_count += @intFromBool(bytes.len > 0 and bytes[bytes.len - 1] == '\n');
 
         if (bytes.len >= 2) {
             ctx.last_bytes = bytes[bytes.len - 2 ..][0..2].*;

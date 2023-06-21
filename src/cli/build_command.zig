@@ -356,7 +356,7 @@ pub const BuildCommand = struct {
 
                         Output.pretty("{s}", .{padding_buf[0..@intCast(usize, compiled_elapsed_digit_count)]});
 
-                        Output.printElapsedStdoutTrim(@intToFloat(f64, compiled_elapsed));
+                        Output.printElapsedStdoutTrim(@floatFromInt(f64, compiled_elapsed));
 
                         Output.prettyln(" <green>compile<r>  <b><blue>{s}<r>", .{
                             outfile,
@@ -450,7 +450,7 @@ pub const BuildCommand = struct {
                         try writer.writeByteNTimes(' ', 2);
                         try writer.writeAll(rel_path);
                         try writer.writeByteNTimes(' ', padding_count);
-                        const size = @intToFloat(f64, f.size) / 1000.0;
+                        const size = @floatFromInt(f64, f.size) / 1000.0;
                         try std.fmt.formatFloatDecimal(size, .{ .precision = 2 }, writer);
                         try writer.writeAll(" KB\n");
                     }
@@ -460,7 +460,7 @@ pub const BuildCommand = struct {
                 if (write_summary and log.errors == 0) {
                     Output.prettyln("\n", .{});
                     Output.printElapsedStdoutTrim(
-                        @intToFloat(f64, (@divTrunc(@truncate(i64, std.time.nanoTimestamp() - bun.CLI.start_time), @as(i64, std.time.ns_per_ms)))),
+                        @floatFromInt(f64, (@divTrunc(@truncate(i64, std.time.nanoTimestamp() - bun.CLI.start_time), @as(i64, std.time.ns_per_ms)))),
                     );
                     if (this_bundler.options.transform_only) {
                         Output.prettyln(" <green>transpile<r>", .{});
@@ -505,7 +505,7 @@ fn printSummary(bundled_end: i128, minify_duration: u64, minified: bool, input_c
     };
     if (minified) {
         Output.pretty("{s}", .{padding_buf[0..@intCast(usize, minified_digit_count)]});
-        Output.printElapsedStdoutTrim(@intToFloat(f64, minify_duration));
+        Output.printElapsedStdoutTrim(@floatFromInt(f64, minify_duration));
         const output_size = brk: {
             var total_size: u64 = 0;
             for (output_files) |f| {
@@ -547,7 +547,7 @@ fn printSummary(bundled_end: i128, minify_duration: u64, minified: bool, input_c
     };
 
     Output.pretty("{s}", .{padding_buf[0..@intCast(usize, bundle_elapsed_digit_count)]});
-    Output.printElapsedStdoutTrim(@intToFloat(f64, bundle_elapsed));
+    Output.printElapsedStdoutTrim(@floatFromInt(f64, bundle_elapsed));
     Output.prettyln(
         "  <green>bundle<r>  {d} modules",
         .{

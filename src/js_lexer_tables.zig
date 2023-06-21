@@ -136,11 +136,11 @@ pub const T = enum(u8) {
     t_with,
 
     pub fn isAssign(self: T) bool {
-        return @enumToInt(self) >= @enumToInt(T.t_ampersand_ampersand_equals) and @enumToInt(self) <= @enumToInt(T.t_slash_equals);
+        return @intFromEnum(self) >= @intFromEnum(T.t_ampersand_ampersand_equals) and @intFromEnum(self) <= @intFromEnum(T.t_slash_equals);
     }
 
     pub fn isReservedWord(self: T) bool {
-        return @enumToInt(self) >= @enumToInt(T.t_break) and @enumToInt(self) <= @enumToInt(T.t_with);
+        return @intFromEnum(self) >= @intFromEnum(T.t_break) and @intFromEnum(self) <= @intFromEnum(T.t_with);
     }
 
     pub fn isString(self: T) bool {
@@ -155,7 +155,7 @@ pub const T = enum(u8) {
     }
 
     pub fn isCloseBraceOrEOF(self: T) bool {
-        return @enumToInt(self) <= @enumToInt(T.t_close_brace);
+        return @intFromEnum(self) <= @intFromEnum(T.t_close_brace);
     }
 };
 

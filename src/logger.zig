@@ -650,8 +650,8 @@ pub const Log = struct {
         var warnings: u32 = 0;
         var errors: u32 = 0;
         for (this.msgs.items) |msg| {
-            errors += @intCast(u32, @boolToInt(msg.kind == .err));
-            warnings += @intCast(u32, @boolToInt(msg.kind == .warn));
+            errors += @intCast(u32, @intFromBool(msg.kind == .err));
+            warnings += @intCast(u32, @intFromBool(msg.kind == .warn));
         }
 
         return Api.Log{
@@ -669,7 +669,7 @@ pub const Log = struct {
         err,
 
         pub fn atLeast(this: Level, other: Level) bool {
-            return @enumToInt(this) <= @enumToInt(other);
+            return @intFromEnum(this) <= @intFromEnum(other);
         }
 
         pub const label: std.EnumArray(Level, string) = brk: {
@@ -760,7 +760,7 @@ pub const Log = struct {
             const msg: Msg = msg_;
             if (msg.notes) |notes| {
                 for (notes) |note| {
-                    notes_count += @intCast(usize, @boolToInt(note.text.len > 0));
+                    notes_count += @intCast(usize, @intFromBool(note.text.len > 0));
                 }
             }
         }

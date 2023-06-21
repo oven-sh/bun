@@ -386,7 +386,7 @@ pub const Response = struct {
 
         const json_value = args.nextEat() orelse JSC.JSValue.zero;
 
-        if (@enumToInt(json_value) != 0) {
+        if (@intFromEnum(json_value) != 0) {
             var zig_str = JSC.ZigString.init("");
             // calling JSON.stringify on an empty string adds extra quotes
             // so this is correct
@@ -448,7 +448,7 @@ pub const Response = struct {
         const url_string_value = args.nextEat() orelse JSC.JSValue.zero;
         var url_string = ZigString.init("");
 
-        if (@enumToInt(url_string_value) != 0) {
+        if (@intFromEnum(url_string_value) != 0) {
             url_string = url_string_value.getZigString(globalThis.ptr());
         }
         var url_string_slice = url_string.toSlice(getAllocator(globalThis));
@@ -1695,7 +1695,7 @@ pub const FetchEvent = struct {
 
         defer {
             if (!VirtualMachine.get().had_errors) {
-                Output.printElapsed(@intToFloat(f64, (request_context.timer.lap())) / std.time.ns_per_ms);
+                Output.printElapsed(@floatFromInt(f64, (request_context.timer.lap())) / std.time.ns_per_ms);
 
                 Output.prettyError(
                     " <b>{s}<r><d> - <b>{d}<r> <d>transpiled, <d><b>{d}<r> <d>imports<r>\n",

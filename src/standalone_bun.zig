@@ -468,7 +468,7 @@ pub const StandaloneModuleGraph = struct {
         // at the very least
         // if you have not a ton of code, we only do a single read() call
         if (Environment.allow_assert or offsets.byte_count > 1024 * 3) {
-            const offset_from_end = trailer_bytes.len - (@ptrToInt(end) - @ptrToInt(@as([]u8, &trailer_bytes).ptr));
+            const offset_from_end = trailer_bytes.len - (@intFromPtr(end) - @intFromPtr(@as([]u8, &trailer_bytes).ptr));
             std.os.lseek_END(self_exe, -@intCast(i64, offset_from_end + offsets.byte_count)) catch return null;
 
             if (comptime Environment.allow_assert) {

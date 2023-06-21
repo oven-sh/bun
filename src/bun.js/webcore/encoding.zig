@@ -659,7 +659,7 @@ pub const TextDecoder = struct {
             },
 
             EncodingLabel.@"UTF-16LE" => {
-                if (std.mem.isAligned(@ptrToInt(buffer_slice.ptr), @alignOf([*]const u16))) {
+                if (std.mem.isAligned(@intFromPtr(buffer_slice.ptr), @alignOf([*]const u16))) {
                     return this.decodeUTF16WithAlignment([]const u16, @alignCast(2, std.mem.bytesAsSlice(u16, buffer_slice)), globalThis);
                 }
 
@@ -701,7 +701,7 @@ pub const TextDecoder = struct {
 
 pub const Encoder = struct {
     export fn Bun__encoding__writeLatin1(input: [*]const u8, len: usize, to: [*]u8, to_len: usize, encoding: u8) usize {
-        return switch (@intToEnum(JSC.Node.Encoding, encoding)) {
+        return switch (@enumFromInt(JSC.Node.Encoding, encoding)) {
             .utf8 => writeU8(input, len, to, to_len, .utf8),
             .latin1 => writeU8(input, len, to, to_len, .ascii),
             .ascii => writeU8(input, len, to, to_len, .ascii),
@@ -714,7 +714,7 @@ pub const Encoder = struct {
         } catch 0;
     }
     export fn Bun__encoding__writeUTF16(input: [*]const u16, len: usize, to: [*]u8, to_len: usize, encoding: u8) usize {
-        return switch (@intToEnum(JSC.Node.Encoding, encoding)) {
+        return switch (@enumFromInt(JSC.Node.Encoding, encoding)) {
             .utf8 => writeU16(input, len, to, to_len, .utf8, false),
             .latin1 => writeU16(input, len, to, to_len, .ascii, false),
             .ascii => writeU16(input, len, to, to_len, .ascii, false),
@@ -727,7 +727,7 @@ pub const Encoder = struct {
         } catch 0;
     }
     export fn Bun__encoding__byteLengthLatin1(input: [*]const u8, len: usize, encoding: u8) usize {
-        return switch (@intToEnum(JSC.Node.Encoding, encoding)) {
+        return switch (@enumFromInt(JSC.Node.Encoding, encoding)) {
             .utf8 => byteLengthU8(input, len, .utf8),
             .latin1 => byteLengthU8(input, len, .ascii),
             .ascii => byteLengthU8(input, len, .ascii),
@@ -740,7 +740,7 @@ pub const Encoder = struct {
         };
     }
     export fn Bun__encoding__byteLengthUTF16(input: [*]const u16, len: usize, encoding: u8) usize {
-        return switch (@intToEnum(JSC.Node.Encoding, encoding)) {
+        return switch (@enumFromInt(JSC.Node.Encoding, encoding)) {
             .utf8 => byteLengthU16(input, len, .utf8),
             .latin1 => byteLengthU16(input, len, .ascii),
             .ascii => byteLengthU16(input, len, .ascii),
@@ -753,7 +753,7 @@ pub const Encoder = struct {
         };
     }
     export fn Bun__encoding__constructFromLatin1(globalObject: *JSGlobalObject, input: [*]const u8, len: usize, encoding: u8) JSValue {
-        var slice = switch (@intToEnum(JSC.Node.Encoding, encoding)) {
+        var slice = switch (@enumFromInt(JSC.Node.Encoding, encoding)) {
             .hex => constructFromU8(input, len, .hex),
             .ascii => constructFromU8(input, len, .ascii),
             .base64url => constructFromU8(input, len, .base64url),
@@ -766,7 +766,7 @@ pub const Encoder = struct {
         return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromUTF16(globalObject: *JSGlobalObject, input: [*]const u16, len: usize, encoding: u8) JSValue {
-        var slice = switch (@intToEnum(JSC.Node.Encoding, encoding)) {
+        var slice = switch (@enumFromInt(JSC.Node.Encoding, encoding)) {
             .base64 => constructFromU16(input, len, .base64),
             .hex => constructFromU16(input, len, .hex),
             .base64url => constructFromU16(input, len, .base64url),
@@ -785,7 +785,7 @@ pub const Encoder = struct {
     }
 
     export fn Bun__encoding__toString(input: [*]const u8, len: usize, globalObject: *JSC.JSGlobalObject, encoding: u8) JSValue {
-        return switch (@intToEnum(JSC.Node.Encoding, encoding)) {
+        return switch (@enumFromInt(JSC.Node.Encoding, encoding)) {
             .ucs2 => toString(input, len, globalObject, .utf16le),
             .utf16le => toString(input, len, globalObject, .utf16le),
             .utf8 => toString(input, len, globalObject, .utf8),
@@ -919,7 +919,7 @@ pub const Encoder = struct {
                 if (to_len < 2)
                     return 0;
 
-                if (std.mem.isAligned(@ptrToInt(to_ptr), @alignOf([*]u16))) {
+                if (std.mem.isAligned(@intFromPtr(to_ptr), @alignOf([*]u16))) {
                     var buf = input[0..len];
 
                     var output = @ptrCast([*]u16, @alignCast(@alignOf(u16), to_ptr))[0 .. to_len / 2];

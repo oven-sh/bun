@@ -264,7 +264,7 @@ export fn Bun__readOriginTimer(vm: *JSC.VirtualMachine) u64 {
 
 export fn Bun__readOriginTimerStart(vm: *JSC.VirtualMachine) f64 {
     // timespce to milliseconds
-    return @floatCast(f64, (@intToFloat(f64, vm.origin_timestamp) + JSC.VirtualMachine.origin_relative_epoch) / 1_000_000.0);
+    return @floatCast(f64, (@floatFromInt(f64, vm.origin_timestamp) + JSC.VirtualMachine.origin_relative_epoch) / 1_000_000.0);
 }
 
 // comptime {
@@ -1382,7 +1382,7 @@ pub const VirtualMachine = struct {
     // // This double prints
     // pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, _: JSPromiseRejectionOperation) callconv(.C) JSValue {
     //     const result = promise.result(global.vm());
-    //     if (@enumToInt(VirtualMachine.get().last_error_jsvalue) != @enumToInt(result)) {
+    //     if (@intFromEnum(VirtualMachine.get().last_error_jsvalue) != @intFromEnum(result)) {
     //         VirtualMachine.get().runErrorHandler(result, null);
     //     }
 
@@ -1823,7 +1823,7 @@ pub const VirtualMachine = struct {
                     iterator(_vm, globalObject, nextValue, ctx.?, false);
                 }
                 inline fn iterator(_: [*c]VM, _: [*c]JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
-                    var this_ = @intToPtr(*@This(), @ptrToInt(ctx));
+                    var this_ = @ptrFromInt(*@This(), @intFromPtr(ctx));
                     VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, Writer, this_.writer, color, allow_side_effects);
                 }
             };
@@ -2371,7 +2371,7 @@ pub const EventListenerMixin = struct {
         const FetchEventRejectionHandler = struct {
             pub fn onRejection(_ctx: *anyopaque, err: anyerror, fetch_event: *FetchEvent, value: JSValue) void {
                 onError(
-                    @intToPtr(*CtxType, @ptrToInt(_ctx)),
+                    @ptrFromInt(*CtxType, @intFromPtr(_ctx)),
                     err,
                     value,
                     fetch_event.request_context.?,

@@ -297,7 +297,7 @@ pub const BufferReadStream = struct {
         const buflen = @intCast(isize, this.buf.len);
         const pos = @intCast(isize, this.pos);
 
-        switch (@intToEnum(Seek, whence)) {
+        switch (@enumFromInt(Seek, whence)) {
             Seek.current => {
                 const new_pos = @max(@min(pos + offset, buflen - 1), 0);
                 this.pos = @intCast(usize, new_pos);
@@ -413,7 +413,7 @@ pub const Archive = struct {
         };
 
         loop: while (true) {
-            const r = @intToEnum(Status, lib.archive_read_next_header(archive, &entry));
+            const r = @enumFromInt(Status, lib.archive_read_next_header(archive, &entry));
 
             switch (r) {
                 Status.eof => break :loop,
@@ -490,7 +490,7 @@ pub const Archive = struct {
         const dir_fd = dir.fd;
 
         loop: while (true) {
-            const r = @intToEnum(Status, lib.archive_read_next_header(archive, &entry));
+            const r = @enumFromInt(Status, lib.archive_read_next_header(archive, &entry));
 
             switch (r) {
                 Status.eof => break :loop,
@@ -513,7 +513,7 @@ pub const Archive = struct {
                     }
 
                     var pathname_ = tokenizer.rest();
-                    pathname = @intToPtr([*]const u8, @ptrToInt(pathname_.ptr))[0..pathname_.len :0];
+                    pathname = @ptrFromInt([*]const u8, @intFromPtr(pathname_.ptr))[0..pathname_.len :0];
                     if (pathname.len == 0) continue;
 
                     const kind = C.kindFromMode(lib.archive_entry_filetype(entry));

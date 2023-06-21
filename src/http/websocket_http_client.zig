@@ -79,7 +79,7 @@ fn buildRequestBody(
     if (client_protocol.len > 0)
         client_protocol_hash.* = bun.hash(static_headers[1].value);
 
-    const headers_ = static_headers[0 .. 1 + @as(usize, @boolToInt(client_protocol.len > 0))];
+    const headers_ = static_headers[0 .. 1 + @as(usize, @intFromBool(client_protocol.len > 0))];
 
     const pathname_ = pathname.slice();
     const host_ = host.slice();
@@ -289,7 +289,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.clearData();
 
             if (!this.tcp.isEstablished()) {
-                _ = uws.us_socket_close_connecting(comptime @as(c_int, @boolToInt(ssl)), this.tcp.socket);
+                _ = uws.us_socket_close_connecting(comptime @as(c_int, @intFromBool(ssl)), this.tcp.socket);
             } else {
                 this.tcp.close(0, null);
             }
@@ -914,7 +914,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 return;
 
             if (!this.tcp.isEstablished()) {
-                _ = uws.us_socket_close_connecting(comptime @as(c_int, @boolToInt(ssl)), this.tcp.socket);
+                _ = uws.us_socket_close_connecting(comptime @as(c_int, @intFromBool(ssl)), this.tcp.socket);
             } else {
                 this.tcp.close(0, null);
             }

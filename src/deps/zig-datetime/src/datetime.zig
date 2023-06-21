@@ -47,7 +47,7 @@ pub const Month = enum(u4) {
         if (month.len == 3) {
             inline for (std.meta.fields(Month)) |f| {
                 if (ascii.eqlIgnoreCase(f.name[0..3], month)) {
-                    return @intToEnum(Month, f.value);
+                    return @enumFromInt(Month, f.value);
                 }
             }
         }
@@ -57,7 +57,7 @@ pub const Month = enum(u4) {
     pub fn parseName(month: []const u8) !Month {
         inline for (std.meta.fields(Month)) |f| {
             if (ascii.eqlIgnoreCase(f.name, month)) {
-                return @intToEnum(Month, f.value);
+                return @enumFromInt(Month, f.value);
             }
         }
         return error.InvalidFormat;
@@ -313,7 +313,7 @@ pub const Date = struct {
     // Create a date from the number of seconds since 1 Jan 1970
     pub fn fromSeconds(seconds: f64) Date {
         const r = math.modf(seconds);
-        const timestamp = @floatToInt(i64, r.ipart); // Seconds
+        const timestamp = @intFromFloat(i64, r.ipart); // Seconds
         const days = @divFloor(timestamp, time.s_per_day) + @as(i64, EPOCH);
         assert(days >= 0 and days <= MAX_ORDINAL);
         return Date.fromOrdinal(@intCast(u32, days));
@@ -322,7 +322,7 @@ pub const Date = struct {
     // Return the number of seconds since 1 Jan 1970
     pub fn toSeconds(self: Date) f64 {
         const days = @intCast(i64, self.toOrdinal()) - @as(i64, EPOCH);
-        return @intToFloat(f64, days * time.s_per_day);
+        return @floatFromInt(f64, days * time.s_per_day);
     }
 
     // Create a date from a UTC timestamp in milliseconds relative to Jan 1st 1970
@@ -445,7 +445,7 @@ pub const Date = struct {
     // Return day of week starting with Monday = 1 and Sunday = 7
     pub fn dayOfWeek(self: Date) Weekday {
         const dow = @intCast(u3, self.toOrdinal() % 7);
-        return @intToEnum(Weekday, if (dow == 0) 7 else dow);
+        return @enumFromInt(Weekday, if (dow == 0) 7 else dow);
     }
 
     // Return the ISO calendar based week of year. With 1 being the first week.
@@ -455,7 +455,7 @@ pub const Date = struct {
 
     // Return day of week starting with Monday = 0 and Sunday = 6
     pub fn weekday(self: Date) u4 {
-        return @enumToInt(self.dayOfWeek()) - 1;
+        return @intFromEnum(self.dayOfWeek()) - 1;
     }
 
     // Return whether the date is a weekend (Saturday or Sunday)
@@ -471,7 +471,7 @@ pub const Date = struct {
     // Return the name of the day of the month, eg "January"
     pub fn monthName(self: Date) []const u8 {
         assert(self.month >= 1 and self.month <= 12);
-        return @tagName(@intToEnum(Month, self.month));
+        return @tagName(@enumFromInt(Month, self.month));
     }
 
     // ------------------------------------------------------------------------
@@ -596,7 +596,7 @@ test "date-from-seconds" {
     //
     //     Max check
     //     var max_date = try Date.create(9999, 12, 31);
-    //     const tmax: f64 = @intToFloat(f64, MAX_ORDINAL-1) * time.s_per_day;
+    //     const tmax: f64 = @floatFromInt(f64, MAX_ORDINAL-1) * time.s_per_day;
     //     date = Date.fromSeconds(tmax);
     //     try testing.expect(date.eql(max_date));
     //     try testing.expectEqual(date.toSeconds(), tmax);
@@ -859,7 +859,7 @@ pub const Time = struct {
         assert(seconds >= 0);
         // Convert to s and us
         const r = math.modf(seconds);
-        var s = @floatToInt(u32, @mod(r.ipart, time.s_per_day)); // s
+        var s = @intFromFloat(u32, @mod(r.ipart, time.s_per_day)); // s
         const h = @divFloor(s, time.s_per_hour);
         s -= h * time.s_per_hour;
         const m = @divFloor(s, time.s_per_min);
@@ -875,15 +875,15 @@ pub const Time = struct {
             s -= 1;
             frac += time.ns_per_s;
         }
-        const ns = @floatToInt(u32, frac);
+        const ns = @intFromFloat(u32, frac);
         return Time.create(h, m, s, ns) catch unreachable; // If this fails it's a bug
     }
 
     // Convert to a time in seconds relative to the UTC timezones
     // including the nanosecond component
     pub fn toSeconds(self: Time) f64 {
-        const s = @intToFloat(f64, self.totalSeconds());
-        const ns = @intToFloat(f64, self.nanosecond) / time.ns_per_s;
+        const s = @floatFromInt(f64, self.totalSeconds());
+        const ns = @floatFromInt(f64, self.nanosecond) / time.ns_per_s;
         return s + ns;
     }
 
@@ -1393,7 +1393,7 @@ pub const Datetime = struct {
         const value = std.mem.trim(u8, ims, " ");
         if (value.len < 29) return error.InvalidFormat;
         const day = std.fmt.parseInt(u8, value[5..7], 10) catch return error.InvalidFormat;
-        const month = @enumToInt(try Month.parseAbbr(value[8..11]));
+        const month = @intFromEnum(try Month.parseAbbr(value[8..11]));
         const year = std.fmt.parseInt(u16, value[12..16], 10) catch return error.InvalidFormat;
         const hour = std.fmt.parseInt(u8, value[17..19], 10) catch return error.InvalidFormat;
         const minute = std.fmt.parseInt(u8, value[20..22], 10) catch return error.InvalidFormat;

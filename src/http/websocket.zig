@@ -34,7 +34,7 @@ pub const Opcode = enum(u4) {
     ResF = 0xF,
 
     pub fn isControl(opcode: Opcode) bool {
-        return @enumToInt(opcode) & 0x8 != 0;
+        return @intFromEnum(opcode) & 0x8 != 0;
     }
 };
 
@@ -292,7 +292,7 @@ pub const Websocket = struct {
         // header.rsv1 = header_bytes[0] & 0x40 == 0x40;
         // header.rsv2 = header_bytes[0] & 0x20;
         // header.rsv3 = header_bytes[0] & 0x10;
-        header.opcode = @intToEnum(Opcode, @truncate(u4, header_bytes[0]));
+        header.opcode = @enumFromInt(Opcode, @truncate(u4, header_bytes[0]));
         header.mask = header_bytes[1] & 0x80 == 0x80;
         header.len = @truncate(u7, header_bytes[1]);
 

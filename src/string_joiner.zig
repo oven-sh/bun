@@ -127,7 +127,7 @@ pub fn append(this: *Joiner, slice: string, offset: u32, allocator: ?Allocator) 
     else
         (this.node_allocator.create(Joinable.Pool.Node) catch unreachable);
 
-    this.watcher.estimated_count += @boolToInt(
+    this.watcher.estimated_count += @intFromBool(
         this.watcher.input.len > 0 and
             bun.strings.contains(data, this.watcher.input),
     );

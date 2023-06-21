@@ -1046,8 +1046,8 @@ fn diffCleanupSemantic(allocator: std.mem.Allocator, diffs: *DiffList) DiffError
             var overlap_length1: usize = diffCommonOverlap(deletion, insertion);
             var overlap_length2: usize = diffCommonOverlap(insertion, deletion);
             if (overlap_length1 >= overlap_length2) {
-                if (@intToFloat(f32, overlap_length1) >= @intToFloat(f32, deletion.len) / 2.0 or
-                    @intToFloat(f32, overlap_length1) >= @intToFloat(f32, insertion.len) / 2.0)
+                if (@floatFromInt(f32, overlap_length1) >= @floatFromInt(f32, deletion.len) / 2.0 or
+                    @floatFromInt(f32, overlap_length1) >= @floatFromInt(f32, insertion.len) / 2.0)
                 {
                     // Overlap found.
                     // Insert an equality and trim the surrounding edits.
@@ -1063,8 +1063,8 @@ fn diffCleanupSemantic(allocator: std.mem.Allocator, diffs: *DiffList) DiffError
                     pointer += 1;
                 }
             } else {
-                if (@intToFloat(f32, overlap_length2) >= @intToFloat(f32, deletion.len) / 2.0 or
-                    @intToFloat(f32, overlap_length2) >= @intToFloat(f32, insertion.len) / 2.0)
+                if (@floatFromInt(f32, overlap_length2) >= @floatFromInt(f32, deletion.len) / 2.0 or
+                    @floatFromInt(f32, overlap_length2) >= @floatFromInt(f32, insertion.len) / 2.0)
                 {
                     // Reverse overlap found.
                     // Insert an equality and swap and trim the surrounding edits.

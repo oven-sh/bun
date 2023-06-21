@@ -717,6 +717,14 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
 
             init.set(structure);
         });
+    mock.withImplementationCleanupFunction.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction>::Initializer& init) {
+            init.set(JSC::JSFunction::create(init.vm, init.owner, 2, String(), jsMockFunctionWithImplementationCleanup, ImplementationVisibility::Public));
+        });
+    mock.mockWithImplementationCleanupDataStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+            init.set(Bun::MockWithImplementationCleanupData::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+        });
     return mock;
 }
 
@@ -1023,12 +1031,14 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetMockName, (JSC::JSGlobalObject * globa
 
     if (auto* impl = tryJSDynamicCast<JSMockImplementation*>(thisObject->implementation.get())) {
         if (impl->kind == JSMockImplementation::Kind::Call) {
-            JSObject* object = impl->underlyingValue.get().asCell()->getObject();
-            if (auto nameValue = object->getIfPropertyExists(globalObject, PropertyName(vm.propertyNames->name))) {
-                RELEASE_AND_RETURN(scope, JSValue::encode(nameValue));
-            }
+            if (JSValue underlyingValue = impl->underlyingValue.get()) {
+                JSObject* object = underlyingValue.asCell()->getObject();
+                if (auto nameValue = object->getIfPropertyExists(globalObject, PropertyName(vm.propertyNames->name))) {
+                    RELEASE_AND_RETURN(scope, JSValue::encode(nameValue));
+                }
 
-            RETURN_IF_EXCEPTION(scope, {});
+                RETURN_IF_EXCEPTION(scope, {});
+            }
         }
     }
 
@@ -1304,7 +1314,7 @@ DEFINE_VISIT_CHILDREN(MockWithImplementationCleanupData);
 
 MockWithImplementationCleanupData* MockWithImplementationCleanupData::create(JSC::JSGlobalObject* globalObject, JSMockFunction* fn, JSValue impl, JSValue tail, JSValue fallback)
 {
-    auto* obj = create(globalObject->vm(), reinterpret_cast<Zig::GlobalObject*>(globalObject)->mockWithImplementationCleanupDataStructure());
+    auto* obj = create(globalObject->vm(), reinterpret_cast<Zig::GlobalObject*>(globalObject)->mockModule.mockWithImplementationCleanupDataStructure.getInitializedOnMainThread(globalObject));
     obj->finishCreation(globalObject->vm(), fn, impl, tail, fallback);
     return obj;
 }
@@ -1366,18 +1376,15 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject 
 
     if (auto promise = tryJSDynamicCast<JSC::JSPromise*>(returnValue)) {
         auto capability = JSC::JSPromise::createNewPromiseCapability(globalObject, globalObject->promiseConstructor());
-
-        JSFunction* func = JSC::JSFunction::create(vm, globalObject, 2,
-            String(), jsMockFunctionWithImplementationCleanup, ImplementationVisibility::Public);
-
         auto ctx = MockWithImplementationCleanupData::create(globalObject, thisObject, lastImpl, lastTail, lastFallback);
 
+        JSFunction* cleanup = globalObject->mockModule.withImplementationCleanupFunction.getInitializedOnMainThread(globalObject);
         JSFunction* performPromiseThenFunction = globalObject->performPromiseThenFunction();
         auto callData = JSC::getCallData(performPromiseThenFunction);
         MarkedArgumentBuffer arguments;
         arguments.append(promise);
-        arguments.append(func);
-        arguments.append(func);
+        arguments.append(cleanup);
+        arguments.append(cleanup);
         arguments.append(capability);
         arguments.append(ctx);
         ASSERT(!arguments.hasOverflowed());

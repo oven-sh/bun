@@ -24,6 +24,8 @@ public:
     LazyProperty<JSC::JSGlobalObject, Structure> mockImplementationStructure;
     LazyProperty<JSC::JSGlobalObject, Structure> mockObjectStructure;
     LazyProperty<JSC::JSGlobalObject, Structure> activeSpySetStructure;
+    LazyProperty<JSC::JSGlobalObject, JSFunction> withImplementationCleanupFunction;
+    LazyProperty<JSC::JSGlobalObject, JSC::Structure> mockWithImplementationCleanupDataStructure;
 
     static JSMockModule create(JSC::JSGlobalObject*);
 

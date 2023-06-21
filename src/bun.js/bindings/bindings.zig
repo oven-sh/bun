@@ -3352,10 +3352,24 @@ pub const JSValue = enum(JSValueReprInt) {
         cppFn("forEachPropertyOrdered", .{ this, globalObject, ctx, callback });
     }
 
+    pub fn coerceToDouble(
+        this: JSValue,
+        globalObject: *JSC.JSGlobalObject,
+    ) f64 {
+        return cppFn("coerceToDouble", .{ this, globalObject });
+    }
+
     pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) T {
         return switch (T) {
             ZigString => this.getZigString(globalThis),
             bool => this.toBooleanSlow(globalThis),
+            f64 => {
+                if (this.isNumber()) {
+                    return this.asDouble();
+                }
+
+                return this.coerceToDouble(globalThis);
+            },
             i32 => {
                 if (this.isInt32()) {
                     return this.asInt32();
@@ -4400,12 +4414,27 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("deepEquals", .{ this, other, global });
     }
 
+    /// same as `JSValue.deepEquals`, but with jest asymmetric matchers enabled
+    pub fn jestDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
+        return cppFn("jestDeepEquals", .{ this, other, global });
+    }
+
     pub fn strictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
         return cppFn("strictDeepEquals", .{ this, other, global });
     }
 
+    /// same as `JSValue.strictDeepEquals`, but with jest asymmetric matchers enabled
+    pub fn jestStrictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
+        return cppFn("jestStrictDeepEquals", .{ this, other, global });
+    }
+
     pub fn deepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject, replace_props_with_asymmetric_matchers: bool) bool {
         return cppFn("deepMatch", .{ this, subset, global, replace_props_with_asymmetric_matchers });
+    }
+
+    /// same as `JSValue.deepMatch`, but with jest asymmetric matchers enabled
+    pub fn jestDeepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject, replace_props_with_asymmetric_matchers: bool) bool {
+        return cppFn("jestDeepMatch", .{ this, subset, global, replace_props_with_asymmetric_matchers });
     }
 
     pub const DiffMethod = enum(u8) {
@@ -4425,6 +4454,14 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn asString(this: JSValue) *JSString {
         return cppFn("asString", .{
+            this,
+        });
+    }
+
+    /// Get the internal number of the `JSC::DateInstance` object
+    /// Returns NaN if the value is not a `JSC::DateInstance` (`Date` in JS)
+     pub fn getUnixTimestamp(this: JSValue) f64 {
+        return cppFn("getUnixTimestamp", .{
             this,
         });
     }
@@ -4670,6 +4707,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "asObject",
         "asPromise",
         "asString",
+        "coerceToDouble",
         "coerceToInt32",
         "coerceToInt64",
         "createEmptyArray",
@@ -4684,8 +4722,8 @@ pub const JSValue = enum(JSValueReprInt) {
         "deepEquals",
         "eqlCell",
         "eqlValue",
-        "fastGet_",
         "fastGetDirect_",
+        "fastGet_",
         "forEach",
         "forEachProperty",
         "forEachPropertyOrdered",
@@ -4705,6 +4743,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "getPrototype",
         "getStaticProperty",
         "getSymbolDescription",
+        "getUnixTimestamp",
         "hasProperty",
         "isAggregateError",
         "isAnyError",
@@ -4768,6 +4807,9 @@ pub const JSValue = enum(JSValueReprInt) {
         "isInstanceOf",
         "stringIncludes",
         "deepMatch",
+        "jestDeepEquals",
+        "jestStrictDeepEquals",
+        "jestDeepMatch",
     };
 };
 

@@ -207,6 +207,7 @@ pub extern fn JSC__JSValue__asNumber(JSValue0: JSC__JSValue) f64;
 pub extern fn JSC__JSValue__asObject(JSValue0: JSC__JSValue) bJSC__JSObject;
 pub extern fn JSC__JSValue__asPromise(JSValue0: JSC__JSValue) ?*bindings.JSPromise;
 pub extern fn JSC__JSValue__asString(JSValue0: JSC__JSValue) [*c]bindings.JSString;
+pub extern fn JSC__JSValue__coerceToDouble(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) f64;
 pub extern fn JSC__JSValue__coerceToInt32(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) i32;
 pub extern fn JSC__JSValue__coerceToInt64(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) i64;
 pub extern fn JSC__JSValue__createEmptyArray(arg0: *bindings.JSGlobalObject, arg1: usize) JSC__JSValue;
@@ -238,6 +239,7 @@ pub extern fn JSC__JSValue__getLengthIfPropertyExistsInternal(JSValue0: JSC__JSV
 pub extern fn JSC__JSValue__getNameProperty(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSValue__getPrototype(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__getSymbolDescription(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]ZigString) void;
+pub extern fn JSC__JSValue__getUnixTimestamp(JSValue0: JSC__JSValue) f64;
 pub extern fn JSC__JSValue__isAggregateError(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) bool;
 pub extern fn JSC__JSValue__isAnyError(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isAnyInt(JSValue0: JSC__JSValue) bool;
@@ -263,6 +265,9 @@ pub extern fn JSC__JSValue__isSameValue(JSValue0: JSC__JSValue, JSValue1: JSC__J
 pub extern fn JSC__JSValue__isSymbol(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isTerminationException(JSValue0: JSC__JSValue, arg1: *bindings.VM) bool;
 pub extern fn JSC__JSValue__isUInt32AsAnyInt(JSValue0: JSC__JSValue) bool;
+pub extern fn JSC__JSValue__jestDeepEquals(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: *bindings.JSGlobalObject) bool;
+pub extern fn JSC__JSValue__jestDeepMatch(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: *bindings.JSGlobalObject, arg3: bool) bool;
+pub extern fn JSC__JSValue__jestStrictDeepEquals(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: *bindings.JSGlobalObject) bool;
 pub extern fn JSC__JSValue__jsBoolean(arg0: bool) JSC__JSValue;
 pub extern fn JSC__JSValue__jsDoubleNumber(arg0: f64) JSC__JSValue;
 pub extern fn JSC__JSValue__jsNull(...) JSC__JSValue;

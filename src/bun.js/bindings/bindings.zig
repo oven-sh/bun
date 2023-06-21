@@ -4460,7 +4460,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
     /// Get the internal number of the `JSC::DateInstance` object
     /// Returns NaN if the value is not a `JSC::DateInstance` (`Date` in JS)
-     pub fn getUnixTimestamp(this: JSValue) f64 {
+    pub fn getUnixTimestamp(this: JSValue) f64 {
         return cppFn("getUnixTimestamp", .{
             this,
         });

@@ -895,7 +895,7 @@ pub const Loader = struct {
         errdefer this.allocator.free(buf);
         const amount_read = try file.readAll(buf[0..end]);
 
-        // The null byte here is mostly for debugging purposes. 
+        // The null byte here is mostly for debugging purposes.
         buf[end] = 0;
 
         const source = logger.Source.initPathString(base, buf[0..amount_read]);

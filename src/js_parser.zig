@@ -21216,82 +21216,36 @@ fn NewParser_(
                         },
                         logger.Loc.Empty,
                     );
-                    const cjsGlobal = p.newSymbol(.unbound, "$_BunCommonJSModule_$") catch unreachable;
-                    var call_args = allocator.alloc(Expr, 6) catch unreachable;
-                    const this_module = p.newExpr(
-                        E.Dot{
-                            .name = "module",
-                            .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
-                            .name_loc = logger.Loc.Empty,
-                        },
-                        logger.Loc.Empty,
-                    );
+                    
 
-                    //
-                    // (function(module, exports, require, __dirname, __filename) {}).call(this.exports, this.module, this.exports, this.require, __dirname, __filename)
-                    call_args[0..6].* = .{
-                        p.newExpr(
-                            E.Dot{
-                                .name = "exports",
-                                .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
-                                .name_loc = logger.Loc.Empty,
-                            },
-                            logger.Loc.Empty,
-                        ),
-                        this_module,
-                        p.newExpr(
-                            E.Dot{
-                                .name = "exports",
-                                .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
-                                .name_loc = logger.Loc.Empty,
-                            },
-                            logger.Loc.Empty,
-                        ),
-                        p.newExpr(
-                            E.Dot{
-                                .name = "require",
-                                .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
-                                .name_loc = logger.Loc.Empty,
-                            },
-                            logger.Loc.Empty,
-                        ),
-                        p.newExpr(
-                            E.Dot{
-                                .name = "__dirname",
-                                .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
-                                .name_loc = logger.Loc.Empty,
-                            },
-                            logger.Loc.Empty,
-                        ),
-                        p.newExpr(
-                            E.Dot{
-                                .name = "__filename",
-                                .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
-                                .name_loc = logger.Loc.Empty,
-                            },
-                            logger.Loc.Empty,
-                        ),
-                    };
-
-                    const call = p.newExpr(
-                        E.Call{
-                            .target = p.newExpr(
+                    const setter = p.newExpr(
+                        E.Binary{
+                            .left = p.newExpr(
                                 E.Dot{
-                                    .target = wrapper,
-                                    .name = "call",
+                                    .target = p.newExpr(E.This{}, logger.Loc.Empty),
+                                    .name = "fn",
                                     .name_loc = logger.Loc.Empty,
                                 },
                                 logger.Loc.Empty,
                             ),
-                            .args = ExprNodeList.init(call_args),
+                            .op = .bin_assign,
+                            .right = wrapper
                         },
                         logger.Loc.Empty,
                     );
 
-                    var only_stmt = try p.allocator.alloc(Stmt, 1);
-                    only_stmt[0] = p.s(
+                    var only_stmt = try p.allocator.alloc(Stmt, 1 + @as(usize, @boolToInt(p.module_scope.strict_mode == .explicit_strict_mode)));
+                    if (p.module_scope.strict_mode == .explicit_strict_mode) {
+                        only_stmt[0] = p.s(
+                            S.Directive{
+                                .value =  strings.toUTF16Literal("use strict"),
+                            },
+                            logger.Loc.Empty,
+                        );
+                    }
+                    only_stmt[only_stmt.len - 1] = p.s(
                         S.SExpr{
-                            .value = call,
+                            .value = setter,
                         },
                         logger.Loc.Empty,
                     );

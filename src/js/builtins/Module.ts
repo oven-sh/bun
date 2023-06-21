@@ -2,6 +2,7 @@ interface Module {
   id: string;
 
   $require(id: string): any;
+  children: Module[];
 }
 
 export function require(this: Module, id: string) {
@@ -14,9 +15,14 @@ export function require(this: Module, id: string) {
     return $internalRequire(id);
   }
 
-  const out = this.$require(id);
+  let out = this.$require(id);
   if (out === -1) {
     return $internalRequire(id);
+  }
+  const fn = globalThis.$textDecoderStreamDecoder(out);
+  if (fn !== out) {
+    fn(out, out.exports, out.require, out.id, out.filename);
+    $requireMap.$set(id, out);
   }
 
   const existing2 = $requireMap.$get(id);

@@ -219,7 +219,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::useJITCage() = false;
         JSC::Options::useShadowRealm() = true;
         JSC::Options::useResizableArrayBuffer() = true;
-        JSC::Options::showPrivateScriptsInStackTraces() = false;
+        JSC::Options::showPrivateScriptsInStackTraces() = true;
         JSC::Options::useSetMethods() = true;
 
         /*
@@ -280,7 +280,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         // crypto.createHash("sha1")    985.26 ns/iter    (956.7 ns … 1.12 µs)      1 µs   1.12 µs   1.12 µs
         // Peak memory usage: 56 MB
         size_t ramSize = WTF::ramSize();
-        ramSize /= 1024;
+        // ramSize /= 1024;
 
         if (ramSize > 0) {
             JSC::Options::forceRAMSize() = ramSize;
@@ -2721,42 +2721,14 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(
                 globalObject,
                 globalObject->objectPrototype(),
-                6);
+                4);
             JSC::PropertyOffset offset;
             auto& vm = globalObject->vm();
 
             structure = structure->addPropertyTransition(
                 vm,
                 structure,
-                JSC::Identifier::fromString(vm, "module"_s),
-                0,
-                offset);
-
-            structure = structure->addPropertyTransition(
-                vm,
-                structure,
-                JSC::Identifier::fromString(vm, "exports"_s),
-                0,
-                offset);
-
-            structure = structure->addPropertyTransition(
-                vm,
-                structure,
-                JSC::Identifier::fromString(vm, "require"_s),
-                PropertyAttribute::Builtin | PropertyAttribute::Function | 0,
-                offset);
-
-            structure = structure->addPropertyTransition(
-                vm,
-                structure,
-                JSC::Identifier::fromString(vm, "__dirname"_s),
-                0,
-                offset);
-
-            structure = structure->addPropertyTransition(
-                vm,
-                structure,
-                JSC::Identifier::fromString(vm, "__filename"_s),
+                JSC::Identifier::fromString(vm, "fn"_s),
                 0,
                 offset);
 
@@ -3434,7 +3406,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     auto& builtinNames = WebCore::builtinNames(vm);
 
     WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-    extraStaticGlobals.reserveCapacity(43);
+    extraStaticGlobals.reserveCapacity(44);
 
     JSC::Identifier queueMicrotaskIdentifier = JSC::Identifier::fromString(vm, "queueMicrotask"_s);
     extraStaticGlobals.uncheckedAppend(
@@ -3511,6 +3483,11 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
                 String(), functionStartDirectStream, ImplementationVisibility::Public),
             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
+
+    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo { builtinNames.textDecoderStreamDecoderPrivateName(),
+        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
+            String(), Bun::jsCommonJSLoadModule, ImplementationVisibility::Public),
+        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
 
     static NeverDestroyed<const String> BunLazyString(MAKE_STATIC_STRING_IMPL("Bun.lazy"));
     static NeverDestroyed<const String> CommonJSSymbolKey(MAKE_STATIC_STRING_IMPL("CommonJS"));

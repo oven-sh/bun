@@ -418,7 +418,8 @@ JSValue fetchCommonJSModule(
     Bun__transpileFile(bunVM, globalObject, specifier, referrer, res, false);
 
     if (res->success && res->result.value.commonJSExportsLen) {
-        RELEASE_AND_RETURN(scope, Bun::JSCommonJSModule::create(globalObject, Bun::toWTFString(*specifier), res->result.value));
+        auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), res->result.value, JSC::SourceProviderSourceType::Program);
+        RELEASE_AND_RETURN(scope, Bun::createCommonJSModuleWithoutRunning(globalObject, WTFMove(sourceProvider), Bun::toWTFString(*specifier).isolatedCopy(), res->result.value));
     }
 
     if (!res->success) {
@@ -473,6 +474,11 @@ static JSValue fetchSourceCode(
 
     auto rejectOrResolve = [&](JSValue code) -> JSValue {
         if (auto* exception = scope.exception()) {
+            if constexpr (!allowPromise) {
+                scope.release();
+                return {};
+            }
+
             scope.clearException();
             return rejectedInternalPromise(globalObject, exception);
         }
@@ -568,8 +574,19 @@ static JSValue fetchSourceCode(
     }
 
     if (res->success && res->result.value.commonJSExportsLen) {
-        auto source = Bun::createCommonJSModule(globalObject, res->result.value);
-        return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));
+        auto created = Bun::createCommonJSModule(globalObject, res->result.value);
+
+        if (created.has_value()) {
+            return rejectOrResolve(JSSourceCode::create(vm, WTFMove(created.value())));
+        }
+
+        if constexpr (allowPromise) {
+            auto* exception = scope.exception();
+            scope.clearException();
+            return rejectedInternalPromise(globalObject, exception);
+        } else {
+            return JSC::jsUndefined();
+        }
     }
 
     if (!res->success) {

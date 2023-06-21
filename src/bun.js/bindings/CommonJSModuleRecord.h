@@ -6,28 +6,41 @@ class GlobalObject;
 }
 namespace JSC {
 class SourceCode;
+class JSSourceCode;
+class ProgramExecutable;
 }
 
 namespace Bun {
 
-class JSCommonJSModule final : public JSC::JSNonFinalObject {
+JSC_DECLARE_HOST_FUNCTION(jsCommonJSLoadModule);
+
+class JSCommonJSModule final : public JSC::JSDestructibleObject {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut;
 
-    mutable JSC::WriteBarrier<JSC::Unknown> m_exportsObject;
     mutable JSC::WriteBarrier<JSC::JSString> m_id;
+    mutable JSC::WriteBarrier<JSC::JSString> m_filename;
+    mutable JSC::WriteBarrier<JSC::JSString> m_dirname;
+    mutable JSC::WriteBarrier<JSC::JSSourceCode> sourceCode;
 
-    void finishCreation(JSC::VM& vm, JSC::JSValue exportsObject,
+    mutable JSC::WriteBarrier<JSC::JSFunction> m_compiledFunction;
+
+    static void destroy(JSC::JSCell*);
+    ~JSCommonJSModule();
+
+    void finishCreation(JSC::VM& vm,
         JSC::JSString* id, JSC::JSString* filename,
-        JSC::JSString* dirname);
+        JSC::JSString* dirname, JSC::JSSourceCode* sourceCode);
 
     static JSC::Structure* createStructure(JSC::JSGlobalObject* globalObject);
 
+    JSFunction* compile(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
+
     static JSCommonJSModule* create(JSC::VM& vm, JSC::Structure* structure,
-        JSC::JSValue exportsObject, JSC::JSString* id,
+        JSC::JSString* id,
         JSC::JSString* filename,
-        JSC::JSString* dirname);
+        JSC::JSString* dirname, JSC::JSSourceCode* sourceCode);
 
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,
@@ -68,10 +81,16 @@ public:
     }
 };
 
+JSCommonJSModule* createCommonJSModuleWithoutRunning(
+    Zig::GlobalObject* globalObject,
+    Ref<Zig::SourceProvider> sourceProvider,
+    const WTF::String& sourceURL,
+    ResolvedSource source);
+
 JSC::Structure* createCommonJSModuleStructure(
     Zig::GlobalObject* globalObject);
 
-JSC::SourceCode createCommonJSModule(
+std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     ResolvedSource source);
 

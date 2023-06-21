@@ -5125,10 +5125,7 @@ pub const CallFrame = opaque {
             5 => Arguments(max).init(comptime @min(5, max), ptr),
             1 => Arguments(max).init(comptime @min(1, max), ptr),
             7 => Arguments(max).init(comptime @min(7, max), ptr),
-            else => {
-                std.debug.print("...how many!!??! {d}\n", .{@as(u4, @min(len, max))});
-                unreachable;
-            },
+            else => unreachable,
         };
     }
 

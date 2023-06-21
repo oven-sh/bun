@@ -1,5 +1,5 @@
 // Hardcoded module "node:http"
-import { EventEmitter } from "node:events";
+import EventEmitter from "node:events";
 import { isIPv6 } from "node:net";
 import { Readable, Writable, Duplex } from "node:stream";
 import { URL } from "node:url";

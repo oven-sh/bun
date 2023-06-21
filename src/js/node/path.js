@@ -1,6 +1,5 @@
 // Hardcoded module "node:path"
 export const createModule = obj => Object.assign(Object.create(null), obj);
-
 function bound(obj) {
   var result = createModule({
     basename: obj.basename.bind(obj),

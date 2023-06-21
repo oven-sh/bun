@@ -16,7 +16,7 @@ const ArrayPrototypeSlice = Array.prototype.slice;
 var defaultMaxListeners = 10;
 
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.apply(this)`.
-function EventEmitter(opts) {
+export function EventEmitter(opts) {
   if (this._events === undefined || this._events === this.__proto__._events) {
     this._events = { __proto__: null };
     this._eventsCount = 0;

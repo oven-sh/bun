@@ -2,6 +2,8 @@
 // "readable-stream" npm package
 // just transpiled
 var { isPromise, isCallable, direct, Object } = import.meta.primordials;
+import EE from "node:events";
+import { StringDecoder } from "node:string_decoder";
 
 globalThis.__IDS_TO_TRACK = process.env.DEBUG_TRACK_EE?.length
   ? process.env.DEBUG_TRACK_EE.split(",")
@@ -37,48 +39,6 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __ObjectSetPrototypeOf = Object.setPrototypeOf;
-var __require = x => import.meta.require(x);
-
-var _EE = __require("bun:events_native");
-
-function DebugEventEmitter(opts) {
-  if (!(this instanceof DebugEventEmitter)) return new DebugEventEmitter(opts);
-  _EE.call(this, opts);
-  const __id = opts.__id;
-  if (__id) {
-    __defProp(this, "__id", {
-      value: __id,
-      readable: true,
-      writable: false,
-      enumerable: false,
-    });
-  }
-}
-
-__ObjectSetPrototypeOf(DebugEventEmitter.prototype, _EE.prototype);
-__ObjectSetPrototypeOf(DebugEventEmitter, _EE);
-
-DebugEventEmitter.prototype.emit = function (event, ...args) {
-  var __id = this.__id;
-  if (__id) {
-    debug("emit", event, ...args, __id);
-  } else {
-    debug("emit", event, ...args);
-  }
-  return _EE.prototype.emit.call(this, event, ...args);
-};
-DebugEventEmitter.prototype.on = function (event, handler) {
-  var __id = this.__id;
-  if (__id) {
-    debug("on", event, "added", __id);
-  } else {
-    debug("on", event, "added");
-  }
-  return _EE.prototype.on.call(this, event, handler);
-};
-DebugEventEmitter.prototype.addListener = function (event, handler) {
-  return this.on(event, handler);
-};
 
 var __commonJS = (cb, mod) =>
   function __require2() {
@@ -260,9 +220,8 @@ var require_primordials = __commonJS({
 var require_util = __commonJS({
   "node_modules/readable-stream/lib/ours/util.js"(exports, module) {
     "use strict";
-    var bufferModule = __require("buffer");
+
     var AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-    var Blob = globalThis.Blob || bufferModule.Blob;
     var isBlob =
       typeof Blob !== "undefined"
         ? function isBlob2(b) {
@@ -1388,7 +1347,6 @@ var require_end_of_stream = __commonJS({
 var require_operators = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/operators.js"(exports, module) {
     "use strict";
-    var AbortController = globalThis.AbortController || __require("abort-controller").AbortController;
     var {
       codes: { ERR_INVALID_ARG_TYPE, ERR_MISSING_ARGS, ERR_OUT_OF_RANGE },
       AbortError,
@@ -2084,13 +2042,6 @@ var require_legacy = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/legacy.js"(exports, module) {
     "use strict";
     var { ArrayIsArray, ObjectSetPrototypeOf } = require_primordials();
-    var { EventEmitter: _EE } = __require("bun:events_native");
-    var EE;
-    if (__TRACK_EE__) {
-      EE = DebugEventEmitter;
-    } else {
-      EE = _EE;
-    }
 
     function Stream(options) {
       if (!(this instanceof Stream)) return new Stream(options);
@@ -2352,7 +2303,6 @@ var require_readable = __commonJS({
     } = require_primordials();
 
     var ReadableState = globalThis[Symbol.for("Bun.lazy")]("bun:stream").ReadableState;
-    var { EventEmitter: EE } = __require("bun:events_native");
     var { Stream, prependListener } = require_legacy();
 
     function Readable(options) {
@@ -2626,7 +2576,6 @@ var require_readable = __commonJS({
       },
     } = require_errors();
     var { validateObject } = require_validators();
-    var { StringDecoder } = __require("string_decoder");
     var from = require_from();
     var nop = () => {};
     var { errorOrDestroy } = destroyImpl;
@@ -3422,7 +3371,6 @@ var require_writable = __commonJS({
       SymbolHasInstance,
     } = require_primordials();
 
-    var { EventEmitter: EE } = __require("bun:events_native");
     var Stream = require_legacy().Stream;
     var destroyImpl = require_destroy();
     var { addAbortSignal } = require_add_abort_signal();
@@ -4048,7 +3996,6 @@ var require_writable = __commonJS({
 var require_duplexify = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/duplexify.js"(exports, module) {
     "use strict";
-    var bufferModule = __require("buffer");
     var {
       isReadable,
       isWritable,
@@ -4068,7 +4015,6 @@ var require_duplexify = __commonJS({
     var Readable = require_readable();
     var { createDeferredPromise } = require_util();
     var from = require_from();
-    var Blob = globalThis.Blob || bufferModule.Blob;
     var isBlob =
       typeof Blob !== "undefined"
         ? function isBlob2(b) {
@@ -4077,7 +4023,6 @@ var require_duplexify = __commonJS({
         : function isBlob2(b) {
             return false;
           };
-    var AbortController = globalThis.AbortController || __require("abort-controller").AbortController;
     var { FunctionPrototypeCall } = require_primordials();
     class Duplexify extends Duplex {
       constructor(options) {
@@ -4619,7 +4564,6 @@ var require_pipeline = __commonJS({
     } = require_errors();
     var { validateFunction, validateAbortSignal } = require_validators();
     var { isIterable, isReadable, isReadableNodeStream, isNodeStream } = require_utils();
-    var AbortController = globalThis.AbortController || __require("abort-controller").AbortController;
     var PassThrough;
     var Readable;
     function destroyer(stream, reading, writing) {

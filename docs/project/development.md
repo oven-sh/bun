@@ -32,19 +32,19 @@ $ proto install bun
 
 ## Install LLVM
 
-Bun requires LLVM 15 and Clang 15 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
+Bun requires LLVM 16 and Clang 16 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
 
 {% codetabs %}
 
 ```bash#macOS (Homebrew)
-$ brew install llvm@15
+$ brew install llvm@16
 ```
 
 ```bash#Ubuntu/Debian
-# On Ubuntu 22.04 and newer, LLVM 15 is available in the default repositories
-$ sudo apt install llvm-15 lld-15 clang-15
+# On Ubuntu 22.04 and newer, LLVM 16 is available in the default repositories
+$ sudo apt install llvm-16 lld-16 clang-16
 # On older versions,
-$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 15 all
+$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 16 all
 ```
 
 ```bash#Arch
@@ -53,12 +53,12 @@ $ sudo pacman -S llvm clang lld
 
 {% /codetabs %}
 
-If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-15.0.7).
+If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-16.0.6).
 
-Make sure LLVM 15 is in your path:
+Make sure LLVM 16 is in your path:
 
 ```bash
-$ which clang-15
+$ which clang-16
 ```
 
 If not, run this to manually link it:
@@ -67,9 +67,9 @@ If not, run this to manually link it:
 
 ```bash#macOS (Homebrew)
 # use fish_add_path if you're using fish
-$ export PATH="$PATH:$(brew --prefix llvm@15)/bin"
-$ export LDFLAGS="$LDFLAGS -L$(brew --prefix llvm@15)/lib"
-$ export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@15)/include"
+$ export PATH="$PATH:$(brew --prefix llvm@16)/bin"
+$ export LDFLAGS="$LDFLAGS -L$(brew --prefix llvm@16)/lib"
+$ export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@16)/include"
 ```
 
 {% /codetabs %}

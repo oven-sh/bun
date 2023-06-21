@@ -24,6 +24,7 @@ module.exports = () => {
     const globals = require("@jest/globals");
     const extended = require("jest-extended");
     globals.expect.extend(extended);
+    globals.test.todo = globals.test;
     return {
       isBun: false,
       bunTest: null,

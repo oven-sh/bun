@@ -1,18 +1,10 @@
-test("1", async () => {
-  const x = jest.fn(() => 1);
+test("lastCall works", () => {
+  const fn = jest.fn(v => -v);
+  fn(1, 2);
 
-  console.log("3", x());
+  console.log("fn.mock.lastCall === fn.mock.__proto__");
+  console.log(fn.mock.lastCall === fn.mock.__proto__);
 
-  await x.withImplementation(
-    () => 2,
-    async () => {
-      console.log("2", x());
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      console.log("2", x());
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      console.log("2", x());
-    },
-  );
-
-  console.log("3", x());
+  console.log("fn.mock.lastCall === fn.mock");
+  console.log(fn.mock.lastCall === fn.mock);
 });

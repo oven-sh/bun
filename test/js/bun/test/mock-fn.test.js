@@ -431,7 +431,6 @@ describe("mock()", () => {
       function () {
         expect(fn()).toBe("2");
         expect(fn()).toBe("2");
-        // expect(this).toBe(undefined);
         return "3";
       },
     );
@@ -448,12 +447,37 @@ describe("mock()", () => {
         expect(fn()).toBe("2");
         await new Promise(resolve => setTimeout(resolve, 10));
         expect(fn()).toBe("2");
-        expect(this).toBe(undefined);
+        expect(fn()).toBe("2");
+        await new Promise(resolve => setTimeout(resolve, 10));
+        expect(fn()).toBe("2");
+        expect(fn()).toBe("2");
         return "3";
       },
     );
-    expect(await expectResolves(result)).toBe(undefined);
+    await expectResolves(result);
     expect(fn()).toBe("1");
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(fn()).toBe("1");
+  });
+  test("lastCall works", () => {
+    const fn = jest.fn(v => -v);
+    expect(fn.mock.lastCall).toBeUndefined();
+    expect(fn(1)).toBe(-1);
+    expect(fn.mock.lastCall).toEqual([1]);
+    expect(fn(-2)).toBe(2);
+    expect(fn.mock.lastCall).toEqual([-2]);
+  });
+  test("invocationCallOrder works", () => {
+    const fn1 = jest.fn(v => -v);
+    const fn2 = jest.fn(v => -v);
+    fn1(1);
+    fn2(1);
+    fn2(1);
+    fn1(1);
+    const first = fn1.mock.invocationCallOrder[0];
+    expect(first).toBeGreaterThan(0);
+    expect(fn1.mock.invocationCallOrder).toEqual([first, first + 3]);
+    expect(fn2.mock.invocationCallOrder).toEqual([first + 1, first + 2]);
   });
 });
 
@@ -477,6 +501,49 @@ describe("spyOn", () => {
     expect(fn.mock.calls[0]).toBeEmpty();
     jest.restoreAllMocks();
     expect(() => expect(obj.original).toHaveBeenCalled()).toThrow();
+    expect(fn).not.toHaveBeenCalled();
+    expect(obj.original()).toBe(42);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  test("override impl after doesnt break restore", () => {
+    var obj = {
+      original() {
+        return 42;
+      },
+    };
+    const fn = spyOn(obj, "original");
+    fn.mockImplementation(() => 43);
+    expect(fn).toBe(obj.original);
+    expect(obj.original()).toBe(43);
+    expect(fn).toHaveBeenCalled();
+    fn.mockRestore();
+    expect(obj.original()).toBe(42);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  test("mockRestore works", () => {
+    var obj = {
+      original() {
+        return 42;
+      },
+    };
+    const fn = spyOn(obj, "original");
+    expect(fn).toBe(obj.original);
+    expect(fn).not.toHaveBeenCalled();
+    expect(() => expect(fn).toHaveBeenCalled()).toThrow();
+    expect(obj.original()).toBe(42);
+    expect(fn).toHaveBeenCalled();
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(() => expect(fn).not.toHaveBeenCalled()).toThrow();
+    expect(() => expect(fn).not.toHaveBeenCalledTimes(1)).toThrow();
+    expect(fn.mock.calls).toHaveLength(1);
+    expect(fn.mock.calls[0]).toBeEmpty();
+    fn.mockRestore();
+    expect(() => expect(obj.original).toHaveBeenCalled()).toThrow();
+    expect(fn).not.toHaveBeenCalled();
+    expect(obj.original()).toBe(42);
+    expect(fn).not.toHaveBeenCalled();
   });
 
   if (isBun) {

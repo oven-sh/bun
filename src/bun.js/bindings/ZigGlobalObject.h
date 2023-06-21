@@ -398,6 +398,7 @@ public:
     void reload();
 
     JSC::Structure* pendingVirtualModuleResultStructure() { return m_pendingVirtualModuleResultStructure.get(this); }
+    JSC::Structure* mockWithImplementationCleanupDataStructure() { return m_mockWithImplementationCleanupDataStructure.get(this); }
 
     // When a napi module initializes on dlopen, we need to know what the value is
     // This value is not observed by GC. It should be extremely ephemeral.
@@ -464,6 +465,7 @@ private:
      * those callbacks will eventually never be called anymore. But it'll work the first time!
      */
     LazyProperty<JSGlobalObject, JSC::Structure> m_pendingVirtualModuleResultStructure;
+    LazyProperty<JSGlobalObject, JSC::Structure> m_mockWithImplementationCleanupDataStructure;
     LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskVariadicFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_emitReadableNextTickFunction;

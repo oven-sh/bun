@@ -241,7 +241,7 @@ JSObject* Zig::ImportMetaObject::createRequireFunction(VM& vm, JSGlobalObject* l
     requireFunction->putDirect(vm, JSC::Identifier::fromString(vm, "main"_s), jsUndefined(), 0);
     requireFunction->putDirect(vm, JSC::Identifier::fromString(vm, "extensions"_s), JSC::constructEmptyObject(globalObject), 0);
     requireFunction->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "cache"_s), JSC::CustomGetterSetter::create(vm, Zig::jsRequireCacheGetter, Zig::jsRequireCacheSetter), 0);
-    requireFunction->putDirect(vm, JSC::Identifier::fromString(vm, "resolve"_s), ResolveFunction::create(globalObject), 0);
+    // requireFunction->putDirect(vm, JSC::Identifier::fromString(vm, "resolve"_s), ResolveFunction::create(globalObject), 0);
     requireFunction->putDirect(vm, JSC::Identifier::fromString(vm, "path"_s), jsString(vm, pathString));
 
     return requireFunction;
@@ -389,7 +389,6 @@ static constexpr uint32_t numberOfImportMetaProperties = 5;
 
 Zig::ImportMetaObject* ImportMetaObject::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url)
 {
-
     ImportMetaObject* ptr = new (NotNull, JSC::allocateCell<ImportMetaObject>(vm)) ImportMetaObject(vm, structure, url);
     ptr->finishCreation(vm);
     return ptr;
@@ -399,7 +398,6 @@ Zig::ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* jslobalObje
     auto* globalObject = jsCast<Zig::GlobalObject*>(jslobalObject);
     auto& vm = globalObject->vm();
     auto view = keyString->value(globalObject);
-    auto* requireFunction = Zig::ImportMetaObject::createRequireFunction(vm, globalObject, view);
     JSC::Structure* structure = globalObject->ImportMetaObjectStructure();
     return Zig::ImportMetaObject::create(vm, globalObject, structure, view);
 }

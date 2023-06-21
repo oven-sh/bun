@@ -1769,8 +1769,12 @@ pub const ESModule = struct {
 
                 const slice = object.list.slice();
                 const keys = slice.items(.key);
-                for (keys, 0..) |key, i| {
-                    if (r.conditions.contains(key)) {
+
+                // This looping order is really sublte and important.
+                // https://github.com/oven-sh/bun/issues/3371
+                // https://github.com/oven-sh/bun/pull/2673
+                for (r.conditions.keys()) |key| {
+                    if (strings.indexEqualAny(keys, key)) |i| {
                         if (r.debug_logs) |log| {
                             log.addNoteFmt("The key \"{s}\" matched", .{key});
                         }

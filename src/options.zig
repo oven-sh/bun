@@ -589,7 +589,15 @@ pub const Target = enum {
         break :brk array;
     };
 
-    pub const DefaultConditions: std.EnumArray(Target, []const string) = brk: {
+    pub fn conditions(this: Target) []const string {
+        return default_conditions.get(this);
+    }
+
+    pub fn fallbackConditions(this: Target) []const string {
+        return fallback_conditions.get(this);
+    }
+
+    const default_conditions: std.EnumArray(Target, []const string) = brk: {
         var array = std.EnumArray(Target, []const string).initUndefined();
 
         array.set(Target.node, &[_]string{
@@ -609,8 +617,6 @@ pub const Target = enum {
                 "worker",
                 "module",
                 "node",
-                "default",
-                "browser",
             },
         );
         array.set(
@@ -621,6 +627,31 @@ pub const Target = enum {
                 "worker",
                 "module",
                 "node",
+            },
+        );
+        break :brk array;
+    };
+
+    const fallback_conditions: std.EnumArray(Target, []const string) = brk: {
+        var array = std.EnumArray(Target, []const string).initUndefined();
+
+        array.set(Target.node, &[_]string{
+            "default",
+        });
+
+        array.set(Target.browser, &[_]string{
+            "default",
+        });
+        array.set(
+            Target.bun,
+            &[_]string{
+                "default",
+                "browser",
+            },
+        );
+        array.set(
+            Target.bun_macro,
+            &[_]string{
                 "default",
                 "browser",
             },
@@ -922,15 +953,15 @@ pub const ESMConditions = struct {
     import: ConditionsMap = undefined,
     require: ConditionsMap = undefined,
 
-    pub fn init(allocator: std.mem.Allocator, defaults: []const string) !ESMConditions {
+    pub fn init(allocator: std.mem.Allocator, defaults: []const string, fallbacks: []const string) !ESMConditions {
         var default_condition_amp = ConditionsMap.init(allocator);
 
         var import_condition_map = ConditionsMap.init(allocator);
         var require_condition_map = ConditionsMap.init(allocator);
 
-        try default_condition_amp.ensureTotalCapacity(defaults.len + 2);
-        try import_condition_map.ensureTotalCapacity(defaults.len + 2);
-        try require_condition_map.ensureTotalCapacity(defaults.len + 2);
+        try default_condition_amp.ensureTotalCapacity(defaults.len + fallbacks.len + 1);
+        try import_condition_map.ensureTotalCapacity(defaults.len + fallbacks.len + 1);
+        try require_condition_map.ensureTotalCapacity(defaults.len + fallbacks.len + 1);
 
         import_condition_map.putAssumeCapacity("import", {});
         require_condition_map.putAssumeCapacity("require", {});
@@ -941,9 +972,11 @@ pub const ESMConditions = struct {
             require_condition_map.putAssumeCapacityNoClobber(default, {});
         }
 
-        default_condition_amp.putAssumeCapacity("default", {});
-        import_condition_map.putAssumeCapacity("default", {});
-        require_condition_map.putAssumeCapacity("default", {});
+        for (fallbacks) |default| {
+            default_condition_amp.putAssumeCapacityNoClobber(default, {});
+            import_condition_map.putAssumeCapacityNoClobber(default, {});
+            require_condition_map.putAssumeCapacityNoClobber(default, {});
+        }
 
         return ESMConditions{
             .default = default_condition_amp,
@@ -1615,7 +1648,7 @@ pub const BundleOptions = struct {
             opts.main_fields = Target.DefaultMainFields.get(opts.target);
         }
 
-        opts.conditions = try ESMConditions.init(allocator, Target.DefaultConditions.get(opts.target));
+        opts.conditions = try ESMConditions.init(allocator, opts.target.conditions(), opts.target.fallbackConditions());
 
         if (transform.serve orelse false) {
             // When we're serving, we need some kind of URL.

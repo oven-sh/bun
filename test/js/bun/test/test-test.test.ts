@@ -516,6 +516,22 @@ describe("deepEquals with asymmetric matchers", () => {
     expect({ active: false }).toEqual({ active: expect.any(Boolean) });
     expect({ active: true }).toEqual({ active: expect.any(Boolean) });
   });
+
+  it("should not match the wrong constructors", () => {
+    function f() {
+      return 32;
+    }
+    Object.defineProperty(f, "name", { value: "String" });
+    expect({ a: "123" }).toEqual({ a: expect.any(String) });
+    expect({ a: "123" }).not.toEqual({ a: expect.any(f) });
+
+    function g() {
+      return 32;
+    }
+    Object.defineProperty(g, "name", { value: "BigInt" });
+    expect({ a: 123n }).toEqual({ a: expect.any(BigInt) });
+    expect({ a: 123n }).not.toEqual({ a: expect.any(g) });
+  });
 });
 
 test("toThrow", () => {

@@ -133,6 +133,8 @@ enum class AsymmetricMatcherResult : uint8_t {
 
 AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSCell* matcherPropCell, JSValue otherProp, ThrowScope* throwScope)
 {
+    VM& vm = globalObject->vm();
+
     if (auto* expectAnything = jsDynamicCast<JSExpectAnything*>(matcherPropCell)) {
         if (otherProp.isUndefinedOrNull()) {
             return AsymmetricMatcherResult::FAIL;
@@ -143,23 +145,43 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSC
         JSValue constructorValue = expectAny->m_constructorValue.get();
         JSObject* constructorObject = constructorValue.getObject();
 
-        if (constructorObject->hasInstance(globalObject, otherProp)) {
-            return AsymmetricMatcherResult::PASS;
+        if (otherProp.isPrimitive()) {
+            if (otherProp.isNumber() && globalObject->numberObjectConstructor() == constructorObject) {
+                return AsymmetricMatcherResult::PASS;
+            } else if (otherProp.isBoolean() && globalObject->booleanObjectConstructor() == constructorObject) {
+                return AsymmetricMatcherResult::PASS;
+            } else if (otherProp.isSymbol() && globalObject->symbolObjectConstructor() == constructorObject) {
+                return AsymmetricMatcherResult::PASS;
+            } else if (otherProp.isString()) {
+                if (auto* constructorFunction = jsDynamicCast<JSFunction*>(constructorObject)) {
+                    String name = constructorFunction->name(vm);
+                    if (name == "String"_s) {
+                        return AsymmetricMatcherResult::PASS;
+                    }
+                } else if (auto* internalConstructorFunction = jsDynamicCast<InternalFunction*>(constructorObject)) {
+                    String name = internalConstructorFunction->name();
+                    if (name == "String"_s) {
+                        return AsymmetricMatcherResult::PASS;
+                    }
+                }
+            } else if (otherProp.isBigInt()) {
+                if (auto* constructorFunction = jsDynamicCast<JSFunction*>(constructorObject)) {
+                    String name = constructorFunction->name(vm);
+                    if (name == "BigInt"_s) {
+                        return AsymmetricMatcherResult::PASS;
+                    }
+                } else if (auto* internalConstructorFunction = jsDynamicCast<InternalFunction*>(constructorObject)) {
+                    String name = internalConstructorFunction->name();
+                    if (name == "BigInt"_s) {
+                        return AsymmetricMatcherResult::PASS;
+                    }
+                }
+            }
+
+            return AsymmetricMatcherResult::FAIL;
         }
 
-        // check for basic types
-        VM& vm = globalObject->vm();
-        ZigString name = {};
-        JSC__JSValue__getNameProperty(JSValue::encode(constructorValue), globalObject, &name);
-        StringView nameView(name.ptr, name.len);
-
-        if (otherProp.isNumber() && nameView == "Number"_s) {
-            return AsymmetricMatcherResult::PASS;
-        } else if (otherProp.isBoolean() && nameView == "Boolean"_s) {
-            return AsymmetricMatcherResult::PASS;
-        } else if (otherProp.isString() && nameView == "String"_s) {
-            return AsymmetricMatcherResult::PASS;
-        } else if (otherProp.isBigInt() && nameView == "BigInt"_s) {
+        if (constructorObject->hasInstance(globalObject, otherProp)) {
             return AsymmetricMatcherResult::PASS;
         }
 

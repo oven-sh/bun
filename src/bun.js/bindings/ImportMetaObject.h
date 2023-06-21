@@ -21,16 +21,11 @@ using namespace WebCore;
 JSC_DECLARE_CUSTOM_GETTER(jsRequireCacheGetter);
 JSC_DECLARE_CUSTOM_SETTER(jsRequireCacheSetter);
 
-class ImportMetaObject final : public JSC::JSDestructibleObject {
+class ImportMetaObject final : public JSC::JSNonFinalObject {
 public:
-    using Base = JSC::JSDestructibleObject;
+    using Base = JSC::JSNonFinalObject;
 
-    static ImportMetaObject* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        ImportMetaObject* ptr = new (NotNull, JSC::allocateCell<ImportMetaObject>(vm)) ImportMetaObject(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
+    static ImportMetaObject* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url);
 
     static JSC::Structure* createRequireFunctionStructure(JSC::VM& vm, JSGlobalObject* globalObject);
     static JSObject* createRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString);
@@ -39,26 +34,39 @@ public:
     static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSValue keyString);
 
     DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
 
-    static constexpr bool needsDestruction = true;
-
-    template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* subspaceFor(VM& vm)
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
-        return &vm.destructibleObjectSpace();
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+
+        return WebCore::subspaceForImpl<ImportMetaObject, UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForImportMeta.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForImportMeta = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForImportMeta.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForImportMeta = std::forward<decltype(space)>(space); });
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
+    WTF::String url;
+    LazyProperty<JSObject, JSFunction> requireProperty;
+    LazyProperty<JSObject, JSString> dirProperty;
+    LazyProperty<JSObject, JSString> urlProperty;
+    LazyProperty<JSObject, JSString> fileProperty;
+    LazyProperty<JSObject, JSString> pathProperty;
+
 private:
-    ImportMetaObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+    ImportMetaObject(JSC::VM& vm, JSC::Structure* structure, const WTF::String& url)
         : Base(vm, structure)
+        , url(url)
     {
     }
 
     void finishCreation(JSC::VM&);
 };
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(ImportMetaObject, ImportMetaObject::Base);
 
 }

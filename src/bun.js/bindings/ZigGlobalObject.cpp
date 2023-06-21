@@ -2986,7 +2986,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_importMetaObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
-            init.set(Zig::ImportMetaObject::createStructure(init.vm, jsCast<Zig::GlobalObject*>(init.owner)));
+            init.set(Zig::ImportMetaObject::createStructure(init.vm, init.owner));
         });
 
     m_JSFileSinkClassStructure.initLater(

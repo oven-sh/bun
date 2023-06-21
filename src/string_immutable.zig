@@ -39,10 +39,40 @@ pub fn toUTF16Literal(comptime str: []const u8) []const u16 {
 }
 
 pub const OptionalUsize = std.meta.Int(.unsigned, @bitSizeOf(usize) - 1);
-pub fn indexOfAny(self: string, comptime str: anytype) ?OptionalUsize {
-    inline for (str) |a| {
-        if (indexOfChar(self, a)) |i| {
-            return @intCast(OptionalUsize, i);
+pub fn indexOfAny(slice: string, comptime str: anytype) ?OptionalUsize {
+    switch (comptime str.len) {
+        0 => @compileError("str cannot be empty"),
+        1 => return indexOfChar(slice, str[0]),
+        else => {},
+    }
+
+    var remaining = slice;
+    if (remaining.len == 0) return null;
+
+    if (comptime Environment.enableSIMD) {
+        while (remaining.len >= ascii_vector_size) {
+            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
+            var cmp = @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, str[0])));
+            inline for (str[1..]) |c| {
+                cmp |= @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, c)));
+            }
+
+            if (@reduce(.Max, cmp) > 0) {
+                const bitmask = @bitCast(AsciiVectorInt, cmp);
+                const first = @ctz(bitmask);
+
+                return @intCast(OptionalUsize, first + slice.len - remaining.len);
+            }
+
+            remaining = remaining[ascii_vector_size..];
+        }
+
+        if (comptime Environment.allow_assert) std.debug.assert(remaining.len < ascii_vector_size);
+    }
+
+    for (remaining, 0..) |c, i| {
+        if (strings.indexOfChar(str, c) != null) {
+            return @intCast(OptionalUsize, i + slice.len - remaining.len);
         }
     }
 

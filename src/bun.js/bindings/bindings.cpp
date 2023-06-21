@@ -4061,9 +4061,18 @@ restart:
             if (key.len == 0)
                 return true;
 
-            JSC::JSValue propertyValue = objectToUse == object ? objectToUse->getDirect(entry.offset()) : JSValue();
+            JSC::JSValue propertyValue = JSValue();
+
+            if (objectToUse == object) {
+                propertyValue = objectToUse->getDirect(entry.offset());
+                if (!propertyValue) {
+                    scope.clearException();
+                    return true;
+                }
+            }
+
             if (!propertyValue || propertyValue.isGetterSetter() && !((entry.attributes() & PropertyAttribute::Accessor) != 0)) {
-                propertyValue = objectToUse->get(globalObject, prop);
+                propertyValue = objectToUse->getIfPropertyExists(globalObject, prop);
             }
 
             if (scope.exception())

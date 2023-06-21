@@ -25,7 +25,7 @@ export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
     // But, this time we do it a little more carefully because this is a JSC function call and not bun source code
     var moduleRecordPromise = loader.parseModule(key, sourceCodeObject);
     var mod = entry.module;
-    if (!mod && moduleRecordPromise && $isPromise(moduleRecordPromise)) {
+    if (moduleRecordPromise && $isPromise(moduleRecordPromise)) {
       var reactionsOrResult = $getPromiseInternalField(moduleRecordPromise, $promiseFieldReactionsOrResult);
       var flags = $getPromiseInternalField(moduleRecordPromise, $promiseFieldFlags);
       var state = flags & $promiseStateMask;
@@ -59,6 +59,7 @@ export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
       // we don't need to run the resolver a 2nd time
       var depKey = depName[0] === "/" ? depName : loader.resolve(depName, key);
       var depEntry = loader.ensureRegistered(depKey);
+
       if (depEntry.state < $ModuleLink) {
         queue.push(depKey);
       }
@@ -108,8 +109,6 @@ export function requireESM(this: ImportMetaObject, resolved) {
   var cjs = commonJS?.[$commonJSSymbol];
   if (cjs === 0) {
     return commonJS;
-  } else if (cjs && $isCallable(commonJS)) {
-    return commonJS();
   }
 
   return exports;
@@ -119,17 +118,14 @@ export function internalRequire(this: ImportMetaObject, resolved) {
   var cached = $requireMap.$get(resolved);
   const last5 = resolved.substring(resolved.length - 5);
   if (cached) {
-    if (last5 === ".node") {
-      return cached.exports;
-    }
-    return cached;
+    return cached.exports;
   }
 
   // TODO: remove this hardcoding
   if (last5 === ".json") {
     var fs = (globalThis[Symbol.for("_fs")] ||= Bun.fs());
     var exports = JSON.parse(fs.readFileSync(resolved, "utf8"));
-    $requireMap.$set(resolved, exports);
+    $requireMap.$set(resolved, { exports });
     return exports;
   } else if (last5 === ".node") {
     var module = { exports: {} };
@@ -139,7 +135,7 @@ export function internalRequire(this: ImportMetaObject, resolved) {
   } else if (last5 === ".toml") {
     var fs = (globalThis[Symbol.for("_fs")] ||= Bun.fs());
     var exports = Bun.TOML.parse(fs.readFileSync(resolved, "utf8"));
-    $requireMap.$set(resolved, exports);
+    $requireMap.$set(resolved, { exports });
     return exports;
   } else {
     var exports = $requireESM(resolved);
@@ -148,7 +144,7 @@ export function internalRequire(this: ImportMetaObject, resolved) {
       return cachedExports;
     }
 
-    $requireMap.$set(resolved, exports);
+    $requireMap.$set(resolved, { exports });
     return exports;
   }
 }

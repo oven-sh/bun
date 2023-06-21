@@ -2721,14 +2721,28 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(
                 globalObject,
                 globalObject->objectPrototype(),
-                4);
+                3);
             JSC::PropertyOffset offset;
             auto& vm = globalObject->vm();
 
             structure = structure->addPropertyTransition(
                 vm,
                 structure,
-                JSC::Identifier::fromString(vm, "fn"_s),
+                JSC::Identifier::fromString(vm, "module"_s),
+                0,
+                offset);
+
+            structure = structure->addPropertyTransition(
+                vm,
+                structure,
+                JSC::Identifier::fromString(vm, "__dirname"_s),
+                0,
+                offset);
+
+            structure = structure->addPropertyTransition(
+                vm,
+                structure,
+                JSC::Identifier::fromString(vm, "__filename"_s),
                 0,
                 offset);
 
@@ -3483,11 +3497,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
                 String(), functionStartDirectStream, ImplementationVisibility::Public),
             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
-
-    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo { builtinNames.textDecoderStreamDecoderPrivateName(),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
-            String(), Bun::jsCommonJSLoadModule, ImplementationVisibility::Public),
-        JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
 
     static NeverDestroyed<const String> BunLazyString(MAKE_STATIC_STRING_IMPL("Bun.lazy"));
     static NeverDestroyed<const String> CommonJSSymbolKey(MAKE_STATIC_STRING_IMPL("CommonJS"));

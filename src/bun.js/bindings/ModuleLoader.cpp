@@ -418,8 +418,12 @@ JSValue fetchCommonJSModule(
     Bun__transpileFile(bunVM, globalObject, specifier, referrer, res, false);
 
     if (res->success && res->result.value.commonJSExportsLen) {
-        auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), res->result.value, JSC::SourceProviderSourceType::Program);
-        RELEASE_AND_RETURN(scope, Bun::createCommonJSModuleWithoutRunning(globalObject, WTFMove(sourceProvider), Bun::toWTFString(*specifier).isolatedCopy(), res->result.value));
+        auto* mod = Bun::JSCommonJSModule::create(globalObject, Bun::toWTFString(*specifier).isolatedCopy(), res->result.value);
+        if (mod) {
+            RELEASE_AND_RETURN(scope, mod);
+        } else {
+            RELEASE_AND_RETURN(scope, {});
+        }
     }
 
     if (!res->success) {

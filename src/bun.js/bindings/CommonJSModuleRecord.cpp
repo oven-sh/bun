@@ -69,6 +69,7 @@
 #include "CommonJSModuleRecord.h"
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSSourceCode.h>
+#include <JavaScriptCore/LazyPropertyInlines.h>
 
 namespace Bun {
 using namespace JSC;
@@ -182,32 +183,6 @@ public:
         this->putDirect(vm, JSC::Identifier::fromString(vm, "extensions"_s), constructEmptyObject(globalObject()), 0);
     }
 };
-
-JSC_DEFINE_HOST_FUNCTION(Bun::jsCommonJSLoadModule, (JSGlobalObject * globalObject, CallFrame* callframe))
-{
-    auto& vm = globalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(callframe->argument(0));
-    if (!thisObject || !thisObject->sourceCode)
-        return JSValue::encode(callframe->argument(0));
-
-    JSFunction* fn = thisObject->compile(vm, globalObject);
-
-    if (fn) {
-        auto* boundRequire = JSC::JSBoundFunction::create(
-            vm,
-            globalObject,
-            thisObject->get(globalObject, WebCore::clientData(vm)->builtinNames().requirePublicName()).getObject(),
-            thisObject,
-            ArgList(),
-            1,
-            nullptr);
-
-        boundRequire->putDirect(vm, Identifier::fromString(vm, "id"_s), thisObject->id(), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
-    }
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(thisObject->compile(vm, globalObject)));
-}
 
 JSC_DEFINE_CUSTOM_GETTER(getterFilename, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
@@ -567,8 +542,6 @@ bool JSCommonJSModule::put(
     RELEASE_AND_RETURN(throwScope, Base::put(cell, globalObject, propertyName, value, slot));
 }
 
-extern "C" EncodedJSValue vmEntryToJavaScript(void*, VM*, ProtoCallFrame*);
-
 template<typename, SubspaceAccess mode> JSC::GCClient::IsoSubspace* JSCommonJSModule::subspaceFor(JSC::VM& vm)
 {
     if constexpr (mode == JSC::SubspaceAccess::Concurrently)
@@ -597,7 +570,6 @@ void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->sourceCode);
     visitor.append(thisObject->m_filename);
     visitor.append(thisObject->m_dirname);
-    visitor.append(thisObject->m_compiledFunction);
 }
 
 DEFINE_VISIT_CHILDREN(JSCommonJSModule);
@@ -626,33 +598,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * globalObje
     RELEASE_AND_RETURN(throwScope, JSValue::encode(Bun::fetchCommonJSModule(jsCast<Zig::GlobalObject*>(globalObject), &specifierStr, &referrerStr)));
 }
 
-JSFunction* JSCommonJSModule::compile(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
-{
-    if (this->m_compiledFunction)
-        return this->m_compiledFunction.get();
-
-    JSC::JSObject* thisObject = JSC::constructEmptyObject(
-        vm,
-        jsCast<Zig::GlobalObject*>(globalObject)->commonJSFunctionArgumentsStructure());
-
-    thisObject->putDirectOffset(vm, 0, jsUndefined());
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSValue result = JSC::evaluate(globalObject, this->sourceCode.get()->sourceCode(), thisObject);
-
-    if (UNLIKELY(throwScope.exception()))
-        return nullptr;
-
-    JSFunction* fn = jsDynamicCast<JSFunction*>(result);
-
-    if (UNLIKELY(!fn))
-        return nullptr;
-
-    this->m_compiledFunction.set(vm, this, fn);
-    this->sourceCode.clear();
-
-    return fn;
-}
-
 void RequireResolveFunctionPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
@@ -662,7 +607,7 @@ void RequireResolveFunctionPrototype::finishCreation(JSC::VM& vm)
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
-JSCommonJSModule* createCommonJSModuleWithoutRunning(
+JSCommonJSModule* runCommonJSModule(
     Zig::GlobalObject* globalObject,
     Ref<Zig::SourceProvider> sourceProvider,
     const WTF::String& sourceURL,
@@ -693,50 +638,38 @@ JSCommonJSModule* createCommonJSModuleWithoutRunning(
 
     moduleObject->putDirect(vm, Identifier::fromString(vm, "exports"_s), JSC::constructEmptyObject(globalObject, globalObject->objectPrototype()), 0);
 
-    return moduleObject;
-}
+    globalObject->requireMap()->set(globalObject, requireMapKey, moduleObject);
 
-JSCommonJSModule* runCommonJSModule(
-    Zig::GlobalObject* globalObject,
-    Ref<Zig::SourceProvider> sourceProvider,
-    const WTF::String& sourceURL,
-    ResolvedSource source)
-{
-    auto& vm = globalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* requireMapKey = jsString(vm, sourceURL);
+    JSC::Structure* thisObjectStructure = globalObject->commonJSFunctionArgumentsStructure();
+    JSC::JSObject* thisObject = JSC::constructEmptyObject(
+        vm,
+        thisObjectStructure);
+    thisObject->putDirectOffset(
+        vm,
+        0,
+        moduleObject);
 
-    auto* moduleObject = createCommonJSModuleWithoutRunning(globalObject, WTFMove(sourceProvider), sourceURL, source);
+    thisObject->putDirectOffset(
+        vm,
+        1,
+        dirname);
+
+    thisObject->putDirectOffset(
+        vm,
+        2,
+        filename);
 
     {
-        auto* function = moduleObject->compile(vm, globalObject);
-        if (throwScope.exception() || !function) {
-            RELEASE_AND_RETURN(throwScope, nullptr);
+        globalObject->m_BunCommonJSModuleValue.set(vm, globalObject, thisObject);
+
+        WTF::NakedPtr<JSC::Exception> exception;
+
+        JSC::JSValue result = JSC::evaluate(globalObject, moduleObject->sourceCode.get()->sourceCode(), globalObject, exception);
+
+        if (auto* except = exception.get()) {
+            throwScope.throwException(globalObject, except);
+            exception.clear();
         }
-
-        auto requireFunction = moduleObject->getPrototype(vm, globalObject).getObject()->getDirect(vm, WebCore::clientData(vm)->builtinNames().requirePublicName());
-
-        auto* boundRequire = JSC::JSBoundFunction::create(
-            vm,
-            globalObject,
-            requireFunction.getObject(),
-            moduleObject,
-            ArgList(),
-            1,
-            nullptr);
-
-        boundRequire->putDirect(vm, Identifier::fromString(vm, "id"_s), requireMapKey, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
-
-        MarkedArgumentBuffer args;
-        args.append(moduleObject);
-        args.append(moduleObject->get(globalObject, Identifier::fromString(vm, "exports"_s)));
-        args.append(boundRequire);
-        args.append(moduleObject->m_dirname.get());
-        args.append(moduleObject->m_filename.get());
-
-        globalObject->requireMap()->set(globalObject, requireMapKey, moduleObject);
-
-        JSC::call(globalObject, function, JSC::getCallData(function), moduleObject, args);
 
         if (throwScope.exception()) {
             RELEASE_AND_RETURN(throwScope, nullptr);
@@ -785,18 +718,19 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 {
     auto sourceURL = Zig::toStringCopy(source.source_url);
     auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program);
-
+    auto* moduleObject = runCommonJSModule(jsCast<Zig::GlobalObject*>(globalObject), WTFMove(sourceProvider), sourceURL, source);
+    if (!moduleObject) {
+        return std::nullopt;
+    }
+    gcProtect(jsCast<JSC::JSCell*>(moduleObject));
     return JSC::SourceCode(
         JSC::SyntheticSourceProvider::create(
-            [sourceURL, source, sourceProvider = WTFMove(sourceProvider)](JSC::JSGlobalObject* globalObject,
+            [moduleObject](JSC::JSGlobalObject* globalObject,
                 JSC::Identifier moduleKey,
                 Vector<JSC::Identifier, 4>& exportNames,
                 JSC::MarkedArgumentBuffer& exportValues) -> void {
-                auto* moduleObject = runCommonJSModule(jsCast<Zig::GlobalObject*>(globalObject), WTFMove(sourceProvider), sourceURL, source);
-                if (UNLIKELY(!moduleObject)) {
-                    return;
-                }
                 moduleObject->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues);
+                gcUnprotect(jsCast<JSC::JSCell*>(moduleObject));
             },
             SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL)),
             sourceURL));

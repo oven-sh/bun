@@ -19,11 +19,6 @@ export function require(this: Module, id: string) {
   if (out === -1) {
     return $internalRequire(id);
   }
-  const fn = globalThis.$textDecoderStreamDecoder(out);
-  if (fn !== out) {
-    fn(out, out.exports, out.require, out.id, out.filename);
-    $requireMap.$set(id, out);
-  }
 
   const existing2 = $requireMap.$get(id);
   if (existing2) {

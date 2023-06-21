@@ -7565,7 +7565,7 @@ pub const PackageManager = struct {
         const needs_clean_lockfile = had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0;
         var did_meta_hash_change = needs_clean_lockfile;
         if (needs_clean_lockfile) {
-            manager.lockfile = try manager.lockfile.clean(manager.package_json_updates);
+            manager.lockfile = try manager.lockfile.cleanWithLogger(manager.package_json_updates, manager.log);
         }
 
         if (manager.lockfile.packages.len > 0) {

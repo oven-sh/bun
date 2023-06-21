@@ -194,6 +194,29 @@ describe("dotenv priority", () => {
   });
 });
 
+test(".env doesnt crash with 159 bytes", () => {
+  const dir = tempDirWithFiles("dotenv-159", {
+    ".env":
+      "123456789=1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678" +
+      "\n",
+    "index.ts": "console.log(process.env['123456789']);",
+    "package.json": `{
+      "name": "foo",
+      "devDependencies": {
+        "conditional-type-checks": "1.0.6",
+        "prettier": "2.8.8",
+        "tsd": "0.22.0",
+        "typescript": "5.0.4"
+      }
+    }`,
+  });
+
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(stdout.trim()).toBe(
+    `1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678`,
+  );
+});
+
 test.todo(".env space edgecase (issue #411)", () => {
   const dir = tempDirWithFiles("dotenv-issue-411", {
     ".env": "VARNAME=A B",

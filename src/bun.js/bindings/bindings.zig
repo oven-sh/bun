@@ -4414,12 +4414,27 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("deepEquals", .{ this, other, global });
     }
 
+    /// same as `JSValue.deepEquals`, but with jest asymmetric matchers enabled
+    pub fn jestDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
+        return cppFn("jestDeepEquals", .{ this, other, global });
+    }
+
     pub fn strictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
         return cppFn("strictDeepEquals", .{ this, other, global });
     }
 
+    /// same as `JSValue.strictDeepEquals`, but with jest asymmetric matchers enabled
+    pub fn jestStrictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
+        return cppFn("jestStrictDeepEquals", .{ this, other, global });
+    }
+
     pub fn deepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject, replace_props_with_asymmetric_matchers: bool) bool {
         return cppFn("deepMatch", .{ this, subset, global, replace_props_with_asymmetric_matchers });
+    }
+
+    /// same as `JSValue.deepMatch`, but with jest asymmetric matchers enabled
+    pub fn jestDeepMatch(this: JSValue, subset: JSValue, global: *JSGlobalObject, replace_props_with_asymmetric_matchers: bool) bool {
+        return cppFn("jestDeepMatch", .{ this, subset, global, replace_props_with_asymmetric_matchers });
     }
 
     pub const DiffMethod = enum(u8) {
@@ -4705,7 +4720,6 @@ pub const JSValue = enum(JSValueReprInt) {
         "createTypeError",
         "createUninitializedUint8Array",
         "deepEquals",
-        "deepMatch",
         "eqlCell",
         "eqlValue",
         "fastGetDirect_",
@@ -4739,13 +4753,11 @@ pub const JSValue = enum(JSValueReprInt) {
         "isBoolean",
         "isCallable",
         "isClass",
-        "isConstructor",
         "isCustomGetterSetter",
         "isError",
         "isException",
         "isGetterSetter",
         "isHeapBigInt",
-        "isInstanceOf",
         "isInt32",
         "isInt32AsAnyInt",
         "isIterable",
@@ -4775,7 +4787,6 @@ pub const JSValue = enum(JSValueReprInt) {
         "putIndex",
         "putRecord",
         "strictDeepEquals",
-        "stringIncludes",
         "symbolFor",
         "symbolKeyFor",
         "toBoolean",
@@ -4783,7 +4794,6 @@ pub const JSValue = enum(JSValueReprInt) {
         "toError_",
         "toInt32",
         "toInt64",
-        "toMatch",
         "toObject",
         "toPropertyKeyValue",
         "toString",
@@ -4792,6 +4802,14 @@ pub const JSValue = enum(JSValueReprInt) {
         "toWTFString",
         "toZigException",
         "toZigString",
+        "toMatch",
+        "isConstructor",
+        "isInstanceOf",
+        "stringIncludes",
+        "deepMatch",
+        "jestDeepEquals",
+        "jestStrictDeepEquals",
+        "jestDeepMatch",
     };
 };
 

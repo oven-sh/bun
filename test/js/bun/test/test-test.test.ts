@@ -366,6 +366,174 @@ test("deepEquals works with proxies", () => {
   }
 });
 
+test("deepEquals works with sets/maps/dates/strings", () => {
+  const f = Symbol.for("foo");
+
+  let a = new Set();
+  a.add([1, 2, 3]);
+  a.add("hello");
+  a.add({ a: 1 });
+  a.add(89);
+
+  let b = new Set();
+  b.add(89);
+  b.add({ a: 1 });
+  b.add("hello");
+  b.add([1, 2, 3]);
+
+  expect(a).toEqual(b);
+  expect(b).toEqual(a);
+  expect(b).toEqual(b);
+
+  let obj = {};
+  var c = new Set();
+  obj.c = c;
+  obj.x = obj;
+  c.add(obj);
+  expect(obj).toEqual(obj);
+
+  let o1 = { a: new Set() };
+  o1.a.add(o1);
+  expect(o1).toEqual(o1);
+
+  let o2 = new Set();
+  let o3 = {};
+  o3.x = o3;
+  o2.add(o3);
+  expect(o2).toEqual(o2);
+
+  var d = new Date();
+  var e = new Date(d);
+  e[f] = "hello";
+
+  expect(d).toEqual(e);
+  expect(e).toEqual(d);
+
+  class Date2 extends Date {
+    constructor() {
+      super(...arguments);
+    }
+  }
+
+  class Date3 extends Date2 {
+    constructor() {
+      super(...arguments);
+    }
+  }
+
+  let d2 = new Date2();
+  let e2 = new Date(d2);
+  d2[f] = "hello";
+  expect(d2).toEqual(e2);
+  expect(e2).toEqual(d2);
+
+  let d3 = new Date3();
+  let e3 = new Date(d3);
+  d3[f] = "hello";
+  expect(d3).toEqual(e3);
+  expect(e3).toEqual(d3);
+
+  let d4 = new Date();
+  let e4 = new Date3(d4);
+  d4[f] = "hello";
+  expect(d4).toEqual(e4);
+  expect(e4).toEqual(d4);
+
+  let d5 = new Date2();
+  let e5 = new Date3(d5);
+  d5[f] = "hello";
+  expect(d5).toEqual(e5);
+  expect(e5).toEqual(d5);
+
+  expect(new String("a")).not.toEqual(new String("b"));
+
+  var s1 = new String("a");
+  var s2 = new String("a");
+  s1[f] = "hello";
+  expect(s1).toEqual(s2);
+
+  class String2 extends String {
+    constructor() {
+      super(...arguments);
+    }
+  }
+
+  class String3 extends String2 {
+    constructor() {
+      super(...arguments);
+    }
+  }
+
+  let string4 = {};
+  string4.__proto__ = String3.prototype;
+
+  var s3 = new String2("a");
+  var s4 = new String2("a");
+  s3[f] = "hello";
+  expect(s3).toEqual(s4);
+
+  var s5 = new String("a");
+  var s6 = new String3("a");
+  expect(s6).not.toEqual(s5);
+  expect(s5).not.toEqual(s6);
+
+  var s7 = new String2("a");
+  var s8 = new String3("a");
+  expect(s7).not.toEqual(s8);
+  expect(s8).not.toEqual(s7);
+
+  var s9 = new String2("a");
+  var s10 = new string4.constructor("a");
+  expect(s9).not.toEqual(s10);
+  expect(s10).not.toEqual(s9);
+
+  class F2 extends Function {}
+  class F3 extends F2 {}
+
+  var f1 = new Function();
+  var f2 = new F2();
+  var f3 = new F3();
+  expect(f1).not.toEqual(f2);
+  expect(f2).not.toEqual(f1);
+  expect(f2).not.toEqual(f3);
+  expect(f3).not.toEqual(f2);
+});
+
+describe("deepEquals with asymmetric matchers", () => {
+  it("should accept any string", () => {
+    expect({ name: "alice" }).toEqual({ name: expect.any(String) });
+    expect({ name: "bob" }).toEqual({ name: expect.any(String) });
+    expect({ name: "charlie" }).toEqual({ name: expect.any(String) });
+  });
+
+  it("should accept any number", () => {
+    expect({ age: 42 }).toEqual({ age: expect.any(Number) });
+    expect({ age: 69 }).toEqual({ age: expect.any(Number) });
+    expect({ age: 73 }).toEqual({ age: expect.any(Number) });
+  });
+
+  it("should accept any boolean", () => {
+    expect({ active: false }).toEqual({ active: expect.any(Boolean) });
+    expect({ active: true }).toEqual({ active: expect.any(Boolean) });
+  });
+
+  it("should not match the wrong constructors", () => {
+    function f() {
+      return 32;
+    }
+    Object.defineProperty(f, "name", { value: "String" });
+    expect({ a: "123" }).toEqual({ a: expect.any(String) });
+    expect({ a: "123" }).not.toEqual({ a: expect.any(f) });
+
+    function g() {
+      return 32;
+    }
+    Object.defineProperty(g, "name", { value: "BigInt" });
+    expect({ a: 123n }).toEqual({ a: expect.any(BigInt) });
+    expect({ a: 123n }).not.toEqual({ a: expect.any(g) });
+  });
+});
+
 test("toThrow", () => {
   expect(() => {
     throw new Error("hello");

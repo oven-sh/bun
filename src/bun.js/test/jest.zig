@@ -1620,7 +1620,7 @@ pub const Expect = struct {
         value.ensureStillAlive();
 
         const not = this.op.contains(.not);
-        var pass = value.deepEquals(expected, globalObject);
+        var pass = value.jestDeepEquals(expected, globalObject);
 
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -1673,7 +1673,7 @@ pub const Expect = struct {
         value.ensureStillAlive();
 
         const not = this.op.contains(.not);
-        var pass = value.strictDeepEquals(expected, globalObject);
+        var pass = value.jestStrictDeepEquals(expected, globalObject);
 
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -1750,7 +1750,7 @@ pub const Expect = struct {
         }
 
         if (pass and expected_property != null) {
-            pass = received_property.deepEquals(expected_property.?, globalObject);
+            pass = received_property.jestDeepEquals(expected_property.?, globalObject);
         }
 
         if (not) pass = !pass;
@@ -2828,7 +2828,7 @@ pub const Expect = struct {
         if (property_matchers) |_prop_matchers| {
             var prop_matchers = _prop_matchers;
 
-            if (!value.deepMatch(prop_matchers, globalObject, true)) {
+            if (!value.jestDeepMatch(prop_matchers, globalObject, true)) {
                 // TODO: print diff with properties from propertyMatchers
                 const signature = comptime getSignature("toMatchSnapshot", "<green>propertyMatchers<r>", false);
                 const fmt = signature ++ "\n\nExpected <green>propertyMatchers<r> to match properties from received object" ++
@@ -4179,18 +4179,18 @@ pub const Expect = struct {
         if (args.len < 1 or !args[0].isObject()) {
             const matcher_error = "\n\n<b>Matcher error<r>: <green>expected<r> value must be a non-null object\n";
             if (not) {
-                const fmt = comptime getSignature("toMatchObject", "", true) ++ matcher_error;
+                const fmt = comptime getSignature("toMatchObject", "<green>expected<r>", true) ++ matcher_error;
                 globalObject.throwPretty(fmt, .{});
                 return .zero;
             }
-            const fmt = comptime getSignature("toMatchObject", "", false) ++ matcher_error;
+            const fmt = comptime getSignature("toMatchObject", "<green>expected<r>", false) ++ matcher_error;
             globalObject.throwPretty(fmt, .{});
             return .zero;
         }
 
         const property_matchers = args[0];
 
-        var pass = received_object.deepMatch(property_matchers, globalObject, true);
+        var pass = received_object.jestDeepMatch(property_matchers, globalObject, true);
 
         if (not) pass = !pass;
         if (pass) return thisValue;

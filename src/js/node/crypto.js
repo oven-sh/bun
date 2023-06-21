@@ -6,9 +6,10 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf,
   __hasOwnProp = Object.prototype.hasOwnProperty;
 import { StringDecoder } from "node:string_decoder";
+import * as BufferModule from "node:buffer";
 
 const MAX_STRING_LENGTH = 536870888;
-var Buffer = globalThis.Buffer;
+var Buffer = BufferModule.Buffer;
 
 const crypto = globalThis.crypto;
 const globalCrypto = crypto;
@@ -342,7 +343,7 @@ var require_md5 = __commonJS({
 var require_ripemd160 = __commonJS({
   "node_modules/ripemd160/index.js"(exports, module) {
     "use strict";
-    var Buffer2 = BufferModule.Buffer,
+    var Buffer2 = Buffer,
       inherits = require_inherits_browser(),
       HashBase = require_hash_base(),
       ARRAY16 = new Array(16),
@@ -17438,7 +17439,7 @@ var require_safer = __commonJS({
   "node_modules/safer-buffer/safer.js"(exports, module) {
     "use strict";
     var buffer = BufferModule,
-      Buffer2 = buffer.Buffer,
+      Buffer2 = Buffer,
       safer = {},
       key;
     for (key in buffer)

@@ -355,9 +355,9 @@ var require_assertion_error = __commonJS({
         _typeof(obj)
       );
     }
-    (inspect = util.inspect),
-      (_require2 = require_errors()),
-      (ERR_INVALID_ARG_TYPE = _require2.codes.ERR_INVALID_ARG_TYPE);
+    var inspect = util.inspect,
+      _require2 = require_errors(),
+      ERR_INVALID_ARG_TYPE = _require2.codes.ERR_INVALID_ARG_TYPE;
     function endsWith(str, search, this_len) {
       return (
         (this_len === void 0 || this_len > str.length) && (this_len = str.length),

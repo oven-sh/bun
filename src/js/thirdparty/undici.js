@@ -3,7 +3,7 @@ import { EventEmitter } from "events";
 import * as NodeStreamModule from "node:stream";
 import { Readable } from "node:stream";
 
-const _ReadableFromWeb = NodeStreamModule.default[Symbol.for("::bunternal::")];
+const { _ReadableFromWeb } = NodeStreamModule.default[Symbol.for("::bunternal::")];
 
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);

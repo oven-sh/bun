@@ -1304,6 +1304,7 @@ pub fn NewClassWithInstanceType(
                 props[i] = brk2: {
                     var static_prop = JSC.C.JSStaticValue{
                         // TODO: update when @typeInfo struct field names are sentinel terminated
+                        // https://github.com/ziglang/zig/issues/16072
                         .name = lit ++ .{0},
                         .getProperty = null,
                         .setProperty = null,

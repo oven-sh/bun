@@ -393,7 +393,7 @@ describe("bundler", () => {
     onAfterBundle(api) {
       api
         .expectFile("/Users/user/project/out.js")
-        .toContain(`console.log(c(F, null, c(\"div\", null), c(\"div\", null)));\n`);
+        .toContain(`console.log(R.c(R.F, null, R.c(\"div\", null), R.c(\"div\", null)));\n`);
     },
   });
   itBundled("tsconfig/ReactJSXNotReact", {

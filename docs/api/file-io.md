@@ -202,6 +202,53 @@ const response = await fetch("https://bun.sh");
 await Bun.write("index.html", response);
 ```
 
+## Incremental writing with `FileSink`
+
+Bun provides a native incremental file writing API called `FileSink`. To retrieve a `FileSink` instance from a `BunFile`:
+
+```ts
+const file = Bun.file("output.txt");
+const writer = file.writer();
+```
+
+To incrementally write to the file, call `.write()`.
+
+```ts
+const file = Bun.file("output.txt");
+const writer = file.writer();
+
+writer.write("it was the best of times\n");
+writer.write("it was the worst of times\n");
+```
+
+These chunks will be buffered internally. To flush the buffer to disk, use `.flush()`. This returns the number of flushed bytes.
+
+```ts
+writer.flush(); // write buffer to disk
+```
+
+The buffer will also auto-flush when the `FileSink`'s _high water mark_ is reached; that is, when its internal buffer is full. This value can be configured.
+
+```ts
+const file = Bun.file("output.txt");
+const writer = file.writer({ highWaterMark: 1024 * 1024 }); // 1MB
+```
+
+To flush the buffer and close the file:
+
+```ts
+writer.end();
+```
+
+Note that, by default, the `bun` process will stay alive until this `FileSink` is explicitly closed with `.end()`. To opt out of this behavior, you can "unref" the instance.
+
+```ts
+writer.unref();
+
+// to "re-ref" it later
+writer.ref();
+```
+
 ## Benchmarks
 
 The following is a 3-line implementation of the Linux `cat` command.
@@ -250,5 +297,15 @@ interface BunFile {
   stream(): Promise<ReadableStream>;
   arrayBuffer(): Promise<ArrayBuffer>;
   json(): Promise<any>;
+  writer(params: { highWaterMark?: number }): FileSink;
+}
+
+export interface FileSink {
+  write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number;
+  flush(): number | Promise<number>;
+  end(error?: Error): number | Promise<number>;
+  start(options?: { highWaterMark?: number }): void;
+  ref(): void;
+  unref(): void;
 }
 ```

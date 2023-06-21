@@ -2077,11 +2077,11 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
     Vector<std::pair<JSValue, JSValue>, 16> stack;
 
     if (arg3.isBoolean() && arg3.asBoolean()) {
-        bool isEqual = Bun__deepEquals<true>(globalObject, arg1, arg2, stack, &scope, true);
+        bool isEqual = Bun__deepEquals<true, false>(globalObject, arg1, arg2, stack, &scope, true);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsBoolean(isEqual));
     } else {
-        bool isEqual = Bun__deepEquals<false>(globalObject, arg1, arg2, stack, &scope, true);
+        bool isEqual = Bun__deepEquals<false, false>(globalObject, arg1, arg2, stack, &scope, true);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsBoolean(isEqual));
     }
@@ -2107,13 +2107,13 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, J
 
     if (!subset.isObject() || !object.isObject()) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        throwTypeError(globalObject, throwScope, "Expected 2 object to match"_s);
+        throwTypeError(globalObject, throwScope, "Expected 2 objects to match"_s);
         return JSValue::encode(jsUndefined());
     }
 
-    bool isEqual = Bun__deepMatch(object, subset, globalObject, &scope, false);
+    bool match = Bun__deepMatch<false>(object, subset, globalObject, &scope, false);
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsBoolean(isEqual));
+    return JSValue::encode(jsBoolean(match));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionBunNanoseconds);
@@ -2502,7 +2502,7 @@ void GlobalObject::createCallSitesFromFrames(JSC::JSGlobalObject* lexicalGlobalO
     }
 }
 
-JSC::JSValue GlobalObject::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites, ZigStackFrame remappedStackFrames[])
+JSC::JSValue GlobalObject::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue errorValue = this->get(this, JSC::Identifier::fromString(vm, "Error"_s));
@@ -2557,39 +2557,8 @@ JSC::JSValue GlobalObject::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* le
     for (size_t i = 0; i < framesCount; i++) {
         JSC::JSValue callSiteValue = callSites->getIndex(lexicalGlobalObject, i);
         CallSite* callSite = JSC::jsDynamicCast<CallSite*>(callSiteValue);
-
-        JSString* typeName = jsTypeStringForValue(lexicalGlobalObject, callSite->thisValue());
-        JSString* function = callSite->functionName().toString(lexicalGlobalObject);
-        JSString* functionName = callSite->functionName().toString(lexicalGlobalObject);
-        JSString* sourceURL = callSite->sourceURL().toString(lexicalGlobalObject);
-        JSString* columnNumber = remappedStackFrames[i].position.column_start >= 0 ? jsNontrivialString(vm, String::number(remappedStackFrames[i].position.column_start)) : jsEmptyString(vm);
-        JSString* lineNumber = remappedStackFrames[i].position.line >= 0 ? jsNontrivialString(vm, String::number(remappedStackFrames[i].position.line)) : jsEmptyString(vm);
-        bool isConstructor = callSite->isConstructor();
-
         sb.append("    at "_s);
-        if (functionName->length() > 0) {
-            if (isConstructor) {
-                sb.append("new "_s);
-            } else {
-                // TODO: print type or class name if available
-                // sb.append(typeName->getString(lexicalGlobalObject));
-                // sb.append(" "_s);
-            }
-            sb.append(functionName->getString(lexicalGlobalObject));
-        } else {
-            sb.append("<anonymous>"_s);
-        }
-        sb.append(" ("_s);
-        if (callSite->isNative()) {
-            sb.append("native"_s);
-        } else {
-            sb.append(sourceURL->getString(lexicalGlobalObject));
-            sb.append(":"_s);
-            sb.append(lineNumber->getString(lexicalGlobalObject));
-            sb.append(":"_s);
-            sb.append(columnNumber->getString(lexicalGlobalObject));
-        }
-        sb.append(")"_s);
+        callSite->formatAsString(vm, lexicalGlobalObject, sb);
         if (i != framesCount - 1) {
             sb.append("\n"_s);
         }
@@ -2598,7 +2567,6 @@ JSC::JSValue GlobalObject::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* le
     return JSC::JSValue(jsString(vm, sb.toString()));
 }
 
-extern "C" void Bun__remapStackFramePositions(JSC::JSGlobalObject*, ZigStackFrame*, size_t);
 extern "C" EncodedJSValue JSPasswordObject__create(JSC::JSGlobalObject*, bool);
 
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace);
@@ -2662,9 +2630,26 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     }
 
     // remap line and column start to original source
+    // XXX: this function does not fully populate the fields of ZigStackFrame,
+    // be careful reading the fields below.
     Bun__remapStackFramePositions(lexicalGlobalObject, remappedFrames, framesCount);
 
-    JSC::JSValue formattedStackTrace = globalObject->formatStackTrace(vm, lexicalGlobalObject, errorObject, callSites, remappedFrames);
+    // write the remapped lines back to the CallSites
+    for (size_t i = 0; i < framesCount; i++) {
+        JSC::JSValue callSiteValue = callSites->getIndex(lexicalGlobalObject, i);
+        CallSite* callSite = JSC::jsDynamicCast<CallSite*>(callSiteValue);
+        if (remappedFrames[i].remapped) {
+            int32_t remappedColumnStart = remappedFrames[i].position.column_start;
+            JSC::JSValue columnNumber = JSC::jsNumber(remappedColumnStart);
+            callSite->setColumnNumber(columnNumber);
+
+            int32_t remappedLine = remappedFrames[i].position.line;
+            JSC::JSValue lineNumber = JSC::jsNumber(remappedLine);
+            callSite->setLineNumber(lineNumber);
+        }
+    }
+
+    JSC::JSValue formattedStackTrace = globalObject->formatStackTrace(vm, lexicalGlobalObject, errorObject, callSites);
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
 
     if (errorObject->hasProperty(lexicalGlobalObject, vm.propertyNames->stack)) {
@@ -2673,7 +2658,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     if (formattedStackTrace.isUndefinedOrNull()) {
         errorObject->putDirect(vm, vm.propertyNames->stack, jsUndefined(), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     } else {
-        errorObject->putDirect(vm, vm.propertyNames->stack, formattedStackTrace.toString(lexicalGlobalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
+        errorObject->putDirect(vm, vm.propertyNames->stack, formattedStackTrace, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     }
 
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSValue {}));
@@ -4057,6 +4042,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->mockModule.mockImplementationStructure.visit(visitor);
     thisObject->mockModule.mockObjectStructure.visit(visitor);
     thisObject->mockModule.activeSpySetStructure.visit(visitor);
+    thisObject->mockModule.mockWithImplementationCleanupDataStructure.visit(visitor);
+    thisObject->mockModule.withImplementationCleanupFunction.visit(visitor);
 
     for (auto& barrier : thisObject->m_thenables) {
         visitor.append(barrier);

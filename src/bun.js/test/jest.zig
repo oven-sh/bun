@@ -698,21 +698,21 @@ pub const Jest = struct {
             Expect.getConstructor(globalObject),
         );
 
-        const mock_object = JSMockFunction__createObject(globalObject);
+        const mock_fn = JSMockFunction__createObject(globalObject);
         const spyOn = JSC.NewFunction(globalObject, ZigString.static("spyOn"), 2, JSMock__spyOn, false);
         const restoreAllMocks = JSC.NewFunction(globalObject, ZigString.static("restoreAllMocks"), 2, jsFunctionResetSpies, false);
-        module.put(
-            globalObject,
-            ZigString.static("mock"),
-            mock_object,
-        );
+        module.put(globalObject, ZigString.static("mock"), mock_fn);
 
         const jest = JSValue.createEmptyObject(globalObject, 3);
-        jest.put(globalObject, ZigString.static("fn"), mock_object);
+        jest.put(globalObject, ZigString.static("fn"), mock_fn);
         jest.put(globalObject, ZigString.static("spyOn"), spyOn);
         jest.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
         module.put(globalObject, ZigString.static("jest"), jest);
         module.put(globalObject, ZigString.static("spyOn"), spyOn);
+
+        const vi = JSValue.createEmptyObject(globalObject, 1);
+        vi.put(globalObject, ZigString.static("fn"), mock_fn);
+        module.put(globalObject, ZigString.static("vi"), vi);
 
         return module;
     }
@@ -989,15 +989,10 @@ pub const Expect = struct {
     }
 
     pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        const arguments_ = callframe.arguments(1);
-        if (arguments_.len < 1) {
-            globalObject.throw("expect() requires one argument\n", .{});
-            return .zero;
-        }
-        const arguments = arguments_.ptr[0..arguments_.len];
+        const arguments = callframe.arguments(1);
+        const value = if (arguments.len < 1) JSC.JSValue.jsUndefined() else arguments.ptr[0];
 
         var expect = globalObject.bunVM().allocator.create(Expect) catch unreachable;
-        const value = arguments[0];
 
         if (Jest.runner.?.pending_test == null) {
             const err = globalObject.createErrorInstance("expect() must be called in a test", .{});
@@ -1620,7 +1615,7 @@ pub const Expect = struct {
         value.ensureStillAlive();
 
         const not = this.op.contains(.not);
-        var pass = value.deepEquals(expected, globalObject);
+        var pass = value.jestDeepEquals(expected, globalObject);
 
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -1673,7 +1668,7 @@ pub const Expect = struct {
         value.ensureStillAlive();
 
         const not = this.op.contains(.not);
-        var pass = value.strictDeepEquals(expected, globalObject);
+        var pass = value.jestStrictDeepEquals(expected, globalObject);
 
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -1750,7 +1745,7 @@ pub const Expect = struct {
         }
 
         if (pass and expected_property != null) {
-            pass = received_property.deepEquals(expected_property.?, globalObject);
+            pass = received_property.jestDeepEquals(expected_property.?, globalObject);
         }
 
         if (not) pass = !pass;
@@ -2828,7 +2823,7 @@ pub const Expect = struct {
         if (property_matchers) |_prop_matchers| {
             var prop_matchers = _prop_matchers;
 
-            if (!value.deepMatch(prop_matchers, globalObject, true)) {
+            if (!value.jestDeepMatch(prop_matchers, globalObject, true)) {
                 // TODO: print diff with properties from propertyMatchers
                 const signature = comptime getSignature("toMatchSnapshot", "<green>propertyMatchers<r>", false);
                 const fmt = signature ++ "\n\nExpected <green>propertyMatchers<r> to match properties from received object" ++
@@ -3002,6 +2997,94 @@ pub const Expect = struct {
         }
 
         const fmt = comptime getSignature("toBeNil", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeArray(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeArray() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        const pass = value.jsType().isArray() != not;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeArray", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeArray", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeArrayOfSize(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const _arguments = callFrame.arguments(1);
+        const arguments = _arguments.ptr[0.._arguments.len];
+
+        if (arguments.len < 1) {
+            globalThis.throwInvalidArguments("toBeArrayOfSize() requires 1 argument", .{});
+            return .zero;
+        }
+
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeArrayOfSize() must be called in a test", .{});
+            return .zero;
+        }
+
+        const size = arguments[0];
+        size.ensureStillAlive();
+
+        if (!size.isAnyInt()) {
+            globalThis.throw("toBeArrayOfSize() requires the first argument to be a number", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        var pass = value.jsType().isArray() and @intCast(i32, value.getLength(globalThis)) == size.toInt32();
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeArrayOfSize", "", true) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{received});
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeArrayOfSize", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
         globalThis.throwPretty(fmt, .{received});
         return .zero;
     }
@@ -3309,6 +3392,99 @@ pub const Expect = struct {
 
         const fmt = comptime getSignature("toBeNegative", "", false) ++ "\n\n" ++ "Received: <red>{any}<r>\n";
         globalThis.throwPretty(fmt, .{received});
+        return .zero;
+    }
+
+    pub fn toBeTypeOf(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const _arguments = callFrame.arguments(1);
+        const arguments = _arguments.ptr[0.._arguments.len];
+
+        if (arguments.len < 1) {
+            globalThis.throwInvalidArguments("toBeTypeOf() requires 1 argument", .{});
+            return .zero;
+        }
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toBeTypeOf() must be called in a test", .{});
+            return .zero;
+        }
+
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        const expected = arguments[0];
+        expected.ensureStillAlive();
+
+        const expectedAsStr = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+        active_test_expectation_counter.actual += 1;
+
+        if (!expected.isString()) {
+            globalThis.throwInvalidArguments("toBeTypeOf() requires a string argument", .{});
+            return .zero;
+        }
+
+        if (!std.mem.eql(u8, expectedAsStr, "function") and
+            !std.mem.eql(u8, expectedAsStr, "object") and
+            !std.mem.eql(u8, expectedAsStr, "bigint") and
+            !std.mem.eql(u8, expectedAsStr, "boolean") and
+            !std.mem.eql(u8, expectedAsStr, "number") and
+            !std.mem.eql(u8, expectedAsStr, "string") and
+            !std.mem.eql(u8, expectedAsStr, "symbol") and
+            !std.mem.eql(u8, expectedAsStr, "undefined"))
+        {
+            globalThis.throwInvalidArguments("toBeTypeOf() requires a valid type string argument ('function', 'object', 'bigint', 'boolean', 'number', 'string', 'symbol', 'undefined')", .{});
+            return .zero;
+        }
+
+        const not = this.op.contains(.not);
+        var pass = false;
+        var whatIsTheType: []const u8 = "";
+
+        // Checking for function/class should be done before everything else, or it will fail.
+        if (value.isCallable(globalThis.vm())) {
+            whatIsTheType = "function";
+        } else if (value.isObject() or value.jsType().isArray() or value.isNull()) {
+            whatIsTheType = "object";
+        } else if (value.isBigInt()) {
+            whatIsTheType = "bigint";
+        } else if (value.isBoolean()) {
+            whatIsTheType = "boolean";
+        } else if (value.isNumber()) {
+            whatIsTheType = "number";
+        } else if (value.jsType().isString()) {
+            whatIsTheType = "string";
+        } else if (value.isSymbol()) {
+            whatIsTheType = "symbol";
+        } else if (value.isUndefined()) {
+            whatIsTheType = "undefined";
+        } else {
+            globalThis.throw("Internal consistency error: unknown JSValue type", .{});
+            return .zero;
+        }
+
+        pass = std.mem.eql(u8, expectedAsStr, whatIsTheType);
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const received = value.toFmt(globalThis, &formatter);
+        const expected_str = expected.toFmt(globalThis, &formatter);
+
+        if (not) {
+            const fmt = comptime getSignature("toBeTypeOf", "", true) ++ "\n\n" ++ "Expected type: not <green>{any}<r>\n" ++ "Received type: <red>\"{s}\"<r>\nReceived value: <red>{any}<r>\n";
+            globalThis.throwPretty(fmt, .{ expected_str, whatIsTheType, received });
+            return .zero;
+        }
+
+        const fmt = comptime getSignature("toBeTypeOf", "", false) ++ "\n\n" ++ "Expected type: <green>{any}<r>\n" ++ "Received type: <red>\"{s}\"<r>\nReceived value: <red>{any}<r>\n";
+        globalThis.throwPretty(fmt, .{ expected_str, whatIsTheType, received });
         return .zero;
     }
 
@@ -3998,18 +4174,18 @@ pub const Expect = struct {
         if (args.len < 1 or !args[0].isObject()) {
             const matcher_error = "\n\n<b>Matcher error<r>: <green>expected<r> value must be a non-null object\n";
             if (not) {
-                const fmt = comptime getSignature("toMatchObject", "", true) ++ matcher_error;
+                const fmt = comptime getSignature("toMatchObject", "<green>expected<r>", true) ++ matcher_error;
                 globalObject.throwPretty(fmt, .{});
                 return .zero;
             }
-            const fmt = comptime getSignature("toMatchObject", "", false) ++ matcher_error;
+            const fmt = comptime getSignature("toMatchObject", "<green>expected<r>", false) ++ matcher_error;
             globalObject.throwPretty(fmt, .{});
             return .zero;
         }
 
         const property_matchers = args[0];
 
-        var pass = received_object.deepMatch(property_matchers, globalObject, true);
+        var pass = received_object.jestDeepMatch(property_matchers, globalObject, true);
 
         if (not) pass = !pass;
         if (pass) return thisValue;

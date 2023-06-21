@@ -3425,9 +3425,42 @@ pub const Parser = struct {
                 .esm => {
                     exports_kind = .esm;
                 },
-                else => {
-                    exports_kind = .esm;
+                .unknown => {
+                    // Divergence from esbuild and Node.js: we default to ESM
+                    // when there are no exports.
+                    //
+                    // However, this breaks certain packages.
+                    // For example, the checkpoint-client used by
+                    // Prisma does an eval("__dirname") but does not export
+                    // anything.
+                    //
+                    // If they use an import statement, we say it's ESM because that's not allowed in CommonJS files.
+                    const uses_any_import_statements = brk: {
+                        for (p.import_records.items) |*import_record| {
+                            if (import_record.is_internal or import_record.is_unused) continue;
+                            if (import_record.kind == .stmt) break :brk true;
+                        }
+
+                        break :brk false;
+                    };
+
+                    if (uses_any_import_statements) {
+                        exports_kind = .esm;
+
+                        // Otherwise, if they use CommonJS features its CommonJS
+                    } else if (p.symbols.items[p.require_ref.innerIndex()].use_count_estimate > 0 or uses_dirname or uses_filename) {
+                        exports_kind = .cjs;
+                    } else {
+                        // If unknown, we default to ESM
+                        exports_kind = .esm;
+                    }
                 },
+            }
+
+            if (exports_kind == .cjs and p.options.features.commonjs_at_runtime) {
+                wrapper_expr = .{
+                    .bun_js = {},
+                };
             }
         }
 
@@ -15060,6 +15093,10 @@ fn NewParser_(
                                 if (e_.tag) |_tag| {
                                     break :tagger p.visitExpr(_tag);
                                 } else {
+                                    if (p.options.jsx.runtime == .classic) {
+                                        break :tagger p.jsxStringsToMemberExpression(expr.loc, p.options.jsx.fragment) catch unreachable;
+                                    }
+
                                     break :tagger p.jsxImport(.Fragment, expr.loc);
                                 }
                             };
@@ -15133,9 +15170,11 @@ fn NewParser_(
                                         i += @intCast(usize, @intFromBool(args[i].data != .e_missing));
                                     }
 
+                                    const target = p.jsxStringsToMemberExpression(expr.loc, p.options.jsx.factory) catch unreachable;
+
                                     // Call createElement()
                                     return p.newExpr(E.Call{
-                                        .target = p.jsxImport(.createElement, expr.loc),
+                                        .target = target,
                                         .args = ExprNodeList.init(args[0..i]),
                                         // Enable tree shaking
                                         .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,

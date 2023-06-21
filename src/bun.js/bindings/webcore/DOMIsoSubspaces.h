@@ -36,6 +36,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForCommonJSModuleRecord;
     std::unique_ptr<IsoSubspace> m_subspaceForJSMockImplementation;
     std::unique_ptr<IsoSubspace> m_subspaceForJSMockFunction;
+    std::unique_ptr<IsoSubspace> m_subspaceForMockWithImplementationCleanupData;
 
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/

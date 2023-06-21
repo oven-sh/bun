@@ -32,7 +32,7 @@ on:
 jobs:
   macos-object-files:
     name: macOS Object
-    runs-on: med-ubuntu
+    runs-on: ubuntu-latest-xl
     if: github.repository_owner == 'oven-sh'
     strategy:
       matrix:

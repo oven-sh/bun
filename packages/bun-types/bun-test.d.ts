@@ -442,7 +442,7 @@ declare module "bun:test" {
     toBe(expected: T): void;
     /**
      * Asserts that a number is odd.
-     * 
+     *
      * @link https://jest-extended.jestcommunity.dev/docs/matchers/number/#tobeodd
      * @example
      * expect(1).toBeOdd();
@@ -451,7 +451,7 @@ declare module "bun:test" {
     toBeOdd(): void;
     /**
      * Asserts that a number is even.
-     * 
+     *
      * @link https://jest-extended.jestcommunity.dev/docs/matchers/number/#tobeeven
      * @example
      * expect(2).toBeEven();
@@ -739,6 +739,27 @@ declare module "bun:test" {
      */
     toBeNil(): void;
     /**
+     * Asserts that a value is a `array`.
+     *
+     * @link https://jest-extended.jestcommunity.dev/docs/matchers/array/#tobearray
+     * @example
+     * expect([1]).toBeArray();
+     * expect(new Array(1)).toBeArray();
+     * expect({}).not.toBeArray();
+     */
+    toBeArray(): void;
+    /**
+     * Asserts that a value is a `array` of a certain length.
+     *
+     * @link https://jest-extended.jestcommunity.dev/docs/matchers/array/#tobearrayofsize
+     * @example
+     * expect([]).toBeArrayOfSize(0);
+     * expect([1]).toBeArrayOfSize(1);
+     * expect(new Array(1)).toBeArrayOfSize(1);
+     * expect({}).not.toBeArrayOfSize(0);
+     */
+    toBeArrayOfSize(size: number): void;
+    /**
      * Asserts that a value is a `boolean`.
      *
      * @example
@@ -757,6 +778,26 @@ declare module "bun:test" {
      * expect(1).not.toBeTrue();
      */
     toBeTrue(): void;
+    /**
+     * Asserts that a value matches a specific type.
+     *
+     * @link https://vitest.dev/api/expect.html#tobetypeof
+     * @example
+     * expect(1).toBeTypeOf("number");
+     * expect("hello").toBeTypeOf("string");
+     * expect([]).not.toBeTypeOf("boolean");
+     */
+    toBeTypeOf(
+      type:
+        | "bigint"
+        | "boolean"
+        | "function"
+        | "number"
+        | "object"
+        | "string"
+        | "symbol"
+        | "undefined",
+    ): void;
     /**
      * Asserts that a value is `false`.
      *
@@ -1058,12 +1099,12 @@ declare namespace JestMock {
      * List of the call order indexes of the mock. Jest is indexing the order of
      * invocations of all mocks in a test file. The index is starting with `1`.
      */
-    // invocationCallOrder: Array<number>;
+    invocationCallOrder: Array<number>;
     /**
      * List of the call arguments of the last call that was made to the mock.
      * If the function was not called, it will return `undefined`.
      */
-    // lastCall?: Parameters<T>;
+    lastCall?: Parameters<T>;
     /**
      * List of the results of all calls that have been made to the mock.
      */

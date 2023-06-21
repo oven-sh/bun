@@ -1048,8 +1048,8 @@ pub const JSX = struct {
         }
 
         pub const Defaults = struct {
-            pub const Factory = &[_]string{"React.createElement"};
-            pub const Fragment = &[_]string{"React.Fragment"};
+            pub const Factory = &[_]string{ "React", "createElement" };
+            pub const Fragment = &[_]string{ "React", "Fragment" };
             pub const ImportSourceDev = "react/jsx-dev-runtime";
             pub const ImportSource = "react/jsx-runtime";
             pub const JSXFunction = "jsx";

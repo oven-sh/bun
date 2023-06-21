@@ -894,29 +894,29 @@ pub fn fileDescriptorFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, excepti
     return @truncate(bun.FileDescriptor, fd);
 }
 
-var _get_time_prop_string: ?JSC.C.JSStringRef = null;
-pub fn timeLikeFromJS(ctx: JSC.C.JSContextRef, value_: JSC.JSValue, exception: JSC.C.ExceptionRef) ?TimeLike {
-    var value = value_;
-    if (JSC.C.JSValueIsDate(ctx, value.asObjectRef())) {
-        // TODO: make this faster
-        var get_time_prop = _get_time_prop_string orelse brk: {
-            var str = JSC.C.JSStringCreateStatic("getTime", "getTime".len);
-            _get_time_prop_string = str;
-            break :brk str;
-        };
+// Node.js docs:
+// > Values can be either numbers representing Unix epoch time in seconds, Dates, or a numeric string like '123456789.0'.
+// > If the value can not be converted to a number, or is NaN, Infinity, or -Infinity, an Error will be thrown.
+pub fn timeLikeFromJS(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, _: JSC.C.ExceptionRef) ?TimeLike {
+    if (value.jsType() == .JSDate) {
+        const milliseconds = value.getUnixTimestamp();
+        if (!std.math.isFinite(milliseconds)) {
+            return null;
+        }
 
-        var getTimeFunction = JSC.C.JSObjectGetProperty(ctx, value.asObjectRef(), get_time_prop, exception);
-        if (exception.* != null) return null;
-        value = JSC.JSValue.fromRef(JSC.C.JSObjectCallAsFunction(ctx, getTimeFunction, value.asObjectRef(), 0, null, exception) orelse return null);
-        if (exception.* != null) return null;
+        return @truncate(TimeLike, @floatToInt(i64, milliseconds / @as(f64, std.time.ms_per_s)));
     }
 
-    const seconds = value.asNumber();
+    if (!value.isNumber() and !value.isString()) {
+        return null;
+    }
+
+    const seconds = value.coerce(f64, globalThis);
     if (!std.math.isFinite(seconds)) {
         return null;
     }
 
-    return @intFromFloat(TimeLike, @max(@floor(seconds), std.math.minInt(TimeLike)));
+    return @truncate(TimeLike, @intFromFloat(i64, seconds));
 }
 
 pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Mode {

@@ -243,10 +243,12 @@ pub const String = extern struct {
     extern fn BunString__fromBytes(bytes: [*]const u8, len: usize) String;
 
     pub fn createLatin1(bytes: []const u8) String {
+        JSC.markBinding(@src());
         return BunString__fromLatin1(bytes.ptr, bytes.len);
     }
 
     pub fn create(bytes: []const u8) String {
+        JSC.markBinding(@src());
         return BunString__fromBytes(bytes.ptr, bytes.len);
     }
 

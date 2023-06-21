@@ -884,18 +884,21 @@ pub const Loader = struct {
         defer file.close();
 
         const stat = try file.stat();
-        if (stat.size == 0) {
+        const end = stat.size;
+
+        if (end == 0) {
             @field(this, base) = logger.Source.initPathString(base, "");
             return;
         }
 
-        var buf = try this.allocator.allocSentinel(u8, stat.size, 0);
+        var buf = try this.allocator.alloc(u8, end + 1);
         errdefer this.allocator.free(buf);
-        var contents = try file.readAll(buf);
+        const amount_read = try file.readAll(buf[0..end]);
 
-        // always sentinel
-        buf.ptr[contents + 1] = 0;
-        const source = logger.Source.initPathString(base, buf.ptr[0..contents :0]);
+        // The null byte here is mostly for debugging purposes.
+        buf[end] = 0;
+
+        const source = logger.Source.initPathString(base, buf[0..amount_read]);
 
         Parser.parse(
             &source,

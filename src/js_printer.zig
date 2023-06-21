@@ -5779,7 +5779,7 @@ pub fn printAst(
             }
         }
 
-        std.sort.insertion(rename.StableSymbolCount, top_level_symbols.items, {}, rename.StableSymbolCount.lessThan);
+        std.sort.block(rename.StableSymbolCount, top_level_symbols.items, {}, rename.StableSymbolCount.lessThan);
 
         try minify_renamer.allocateTopLevelSymbolSlots(top_level_symbols);
         var minifier = tree.char_freq.?.compile(allocator);

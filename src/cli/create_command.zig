@@ -594,7 +594,7 @@ pub const CreateCommand = struct {
                         progress_: *std.Progress,
                     ) !void {
                         while (try walker.next()) |entry| {
-                            if (entry.kind != .File) continue;
+                            if (entry.kind != .file) continue;
 
                             var outfile = destination_dir_.createFile(entry.path, .{}) catch brk: {
                                 if (std.fs.path.dirname(entry.path)) |entry_dirname| {
@@ -643,7 +643,7 @@ pub const CreateCommand = struct {
                             break :read_package_json;
                         };
 
-                        if (stat.kind != .File or stat.size == 0) {
+                        if (stat.kind != .file or stat.size == 0) {
                             package_json_file = null;
                             node.end();
 
@@ -1754,7 +1754,7 @@ pub const Example = struct {
                         const entry: std.fs.IterableDir.Entry = entry_;
 
                         switch (entry.kind) {
-                            .Directory => {
+                            .directory => {
                                 inline for (skip_dirs) |skip_dir| {
                                     if (strings.eqlComptime(entry.name, skip_dir)) {
                                         continue :loop;

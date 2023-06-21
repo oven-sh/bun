@@ -1166,12 +1166,12 @@ pub const Printer = struct {
                     }
 
                     var dependency_versions = requested_version_start[0..j];
-                    if (dependency_versions.len > 1) std.sort.insertionSort(Dependency.Version, dependency_versions, string_buf, Dependency.Version.isLessThan);
+                    if (dependency_versions.len > 1) std.sort.insertion(Dependency.Version, dependency_versions, string_buf, Dependency.Version.isLessThan);
                     try requested_versions.put(i, dependency_versions);
                 }
             }
 
-            std.sort.insertion(
+            std.sort.block(
                 PackageID,
                 alphabetized_names,
                 Lockfile.Package.Alphabetizer{
@@ -2363,7 +2363,7 @@ pub const Package = extern struct {
     };
 
     pub fn hash(name: string, version: Semver.Version) u64 {
-        var hasher = std.hash.Wyhash.init(0);
+        var hasher = bun.Wyhash.init(0);
         hasher.update(name);
         hasher.update(std.mem.asBytes(&version));
         return hasher.final();
@@ -3275,7 +3275,7 @@ pub const Package = extern struct {
             }
         }
 
-        std.sort.insertion(
+        std.sort.block(
             Dependency,
             package_dependencies[0..total_dependencies_count],
             lockfile.buffers.string_bytes.items,
@@ -3352,7 +3352,7 @@ pub const Package = extern struct {
                 }
             };
             var trash: i32 = undefined; // workaround for stage1 compiler bug
-            std.sort.insertion(Data, &data, &trash, Sort.lessThan);
+            std.sort.block(Data, &data, &trash, Sort.lessThan);
             var sizes_bytes: [fields.len]usize = undefined;
             var field_indexes: [fields.len]usize = undefined;
             var Types: [fields.len]type = undefined;
@@ -3447,10 +3447,10 @@ pub const Package = extern struct {
                 var bytes = std.mem.sliceAsBytes(sliced.items(@field(Lockfile.Package.List.Field, field.name)));
                 const end_pos = stream.pos + bytes.len;
                 if (end_pos <= end_at) {
-                    bun.oldMemcpy(bytes.ptr, stream.buffer[stream.pos..].ptr, bytes.len);
+                    @memcpy(bytes, stream.buffer[stream.pos..][0..bytes.len]);
                     stream.pos = end_pos;
                 } else if (comptime strings.eqlComptime(field.name, "scripts")) {
-                    bun.oldMemset(bytes.ptr, 0, bytes.len);
+                    @memset(bytes, 0);
                 } else {
                     return error.@"Lockfile validation failed: invalid package list range";
                 }
@@ -3519,7 +3519,7 @@ const Buffers = struct {
             }
         };
         var trash: i32 = undefined; // workaround for stage1 compiler bug
-        std.sort.insertion(Data, &data, &trash, Sort.lessThan);
+        std.sort.block(Data, &data, &trash, Sort.lessThan);
         var sizes_bytes: [fields.len]usize = undefined;
         var names: [fields.len][]const u8 = undefined;
         var types: [fields.len]type = undefined;
@@ -3883,7 +3883,7 @@ fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash 
         }
     }
 
-    std.sort.insertion(
+    std.sort.block(
         PackageID,
         alphabetized_names,
         Lockfile.Package.Alphabetizer{

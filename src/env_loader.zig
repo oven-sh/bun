@@ -422,7 +422,7 @@ pub const Loader = struct {
 
     pub fn getNodePath(this: *Loader, fs: *Fs.FileSystem, buf: *Fs.PathBuffer) ?[:0]const u8 {
         if (this.get("NODE") orelse this.get("npm_node_execpath")) |node| {
-            bun.oldMemcpy(buf, node.ptr, node.len);
+            @memcpy(buf[0..node.len], node);
             buf[node.len] = 0;
             return buf[0..node.len :0];
         }

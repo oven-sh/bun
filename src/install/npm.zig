@@ -121,9 +121,9 @@ pub const Registry = struct {
                     if (registry.username.len > 0 and registry.password.len > 0 and auth.len == 0) {
                         var output_buf = try allocator.alloc(u8, registry.username.len + registry.password.len + 1 + std.base64.standard.Encoder.calcSize(registry.username.len + registry.password.len + 1));
                         var input_buf = output_buf[0 .. registry.username.len + registry.password.len + 1];
-                        bun.oldMemcpy(input_buf.ptr, registry.username.ptr, registry.username.len);
+                        @memcpy(input_buf[0..registry.username.len], registry.username);
                         input_buf[registry.username.len] = ':';
-                        bun.oldMemcpy(input_buf[registry.username.len + 1 ..].ptr, registry.password.ptr, registry.password.len);
+                        @memcpy(input_buf[registry.username.len + 1 ..][0..registry.password.len], registry.password);
                         output_buf = output_buf[input_buf.len..];
                         auth = std.base64.standard.Encoder.encode(output_buf, input_buf);
                         break :outer;
@@ -496,7 +496,7 @@ pub const PackageManifest = struct {
                 }
             };
             var trash: i32 = undefined; // workaround for stage1 compiler bug
-            std.sort.insertion(Data, &data, &trash, Sort.lessThan);
+            std.sort.block(Data, &data, &trash, Sort.lessThan);
             var sizes_bytes: [fields.len]usize = undefined;
             var names: [fields.len][]const u8 = undefined;
             for (data, 0..) |elem, i| {
@@ -630,7 +630,7 @@ pub const PackageManifest = struct {
 
             inline for (sizes.fields) |field_name| {
                 if (comptime strings.eqlComptime(field_name, "pkg")) {
-                    pkg_stream.pos = std.mem.alignForward(pkg_stream.pos, @alignOf(Npm.NpmPackage));
+                    pkg_stream.pos = std.mem.alignForward(usize, pkg_stream.pos, @alignOf(Npm.NpmPackage));
                     var reader = pkg_stream.reader();
                     package_manifest.pkg = try reader.readStruct(NpmPackage);
                 } else {
@@ -961,19 +961,19 @@ pub const PackageManifest = struct {
 
         if (versioned_packages.len > 0) {
             var versioned_packages_bytes = std.mem.sliceAsBytes(versioned_packages);
-            bun.oldMemset(versioned_packages_bytes.ptr, 0, versioned_packages_bytes.len);
+            @memset(versioned_packages_bytes, 0);
         }
         if (all_semver_versions.len > 0) {
             var all_semver_versions_bytes = std.mem.sliceAsBytes(all_semver_versions);
-            bun.oldMemset(all_semver_versions_bytes.ptr, 0, all_semver_versions_bytes.len);
+            @memset(all_semver_versions_bytes, 0);
         }
         if (all_extern_strings.len > 0) {
             var all_extern_strings_bytes = std.mem.sliceAsBytes(all_extern_strings);
-            bun.oldMemset(all_extern_strings_bytes.ptr, 0, all_extern_strings_bytes.len);
+            @memset(all_extern_strings_bytes, 0);
         }
         if (version_extern_strings.len > 0) {
             var version_extern_strings_bytes = std.mem.sliceAsBytes(version_extern_strings);
-            bun.oldMemset(version_extern_strings_bytes.ptr, 0, version_extern_strings_bytes.len);
+            @memset(version_extern_strings_bytes, 0);
         }
 
         var versioned_package_releases = versioned_packages[0..release_versions_len];
@@ -998,7 +998,7 @@ pub const PackageManifest = struct {
         var string_buf: string = "";
         if (string_builder.ptr) |ptr| {
             // 0 it out for better determinism
-            bun.oldMemset(ptr, 0, string_builder.cap);
+            @memset(ptr[0..string_builder.cap], 0);
 
             string_buf = ptr[0..string_builder.cap];
         }
@@ -1253,8 +1253,8 @@ pub const PackageManifest = struct {
                                 var this_names = dependency_names[0..count];
                                 var this_versions = dependency_values[0..count];
 
-                                var name_hasher = std.hash.Wyhash.init(0);
-                                var version_hasher = std.hash.Wyhash.init(0);
+                                var name_hasher = bun.Wyhash.init(0);
+                                var version_hasher = bun.Wyhash.init(0);
 
                                 const is_peer = comptime strings.eqlComptime(pair.prop, "peerDependencies");
 
@@ -1495,7 +1495,7 @@ pub const PackageManifest = struct {
             if (src.len > 0) {
                 var dst = std.mem.sliceAsBytes(all_extern_strings[all_extern_strings.len - extern_strings.len ..]);
                 std.debug.assert(dst.len >= src.len);
-                bun.oldMemcpy(dst.ptr, src.ptr, src.len);
+                @memcpy(dst[0..src.len], src);
             }
 
             all_extern_strings = all_extern_strings[0 .. all_extern_strings.len - extern_strings.len];

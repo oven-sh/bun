@@ -1147,9 +1147,9 @@ pub const Fetch = struct {
                                 JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
                                 return .zero;
                             };
-                            bun.oldMemcpy(buffer.ptr, url_slice.ptr, url_slice.len);
+                            @memcpy(buffer[0..url_slice.len], url_slice);
                             var proxy_url_slice = buffer[url_slice.len..];
-                            bun.oldMemcpy(proxy_url_slice.ptr, proxy_url_zig.ptr, proxy_url_zig.len);
+                            @memcpy(proxy_url_slice[0..proxy_url_zig.len], proxy_url_zig.ptr[0..proxy_url_zig.len]);
 
                             url = ZigURL.parse(buffer[0..url_slice.len]);
                             proxy = ZigURL.parse(proxy_url_slice);
@@ -1283,9 +1283,9 @@ pub const Fetch = struct {
                                 JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
                                 return .zero;
                             };
-                            bun.oldMemcpy(buffer.ptr, url_slice.ptr, url_slice.len);
+                            @memcpy(buffer[0..url_slice.len], url_slice.ptr[0..url_slice.len]);
                             var proxy_url_slice = buffer[url_slice.len..];
-                            bun.oldMemcpy(proxy_url_slice.ptr, proxy_url_zig.ptr, proxy_url_zig.len);
+                            @memcpy(proxy_url_slice[0..proxy_url_zig.len], proxy_url_zig.ptr[0..proxy_url_zig.len]);
 
                             url = ZigURL.parse(buffer[0..url_slice.len]);
                             proxy = ZigURL.parse(proxy_url_slice);

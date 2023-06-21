@@ -1303,7 +1303,8 @@ pub fn NewClassWithInstanceType(
             for (property_name_literals, 0..) |lit, i| {
                 props[i] = brk2: {
                     var static_prop = JSC.C.JSStaticValue{
-                        .name = lit.ptr,
+                        // TODO: update when @typeInfo struct field names are sentinel terminated
+                        .name = lit ++ .{0},
                         .getProperty = null,
                         .setProperty = null,
                         .attributes = @intToEnum(js.JSPropertyAttributes, 0),

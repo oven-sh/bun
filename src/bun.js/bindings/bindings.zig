@@ -539,7 +539,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn sortDesc(slice_: []ZigString) void {
-        std.sort.insertion(ZigString, slice_, {}, cmpDesc);
+        std.sort.block(ZigString, slice_, {}, cmpDesc);
     }
 
     pub fn cmpDesc(_: void, a: ZigString, b: ZigString) bool {
@@ -547,7 +547,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn sortAsc(slice_: []ZigString) void {
-        std.sort.insertion(ZigString, slice_, {}, cmpAsc);
+        std.sort.block(ZigString, slice_, {}, cmpAsc);
     }
 
     pub fn cmpAsc(_: void, a: ZigString, b: ZigString) bool {
@@ -5123,8 +5123,12 @@ pub const CallFrame = opaque {
             3 => Arguments(max).init(comptime @min(3, max), ptr),
             8 => Arguments(max).init(comptime @min(8, max), ptr),
             5 => Arguments(max).init(comptime @min(5, max), ptr),
+            1 => Arguments(max).init(comptime @min(1, max), ptr),
             7 => Arguments(max).init(comptime @min(7, max), ptr),
-            else => unreachable,
+            else => {
+                std.debug.print("...how many!!??! {d}\n", .{@as(u4, @min(len, max))});
+                unreachable;
+            },
         };
     }
 

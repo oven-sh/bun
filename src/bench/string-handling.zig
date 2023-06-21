@@ -34,7 +34,7 @@ pub fn main() anyerror!void {
         var i: usize = 0;
         while (j < amount) : (j += 1) {
             i = 0;
-            bun.oldMemcpy(duped.ptr, contents.ptr, contents.len);
+            @memcpy(duped[0..contents.len], contents);
         }
 
         if (index == std.math.maxInt(usize)) {

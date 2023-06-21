@@ -1555,7 +1555,7 @@ pub const SideEffects = enum(u1) {
                 // can be removed. The annotation causes us to ignore the target.
                 if (call.can_be_unwrapped_if_unused) {
                     if (call.args.len > 0) {
-                        // return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, simpifyUnusedExpr, p.allocator);
+                        return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, comptime simpifyUnusedExpr, p.allocator);
                     }
                 }
             },
@@ -1679,13 +1679,13 @@ pub const SideEffects = enum(u1) {
 
                 // Otherwise, the array can be completely removed. We only need to keep any
                 // array items with side effects. Apply this simplification recursively.
-                // return Expr.joinAllWithCommaCallback(
-                //     items,
-                //     @TypeOf(p),
-                //     p,
-                //     simpifyUnusedExpr,
-                //     p.allocator,
-                // );
+                return Expr.joinAllWithCommaCallback(
+                    items,
+                    @TypeOf(p),
+                    p,
+                    comptime simpifyUnusedExpr,
+                    p.allocator,
+                );
             },
 
             .e_new => |call| {
@@ -1693,13 +1693,13 @@ pub const SideEffects = enum(u1) {
                 // can be removed. The annotation causes us to ignore the target.
                 if (call.can_be_unwrapped_if_unused) {
                     if (call.args.len > 0) {
-                        // return Expr.joinAllWithCommaCallback(
-                        //     call.args.slice(),
-                        //     @TypeOf(p),
-                        //     p,
-                        //     simpifyUnusedExpr,
-                        //     p.allocator,
-                        // );
+                        return Expr.joinAllWithCommaCallback(
+                            call.args.slice(),
+                            @TypeOf(p),
+                            p,
+                            comptime simpifyUnusedExpr,
+                            p.allocator,
+                        );
                     }
 
                     return null;
@@ -4173,7 +4173,7 @@ pub const Parser = struct {
                 i += 1;
             }
 
-            std.sort.insertion(
+            std.sort.block(
                 u8,
                 runtime_imports[0..i],
                 {},

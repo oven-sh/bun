@@ -398,7 +398,7 @@ pub const Body = struct {
             //         .was_string = was_string,
             //         .len = @truncate(InlineBlob.IntSize, data.len),
             //     };
-            //     bun.oldMemcpy(&_blob.bytes, data.ptr, data.len);
+            //     @memcpy(&_blob.bytes, data.ptr, data.len);
             //     allocator.free(data);
             //     return Value{
             //         .InlineBlob = _blob,

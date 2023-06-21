@@ -143,7 +143,7 @@ pub fn repeatingAlloc(allocator: std.mem.Allocator, count: usize, char: u8) ![]u
 }
 
 pub fn repeatingBuf(self: []u8, char: u8) void {
-    bun.oldMemset(self.ptr, char, self.len);
+    @memset(self, char);
 }
 
 pub fn indexOfCharNeg(self: string, char: u8) i32 {
@@ -408,7 +408,7 @@ pub const StringOrTinyString = struct {
                     .is_tiny_string = 1,
                     .remainder_len = @truncate(u7, stringy.len),
                 };
-                bun.oldMemcpy(&tiny.remainder_buf, stringy.ptr, tiny.remainder_len);
+                @memcpy(tiny.remainder_buf[0..tiny.remainder_len], stringy[0..tiny.remainder_len]);
                 return tiny;
             },
             else => {
@@ -628,7 +628,7 @@ test "StringOrTinyString Lowercase" {
 pub fn copy(buf: []u8, src: []const u8) []const u8 {
     const len = @min(buf.len, src.len);
     if (len > 0)
-        bun.oldMemcpy(buf.ptr, src.ptr, len);
+        @memcpy(buf[0..len], src[0..len]);
     return buf[0..len];
 }
 
@@ -1035,20 +1035,20 @@ pub fn eqlLong(a_str: string, b_str: string, comptime check_len: bool) bool {
 pub inline fn append(allocator: std.mem.Allocator, self: string, other: string) ![]u8 {
     var buf = try allocator.alloc(u8, self.len + other.len);
     if (self.len > 0)
-        bun.oldMemcpy(buf.ptr, self.ptr, self.len);
+        @memcpy(buf[0..self.len], self);
     if (other.len > 0)
-        bun.oldMemcpy(buf.ptr + self.len, other.ptr, other.len);
+        @memcpy(buf[self.len..][0..other.len], other);
     return buf;
 }
 
 pub inline fn append3(allocator: std.mem.Allocator, self: string, other: string, third: string) ![]u8 {
     var buf = try allocator.alloc(u8, self.len + other.len + third.len);
     if (self.len > 0)
-        bun.oldMemcpy(buf.ptr, self.ptr, self.len);
+        @memcpy(buf[0..self.len], self);
     if (other.len > 0)
-        bun.oldMemcpy(buf.ptr + self.len, other.ptr, other.len);
+        @memcpy(buf[self.len..][0..other.len], other);
     if (third.len > 0)
-        bun.oldMemcpy(buf.ptr + self.len + other.len, third.ptr, third.len);
+        @memcpy(buf[self.len + other.len ..][0..third.len], third);
     return buf;
 }
 
@@ -1211,7 +1211,7 @@ pub fn copyLatin1IntoASCII(dest: []u8, src: []const u8) void {
 
     const non_ascii_offset = strings.firstNonASCII(remain) orelse @truncate(u32, remain.len);
     if (non_ascii_offset > 0) {
-        bun.oldMemcpy(to.ptr, remain.ptr, non_ascii_offset);
+        @memcpy(to[0..non_ascii_offset], remain[0..non_ascii_offset]);
         remain = remain[non_ascii_offset..];
         to = to[non_ascii_offset..];
 
@@ -1535,7 +1535,7 @@ pub const EncodeIntoResult = struct {
 pub fn allocateLatin1IntoUTF8(allocator: std.mem.Allocator, comptime Type: type, latin1_: Type) ![]u8 {
     if (comptime bun.FeatureFlags.latin1_is_now_ascii) {
         var out = try allocator.alloc(u8, latin1_.len);
-        bun.oldMemcpy(out.ptr, latin1_.ptr, latin1_.len);
+        @memcpy(out[0..latin1_.len], latin1_);
         return out;
     }
 
@@ -1778,7 +1778,8 @@ pub fn copyLatin1IntoUTF8(buf_: []u8, comptime Type: type, latin1_: Type) Encode
 pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_: Type, comptime stop: bool) EncodeIntoResult {
     if (comptime bun.FeatureFlags.latin1_is_now_ascii) {
         const to_copy = @truncate(u32, @min(buf_.len, latin1_.len));
-        bun.oldMemcpy(buf_.ptr, latin1_.ptr, to_copy);
+        @memcpy(buf_[0..to_copy], latin1_[0..to_copy]);
+
         return .{ .written = to_copy, .read = to_copy };
     }
 
@@ -2199,7 +2200,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
 
                         buf = try std.ArrayList(u8).initCapacity(allocator, latin1.len + 6);
                         const copy_len = @ptrToInt(remaining.ptr) - @ptrToInt(latin1.ptr);
-                        bun.oldMemcpy(buf.items.ptr, latin1.ptr, copy_len);
+                        @memcpy(buf.items[0..copy_len], latin1[0..copy_len]);
                         buf.items.len = copy_len;
                         any_needs_escape = true;
                         comptime var i: usize = 0;
@@ -2312,7 +2313,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
 
                             buf = try std.ArrayList(u8).initCapacity(allocator, latin1.len + @as(usize, Scalar.lengths[c]));
                             const copy_len = @ptrToInt(ptr) - @ptrToInt(latin1.ptr);
-                            bun.oldMemcpy(buf.items.ptr, latin1.ptr, copy_len);
+                            @memcpy(buf.items[0..copy_len], latin1[0..copy_len]);
                             buf.items.len = copy_len;
                             any_needs_escape = true;
                             break :scan_and_allocate_lazily;
@@ -2476,7 +2477,7 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                         buf = try std.ArrayList(u16).initCapacity(allocator, utf16.len + 6);
                         if (comptime Environment.allow_assert) std.debug.assert(@ptrToInt(remaining.ptr + i) >= @ptrToInt(utf16.ptr));
                         const to_copy = std.mem.sliceAsBytes(utf16)[0 .. @ptrToInt(remaining.ptr + i) - @ptrToInt(utf16.ptr)];
-                        bun.oldMemcpy(@ptrCast([*]align(2) u8, buf.items.ptr), to_copy.ptr, to_copy.len);
+                        @memcpy(@ptrCast([*]align(2) u8, buf.items[0..to_copy.len]), to_copy);
                         buf.items.len = std.mem.bytesAsSlice(u16, to_copy).len;
 
                         while (i < ascii_u16_vector_size) {
@@ -2589,10 +2590,9 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
 
                             const to_copy = std.mem.sliceAsBytes(utf16)[0 .. @ptrToInt(ptr) - @ptrToInt(utf16.ptr)];
 
-                            bun.oldMemcpy(
-                                @ptrCast([*]align(2) u8, buf.items.ptr),
-                                to_copy.ptr,
-                                to_copy.len,
+                            @memcpy(
+                                @ptrCast([*]align(2) u8, buf.items[0..to_copy.len]),
+                                to_copy,
                             );
 
                             buf.items.len = std.mem.bytesAsSlice(u16, to_copy).len;
@@ -3820,7 +3820,7 @@ test "indexOfNotChar" {
         var yes: [312]u8 = undefined;
         var i: usize = 0;
         while (i < yes.len) {
-            bun.oldMemset(&yes, 'a', yes.len);
+            @memset(yes, 'a');
             yes[i] = 'b';
             if (comptime Environment.allow_assert) std.debug.assert(indexOfNotChar(&yes, 'a').? == i);
             i += 1;
@@ -4077,12 +4077,12 @@ const sort_desc = std.sort.desc(u8);
 
 pub fn sortAsc(in: []string) void {
     // TODO: experiment with simd to see if it's faster
-    std.sort.insertion([]const u8, in, {}, cmpStringsAsc);
+    std.sort.block([]const u8, in, {}, cmpStringsAsc);
 }
 
 pub fn sortDesc(in: []string) void {
     // TODO: experiment with simd to see if it's faster
-    std.sort.insertion([]const u8, in, {}, cmpStringsDesc);
+    std.sort.block([]const u8, in, {}, cmpStringsDesc);
 }
 
 pub const StringArrayByIndexSorter = struct {
@@ -4517,7 +4517,7 @@ pub fn concatWithLength(
     var out = try allocator.alloc(u8, length);
     var remain = out;
     for (args) |arg| {
-        bun.oldMemcpy(remain.ptr, arg.ptr, arg.len);
+        @memcpy(remain[0..arg.len], arg);
         remain = remain[arg.len..];
     }
     std.debug.assert(remain.len == 0); // all bytes should be used
@@ -4590,7 +4590,8 @@ pub fn concatIfNeeded(
     dest.* = buf;
     var remain = buf[0..];
     for (args) |arg| {
-        bun.oldMemcpy(remain.ptr, arg.ptr, arg.len);
+        @memcpy(remain[0..arg.len], arg);
+
         remain = remain[arg.len..];
     }
     std.debug.assert(remain.len == 0);

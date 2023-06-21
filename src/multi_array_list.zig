@@ -98,7 +98,7 @@ pub fn MultiArrayList(comptime S: type) type {
                     return lhs.alignment > rhs.alignment;
                 }
             };
-            std.sort.insertion(Data, &data, {}, Sort.lessThan);
+            std.sort.block(Data, &data, {}, Sort.lessThan);
             var sizes_bytes: [fields.len]usize = undefined;
             var field_indexes: [fields.len]usize = undefined;
             for (data, 0..) |elem, i| {
@@ -432,7 +432,7 @@ pub fn MultiArrayList(comptime S: type) type {
                 }
             };
 
-            std.sort.insertionContext(0, self.len, SortContext{
+            std.sort.blockContext(0, self.len, SortContext{
                 .sub_ctx = ctx,
                 .slice = self.slice(),
             });

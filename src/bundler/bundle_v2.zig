@@ -3263,7 +3263,7 @@ const LinkerGraph = struct {
         var entry_point_kinds = files.items(.entry_point_kind);
         {
             var kinds = std.mem.sliceAsBytes(entry_point_kinds);
-            bun.oldMemset(kinds.ptr, 0, kinds.len);
+            @memset(kinds, 0);
         }
 
         // Setup entry points
@@ -3275,7 +3275,7 @@ const LinkerGraph = struct {
             var path_strings: []bun.PathString = this.entry_points.items(.output_path);
             {
                 var output_was_auto_generated = std.mem.sliceAsBytes(this.entry_points.items(.output_path_was_auto_generated));
-                bun.oldMemset(output_was_auto_generated.ptr, 0, output_was_auto_generated.len);
+                @memset(output_was_auto_generated, 0);
             }
 
             for (entry_points, path_strings, source_indices) |i, *path_string, *source_index| {
@@ -3396,7 +3396,7 @@ const LinkerGraph = struct {
             var stable_source_indices = try this.allocator.alloc(Index, sources.len + 1);
 
             // set it to max value so that if we access an invalid one, it crashes
-            bun.oldMemset(std.mem.sliceAsBytes(stable_source_indices).ptr, 255, std.mem.sliceAsBytes(stable_source_indices).len);
+            @memset(std.mem.sliceAsBytes(stable_source_indices), 255);
 
             for (this.reachable_files, 0..) |source_index, i| {
                 stable_source_indices[source_index.get()] = Index.source(i);
@@ -5860,7 +5860,7 @@ const LinkerContext = struct {
             // of hash calculation.
             if (chunk_meta.dynamic_imports.count() > 0) {
                 var dynamic_chunk_indices = chunk_meta.dynamic_imports.keys();
-                std.sort.insertion(Index.Int, dynamic_chunk_indices, {}, std.sort.asc(Index.Int));
+                std.sort.block(Index.Int, dynamic_chunk_indices, {}, std.sort.asc(Index.Int));
 
                 var imports = chunk.cross_chunk_imports.listManaged(c.allocator);
                 defer chunk.cross_chunk_imports.update(imports);
@@ -6119,7 +6119,7 @@ const LinkerContext = struct {
                 }
             }
 
-            std.sort.insertion(StableRef, list.items, {}, StableRef.isLessThan);
+            std.sort.block(StableRef, list.items, {}, StableRef.isLessThan);
             break :brk list;
         };
         defer sorted_imports_from_other_chunks.deinit();
@@ -6191,7 +6191,7 @@ const LinkerContext = struct {
                     }
                 }
 
-                std.sort.insertion(renamer.StableSymbolCount, top_level_symbols.items, {}, StableSymbolCount.lessThan);
+                std.sort.block(renamer.StableSymbolCount, top_level_symbols.items, {}, StableSymbolCount.lessThan);
                 capacity += top_level_symbols.items.len;
                 top_level_symbols_all.appendSlice(top_level_symbols.items) catch unreachable;
             }
@@ -8784,8 +8784,8 @@ const LinkerContext = struct {
                     return strings.order(a, b) == .lt;
                 }
             };
-            std.sort.insertion(u32, sorted_client_component_ids.items, Sorter{ .sources = all_sources }, Sorter.isLessThan);
-            std.sort.insertion(u32, sorted_server_component_ids.items, Sorter{ .sources = all_sources }, Sorter.isLessThan);
+            std.sort.block(u32, sorted_client_component_ids.items, Sorter{ .sources = all_sources }, Sorter.isLessThan);
+            std.sort.block(u32, sorted_server_component_ids.items, Sorter{ .sources = all_sources }, Sorter.isLessThan);
 
             inline for (.{
                 sorted_client_component_ids.items,
@@ -9410,7 +9410,7 @@ const LinkerContext = struct {
                 .ref = export_ref,
             };
         }
-        std.sort.insertion(StableRef, result.items, {}, StableRef.isLessThan);
+        std.sort.block(StableRef, result.items, {}, StableRef.isLessThan);
     }
 
     pub fn markFileReachableForCodeSplitting(
@@ -10699,7 +10699,7 @@ pub const Chunk = struct {
         /// equidistant to an entry point, then break the tie by sorting on the
         /// stable source index derived from the DFS over all entry points.
         pub fn sort(a: []Order) void {
-            std.sort.insertion(Order, a, Order{}, lessThan);
+            std.sort.block(Order, a, Order{}, lessThan);
         }
     };
 
@@ -10804,7 +10804,7 @@ pub const Chunk = struct {
                         shift.after.add(data_offset);
 
                         if (data.len > 0)
-                            bun.oldMemcpy(remain.ptr, data.ptr, data.len);
+                            @memcpy(remain[0..data.len], data);
 
                         remain = remain[data.len..];
 
@@ -10836,13 +10836,13 @@ pub const Chunk = struct {
                                 );
 
                                 if (cheap_normalizer[0].len > 0) {
-                                    bun.oldMemcpy(remain.ptr, cheap_normalizer[0].ptr, cheap_normalizer[0].len);
+                                    @memcpy(remain[0..cheap_normalizer[0].len], cheap_normalizer[0]);
                                     remain = remain[cheap_normalizer[0].len..];
                                     shift.after.advance(cheap_normalizer[0]);
                                 }
 
                                 if (cheap_normalizer[1].len > 0) {
-                                    bun.oldMemcpy(remain.ptr, cheap_normalizer[1].ptr, cheap_normalizer[1].len);
+                                    @memcpy(remain[0..cheap_normalizer[1].len], cheap_normalizer[1]);
                                     remain = remain[cheap_normalizer[1].len..];
                                     shift.after.advance(cheap_normalizer[1]);
                                 }
@@ -10968,7 +10968,7 @@ pub const Chunk = struct {
                         const data = piece.data();
 
                         if (data.len > 0)
-                            bun.oldMemcpy(remain.ptr, data.ptr, data.len);
+                            @memcpy(remain[0..data.len], data);
 
                         remain = remain[data.len..];
 
@@ -10996,12 +10996,12 @@ pub const Chunk = struct {
                                 );
 
                                 if (cheap_normalizer[0].len > 0) {
-                                    bun.oldMemcpy(remain.ptr, cheap_normalizer[0].ptr, cheap_normalizer[0].len);
+                                    @memcpy(remain[0..cheap_normalizer[0].len], cheap_normalizer[0]);
                                     remain = remain[cheap_normalizer[0].len..];
                                 }
 
                                 if (cheap_normalizer[1].len > 0) {
-                                    bun.oldMemcpy(remain.ptr, cheap_normalizer[1].ptr, cheap_normalizer[1].len);
+                                    @memcpy(remain[0..cheap_normalizer[1].len], cheap_normalizer[1]);
                                     remain = remain[cheap_normalizer[1].len..];
                                 }
                             },
@@ -11142,7 +11142,7 @@ pub const CrossChunkImport = struct {
                 item.export_alias = exports_to_other_chunks.get(item.ref).?;
                 std.debug.assert(item.export_alias.len > 0);
             }
-            std.sort.insertion(CrossChunkImport.Item, import_items.slice(), {}, CrossChunkImport.Item.lessThan);
+            std.sort.block(CrossChunkImport.Item, import_items.slice(), {}, CrossChunkImport.Item.lessThan);
 
             result.append(CrossChunkImport{
                 .chunk_index = chunk_index,
@@ -11150,7 +11150,7 @@ pub const CrossChunkImport = struct {
             }) catch unreachable;
         }
 
-        std.sort.insertion(CrossChunkImport, result.items, {}, CrossChunkImport.lessThan);
+        std.sort.block(CrossChunkImport, result.items, {}, CrossChunkImport.lessThan);
     }
 };
 

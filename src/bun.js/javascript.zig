@@ -2760,10 +2760,10 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                             break :brk path_string.slice();
                                         } else {
                                             var file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
-                                            bun.oldMemcpy(&_on_file_update_path_buf, file_path_without_trailing_slash.ptr, file_path_without_trailing_slash.len);
+                                            @memcpy(_on_file_update_path_buf[0..file_path_without_trailing_slash.len], file_path_without_trailing_slash);
                                             _on_file_update_path_buf[file_path_without_trailing_slash.len] = std.fs.path.sep;
 
-                                            bun.oldMemcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len + 1 ..].ptr, changed_name.ptr, changed_name.len);
+                                            @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len..][0..changed_name.len], changed_name);
                                             const path_slice = _on_file_update_path_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
                                             file_hash = @This().Watcher.getHash(path_slice);
                                             break :brk path_slice;

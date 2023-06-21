@@ -180,7 +180,7 @@ pub const MutableString = struct {
         try self.list.ensureTotalCapacityPrecise(self.allocator, self.list.items.len + slice.len);
         var end = self.list.items.ptr + self.list.items.len;
         self.list.items.len += slice.len;
-        bun.oldMemcpy(end, slice.ptr, slice.len);
+        @memcpy(end[0..slice.len], slice);
     }
 
     pub inline fn reset(
@@ -329,7 +329,7 @@ pub const MutableString = struct {
                 if (pending.len + this.pos > max) {
                     try this.flush();
                 }
-                bun.oldMemcpy(this.remain().ptr, pending.ptr, pending.len);
+                @memcpy(this.remain()[0..pending.len], pending);
                 this.pos += pending.len;
             }
 

@@ -1022,7 +1022,7 @@ pub const PackageJSON = struct {
     }
 
     pub fn hashModule(this: *const PackageJSON, module: string) u32 {
-        var hasher = std.hash.Wyhash.init(0);
+        var hasher = bun.Wyhash.init(0);
         hasher.update(std.mem.asBytes(&this.hash));
         hasher.update(module);
 
@@ -1148,7 +1148,7 @@ pub const ExportsMap = struct {
                     // PATTERN_KEY_COMPARE which orders in descending order of specificity.
                     const GlobLengthSorter: type = strings.NewGlobLengthSorter(Entry.Data.Map.MapEntry, "key");
                     var sorter = GlobLengthSorter{};
-                    std.sort.insertion(Entry.Data.Map.MapEntry, expansion_keys, sorter, GlobLengthSorter.lessThan);
+                    std.sort.block(Entry.Data.Map.MapEntry, expansion_keys, sorter, GlobLengthSorter.lessThan);
 
                     return Entry{
                         .data = .{

@@ -256,7 +256,7 @@ pub const MacroEntryPoint = struct {
     source: logger.Source = undefined,
 
     pub fn generateID(entry_path: string, function_name: string, buf: []u8, len: *u32) i32 {
-        var hasher = std.hash.Wyhash.init(0);
+        var hasher = bun.Wyhash.init(0);
         hasher.update(js_ast.Macro.namespaceWithColon);
         hasher.update(entry_path);
         hasher.update(function_name);

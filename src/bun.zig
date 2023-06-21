@@ -149,7 +149,7 @@ pub const fmt = struct {
             const mags_iec = " KMGTPEZY";
 
             const log2 = math.log2(value);
-            const magnitude = math.min(log2 / comptime math.log2(1000), mags_si.len - 1);
+            const magnitude = @min(log2 / comptime math.log2(1000), mags_si.len - 1);
             const new_value = math.lossyCast(f64, value) / math.pow(f64, 1000, math.lossyCast(f64, magnitude));
             const suffix = switch (1000) {
                 1000 => mags_si[magnitude],
@@ -561,14 +561,6 @@ pub fn assertDefined(val: anytype) void {
 
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
 
-pub fn oldMemcpy(a: anytype, b: anytype, length: usize) void {
-    @memcpy(a[0..length], b[0..length]);
-}
-
-pub fn oldMemset(a: anytype, element: anytype, length: usize) void {
-    @memset(a[0..length], element);
-}
-
 /// hash a string
 pub fn hash(content: []const u8) u64 {
     return std.hash.Wyhash.hash(0, content);
@@ -577,22 +569,6 @@ pub fn hash(content: []const u8) u64 {
 pub fn hashWithSeed(seed: u64, content: []const u8) u64 {
     return std.hash.Wyhash.hash(seed, content);
 }
-
-// pub const BunHash = struct {
-//     state: Stateless,
-
-//     buf: [32]u8,
-//     buf_len: usize,
-
-//     pub fn init(seed: u64) BunHash {
-//         const wyhash = std.hash.Wyhash.init(seed);
-//         return BunHash{
-//             .state = wyhash.state,
-//             .buf = wyhash.buf,
-//             .buf_len = wyhash.buf_len,
-//         };
-//     }
-// };
 
 pub fn hash32(content: []const u8) u32 {
     const res = hash(content);
@@ -620,7 +596,7 @@ pub fn ensureNonBlocking(fd: anytype) void {
 
 const global_scope_log = Output.scoped(.bun, false);
 pub fn isReadable(fd: std.os.fd_t) PollFlag {
-    var polls = &[_]std.os.pollfd{
+    var polls = [_]std.os.pollfd{
         .{
             .fd = fd,
             .events = std.os.POLL.IN | std.os.POLL.ERR,
@@ -628,7 +604,7 @@ pub fn isReadable(fd: std.os.fd_t) PollFlag {
         },
     };
 
-    const result = (std.os.poll(polls, 0) catch 0) != 0;
+    const result = (std.os.poll(&polls, 0) catch 0) != 0;
     global_scope_log("poll({d}) readable: {any} ({d})", .{ fd, result, polls[0].revents });
     return if (result and polls[0].revents & std.os.POLL.HUP != 0)
         PollFlag.hup
@@ -989,7 +965,7 @@ pub fn ComptimeEnumMap(comptime T: type) type {
 /// Ignores default struct values.
 pub fn zero(comptime Type: type) Type {
     var out: [@sizeOf(Type)]u8 align(@alignOf(Type)) = undefined;
-    oldMemset(@ptrCast([*]u8, &out), 0, out.len);
+    @memset(@ptrCast([*]u8, &out)[0..out.len], 0);
     return @bitCast(Type, out);
 }
 pub const c_ares = @import("./deps/c_ares.zig");

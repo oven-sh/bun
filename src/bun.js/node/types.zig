@@ -632,7 +632,7 @@ pub const PathLike = union(Tag) {
             }
         }
 
-        bun.oldMemcpy(buf, sliced.ptr, sliced.len);
+        @memcpy(buf[0..sliced.len], sliced);
         buf[sliced.len] = 0;
         return buf[0..sliced.len :0];
     }

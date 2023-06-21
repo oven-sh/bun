@@ -549,7 +549,7 @@ pub fn normalizeStringGeneric(path: []const u8, buf: []u8, comptime allow_above_
         const from = r;
         while (r < n and !isSeparator(path[r])) : (r += 1) {}
         const count = r - from;
-        bun.oldMemcpy(buf[buf_i..].ptr, path[from..].ptr, count);
+        @memcpy(buf[buf_i..][0..count], path[from..][0..count]);
         buf_i += count;
     }
 

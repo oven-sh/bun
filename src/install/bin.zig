@@ -519,7 +519,7 @@ pub const Bin = extern struct {
                     return;
                 }
 
-                bun.oldMemcpy(&target_buf, this.global_bin_path.ptr, this.global_bin_path.len);
+                @memcpy(target_buf[0..this.global_bin_path.len], this.global_bin_path);
                 from_remain = target_buf[this.global_bin_path.len..];
                 from_remain[0] = std.fs.path.sep;
                 from_remain = from_remain[1..];

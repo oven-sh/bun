@@ -356,7 +356,7 @@ const RouteLoader = struct {
             .allocator = allocator,
         };
 
-        std.sort.insertion(*Route, this.all_routes.items, Route.Sorter{}, Route.Sorter.sortByName);
+        std.sort.block(*Route, this.all_routes.items, Route.Sorter{}, Route.Sorter.sortByName);
 
         var route_list = RouteIndex.List{};
         route_list.setCapacity(allocator, this.all_routes.items.len) catch unreachable;

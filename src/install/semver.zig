@@ -311,7 +311,7 @@ pub const String = extern struct {
         pub const StringPool = std.HashMap(u64, String, IdentityContext(u64), 80);
 
         pub inline fn stringHash(buf: []const u8) u64 {
-            return std.hash.Wyhash.hash(0, buf);
+            return bun.Wyhash.hash(0, buf);
         }
 
         pub inline fn count(this: *Builder, slice_: string) void {
@@ -515,7 +515,7 @@ pub const ExternalString = extern struct {
     pub inline fn from(in: string) ExternalString {
         return ExternalString{
             .value = String.init(in, in),
-            .hash = std.hash.Wyhash.hash(0, in),
+            .hash = bun.Wyhash.hash(0, in),
         };
     }
 
@@ -552,7 +552,7 @@ pub const BigExternalString = extern struct {
         return BigExternalString{
             .off = 0,
             .len = @truncate(u32, in.len),
-            .hash = std.hash.Wyhash.hash(0, in),
+            .hash = bun.Wyhash.hash(0, in),
         };
     }
 
@@ -582,7 +582,7 @@ pub const SlicedString = struct {
     pub inline fn external(this: SlicedString) ExternalString {
         if (comptime Environment.allow_assert) std.debug.assert(@ptrToInt(this.buf.ptr) <= @ptrToInt(this.slice.ptr) and ((@ptrToInt(this.slice.ptr) + this.slice.len) <= (@ptrToInt(this.buf.ptr) + this.buf.len)));
 
-        return ExternalString.init(this.buf, this.slice, std.hash.Wyhash.hash(0, this.slice));
+        return ExternalString.init(this.buf, this.slice, bun.Wyhash.hash(0, this.slice));
     }
 
     pub inline fn value(this: SlicedString) String {
@@ -678,7 +678,7 @@ pub const Version = extern struct {
             .build = this.tag.build.hash,
         };
         const bytes = std.mem.asBytes(&hashable);
-        return std.hash.Wyhash.hash(0, bytes);
+        return bun.Wyhash.hash(0, bytes);
     }
 
     pub const Formatter = struct {

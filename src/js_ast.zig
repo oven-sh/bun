@@ -666,7 +666,7 @@ pub const CharFreq = struct {
             break :brk _array;
         };
 
-        std.sort.insertion(CharAndCount, &array, {}, CharAndCount.lessThan);
+        std.sort.block(CharAndCount, &array, {}, CharAndCount.lessThan);
 
         var minifier = NameMinifier.init(allocator);
         minifier.head.ensureTotalCapacityPrecise(NameMinifier.default_head.len) catch unreachable;
@@ -2057,11 +2057,11 @@ pub const E = struct {
         }
 
         pub fn alphabetizeProperties(this: *Object) void {
-            std.sort.insertion(G.Property, this.properties.slice(), {}, Sorter.isLessThan);
+            std.sort.block(G.Property, this.properties.slice(), {}, Sorter.isLessThan);
         }
 
         pub fn packageJSONSort(this: *Object) void {
-            std.sort.insertion(G.Property, this.properties.slice(), {}, PackageJSONSort.Fields.isLessThan);
+            std.sort.block(G.Property, this.properties.slice(), {}, PackageJSONSort.Fields.isLessThan);
         }
 
         const PackageJSONSort = struct {
@@ -3290,7 +3290,7 @@ pub const Expr = struct {
         }
     }
 
-    pub fn joinAllWithCommaCallback(all: []Expr, comptime Context: type, ctx: Context, callback: (fn (ctx: anytype, expr: anytype) ?Expr), allocator: std.mem.Allocator) ?Expr {
+    pub fn joinAllWithCommaCallback(all: []Expr, comptime Context: type, ctx: Context, comptime callback: (fn (ctx: anytype, expr: Expr) ?Expr), allocator: std.mem.Allocator) ?Expr {
         switch (all.len) {
             0 => return null,
             1 => {

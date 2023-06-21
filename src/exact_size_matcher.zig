@@ -20,11 +20,11 @@ pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
                 1...max_bytes - 1 => {
                     var tmp: [max_bytes]u8 = undefined;
                     if (comptime std.meta.trait.isSlice(@TypeOf(str))) {
-                        bun.oldMemcpy(&tmp, str.ptr, str.len);
-                        bun.oldMemset(tmp[str.len..].ptr, 0, tmp[str.len..].len);
+                        @memcpy(tmp[0..str.len], str);
+                        @memset(tmp[str.len..], 0);
                     } else {
-                        bun.oldMemcpy(&tmp, str, str.len);
-                        bun.oldMemset(tmp[str.len..], 0, tmp[str.len..].len);
+                        @memcpy(tmp[0..str.len], str);
+                        @memset(tmp[str.len..], 0);
                     }
 
                     return std.mem.readIntNative(T, &tmp);
@@ -48,7 +48,7 @@ pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
                     for (str, 0..) |char, i| {
                         tmp[i] = std.ascii.toLower(char);
                     }
-                    bun.oldMemset(tmp[str.len..].ptr, 0, tmp[str.len..].len);
+                    @memset(tmp[str.len..], 0);
                     return std.mem.readIntNative(T, &tmp);
                 },
                 max_bytes => {

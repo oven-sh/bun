@@ -251,10 +251,10 @@ pub fn main() anyerror!void {
         var digest2: DigestType = undefined;
         var digest3: DigestType = undefined;
         var digest4: DigestType = undefined;
-        bun.oldMemset(&digest1, 0, @sizeOf(DigestType));
-        bun.oldMemset(&digest2, 0, @sizeOf(DigestType));
-        bun.oldMemset(&digest3, 0, @sizeOf(DigestType));
-        bun.oldMemset(&digest4, 0, @sizeOf(DigestType));
+        @memset(@ptrCast([*]u8, &digest1)[0..@sizeOf(DigestType)], 0);
+        @memset(@ptrCast([*]u8, &digest2)[0..@sizeOf(DigestType)], 0);
+        @memset(@ptrCast([*]u8, &digest3)[0..@sizeOf(DigestType)], 0);
+        @memset(@ptrCast([*]u8, &digest4)[0..@sizeOf(DigestType)], 0);
         defer {
             std.mem.doNotOptimizeAway(&digest1);
             std.mem.doNotOptimizeAway(&digest2);

@@ -183,7 +183,7 @@ pub const Aligner = struct {
     }
 
     pub inline fn skipAmount(comptime Type: type, pos: usize) usize {
-        return std.mem.alignForward(pos, @alignOf(Type)) - pos;
+        return std.mem.alignForward(usize, pos, @alignOf(Type)) - pos;
     }
 };
 
@@ -541,7 +541,7 @@ const Task = struct {
     /// An ID that lets us register a callback without keeping the same pointer around
     pub const Id = struct {
         pub fn forNPMPackage(package_name: string, package_version: Semver.Version) u64 {
-            var hasher = std.hash.Wyhash.init(0);
+            var hasher = bun.Wyhash.init(0);
             hasher.update(package_name);
             hasher.update("@");
             hasher.update(std.mem.asBytes(&package_version));
@@ -549,28 +549,28 @@ const Task = struct {
         }
 
         pub fn forBinLink(package_id: PackageID) u64 {
-            const hash = std.hash.Wyhash.hash(0, std.mem.asBytes(&package_id));
+            const hash = bun.Wyhash.hash(0, std.mem.asBytes(&package_id));
             return @as(u64, 1 << 61) | @as(u64, @truncate(u61, hash));
         }
 
         pub fn forManifest(name: string) u64 {
-            return @as(u64, 2 << 61) | @as(u64, @truncate(u61, std.hash.Wyhash.hash(0, name)));
+            return @as(u64, 2 << 61) | @as(u64, @truncate(u61, bun.Wyhash.hash(0, name)));
         }
 
         pub fn forTarball(url: string) u64 {
-            var hasher = std.hash.Wyhash.init(0);
+            var hasher = bun.Wyhash.init(0);
             hasher.update(url);
             return @as(u64, 3 << 61) | @as(u64, @truncate(u61, hasher.final()));
         }
 
         pub fn forGitClone(url: string) u64 {
-            var hasher = std.hash.Wyhash.init(0);
+            var hasher = bun.Wyhash.init(0);
             hasher.update(url);
             return @as(u64, 4 << 61) | @as(u64, @truncate(u61, hasher.final()));
         }
 
         pub fn forGitCheckout(url: string, resolved: string) u64 {
-            var hasher = std.hash.Wyhash.init(0);
+            var hasher = bun.Wyhash.init(0);
             hasher.update(url);
             hasher.update("@");
             hasher.update(resolved);
@@ -1356,11 +1356,11 @@ const PackageInstall = struct {
                         },
                         // but each file in the directory is a symlink
                         .file => {
-                            bun.oldMemcpy(remain.ptr, entry.path.ptr, entry.path.len);
+                            @memcpy(remain[0..entry.path.len], entry.path);
                             remain[entry.path.len] = 0;
                             var from_path = buf[0 .. cache_dir_offset + entry.path.len :0];
 
-                            bun.oldMemcpy(dest_remaining.ptr, entry.path.ptr, entry.path.len);
+                            @memcpy(dest_remaining[0..entry.path.len], entry.path);
                             dest_remaining[entry.path.len] = 0;
                             var to_path = dest_buf[0 .. dest_dir_offset + entry.path.len :0];
 
@@ -2305,7 +2305,7 @@ pub const PackageManager = struct {
         };
 
         // TODO: make this fewer passes
-        std.sort.insertion(
+        std.sort.block(
             Semver.Version,
             installed_versions.items,
             @as([]const u8, tags_buf.items),
@@ -6547,7 +6547,7 @@ pub const PackageManager = struct {
                     if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
                         installer.cache_dir_subpath = ".";
                     } else {
-                        bun.oldMemcpy(&this.folder_path_buf, folder.ptr, folder.len);
+                        @memcpy(this.folder_path_buf[0..folder.len], folder);
                         this.folder_path_buf[folder.len] = 0;
                         installer.cache_dir_subpath = this.folder_path_buf[0..folder.len :0];
                     }
@@ -6567,7 +6567,7 @@ pub const PackageManager = struct {
                     if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
                         installer.cache_dir_subpath = ".";
                     } else {
-                        bun.oldMemcpy(&this.folder_path_buf, folder.ptr, folder.len);
+                        @memcpy(this.folder_path_buf[0..folder.len], folder);
                         this.folder_path_buf[folder.len] = 0;
                         installer.cache_dir_subpath = this.folder_path_buf[0..folder.len :0];
                     }
@@ -6608,13 +6608,13 @@ pub const PackageManager = struct {
                         const global_link_dir = this.manager.globalLinkDirPath() catch unreachable;
                         var ptr = &this.folder_path_buf;
                         var remain: []u8 = this.folder_path_buf[0..];
-                        bun.oldMemcpy(ptr, global_link_dir.ptr, global_link_dir.len);
+                        @memcpy(ptr[0..global_link_dir.len], global_link_dir);
                         remain = remain[global_link_dir.len..];
                         if (global_link_dir[global_link_dir.len - 1] != std.fs.path.sep) {
                             remain[0] = std.fs.path.sep;
                             remain = remain[1..];
                         }
-                        bun.oldMemcpy(remain.ptr, folder.ptr, folder.len);
+                        @memcpy(remain[0..folder.len], folder);
                         remain = remain[folder.len..];
                         remain[0] = 0;
                         const len = @ptrToInt(remain.ptr) - @ptrToInt(ptr);

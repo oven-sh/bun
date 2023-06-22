@@ -1,5 +1,5 @@
 // Hardcoded module "node:assert"
-var { Bun } = import.meta.primordials;
+var { Bun } = globalThis[Symbol.for("Bun.lazy")]("primordials");
 import util from "node:util";
 
 var isDeepEqual = Bun.deepEquals;

@@ -1,5 +1,6 @@
 interface Module {
   id: string;
+  path: string;
 
   $require(id: string): any;
   children: Module[];
@@ -30,5 +31,5 @@ export function require(this: Module, id: string) {
 }
 
 export function requireResolve(this: Module, id: string) {
-  return $resolveSync(id, this.id, false);
+  return $resolveSync(id, this.path, false);
 }

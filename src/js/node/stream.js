@@ -1,7 +1,7 @@
 // Hardcoded module "node:stream" / "readable-stream"
 // "readable-stream" npm package
 // just transpiled
-var { isPromise, isCallable, direct, Object } = import.meta.primordials;
+var { isPromise, isCallable, direct, Object } = globalThis[Symbol.for("Bun.lazy")]("primordials");
 import EE from "node:events";
 import { StringDecoder } from "node:string_decoder";
 

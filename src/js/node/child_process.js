@@ -1,13 +1,11 @@
 // Hardcoded module "node:child_process"
 import EventEmitter from "node:events";
-import { Readable, NativeWritable } from "node:stream";
+import StreamModule from "node:stream";
 import { constants } from "node:os";
 import { promisify } from "node:util";
-
-const ReadableFromWeb = Readable.fromWeb;
 const signals = constants.signals;
 
-const { ArrayBuffer, Uint8Array, String, Object, Buffer, Promise } = import.meta.primordials;
+const { ArrayBuffer, Uint8Array, String, Object, Buffer, Promise } = globalThis[Symbol.for("Bun.lazy")]("primordials");
 
 var ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 var ObjectCreate = Object.create;
@@ -19,8 +17,6 @@ var BufferIsEncoding = Buffer.isEncoding;
 var kEmptyObject = ObjectCreate(null);
 
 var ArrayPrototypePush = Array.prototype.push;
-var ArrayPrototypeReduce = Array.prototype.reduce;
-var ArrayPrototypeFilter = Array.prototype.filter;
 var ArrayPrototypeJoin = Array.prototype.join;
 var ArrayPrototypeMap = Array.prototype.map;
 var ArrayPrototypeIncludes = Array.prototype.includes;
@@ -57,6 +53,18 @@ if (__TRACK_STDIO__) {
     return globalThis.__lastId !== null ? globalThis.__lastId++ : 0;
   };
 }
+
+var getNativeWritable = () => {
+  const value = StreamModule.NativeWritable;
+  getNativeWritable = () => value;
+  return value;
+};
+
+var getReadableFromWeb = () => {
+  const value = StreamModule[Symbol.for("::bunternal::")]._ReadableFromWeb;
+  getReadableFromWeb = () => value;
+  return value;
+};
 
 // Sections:
 // 1. Exported child_process functions
@@ -964,7 +972,7 @@ export class ChildProcess extends EventEmitter {
       case 0: {
         switch (io) {
           case "pipe":
-            return new NativeWritable(this.#handle.stdin);
+            return new getNativeWritable(this.#handle.stdin);
           case "inherit":
             return process.stdin || null;
           case "destroyed":
@@ -977,7 +985,7 @@ export class ChildProcess extends EventEmitter {
       case 1: {
         switch (io) {
           case "pipe":
-            return ReadableFromWeb(
+            return getReadableFromWeb(
               this.#handle[fdToStdioName(i)],
               __TRACK_STDIO__
                 ? {

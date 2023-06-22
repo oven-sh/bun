@@ -21256,9 +21256,9 @@ fn NewParser_(
                         .name_loc = logger.Loc.Empty,
                     }, logger.Loc.Empty);
 
-                    const require_id = p.newExpr(
+                    const require_path = p.newExpr(
                         E.Dot{
-                            .name = "id",
+                            .name = "path",
                             .target = get_require,
                             .name_loc = logger.Loc.Empty,
                         },
@@ -21274,7 +21274,7 @@ fn NewParser_(
                     );
 
                     const assign_id = p.newExpr(E.Binary{
-                        .left = require_id,
+                        .left = require_path,
                         .right = module_id,
                         .op = .bin_assign,
                     }, logger.Loc.Empty);

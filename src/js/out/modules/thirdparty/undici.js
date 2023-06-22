@@ -1,5 +1,5 @@
 import {EventEmitter} from "node:events";
-import * as NodeStreamModule from "node:stream";
+import NodeStreamModule from "node:stream";
 import {Readable} from "node:stream";
 var notImplemented = function() {
   throw new Error("Not implemented in bun");
@@ -87,7 +87,7 @@ function mockErrors() {
 function Undici() {
   throw new Error("Not implemented in bun");
 }
-var { _ReadableFromWeb } = NodeStreamModule.default[Symbol.for("::bunternal::")], ObjectCreate = Object.create, kEmptyObject = ObjectCreate(null), fetch = Bun.fetch, Response = globalThis.Response, Headers = globalThis.Headers, Request = globalThis.Request, URLSearchParams = globalThis.URLSearchParams, URL = globalThis.URL;
+var { Object } = globalThis[Symbol.for("Bun.lazy")]("primordials"), { _ReadableFromWeb } = NodeStreamModule[Symbol.for("::bunternal::")], ObjectCreate = Object.create, kEmptyObject = ObjectCreate(null), fetch = Bun.fetch, Response = globalThis.Response, Headers = globalThis.Headers, Request = globalThis.Request, URLSearchParams = globalThis.URLSearchParams, URL = globalThis.URL;
 
 class File extends Blob {
 }

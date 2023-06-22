@@ -5,7 +5,7 @@ import { Readable, Writable, Duplex } from "node:stream";
 import { URL } from "node:url";
 import { isTypedArray } from "util/types";
 
-const { newArrayWithSize, String, Object, Array } = import.meta.primordials;
+const { newArrayWithSize, String, Object, Array } = globalThis[Symbol.for("Bun.lazy")]("primordials");
 
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;

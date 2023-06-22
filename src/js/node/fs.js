@@ -1,5 +1,5 @@
 // Hardcoded module "node:fs"
-var { direct, isPromise, isCallable } = import.meta.primordials;
+var { direct, isPromise, isCallable } = globalThis[Symbol.for("Bun.lazy")]("primordials");
 import promises from "node:fs/promises";
 
 import { Readable, NativeWritable, _getNativeReadableStreamPrototype, eos as eos_ } from "node:stream";

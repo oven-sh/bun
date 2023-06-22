@@ -280,7 +280,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         // crypto.createHash("sha1")    985.26 ns/iter    (956.7 ns … 1.12 µs)      1 µs   1.12 µs   1.12 µs
         // Peak memory usage: 56 MB
         size_t ramSize = WTF::ramSize();
-        // ramSize /= 1024;
+        ramSize /= 1024;
 
         if (ramSize > 0) {
             JSC::Options::forceRAMSize() = ramSize;
@@ -1271,10 +1271,12 @@ JSC_DEFINE_HOST_FUNCTION(functionCallNotImplemented,
 
 // we're trying out a new way to do this lazy loading
 static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
 JSC:
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     VM& vm = globalObject->vm();
+
     switch (callFrame->argumentCount()) {
     case 0: {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -1283,13 +1285,6 @@ JSC:
         return JSC::JSValue::encode(JSC::JSValue {});
     }
     default: {
-        static NeverDestroyed<const String> sqliteString(MAKE_STATIC_STRING_IMPL("sqlite"));
-        static NeverDestroyed<const String> bunJSCString(MAKE_STATIC_STRING_IMPL("bun:jsc"));
-        static NeverDestroyed<const String> bunStreamString(MAKE_STATIC_STRING_IMPL("bun:stream"));
-        static NeverDestroyed<const String> noopString(MAKE_STATIC_STRING_IMPL("noop"));
-        static NeverDestroyed<const String> createImportMeta(MAKE_STATIC_STRING_IMPL("createImportMeta"));
-        static NeverDestroyed<const String> masqueradesAsUndefined(MAKE_STATIC_STRING_IMPL("masqueradesAsUndefined"));
-        static NeverDestroyed<const String> vmString(MAKE_STATIC_STRING_IMPL("vm"));
 
         JSC::JSValue moduleName = callFrame->argument(0);
         if (moduleName.isNumber()) {
@@ -1328,24 +1323,24 @@ JSC:
             return JSC::JSValue::encode(JSC::JSValue {});
         }
 
-        if (string == sqliteString) {
+        if (string == "sqlite"_s) {
             return JSC::JSValue::encode(JSSQLStatementConstructor::create(vm, globalObject, JSSQLStatementConstructor::createStructure(vm, globalObject, globalObject->m_functionPrototype.get())));
         }
 
-        if (string == bunJSCString) {
+        if (string == "bun:jsc"_s) {
             return JSC::JSValue::encode(createJSCModule(globalObject));
         }
 
-        if (string == pathToFileURLString) {
+        if (string == "pathToFileURL"_s) {
             return JSValue::encode(
                 JSFunction::create(vm, globalObject, 1, pathToFileURLString, functionPathToFileURL, ImplementationVisibility::Public, NoIntrinsic));
         }
-        if (string == fileURLToPathString) {
+        if (string == "fileURLToPath"_s) {
             return JSValue::encode(
                 JSFunction::create(vm, globalObject, 1, fileURLToPathString, functionFileURLToPath, ImplementationVisibility::Public, NoIntrinsic));
         }
 
-        if (string == bunStreamString) {
+        if (string == "bun:stream"_s) {
             auto* obj = constructEmptyObject(globalObject);
             obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "BufferList"_s)), reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferList(), 0);
             obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "ReadableState"_s)), reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSReadableState(), 0);
@@ -1364,16 +1359,16 @@ JSC:
             return JSValue::encode(obj);
         }
 
-        if (string == createImportMeta) {
+        if (string == "createImportMeta"_s) {
             Zig::ImportMetaObject* obj = Zig::ImportMetaObject::create(globalObject, callFrame->argument(1));
             return JSValue::encode(obj);
         }
 
-        if (string == masqueradesAsUndefined) {
+        if (string == "masqueradesAsUndefined"_s) {
             return JSValue::encode(InternalFunction::createFunctionThatMasqueradesAsUndefined(vm, globalObject, 0, String(), functionCallNotImplemented));
         }
 
-        if (string == vmString) {
+        if (string == "vm"_s) {
             auto* obj = constructEmptyObject(globalObject);
             obj->putDirect(
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Script"_s)),
@@ -1394,7 +1389,22 @@ JSC:
             return JSValue::encode(obj);
         }
 
-        if (UNLIKELY(string == noopString)) {
+        if (string == "vm"_s) {
+            auto* obj = constructEmptyObject(globalObject);
+        }
+
+        if (string == "primordials"_s) {
+            auto sourceOrigin = callFrame->callerSourceOrigin(vm).url();
+            bool isBuiltin = sourceOrigin.protocolIs("builtin"_s);
+            if (!isBuiltin) {
+                return JSC::JSValue::encode(JSC::jsUndefined());
+            }
+
+            auto* obj = globalObject->primordialsObject();
+            return JSValue::encode(obj);
+        }
+
+        if (UNLIKELY(string == "noop"_s)) {
             auto* obj = constructEmptyObject(globalObject);
             obj->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "getterSetter"_s)), JSC::CustomGetterSetter::create(vm, noop_getter, noop_setter), 0);
             Zig::JSFFIFunction* function = Zig::JSFFIFunction::create(vm, reinterpret_cast<Zig::GlobalObject*>(globalObject), 0, String(), functionNoop, JSC::NoIntrinsic);

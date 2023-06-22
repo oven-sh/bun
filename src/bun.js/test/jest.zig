@@ -600,7 +600,7 @@ pub const Jest = struct {
     pub fn Bun__Jest__createTestModuleObject(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
 
-        const module = JSC.JSValue.createEmptyObject(globalObject, 11);
+        const module = JSC.JSValue.createEmptyObject(globalObject, 12);
 
         const test_fn = JSC.NewFunction(globalObject, ZigString.static("test"), 2, TestScope.call, false);
         module.put(
@@ -710,9 +710,10 @@ pub const Jest = struct {
         module.put(globalObject, ZigString.static("jest"), jest);
         module.put(globalObject, ZigString.static("spyOn"), spyOn);
 
-        const vi = JSValue.createEmptyObject(globalObject, 1);
+        const vi = JSValue.createEmptyObject(globalObject, 3);
         vi.put(globalObject, ZigString.static("fn"), mockFn);
         vi.put(globalObject, ZigString.static("spyOn"), spyOn);
+        vi.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
         module.put(globalObject, ZigString.static("vi"), vi);
 
         return module;

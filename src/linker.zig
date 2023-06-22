@@ -119,7 +119,7 @@ pub const Linker = struct {
         fd: ?FileDescriptorType,
     ) !string {
         if (Bundler.isCacheEnabled) {
-            var hashed = std.hash.Wyhash.hash(0, file_path.text);
+            var hashed = bun.hash(file_path.text);
             var hashed_result = try this.hashed_filenames.getOrPut(hashed);
             if (hashed_result.found_existing) {
                 return hashed_result.value_ptr.*;
@@ -130,7 +130,7 @@ pub const Linker = struct {
         const hash_name = modkey.hashName(file_path.text);
 
         if (Bundler.isCacheEnabled) {
-            var hashed = std.hash.Wyhash.hash(0, file_path.text);
+            var hashed = bun.hash(file_path.text);
             try this.hashed_filenames.put(hashed, try this.allocator.dupe(u8, hash_name));
         }
 
@@ -569,7 +569,7 @@ pub const Linker = struct {
                         // But we need to at least tell the printer that this needs to happen.
                         if (loader != .napi and resolved_import.shouldAssumeCommonJS(import_record.kind) and !is_bun) {
                             import_record.do_commonjs_transform_in_printer = true;
-                            import_record.module_id = @truncate(u32, std.hash.Wyhash.hash(0, path.pretty));
+                            import_record.module_id = @truncate(u32, bun.hash(path.pretty));
                         }
                     } else |err| {
                         switch (err) {
@@ -1043,7 +1043,7 @@ pub const Linker = struct {
             hash_key = path.text[linker.fs.top_level_dir.len..];
         }
 
-        return std.hash.Wyhash.hash(0, hash_key);
+        return bun.hash(hash_key);
     }
 
     pub fn enqueueResolveResult(linker: *ThisLinker, resolve_result: *const Resolver.Result) !bool {

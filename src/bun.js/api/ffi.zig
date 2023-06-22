@@ -137,8 +137,8 @@ pub const FFI = struct {
                     globalThis,
                     ZigString.static("ptr"),
                     ZigString.static("ctx"),
-                    JSC.JSValue.fromPtrAddress(@ptrToInt(function_.step.compiled.ptr)),
-                    JSC.JSValue.fromPtrAddress(@ptrToInt(function_)),
+                    JSC.JSValue.fromPtrAddress(@intFromPtr(function_.step.compiled.ptr)),
+                    JSC.JSValue.fromPtrAddress(@intFromPtr(function_)),
                 );
             },
         }
@@ -523,7 +523,7 @@ pub const FFI = struct {
                     const int = val.to(i32);
                     switch (int) {
                         0...ABIType.max => {
-                            abi_types.appendAssumeCapacity(@intToEnum(ABIType, int));
+                            abi_types.appendAssumeCapacity(@enumFromInt(ABIType, int));
                             continue;
                         },
                         else => {
@@ -560,7 +560,7 @@ pub const FFI = struct {
                 const int = ret_value.toInt32();
                 switch (int) {
                     0...ABIType.max => {
-                        return_type = @intToEnum(ABIType, int);
+                        return_type = @enumFromInt(ABIType, int);
                         break :brk;
                     },
                     else => {
@@ -594,11 +594,11 @@ pub const FFI = struct {
             if (ptr.isNumber()) {
                 const num = ptr.asPtrAddress();
                 if (num > 0)
-                    function.symbol_from_dynamic_library = @intToPtr(*anyopaque, num);
+                    function.symbol_from_dynamic_library = @ptrFromInt(*anyopaque, num);
             } else {
                 const num = ptr.toUInt64NoTruncate();
                 if (num > 0) {
-                    function.symbol_from_dynamic_library = @intToPtr(*anyopaque, num);
+                    function.symbol_from_dynamic_library = @ptrFromInt(*anyopaque, num);
                 }
             }
         }
@@ -866,7 +866,7 @@ pub const FFI = struct {
                 c: u8,
                 byte_count: usize,
             ) callconv(.C) void {
-                @memset(dest, c, byte_count);
+                @memset(dest[0..byte_count], c);
             }
 
             noinline fn memcpy(
@@ -874,7 +874,7 @@ pub const FFI = struct {
                 noalias source: [*]const u8,
                 byte_count: usize,
             ) callconv(.C) void {
-                @memcpy(dest, source, byte_count);
+                @memcpy(dest[0..byte_count], source[0..byte_count]);
             }
 
             pub fn define(state: *TCC.TCCState) void {
@@ -1205,7 +1205,7 @@ pub const FFI = struct {
             writer: anytype,
         ) !void {
             {
-                const ptr = @ptrToInt(globalObject);
+                const ptr = @intFromPtr(globalObject);
                 const fmt = bun.fmt.hexIntUpper(ptr);
                 try writer.print("#define JS_GLOBAL_OBJECT (void*)0x{any}ULL\n", .{fmt});
             }
@@ -1290,7 +1290,7 @@ pub const FFI = struct {
             var inner_buf: []u8 = &.{};
 
             {
-                const ptr = @ptrToInt(context_ptr);
+                const ptr = @intFromPtr(context_ptr);
                 const fmt = bun.fmt.hexIntUpper(ptr);
 
                 if (this.arg_types.items.len > 0) {
@@ -1355,7 +1355,7 @@ pub const FFI = struct {
 
         function = 17,
 
-        pub const max = @enumToInt(ABIType.function);
+        pub const max = @intFromEnum(ABIType.function);
 
         /// Types that we can directly pass through as an `int64_t`
         pub fn needsACastInC(this: ABIType) bool {
@@ -1414,11 +1414,11 @@ pub const FFI = struct {
                 // these are not all valid identifiers
                 try writer.writeAll(self.name);
                 try writer.writeAll("']:");
-                try std.fmt.formatInt(@enumToInt(self.entry), 10, .lower, .{}, writer);
+                try std.fmt.formatInt(@intFromEnum(self.entry), 10, .lower, .{}, writer);
                 try writer.writeAll(",'");
-                try std.fmt.formatInt(@enumToInt(self.entry), 10, .lower, .{}, writer);
+                try std.fmt.formatInt(@intFromEnum(self.entry), 10, .lower, .{}, writer);
                 try writer.writeAll("':");
-                try std.fmt.formatInt(@enumToInt(self.entry), 10, .lower, .{}, writer);
+                try std.fmt.formatInt(@intFromEnum(self.entry), 10, .lower, .{}, writer);
             }
         };
         pub const map_to_js_object = brk: {
@@ -1426,7 +1426,7 @@ pub const FFI = struct {
             for (map, 0..) |item, i| {
                 var fmt = EnumMapFormatter{ .name = item.@"0", .entry = item.@"1" };
                 count += std.fmt.count("{}", .{fmt});
-                count += @boolToInt(i > 0);
+                count += @intFromBool(i > 0);
             }
 
             var buf: [count]u8 = undefined;

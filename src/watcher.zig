@@ -73,7 +73,7 @@ pub const INotify = struct {
             // it includes alignment / padding
             // but it is a sentineled value
             // so we can just trim it to the first null byte
-            return bun.sliceTo(@intToPtr([*:0]u8, @ptrToInt(&this.name_len) + @sizeOf(u32)), 0)[0.. :0];
+            return bun.sliceTo(@ptrFromInt([*:0]u8, @intFromPtr(&this.name_len) + @sizeOf(u32)), 0)[0.. :0];
         }
     };
     pub var inotify_fd: EventListIndex = 0;
@@ -367,7 +367,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         var evict_list: [WATCHER_MAX_LIST]WatchItemIndex = undefined;
 
         pub fn getHash(filepath: string) HashType {
-            return @truncate(HashType, std.hash.Wyhash.hash(0, filepath));
+            return @truncate(HashType, bun.hash(filepath));
         }
 
         pub fn init(ctx: ContextType, fs: *Fs.FileSystem, allocator: std.mem.Allocator) !*Watcher {
@@ -434,7 +434,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             // swapRemove messes up the order
             // But, it only messes up the order if any elements in the list appear after the item being removed
             // So if we just sort the list by the biggest index first, that should be fine
-            std.sort.sort(
+            std.sort.block(
                 WatchItemIndex,
                 evict_list[0..evict_list_i],
                 {},
@@ -570,14 +570,14 @@ pub fn NewWatcher(comptime ContextType: type) type {
                             else
                                 null;
                             watchevents[watch_event_id].name_off = temp_name_off;
-                            watchevents[watch_event_id].name_len = @as(u8, @boolToInt((event.name_len > 0)));
-                            temp_name_off += @as(u8, @boolToInt((event.name_len > 0)));
+                            watchevents[watch_event_id].name_len = @as(u8, @intFromBool((event.name_len > 0)));
+                            temp_name_off += @as(u8, @intFromBool((event.name_len > 0)));
 
                             watch_event_id += 1;
                         }
 
                         var all_events = watchevents[0..watch_event_id];
-                        std.sort.sort(WatchEvent, all_events, {}, WatchEvent.sortByIndex);
+                        std.sort.block(WatchEvent, all_events, {}, WatchEvent.sortByIndex);
 
                         var last_event_index: usize = 0;
                         var last_event_id: INotify.EventListIndex = std.math.maxInt(INotify.EventListIndex);
@@ -859,7 +859,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     }
                 }
             }
-            try this.watchlist.ensureUnusedCapacity(this.allocator, 1 + @intCast(usize, @boolToInt(parent_watch_item == null)));
+            try this.watchlist.ensureUnusedCapacity(this.allocator, 1 + @intCast(usize, @intFromBool(parent_watch_item == null)));
 
             if (autowatch_parent_dir) {
                 parent_watch_item = parent_watch_item orelse try this.appendDirectoryAssumeCapacity(dir_fd, parent_dir, parent_dir_hash, copy_file_path);

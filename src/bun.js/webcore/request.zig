@@ -472,8 +472,8 @@ pub const Request = struct {
                 url_or_object,
             if (is_first_argument_a_url) JSValue.undefined else url_or_object,
         };
-        const values_to_try = values_to_try_[0 .. @as(usize, @boolToInt(!is_first_argument_a_url)) +
-            @as(usize, @boolToInt(arguments.len > 1 and arguments[1].isObject()))];
+        const values_to_try = values_to_try_[0 .. @as(usize, @intFromBool(!is_first_argument_a_url)) +
+            @as(usize, @intFromBool(arguments.len > 1 and arguments[1].isObject()))];
 
         for (values_to_try) |value| {
             const value_type = value.jsType();
@@ -564,7 +564,7 @@ pub const Request = struct {
                         fields.insert(.url);
 
                     // first value
-                } else if (@enumToInt(value) == @enumToInt(values_to_try[values_to_try.len - 1]) and !is_first_argument_a_url and
+                } else if (@intFromEnum(value) == @intFromEnum(values_to_try[values_to_try.len - 1]) and !is_first_argument_a_url and
                     value.implementsToString(globalThis))
                 {
                     const slice = value.toSliceOrNull(globalThis) orelse {

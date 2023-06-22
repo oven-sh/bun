@@ -727,11 +727,11 @@ pub fn DirectiveHandler(comptime Container: type, comptime UserDataType: type, c
     return struct {
         pub fn callback(this: *Container, user_data: ?*anyopaque) callconv(.C) Directive {
             auto_disable();
-            return @intToEnum(
+            return @enumFromInt(
                 Directive,
                 @as(
                     c_uint,
-                    @boolToInt(
+                    @intFromBool(
                         Callback(
                             @ptrCast(
                                 *UserDataType,

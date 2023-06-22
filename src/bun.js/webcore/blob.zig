@@ -546,7 +546,7 @@ pub const Blob = struct {
             return JSPromise.resolvedPromiseValue(ctx.ptr(), cloned.toJS(ctx)).asObjectRef();
         } else if (destination_type == .bytes and source_type == .file) {
             var fake_call_frame: [8]JSC.JSValue = undefined;
-            @memset(@ptrCast([*]u8, &fake_call_frame), 0, @sizeOf(@TypeOf(fake_call_frame)));
+            @memset(@ptrCast([*]u8, &fake_call_frame)[0..@sizeOf(@TypeOf(fake_call_frame))], 0);
             const blob_value =
                 source_blob.getSlice(ctx, @ptrCast(*JSC.CallFrame, &fake_call_frame));
 
@@ -1232,7 +1232,7 @@ pub const Blob = struct {
                                 }).toSystemError();
 
                                 // assert we never end up reusing the memory
-                                std.debug.assert(@ptrToInt(this.system_error.?.path.slice().ptr) != @ptrToInt(path_buffer));
+                                std.debug.assert(@intFromPtr(this.system_error.?.path.slice().ptr) != @intFromPtr(path_buffer));
 
                                 callback(this, null_fd);
                                 return;
@@ -1739,12 +1739,12 @@ pub const Blob = struct {
         };
 
         const unsupported_directory_error = SystemError{
-            .errno = @intCast(c_int, @enumToInt(bun.C.SystemErrno.EISDIR)),
+            .errno = @intCast(c_int, @intFromEnum(bun.C.SystemErrno.EISDIR)),
             .message = ZigString.init("That doesn't work on folders"),
             .syscall = ZigString.init("fstat"),
         };
         const unsupported_non_regular_file_error = SystemError{
-            .errno = @intCast(c_int, @enumToInt(bun.C.SystemErrno.ENOTSUP)),
+            .errno = @intCast(c_int, @intFromEnum(bun.C.SystemErrno.ENOTSUP)),
             .message = ZigString.init("Non-regular files aren't supported yet"),
             .syscall = ZigString.init("fstat"),
         };
@@ -1978,14 +1978,14 @@ pub const Blob = struct {
                             }
 
                             this.system_error = (JSC.Node.Syscall.Error{
-                                .errno = @intCast(JSC.Node.Syscall.Error.Int, @enumToInt(linux.E.INVAL)),
+                                .errno = @intCast(JSC.Node.Syscall.Error.Int, @intFromEnum(linux.E.INVAL)),
                                 .syscall = TryWith.tag.get(use).?,
                             }).toSystemError();
                             return AsyncIO.asError(linux.E.INVAL);
                         },
                         else => |errno| {
                             this.system_error = (JSC.Node.Syscall.Error{
-                                .errno = @intCast(JSC.Node.Syscall.Error.Int, @enumToInt(errno)),
+                                .errno = @intCast(JSC.Node.Syscall.Error.Int, @intFromEnum(errno)),
                                 .syscall = TryWith.tag.get(use).?,
                             }).toSystemError();
                             return AsyncIO.asError(errno);
@@ -2000,7 +2000,7 @@ pub const Blob = struct {
             }
 
             pub fn doFCopyFile(this: *CopyFile) anyerror!void {
-                switch (JSC.Node.Syscall.fcopyfile(this.source_fd, this.destination_fd, os.system.COPYFILE_DATA)) {
+                switch (JSC.Node.Syscall.fcopyfile(this.source_fd, this.destination_fd, os.system.COPYFILE.DATA)) {
                     .err => |errno| {
                         this.system_error = errno.toSystemError();
 
@@ -3816,10 +3816,10 @@ pub const InlineBlob = extern struct {
         var bytes_slice = inline_blob.bytes[0..total];
 
         if (first.len > 0)
-            @memcpy(bytes_slice.ptr, first.ptr, first.len);
+            @memcpy(bytes_slice[0..first.len], first);
 
         if (second.len > 0)
-            @memcpy(bytes_slice.ptr + first.len, second.ptr, second.len);
+            @memcpy(bytes_slice[first.len..][0..second.len], second);
 
         inline_blob.len = @truncate(@TypeOf(inline_blob.len), total);
         return inline_blob;
@@ -3834,7 +3834,7 @@ pub const InlineBlob = extern struct {
         };
 
         if (data.len > 0)
-            @memcpy(&blob.bytes, data.ptr, data.len);
+            @memcpy(blob.bytes[0..data.len], data);
         return blob;
     }
 

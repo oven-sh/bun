@@ -1011,7 +1011,7 @@ pub const Subprocess = struct {
             if (signal.name()) |name|
                 return JSC.ZigString.init(name).toValueGC(global)
             else
-                return JSC.JSValue.jsNumber(@enumToInt(signal));
+                return JSC.JSValue.jsNumber(@intFromEnum(signal));
         }
 
         return JSC.JSValue.jsNull();
@@ -1535,9 +1535,9 @@ pub const Subprocess = struct {
                 }
 
                 if (std.os.W.IFSIGNALED(result.status)) {
-                    this.signal_code = @intToEnum(SignalCode, @truncate(u8, std.os.W.TERMSIG(result.status)));
+                    this.signal_code = @enumFromInt(SignalCode, @truncate(u8, std.os.W.TERMSIG(result.status)));
                 } else if (std.os.W.IFSTOPPED(result.status)) {
-                    this.signal_code = @intToEnum(SignalCode, @truncate(u8, std.os.W.STOPSIG(result.status)));
+                    this.signal_code = @enumFromInt(SignalCode, @truncate(u8, std.os.W.STOPSIG(result.status)));
                 }
 
                 if (!this.hasExited()) {

@@ -17,11 +17,11 @@ noinline fn sigaction_handler(sig: i32, info: *const std.os.siginfo_t, _: ?*cons
     setup_sigactions(null) catch unreachable;
 
     const addr = switch (comptime builtin.target.os.tag) {
-        .linux => @ptrToInt(info.fields.sigfault.addr),
-        .macos, .freebsd => @ptrToInt(info.addr),
-        .netbsd => @ptrToInt(info.info.reason.fault.addr),
-        .openbsd => @ptrToInt(info.data.fault.addr),
-        .solaris => @ptrToInt(info.reason.fault.addr),
+        .linux => @intFromPtr(info.fields.sigfault.addr),
+        .macos, .freebsd => @intFromPtr(info.addr),
+        .netbsd => @intFromPtr(info.info.reason.fault.addr),
+        .openbsd => @intFromPtr(info.data.fault.addr),
+        .solaris => @intFromPtr(info.reason.fault.addr),
         else => unreachable,
     };
     if (on_error) |handle| handle(sig, addr);

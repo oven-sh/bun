@@ -196,7 +196,7 @@ pub const SavedSourceMap = struct {
     pub const SourceMapHandler = js_printer.SourceMapHandler.For(SavedSourceMap, onSourceMapChunk);
 
     pub fn putMappings(this: *SavedSourceMap, source: logger.Source, mappings: MutableString) !void {
-        var entry = try this.map.getOrPut(std.hash.Wyhash.hash(0, source.path.text));
+        var entry = try this.map.getOrPut(bun.hash(source.path.text));
         if (entry.found_existing) {
             var value = Value.from(entry.value_ptr.*);
             if (value.get(MappingList)) |source_map_| {
@@ -213,7 +213,7 @@ pub const SavedSourceMap = struct {
     }
 
     pub fn get(this: *SavedSourceMap, path: string) ?MappingList {
-        var mapping = this.map.getEntry(std.hash.Wyhash.hash(0, path)) orelse return null;
+        var mapping = this.map.getEntry(bun.hash(path)) orelse return null;
         switch (Value.from(mapping.value_ptr.*).tag()) {
             (@field(Value.Tag, @typeName(MappingList))) => {
                 return Value.from(mapping.value_ptr.*).as(MappingList).*;
@@ -264,7 +264,7 @@ export fn Bun__readOriginTimer(vm: *JSC.VirtualMachine) u64 {
 
 export fn Bun__readOriginTimerStart(vm: *JSC.VirtualMachine) f64 {
     // timespce to milliseconds
-    return @floatCast(f64, (@intToFloat(f64, vm.origin_timestamp) + JSC.VirtualMachine.origin_relative_epoch) / 1_000_000.0);
+    return @floatCast(f64, (@floatFromInt(f64, vm.origin_timestamp) + JSC.VirtualMachine.origin_relative_epoch) / 1_000_000.0);
 }
 
 // comptime {
@@ -1382,7 +1382,7 @@ pub const VirtualMachine = struct {
     // // This double prints
     // pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, _: JSPromiseRejectionOperation) callconv(.C) JSValue {
     //     const result = promise.result(global.vm());
-    //     if (@enumToInt(VirtualMachine.get().last_error_jsvalue) != @enumToInt(result)) {
+    //     if (@intFromEnum(VirtualMachine.get().last_error_jsvalue) != @intFromEnum(result)) {
     //         VirtualMachine.get().runErrorHandler(result, null);
     //     }
 
@@ -1823,7 +1823,7 @@ pub const VirtualMachine = struct {
                     iterator(_vm, globalObject, nextValue, ctx.?, false);
                 }
                 inline fn iterator(_: [*c]VM, _: [*c]JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
-                    var this_ = @intToPtr(*@This(), @ptrToInt(ctx));
+                    var this_ = @ptrFromInt(*@This(), @intFromPtr(ctx));
                     VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, Writer, this_.writer, color, allow_side_effects);
                 }
             };
@@ -2066,8 +2066,8 @@ pub const VirtualMachine = struct {
             )) |lines| {
                 var source_lines = exception.stack.source_lines_ptr[0..JSC.ZigException.Holder.source_lines_count];
                 var source_line_numbers = exception.stack.source_lines_numbers[0..JSC.ZigException.Holder.source_lines_count];
-                std.mem.set(ZigString, source_lines, ZigString.Empty);
-                std.mem.set(i32, source_line_numbers, 0);
+                @memset(source_lines, ZigString.Empty);
+                @memset(source_line_numbers, 0);
 
                 var lines_ = lines[0..@min(lines.len, source_lines.len)];
                 for (lines_, 0..) |line, j| {
@@ -2374,7 +2374,7 @@ pub const EventListenerMixin = struct {
         const FetchEventRejectionHandler = struct {
             pub fn onRejection(_ctx: *anyopaque, err: anyerror, fetch_event: *FetchEvent, value: JSValue) void {
                 onError(
-                    @intToPtr(*CtxType, @ptrToInt(_ctx)),
+                    @ptrFromInt(*CtxType, @intFromPtr(_ctx)),
                     err,
                     value,
                     fetch_event.request_context.?,
@@ -2763,10 +2763,10 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                             break :brk path_string.slice();
                                         } else {
                                             var file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
-                                            @memcpy(&_on_file_update_path_buf, file_path_without_trailing_slash.ptr, file_path_without_trailing_slash.len);
+                                            @memcpy(_on_file_update_path_buf[0..file_path_without_trailing_slash.len], file_path_without_trailing_slash);
                                             _on_file_update_path_buf[file_path_without_trailing_slash.len] = std.fs.path.sep;
 
-                                            @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len + 1 ..].ptr, changed_name.ptr, changed_name.len);
+                                            @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len..][0..changed_name.len], changed_name);
                                             const path_slice = _on_file_update_path_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
                                             file_hash = @This().Watcher.getHash(path_slice);
                                             break :brk path_slice;

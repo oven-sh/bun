@@ -256,7 +256,7 @@ pub const MacroEntryPoint = struct {
     source: logger.Source = undefined,
 
     pub fn generateID(entry_path: string, function_name: string, buf: []u8, len: *u32) i32 {
-        var hasher = std.hash.Wyhash.init(0);
+        var hasher = bun.Wyhash.init(0);
         hasher.update(js_ast.Macro.namespaceWithColon);
         hasher.update(entry_path);
         hasher.update(function_name);
@@ -270,7 +270,7 @@ pub const MacroEntryPoint = struct {
     }
 
     pub fn generateIDFromSpecifier(specifier: string) i32 {
-        return @bitCast(i32, @truncate(u32, std.hash.Wyhash.hash(0, specifier)));
+        return @bitCast(i32, @truncate(u32, bun.hash(specifier)));
     }
 
     pub fn generate(

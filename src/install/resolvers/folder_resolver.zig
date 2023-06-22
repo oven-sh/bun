@@ -30,7 +30,7 @@ pub const FolderResolution = union(Tag) {
     }
 
     pub fn hash(normalized_path: string) u64 {
-        return std.hash.Wyhash.hash(0, normalized_path);
+        return bun.hash(normalized_path);
     }
 
     fn NewResolver(comptime tag: Resolution.Tag) type {
@@ -95,9 +95,9 @@ pub const FolderResolution = union(Tag) {
                 .global, .cache_folder => {
                     const path = if (global_or_relative == .global) global_or_relative.global else global_or_relative.cache_folder;
                     if (path.len > 0) {
-                        const offset = path.len -| @as(usize, @boolToInt(path[path.len -| 1] == std.fs.path.sep));
+                        const offset = path.len -| @as(usize, @intFromBool(path[path.len -| 1] == std.fs.path.sep));
                         if (offset > 0)
-                            @memcpy(remain.ptr, path.ptr, offset);
+                            @memcpy(remain[0..offset], path[0..offset]);
                         remain = remain[offset..];
                         if (normalized.len > 0) {
                             if ((path[path.len - 1] != std.fs.path.sep) and (normalized[0] != std.fs.path.sep)) {

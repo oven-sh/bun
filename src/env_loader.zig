@@ -52,7 +52,7 @@ pub const Lexer = struct {
     pub inline fn step(this: *Lexer) void {
         const ended = !this.iter.next(&this.cursor);
         if (ended) this.cursor.c = -1;
-        this.current = this.cursor.i + @as(usize, @boolToInt(ended));
+        this.current = this.cursor.i + @as(usize, @intFromBool(ended));
     }
 
     pub fn eatNestedValue(
@@ -73,7 +73,7 @@ pub const Lexer = struct {
                     i += 1;
                     const start = i;
 
-                    const curly_braces_offset = @as(usize, @boolToInt(variable.value[i] == '{'));
+                    const curly_braces_offset = @as(usize, @intFromBool(variable.value[i] == '{'));
                     i += curly_braces_offset;
 
                     while (i < variable.value.len) {
@@ -422,7 +422,7 @@ pub const Loader = struct {
 
     pub fn getNodePath(this: *Loader, fs: *Fs.FileSystem, buf: *Fs.PathBuffer) ?[:0]const u8 {
         if (this.get("NODE") orelse this.get("npm_node_execpath")) |node| {
-            @memcpy(buf, node.ptr, node.len);
+            @memcpy(buf[0..node.len], node);
             buf[node.len] = 0;
             return buf[0..node.len :0];
         }
@@ -556,7 +556,7 @@ pub const Loader = struct {
         var string_map_hashes = try allocator.alloc(u64, framework_defaults.keys.len);
         defer allocator.free(string_map_hashes);
         const invalid_hash = std.math.maxInt(u64) - 1;
-        std.mem.set(u64, string_map_hashes, invalid_hash);
+        @memset(string_map_hashes, invalid_hash);
 
         var key_buf: []u8 = "";
         // Frameworks determine an allowlist of values
@@ -564,7 +564,7 @@ pub const Loader = struct {
         for (framework_defaults.keys, 0..) |key, i| {
             if (key.len > "process.env.".len and strings.eqlComptime(key[0.."process.env.".len], "process.env.")) {
                 const hashable_segment = key["process.env.".len..];
-                string_map_hashes[i] = std.hash.Wyhash.hash(0, hashable_segment);
+                string_map_hashes[i] = bun.hash(hashable_segment);
             }
         }
 
@@ -616,7 +616,7 @@ pub const Loader = struct {
 
                             e_strings[0] = js_ast.E.String{
                                 .data = if (value.len > 0)
-                                    @intToPtr([*]u8, @ptrToInt(value.ptr))[0..value.len]
+                                    @ptrFromInt([*]u8, @intFromPtr(value.ptr))[0..value.len]
                                 else
                                     &[_]u8{},
                             };
@@ -632,14 +632,14 @@ pub const Loader = struct {
                             );
                             e_strings = e_strings[1..];
                         } else {
-                            const hash = std.hash.Wyhash.hash(0, entry.key_ptr.*);
+                            const hash = bun.hash(entry.key_ptr.*);
 
                             std.debug.assert(hash != invalid_hash);
 
                             if (std.mem.indexOfScalar(u64, string_map_hashes, hash)) |key_i| {
                                 e_strings[0] = js_ast.E.String{
                                     .data = if (value.len > 0)
-                                        @intToPtr([*]u8, @ptrToInt(value.ptr))[0..value.len]
+                                        @ptrFromInt([*]u8, @intFromPtr(value.ptr))[0..value.len]
                                     else
                                         &[_]u8{},
                                 };
@@ -665,7 +665,7 @@ pub const Loader = struct {
 
                         e_strings[0] = js_ast.E.String{
                             .data = if (entry.value_ptr.*.len > 0)
-                                @intToPtr([*]u8, @ptrToInt(entry.value_ptr.*.ptr))[0..value.len]
+                                @ptrFromInt([*]u8, @intFromPtr(entry.value_ptr.*.ptr))[0..value.len]
                             else
                                 &[_]u8{},
                         };
@@ -803,17 +803,17 @@ pub const Loader = struct {
 
     pub fn printLoaded(this: *Loader, start: i128) void {
         const count =
-            @intCast(u8, @boolToInt(this.@".env.development.local" != null)) +
-            @intCast(u8, @boolToInt(this.@".env.production.local" != null)) +
-            @intCast(u8, @boolToInt(this.@".env.test.local" != null)) +
-            @intCast(u8, @boolToInt(this.@".env.local" != null)) +
-            @intCast(u8, @boolToInt(this.@".env.development" != null)) +
-            @intCast(u8, @boolToInt(this.@".env.production" != null)) +
-            @intCast(u8, @boolToInt(this.@".env.test" != null)) +
-            @intCast(u8, @boolToInt(this.@".env" != null));
+            @intCast(u8, @intFromBool(this.@".env.development.local" != null)) +
+            @intCast(u8, @intFromBool(this.@".env.production.local" != null)) +
+            @intCast(u8, @intFromBool(this.@".env.test.local" != null)) +
+            @intCast(u8, @intFromBool(this.@".env.local" != null)) +
+            @intCast(u8, @intFromBool(this.@".env.development" != null)) +
+            @intCast(u8, @intFromBool(this.@".env.production" != null)) +
+            @intCast(u8, @intFromBool(this.@".env.test" != null)) +
+            @intCast(u8, @intFromBool(this.@".env" != null));
 
         if (count == 0) return;
-        const elapsed = @intToFloat(f64, (std.time.nanoTimestamp() - start)) / std.time.ns_per_ms;
+        const elapsed = @floatFromInt(f64, (std.time.nanoTimestamp() - start)) / std.time.ns_per_ms;
 
         const all = [_]string{
             ".env.development.local",

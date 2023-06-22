@@ -1800,7 +1800,7 @@ pub const JumpTableInline = struct {
 //                     iter = std.unicode.Utf8Iterator{ .bytes = code, .i = 0 };
 //                     hash_table_count = 0;
 //                     while (iter.nextCodepoint()) |cp| {
-//                         hash_table_count += @as(usize, @boolToInt(HashTable.isIdentifierStart(cp) or HashTable.isIdentifierPart(cp)));
+//                         hash_table_count += @as(usize, @intFromBool(HashTable.isIdentifierStart(cp) or HashTable.isIdentifierPart(cp)));
 //                     }
 //                 }
 //                 hash_table_elapsed += timer.read();
@@ -1816,7 +1816,7 @@ pub const JumpTableInline = struct {
 //                     while (iter.nextCodepoint()) |cp| {
 //                         jump_table_count += @as(
 //                             usize,
-//                             @boolToInt(JumpTable.isIdentifierStart(cp) or JumpTable.isIdentifierPart(cp)),
+//                             @intFromBool(JumpTable.isIdentifierStart(cp) or JumpTable.isIdentifierPart(cp)),
 //                         );
 //                     }
 //                 }
@@ -1833,7 +1833,7 @@ pub const JumpTableInline = struct {
 //                     while (iter.nextCodepoint()) |cp| {
 //                         binary_search_count += @as(
 //                             usize,
-//                             @boolToInt(
+//                             @intFromBool(
 //                                 BinarySearch.isIdentifierStart(
 //                                     cp,
 //                                 ) or BinarySearch.isIdentifierPart(
@@ -1856,7 +1856,7 @@ pub const JumpTableInline = struct {
 //                     while (iter.nextCodepoint()) |cp| {
 //                         bitset_count += @as(
 //                             usize,
-//                             @boolToInt(
+//                             @intFromBool(
 //                                 Bitset.isIdentifierStart(
 //                                     cp,
 //                                 ) or Bitset.isIdentifierPart(
@@ -1930,7 +1930,7 @@ pub const JumpTableInline = struct {
 //                     iter = std.unicode.Utf8Iterator{ .bytes = code, .i = 0 };
 //                     hash_table_count = 0;
 //                     while (iter.nextCodepoint()) |cp| {
-//                         hash_table_count += @as(usize, @boolToInt(HashTable.isIdentifierStart(cp) or HashTable.isIdentifierPart(cp)));
+//                         hash_table_count += @as(usize, @intFromBool(HashTable.isIdentifierStart(cp) or HashTable.isIdentifierPart(cp)));
 //                     }
 //                 }
 //                 hash_table_elapsed += timer.read();
@@ -1946,7 +1946,7 @@ pub const JumpTableInline = struct {
 //                     while (iter.nextCodepoint()) |cp| {
 //                         jump_table_count += @as(
 //                             usize,
-//                             @boolToInt(JumpTable.isIdentifierStart(cp) or JumpTable.isIdentifierPart(cp)),
+//                             @intFromBool(JumpTable.isIdentifierStart(cp) or JumpTable.isIdentifierPart(cp)),
 //                         );
 //                     }
 //                 }
@@ -1963,7 +1963,7 @@ pub const JumpTableInline = struct {
 //                     while (iter.nextCodepoint()) |cp| {
 //                         binary_search_count += @as(
 //                             usize,
-//                             @boolToInt(
+//                             @intFromBool(
 //                                 BinarySearch.isIdentifierStart(
 //                                     cp,
 //                                 ) or BinarySearch.isIdentifierPart(
@@ -1986,7 +1986,7 @@ pub const JumpTableInline = struct {
 //                     while (iter.nextCodepoint()) |cp| {
 //                         bitset_count += @as(
 //                             usize,
-//                             @boolToInt(
+//                             @intFromBool(
 //                                 Bitset.isIdentifierStart(
 //                                     cp,
 //                                 ) or Bitset.isIdentifierPart(

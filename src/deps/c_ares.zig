@@ -488,7 +488,7 @@ pub const Channel = opaque {
                 break :brk null;
             }
             const len = @min(host.len, host_buf.len - 1);
-            @memcpy(&host_buf, host.ptr, len);
+            @memcpy(host_buf[0..len], host[0..len]);
             host_buf[len] = 0;
             break :brk host_buf[0..len :0].ptr;
         };
@@ -516,7 +516,8 @@ pub const Channel = opaque {
                 break :brk null;
             }
             const len = @min(name_buf.len, name_buf.len - 1);
-            @memcpy(&name_buf, name.ptr, len);
+            @memcpy(name_buf[0..len], name[0..len]);
+
             name_buf[len] = 0;
             break :brk name_buf[0..len :0];
         };
@@ -1209,8 +1210,8 @@ pub const Error = enum(i32) {
     ESERVICE = ARES_ESERVICE,
 
     pub fn initEAI(rc: i32) ?Error {
-        return switch (@intToEnum(std.os.system.EAI, rc)) {
-            @intToEnum(std.os.system.EAI, 0) => return null,
+        return switch (@enumFromInt(std.os.system.EAI, rc)) {
+            @enumFromInt(std.os.system.EAI, 0) => return null,
             .ADDRFAMILY => Error.EBADFAMILY,
             .BADFLAGS => Error.EBADFLAGS, // Invalid hints
             .FAIL => Error.EBADRESP,
@@ -1283,8 +1284,8 @@ pub const Error = enum(i32) {
     pub fn get(rc: i32) ?Error {
         return switch (rc) {
             0 => null,
-            1...ARES_ESERVICE => @intToEnum(Error, rc),
-            -ARES_ESERVICE...-1 => @intToEnum(Error, -rc),
+            1...ARES_ESERVICE => @enumFromInt(Error, rc),
+            -ARES_ESERVICE...-1 => @enumFromInt(Error, -rc),
             else => unreachable,
         };
     }

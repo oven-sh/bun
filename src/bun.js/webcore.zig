@@ -663,7 +663,7 @@ pub const Crypto = struct {
     ) callconv(.C) JSC.JSValue {
         var slice = array.slice();
         randomData(globalThis, slice.ptr, slice.len);
-        return @intToEnum(JSC.JSValue, @bitCast(i64, @ptrToInt(array)));
+        return @enumFromInt(JSC.JSValue, @bitCast(i64, @intFromPtr(array)));
     }
 
     fn randomData(

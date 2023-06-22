@@ -8,6 +8,7 @@ namespace JSC {
 class SourceCode;
 class JSSourceCode;
 class ProgramExecutable;
+class AbstractModuleRecord;
 }
 
 namespace Bun {
@@ -46,7 +47,7 @@ public:
         Zig::GlobalObject* globalObject,
         const WTF::String& key,
         const WTF::String& dirname,
-        JSC::JSObject* moduleNamespaceObject);
+        JSC::AbstractModuleRecord* moduleRecord);
 
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,

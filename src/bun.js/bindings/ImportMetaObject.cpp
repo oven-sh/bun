@@ -83,18 +83,15 @@ static EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObject, 
         if (callFrame->argumentCount() > 1) {
             JSC::JSValue fromValue = callFrame->argument(1);
 
-            if (fromValue.isAnyInt() && fromValue.toInt32(globalObject) == -999) {
-                // -999 is a special value that means callerSourceOrigin()
-                return doIt(callFrame->callerSourceOrigin(vm).string());
-            }
-
             // require.resolve also supports a paths array
             // we only support a single path
-            else if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
-                if (JSValue pathsValue = fromValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s))) {
-                    if (JSC::JSArray* array = JSC::jsDynamicCast<JSC::JSArray*>(pathsValue)) {
-                        if (array->length() > 0) {
-                            fromValue = array->getIndex(globalObject, 0);
+            if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
+                if (auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s))) {
+                    if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
+                        auto pathsArray = JSC::jsCast<JSC::JSArray*>(pathsObject);
+                        if (pathsArray->length() > 0) {
+                            fromValue = pathsArray->getIndex(globalObject, 0);
+                            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
                         }
                     }
                 }
@@ -189,7 +186,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
-        return &vm.functionSpace();
+        return &vm.plainObjectSpace();
     }
 };
 
@@ -207,7 +204,7 @@ public:
             JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags),
             ResolveFunction::info());
         auto* resolveFunction = new (NotNull, JSC::allocateCell<ResolveFunction>(globalObject->vm())) ResolveFunction(globalObject->vm(), structure);
-        resolveFunction->finishCreation(globalObject->vm(), 2, "resolve"_s, PropertyAdditionMode::WithStructureTransition);
+        resolveFunction->finishCreation(globalObject->vm());
         return resolveFunction;
     }
 
@@ -241,7 +238,7 @@ JSObject* Zig::ImportMetaObject::createRequireFunction(VM& vm, JSGlobalObject* l
     requireFunction->putDirect(vm, JSC::Identifier::fromString(vm, "main"_s), jsUndefined(), 0);
     requireFunction->putDirect(vm, JSC::Identifier::fromString(vm, "extensions"_s), JSC::constructEmptyObject(globalObject), 0);
     requireFunction->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "cache"_s), JSC::CustomGetterSetter::create(vm, Zig::jsRequireCacheGetter, Zig::jsRequireCacheSetter), 0);
-    // requireFunction->putDirect(vm, JSC::Identifier::fromString(vm, "resolve"_s), ResolveFunction::create(globalObject), 0);
+    requireFunction->putDirect(vm, JSC::Identifier::fromString(vm, "resolve"_s), ResolveFunction::create(globalObject), JSC::PropertyAttribute::Function | 0);
     requireFunction->putDirect(vm, JSC::Identifier::fromString(vm, "path"_s), jsString(vm, pathString));
 
     return requireFunction;
@@ -259,7 +256,7 @@ extern "C" EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* g
     case 0: {
 
         // not "requires" because "require" could be confusing
-        JSC::throwTypeError(globalObject, scope, "import.meta.resolveSync needs 1 argument (a string)"_s);
+        JSC::throwTypeError(globalObject, scope, "needs 1 argument (a string)"_s);
         scope.release();
         return JSC::JSValue::encode(JSC::JSValue {});
     }
@@ -267,7 +264,7 @@ extern "C" EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* g
         JSC::JSValue moduleName = callFrame->argument(0);
 
         if (moduleName.isUndefinedOrNull()) {
-            JSC::throwTypeError(globalObject, scope, "import.meta.resolveSync expects a string"_s);
+            JSC::throwTypeError(globalObject, scope, "expects a string"_s);
             scope.release();
             return JSC::JSValue::encode(JSC::JSValue {});
         }
@@ -286,15 +283,15 @@ extern "C" EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* g
                 }
             }
 
-            if (fromValue.isInt32() && fromValue.asInt32() == -999) {
-                // -999 is a special value that means callerSourceOrigin()
-                from = JSValue::encode(jsString(vm, callFrame->callerSourceOrigin(vm).string()));
-            } else if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
-                // require.resolve also supports a paths array
-                // we only support a single path
-                if (JSC::JSArray* array = JSC::jsDynamicCast<JSC::JSArray*>(fromValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s)))) {
-                    if (array->length() > 0) {
-                        fromValue = array->getIndex(globalObject, 0);
+            if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
+
+                if (auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s))) {
+                    if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
+                        auto pathsArray = JSC::jsCast<JSC::JSArray*>(pathsObject);
+                        if (pathsArray->length() > 0) {
+                            fromValue = pathsArray->getIndex(globalObject, 0);
+                            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
+                        }
                     }
                 }
 
@@ -302,7 +299,10 @@ extern "C" EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* g
                 isESM = fromValue.toBoolean(globalObject);
                 RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
             }
-            from = JSC::JSValue::encode(fromValue);
+
+            if (fromValue.isString()) {
+                from = JSC::JSValue::encode(fromValue);
+            }
 
         } else {
             JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(callFrame->thisValue());
@@ -313,8 +313,10 @@ extern "C" EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* g
             }
 
             auto clientData = WebCore::clientData(vm);
+            JSValue pathProperty = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().pathPublicName());
 
-            from = JSC::JSValue::encode(thisObject->get(globalObject, clientData->builtinNames().pathPublicName()));
+            if (pathProperty && pathProperty.isString())
+                from = JSC::JSValue::encode(pathProperty);
         }
 
         auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), from, isESM);
@@ -357,7 +359,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
 
         JSC__JSValue from;
 
-        if (callFrame->argumentCount() > 1) {
+        if (callFrame->argumentCount() > 1 && callFrame->argument(1).isString()) {
             from = JSC::JSValue::encode(callFrame->argument(1));
         } else {
             JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(callFrame->thisValue());
@@ -369,7 +371,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
 
             auto clientData = WebCore::clientData(vm);
 
-            from = JSC::JSValue::encode(thisObject->get(globalObject, clientData->builtinNames().pathPublicName()));
+            from = JSC::JSValue::encode(thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().pathPublicName()));
         }
 
         return Bun__resolve(globalObject, JSC::JSValue::encode(moduleName), from, true);
@@ -400,30 +402,6 @@ Zig::ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* jslobalObje
     auto view = keyString->value(globalObject);
     JSC::Structure* structure = globalObject->ImportMetaObjectStructure();
     return Zig::ImportMetaObject::create(vm, globalObject, structure, view);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsImportMetaObjectPrimordialsGetter, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
-{
-
-    auto* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    if (UNLIKELY(!globalObject)) {
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-
-    auto& vm = lexicalGlobalObject->vm();
-
-    auto* thisObject = jsDynamicCast<Zig::ImportMetaObject*>(callframe->thisValue());
-    if (UNLIKELY(!thisObject)) {
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-
-    auto& origin = thisObject->url;
-    if (!origin.startsWith("node:"_s) && !origin.startsWith("bun:"_s)) {
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-
-    auto* primordials = globalObject->primordialsObject();
-    return JSC::JSValue::encode(primordials);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_url, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName))
@@ -515,10 +493,6 @@ public:
             builtinNames.mainPublicName(),
             GetterSetter::create(vm, globalObject, JSFunction::create(vm, importMetaObjectMainCodeGenerator(vm), globalObject), nullptr),
             JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin | 0);
-        JSC::JSFunction* primordialsGetterFunction = JSC::JSFunction::create(vm, globalObject, 0,
-            "primordials"_s, jsImportMetaObjectPrimordialsGetter, ImplementationVisibility::Public);
-        auto* getterSetter = JSC::GetterSetter::create(vm, globalObject, primordialsGetterFunction, nullptr);
-        this->putDirect(vm, Identifier::fromString(vm, "primordials"_s), getterSetter, JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::ReadOnly | 0 | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
     }
 
     ImportMetaObjectPrototype(JSC::VM& vm, JSC::Structure* structure)

@@ -15,12 +15,8 @@ class FSWatcher extends EventEmitter {
   #listener;
   constructor(path, options, listener) {
     super();
-    if (path instanceof URL) {
-      throw new TypeError("Watch URLs are not supported yet");
-    } else if (Buffer.isBuffer(path)) {
+    if (Buffer.isBuffer(path)) {
       path = path.toString();
-    } else if (typeof path !== "string") {
-      throw new TypeError("Expected path to be a string or Buffer");
     }
 
     if (typeof options === "function") {

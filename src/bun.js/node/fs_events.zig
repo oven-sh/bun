@@ -391,8 +391,8 @@ pub const FSEventsLoop = struct {
                     }
 
                     // Do not emit events from subdirectories (without option set)
-                    if (bun.strings.containsChar(path, '/') and !handle.recursive) {
-                        break;
+                    if (path.len == 0 or (bun.strings.containsChar(path, '/') and !handle.recursive)) {
+                        continue;
                     }
 
                     var is_rename = true;
@@ -449,7 +449,7 @@ pub const FSEventsLoop = struct {
             }
         }
 
-        const cf_paths = CF.ArrayCreate(null, paths.ptr, this.watcher_count, null);
+        const cf_paths = CF.ArrayCreate(null, paths.ptr, count, null);
         var ctx: FSEventStreamContext = .{
             .info = this,
         };
@@ -519,14 +519,16 @@ pub const FSEventsLoop = struct {
         defer this.mutex.unlock();
         var watchers = this.watchers.slice();
         for (watchers, 0..) |w, i| {
-            if (w == watcher) {
-                watchers[i] = null;
-                // if is the last one just pop
-                if (i == watchers.len - 1) {
-                    this.watchers.len -= 1;
+            if (w) |item| {
+                if (item == watcher) {
+                    watchers[i] = null;
+                    // if is the last one just pop
+                    if (i == watchers.len - 1) {
+                        this.watchers.len -= 1;
+                    }
+                    this.watcher_count -= 1;
+                    break;
                 }
-                this.watcher_count -= 1;
-                break;
             }
         }
     }
@@ -592,13 +594,6 @@ pub const FSEventsWatcher = struct {
         bun.default_allocator.destroy(this);
     }
 };
-
-fn test_callback(ctx: ?*anyopaque, path: string, is_file: bool, is_rename: bool) void {
-    _ = ctx;
-    _ = path;
-    _ = is_file;
-    _ = is_rename;
-}
 
 pub fn watch(path: string, recursive: bool, callback: FSEventsWatcher.Callback, ctx: ?*anyopaque) !*FSEventsWatcher {
     if (fsevents_default_loop) |loop| {

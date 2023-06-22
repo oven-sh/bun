@@ -849,9 +849,12 @@ pub const FSWatcher = struct {
 
     pub fn init(args: Arguments) !*FSWatcher {
         var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-
+        var slice = args.path.slice();
+        if (bun.strings.startsWith(slice, "file://")) {
+            slice = slice[6..];
+        }
         var parts = [_]string{
-            args.path.slice(),
+            slice,
         };
 
         var file_path = Path.joinAbsStringBuf(

@@ -5,6 +5,8 @@ const Fs = @import("../../fs.zig");
 const Path = @import("../../resolver/resolve_path.zig");
 const Encoder = JSC.WebCore.Encoder;
 
+const FSEvents = @import("./fs_events.zig");
+
 const VirtualMachine = JSC.VirtualMachine;
 const EventLoop = JSC.EventLoop;
 const PathLike = JSC.Node.PathLike;
@@ -74,13 +76,19 @@ pub const FSWatcher = struct {
             abort,
         };
 
+        pub const EventFreeType = enum {
+            destroy,
+            free,
+            none,
+        };
+
         pub const Entry = struct {
             file_path: string,
             event_type: EventType,
-            needs_free: bool,
+            free_type: EventFreeType,
         };
 
-        pub fn append(this: *FSWatchTask, file_path: string, event_type: EventType, needs_free: bool) void {
+        pub fn append(this: *FSWatchTask, file_path: string, event_type: EventType, free_type: EventFreeType) void {
             if (this.count == 8) {
                 this.enqueue();
                 var ctx = this.ctx;
@@ -93,7 +101,7 @@ pub const FSWatcher = struct {
             this.entries[this.count] = .{
                 .file_path = file_path,
                 .event_type = event_type,
-                .needs_free = needs_free,
+                .free_type = free_type,
             };
             this.count += 1;
         }
@@ -136,8 +144,10 @@ pub const FSWatcher = struct {
         pub fn deinit(this: *FSWatchTask) void {
             while (this.count > 0) {
                 this.count -= 1;
-                if (this.entries[this.count].needs_free) {
-                    bun.default_allocator.destroy(this.entries[this.count].file_path);
+                switch (this.entries[this.count].free_type) {
+                    .destroy => bun.default_allocator.destroy(this.entries[this.count].file_path),
+                    .free => bun.default_allocator.free(this.entries[this.count].file_path),
+                    else => {},
                 }
             }
             bun.default_allocator.destroy(this);
@@ -229,8 +239,28 @@ pub const FSWatcher = struct {
         var current_task: FSWatchTask = .{
             .ctx = this,
         };
-        current_task.append(@errorName(err), .@"error", false);
+        current_task.append(@errorName(err), .@"error", .none);
         current_task.enqueue();
+    }
+
+    pub fn onFSEventUpdate(
+        ctx: ?*anyopaque,
+        path: string,
+        _: bool,
+        is_rename: bool,
+    ) void {
+        const this = bun.cast(*FSWatcher, ctx.?);
+
+        var current_task: FSWatchTask = .{
+            .ctx = this,
+        };
+        defer current_task.enqueue();
+
+        const relative_path = bun.default_allocator.alloc(u8, path.len) catch unreachable;
+        bun.copy(u8, relative_path, path);
+        const event_type: FSWatchTask.EventType = if (is_rename) .rename else .change;
+
+        current_task.append(relative_path, event_type, .free);
     }
 
     pub fn onFileUpdate(
@@ -312,11 +342,14 @@ pub const FSWatcher = struct {
 
                             const relative_path = bun.default_allocator.dupe(u8, relative_slice) catch unreachable;
 
-                            current_task.append(relative_path, event_type, true);
+                            current_task.append(relative_path, event_type, .destroy);
                         }
                     }
                 },
                 .directory => {
+                    // if (comptime Environment.isMac) {
+                    //     unreachable;
+                    // }
                     var affected_buf: [128][]const u8 = undefined;
 
                     const affected = brk: {
@@ -379,7 +412,7 @@ pub const FSWatcher = struct {
                             this.last_change_event.event_type = event_type;
                             this.last_change_event.hash = file_hash;
 
-                            current_task.append(relative_path, event_type, true);
+                            current_task.append(relative_path, event_type, .destroy);
 
                             if (this.verbose)
                                 Output.prettyErrorln("<r> <d>Dir change: {s}<r>", .{relative_path});
@@ -464,7 +497,7 @@ pub const FSWatcher = struct {
                             );
                             return null;
                         }
-                        if (JSC.Node.Encoding.fromStringValue(encoding_, ctx)) |node_encoding| {
+                        if (JSC.Node.Encoding.fromJS(encoding_, ctx.ptr())) |node_encoding| {
                             encoding = node_encoding;
                         } else {
                             JSC.throwInvalidArguments(
@@ -550,7 +583,8 @@ pub const FSWatcher = struct {
     pub const JSObject = struct {
         signal: ?*JSC.AbortSignal,
         persistent: bool,
-        manager: *FSWatcher.Watcher,
+        manager: ?*FSWatcher.Watcher,
+        fsevents_watcher: ?*FSEvents.FSEventsWatcher,
         poll_ref: JSC.PollRef = .{},
         globalThis: ?*JSC.JSGlobalObject,
         js_this: JSC.JSValue,
@@ -559,20 +593,29 @@ pub const FSWatcher = struct {
 
         pub usingnamespace JSC.Codegen.JSFSWatcher;
 
-        pub fn init(globalThis: *JSC.JSGlobalObject, manager: *FSWatcher.Watcher, signal: ?*JSC.AbortSignal, listener: JSC.JSValue, persistent: bool, encoding: JSC.Node.Encoding) !*JSObject {
+        pub fn getFSWatcher(this: *JSObject) *FSWatcher {
+            if (this.manager) |manager| return manager.ctx;
+            if (this.fsevents_watcher) |manager| return bun.cast(*FSWatcher, manager.ctx.?);
+
+            @panic("No context attached to JSFSWatcher");
+        }
+
+        pub fn init(globalThis: *JSC.JSGlobalObject, manager: ?*FSWatcher.Watcher, fsevents_watcher: ?*FSEvents.FSEventsWatcher, signal: ?*JSC.AbortSignal, listener: JSC.JSValue, persistent: bool, encoding: JSC.Node.Encoding) !*JSObject {
             var obj = try globalThis.allocator().create(JSObject);
             obj.* = .{
                 .signal = null,
                 .persistent = persistent,
                 .manager = manager,
+                .fsevents_watcher = fsevents_watcher,
                 .globalThis = globalThis,
                 .js_this = .zero,
                 .encoding = encoding,
                 .closed = false,
             };
+            const instance = obj.getFSWatcher();
 
             if (persistent) {
-                obj.poll_ref.ref(obj.manager.ctx.ctx);
+                obj.poll_ref.ref(instance.ctx);
             }
 
             var js_this = JSObject.toJS(obj, globalThis);
@@ -587,9 +630,9 @@ pub const FSWatcher = struct {
                     obj.signal = s.ref();
                     // abort next tick
                     var current_task: FSWatchTask = .{
-                        .ctx = manager.ctx,
+                        .ctx = instance,
                     };
-                    current_task.append("", .abort, false);
+                    current_task.append("", .abort, .none);
                     current_task.enqueue();
                 } else {
                     // watch for abortion
@@ -682,7 +725,7 @@ pub const FSWatcher = struct {
 
             if (!this.persistent) {
                 this.persistent = true;
-                this.poll_ref.ref(this.manager.ctx.ctx);
+                this.poll_ref.ref(this.getFSWatcher().ctx);
             }
         }
 
@@ -694,7 +737,7 @@ pub const FSWatcher = struct {
         pub fn unref(this: *JSObject) void {
             if (this.persistent) {
                 this.persistent = false;
-                this.poll_ref.unref(this.manager.ctx.ctx);
+                this.poll_ref.unref(this.getFSWatcher().ctx);
             }
         }
 
@@ -739,10 +782,20 @@ pub const FSWatcher = struct {
                 this.signal = null;
                 signal.detach(this);
             }
+            if (this.manager) |manager| {
+                var ctx = manager.ctx;
+                this.manager = null;
+                ctx.js_watcher = null;
+                ctx.deinit();
+                manager.deinit(true);
+            }
 
-            this.manager.ctx.js_watcher = null;
-            this.manager.ctx.deinit();
-            this.manager.deinit(true);
+            if (this.fsevents_watcher) |manager| {
+                var ctx = bun.cast(*FSWatcher, manager.ctx.?);
+                ctx.js_watcher = null;
+                ctx.deinit();
+                manager.deinit();
+            }
         }
 
         pub fn doClose(this: *JSObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -824,6 +877,27 @@ pub const FSWatcher = struct {
             },
         };
 
+        if (comptime Environment.isMac) {
+            if (!fs_type.is_file) {
+                var dir_path_clone = bun.default_allocator.dupeZ(u8, file_path) catch unreachable;
+                ctx.entry_path = dir_path_clone;
+                ctx.entry_dir = dir_path_clone;
+
+                var fsevents_watcher = FSEvents.watch(dir_path_clone, args.recursive, onFSEventUpdate, bun.cast(*anyopaque, ctx)) catch |err| {
+                    ctx.deinit();
+                    return err;
+                };
+
+                ctx.js_watcher = JSObject.init(args.global_this, null, fsevents_watcher, args.signal, args.listener, args.persistent, args.encoding) catch |err| {
+                    ctx.deinit();
+                    fsevents_watcher.deinit();
+                    return err;
+                };
+
+                return ctx;
+            }
+        }
+
         var fs_watcher = FSWatcher.Watcher.init(
             ctx,
             vm.bundler.fs,
@@ -861,7 +935,7 @@ pub const FSWatcher = struct {
             return err;
         };
 
-        ctx.js_watcher = JSObject.init(args.global_this, fs_watcher, args.signal, args.listener, args.persistent, args.encoding) catch |err| {
+        ctx.js_watcher = JSObject.init(args.global_this, fs_watcher, null, args.signal, args.listener, args.persistent, args.encoding) catch |err| {
             ctx.deinit();
             fs_watcher.deinit(true);
             return err;

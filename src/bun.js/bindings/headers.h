@@ -32,113 +32,113 @@ typedef void* JSClassRef;
 #include "JavaScriptCore/JSClassRef.h"
 #endif
 #include "headers-handwritten.h"
- typedef struct bJSC__JSPromise { unsigned char bytes[32]; } bJSC__JSPromise;
- typedef char* bJSC__JSPromise_buf;
- typedef struct bJSC__JSCell { unsigned char bytes[8]; } bJSC__JSCell;
- typedef char* bJSC__JSCell_buf;
- typedef struct bJSC__Exception { unsigned char bytes[40]; } bJSC__Exception;
- typedef char* bJSC__Exception_buf;
- typedef struct bJSC__JSObject { unsigned char bytes[16]; } bJSC__JSObject;
- typedef char* bJSC__JSObject_buf;
  typedef struct bJSC__ThrowScope { unsigned char bytes[8]; } bJSC__ThrowScope;
  typedef char* bJSC__ThrowScope_buf;
- typedef struct bJSC__CatchScope { unsigned char bytes[8]; } bJSC__CatchScope;
- typedef char* bJSC__CatchScope_buf;
- typedef struct bJSC__JSString { unsigned char bytes[16]; } bJSC__JSString;
- typedef char* bJSC__JSString_buf;
- typedef struct bJSC__JSInternalPromise { unsigned char bytes[32]; } bJSC__JSInternalPromise;
- typedef char* bJSC__JSInternalPromise_buf;
- typedef struct bJSC__JSGlobalObject { unsigned char bytes[3128]; } bJSC__JSGlobalObject;
- typedef char* bJSC__JSGlobalObject_buf;
+ typedef struct bJSC__Exception { unsigned char bytes[40]; } bJSC__Exception;
+ typedef char* bJSC__Exception_buf;
  typedef struct bJSC__VM { unsigned char bytes[52176]; } bJSC__VM;
  typedef char* bJSC__VM_buf;
+ typedef struct bJSC__JSString { unsigned char bytes[16]; } bJSC__JSString;
+ typedef char* bJSC__JSString_buf;
+ typedef struct bJSC__JSGlobalObject { unsigned char bytes[3128]; } bJSC__JSGlobalObject;
+ typedef char* bJSC__JSGlobalObject_buf;
+ typedef struct bJSC__JSCell { unsigned char bytes[8]; } bJSC__JSCell;
+ typedef char* bJSC__JSCell_buf;
+ typedef struct bJSC__JSInternalPromise { unsigned char bytes[32]; } bJSC__JSInternalPromise;
+ typedef char* bJSC__JSInternalPromise_buf;
+ typedef struct bJSC__JSPromise { unsigned char bytes[32]; } bJSC__JSPromise;
+ typedef char* bJSC__JSPromise_buf;
+ typedef struct bJSC__JSObject { unsigned char bytes[16]; } bJSC__JSObject;
+ typedef char* bJSC__JSObject_buf;
+ typedef struct bJSC__CatchScope { unsigned char bytes[8]; } bJSC__CatchScope;
+ typedef char* bJSC__CatchScope_buf;
 
 #ifndef __cplusplus
-  typedef Bun__ArrayBuffer Bun__ArrayBuffer;
- typedef bJSC__JSString JSC__JSString; // JSC::JSString
-  typedef BunString BunString;
-  typedef int64_t JSC__JSValue;
-  typedef ZigString ZigString;
- typedef struct WebCore__DOMFormData WebCore__DOMFormData; // WebCore::DOMFormData
- typedef struct WebCore__DOMURL WebCore__DOMURL; // WebCore::DOMURL
- typedef struct WebCore__FetchHeaders WebCore__FetchHeaders; // WebCore::FetchHeaders
-  typedef ErrorableResolvedSource ErrorableResolvedSource;
- typedef bJSC__JSPromise JSC__JSPromise; // JSC::JSPromise
- typedef bJSC__VM JSC__VM; // JSC::VM
  typedef bJSC__CatchScope JSC__CatchScope; // JSC::CatchScope
-  typedef ZigException ZigException;
- typedef struct JSC__CallFrame JSC__CallFrame; // JSC::CallFrame
- typedef bJSC__ThrowScope JSC__ThrowScope; // JSC::ThrowScope
- typedef bJSC__Exception JSC__Exception; // JSC::Exception
-  typedef WebSocketHTTPClient WebSocketHTTPClient;
-  typedef WebSocketClient WebSocketClient;
-  typedef WebSocketClientTLS WebSocketClientTLS;
+  typedef ErrorableResolvedSource ErrorableResolvedSource;
+  typedef BunString BunString;
   typedef ErrorableString ErrorableString;
+ typedef bJSC__ThrowScope JSC__ThrowScope; // JSC::ThrowScope
  typedef bJSC__JSObject JSC__JSObject; // JSC::JSObject
- typedef struct JSC__JSMap JSC__JSMap; // JSC::JSMap
-  typedef SystemError SystemError;
-  typedef Uint8Array_alias Uint8Array_alias;
- typedef bJSC__JSCell JSC__JSCell; // JSC::JSCell
- typedef bJSC__JSGlobalObject JSC__JSGlobalObject; // JSC::JSGlobalObject
+  typedef WebSocketClient WebSocketClient;
  typedef struct WebCore__AbortSignal WebCore__AbortSignal; // WebCore::AbortSignal
-  typedef JSClassRef JSClassRef;
- typedef bJSC__JSInternalPromise JSC__JSInternalPromise; // JSC::JSInternalPromise
+ typedef struct JSC__JSMap JSC__JSMap; // JSC::JSMap
   typedef WebSocketHTTPSClient WebSocketHTTPSClient;
+  typedef JSClassRef JSClassRef;
+ typedef bJSC__VM JSC__VM; // JSC::VM
+  typedef Bun__ArrayBuffer Bun__ArrayBuffer;
+  typedef Uint8Array_alias Uint8Array_alias;
+  typedef WebSocketClientTLS WebSocketClientTLS;
+ typedef bJSC__JSGlobalObject JSC__JSGlobalObject; // JSC::JSGlobalObject
+  typedef ZigException ZigException;
+ typedef bJSC__JSPromise JSC__JSPromise; // JSC::JSPromise
+  typedef WebSocketHTTPClient WebSocketHTTPClient;
+  typedef SystemError SystemError;
+ typedef bJSC__JSCell JSC__JSCell; // JSC::JSCell
+  typedef ZigString ZigString;
+ typedef struct WebCore__DOMURL WebCore__DOMURL; // WebCore::DOMURL
+  typedef int64_t JSC__JSValue;
+ typedef bJSC__JSInternalPromise JSC__JSInternalPromise; // JSC::JSInternalPromise
+ typedef bJSC__Exception JSC__Exception; // JSC::Exception
+ typedef bJSC__JSString JSC__JSString; // JSC::JSString
+ typedef struct WebCore__DOMFormData WebCore__DOMFormData; // WebCore::DOMFormData
+ typedef struct JSC__CallFrame JSC__CallFrame; // JSC::CallFrame
+ typedef struct WebCore__FetchHeaders WebCore__FetchHeaders; // WebCore::FetchHeaders
 
 #endif
 
 #ifdef __cplusplus
   namespace JSC {
-    class JSGlobalObject;
-    class Exception;
-    class JSObject;
-    class JSInternalPromise;
-    class JSString;
-    class JSCell;
     class JSMap;
+    class JSCell;
+    class JSObject;
+    class JSGlobalObject;
     class JSPromise;
+    class Exception;
+    class JSString;
+    class JSInternalPromise;
     class CatchScope;
     class VM;
-    class ThrowScope;
     class CallFrame;
+    class ThrowScope;
   }
   namespace WebCore {
-    class FetchHeaders;
     class DOMFormData;
-    class AbortSignal;
     class DOMURL;
+    class AbortSignal;
+    class FetchHeaders;
   }
 
-  typedef Bun__ArrayBuffer Bun__ArrayBuffer;
-  typedef BunString BunString;
-  typedef int64_t JSC__JSValue;
-  typedef ZigString ZigString;
   typedef ErrorableResolvedSource ErrorableResolvedSource;
+  typedef BunString BunString;
+  typedef ErrorableString ErrorableString;
+  typedef WebSocketClient WebSocketClient;
+  typedef WebSocketHTTPSClient WebSocketHTTPSClient;
+  typedef JSClassRef JSClassRef;
+  typedef Bun__ArrayBuffer Bun__ArrayBuffer;
+  typedef Uint8Array_alias Uint8Array_alias;
+  typedef WebSocketClientTLS WebSocketClientTLS;
   typedef ZigException ZigException;
   typedef WebSocketHTTPClient WebSocketHTTPClient;
-  typedef WebSocketClient WebSocketClient;
-  typedef WebSocketClientTLS WebSocketClientTLS;
-  typedef ErrorableString ErrorableString;
   typedef SystemError SystemError;
-  typedef Uint8Array_alias Uint8Array_alias;
-  typedef JSClassRef JSClassRef;
-  typedef WebSocketHTTPSClient WebSocketHTTPSClient;
-  using JSC__JSGlobalObject = JSC::JSGlobalObject;
-  using JSC__Exception = JSC::Exception;
-  using JSC__JSObject = JSC::JSObject;
-  using JSC__JSInternalPromise = JSC::JSInternalPromise;
-  using JSC__JSString = JSC::JSString;
-  using JSC__JSCell = JSC::JSCell;
+  typedef ZigString ZigString;
+  typedef int64_t JSC__JSValue;
   using JSC__JSMap = JSC::JSMap;
+  using JSC__JSCell = JSC::JSCell;
+  using JSC__JSObject = JSC::JSObject;
+  using JSC__JSGlobalObject = JSC::JSGlobalObject;
   using JSC__JSPromise = JSC::JSPromise;
+  using JSC__Exception = JSC::Exception;
+  using JSC__JSString = JSC::JSString;
+  using JSC__JSInternalPromise = JSC::JSInternalPromise;
   using JSC__CatchScope = JSC::CatchScope;
   using JSC__VM = JSC::VM;
-  using JSC__ThrowScope = JSC::ThrowScope;
   using JSC__CallFrame = JSC::CallFrame;
-  using WebCore__FetchHeaders = WebCore::FetchHeaders;
+  using JSC__ThrowScope = JSC::ThrowScope;
   using WebCore__DOMFormData = WebCore::DOMFormData;
-  using WebCore__AbortSignal = WebCore::AbortSignal;
   using WebCore__DOMURL = WebCore::DOMURL;
+  using WebCore__AbortSignal = WebCore::AbortSignal;
+  using WebCore__FetchHeaders = WebCore::FetchHeaders;
 
 #endif
 

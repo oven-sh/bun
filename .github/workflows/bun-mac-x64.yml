@@ -172,10 +172,10 @@ jobs:
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         run: |
-          brew install rust ccache llvm@16 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
+          brew install rust ccache llvm@15 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
-          echo "$(brew --prefix llvm@16)/bin" >> $GITHUB_PATH
-          brew link --overwrite llvm@16
+          echo "$(brew --prefix llvm@15)/bin" >> $GITHUB_PATH
+          brew link --overwrite llvm@15
       - name: Download WebKit
         if: matrix.compile_obj
         env:
@@ -293,10 +293,10 @@ jobs:
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         run: |
-          brew install rust ccache llvm@16 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
+          brew install rust ccache llvm@15 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
-          echo "$(brew --prefix llvm@16)/bin" >> $GITHUB_PATH
-          brew link --overwrite llvm@16
+          echo "$(brew --prefix llvm@15)/bin" >> $GITHUB_PATH
+          brew link --overwrite llvm@15
       - name: Download WebKit
         env:
           CPU_TARGET: ${{ matrix.cpu }}

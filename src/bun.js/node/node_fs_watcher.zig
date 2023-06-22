@@ -256,11 +256,10 @@ pub const FSWatcher = struct {
         };
         defer current_task.enqueue();
 
-        const relative_path = bun.default_allocator.alloc(u8, path.len) catch unreachable;
-        bun.copy(u8, relative_path, path);
+        const relative_path = bun.default_allocator.dupe(u8, path) catch unreachable;
         const event_type: FSWatchTask.EventType = if (is_rename) .rename else .change;
 
-        current_task.append(relative_path, event_type, .free);
+        current_task.append(relative_path, event_type, .destroy);
     }
 
     pub fn onFileUpdate(

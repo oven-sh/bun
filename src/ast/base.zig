@@ -275,7 +275,7 @@ pub const Ref = packed struct(u64) {
     }
 
     pub inline fn hash64(key: Ref) u64 {
-        return std.hash.Wyhash.hash(0, &@bitCast([8]u8, key.asU64()));
+        return bun.hash(&@bitCast([8]u8, key.asU64()));
     }
 
     pub fn eql(ref: Ref, b: Ref) bool {

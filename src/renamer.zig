@@ -156,7 +156,7 @@ pub const MinifyRenamer = struct {
         for (first_top_level_slots.slots.values, 0..) |count, ns| {
             slots.values[ns] = try std.ArrayList(SymbolSlot).initCapacity(allocator, count);
             slots.values[ns].items.len = count;
-            std.mem.set(SymbolSlot, slots.values[ns].items[0..count], SymbolSlot{});
+            @memset(slots.values[ns].items[0..count], SymbolSlot{});
         }
 
         renamer.* = MinifyRenamer{
@@ -297,7 +297,7 @@ pub const MinifyRenamer = struct {
                     .count = slot.count,
                 };
             }
-            std.sort.sort(SlotAndCount, sorted.items, {}, SlotAndCount.lessThan);
+            std.sort.block(SlotAndCount, sorted.items, {}, SlotAndCount.lessThan);
 
             var next_name: isize = 0;
 
@@ -395,7 +395,7 @@ pub fn assignNestedScopeSlotsHelper(sorted_members: *std.ArrayList(u32), scope: 
             sorted_members_buf[i] = member.ref.innerIndex();
             i += 1;
         }
-        std.sort.sort(u32, sorted_members_buf, {}, std.sort.asc(u32));
+        std.sort.block(u32, sorted_members_buf, {}, std.sort.asc(u32));
 
         // Assign slots for this scope's symbols. Only do this if the slot is
         // not already assigned. Nested scopes have copies of symbols from parent
@@ -519,7 +519,7 @@ pub const NumberRenamer = struct {
             const prev_cap = inner.len;
             inner.ensureUnusedCapacity(r.allocator, new_len - prev_cap) catch unreachable;
             const to_write = inner.ptr[prev_cap..inner.cap];
-            @memset(std.mem.sliceAsBytes(to_write).ptr, 0, std.mem.sliceAsBytes(to_write).len);
+            @memset(std.mem.sliceAsBytes(to_write), 0);
         }
         inner.len = new_len;
         inner.mut(ref.innerIndex()).* = name;
@@ -553,7 +553,7 @@ pub const NumberRenamer = struct {
                 symbols.dump();
         }
 
-        @memset(std.mem.sliceAsBytes(renamer.names).ptr, 0, std.mem.sliceAsBytes(renamer.names).len);
+        @memset(std.mem.sliceAsBytes(renamer.names), 0);
 
         return renamer;
     }
@@ -593,7 +593,7 @@ pub const NumberRenamer = struct {
                 remaining = remaining[1..];
             }
             std.debug.assert(remaining.len == 0);
-            std.sort.sort(u32, sorted.items, {}, std.sort.asc(u32));
+            std.sort.block(u32, sorted.items, {}, std.sort.asc(u32));
 
             for (sorted.items) |inner_index| {
                 r.assignName(s, Ref.init(@intCast(Ref.Int, inner_index), source_index, false));

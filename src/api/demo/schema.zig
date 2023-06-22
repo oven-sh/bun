@@ -201,7 +201,7 @@ pub fn Writer(comptime WritableStream: type) type {
         }
 
         pub inline fn writeEnum(this: *Self, val: anytype) !void {
-            try this.writeInt(@enumToInt(val));
+            try this.writeInt(@intFromEnum(val));
         }
 
         pub fn writeValue(this: *Self, comptime SliceType: type, slice: SliceType) !void {
@@ -881,9 +881,9 @@ pub const Api = struct {
             try writer.writeValue(@TypeOf(this.factory), this.factory);
             try writer.writeEnum(this.runtime);
             try writer.writeValue(@TypeOf(this.fragment), this.fragment);
-            try writer.writeInt(@as(u8, @boolToInt(this.development)));
+            try writer.writeInt(@as(u8, @intFromBool(this.development)));
             try writer.writeValue(@TypeOf(this.import_source), this.import_source);
-            try writer.writeInt(@as(u8, @boolToInt(this.react_fast_refresh)));
+            try writer.writeInt(@as(u8, @intFromBool(this.react_fast_refresh)));
         }
     };
 
@@ -1151,7 +1151,7 @@ pub const Api = struct {
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
             try writer.writeEnum(this.kind);
             try writer.writeValue(@TypeOf(this.path), this.path);
-            try writer.writeInt(@as(u8, @boolToInt(this.dynamic)));
+            try writer.writeInt(@as(u8, @intFromBool(this.dynamic)));
         }
     };
 
@@ -1390,7 +1390,7 @@ pub const Api = struct {
             }
             if (this.development) |development| {
                 try writer.writeFieldID(5);
-                try writer.writeInt(@as(u8, @boolToInt(development)));
+                try writer.writeInt(@as(u8, @intFromBool(development)));
             }
             if (this.client_css_in_js) |client_css_in_js| {
                 try writer.writeFieldID(6);
@@ -1564,7 +1564,7 @@ pub const Api = struct {
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
             try writer.writeValue(@TypeOf(this.package), this.package);
             try writer.writeValue(@TypeOf(this.display_name), this.display_name);
-            try writer.writeInt(@as(u8, @boolToInt(this.development)));
+            try writer.writeInt(@as(u8, @intFromBool(this.development)));
             try writer.writeValue(@TypeOf(this.entry_points), this.entry_points);
             try writer.writeEnum(this.client_css_in_js);
             try writer.writeValue(@TypeOf(this.override_modules), this.override_modules);
@@ -1866,7 +1866,7 @@ pub const Api = struct {
             }
             if (this.preserve_symlinks) |preserve_symlinks| {
                 try writer.writeFieldID(7);
-                try writer.writeInt(@as(u8, @boolToInt(preserve_symlinks)));
+                try writer.writeInt(@as(u8, @intFromBool(preserve_symlinks)));
             }
             if (this.entry_points) |entry_points| {
                 try writer.writeFieldID(8);
@@ -1874,7 +1874,7 @@ pub const Api = struct {
             }
             if (this.write) |write| {
                 try writer.writeFieldID(9);
-                try writer.writeInt(@as(u8, @boolToInt(write)));
+                try writer.writeInt(@as(u8, @intFromBool(write)));
             }
             if (this.inject) |inject| {
                 try writer.writeFieldID(10);
@@ -1902,7 +1902,7 @@ pub const Api = struct {
             }
             if (this.serve) |serve| {
                 try writer.writeFieldID(16);
-                try writer.writeInt(@as(u8, @boolToInt(serve)));
+                try writer.writeInt(@as(u8, @intFromBool(serve)));
             }
             if (this.extension_order) |extension_order| {
                 try writer.writeFieldID(17);
@@ -1910,7 +1910,7 @@ pub const Api = struct {
             }
             if (this.generate_node_module_bundle) |generate_node_module_bundle| {
                 try writer.writeFieldID(18);
-                try writer.writeInt(@as(u8, @boolToInt(generate_node_module_bundle)));
+                try writer.writeInt(@as(u8, @intFromBool(generate_node_module_bundle)));
             }
             if (this.node_modules_bundle_path) |node_modules_bundle_path| {
                 try writer.writeFieldID(19);
@@ -1930,11 +1930,11 @@ pub const Api = struct {
             }
             if (this.no_summary) |no_summary| {
                 try writer.writeFieldID(23);
-                try writer.writeInt(@as(u8, @boolToInt(no_summary)));
+                try writer.writeInt(@as(u8, @intFromBool(no_summary)));
             }
             if (this.disable_hmr) |disable_hmr| {
                 try writer.writeFieldID(24);
-                try writer.writeInt(@as(u8, @boolToInt(disable_hmr)));
+                try writer.writeInt(@as(u8, @intFromBool(disable_hmr)));
             }
             if (this.port) |port| {
                 try writer.writeFieldID(25);
@@ -2259,7 +2259,7 @@ pub const Api = struct {
             }
             if (this.build) |build| {
                 try writer.writeFieldID(2);
-                try writer.writeInt(@as(u8, @boolToInt(build)));
+                try writer.writeInt(@as(u8, @intFromBool(build)));
             }
             try writer.endMessage();
         }
@@ -2822,35 +2822,35 @@ pub const Api = struct {
             }
             if (this.dry_run) |dry_run| {
                 try writer.writeFieldID(6);
-                try writer.writeInt(@as(u8, @boolToInt(dry_run)));
+                try writer.writeInt(@as(u8, @intFromBool(dry_run)));
             }
             if (this.force) |force| {
                 try writer.writeFieldID(7);
-                try writer.writeInt(@as(u8, @boolToInt(force)));
+                try writer.writeInt(@as(u8, @intFromBool(force)));
             }
             if (this.save_dev) |save_dev| {
                 try writer.writeFieldID(8);
-                try writer.writeInt(@as(u8, @boolToInt(save_dev)));
+                try writer.writeInt(@as(u8, @intFromBool(save_dev)));
             }
             if (this.save_optional) |save_optional| {
                 try writer.writeFieldID(9);
-                try writer.writeInt(@as(u8, @boolToInt(save_optional)));
+                try writer.writeInt(@as(u8, @intFromBool(save_optional)));
             }
             if (this.save_peer) |save_peer| {
                 try writer.writeFieldID(10);
-                try writer.writeInt(@as(u8, @boolToInt(save_peer)));
+                try writer.writeInt(@as(u8, @intFromBool(save_peer)));
             }
             if (this.save_lockfile) |save_lockfile| {
                 try writer.writeFieldID(11);
-                try writer.writeInt(@as(u8, @boolToInt(save_lockfile)));
+                try writer.writeInt(@as(u8, @intFromBool(save_lockfile)));
             }
             if (this.production) |production| {
                 try writer.writeFieldID(12);
-                try writer.writeInt(@as(u8, @boolToInt(production)));
+                try writer.writeInt(@as(u8, @intFromBool(production)));
             }
             if (this.save_yarn_lockfile) |save_yarn_lockfile| {
                 try writer.writeFieldID(13);
-                try writer.writeInt(@as(u8, @boolToInt(save_yarn_lockfile)));
+                try writer.writeInt(@as(u8, @intFromBool(save_yarn_lockfile)));
             }
             if (this.native_bin_links) |native_bin_links| {
                 try writer.writeFieldID(14);
@@ -2858,11 +2858,11 @@ pub const Api = struct {
             }
             if (this.disable_cache) |disable_cache| {
                 try writer.writeFieldID(15);
-                try writer.writeInt(@as(u8, @boolToInt(disable_cache)));
+                try writer.writeInt(@as(u8, @intFromBool(disable_cache)));
             }
             if (this.disable_manifest_cache) |disable_manifest_cache| {
                 try writer.writeFieldID(16);
-                try writer.writeInt(@as(u8, @boolToInt(disable_manifest_cache)));
+                try writer.writeInt(@as(u8, @intFromBool(disable_manifest_cache)));
             }
             if (this.global_dir) |global_dir| {
                 try writer.writeFieldID(17);

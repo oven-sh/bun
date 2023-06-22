@@ -164,9 +164,9 @@ const pure_global_identifier_define = defines.IdentifierDefine{
 const js_ast = bun.JSAst;
 
 const identifiers = struct {
-    const nan_val = js_ast.E.Number{ .value = std.math.nan_f64 };
+    const nan_val = js_ast.E.Number{ .value = std.math.nan(f64) };
 
-    const inf_val = js_ast.E.Number{ .value = std.math.inf_f64 };
+    const inf_val = js_ast.E.Number{ .value = std.math.inf(f64) };
 
     // Step 2. Swap in certain literal values because those can be constant folded
     pub const @"undefined" = defines.IdentifierDefine{

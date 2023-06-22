@@ -42,14 +42,14 @@ pub const Map = struct {
     pub fn get(this: *Map, key: string) ?Blob {
         this.lock.lock();
         defer this.lock.unlock();
-        return this.map.get(std.hash.Wyhash.hash(0, key));
+        return this.map.get(bun.hash(key));
     }
 
     pub fn put(this: *Map, key: string, blob: Blob) !void {
         this.lock.lock();
         defer this.lock.unlock();
 
-        return try this.map.put(std.hash.Wyhash.hash(0, key), blob);
+        return try this.map.put(bun.hash(key), blob);
     }
 
     pub fn reset(this: *Map) !void {

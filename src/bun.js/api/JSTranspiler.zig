@@ -85,7 +85,7 @@ const TranspilerOptions = struct {
 // This is going to be hard to not leak
 pub const TransformTask = struct {
     input_code: ZigString = ZigString.init(""),
-    protected_input_value: JSC.JSValue = @intToEnum(JSC.JSValue, 0),
+    protected_input_value: JSC.JSValue = @enumFromInt(JSC.JSValue, 0),
     output_code: ZigString = ZigString.init(""),
     bundler: Bundler.Bundler = undefined,
     log: logger.Log,
@@ -220,8 +220,8 @@ pub const TransformTask = struct {
 
         finish(this.output_code, this.global, promise);
 
-        if (@enumToInt(this.protected_input_value) != 0) {
-            this.protected_input_value = @intToEnum(JSC.JSValue, 0);
+        if (@intFromEnum(this.protected_input_value) != 0) {
+            this.protected_input_value = @enumFromInt(JSC.JSValue, 0);
         }
         this.deinit();
     }
@@ -611,7 +611,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 while (length_iter.next()) |value| {
                     if (value.isString()) {
                         const length = @truncate(u32, value.getLength(globalThis));
-                        string_count += @as(u32, @boolToInt(length > 0));
+                        string_count += @as(u32, @intFromBool(length > 0));
                         total_name_buf_len += length;
                     }
                 }
@@ -877,7 +877,7 @@ fn getParseResult(this: *Transpiler, allocator: std.mem.Allocator, code: []const
         for (res.ast.import_records.slice()) |*import| {
             if (import.kind.isCommonJS()) {
                 import.do_commonjs_transform_in_printer = true;
-                import.module_id = @truncate(u32, std.hash.Wyhash.hash(0, import.path.pretty));
+                import.module_id = @truncate(u32, bun.hash(import.path.pretty));
             }
         }
     }

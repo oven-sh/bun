@@ -844,7 +844,7 @@ pub const JSBundler = struct {
 
                 this.value = .{
                     .success = .{
-                        .loader = @intToEnum(options.Loader, @intCast(u8, loader_as_int.to(i32))),
+                        .loader = @enumFromInt(options.Loader, @intCast(u8, loader_as_int.to(i32))),
                         .source_code = source_code,
                     },
                 };
@@ -928,7 +928,7 @@ pub const JSBundler = struct {
             else
                 ZigString.fromUTF8(namespace);
             const path_string = ZigString.fromUTF8(path);
-            JSBundlerPlugin__matchOnLoad(globalThis, this, &namespace_string, &path_string, context, @enumToInt(default_loader));
+            JSBundlerPlugin__matchOnLoad(globalThis, this, &namespace_string, &path_string, context, @intFromEnum(default_loader));
         }
 
         pub fn matchOnResolve(
@@ -949,7 +949,7 @@ pub const JSBundler = struct {
                 ZigString.fromUTF8(namespace);
             const path_string = ZigString.fromUTF8(path);
             const importer_string = ZigString.fromUTF8(importer);
-            JSBundlerPlugin__matchOnResolve(globalThis, this, &namespace_string, &path_string, &importer_string, context, @enumToInt(import_record_kind));
+            JSBundlerPlugin__matchOnResolve(globalThis, this, &namespace_string, &path_string, &importer_string, context, @intFromEnum(import_record_kind));
         }
 
         pub fn addPlugin(

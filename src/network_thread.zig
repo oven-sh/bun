@@ -1,15 +1,16 @@
-const ThreadPool = @import("root").bun.ThreadPool;
+const bun = @import("root").bun;
+const ThreadPool = bun.ThreadPool;
 pub const Batch = ThreadPool.Batch;
 pub const Task = ThreadPool.Task;
 const Node = ThreadPool.Node;
 pub const Completion = AsyncIO.Completion;
 const std = @import("std");
-pub const AsyncIO = @import("root").bun.AsyncIO;
-const Output = @import("root").bun.Output;
+pub const AsyncIO = bun.AsyncIO;
+const Output = bun.Output;
 const IdentityContext = @import("./identity_context.zig").IdentityContext;
 const HTTP = @import("./http_client_async.zig");
 const NetworkThread = @This();
-const Environment = @import("root").bun.Environment;
+const Environment = bun.Environment;
 const Lock = @import("./lock.zig").Lock;
 
 /// Single-thread in this pool

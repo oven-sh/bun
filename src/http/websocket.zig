@@ -34,7 +34,7 @@ pub const Opcode = enum(u4) {
     ResF = 0xF,
 
     pub fn isControl(opcode: Opcode) bool {
-        return @enumToInt(opcode) & 0x8 != 0;
+        return @intFromEnum(opcode) & 0x8 != 0;
     }
 };
 
@@ -261,7 +261,7 @@ pub const Websocket = struct {
     }
 
     pub fn read(self: *Websocket) !WebsocketDataFrame {
-        @memset(&self.buf, 0, self.buf.len);
+        @memset(&self.buf, 0);
 
         // Read and retry if we hit the end of the stream buffer
         var start = try self.stream.read(&self.buf);
@@ -274,7 +274,7 @@ pub const Websocket = struct {
     }
 
     pub fn eatAt(self: *Websocket, offset: usize, _len: usize) []u8 {
-        const len = std.math.min(self.read_stream.buffer.len, _len);
+        const len = @min(self.read_stream.buffer.len, _len);
         self.read_stream.pos = len;
         return self.read_stream.buffer[offset..len];
     }
@@ -292,7 +292,7 @@ pub const Websocket = struct {
         // header.rsv1 = header_bytes[0] & 0x40 == 0x40;
         // header.rsv2 = header_bytes[0] & 0x20;
         // header.rsv3 = header_bytes[0] & 0x10;
-        header.opcode = @intToEnum(Opcode, @truncate(u4, header_bytes[0]));
+        header.opcode = @enumFromInt(Opcode, @truncate(u4, header_bytes[0]));
         header.mask = header_bytes[1] & 0x80 == 0x80;
         header.len = @truncate(u7, header_bytes[1]);
 

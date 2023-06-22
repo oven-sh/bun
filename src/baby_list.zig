@@ -30,7 +30,7 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn contains(this: @This(), item: []const Type) bool {
-            return this.len > 0 and @ptrToInt(item.ptr) >= @ptrToInt(this.ptr) and @ptrToInt(item.ptr) < @ptrToInt(this.ptr) + this.len;
+            return this.len > 0 and @intFromPtr(item.ptr) >= @intFromPtr(this.ptr) and @intFromPtr(item.ptr) < @intFromPtr(this.ptr) + this.len;
         }
 
         pub inline fn initConst(items: []const Type) ListType {

@@ -104,7 +104,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
         count += 1;
     }
 
-    const npm_args = 2 * @intCast(usize, @boolToInt(npm_client != null));
+    const npm_args = 2 * @intCast(usize, @intFromBool(npm_client != null));
     const total = count + npm_args;
     var argv = allocator.alloc(string, total) catch return;
     var proc: std.ChildProcess = undefined;
@@ -491,7 +491,7 @@ pub const CreateCommand = struct {
                     [1]Archive.Plucker{undefined};
 
                 var archive_context = Archive.Context{
-                    .pluckers = pluckers[0..@intCast(usize, @boolToInt(!create_options.skip_package_json))],
+                    .pluckers = pluckers[0..@intCast(usize, @intFromBool(!create_options.skip_package_json))],
                     .all_files = undefined,
                     .overwrite_list = bun.StringArrayHashMap(void).init(ctx.allocator),
                 };
@@ -523,7 +523,7 @@ pub const CreateCommand = struct {
                         );
                         for (archive_context.overwrite_list.keys()) |path| {
                             if (strings.endsWith(path, std.fs.path.sep_str)) {
-                                Output.prettyError("<r>  <blue>{s}<r>", .{path[0 .. std.math.max(path.len, 1) - 1]});
+                                Output.prettyError("<r>  <blue>{s}<r>", .{path[0 .. @max(path.len, 1) - 1]});
                                 Output.prettyErrorln(std.fs.path.sep_str, .{});
                             } else {
                                 Output.prettyErrorln("<r>  {s}", .{path});
@@ -594,7 +594,7 @@ pub const CreateCommand = struct {
                         progress_: *std.Progress,
                     ) !void {
                         while (try walker.next()) |entry| {
-                            if (entry.kind != .File) continue;
+                            if (entry.kind != .file) continue;
 
                             var outfile = destination_dir_.createFile(entry.path, .{}) catch brk: {
                                 if (std.fs.path.dirname(entry.path)) |entry_dirname| {
@@ -643,7 +643,7 @@ pub const CreateCommand = struct {
                             break :read_package_json;
                         };
 
-                        if (stat.kind != .File or stat.size == 0) {
+                        if (stat.kind != .file or stat.size == 0) {
                             package_json_file = null;
                             node.end();
 
@@ -736,7 +736,7 @@ pub const CreateCommand = struct {
                 if (package_json_expr.asProperty("name")) |name_expr| {
                     if (name_expr.expr.data == .e_string) {
                         var basename = std.fs.path.basename(destination);
-                        name_expr.expr.data.e_string.data = @intToPtr([*]u8, @ptrToInt(basename.ptr))[0..basename.len];
+                        name_expr.expr.data.e_string.data = @ptrFromInt([*]u8, @intFromPtr(basename.ptr))[0..basename.len];
                     }
                 }
 
@@ -778,7 +778,7 @@ pub const CreateCommand = struct {
                             const key = list[i].key.?.data.e_string.data;
 
                             const do_prune = packages.has(key);
-                            prune_count += @intCast(u16, @boolToInt(do_prune));
+                            prune_count += @intCast(u16, @intFromBool(do_prune));
 
                             if (!do_prune) {
                                 list[out_i] = list[i];
@@ -902,14 +902,14 @@ pub const CreateCommand = struct {
                 var needs_to_inject_dev_dependency = needs.react_refresh or needs.bun_macro_relay;
                 var needs_to_inject_dependency = needs.bun_framework_next;
 
-                const dependencies_to_inject_count = @intCast(usize, @boolToInt(needs.bun_framework_next));
+                const dependencies_to_inject_count = @intCast(usize, @intFromBool(needs.bun_framework_next));
 
-                const dev_dependencies_to_inject_count = @intCast(usize, @boolToInt(needs.react_refresh)) +
-                    @intCast(usize, @boolToInt(needs.bun_macro_relay));
+                const dev_dependencies_to_inject_count = @intCast(usize, @intFromBool(needs.react_refresh)) +
+                    @intCast(usize, @intFromBool(needs.bun_macro_relay));
 
-                const new_properties_count = @intCast(usize, @boolToInt(needs_to_inject_dev_dependency and dev_dependencies == null)) +
-                    @intCast(usize, @boolToInt(needs_to_inject_dependency and dependencies == null)) +
-                    @intCast(usize, @boolToInt(needs_bun_prop));
+                const new_properties_count = @intCast(usize, @intFromBool(needs_to_inject_dev_dependency and dev_dependencies == null)) +
+                    @intCast(usize, @intFromBool(needs_to_inject_dependency and dependencies == null)) +
+                    @intCast(usize, @intFromBool(needs_bun_prop));
 
                 if (new_properties_count != 0) {
                     try properties_list.ensureUnusedCapacity(new_properties_count);
@@ -1463,7 +1463,7 @@ pub const CreateCommand = struct {
         }
 
         if (create_options.verbose) {
-            Output.prettyErrorln("Has dependencies? {d}", .{@boolToInt(has_dependencies)});
+            Output.prettyErrorln("Has dependencies? {d}", .{@intFromBool(has_dependencies)});
         }
 
         var npm_client_: ?NPMClient = null;
@@ -1692,7 +1692,7 @@ pub const Example = struct {
     var app_name_buf: [512]u8 = undefined;
     pub fn print(examples: []const Example, default_app_name: ?string) void {
         for (examples) |example| {
-            var app_name = default_app_name orelse (std.fmt.bufPrint(&app_name_buf, "./{s}-app", .{example.name[0..std.math.min(example.name.len, 492)]}) catch unreachable);
+            var app_name = default_app_name orelse (std.fmt.bufPrint(&app_name_buf, "./{s}-app", .{example.name[0..@min(example.name.len, 492)]}) catch unreachable);
 
             if (example.description.len > 0) {
                 Output.pretty("  <r># {s}<r>\n  <b>bun create <cyan>{s}<r><b> {s}<r>\n<d>  \n\n", .{
@@ -1754,7 +1754,7 @@ pub const Example = struct {
                         const entry: std.fs.IterableDir.Entry = entry_;
 
                         switch (entry.kind) {
-                            .Directory => {
+                            .directory => {
                                 inline for (skip_dirs) |skip_dir| {
                                     if (strings.eqlComptime(entry.name, skip_dir)) {
                                         continue :loop;

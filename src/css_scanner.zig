@@ -139,7 +139,7 @@ pub const Scanner = struct {
 
     pub fn step(scanner: *Scanner) void {
         scanner.codepoint = scanner.nextCodepoint();
-        scanner.approximate_newline_count += @boolToInt(scanner.codepoint == '\n');
+        scanner.approximate_newline_count += @intFromBool(scanner.codepoint == '\n');
     }
     pub fn raw(_: *Scanner) string {}
 
@@ -698,7 +698,7 @@ pub const Scanner = struct {
                             scanner.step();
                         }
                         if (import_behavior == .scan or import_behavior == .keep) {
-                            chunk.range.len = @intCast(i32, scanner.end) - std.math.max(chunk.range.loc.start, 0);
+                            chunk.range.len = @intCast(i32, scanner.end) - @max(chunk.range.loc.start, 0);
                             chunk.content = .{ .t_import = import };
                             try writeChunk(writer, chunk);
                         }

@@ -15,9 +15,6 @@ class FSWatcher extends EventEmitter {
   #listener;
   constructor(path, options, listener) {
     super();
-    if (Buffer.isBuffer(path)) {
-      path = path.toString();
-    }
 
     if (typeof options === "function") {
       listener = options;

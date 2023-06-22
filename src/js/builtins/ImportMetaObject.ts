@@ -141,7 +141,7 @@ export function internalRequire(this: ImportMetaObject, resolved) {
     var exports = $requireESM(resolved);
     const cachedExports = $requireMap.$get(resolved);
     if (cachedExports) {
-      return cachedExports;
+      return cachedExports.exports;
     }
 
     $requireMap.$set(resolved, { exports });

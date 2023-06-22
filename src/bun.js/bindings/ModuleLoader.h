@@ -93,6 +93,7 @@ JSValue fetchSourceCodeAsync(
 
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
+    JSValue specifierValue,
     BunString* specifier,
     BunString* referrer);
 

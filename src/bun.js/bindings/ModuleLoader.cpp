@@ -357,6 +357,7 @@ extern "C" void Bun__onFulfillAsyncModule(
 
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
+    JSValue specifierValue,
     BunString* specifier,
     BunString* referrer)
 {
@@ -365,6 +366,8 @@ JSValue fetchCommonJSModule(
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorableResolvedSource resValue;
     ErrorableResolvedSource* res = &resValue;
+
+    auto& builtinNames = WebCore::clientData(vm)->builtinNames();
 
     auto synthetic = [specifier, globalObject, referrer](const SyntheticSourceProvider::SyntheticSourceGenerator& generator) -> JSValue {
         return JSCommonJSModule::create(
@@ -379,8 +382,6 @@ JSValue fetchCommonJSModule(
             throwException(scope, res->result.err, globalObject);
             RELEASE_AND_RETURN(scope, JSValue());
         }
-
-        auto moduleKey = Bun::toWTFString(*specifier);
 
         switch (res->result.value.tag) {
         case SyntheticModuleType::Module: {
@@ -414,6 +415,23 @@ JSValue fetchCommonJSModule(
     // if (JSC::JSValue virtualModuleResult = JSValue::decode(Bun__runVirtualModule(globalObject, specifier))) {
     //     return handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer);
     // }
+    auto* loader = globalObject->moduleLoader();
+    JSMap* registry = jsCast<JSMap*>(loader->getDirect(vm, Identifier::fromString(vm, "registry"_s)));
+
+    auto hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice = [&]() -> bool {
+        JSValue entry = registry->get(globalObject, specifierValue);
+
+        if (!entry || !entry.isObject()) {
+            return false;
+        }
+
+        int status = entry.getObject()->getDirect(vm, WebCore::clientData(vm)->builtinNames().statePublicName()).asInt32();
+        return status > JSModuleLoader::Status::Fetch;
+    };
+
+    if (hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice()) {
+        return jsNumber(-1);
+    }
 
     Bun__transpileFile(bunVM, globalObject, specifier, referrer, res, false);
 
@@ -431,19 +449,9 @@ JSValue fetchCommonJSModule(
         RELEASE_AND_RETURN(scope, {});
     }
 
+    auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);
+    globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, JSC::SourceCode(provider));
     return jsNumber(-1);
-
-    // auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);
-    // JSMap* map = jsCast<JSMap*>(globalObject->moduleLoader()->getDirect(vm, Identifier::fromString(vm, "registry"_s)));
-    // auto id = Bun::toWTFString(*specifier);
-    // Identifier moduleKey = Identifier::fromString(vm, id);
-    // globalObject->moduleLoader()->provideFetch(globalObject, jsString(vm, id), JSC::SourceCode(provider));
-    // globalObject->moduleLoader()->parse(globalObject, jsString(vm, id), JSC::SourceCode(provider));
-    // RETURN_IF_EXCEPTION(scope, {});
-    // JSC::linkAndEvaluateModule(globalObject, moduleKey, jsUndefined());
-    // RETURN_IF_EXCEPTION(scope, {});
-    // auto moduleRecord = map->get(globalObject, identifierToJSValue(vm, moduleKey));
-    // RELEASE_AND_RETURN(scope, JSCommonJSModule::create(globalObject, id, id, globalObject->moduleLoader()->getModuleNamespaceObject(globalObject, moduleRecord)));
 }
 
 template<bool allowPromise>
@@ -558,7 +566,7 @@ static JSValue fetchSourceCode(
             return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));
         }
         default: {
-            auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);
+            auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);
             return rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
         }
         }

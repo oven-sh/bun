@@ -698,31 +698,31 @@ pub const Jest = struct {
             Expect.getConstructor(globalObject),
         );
 
-        const mock_fn = JSMockFunction__createObject(globalObject);
-        const spyOn = JSC.NewFunction(globalObject, ZigString.static("spyOn"), 2, JSMock__spyOn, false);
-        const restoreAllMocks = JSC.NewFunction(globalObject, ZigString.static("restoreAllMocks"), 2, jsFunctionResetSpies, false);
-        module.put(globalObject, ZigString.static("mock"), mock_fn);
+        const mockFn = JSC.NewFunction(globalObject, ZigString.static("fn"), 1, JSMock__jsMockFn, false);
+        const spyOn = JSC.NewFunction(globalObject, ZigString.static("spyOn"), 2, JSMock__jsSpyOn, false);
+        const restoreAllMocks = JSC.NewFunction(globalObject, ZigString.static("restoreAllMocks"), 2, JSMock__jsRestoreAllMocks, false);
+        module.put(globalObject, ZigString.static("mock"), mockFn);
 
         const jest = JSValue.createEmptyObject(globalObject, 3);
-        jest.put(globalObject, ZigString.static("fn"), mock_fn);
+        jest.put(globalObject, ZigString.static("fn"), mockFn);
         jest.put(globalObject, ZigString.static("spyOn"), spyOn);
         jest.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
         module.put(globalObject, ZigString.static("jest"), jest);
         module.put(globalObject, ZigString.static("spyOn"), spyOn);
 
         const vi = JSValue.createEmptyObject(globalObject, 1);
-        vi.put(globalObject, ZigString.static("fn"), mock_fn);
+        vi.put(globalObject, ZigString.static("fn"), mockFn);
+        vi.put(globalObject, ZigString.static("spyOn"), spyOn);
         module.put(globalObject, ZigString.static("vi"), vi);
 
         return module;
     }
 
-    extern fn JSMockFunction__createObject(*JSC.JSGlobalObject) JSC.JSValue;
-
     extern fn Bun__Jest__testPreloadObject(*JSC.JSGlobalObject) JSC.JSValue;
     extern fn Bun__Jest__testModuleObject(*JSC.JSGlobalObject) JSC.JSValue;
-    extern fn jsFunctionResetSpies(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
-    extern fn JSMock__spyOn(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
+    extern fn JSMock__jsMockFn(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
+    extern fn JSMock__jsRestoreAllMocks(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
+    extern fn JSMock__jsSpyOn(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
 
     pub fn call(
         _: void,

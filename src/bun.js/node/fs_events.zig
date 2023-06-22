@@ -547,8 +547,8 @@ pub const FSEventsLoop = struct {
         CF.Release(this.signal_source);
         this.signal_source = null;
 
-        // this.sem.deinit();
-        // this.mutex.deinit();
+        this.sem.deinit();
+        this.mutex.deinit();
         if (this.watcher_count > 0) {
             while (this.watchers.popOrNull()) |watcher| {
                 if (watcher) |w| {

@@ -273,8 +273,6 @@ pub const FSWatcher = struct {
 
         var counts = slice.items(.count);
         const kinds = slice.items(.kind);
-        const hashes = slice.items(.hash);
-        const parents = slice.items(.parent_hash);
         var _on_file_update_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
         var ctx = this.watcher_instance.?;
@@ -301,11 +299,6 @@ pub const FSWatcher = struct {
             const update_count = counts[event.index] + 1;
             counts[event.index] = update_count;
             const kind = kinds[event.index];
-
-            // so it's consistent with the rest
-            // if we use .extname we might run into an issue with whether or not the "." is included.
-            // const path = Fs.PathName.init(file_path);
-            const id = hashes[event.index];
 
             if (comptime Environment.isDebug) {
                 if (this.verbose) {
@@ -346,44 +339,15 @@ pub const FSWatcher = struct {
                     }
                 },
                 .directory => {
-                    // if (comptime Environment.isMac) {
-                    //     unreachable;
-                    // }
-                    var affected_buf: [128][]const u8 = undefined;
+                    // macOS should use FSEvents for directories
+                    if (comptime Environment.isMac) {
+                        @panic("Unexpected directory watch");
+                    }
 
-                    const affected = brk: {
-                        if (comptime Environment.isMac) {
-                            var affected_i: usize = 0;
-
-                            // if a file descriptor is stale, we need to close it
-                            if (event.op.delete) {
-                                for (parents, 0..) |parent_hash, entry_id| {
-                                    if (parent_hash == id) {
-                                        const affected_path = file_paths[entry_id];
-                                        const was_deleted = check: {
-                                            std.os.access(affected_path, std.os.F_OK) catch break :check true;
-                                            break :check false;
-                                        };
-                                        if (!was_deleted) continue;
-
-                                        affected_buf[affected_i] = affected_path[file_path.len..];
-                                        affected_i += 1;
-                                        if (affected_i >= affected_buf.len) break;
-                                    }
-                                }
-                            }
-
-                            break :brk affected_buf[0..affected_i];
-                        }
-
-                        break :brk event.names(changed_files);
-                    };
+                    const affected = event.names(changed_files);
 
                     for (affected) |changed_name_| {
-                        const changed_name: []const u8 = if (comptime Environment.isMac)
-                            changed_name_
-                        else
-                            bun.asByteSlice(changed_name_.?);
+                        const changed_name: []const u8 = bun.asByteSlice(changed_name_.?);
                         if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
 
                         var file_hash: FSWatcher.Watcher.HashType = 0;

@@ -43,7 +43,22 @@ static uintptr_t getSourceProviderMapKey(ResolvedSource& resolvedSource)
     }
 }
 
-Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, ResolvedSource resolvedSource, JSC::SourceProviderSourceType sourceType)
+static SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
+{
+    if (isBuiltin) {
+        if (sourceURL.startsWith("node:"_s)) {
+            return SourceOrigin(WTF::URL(makeString("builtin://node/", sourceURL.substring(5))));
+        } else if (sourceURL.startsWith("bun:"_s)) {
+            return SourceOrigin(WTF::URL(makeString("builtin://bun/", sourceURL.substring(4))));
+        } else {
+            return SourceOrigin(WTF::URL(makeString("builtin://", sourceURL)));
+        }
+    }
+
+    return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
+}
+
+Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, ResolvedSource resolvedSource, JSC::SourceProviderSourceType sourceType, bool isBuiltin)
 {
 
     uintptr_t providerKey = 0;
@@ -68,7 +83,7 @@ Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, Reso
     auto provider = adoptRef(*new SourceProvider(
         globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
         resolvedSource, stringImpl.releaseImpl().releaseNonNull(),
-        JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURLString)),
+        toSourceOrigin(sourceURLString, isBuiltin),
         sourceURLString.impl(), TextPosition(),
         sourceType));
 

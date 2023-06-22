@@ -845,7 +845,14 @@ fn NewPrinter(
         fn printBunJestImportStatement(p: *Printer, import: S.Import) void {
             if (comptime !is_bun_platform) unreachable;
 
-            printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(import.meta.path)"), "globalThis.Bun.jest(import.meta.path)");
+            switch (p.options.module_type) {
+                .cjs => {
+                    printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(__filename)"), "globalThis.Bun.jest(__filename)");
+                },
+                else => {
+                    printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(import.meta.path)"), "globalThis.Bun.jest(import.meta.path)");
+                },
+            }
         }
 
         fn printGlobalBunImportStatement(p: *Printer, import: S.Import) void {

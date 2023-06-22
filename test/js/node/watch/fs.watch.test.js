@@ -21,77 +21,77 @@ const testDir = tempDirWithFiles("watch", {
 });
 
 describe("fs.watch", () => {
-  // test("non-persistent watcher should not block the event loop", done => {
-  //   try {
-  //     // https://github.com/joyent/node/issues/2293 - non-persistent watcher should not block the event loop
-  //     bunRun(path.join(import.meta.dir, "fixtures", "persistent.js"));
-  //     done();
-  //   } catch (e) {
-  //     done(e);
-  //   }
-  // });
+  test("non-persistent watcher should not block the event loop", done => {
+    try {
+      // https://github.com/joyent/node/issues/2293 - non-persistent watcher should not block the event loop
+      bunRun(path.join(import.meta.dir, "fixtures", "persistent.js"));
+      done();
+    } catch (e) {
+      done(e);
+    }
+  });
 
-  // test("watcher should close and not block the event loop", done => {
-  //   try {
-  //     bunRun(path.join(import.meta.dir, "fixtures", "close.js"));
-  //     done();
-  //   } catch (e) {
-  //     done(e);
-  //   }
-  // });
+  test("watcher should close and not block the event loop", done => {
+    try {
+      bunRun(path.join(import.meta.dir, "fixtures", "close.js"));
+      done();
+    } catch (e) {
+      done(e);
+    }
+  });
 
-  // test("unref watcher should not block the event loop", done => {
-  //   try {
-  //     bunRun(path.join(import.meta.dir, "fixtures", "unref.js"));
-  //     done();
-  //   } catch (e) {
-  //     done(e);
-  //   }
-  // });
+  test("unref watcher should not block the event loop", done => {
+    try {
+      bunRun(path.join(import.meta.dir, "fixtures", "unref.js"));
+      done();
+    } catch (e) {
+      done(e);
+    }
+  });
 
-  // test("should work with relative files", done => {
-  //   try {
-  //     bunRunAsScript(testDir, path.join(import.meta.dir, "fixtures", "relative.js"));
-  //     done();
-  //   } catch (e) {
-  //     done(e);
-  //   }
-  // });
+  test("should work with relative files", done => {
+    try {
+      bunRunAsScript(testDir, path.join(import.meta.dir, "fixtures", "relative.js"));
+      done();
+    } catch (e) {
+      done(e);
+    }
+  });
 
-  // test("add file/folder to folder", done => {
-  //   let count = 0;
-  //   const root = path.join(testDir, "add-directory");
-  //   try {
-  //     fs.mkdirSync(root);
-  //   } catch {}
-  //   let err = undefined;
-  //   const watcher = fs.watch(root, { signal: AbortSignal.timeout(3000) });
-  //   watcher.on("change", (event, filename) => {
-  //     count++;
-  //     try {
-  //       expect(event).toBe("rename");
-  //       expect(["new-file.txt", "new-folder.txt"]).toContain(filename);
-  //       if (count >= 2) {
-  //         watcher.close();
-  //       }
-  //     } catch (e) {
-  //       err = e;
-  //       watcher.close();
-  //     }
-  //   });
+  test("add file/folder to folder", done => {
+    let count = 0;
+    const root = path.join(testDir, "add-directory");
+    try {
+      fs.mkdirSync(root);
+    } catch {}
+    let err = undefined;
+    const watcher = fs.watch(root, { signal: AbortSignal.timeout(3000) });
+    watcher.on("change", (event, filename) => {
+      count++;
+      try {
+        expect(event).toBe("rename");
+        expect(["new-file.txt", "new-folder.txt"]).toContain(filename);
+        if (count >= 2) {
+          watcher.close();
+        }
+      } catch (e) {
+        err = e;
+        watcher.close();
+      }
+    });
 
-  //   watcher.on("error", e => (err = e));
-  //   watcher.on("close", () => {
-  //     clearInterval(interval);
-  //     done(err);
-  //   });
+    watcher.on("error", e => (err = e));
+    watcher.on("close", () => {
+      clearInterval(interval);
+      done(err);
+    });
 
-  //   const interval = repeat(() => {
-  //     fs.writeFileSync(path.join(root, "new-file.txt"), "hello");
-  //     fs.mkdirSync(path.join(root, "new-folder.txt"));
-  //     fs.rmdirSync(path.join(root, "new-folder.txt"));
-  //   });
-  // });
+    const interval = repeat(() => {
+      fs.writeFileSync(path.join(root, "new-file.txt"), "hello");
+      fs.mkdirSync(path.join(root, "new-folder.txt"));
+      fs.rmdirSync(path.join(root, "new-folder.txt"));
+    });
+  });
 
   test("add file/folder to subfolder", done => {
     let count = 0;

@@ -94,6 +94,7 @@ const bufs = struct {
     threadlocal var remap_path_trailing_slash: [bun.MAX_PATH_BYTES]u8 = undefined;
     threadlocal var path_in_global_disk_cache: [bun.MAX_PATH_BYTES]u8 = undefined;
     threadlocal var abs_to_rel: [bun.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var node_modules_paths_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
     pub inline fn bufs(comptime field: std.meta.DeclEnum(@This())) *@TypeOf(@field(@This(), @tagName(field))) {
         return &@field(@This(), @tagName(field));
@@ -3107,6 +3108,65 @@ pub const Resolver = struct {
         };
     }
 
+    pub export fn Resolver__nodeModulePathsForJS(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) callconv(.C) bun.JSC.JSValue {
+        bun.JSC.markBinding(@src());
+        const argument: bun.JSC.JSValue = callframe.argument(0);
+
+        if (argument.isEmpty() or !argument.isString()) {
+            globalThis.throwInvalidArgumentType("nodeModulePaths", "path", "string");
+            return .zero;
+        }
+
+        const in_str = argument.toBunString(globalThis);
+        var r = &globalThis.bunVM().bundler.resolver;
+        return nodeModulePathsForJS(r, in_str, globalThis);
+    }
+
+    pub fn nodeModulePathsForJS(
+        r: *ThisResolver,
+        in_str: bun.String,
+        globalObject: *bun.JSC.JSGlobalObject,
+    ) bun.JSC.JSValue {
+        var list = std.ArrayList(bun.String).init(bun.default_allocator);
+        defer list.deinit();
+
+        const sliced = in_str.toUTF8(bun.default_allocator);
+        defer sliced.deinit();
+
+        const str = brk: {
+            if (std.fs.path.isAbsolute(sliced.slice())) break :brk sliced.slice();
+            var dir_path_buf = bufs(.node_modules_paths_buf);
+            break :brk r.fs.joinBuf(&[_]string{ r.fs.top_level_dir, sliced.slice() }, dir_path_buf);
+        };
+        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        defer arena.deinit();
+        var stack_fallback_allocator = std.heap.stackFallback(1024, arena.allocator());
+
+        if (r.readDirInfo(strings.withoutTrailingSlash(str)) catch null) |result| {
+            var dir_info = result;
+
+            while (true) {
+                const path_without_trailing_slash = strings.withoutTrailingSlash(dir_info.abs_path);
+                if (dir_info.hasNodeModules()) {
+                    list.append(
+                        bun.String.create(
+                            bun.strings.concat(
+                                stack_fallback_allocator.get(),
+                                &[_]string{
+                                    path_without_trailing_slash,
+                                    "/node_modules",
+                                },
+                            ) catch unreachable,
+                        ),
+                    ) catch unreachable;
+                }
+                dir_info = (r.readDirInfo(std.fs.path.dirname(path_without_trailing_slash) orelse break) catch null) orelse break;
+            }
+        }
+
+        return bun.String.toJSArray(globalObject, list.items);
+    }
+
     pub fn loadAsIndex(r: *ThisResolver, dir_info: *DirInfo, extension_order: []const string) ?MatchResult {
         var rfs = &r.fs.fs;
         // Try the "index" file with extensions
@@ -3892,3 +3952,9 @@ pub const GlobalCache = enum {
         };
     }
 };
+
+comptime {
+    if (!bun.JSC.is_bindgen) {
+        _ = Resolver.Resolver__nodeModulePathsForJS;
+    }
+}

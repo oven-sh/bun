@@ -38,15 +38,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
 
   RELEASE_AND_RETURN(scope, JSValue::encode(boundRequireFunction));
 }
-JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModulePaths,
-                         (JSC::JSGlobalObject * globalObject,
-                          JSC::CallFrame *callFrame)) {
-  return JSC::JSValue::encode(JSC::JSArray::create(
-      globalObject->vm(),
-      globalObject->arrayStructureForIndexingTypeDuringAllocation(
-          ArrayWithContiguous),
-      0));
-}
+extern "C" EncodedJSValue Resolver__nodeModulePathsForJS(JSGlobalObject *,
+                                                         CallFrame *);
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionFindSourceMap,
                          (JSGlobalObject * globalObject,
@@ -126,7 +119,7 @@ void generateNodeModuleModule(JSC::JSGlobalObject *globalObject,
       vm, globalObject, 1, String("createRequire"_s),
       jsFunctionNodeModuleCreateRequire, ImplementationVisibility::Public));
   exportValues.append(JSFunction::create(vm, globalObject, 1, String("paths"_s),
-                                         jsFunctionNodeModulePaths,
+                                         Resolver__nodeModulePathsForJS,
                                          ImplementationVisibility::Public));
   exportValues.append(JSFunction::create(
       vm, globalObject, 1, String("findSourceMap"_s), jsFunctionFindSourceMap,
@@ -155,7 +148,7 @@ void generateNodeModuleModule(JSC::JSGlobalObject *globalObject,
   exportNames.append(JSC::Identifier::fromString(vm, "_nodeModulePaths"_s));
   exportValues.append(JSFunction::create(
       vm, globalObject, 0, String("_nodeModulePaths"_s),
-      jsFunctionNodeModulePaths, ImplementationVisibility::Public));
+      Resolver__nodeModulePathsForJS, ImplementationVisibility::Public));
 
   exportNames.append(JSC::Identifier::fromString(vm, "_cache"_s));
   exportValues.append(JSC::constructEmptyObject(globalObject));

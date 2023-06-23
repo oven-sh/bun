@@ -261,7 +261,7 @@ function mockErrors() {
   throw new Error("Not implemented in bun");
 }
 
-function Undici() {
+export function Undici() {
   throw new Error("Not implemented in bun");
 }
 

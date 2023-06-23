@@ -1,5 +1,5 @@
-import EventEmitter from "node:events";
-import StreamModule from "node:stream";
+import {EventEmitter} from "node:events";
+import * as StreamModule from "node:stream";
 import {constants} from "node:os";
 import {promisify} from "node:util";
 function spawn(file, args, options) {
@@ -460,13 +460,7 @@ if (__TRACK_STDIO__)
   debug("child_process: debug mode on"), globalThis.__lastId = null, globalThis.__getId = () => {
     return globalThis.__lastId !== null ? globalThis.__lastId++ : 0;
   };
-var getNativeWritable = () => {
-  const value = StreamModule.NativeWritable;
-  return getNativeWritable = () => value, value;
-}, getReadableFromWeb = () => {
-  const value = StreamModule[Symbol.for("::bunternal::")]._ReadableFromWeb;
-  return getReadableFromWeb = () => value, value;
-}, customPromiseExecFunction = (orig) => {
+var NativeWritable2, ReadableFromWeb, customPromiseExecFunction = (orig) => {
   return (...args) => {
     let resolve, reject;
     const promise = new Promise2((res, rej) => {
@@ -525,12 +519,13 @@ class ChildProcess extends EventEmitter {
         debug("ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited");
       else
         debug("ChildProcess: getBunSpawnIo: this.#handle is undefined");
+    NativeWritable2 ||= StreamModule.NativeWritable, ReadableFromWeb ||= StreamModule.Readable.fromWeb;
     const io = this.#stdioOptions[i];
     switch (i) {
       case 0:
         switch (io) {
           case "pipe":
-            return new getNativeWritable(this.#handle.stdin);
+            return new NativeWritable2(this.#handle.stdin);
           case "inherit":
             return process.stdin || null;
           case "destroyed":
@@ -542,10 +537,7 @@ class ChildProcess extends EventEmitter {
       case 1:
         switch (io) {
           case "pipe":
-            return getReadableFromWeb(this.#handle[fdToStdioName(i)], __TRACK_STDIO__ ? {
-              encoding,
-              __id: `PARENT_${fdToStdioName(i).toUpperCase()}-${globalThis.__getId()}`
-            } : { encoding });
+            return ReadableFromWeb(this.#handle[fdToStdioName(i)]);
           case "inherit":
             return process[fdToStdioName(i)] || null;
           case "destroyed":

@@ -1,6 +1,6 @@
 // Hardcoded module "node:child_process"
 import { EventEmitter } from "node:events";
-import StreamModule from "node:stream";
+import * as StreamModule from "node:stream";
 import { constants } from "node:os";
 import { promisify } from "node:util";
 const signals = constants.signals;

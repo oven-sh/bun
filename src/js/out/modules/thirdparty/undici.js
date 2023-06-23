@@ -79,9 +79,11 @@ var stream = function() {
   throw new Error("Not implemented in bun");
 }, mockErrors = function() {
   throw new Error("Not implemented in bun");
-}, Undici = function() {
+};
+function Undici() {
   throw new Error("Not implemented in bun");
-}, { Object } = globalThis[Symbol.for("Bun.lazy")]("primordials"), { _ReadableFromWeb } = NodeStreamModule[Symbol.for("::bunternal::")], ObjectCreate = Object.create, kEmptyObject = ObjectCreate(null), fetch = Bun.fetch, Response = globalThis.Response, Headers = globalThis.Headers, Request = globalThis.Request, URLSearchParams = globalThis.URLSearchParams, URL = globalThis.URL;
+}
+var { Object } = globalThis[Symbol.for("Bun.lazy")]("primordials"), { _ReadableFromWeb } = NodeStreamModule[Symbol.for("::bunternal::")], ObjectCreate = Object.create, kEmptyObject = ObjectCreate(null), fetch = Bun.fetch, Response = globalThis.Response, Headers = globalThis.Headers, Request = globalThis.Request, URLSearchParams = globalThis.URLSearchParams, URL = globalThis.URL;
 
 class File extends Blob {
 }
@@ -209,6 +211,7 @@ export {
   fetch,
   undici_default as default,
   connect,
+  Undici,
   URLSearchParams,
   URL,
   Response,

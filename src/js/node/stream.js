@@ -5248,7 +5248,7 @@ function createNativeStreamReadable(nativeType, Readable) {
   const finalizer = new FinalizationRegistry(ptr => ptr && deinit(ptr));
   const MIN_BUFFER_SIZE = 512;
   var NativeReadable = class NativeReadable extends Readable {
-    #ptr;
+    #bunNativePtr;
     #refCount = 1;
     #constructed = false;
     #remainingChunk = undefined;
@@ -5263,12 +5263,12 @@ function createNativeStreamReadable(nativeType, Readable) {
       } else {
         this.#highWaterMark = 256 * 1024;
       }
-      this.#ptr = ptr;
+      this.#bunNativePtr = ptr;
       this.#constructed = false;
       this.#remainingChunk = undefined;
       this.#pendingRead = false;
       this.#unregisterToken = {};
-      finalizer.register(this, this.#ptr, this.#unregisterToken);
+      finalizer.register(this, this.#bunNativePtr, this.#unregisterToken);
     }
 
     // maxToRead is by default the highWaterMark passed from the Readable.read call to this fn
@@ -5281,7 +5281,7 @@ function createNativeStreamReadable(nativeType, Readable) {
         return;
       }
 
-      var ptr = this.#ptr;
+      var ptr = this.#bunNativePtr;
       __DEBUG__ && debug("ptr @ NativeReadable._read", ptr, this.__id);
       if (ptr === 0) {
         this.push(null);
@@ -5402,14 +5402,14 @@ function createNativeStreamReadable(nativeType, Readable) {
     }
 
     _destroy(error, callback) {
-      var ptr = this.#ptr;
+      var ptr = this.#bunNativePtr;
       if (ptr === 0) {
         callback(error);
         return;
       }
 
       finalizer.unregister(this.#unregisterToken);
-      this.#ptr = 0;
+      this.#bunNativePtr = 0;
       if (updateRef) {
         updateRef(ptr, false);
       }
@@ -5419,7 +5419,7 @@ function createNativeStreamReadable(nativeType, Readable) {
     }
 
     ref() {
-      var ptr = this.#ptr;
+      var ptr = this.#bunNativePtr;
       if (ptr === 0) return;
       if (this.#refCount++ === 0) {
         updateRef(ptr, true);
@@ -5427,7 +5427,7 @@ function createNativeStreamReadable(nativeType, Readable) {
     }
 
     unref() {
-      var ptr = this.#ptr;
+      var ptr = this.#bunNativePtr;
       if (ptr === 0) return;
       if (this.#refCount-- === 1) {
         updateRef(ptr, false);

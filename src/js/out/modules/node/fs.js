@@ -1,3 +1,4 @@
+import {default as default2} from "node:fs/promises";
 import promises2 from "node:fs/promises";
 import {Readable, NativeWritable, _getNativeReadableStreamPrototype, eos as eos_} from "node:stream";
 var callbackify = function(fsFunction, args) {
@@ -17,7 +18,7 @@ function createReadStream(path, options) {
 function createWriteStream(path, options) {
   return new WriteStream(path, options);
 }
-var { direct, isPromise, isCallable } = globalThis[Symbol.for("Bun.lazy")]("primordials"), NativeReadable = _getNativeReadableStreamPrototype(2, Readable), fs = Bun.fs(), debug = process.env.DEBUG ? console.log : () => {
+var { direct, isPromise, isCallable } = globalThis[Symbol.for("Bun.lazy")]("primordials"), fs = Bun.fs(), debug = process.env.DEBUG ? console.log : () => {
 }, access = function access2(...args) {
   callbackify(fs.accessSync, args);
 }, appendFile = function appendFile2(...args) {
@@ -117,7 +118,7 @@ var { direct, isPromise, isCallable } = globalThis[Symbol.for("Bun.lazy")]("prim
     close
   },
   autoDestroy: !0
-}, ReadStreamClass, ReadStream = function(InternalReadStream) {
+}, ReadStreamClass, NativeReadable = _getNativeReadableStreamPrototype(2, Readable), ReadStream = function(InternalReadStream) {
   return ReadStreamClass = InternalReadStream, Object.defineProperty(ReadStreamClass.prototype, Symbol.toStringTag, {
     value: "ReadStream",
     enumerable: !1
@@ -628,6 +629,7 @@ export {
   readFileSync,
   readFile,
   read,
+  default2 as promises,
   openSync,
   open,
   mkdtempSync,

@@ -192,14 +192,34 @@ describe("bun test", () => {
       });
       expect(stderr).toContain("Invalid timeout");
     });
+    test("timeout can be set to 0ms", () => {
+      const stderr = runTest({
+        args: ["--timeout", "0"],
+        input: `
+          import { test, expect } from "bun:test";
+          import { sleep } from "bun";
+          test("ok", async () => {
+            await expect(Promise.resolve()).resolves.toBeUndefined();
+            await expect(Promise.reject()).rejects.toBeUndefined();
+          });
+          test("timeout", async () => {
+            await expect(sleep(1)).resolves.toBeUndefined();
+          });
+        `,
+      });
+      expect(stderr).toContain("timed out after 0ms");
+    });
     test("timeout can be set to 1ms", () => {
       const stderr = runTest({
         args: ["--timeout", "1"],
         input: `
           import { test, expect } from "bun:test";
           import { sleep } from "bun";
+          test("ok", async () => {
+            await expect(sleep(1)).resolves.toBeUndefined();
+          });
           test("timeout", async () => {
-            await sleep(2);
+            await expect(sleep(2)).resolves.toBeUndefined();
           });
         `,
       });

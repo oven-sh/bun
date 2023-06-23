@@ -2045,6 +2045,9 @@ pub const JSPromise = extern struct {
     pub fn isHandled(this: *const JSPromise, vm: *VM) bool {
         return cppFn("isHandled", .{ this, vm });
     }
+    pub fn setHandled(this: *JSPromise, vm: *VM) void {
+        cppFn("setHandled", .{ this, vm });
+    }
 
     pub fn rejectWithCaughtException(this: *JSPromise, globalObject: *JSGlobalObject, scope: ThrowScope) void {
         return cppFn("rejectWithCaughtException", .{ this, globalObject, scope });
@@ -2115,6 +2118,7 @@ pub const JSPromise = extern struct {
         "asValue",
         "create",
         "isHandled",
+        "setHandled",
         "reject",
         "rejectAsHandled",
         "rejectAsHandledException",
@@ -2148,6 +2152,9 @@ pub const JSInternalPromise = extern struct {
     }
     pub fn isHandled(this: *const JSInternalPromise, vm: *VM) bool {
         return cppFn("isHandled", .{ this, vm });
+    }
+    pub fn setHandled(this: *JSInternalPromise, vm: *VM) void {
+        cppFn("setHandled", .{ this, vm });
     }
 
     pub fn rejectWithCaughtException(this: *JSInternalPromise, globalObject: *JSGlobalObject, scope: ThrowScope) void {
@@ -2332,6 +2339,7 @@ pub const JSInternalPromise = extern struct {
         "status",
         "result",
         "isHandled",
+        "setHandled",
         "resolvedPromise",
         "rejectedPromise",
         "resolve",
@@ -2362,6 +2370,11 @@ pub const AnyPromise = union(enum) {
         return switch (this) {
             inline else => |promise| promise.isHandled(vm),
         };
+    }
+    pub fn setHandled(this: AnyPromise, vm: *VM) void {
+        switch (this) {
+            inline else => |promise| promise.setHandled(vm),
+        }
     }
 
     pub fn rejectWithCaughtException(this: AnyPromise, globalObject: *JSGlobalObject, scope: ThrowScope) void {

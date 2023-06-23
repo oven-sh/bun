@@ -15,6 +15,7 @@ const JSPrinter = bun.js_printer;
 const JSPrivateDataPtr = JSC.JSPrivateDataPtr;
 const JS = @import("../javascript.zig");
 const JSPromise = JSC.JSPromise;
+const expect = @import("./expect.zig");
 
 pub const EventType = enum(u8) {
     Event,
@@ -1264,12 +1265,12 @@ pub const JestPrettyFormat = struct {
                     } else if (value.as(JSC.ResolveMessage)) |resolve_log| {
                         resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                         return;
-                    } else if (value.as(JSC.Jest.ExpectAnything) != null) {
+                    } else if (value.as(expect.ExpectAnything) != null) {
                         this.addForNewLine("Anything".len);
                         writer.writeAll("Anything");
                         return;
-                    } else if (value.as(JSC.Jest.ExpectAny) != null) {
-                        const constructor_value = JSC.Jest.ExpectAny.constructorValueGetCached(value) orelse return;
+                    } else if (value.as(expect.ExpectAny) != null) {
+                        const constructor_value = expect.ExpectAny.constructorValueGetCached(value) orelse return;
 
                         this.addForNewLine("Any<".len);
                         writer.writeAll("Any<");
@@ -1281,16 +1282,16 @@ pub const JestPrettyFormat = struct {
                         writer.writeAll(">");
 
                         return;
-                    } else if (value.as(JSC.Jest.ExpectStringContaining) != null) {
-                        const substring_value = JSC.Jest.ExpectStringContaining.stringValueGetCached(value) orelse return;
+                    } else if (value.as(expect.ExpectStringContaining) != null) {
+                        const substring_value = expect.ExpectStringContaining.stringValueGetCached(value) orelse return;
 
                         this.addForNewLine("StringContaining ".len);
                         writer.writeAll("StringContaining ");
                         this.printAs(.String, Writer, writer_, substring_value, .String, enable_ansi_colors);
 
                         return;
-                    } else if (value.as(JSC.Jest.ExpectStringMatching) != null) {
-                        const test_value = JSC.Jest.ExpectStringMatching.testValueGetCached(value) orelse return;
+                    } else if (value.as(expect.ExpectStringMatching) != null) {
+                        const test_value = expect.ExpectStringMatching.testValueGetCached(value) orelse return;
 
                         this.addForNewLine("StringMatching ".len);
                         writer.writeAll("StringMatching ");

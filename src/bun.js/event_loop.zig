@@ -666,6 +666,30 @@ pub const EventLoop = struct {
         }
     }
 
+    pub fn waitForPromiseWithTimeout(this: *EventLoop, promise: JSC.AnyPromise, timeout: u32) bool {
+        return switch (promise.status(this.global.vm())) {
+            JSC.JSPromise.Status.Pending => {
+                if (timeout == 0) {
+                    return false;
+                }
+                var start_time = std.time.milliTimestamp();
+                while (promise.status(this.global.vm()) == .Pending) {
+                    this.tick();
+
+                    if (std.time.milliTimestamp() - start_time > timeout) {
+                        return false;
+                    }
+
+                    if (promise.status(this.global.vm()) == .Pending) {
+                        this.autoTick();
+                    }
+                }
+                return true;
+            },
+            else => true,
+        };
+    }
+
     pub fn waitForTasks(this: *EventLoop) void {
         this.tick();
         while (this.tasks.count > 0) {

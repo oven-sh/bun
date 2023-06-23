@@ -105,18 +105,12 @@ export function requireESM(this: ImportMetaObject, resolved) {
     return;
   }
 
-  var commonJS = exports.default;
-  var cjs = commonJS?.[$commonJSSymbol];
-  if (cjs === 0) {
-    return commonJS;
-  }
-
   return exports;
 }
 
-export function internalRequire(this: ImportMetaObject, resolved) {
-  var cached = $requireMap.$get(resolved);
-  const last5 = resolved.substring(resolved.length - 5);
+export function internalRequire(this: ImportMetaObject, id) {
+  var cached = $requireMap.$get(id);
+  const last5 = id.substring(id.length - 5);
   if (cached) {
     return cached.exports;
   }
@@ -124,27 +118,26 @@ export function internalRequire(this: ImportMetaObject, resolved) {
   // TODO: remove this hardcoding
   if (last5 === ".json") {
     var fs = (globalThis[Symbol.for("_fs")] ||= Bun.fs());
-    var exports = JSON.parse(fs.readFileSync(resolved, "utf8"));
-    $requireMap.$set(resolved, { exports });
+    var exports = JSON.parse(fs.readFileSync(id, "utf8"));
+    $requireMap.$set(id, $createCommonJSModule(id, exports));
     return exports;
   } else if (last5 === ".node") {
-    var module = { exports: {} };
-    process.dlopen(module, resolved);
-    $requireMap.$set(resolved, module);
+    const module = $createCommonJSModule(id, {});
+    process.dlopen(module, id);
+    $requireMap.$set(id, module);
     return module.exports;
   } else if (last5 === ".toml") {
     var fs = (globalThis[Symbol.for("_fs")] ||= Bun.fs());
-    var exports = Bun.TOML.parse(fs.readFileSync(resolved, "utf8"));
-    $requireMap.$set(resolved, { exports });
+    var exports = Bun.TOML.parse(fs.readFileSync(id, "utf8"));
+    $requireMap.$set(id, $createCommonJSModule(id, exports));
     return exports;
   } else {
-    var exports = $requireESM(resolved);
-    const cachedExports = $requireMap.$get(resolved);
+    var exports = $requireESM(id);
+    const cachedExports = $requireMap.$get(id);
     if (cachedExports) {
       return cachedExports.exports;
     }
-
-    $requireMap.$set(resolved, { exports });
+    $requireMap.$set(id, $createCommonJSModule(id, exports));
     return exports;
   }
 }
@@ -186,61 +179,66 @@ export function createRequireCache() {
   }
 
   var moduleMap = new Map();
+  var inner = {};
+  return new Proxy(inner, {
+    get(target, key: string) {
+      const entry = $requireMap.$get(key);
+      if (entry) return entry;
 
-  return new Proxy(
-    {},
-    {
-      get(target, key: string) {
-        const entry = $requireMap.$get(key);
-        if (entry) {
-          var mod = moduleMap.$get(key);
-          if (!mod) {
-            mod = new Module(key);
-            moduleMap.$set(key, mod);
-          }
-          return mod;
-        }
-      },
-      set(target, key: string, value) {
-        if (!moduleMap.$has(key)) {
-          moduleMap.$set(key, new Module(key));
-        }
+      const esm = Loader.registry.$get(key);
+      if (esm && esm.evaluated) {
+        const namespace = Loader.getModuleNamespaceObject(esm.module);
+        const exports =
+          namespace[$commonJSSymbol] === 0 || namespace.default?.[$commonJSSymbol] ? namespace.default : namespace;
+        const mod = $createCommonJSModule(key, exports);
+        $requireMap.$set(key, mod);
+        return mod;
+      }
 
-        $requireMap.$set(key, value?.exports);
-
-        return true;
-      },
-
-      has(target, key: string) {
-        return $requireMap.$has(key);
-      },
-
-      deleteProperty(target, key: string) {
-        moduleMap.$delete(key);
-        $requireMap.$delete(key);
-        Loader.registry.$delete(key);
-        return true;
-      },
-
-      ownKeys(target) {
-        return [...$requireMap.$keys()];
-      },
-
-      // In Node, require.cache has a null prototype
-      getPrototypeOf(target) {
-        return null;
-      },
-
-      getOwnPropertyDescriptor(target, key: string) {
-        if ($requireMap.$has(key)) {
-          return {
-            configurable: true,
-            enumerable: true,
-          };
-        }
-      },
+      return inner[key];
     },
-  );
+    set(target, key: string, value) {
+      $requireMap.$set(key, value);
+      return true;
+    },
+
+    has(target, key: string) {
+      return $requireMap.$has(key) || Loader.registry.$has(key);
+    },
+
+    deleteProperty(target, key: string) {
+      moduleMap.$delete(key);
+      $requireMap.$delete(key);
+      Loader.registry.$delete(key);
+      return true;
+    },
+
+    ownKeys(target) {
+      var array = [...$requireMap.$keys()];
+      const registryKeys = [...Loader.registry.$keys()];
+      for (const key of registryKeys) {
+        if (!array.includes(key)) {
+          $arrayPush(array, key);
+        }
+      }
+
+      return array;
+    },
+
+    // In Node, require.cache has a null prototype
+    getPrototypeOf(target) {
+      return null;
+    },
+
+    getOwnPropertyDescriptor(target, key: string) {
+      if ($requireMap.$has(key) || Loader.registry.$has(key)) {
+        return {
+          configurable: true,
+          enumerable: true,
+        };
+      }
+    },
+  });
 }
 
 $sloppy;

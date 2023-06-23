@@ -59,11 +59,11 @@ using namespace JSC;
     macro(cloneArrayBuffer) \
     macro(close) \
     macro(closeAlgorithm) \
-    macro(closeRequest) \
-    macro(closeRequested) \
     macro(closed) \
     macro(closedPromise) \
     macro(closedPromiseCapability) \
+    macro(closeRequest) \
+    macro(closeRequested) \
     macro(code) \
     macro(commonJSSymbol) \
     macro(connect) \
@@ -71,6 +71,7 @@ using namespace JSC;
     macro(controlledReadableStream) \
     macro(controller) \
     macro(cork) \
+    macro(createCommonJSModule) \
     macro(createEmptyReadableStream) \
     macro(createFIFO) \
     macro(createNativeReadableStream) \

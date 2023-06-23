@@ -366,26 +366,41 @@ JSCommonJSModule* JSCommonJSModule::create(
     return cell;
 }
 
-JSCommonJSModule* JSCommonJSModule::create(
-    Zig::GlobalObject* globalObject,
-    const WTF::String& key,
-    const WTF::String& dirname,
-    JSC::AbstractModuleRecord* record)
+JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateCommonJSModule, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto& vm = globalObject->vm();
 
-    auto getDefaultValue = [&]() -> JSValue {
-        return record->getModuleNamespace(globalObject)->get(globalObject, vm.propertyNames->defaultKeyword);
-    };
-    JSString* keyStr = JSC::jsStringWithCache(vm, key);
+    auto id = callframe->argument(0).toWTFString(globalObject);
+
+    JSValue object = callframe->argument(1);
+
+    return JSValue::encode(
+        JSCommonJSModule::create(
+            jsCast<Zig::GlobalObject*>(globalObject),
+            id,
+            object));
+}
+
+JSCommonJSModule* JSCommonJSModule::create(
+    Zig::GlobalObject* globalObject,
+    const WTF::String& key,
+    JSValue exportsObject)
+{
+    auto& vm = globalObject->vm();
+    JSString* requireMapKey = JSC::jsStringWithCache(vm, key);
+    auto index = key.reverseFind('/', key.length());
+    JSString* dirname = jsEmptyString(vm);
+    JSString* filename = requireMapKey;
+    if (index != WTF::notFound) {
+        dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
+    }
 
     auto* out = JSCommonJSModule::create(
         vm,
         globalObject->CommonJSModuleObjectStructure(),
-        keyStr, keyStr, JSC::jsString(vm, dirname), nullptr);
+        requireMapKey, filename, dirname, nullptr);
 
-    out->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), getDefaultValue(), 0);
-    globalObject->requireMap()->set(globalObject, out->id(), out);
+    out->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), exportsObject, exportsObject.isCell() && exportsObject.isCallable() ? JSC::PropertyAttribute::Function | 0 : 0);
     return out;
 }
 
@@ -722,12 +737,25 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
     return JSC::SourceCode(
         JSC::SyntheticSourceProvider::create(
-            [source, sourceProvider = WTFMove(sourceProvider)](JSC::JSGlobalObject* globalObject,
+            [source, sourceProvider = WTFMove(sourceProvider)](JSC::JSGlobalObject* lexicalGlobalObject,
                 JSC::Identifier moduleKey,
                 Vector<JSC::Identifier, 4>& exportNames,
                 JSC::MarkedArgumentBuffer& exportValues) -> void {
+                auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+                if (!moduleKey.isSymbol()) {
+                    JSValue entry = globalObject->requireMap()->get(globalObject, identifierToJSValue(globalObject->vm(), moduleKey));
+
+                    if (entry) {
+                        if (auto* moduleObject = jsDynamicCast<JSCommonJSModule*>(entry)) {
+                            moduleObject->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues);
+                            sourceProvider->deref();
+                            return;
+                        }
+                    }
+                }
+
                 auto sourceURL = sourceProvider->sourceURL();
-                auto* moduleObject = runCommonJSModule(jsCast<Zig::GlobalObject*>(globalObject), WTFMove(sourceProvider), sourceURL, source);
+                auto* moduleObject = runCommonJSModule(globalObject, WTFMove(sourceProvider), sourceURL, source);
                 if (UNLIKELY(!moduleObject))
                     return;
 

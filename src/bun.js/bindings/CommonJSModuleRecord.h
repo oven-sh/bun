@@ -14,6 +14,7 @@ class AbstractModuleRecord;
 namespace Bun {
 
 JSC_DECLARE_HOST_FUNCTION(jsCommonJSLoadModule);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 
 class JSCommonJSModule final : public JSC::JSDestructibleObject {
 public:
@@ -46,8 +47,7 @@ public:
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,
         const WTF::String& key,
-        const WTF::String& dirname,
-        JSC::AbstractModuleRecord* moduleRecord);
+        JSValue exportsObject);
 
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,

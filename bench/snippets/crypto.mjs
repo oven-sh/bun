@@ -22,4 +22,8 @@ bench("crypto.randomUUID()", () => {
   return crypto.randomUUID()[2];
 });
 
+bench("crypto.randomInt()", () => {
+  return crypto.randomInt();
+});
+
 await run();

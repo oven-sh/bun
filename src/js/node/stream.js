@@ -2,7 +2,7 @@
 // "readable-stream" npm package
 // just transpiled
 var { isPromise, isCallable, direct, Object } = globalThis[Symbol.for("Bun.lazy")]("primordials");
-import EE from "node:events";
+import { EventEmitter as EE } from "node:events";
 import { StringDecoder } from "node:string_decoder";
 
 globalThis.__IDS_TO_TRACK = process.env.DEBUG_TRACK_EE?.length

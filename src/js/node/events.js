@@ -17,7 +17,7 @@ const ArrayPrototypeSlice = Array.prototype.slice;
 var defaultMaxListeners = 10;
 
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.apply(this)`.
-export function EventEmitter(opts) {
+function EventEmitter(opts) {
   if (this._events === undefined || this._events === this.__proto__._events) {
     this._events = { __proto__: null };
     this._eventsCount = 0;
@@ -387,8 +387,6 @@ Object.defineProperties(EventEmitter, {
 EventEmitter.init = EventEmitter;
 EventEmitter[Symbol.for("CommonJS")] = 0;
 
-export default EventEmitter;
-
 function eventTargetAgnosticRemoveListener(emitter, name, listener, flags) {
   if (typeof emitter.removeListener === "function") {
     emitter.removeListener(name, listener);
@@ -455,10 +453,13 @@ function checkListener(listener) {
   }
 }
 
-export class EventEmitterAsyncResource extends EventEmitter {
+class EventEmitterAsyncResource extends EventEmitter {
   constructor(options = undefined) {
     throwNotImplemented("EventEmitterAsyncResource", 1832);
   }
 }
 
-EventEmitter.EventEmitterAsyncResource = EventEmitterAsyncResource;
+EventEmitter[Symbol.for("CommonJS")] = 0;
+Object.assign(EventEmitter, { once, on, getEventListeners, setMaxListeners, listenerCount, EventEmitterAsyncResource });
+export { EventEmitter, once, on, getEventListeners, setMaxListeners, listenerCount, EventEmitterAsyncResource };
+export default EventEmitter;

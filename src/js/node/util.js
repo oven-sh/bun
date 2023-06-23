@@ -1,5 +1,7 @@
 // Hardcoded module "node:util"
 import * as types from "node:util/types";
+export { default as types } from "node:util/types";
+
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __commonJS = (cb, mod) =>
   function __require() {

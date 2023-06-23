@@ -980,7 +980,7 @@ export class ChildProcess extends EventEmitter {
       case 1: {
         switch (io) {
           case "pipe":
-            return ReadableFromWeb(this.#handle[fdToStdioName(i)]);
+            return ReadableFromWeb(this.#handle[fdToStdioName(i)], { encoding });
           case "inherit":
             return process[fdToStdioName(i)] || null;
           case "destroyed":

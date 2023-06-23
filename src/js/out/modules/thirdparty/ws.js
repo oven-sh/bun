@@ -1,4 +1,4 @@
-import EventEmitter from "node:events";
+import {EventEmitter} from "node:events";
 import http from "node:http";
 var emitWarning = function(type, message) {
   if (emittedWarnings.has(type))

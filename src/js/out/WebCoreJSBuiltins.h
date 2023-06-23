@@ -4090,7 +4090,7 @@ extern const JSC::ImplementationVisibility s_importMetaObjectMainCodeImplementat
 
 #define WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_DATA(macro) \
     macro(loadCJS2ESM, importMetaObjectLoadCJS2ESM, 1) \
-    macro(requireESM, importMetaObjectRequireESM, 1) \
+    macro(requireESM, importMetaObjectRequireESM, 2) \
     macro(internalRequire, importMetaObjectInternalRequire, 1) \
     macro(createRequireCache, importMetaObjectCreateRequireCache, 0) \
     macro(require, importMetaObjectRequire, 1) \

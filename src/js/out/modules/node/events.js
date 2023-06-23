@@ -17,13 +17,12 @@ class NotImplementedError extends Error {
 }
 
 // src/js/node/events.js
-function EventEmitter(opts) {
+var EventEmitter = function(opts) {
   if (this._events === void 0 || this._events === this.__proto__._events)
     this._events = { __proto__: null }, this._eventsCount = 0;
   if (this._maxListeners ??= void 0, this[kCapture] = opts?.captureRejections ? Boolean(opts?.captureRejections) : EventEmitterPrototype[kCapture])
     this.emit = emitWithRejectionCapture;
-}
-var emitError = function(emitter, args) {
+}, emitError = function(emitter, args) {
   var { _events: events } = emitter;
   if (args[0] ??= new Error("Unhandled error."), !events)
     throw args[0];
@@ -319,7 +318,6 @@ Object2.defineProperties(EventEmitter, {
 });
 EventEmitter.init = EventEmitter;
 EventEmitter[Symbol.for("CommonJS")] = 0;
-var events_default = EventEmitter;
 
 class AbortError extends Error {
   constructor(message = "The operation was aborted", options = void 0) {
@@ -335,8 +333,15 @@ class EventEmitterAsyncResource extends EventEmitter {
     throwNotImplemented("EventEmitterAsyncResource", 1832);
   }
 }
-EventEmitter.EventEmitterAsyncResource = EventEmitterAsyncResource;
+EventEmitter[Symbol.for("CommonJS")] = 0;
+Object2.assign(EventEmitter, { once, on, getEventListeners, setMaxListeners, listenerCount, EventEmitterAsyncResource });
+var events_default = EventEmitter;
 export {
+  setMaxListeners,
+  once,
+  on,
+  listenerCount,
+  getEventListeners,
   events_default as default,
   EventEmitterAsyncResource,
   EventEmitter

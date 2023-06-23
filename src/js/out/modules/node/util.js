@@ -1,4 +1,5 @@
 import * as types from "node:util/types";
+import {default as default2} from "node:util/types";
 var isBufferInterface = function({ copy, fill, readUint8 }) {
   return typeof copy === "function" && typeof fill === "function" && typeof readUint8 === "function";
 };
@@ -412,6 +413,7 @@ var TextDecoder = cjs_exports.TextDecoder = globalThis.TextDecoder, TextEncoder 
 cjs_exports[Symbol.for("CommonJS")] = 0;
 var util_default = cjs_exports;
 export {
+  default2 as types,
   promisify,
   log,
   isUndefined,

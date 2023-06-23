@@ -69,25 +69,19 @@ async function request(url, options = {
   const body = resp.body ? new BodyReadable(resp) : null;
   return { statusCode, headers: headers.toJSON(), body, trailers, opaque: kEmptyObject, context: kEmptyObject };
 }
-function stream() {
+var stream = function() {
   throw new Error("Not implemented in bun");
-}
-function pipeline() {
+}, pipeline = function() {
   throw new Error("Not implemented in bun");
-}
-function connect() {
+}, connect = function() {
   throw new Error("Not implemented in bun");
-}
-function upgrade() {
+}, upgrade = function() {
   throw new Error("Not implemented in bun");
-}
-function mockErrors() {
+}, mockErrors = function() {
   throw new Error("Not implemented in bun");
-}
-function Undici() {
+}, Undici = function() {
   throw new Error("Not implemented in bun");
-}
-var { Object } = globalThis[Symbol.for("Bun.lazy")]("primordials"), { _ReadableFromWeb } = NodeStreamModule[Symbol.for("::bunternal::")], ObjectCreate = Object.create, kEmptyObject = ObjectCreate(null), fetch = Bun.fetch, Response = globalThis.Response, Headers = globalThis.Headers, Request = globalThis.Request, URLSearchParams = globalThis.URLSearchParams, URL = globalThis.URL;
+}, { Object } = globalThis[Symbol.for("Bun.lazy")]("primordials"), { _ReadableFromWeb } = NodeStreamModule[Symbol.for("::bunternal::")], ObjectCreate = Object.create, kEmptyObject = ObjectCreate(null), fetch = Bun.fetch, Response = globalThis.Response, Headers = globalThis.Headers, Request = globalThis.Request, URLSearchParams = globalThis.URLSearchParams, URL = globalThis.URL;
 
 class File extends Blob {
 }
@@ -215,16 +209,20 @@ export {
   fetch,
   undici_default as default,
   connect,
-  Undici,
   URLSearchParams,
   URL,
   Response,
   Request,
+  Pool,
   MockPool,
   MockClient,
   MockAgent,
   Headers,
   FormData,
   FileReader,
-  File
+  File,
+  Dispatcher,
+  Client,
+  BalancedPool,
+  Agent
 };

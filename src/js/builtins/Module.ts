@@ -23,7 +23,7 @@ export function require(this: Module, id: string) {
 
   let esm = Loader.registry.$get(id);
 
-  if ((esm?.state ?? 0) >= $ModuleLink) {
+  if (esm?.evaluated) {
     const mod = esm!.module;
     const namespace = Loader.getModuleNamespaceObject(mod);
     const exports =
@@ -54,7 +54,7 @@ export function require(this: Module, id: string) {
     esm = Loader.registry.$get(id);
 
     // If we can pull out a ModuleNamespaceObject, let's do it.
-    if ((esm?.state ?? 0) >= $ModuleLink) {
+    if (esm?.evaluated) {
       const namespace = Loader.getModuleNamespaceObject(esm!.module);
       return (mod.exports =
         // if they choose a module

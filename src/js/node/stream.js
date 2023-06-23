@@ -2546,7 +2546,7 @@ var require_readable = __commonJS({
     }
 
     module.exports = Readable;
-    _ReadableFromWeb = ReadableFromWeb;
+    _ReadableFromWeb = newStreamReadableFromReadableStream;
 
     var { addAbortSignal } = require_add_abort_signal();
     var eos = require_end_of_stream();

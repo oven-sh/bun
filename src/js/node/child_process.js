@@ -1,5 +1,5 @@
 // Hardcoded module "node:child_process"
-import EventEmitter from "node:events";
+import { EventEmitter } from "node:events";
 import StreamModule from "node:stream";
 import { constants } from "node:os";
 import { promisify } from "node:util";
@@ -54,17 +54,8 @@ if (__TRACK_STDIO__) {
   };
 }
 
-var getNativeWritable = () => {
-  const value = StreamModule.NativeWritable;
-  getNativeWritable = () => value;
-  return value;
-};
-
-var getReadableFromWeb = () => {
-  const value = StreamModule[Symbol.for("::bunternal::")]._ReadableFromWeb;
-  getReadableFromWeb = () => value;
-  return value;
-};
+var NativeWritable;
+var ReadableFromWeb;
 
 // Sections:
 // 1. Exported child_process functions
@@ -967,12 +958,16 @@ export class ChildProcess extends EventEmitter {
         debug("ChildProcess: getBunSpawnIo: this.#handle is undefined");
       }
     }
+
+    NativeWritable ||= StreamModule.NativeWritable;
+    ReadableFromWeb ||= StreamModule.Readable.fromWeb;
+
     const io = this.#stdioOptions[i];
     switch (i) {
       case 0: {
         switch (io) {
           case "pipe":
-            return new getNativeWritable(this.#handle.stdin);
+            return new NativeWritable(this.#handle.stdin);
           case "inherit":
             return process.stdin || null;
           case "destroyed":
@@ -985,15 +980,7 @@ export class ChildProcess extends EventEmitter {
       case 1: {
         switch (io) {
           case "pipe":
-            return getReadableFromWeb(
-              this.#handle[fdToStdioName(i)],
-              __TRACK_STDIO__
-                ? {
-                    encoding,
-                    __id: `PARENT_${fdToStdioName(i).toUpperCase()}-${globalThis.__getId()}`,
-                  }
-                : { encoding },
-            );
+            return ReadableFromWeb(this.#handle[fdToStdioName(i)]);
           case "inherit":
             return process[fdToStdioName(i)] || null;
           case "destroyed":

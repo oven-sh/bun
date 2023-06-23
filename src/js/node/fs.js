@@ -1,9 +1,9 @@
 // Hardcoded module "node:fs"
 var { direct, isPromise, isCallable } = globalThis[Symbol.for("Bun.lazy")]("primordials");
+export { default as promises } from "node:fs/promises";
 import promises from "node:fs/promises";
 
 import { Readable, NativeWritable, _getNativeReadableStreamPrototype, eos as eos_ } from "node:stream";
-var NativeReadable = _getNativeReadableStreamPrototype(2, Readable); // 2 means native type is a file here
 
 var fs = Bun.fs();
 var debug = process.env.DEBUG ? console.log : () => {};
@@ -221,6 +221,7 @@ var defaultReadStreamOptions = {
 };
 
 var ReadStreamClass;
+var NativeReadable = _getNativeReadableStreamPrototype(2, Readable); // 2 means native type is a file here
 export var ReadStream = (function (InternalReadStream) {
   ReadStreamClass = InternalReadStream;
   Object.defineProperty(ReadStreamClass.prototype, Symbol.toStringTag, {

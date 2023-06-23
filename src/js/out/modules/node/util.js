@@ -6,7 +6,9 @@ var isBufferInterface = function({ copy, fill, readUint8 }) {
 function isBuffer(value) {
   return Buffer.isBuffer(value) || typeof value === "object" && isBufferInterface(value || {});
 }
-var format = function(f) {
+var isFunction = function(value) {
+  return typeof value === "function";
+}, format = function(f) {
   if (!isString(f)) {
     var objects = [];
     for (var i = 0;i < arguments.length; i++)
@@ -44,7 +46,7 @@ var format = function(f) {
     return fn;
   if (typeof process === "undefined")
     return function() {
-      return cjs_exports.deprecate(fn, msg).apply(this, arguments);
+      return deprecate(fn, msg).apply(this, arguments);
     };
   var warned = !1;
   function deprecated() {
@@ -65,7 +67,7 @@ var format = function(f) {
     if (debugEnvRegex.test(set)) {
       var pid = process.pid;
       debugs[set] = function() {
-        var msg = cjs_exports.format.apply(cjs_exports, arguments);
+        var msg = format.apply(cjs_exports, arguments);
         console.error("%s %d: %s", set, pid, msg);
       };
     } else
@@ -84,7 +86,7 @@ var format = function(f) {
   if (isBoolean(opts))
     ctx.showHidden = opts;
   else if (opts)
-    cjs_exports._extend(ctx, opts);
+    _extend(ctx, opts);
   if (isUndefined(ctx.showHidden))
     ctx.showHidden = !1;
   if (isUndefined(ctx.depth))
@@ -110,7 +112,7 @@ var format = function(f) {
     hash[val] = !0;
   }), hash;
 }, formatValue = function(ctx, value, recurseTimes) {
-  if (ctx.customInspect && value && isFunction(value.inspect) && value.inspect !== cjs_exports.inspect && !(value.constructor && value.constructor.prototype === value)) {
+  if (ctx.customInspect && value && isFunction(value.inspect) && value.inspect !== inspect && !(value.constructor && value.constructor.prototype === value)) {
     var ret = value.inspect(recurseTimes, ctx);
     if (!isString(ret))
       ret = formatValue(ctx, ret, recurseTimes);
@@ -129,9 +131,9 @@ var format = function(f) {
       var name = value.name ? ": " + value.name : "";
       return ctx.stylize("[Function" + name + "]", "special");
     }
-    if (isRegExp(value))
+    if (isRegExp2(value))
       return ctx.stylize(RegExp.prototype.toString.call(value), "regexp");
-    if (isDate(value))
+    if (isDate2(value))
       return ctx.stylize(Date.prototype.toString.call(value), "date");
     if (isError(value))
       return formatError(value);
@@ -143,16 +145,16 @@ var format = function(f) {
     var n = value.name ? ": " + value.name : "";
     base = " [Function" + n + "]";
   }
-  if (isRegExp(value))
+  if (isRegExp2(value))
     base = " " + RegExp.prototype.toString.call(value);
-  if (isDate(value))
+  if (isDate2(value))
     base = " " + Date.prototype.toUTCString.call(value);
   if (isError(value))
     base = " " + formatError(value);
   if (keys.length === 0 && (!array || value.length == 0))
     return braces[0] + base + braces[1];
   if (recurseTimes < 0)
-    if (isRegExp(value))
+    if (isRegExp2(value))
       return ctx.stylize(RegExp.prototype.toString.call(value), "regexp");
     else
       return ctx.stylize("[Object]", "special");
@@ -289,7 +291,7 @@ var format = function(f) {
     });
   }
   return Object.setPrototypeOf(callbackified, Object.getPrototypeOf(original)), Object.defineProperties(callbackified, getOwnPropertyDescriptors(original)), callbackified;
-}, __getOwnPropNames = Object.getOwnPropertyNames, __commonJS = (cb, mod) => function __require() {
+}, cjs_exports = {}, util_default = cjs_exports, __getOwnPropNames = Object.getOwnPropertyNames, __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 }, require_inherits_browser = __commonJS({
   "node_modules/inherits/inherits_browser.js"(exports, module2) {
@@ -304,17 +306,10 @@ var format = function(f) {
       });
     };
   }
-}), deepEquals = Bun.deepEquals, isDeepStrictEqual = (a, b) => deepEquals(a, b, !0), cjs_exports = {
-  isDeepStrictEqual
-}, getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors, formatRegExp = /%[sdj%]/g;
-cjs_exports.format = format;
-cjs_exports.deprecate = deprecate;
-var debugs = {}, debugEnvRegex = /^$/;
+}), deepEquals = Bun.deepEquals, isDeepStrictEqual = (a, b) => deepEquals(a, b, !0), getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors, formatRegExp = /%[sdj%]/g, debugs = {}, debugEnvRegex = /^$/;
 if (process.env.NODE_DEBUG)
   debugEnv = process.env.NODE_DEBUG, debugEnv = debugEnv.replace(/[|\\{}()[\]^$+?.]/g, "\\$&").replace(/\*/g, ".*").replace(/,/g, "$|^").toUpperCase(), debugEnvRegex = new RegExp("^" + debugEnv + "$", "i");
 var debugEnv;
-cjs_exports.debuglog = debuglog;
-cjs_exports.inspect = inspect;
 inspect.colors = {
   bold: [1, 22],
   italic: [3, 23],
@@ -340,32 +335,16 @@ inspect.styles = {
   date: "magenta",
   regexp: "red"
 };
-cjs_exports.types = types;
-cjs_exports.isArray = isArray;
-cjs_exports.isBoolean = isBoolean;
-cjs_exports.isNull = isNull;
-cjs_exports.isNullOrUndefined = isNullOrUndefined;
-cjs_exports.isNumber = isNumber;
-cjs_exports.isString = isString;
-cjs_exports.isSymbol = isSymbol;
-cjs_exports.isUndefined = isUndefined;
-var isRegExp = cjs_exports.isRegExp = cjs_exports.types.isRegExp;
-cjs_exports.isObject = isObject;
-var isDate = cjs_exports.isDate = cjs_exports.types.isDate, isError = cjs_exports.isError = cjs_exports.types.isNativeError, isFunction = (arg) => {
-  return typeof arg === "function";
-};
-cjs_exports.isPrimitive = isPrimitive;
-cjs_exports.isBuffer = isBuffer;
-var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], log = cjs_exports.log = function() {
-  console.log("%s - %s", timestamp(), cjs_exports.format.apply(cjs_exports, arguments));
-}, inherits = cjs_exports.inherits = require_inherits_browser(), _extend = cjs_exports._extend = function(origin, add) {
+var isRegExp2 = types.isRegExp, isDate2 = types.isDate, isError = types.isNativeError, months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], log = function log2() {
+  console.log("%s - %s", timestamp(), format.apply(cjs_exports, arguments));
+}, inherits = inherits = require_inherits_browser(), _extend = function(origin, add) {
   if (!add || !isObject(add))
     return origin;
   var keys = Object.keys(add), i = keys.length;
   while (i--)
     origin[keys[i]] = add[keys[i]];
   return origin;
-}, kCustomPromisifiedSymbol = Symbol.for("util.promisify.custom"), promisify = cjs_exports.promisify = function promisify2(original) {
+}, kCustomPromisifiedSymbol = Symbol.for("util.promisify.custom"), promisify = function promisify2(original) {
   if (typeof original !== "function")
     throw new TypeError('The "original" argument must be of type Function');
   if (kCustomPromisifiedSymbol && original[kCustomPromisifiedSymbol]) {
@@ -407,11 +386,39 @@ var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oc
     });
   return Object.defineProperties(fn, getOwnPropertyDescriptors(original));
 };
-cjs_exports.promisify.custom = kCustomPromisifiedSymbol;
-cjs_exports.callbackify = callbackify;
-var TextDecoder = cjs_exports.TextDecoder = globalThis.TextDecoder, TextEncoder = cjs_exports.TextEncoder = globalThis.TextEncoder;
-cjs_exports[Symbol.for("CommonJS")] = 0;
-var util_default = cjs_exports;
+promisify.custom = kCustomPromisifiedSymbol;
+var { TextDecoder, TextEncoder } = globalThis;
+Object.assign(cjs_exports, {
+  format,
+  deprecate,
+  debuglog,
+  _extend,
+  inspect,
+  types,
+  isArray,
+  isBoolean,
+  isNull,
+  isNullOrUndefined,
+  isNumber,
+  isString,
+  isSymbol,
+  isUndefined,
+  isRegExp: isRegExp2,
+  isObject,
+  isDate: isDate2,
+  isFunction,
+  isError,
+  isPrimitive,
+  isBuffer,
+  log,
+  inherits,
+  promisify,
+  callbackify,
+  isDeepStrictEqual,
+  TextDecoder,
+  TextEncoder,
+  [Symbol.for("CommonJS")]: 0
+});
 export {
   default2 as types,
   promisify,
@@ -419,7 +426,7 @@ export {
   isUndefined,
   isSymbol,
   isString,
-  isRegExp,
+  isRegExp2 as isRegExp,
   isPrimitive,
   isObject,
   isNumber,
@@ -428,7 +435,7 @@ export {
   isFunction,
   isError,
   isDeepStrictEqual,
-  isDate,
+  isDate2 as isDate,
   isBuffer,
   isBoolean,
   isArray,

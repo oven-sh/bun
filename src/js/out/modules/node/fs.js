@@ -1,6 +1,6 @@
 import {default as default2} from "node:fs/promises";
 import promises2 from "node:fs/promises";
-import {Readable, NativeWritable, _getNativeReadableStreamPrototype, eos as eos_} from "node:stream";
+import * as Stream from "node:stream";
 var callbackify = function(fsFunction, args) {
   try {
     const result = fsFunction.apply(fs, args.slice(0, args.length - 1)), callback = args[args.length - 1];
@@ -18,7 +18,7 @@ function createReadStream(path, options) {
 function createWriteStream(path, options) {
   return new WriteStream(path, options);
 }
-var { direct, isPromise, isCallable } = globalThis[Symbol.for("Bun.lazy")]("primordials"), fs = Bun.fs(), debug = process.env.DEBUG ? console.log : () => {
+var ReadStream, WriteStream, { direct, isPromise, isCallable } = globalThis[Symbol.for("Bun.lazy")]("primordials"), fs = Bun.fs(), debug = process.env.DEBUG ? console.log : () => {
 }, access = function access2(...args) {
   callbackify(fs.accessSync, args);
 }, appendFile = function appendFile2(...args) {
@@ -118,7 +118,8 @@ var { direct, isPromise, isCallable } = globalThis[Symbol.for("Bun.lazy")]("prim
     close
   },
   autoDestroy: !0
-}, ReadStreamClass, NativeReadable = _getNativeReadableStreamPrototype(2, Readable), ReadStream = function(InternalReadStream) {
+}, ReadStreamClass;
+ReadStream = function(InternalReadStream) {
   return ReadStreamClass = InternalReadStream, Object.defineProperty(ReadStreamClass.prototype, Symbol.toStringTag, {
     value: "ReadStream",
     enumerable: !1
@@ -129,7 +130,7 @@ var { direct, isPromise, isCallable } = globalThis[Symbol.for("Bun.lazy")]("prim
       return instance instanceof InternalReadStream;
     }
   });
-}(class ReadStream2 extends NativeReadable {
+}(class ReadStream2 extends Stream._getNativeReadableStreamPrototype(2, Stream.Readable) {
   constructor(pathOrFd, options = defaultReadStreamOptions) {
     if (typeof options !== "object" || !options)
       throw new TypeError("Expected options to be an object");
@@ -302,7 +303,8 @@ var { direct, isPromise, isCallable } = globalThis[Symbol.for("Bun.lazy")]("prim
     }
     return this[readStreamPathFastPathSymbol] = !1, super.pipe(dest, pipeOpts);
   }
-}), defaultWriteStreamOptions = {
+});
+var defaultWriteStreamOptions = {
   fd: null,
   start: void 0,
   pos: void 0,
@@ -315,7 +317,8 @@ var { direct, isPromise, isCallable } = globalThis[Symbol.for("Bun.lazy")]("prim
     open,
     openSync
   }
-}, WriteStreamClass, WriteStream = function(InternalWriteStream) {
+}, WriteStreamClass;
+WriteStream = function(InternalWriteStream) {
   return WriteStreamClass = InternalWriteStream, Object.defineProperty(WriteStreamClass.prototype, Symbol.toStringTag, {
     value: "WritesStream",
     enumerable: !1
@@ -326,7 +329,7 @@ var { direct, isPromise, isCallable } = globalThis[Symbol.for("Bun.lazy")]("prim
       return instance instanceof InternalWriteStream;
     }
   });
-}(class WriteStream2 extends NativeWritable {
+}(class WriteStream2 extends Stream.NativeWritable {
   constructor(path, options = defaultWriteStreamOptions) {
     if (!options)
       throw new TypeError("Expected options to be an object");

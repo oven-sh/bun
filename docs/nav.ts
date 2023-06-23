@@ -190,6 +190,9 @@ export default {
     page("test/snapshots", "Snapshots", {
       description: "Add lifecycle hooks to your tests that run before/after each test or test run",
     }),
+    page("test/dom", "DOM testing", {
+      description: "Write headless tests for UI and React/Vue/Svelte/Lit components with happy-dom",
+    }),
     page("test/hot", "Watch mode", {
       description: "Reload your tests automatically on change.",
     }),

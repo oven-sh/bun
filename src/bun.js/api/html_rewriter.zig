@@ -472,13 +472,13 @@ pub const HTMLRewriter = struct {
         pub fn onFinishedLoading(sink: *BufferOutputSink, bytes: JSC.WebCore.Blob.Store.ReadFile.ResultType) void {
             switch (bytes) {
                 .err => |err| {
-                    if (sink.response.body.value == .Locked and @ptrToInt(sink.response.body.value.Locked.task) == @ptrToInt(sink) and
+                    if (sink.response.body.value == .Locked and @intFromPtr(sink.response.body.value.Locked.task) == @intFromPtr(sink) and
                         sink.response.body.value.Locked.promise == null)
                     {
                         sink.response.body.value = .{ .Empty = {} };
                         // is there a pending promise?
                         // we will need to reject it
-                    } else if (sink.response.body.value == .Locked and @ptrToInt(sink.response.body.value.Locked.task) == @ptrToInt(sink) and
+                    } else if (sink.response.body.value == .Locked and @intFromPtr(sink.response.body.value.Locked.task) == @intFromPtr(sink) and
                         sink.response.body.value.Locked.promise != null)
                     {
                         sink.response.body.value.Locked.onReceiveValue = null;

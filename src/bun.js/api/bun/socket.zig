@@ -254,19 +254,17 @@ pub const SocketConfig = struct {
         var ssl: ?JSC.API.ServerConfig.SSLConfig = null;
         var default_data = JSValue.zero;
 
-        if (opts.getTruthy(globalObject, "tls")) |tls| outer: {
+        if (opts.getTruthy(globalObject, "tls")) |tls| {
             if (tls.isBoolean()) {
                 if (tls.toBoolean()) {
                     ssl = JSC.API.ServerConfig.SSLConfig.zero;
                 }
-
-                break :outer;
-            }
-
-            if (JSC.API.ServerConfig.SSLConfig.inJS(globalObject, tls, exception)) |ssl_config| {
-                ssl = ssl_config;
-            } else if (exception.* != null) {
-                return null;
+            } else {
+                if (JSC.API.ServerConfig.SSLConfig.inJS(globalObject, tls, exception)) |ssl_config| {
+                    ssl = ssl_config;
+                } else if (exception.* != null) {
+                    return null;
+                }
             }
         }
 
@@ -400,10 +398,10 @@ pub const Listener = struct {
         pub fn deinit(this: UnixOrHost) void {
             switch (this) {
                 .unix => |u| {
-                    bun.default_allocator.destroy(@intToPtr([*]u8, @ptrToInt(u.ptr)));
+                    bun.default_allocator.destroy(@ptrFromInt([*]u8, @intFromPtr(u.ptr)));
                 },
                 .host => |h| {
-                    bun.default_allocator.destroy(@intToPtr([*]u8, @ptrToInt(h.host.ptr)));
+                    bun.default_allocator.destroy(@ptrFromInt([*]u8, @intFromPtr(h.host.ptr)));
                 },
             }
         }
@@ -474,7 +472,7 @@ pub const Listener = struct {
         globalObject.bunVM().eventLoop().ensureWaker();
 
         var socket_context = uws.us_create_bun_socket_context(
-            @boolToInt(ssl_enabled),
+            @intFromBool(ssl_enabled),
             uws.Loop.get().?,
             @sizeOf(usize),
             ctx_opts,
@@ -485,7 +483,7 @@ pub const Listener = struct {
                 hostname_or_unix.deinit();
             }
 
-            const errno = @enumToInt(std.c.getErrno(-1));
+            const errno = @intFromEnum(std.c.getErrno(-1));
             if (errno != 0) {
                 err.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(errno));
                 if (bun.C.SystemErrno.init(errno)) |str| {
@@ -546,7 +544,7 @@ pub const Listener = struct {
                     defer bun.default_allocator.free(host);
 
                     const socket = uws.us_socket_context_listen(
-                        @boolToInt(ssl_enabled),
+                        @intFromBool(ssl_enabled),
                         socket_context,
                         normalizeHost(@as([:0]const u8, host)),
                         c.port,
@@ -562,13 +560,13 @@ pub const Listener = struct {
                 .unix => |u| {
                     var host = bun.default_allocator.dupeZ(u8, u) catch unreachable;
                     defer bun.default_allocator.free(host);
-                    break :brk uws.us_socket_context_listen_unix(@boolToInt(ssl_enabled), socket_context, host, socket_flags, 8);
+                    break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, socket_flags, 8);
                 },
             }
         } orelse {
             defer {
                 hostname_or_unix.deinit();
-                uws.us_socket_context_free(@boolToInt(ssl_enabled), socket_context);
+                uws.us_socket_context_free(@intFromBool(ssl_enabled), socket_context);
             }
 
             const err = globalObject.createErrorInstance(
@@ -577,7 +575,7 @@ pub const Listener = struct {
                     bun.span(hostname_or_unix.slice()),
                 },
             );
-            const errno = @enumToInt(std.c.getErrno(-1));
+            const errno = @intFromEnum(std.c.getErrno(-1));
             if (errno != 0) {
                 err.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(errno));
                 if (bun.C.SystemErrno.init(errno)) |str| {
@@ -791,7 +789,7 @@ pub const Listener = struct {
 
         globalObject.bunVM().eventLoop().ensureWaker();
 
-        var socket_context = uws.us_create_bun_socket_context(@boolToInt(ssl_enabled), uws.Loop.get().?, @sizeOf(usize), ctx_opts).?;
+        var socket_context = uws.us_create_bun_socket_context(@intFromBool(ssl_enabled), uws.Loop.get().?, @sizeOf(usize), ctx_opts).?;
         var connection: Listener.UnixOrHost = if (port) |port_| .{
             .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(), .port = port_ },
         } else .{

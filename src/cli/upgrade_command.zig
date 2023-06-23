@@ -344,7 +344,7 @@ pub const UpgradeCommand = struct {
 
                         if (asset.asProperty("size")) |size_| {
                             if (size_.expr.data == .e_number) {
-                                version.size = @intCast(u32, @max(@floatToInt(i32, std.math.ceil(size_.expr.data.e_number.value)), 0));
+                                version.size = @intCast(u32, @max(@intFromFloat(i32, std.math.ceil(size_.expr.data.e_number.value)), 0));
                             }
                         }
                         return version;
@@ -648,13 +648,13 @@ pub const UpgradeCommand = struct {
                 if (target_stat.size == dest_stat.size and target_stat.size > 0) {
                     var input_buf = try ctx.allocator.alloc(u8, target_stat.size);
 
-                    const target_hash = std.hash.Wyhash.hash(0, target_dir.readFile(target_filename, input_buf) catch |err| {
+                    const target_hash = bun.hash(target_dir.readFile(target_filename, input_buf) catch |err| {
                         save_dir_.deleteTree(version_name) catch {};
                         Output.prettyErrorln("<r><red>error:<r> Failed to read target bun {s}", .{@errorName(err)});
                         Global.exit(1);
                     });
 
-                    const source_hash = std.hash.Wyhash.hash(0, save_dir.readFile(exe, input_buf) catch |err| {
+                    const source_hash = bun.hash(save_dir.readFile(exe, input_buf) catch |err| {
                         save_dir_.deleteTree(version_name) catch {};
                         Output.prettyErrorln("<r><red>error:<r> Failed to read source bun {s}", .{@errorName(err)});
                         Global.exit(1);

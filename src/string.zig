@@ -243,11 +243,22 @@ pub const String = extern struct {
     extern fn BunString__fromBytes(bytes: [*]const u8, len: usize) String;
 
     pub fn createLatin1(bytes: []const u8) String {
+        JSC.markBinding(@src());
         return BunString__fromLatin1(bytes.ptr, bytes.len);
     }
 
     pub fn create(bytes: []const u8) String {
+        JSC.markBinding(@src());
         return BunString__fromBytes(bytes.ptr, bytes.len);
+    }
+
+    pub fn isEmpty(this: String) bool {
+        return this.tag == .Empty or this.length() == 0;
+    }
+
+    pub fn dupeRef(this: String) String {
+        this.ref();
+        return this;
     }
 
     pub fn initWithType(comptime Type: type, value: Type) String {
@@ -293,6 +304,7 @@ pub const String = extern struct {
     ) String;
 
     pub fn createExternal(bytes: []const u8, isLatin1: bool, ctx: ?*anyopaque, callback: ?*const fn (*anyopaque, *anyopaque, u32) callconv(.C) void) String {
+        JSC.markBinding(@src());
         return BunString__createExternal(bytes.ptr, bytes.len, isLatin1, ctx, callback);
     }
 
@@ -336,6 +348,24 @@ pub const String = extern struct {
         return BunString__toJS(globalObject, this);
     }
 
+    pub fn toJSConst(this: *const String, globalObject: *bun.JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        var a = this.*;
+        return toJS(&a, globalObject);
+    }
+
+    extern fn BunString__createArray(
+        globalObject: *bun.JSC.JSGlobalObject,
+        ptr: [*]const String,
+        len: usize,
+    ) JSC.JSValue;
+
+    pub fn toJSArray(globalObject: *bun.JSC.JSGlobalObject, array: []const bun.String) JSC.JSValue {
+        JSC.markBinding(@src());
+
+        return BunString__createArray(globalObject, array.ptr, array.len);
+    }
+
     pub fn toZigString(this: String) ZigString {
         if (this.tag == .StaticZigString or this.tag == .ZigString) {
             return this.value.ZigString;
@@ -348,6 +378,8 @@ pub const String = extern struct {
     }
 
     pub fn toWTF(this: *String) void {
+        JSC.markBinding(@src());
+
         BunString__toWTFString(this);
     }
 
@@ -446,6 +478,13 @@ pub const String = extern struct {
         return ZigString.Slice.empty;
     }
 
+    pub fn toSlice(this: String, allocator: std.mem.Allocator) SliceWithUnderlyingString {
+        return SliceWithUnderlyingString{
+            .utf8 = this.toUTF8(allocator),
+            .underlying = this,
+        };
+    }
+
     extern fn BunString__fromJS(globalObject: *JSC.JSGlobalObject, value: bun.JSC.JSValue, out: *String) bool;
     extern fn BunString__toJS(globalObject: *JSC.JSGlobalObject, in: *String) JSC.JSValue;
     extern fn BunString__toWTFString(this: *String) void;
@@ -470,11 +509,114 @@ pub const String = extern struct {
         return this.toZigString().eqlComptime(value);
     }
 
+    pub fn is8Bit(this: String) bool {
+        return switch (this.tag) {
+            .WTFStringImpl => this.value.WTFStringImpl.is8Bit(),
+            .ZigString => !this.value.ZigString.is16Bit(),
+            else => true,
+        };
+    }
+
+    pub fn indexOfComptimeWithCheckLen(this: String, comptime values: []const []const u8, comptime check_len: usize) ?usize {
+        if (this.is8Bit()) {
+            const bytes = this.byteSlice();
+            for (values, 0..) |val, i| {
+                if (bun.strings.eqlComptimeCheckLenWithType(u8, bytes, val, check_len)) {
+                    return i;
+                }
+            }
+
+            return null;
+        }
+
+        const u16_bytes = this.byteSlice();
+        inline for (values, 0..) |val, i| {
+            if (bun.strings.eqlComptimeCheckLenWithType(u16, u16_bytes, comptime bun.strings.toUTF16Literal(val), check_len)) {
+                return i;
+            }
+        }
+
+        return null;
+    }
+
+    pub fn indexOfComptimeArrayAssumeSameLength(this: String, comptime values: []const []const u8) ?usize {
+        if (this.is8Bit()) {
+            const bytes = this.byteSlice();
+
+            inline for (0..values.len) |i| {
+                std.debug.assert(bytes.len == values[i].len);
+                if (bun.strings.eqlComptimeCheckLenWithType(u8, bytes, values[i], false)) {
+                    return i;
+                }
+            }
+
+            return null;
+        }
+
+        const u16_bytes = this.utf16();
+        var buffer: [values[0].len]u8 = undefined;
+        inline for (0..values[0].len) |i| {
+            const uchar = u16_bytes[i];
+            if (uchar > 255)
+                return null;
+
+            buffer[i] = @intCast(u8, uchar);
+        }
+
+        inline for (0..values.len) |i| {
+            if (bun.strings.eqlComptimeCheckLenWithType(u8, &buffer, values[i], false)) {
+                return i;
+            }
+        }
+
+        return null;
+    }
+
+    pub fn inMap(this: String, comptime ComptimeStringMap: anytype) ?ComptimeStringMap.Value {
+        return ComptimeStringMap.getWithEqlList(this, indexOfComptimeArrayAssumeSameLength);
+    }
+
+    pub fn inMapCaseInsensitive(this: String, comptime ComptimeStringMap: anytype) ?ComptimeStringMap.Value {
+        return ComptimeStringMap.getWithEqlList(this, indexOfComptimeArrayCaseInsensitiveSameLength);
+    }
+
+    pub fn indexOfComptimeArrayCaseInsensitiveSameLength(this: String, comptime values: []const []const u8) ?usize {
+        if (this.is8Bit()) {
+            const bytes = this.byteSlice();
+
+            inline for (0..values.len) |i| {
+                std.debug.assert(bytes.len == values[i].len);
+                if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(bytes, values[i])) {
+                    return i;
+                }
+            }
+
+            return null;
+        }
+
+        const u16_bytes = this.utf16();
+        const buffer: [values[0].len]u8 = brk: {
+            var bytes: [values[0].len]u8 = undefined;
+            for (&bytes, u16_bytes) |*byte, uchar| {
+                if (uchar > 255)
+                    return null;
+
+                byte.* = @intCast(u8, uchar);
+            }
+            break :brk bytes;
+        };
+
+        inline for (0..values.len) |i| {
+            if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(&buffer, values[i])) {
+                return i;
+            }
+        }
+
+        return null;
+    }
+
     pub fn hasPrefixComptime(this: String, comptime value: []const u8) bool {
-        _ = value;
-        _ = this;
-        return false;
-        // return this.toZigString().substring(0, value.len).eqlComptime(value);
+        return this.toZigString().substring(0, value.len).eqlComptime(value);
     }
 
     pub fn isWTFAllocator(this: std.mem.Allocator) bool {
@@ -487,5 +629,23 @@ pub const String = extern struct {
 
     pub fn eql(this: String, other: String) bool {
         return this.toZigString().eql(other.toZigString());
+    }
+};
+
+pub const SliceWithUnderlyingString = struct {
+    utf8: ZigString.Slice,
+    underlying: String,
+
+    pub fn deinit(this: SliceWithUnderlyingString) void {
+        this.utf8.deinit();
+        this.underlying.deref();
+    }
+
+    pub fn slice(this: SliceWithUnderlyingString) []const u8 {
+        return this.utf8.slice();
+    }
+
+    pub fn toJS(this: SliceWithUnderlyingString, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        return this.underlying.toJS(globalObject);
     }
 };

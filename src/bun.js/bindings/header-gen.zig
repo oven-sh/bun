@@ -807,7 +807,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                                                 }
                                             };
                                             var extern_list = Type.Extern;
-                                            std.sort.sort([]const u8, &extern_list, Sorder{}, Sorder.lessThan);
+                                            std.sort.block([]const u8, &extern_list, Sorder{}, Sorder.lessThan);
                                             break :brk extern_list;
                                         };
                                         // impl_writer.print("  #include {s}\n", .{Type.include}) catch unreachable;
@@ -840,7 +840,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                                                 }
                                             };
                                             var extern_list = Type.Export;
-                                            std.sort.sort(StaticExport, &extern_list, Sorder{}, Sorder.lessThan);
+                                            std.sort.block(StaticExport, &extern_list, Sorder{}, Sorder.lessThan);
                                             break :brk extern_list;
                                         };
 
@@ -867,7 +867,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                                     //             }
                                     //         };
                                     //         var extern_list = Type.lazy_static_functions;
-                                    //         std.sort.sort(StaticExport, &extern_list, Sorder{}, Sorder.lessThan);
+                                    //         std.sort.block(StaticExport, &extern_list, Sorder{}, Sorder.lessThan);
                                     //         break :brk extern_list;
                                     //     };
 

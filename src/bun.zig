@@ -149,7 +149,7 @@ pub const fmt = struct {
             const mags_iec = " KMGTPEZY";
 
             const log2 = math.log2(value);
-            const magnitude = math.min(log2 / comptime math.log2(1000), mags_si.len - 1);
+            const magnitude = @min(log2 / comptime math.log2(1000), mags_si.len - 1);
             const new_value = math.lossyCast(f64, value) / math.pow(f64, 1000, math.lossyCast(f64, magnitude));
             const suffix = switch (1000) {
                 1000 => mags_si[magnitude],
@@ -176,7 +176,7 @@ pub const fmt = struct {
     pub fn size(value: anytype) SizeFormatter {
         return switch (@TypeOf(value)) {
             f64, f32, f128 => SizeFormatter{
-                .value = @floatToInt(u64, value),
+                .value = @intFromFloat(u64, value),
             },
             else => SizeFormatter{ .value = @intCast(u64, value) },
         };
@@ -288,7 +288,7 @@ pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.MAX_P
 
 pub inline fn cast(comptime To: type, value: anytype) To {
     if (comptime std.meta.trait.isIntegral(@TypeOf(value))) {
-        return @intToPtr(To, @bitCast(usize, value));
+        return @ptrFromInt(To, @bitCast(usize, value));
     }
 
     // TODO: file issue about why std.meta.Child only is necessary on Linux aarch64
@@ -471,7 +471,7 @@ pub inline fn range(comptime min: anytype, comptime max: anytype) [max - min]usi
 
 pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
     if (comptime Environment.allow_assert) std.debug.assert(dest.len >= src.len);
-    if (@ptrToInt(src.ptr) == @ptrToInt(dest.ptr) or src.len == 0) return;
+    if (@intFromPtr(src.ptr) == @intFromPtr(dest.ptr) or src.len == 0) return;
 
     const input: []const u8 = std.mem.sliceAsBytes(src);
     const output: []u8 = std.mem.sliceAsBytes(dest);
@@ -479,13 +479,13 @@ pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
     std.debug.assert(input.len > 0);
     std.debug.assert(output.len > 0);
 
-    const does_input_or_output_overlap = (@ptrToInt(input.ptr) < @ptrToInt(output.ptr) and
-        @ptrToInt(input.ptr) + input.len > @ptrToInt(output.ptr)) or
-        (@ptrToInt(output.ptr) < @ptrToInt(input.ptr) and
-        @ptrToInt(output.ptr) + output.len > @ptrToInt(input.ptr));
+    const does_input_or_output_overlap = (@intFromPtr(input.ptr) < @intFromPtr(output.ptr) and
+        @intFromPtr(input.ptr) + input.len > @intFromPtr(output.ptr)) or
+        (@intFromPtr(output.ptr) < @intFromPtr(input.ptr) and
+        @intFromPtr(output.ptr) + output.len > @intFromPtr(input.ptr));
 
     if (!does_input_or_output_overlap) {
-        @memcpy(output.ptr, input.ptr, input.len);
+        @memcpy(output[0..input.len], input);
     } else {
         C.memmove(output.ptr, input.ptr, input.len);
     }
@@ -541,14 +541,14 @@ pub fn assertDefined(val: anytype) void {
         std.debug.assert(val.len < std.math.maxInt(u32) + 1);
         var slice: []Type = undefined;
         if (val.len > 0) {
-            std.debug.assert(@ptrToInt(val.ptr) != @ptrToInt(slice.ptr));
+            std.debug.assert(@intFromPtr(val.ptr) != @intFromPtr(slice.ptr));
         }
         return;
     }
 
     if (comptime @typeInfo(Type) == .Pointer) {
         var slice: *Type = undefined;
-        std.debug.assert(@ptrToInt(val) != @ptrToInt(slice));
+        std.debug.assert(@intFromPtr(val) != @intFromPtr(slice));
         return;
     }
 
@@ -564,6 +564,10 @@ pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
 /// hash a string
 pub fn hash(content: []const u8) u64 {
     return std.hash.Wyhash.hash(0, content);
+}
+
+pub fn hashWithSeed(seed: u64, content: []const u8) u64 {
+    return std.hash.Wyhash.hash(seed, content);
 }
 
 pub fn hash32(content: []const u8) u32 {
@@ -592,7 +596,7 @@ pub fn ensureNonBlocking(fd: anytype) void {
 
 const global_scope_log = Output.scoped(.bun, false);
 pub fn isReadable(fd: std.os.fd_t) PollFlag {
-    var polls = &[_]std.os.pollfd{
+    var polls = [_]std.os.pollfd{
         .{
             .fd = fd,
             .events = std.os.POLL.IN | std.os.POLL.ERR,
@@ -600,7 +604,7 @@ pub fn isReadable(fd: std.os.fd_t) PollFlag {
         },
     };
 
-    const result = (std.os.poll(polls, 0) catch 0) != 0;
+    const result = (std.os.poll(&polls, 0) catch 0) != 0;
     global_scope_log("poll({d}) readable: {any} ({d})", .{ fd, result, polls[0].revents });
     return if (result and polls[0].revents & std.os.POLL.HUP != 0)
         PollFlag.hup
@@ -612,7 +616,7 @@ pub fn isReadable(fd: std.os.fd_t) PollFlag {
 
 pub const PollFlag = enum { ready, not_ready, hup };
 pub fn isWritable(fd: std.os.fd_t) PollFlag {
-    var polls = &[_]std.os.pollfd{
+    var polls = [_]std.os.pollfd{
         .{
             .fd = fd,
             .events = std.os.POLL.OUT,
@@ -620,7 +624,7 @@ pub fn isWritable(fd: std.os.fd_t) PollFlag {
         },
     };
 
-    const result = (std.os.poll(polls, 0) catch 0) != 0;
+    const result = (std.os.poll(&polls, 0) catch 0) != 0;
     global_scope_log("poll({d}) writable: {any} ({d})", .{ fd, result, polls[0].revents });
     if (result and polls[0].revents & std.os.POLL.HUP != 0) {
         return PollFlag.hup;
@@ -678,13 +682,13 @@ pub fn isHeapMemory(memory: anytype) bool {
 pub const Mimalloc = @import("./allocators/mimalloc.zig");
 
 pub inline fn isSliceInBuffer(slice: []const u8, buffer: []const u8) bool {
-    return slice.len > 0 and @ptrToInt(buffer.ptr) <= @ptrToInt(slice.ptr) and ((@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(buffer.ptr) + buffer.len));
+    return slice.len > 0 and @intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and ((@intFromPtr(slice.ptr) + slice.len) <= (@intFromPtr(buffer.ptr) + buffer.len));
 }
 
 pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
     if (!isSliceInBuffer(slice, buffer)) return null;
     const r = [_]u32{
-        @truncate(u32, @ptrToInt(slice.ptr) -| @ptrToInt(buffer.ptr)),
+        @truncate(u32, @intFromPtr(slice.ptr) -| @intFromPtr(buffer.ptr)),
         @truncate(u32, slice.len),
     };
     if (comptime Environment.allow_assert)
@@ -870,7 +874,7 @@ pub const SignalCode = enum(u8) {
     _,
 
     pub fn name(value: SignalCode) ?[]const u8 {
-        if (@enumToInt(value) <= @enumToInt(SignalCode.SIGSYS)) {
+        if (@intFromEnum(value) <= @intFromEnum(SignalCode.SIGSYS)) {
             return asByteSlice(@tagName(value));
         }
 
@@ -878,14 +882,14 @@ pub const SignalCode = enum(u8) {
     }
 
     pub fn from(value: anytype) SignalCode {
-        return @intToEnum(SignalCode, @truncate(u7, std.mem.asBytes(&value)[0]));
+        return @enumFromInt(SignalCode, @truncate(u7, std.mem.asBytes(&value)[0]));
     }
 
     pub fn format(self: SignalCode, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
         if (self.name()) |str| {
-            try std.fmt.format(writer, "code {d} ({s})", .{ @enumToInt(self), str });
+            try std.fmt.format(writer, "code {d} ({s})", .{ @intFromEnum(self), str });
         } else {
-            try std.fmt.format(writer, "code {d}", .{@enumToInt(self)});
+            try std.fmt.format(writer, "code {d}", .{@intFromEnum(self)});
         }
     }
 };
@@ -961,7 +965,7 @@ pub fn ComptimeEnumMap(comptime T: type) type {
 /// Ignores default struct values.
 pub fn zero(comptime Type: type) Type {
     var out: [@sizeOf(Type)]u8 align(@alignOf(Type)) = undefined;
-    @memset(@ptrCast([*]u8, &out), 0, out.len);
+    @memset(@ptrCast([*]u8, &out)[0..out.len], 0);
     return @bitCast(Type, out);
 }
 pub const c_ares = @import("./deps/c_ares.zig");
@@ -1525,6 +1529,7 @@ pub const StringPointer = Schema.Api.StringPointer;
 pub const StandaloneModuleGraph = @import("./standalone_bun.zig").StandaloneModuleGraph;
 
 pub const String = @import("./string.zig").String;
+pub const SliceWithUnderlyingString = @import("./string.zig").SliceWithUnderlyingString;
 
 pub const WTF = struct {
     /// The String type from WebKit's WTF library.
@@ -1532,3 +1537,5 @@ pub const WTF = struct {
 };
 
 pub const ArenaAllocator = @import("./ArenaAllocator.zig").ArenaAllocator;
+
+pub const Wyhash = @import("./wyhash.zig").Wyhash;

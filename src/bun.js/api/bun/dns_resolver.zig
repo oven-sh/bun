@@ -123,7 +123,7 @@ const LibInfo = struct {
                 this.vm.uws_event_loop.?,
                 .machport,
                 true,
-                @ptrToInt(request.backend.libinfo.machport),
+                @intFromPtr(request.backend.libinfo.machport),
             ) == .result,
         );
 
@@ -230,7 +230,7 @@ fn addrInfoCount(addrinfo: *std.c.addrinfo) u32 {
     var count: u32 = 1;
     var current: ?*std.c.addrinfo = addrinfo.next;
     while (current != null) : (current = current.?.next) {
-        count += @boolToInt(current.?.addr != null);
+        count += @intFromBool(current.?.addr != null);
     }
     return count;
 }
@@ -285,7 +285,7 @@ pub const GetAddrInfo = struct {
 
     pub fn toCAres(this: GetAddrInfo) bun.c_ares.AddrInfo_hints {
         var hints: bun.c_ares.AddrInfo_hints = undefined;
-        @memset(std.mem.asBytes(&hints), 0, @sizeOf(bun.c_ares.AddrInfo_hints));
+        @memset(std.mem.asBytes(&hints)[0..@sizeOf(bun.c_ares.AddrInfo_hints)], 0);
 
         hints.ai_family = this.options.family.toLibC();
         hints.ai_socktype = this.options.socktype.toLibC();
@@ -320,7 +320,7 @@ pub const GetAddrInfo = struct {
             }
 
             var hints: std.c.addrinfo = undefined;
-            @memset(std.mem.asBytes(&hints), 0, @sizeOf(std.c.addrinfo));
+            @memset(std.mem.asBytes(&hints)[0..@sizeOf(std.c.addrinfo)], 0);
 
             hints.family = this.family.toLibC();
             hints.socktype = this.socktype.toLibC();
@@ -385,7 +385,7 @@ pub const GetAddrInfo = struct {
                 return .unspecified;
 
             if (value.isNumber()) {
-                return switch (value.to(i32)) {
+                return switch (value.coerce(i32, globalObject)) {
                     0 => .unspecified,
                     4 => .inet,
                     6 => .inet6,
@@ -394,11 +394,11 @@ pub const GetAddrInfo = struct {
             }
 
             if (value.isString()) {
-                const str = value.getZigString(globalObject);
-                if (str.len == 0)
+                const str = value.toBunString(globalObject);
+                if (str.isEmpty())
                     return .unspecified;
 
-                return map.getWithEql(str, JSC.ZigString.eqlComptime) orelse return error.InvalidFamily;
+                return str.inMap(map) orelse return error.InvalidFamily;
             }
 
             return error.InvalidFamily;
@@ -793,7 +793,7 @@ pub const GetAddrInfoRequest = struct {
         addr_info: ?*std.c.addrinfo,
         arg: ?*anyopaque,
     ) callconv(.C) void {
-        const this = @intToPtr(*GetAddrInfoRequest, @ptrToInt(arg));
+        const this = @ptrFromInt(*GetAddrInfoRequest, @intFromPtr(arg));
         log("getAddrInfoAsyncCallback: status={d}", .{status});
 
         if (this.backend == .libinfo) {
@@ -846,8 +846,8 @@ pub const GetAddrInfoRequest = struct {
                     err,
                     debug_timer,
                 });
-                if (@enumToInt(err) != 0 or addrinfo == null) {
-                    this.* = .{ .err = @enumToInt(err) };
+                if (@intFromEnum(err) != 0 or addrinfo == null) {
+                    this.* = .{ .err = @intFromEnum(err) };
                     return;
                 }
 

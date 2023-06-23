@@ -270,21 +270,21 @@ pub const ElapsedFormatter = struct {
             0...std.time.ns_per_ms * 10 => {
                 const fmt_str = "<r><d>[{d:>.2}ms<r><d>]<r>";
                 switch (self.colors) {
-                    inline else => |colors| try writer_.print(comptime prettyFmt(fmt_str, colors), .{@intToFloat(f64, self.duration_ns) / std.time.ns_per_ms}),
+                    inline else => |colors| try writer_.print(comptime prettyFmt(fmt_str, colors), .{@floatFromInt(f64, self.duration_ns) / std.time.ns_per_ms}),
                 }
             },
             std.time.ns_per_ms * 8_000...std.math.maxInt(u64) => {
                 const fmt_str = "<r><d>[<r><yellow>{d:>.2}ms<r><d>]<r>";
 
                 switch (self.colors) {
-                    inline else => |colors| try writer_.print(comptime prettyFmt(fmt_str, colors), .{@intToFloat(f64, self.duration_ns) / std.time.ns_per_ms}),
+                    inline else => |colors| try writer_.print(comptime prettyFmt(fmt_str, colors), .{@floatFromInt(f64, self.duration_ns) / std.time.ns_per_ms}),
                 }
             },
             else => {
                 const fmt_str = "<r><d>[<b>{d:>.2}ms<r><d>]<r>";
 
                 switch (self.colors) {
-                    inline else => |colors| try writer_.print(comptime prettyFmt(fmt_str, colors), .{@intToFloat(f64, self.duration_ns) / std.time.ns_per_ms}),
+                    inline else => |colors| try writer_.print(comptime prettyFmt(fmt_str, colors), .{@floatFromInt(f64, self.duration_ns) / std.time.ns_per_ms}),
                 }
             },
         }
@@ -292,7 +292,7 @@ pub const ElapsedFormatter = struct {
 };
 
 inline fn printElapsedToWithCtx(elapsed: f64, comptime printerFn: anytype, comptime has_ctx: bool, ctx: anytype) void {
-    switch (@floatToInt(i64, @round(elapsed))) {
+    switch (@intFromFloat(i64, @round(elapsed))) {
         0...1500 => {
             const fmt = "<r><d>[<b>{d:>.2}ms<r><d>]<r>";
             const args = .{elapsed};
@@ -328,7 +328,7 @@ pub fn printElapsedStdout(elapsed: f64) void {
 }
 
 pub fn printElapsedStdoutTrim(elapsed: f64) void {
-    switch (@floatToInt(i64, @round(elapsed))) {
+    switch (@intFromFloat(i64, @round(elapsed))) {
         0...1500 => {
             const fmt = "<r><d>[<b>{d:>}ms<r><d>]<r>";
             const args = .{elapsed};
@@ -345,18 +345,18 @@ pub fn printElapsedStdoutTrim(elapsed: f64) void {
 
 pub fn printStartEnd(start: i128, end: i128) void {
     const elapsed = @divTrunc(@truncate(i64, end - start), @as(i64, std.time.ns_per_ms));
-    printElapsed(@intToFloat(f64, elapsed));
+    printElapsed(@floatFromInt(f64, elapsed));
 }
 
 pub fn printStartEndStdout(start: i128, end: i128) void {
     const elapsed = @divTrunc(@truncate(i64, end - start), @as(i64, std.time.ns_per_ms));
-    printElapsedStdout(@intToFloat(f64, elapsed));
+    printElapsedStdout(@floatFromInt(f64, elapsed));
 }
 
 pub fn printTimer(timer: *SystemTimer) void {
     if (comptime Environment.isWasm) return;
     const elapsed = @divTrunc(timer.read(), @as(u64, std.time.ns_per_ms));
-    printElapsed(@intToFloat(f64, elapsed));
+    printElapsed(@floatFromInt(f64, elapsed));
 }
 
 pub noinline fn printErrorable(comptime fmt: string, args: anytype) !void {
@@ -692,7 +692,7 @@ pub const DebugTimer = struct {
             var _opts = opts;
             _opts.precision = 3;
             std.fmt.formatFloatDecimal(
-                @floatCast(f64, @intToFloat(f64, timer.read()) / std.time.ns_per_ms),
+                @floatCast(f64, @floatFromInt(f64, timer.read()) / std.time.ns_per_ms),
                 _opts,
                 writer_,
             ) catch unreachable;

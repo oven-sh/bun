@@ -41,7 +41,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
         } else {
             @compileError("Not implemented for this key type");
         }
-        std.sort.sort(KV, &sorted_kvs, {}, lenAsc);
+        std.sort.block(KV, &sorted_kvs, {}, lenAsc);
         const min_len = sorted_kvs[0].key.len;
         const max_len = sorted_kvs[sorted_kvs.len - 1].key.len;
         var len_indexes: [max_len + 1]usize = undefined;
@@ -76,6 +76,8 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             }
             break :blk k[0..];
         };
+
+        pub const Value = V;
 
         pub fn keys() []const []const KeyType {
             return keys_list;
@@ -131,6 +133,25 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             return null;
         }
 
+        pub fn getWithLengthAndEqlList(str: anytype, comptime len: usize, comptime eqls: anytype) ?V {
+            const end = comptime brk: {
+                var i = len_indexes[len];
+                @setEvalBranchQuota(99999);
+
+                while (i < kvs.len and kvs[i].key.len == len) : (i += 1) {}
+
+                break :brk i;
+            };
+
+            const start = comptime len_indexes[len];
+            const range = comptime keys()[start..end];
+            if (eqls(str, range)) |k| {
+                return kvs[start + k].value;
+            }
+
+            return null;
+        }
+
         pub fn get(str: []const KeyType) ?V {
             if (str.len < precomputed.min_len or str.len > precomputed.max_len)
                 return null;
@@ -155,6 +176,22 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             inline while (i <= precomputed.max_len) : (i += 1) {
                 if (length == i) {
                     return getWithLengthAndEql(input, i, eql);
+                }
+            }
+
+            return null;
+        }
+
+        pub fn getWithEqlList(input: anytype, comptime eql: anytype) ?V {
+            const Input = @TypeOf(input);
+            const length = if (comptime std.meta.trait.isSlice(Input) or std.meta.trait.isZigString(Input)) input.len else input.length();
+            if (length < precomputed.min_len or length > precomputed.max_len)
+                return null;
+
+            comptime var i: usize = precomputed.min_len;
+            inline while (i <= precomputed.max_len) : (i += 1) {
+                if (length == i) {
+                    return getWithLengthAndEqlList(input, i, eql);
                 }
             }
 
@@ -406,12 +443,12 @@ pub fn compareString(input: []const u8) !void {
     if (TestEnum2.map.has(str) != TestEnum2.official.has(str)) {
         std.debug.panic("{s} - TestEnum2.map.has(str) ({d}) != TestEnum2.official.has(str) ({d})", .{
             str,
-            @boolToInt(TestEnum2.map.has(str)),
-            @boolToInt(TestEnum2.official.has(str)),
+            @intFromBool(TestEnum2.map.has(str)),
+            @intFromBool(TestEnum2.official.has(str)),
         });
     }
 
-    std.debug.print("For string: \"{s}\" (has a match? {d})\n", .{ str, @boolToInt(TestEnum2.map.has(str)) });
+    std.debug.print("For string: \"{s}\" (has a match? {d})\n", .{ str, @intFromBool(TestEnum2.map.has(str)) });
 
     var i: usize = 0;
     var is_eql = false;

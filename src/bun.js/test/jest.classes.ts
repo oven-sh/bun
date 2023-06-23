@@ -277,6 +277,14 @@ export default [
         fn: "toBeNil",
         length: 0,
       },
+      toBeArray: {
+        fn: "toBeArray",
+        length: 0,
+      },
+      toBeArrayOfSize: {
+        fn: "toBeArrayOfSize",
+        length: 1,
+      },
       toBeBoolean: {
         fn: "toBeBoolean",
         length: 0,
@@ -284,6 +292,10 @@ export default [
       toBeTrue: {
         fn: "toBeTrue",
         length: 0,
+      },
+      toBeTypeOf: {
+        fn: "toBeTypeOf",
+        length: 1,
       },
       toBeFalse: {
         fn: "toBeFalse",

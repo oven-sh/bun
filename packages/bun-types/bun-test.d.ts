@@ -425,6 +425,20 @@ declare module "bun:test" {
      */
     not: Expect<unknown>;
     /**
+     * Expects the value to be a promise that resolves.
+     *
+     * @example
+     * expect(Promise.resolve(1)).resolves.toBe(1);
+     */
+    resolves: Expect<unknown>;
+    /**
+     * Expects the value to be a promise that rejects.
+     *
+     * @example
+     * expect(Promise.reject("error")).rejects.toBe("error");
+     */
+    rejects: Expect<unknown>;
+    /**
      * Asserts that a value equals what is expected.
      *
      * - For non-primitive values, like objects and arrays,
@@ -440,6 +454,24 @@ declare module "bun:test" {
      * @param expected the expected value
      */
     toBe(expected: T): void;
+    /**
+     * Asserts that a number is odd.
+     *
+     * @link https://jest-extended.jestcommunity.dev/docs/matchers/number/#tobeodd
+     * @example
+     * expect(1).toBeOdd();
+     * expect(2).not.toBeOdd();
+     */
+    toBeOdd(): void;
+    /**
+     * Asserts that a number is even.
+     *
+     * @link https://jest-extended.jestcommunity.dev/docs/matchers/number/#tobeeven
+     * @example
+     * expect(2).toBeEven();
+     * expect(1).not.toBeEven();
+     */
+    toBeEven(): void;
     /**
      * Asserts that value is close to the expected by floating point precision.
      *
@@ -721,6 +753,27 @@ declare module "bun:test" {
      */
     toBeNil(): void;
     /**
+     * Asserts that a value is a `array`.
+     *
+     * @link https://jest-extended.jestcommunity.dev/docs/matchers/array/#tobearray
+     * @example
+     * expect([1]).toBeArray();
+     * expect(new Array(1)).toBeArray();
+     * expect({}).not.toBeArray();
+     */
+    toBeArray(): void;
+    /**
+     * Asserts that a value is a `array` of a certain length.
+     *
+     * @link https://jest-extended.jestcommunity.dev/docs/matchers/array/#tobearrayofsize
+     * @example
+     * expect([]).toBeArrayOfSize(0);
+     * expect([1]).toBeArrayOfSize(1);
+     * expect(new Array(1)).toBeArrayOfSize(1);
+     * expect({}).not.toBeArrayOfSize(0);
+     */
+    toBeArrayOfSize(size: number): void;
+    /**
      * Asserts that a value is a `boolean`.
      *
      * @example
@@ -739,6 +792,26 @@ declare module "bun:test" {
      * expect(1).not.toBeTrue();
      */
     toBeTrue(): void;
+    /**
+     * Asserts that a value matches a specific type.
+     *
+     * @link https://vitest.dev/api/expect.html#tobetypeof
+     * @example
+     * expect(1).toBeTypeOf("number");
+     * expect("hello").toBeTypeOf("string");
+     * expect([]).not.toBeTypeOf("boolean");
+     */
+    toBeTypeOf(
+      type:
+        | "bigint"
+        | "boolean"
+        | "function"
+        | "number"
+        | "object"
+        | "string"
+        | "symbol"
+        | "undefined",
+    ): void;
     /**
      * Asserts that a value is `false`.
      *
@@ -1040,12 +1113,12 @@ declare namespace JestMock {
      * List of the call order indexes of the mock. Jest is indexing the order of
      * invocations of all mocks in a test file. The index is starting with `1`.
      */
-    // invocationCallOrder: Array<number>;
+    invocationCallOrder: Array<number>;
     /**
      * List of the call arguments of the last call that was made to the mock.
      * If the function was not called, it will return `undefined`.
      */
-    // lastCall?: Parameters<T>;
+    lastCall?: Parameters<T>;
     /**
      * List of the results of all calls that have been made to the mock.
      */

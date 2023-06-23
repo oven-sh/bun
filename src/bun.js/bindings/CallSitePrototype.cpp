@@ -35,6 +35,7 @@ static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsConstructor);
 static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsAsync);
 static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsPromiseAll);
 static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetPromiseIndex);
+static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncToString);
 
 ALWAYS_INLINE static CallSite* getCallSite(JSGlobalObject* globalObject, JSC::JSValue thisValue)
 {
@@ -82,6 +83,7 @@ static const HashTableValue CallSitePrototypeTableValues[]
           { "isAsync"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncIsAsync, 0 } },
           { "isPromiseAll"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncIsPromiseAll, 0 } },
           { "getPromiseIndex"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetPromiseIndex, 0 } },
+          { "toString"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncToString, 0 } },
       };
 
 const JSC::ClassInfo CallSitePrototype::s_info = { "CallSite"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(CallSitePrototype) };
@@ -222,7 +224,15 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetPromiseIndex, (JSGlobalObject * glo
 {
     ENTER_PROTO_FUNC();
 
-    return JSC::JSValue::encode(JSC::jsNumber(0));
+    return JSC::JSValue::encode(JSC::jsNull());
+}
+
+JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncToString, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    ENTER_PROTO_FUNC();
+    WTF::StringBuilder sb;
+    callSite->formatAsString(vm, globalObject, sb);
+    return JSC::JSValue::encode(JSC::JSValue(jsString(vm, sb.toString())));
 }
 
 }

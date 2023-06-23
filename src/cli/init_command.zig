@@ -112,7 +112,7 @@ pub const InitCommand = struct {
             if (package_json_file) |pkg| {
                 const stat = pkg.stat() catch break :read_package_json;
 
-                if (stat.kind != .File or stat.size == 0) {
+                if (stat.kind != .file or stat.size == 0) {
                     break :read_package_json;
                 }
                 package_json_contents = try MutableString.init(alloc, stat.size);

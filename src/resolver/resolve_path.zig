@@ -376,7 +376,7 @@ pub fn relativeToCommonPath(
     var out_slice: []u8 = buf[0..0];
 
     if (normalized_from.len > 0) {
-        var i: usize = @intCast(usize, @boolToInt(normalized_from[0] == separator)) + 1 + last_common_separator;
+        var i: usize = @intCast(usize, @intFromBool(normalized_from[0] == separator)) + 1 + last_common_separator;
 
         while (i <= normalized_from.len) : (i += 1) {
             if (i == normalized_from.len or (normalized_from[i] == separator and i + 1 < normalized_from.len)) {
@@ -549,7 +549,7 @@ pub fn normalizeStringGeneric(path: []const u8, buf: []u8, comptime allow_above_
         const from = r;
         while (r < n and !isSeparator(path[r])) : (r += 1) {}
         const count = r - from;
-        @memcpy(buf[buf_i..].ptr, path[from..].ptr, count);
+        @memcpy(buf[buf_i..][0..count], path[from..][0..count]);
         buf_i += count;
     }
 

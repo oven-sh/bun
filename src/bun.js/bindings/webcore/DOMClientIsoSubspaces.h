@@ -36,6 +36,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCommonJSModuleRecord;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMockImplementation;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMockFunction;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMockWithImplementationCleanupData;
 
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */

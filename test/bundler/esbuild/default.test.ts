@@ -6520,4 +6520,46 @@ describe("bundler", () => {
       `,
     },
   });
+  itBundled("default/ConstDeclNotRemovedIfReferencedBeforeDecl", {
+    files: {
+      "/entry.js": `
+        {
+          const foo = () => {
+            return data;
+          }
+          const data = 123;
+
+          console.log(foo());
+        }
+      `,
+    },
+    minifySyntax: true,
+    run: {
+      stdout: "123",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("data = 123");
+    },
+  });
+  itBundled("default/ConstDeclRemovedIfReferencedBeforeAllUses", {
+    files: {
+      "/entry.js": `
+        {
+          const data = 123;
+          const foo = () => {
+            return data;
+          }
+
+          console.log(foo());
+        }
+      `,
+    },
+    minifySyntax: true,
+    run: {
+      stdout: "123",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("data = 123");
+    },
+  });
 });

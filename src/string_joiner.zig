@@ -43,7 +43,7 @@ pub fn done(this: *Joiner, allocator: Allocator) ![]u8 {
     var el_ = this.head;
     while (el_) |join| {
         const to_join = join.data.slice[join.data.offset..];
-        @memcpy(remaining.ptr, to_join.ptr, to_join.len);
+        @memcpy(remaining[0..to_join.len], to_join);
 
         remaining = remaining[@min(remaining.len, to_join.len)..];
 
@@ -67,7 +67,8 @@ pub fn doneWithEnd(this: *Joiner, allocator: Allocator, end: []const u8) ![]u8 {
 
     if (this.head == null) {
         var slice = try allocator.alloc(u8, end.len);
-        @memcpy(slice.ptr, end.ptr, end.len);
+        @memcpy(slice[0..end.len], end);
+
         return slice;
     }
 
@@ -76,7 +77,7 @@ pub fn doneWithEnd(this: *Joiner, allocator: Allocator, end: []const u8) ![]u8 {
     var el_ = this.head;
     while (el_) |join| {
         const to_join = join.data.slice[join.data.offset..];
-        @memcpy(remaining.ptr, to_join.ptr, to_join.len);
+        @memcpy(remaining[0..to_join.len], to_join);
 
         remaining = remaining[@min(remaining.len, to_join.len)..];
 
@@ -90,7 +91,7 @@ pub fn doneWithEnd(this: *Joiner, allocator: Allocator, end: []const u8) ![]u8 {
         if (this.use_pool) prev.release();
     }
 
-    @memcpy(remaining.ptr, end.ptr, end.len);
+    @memcpy(remaining[0..end.len], end);
 
     remaining = remaining[@min(remaining.len, end.len)..];
 
@@ -126,7 +127,7 @@ pub fn append(this: *Joiner, slice: string, offset: u32, allocator: ?Allocator) 
     else
         (this.node_allocator.create(Joinable.Pool.Node) catch unreachable);
 
-    this.watcher.estimated_count += @boolToInt(
+    this.watcher.estimated_count += @intFromBool(
         this.watcher.input.len > 0 and
             bun.strings.contains(data, this.watcher.input),
     );

@@ -167,7 +167,7 @@ public:
     void clearDOMGuardedObjects();
 
     static void createCallSitesFromFrames(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ObjectInitializationScope& objectScope, JSCStackTrace& stackTrace, JSC::JSArray* callSites);
-    JSC::JSValue formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites, ZigStackFrame remappedStackFrames[]);
+    JSC::JSValue formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites);
 
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
@@ -363,6 +363,7 @@ public:
     mutable WriteBarrier<Unknown> m_JSURLSearchParamsSetterValue;
     mutable WriteBarrier<Unknown> m_JSWebSocketSetterValue;
     mutable WriteBarrier<Unknown> m_JSDOMFormDataSetterValue;
+    mutable WriteBarrier<Unknown> m_BunCommonJSModuleValue;
 
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
 

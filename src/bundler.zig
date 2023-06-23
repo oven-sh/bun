@@ -506,7 +506,13 @@ pub const Bundler = struct {
         switch (this.options.env.behavior) {
             .prefix, .load_all => {
                 // Step 1. Load the project root.
-                var dir: *Fs.FileSystem.DirEntry = ((this.resolver.readDirInfo(this.fs.top_level_dir) catch return) orelse return).getEntries(this.resolver.generation) orelse return;
+                const dir_info = this.resolver.readDirInfo(this.fs.top_level_dir) catch return orelse return;
+
+                if (dir_info.tsconfig_json) |tsconfig| {
+                    this.options.jsx = tsconfig.mergeJSX(this.options.jsx);
+                }
+
+                var dir = dir_info.getEntries(this.resolver.generation) orelse return;
 
                 // Process always has highest priority.
                 const was_production = this.options.production;
@@ -1595,7 +1601,7 @@ pub const Bundler = struct {
         // All non-absolute paths are ./paths
         if (path_to_use[0] != '/' and path_to_use[0] != '.') {
             tmp_buildfile_buf3[0..2].* = "./".*;
-            @memcpy(tmp_buildfile_buf3[2..], path_to_use.ptr, path_to_use.len);
+            @memcpy(tmp_buildfile_buf3[2..][0..path_to_use.len], path_to_use);
             path_to_use = tmp_buildfile_buf3[0 .. 2 + path_to_use.len];
         }
 

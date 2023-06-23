@@ -8,7 +8,7 @@ const MimeType = @import("../../http.zig").MimeType;
 const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = @import("root").bun.HTTP;
 const NetworkThread = HTTPClient.NetworkThread;
-const Environment = @import("../../env.zig");
+const Environment = bun.Environment;
 
 const Snapshots = @import("./snapshot.zig").Snapshots;
 const expect = @import("./expect.zig");
@@ -33,8 +33,6 @@ const default_allocator = @import("root").bun.default_allocator;
 const FeatureFlags = @import("root").bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
-const d = @import("../base.zig").d;
-const castObj = @import("../base.zig").castObj;
 const getAllocator = @import("../base.zig").getAllocator;
 
 const ZigString = JSC.ZigString;
@@ -48,12 +46,10 @@ const JSObject = JSC.JSObject;
 const CallFrame = JSC.CallFrame;
 
 const VirtualMachine = JSC.VirtualMachine;
-const Task = @import("../javascript.zig").Task;
-
-const Fs = @import("../../fs.zig");
+const Fs = bun.fs;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 
-const ArrayIdentityContext = @import("../../identity_context.zig").ArrayIdentityContext;
+const ArrayIdentityContext = bun.ArrayIdentityContext;
 pub var test_elapsed_timer: ?*std.time.Timer = null;
 
 pub const Tag = enum(u3) {

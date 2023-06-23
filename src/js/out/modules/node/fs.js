@@ -18,6 +18,7 @@ function createReadStream(path, options) {
 function createWriteStream(path, options) {
   return new WriteStream(path, options);
 }
+import {constants} from "node:fs/promises";
 var ReadStream, WriteStream, { direct, isPromise, isCallable } = globalThis[Symbol.for("Bun.lazy")]("primordials"), fs = Bun.fs(), debug = process.env.DEBUG ? console.log : () => {
 }, access = function access2(...args) {
   callbackify(fs.accessSync, args);
@@ -668,6 +669,7 @@ export {
   createReadStream,
   copyFileSync,
   copyFile,
+  constants,
   closeSync,
   close,
   chownSync,

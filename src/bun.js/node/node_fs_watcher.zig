@@ -354,10 +354,11 @@ pub const FSWatcher = struct {
                         const relative_slice: string = brk: {
                             var file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
 
-                            @memcpy(&_on_file_update_path_buf, file_path_without_trailing_slash.ptr, file_path_without_trailing_slash.len);
+                            @memcpy(_on_file_update_path_buf[0..file_path_without_trailing_slash.len], file_path_without_trailing_slash);
+
                             _on_file_update_path_buf[file_path_without_trailing_slash.len] = std.fs.path.sep;
 
-                            @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len + 1 ..].ptr, changed_name.ptr, changed_name.len);
+                            @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len + 1 ..][0..changed_name.len], changed_name);
                             const path_slice = _on_file_update_path_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
                             file_hash = FSWatcher.Watcher.getHash(path_slice);
 
@@ -787,14 +788,14 @@ pub const FSWatcher = struct {
         var result = PathResult{};
 
         switch (stat.kind) {
-            .SymLink => {
+            .sym_link => {
                 var file = try std.fs.openFileAbsoluteZ(absolute_path_z, .{ .mode = .read_only });
                 result.fd = file.handle;
                 const _stat = try file.stat();
 
-                result.is_file = _stat.kind == .Directory;
+                result.is_file = _stat.kind == .directory;
             },
-            .Directory => {
+            .directory => {
                 const dir = (try std.fs.openIterableDirAbsoluteZ(absolute_path_z, .{
                     .access_sub_paths = true,
                 })).dir;

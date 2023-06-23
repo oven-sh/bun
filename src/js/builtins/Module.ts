@@ -21,9 +21,47 @@ export function require(this: Module, id: string) {
     return $internalRequire(id);
   }
 
+  let esm = Loader.registry.$get(id);
+
+  if ((esm?.state ?? 0) >= $ModuleLink) {
+    const mod = esm!.module;
+    const namespace = Loader.getModuleNamespaceObject(mod);
+    const exports =
+      namespace?.[$commonJSSymbol] === 0 || namespace?.default?.[$commonJSSymbol] === 0 ? namespace.default : namespace;
+    $requireMap.$set(id, $createCommonJSModule(id, exports));
+    return exports;
+  }
+
   let out = this.$require(id);
+
+  // -1 means we need to lookup the module from the ESM registry.
   if (out === -1) {
-    return $internalRequire(id);
+    // To handle import/export cycles, we need to create a module object and put
+    // it into the map before we import it.
+    const mod = $createCommonJSModule(id, {});
+    $requireMap.$set(id, mod);
+
+    try {
+      out = $requireESM(id);
+    } catch (exception) {
+      // If the ESM module failed to load, we need to remove the module from the
+      // CommonJS map as well. That way, if there's a syntax error, we don't
+      // prevent you from reloading the module once you fix the syntax error.
+      $requireMap.$delete(id);
+      throw exception;
+    }
+
+    esm = Loader.registry.$get(id);
+
+    // If we can pull out a ModuleNamespaceObject, let's do it.
+    if ((esm?.state ?? 0) >= $ModuleLink) {
+      const namespace = Loader.getModuleNamespaceObject(esm!.module);
+      return (mod.exports =
+        // if they choose a module
+        namespace?.[$commonJSSymbol] === 0 || namespace?.default?.[$commonJSSymbol] === 0
+          ? namespace.default
+          : namespace);
+    }
   }
 
   const existing2 = $requireMap.$get(id);
@@ -31,7 +69,6 @@ export function require(this: Module, id: string) {
     return existing2.exports;
   }
 
-  $requireMap.$set(id, { id, exports: out, loaded: true, filename: id });
   return out;
 }
 

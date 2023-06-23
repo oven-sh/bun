@@ -812,7 +812,7 @@ pub const Expect = struct {
         const value: JSValue = this.getValue(globalObject, thisValue, "toEqual", "<green>expected<r>") orelse return .zero;
 
         const not = this.flags.not;
-        var pass = value.deepEquals(expected, globalObject);
+        var pass = value.jestDeepEquals(expected, globalObject);
 
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -856,7 +856,7 @@ pub const Expect = struct {
         const value: JSValue = this.getValue(globalObject, thisValue, "toStrictEqual", "<green>expected<r>") orelse return .zero;
 
         const not = this.flags.not;
-        var pass = value.strictDeepEquals(expected, globalObject);
+        var pass = value.jestStrictDeepEquals(expected, globalObject);
 
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -924,7 +924,7 @@ pub const Expect = struct {
         }
 
         if (pass and expected_property != null) {
-            pass = received_property.deepEquals(expected_property.?, globalObject);
+            pass = received_property.jestDeepEquals(expected_property.?, globalObject);
         }
 
         if (not) pass = !pass;
@@ -1927,7 +1927,7 @@ pub const Expect = struct {
         if (property_matchers) |_prop_matchers| {
             var prop_matchers = _prop_matchers;
 
-            if (!value.deepMatch(prop_matchers, globalObject, true)) {
+            if (!value.jestDeepMatch(prop_matchers, globalObject, true)) {
                 // TODO: print diff with properties from propertyMatchers
                 const signature = comptime getSignature("toMatchSnapshot", "<green>propertyMatchers<r>", false);
                 const fmt = signature ++ "\n\nExpected <green>propertyMatchers<r> to match properties from received object" ++
@@ -3084,7 +3084,7 @@ pub const Expect = struct {
 
         const property_matchers = args[0];
 
-        var pass = received_object.deepMatch(property_matchers, globalObject, true);
+        var pass = received_object.jestDeepMatch(property_matchers, globalObject, true);
 
         if (not) pass = !pass;
         if (pass) return thisValue;

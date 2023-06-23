@@ -4935,11 +4935,11 @@ pub const EnvironmentVariables = struct {
     pub fn getEnvNames(globalObject: *JSC.JSGlobalObject, names: []ZigString) usize {
         var vm = globalObject.bunVM();
         const keys = vm.bundler.env.map.map.keys();
-        const max = @min(names.len, keys.len);
-        for (keys[0..max], 0..) |key, i| {
-            names[i] = ZigString.initUTF8(key);
+        const len = @min(names.len, keys.len);
+        for (keys[0..len], names[0..len]) |key, *name| {
+            name.* = ZigString.initUTF8(key);
         }
-        return keys.len;
+        return len;
     }
     pub fn getEnvValue(globalObject: *JSC.JSGlobalObject, name: ZigString) ?ZigString {
         var vm = globalObject.bunVM();

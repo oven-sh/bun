@@ -1,4 +1,4 @@
-import {promises} from "node:dns";
+var {promises } = import.meta.require("node:dns");
 var {
   lookup,
   lookupService,

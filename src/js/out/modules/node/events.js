@@ -334,7 +334,6 @@ class EventEmitterAsyncResource extends EventEmitter {
   }
 }
 var usingDomains = !1;
-EventEmitter[Symbol.for("CommonJS")] = 0;
 Object2.assign(EventEmitter, { once, on, getEventListeners, setMaxListeners, listenerCount, EventEmitterAsyncResource });
 var events_default = EventEmitter;
 export {

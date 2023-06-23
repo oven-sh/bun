@@ -1,4 +1,4 @@
-import {isTypedArray} from "node:util/types";
+var {isTypedArray } = import.meta.require("node:util/types");
 var parseCertString = function() {
   throwNotImplemented("Not implemented");
 }, isValidTLSArray = function(obj) {
@@ -15,7 +15,7 @@ var parseCertString = function() {
 }, createSecureContext = function(options) {
   return new SecureContext(options);
 };
-import NodeNet from "node:net";
+var NodeNet = import.meta.require("node:net");
 var createServer = function(options, connectionListener) {
   return new Server(options, connectionListener);
 }, InternalSecureContext = class SecureContext2 {

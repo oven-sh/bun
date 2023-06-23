@@ -1863,10 +1863,9 @@ pub const ModuleLoader = struct {
             return ResolvedSource{
                 .allocator = null,
                 .source_code = bun.String.static(
-                    \\const symbol = Symbol.for("CommonJS");
-                    \\const lazy = globalThis[Symbol.for("Bun.lazy")];
-                    \\var masqueradesAsUndefined = lazy("masqueradesAsUndefined");
-                    \\masqueradesAsUndefined[symbol] = 0;
+                    \\var masqueradesAsUndefined=globalThis[Symbol.for("Bun.lazy")]("masqueradesAsUndefined");
+                    \\masqueradesAsUndefined[Symbol.for("CommonJS")]=0;
+                    \\masqueradesAsUndefined.default=masqueradesAsUndefined;
                     \\export default masqueradesAsUndefined;
                     \\
                 ),

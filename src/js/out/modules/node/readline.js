@@ -1,6 +1,6 @@
-import EventEmitter from "node:events";
-import {clearTimeout, setTimeout} from "node:timers";
-import {StringDecoder} from "node:string_decoder";
+var {EventEmitter } = import.meta.require("node:events");
+var {clearTimeout, setTimeout } = import.meta.require("node:timers");
+var {StringDecoder } = import.meta.require("node:string_decoder");
 var stripVTControlCharacters = function(str) {
   return validateString(str, "str"), RegExpPrototypeSymbolReplace.call(ansi, str, "");
 }, promisify = function(original) {
@@ -694,7 +694,6 @@ CSI.kClearToLineBeginning = kClearToLineBeginning = CSI`1K`;
 CSI.kClearToLineEnd = kClearToLineEnd = CSI`0K`;
 var KEYPRESS_DECODER = Symbol("keypress-decoder"), ESCAPE_DECODER = Symbol("escape-decoder"), ESCAPE_CODE_TIMEOUT = 500, kEmptyObject = ObjectFreeze(ObjectCreate(null)), kHistorySize = 30, kMaxUndoRedoStackSize = 2048, kMincrlfDelay = 100, lineEnding = /\r?\n|\r(?!\n)/g, kMaxLengthOfKillRing = 32, kLineObjectStream = Symbol("line object stream"), kQuestionCancel = Symbol("kQuestionCancel"), kQuestion = Symbol("kQuestion"), kAddHistory = Symbol("_addHistory"), kBeforeEdit = Symbol("_beforeEdit"), kDecoder = Symbol("_decoder"), kDeleteLeft = Symbol("_deleteLeft"), kDeleteLineLeft = Symbol("_deleteLineLeft"), kDeleteLineRight = Symbol("_deleteLineRight"), kDeleteRight = Symbol("_deleteRight"), kDeleteWordLeft = Symbol("_deleteWordLeft"), kDeleteWordRight = Symbol("_deleteWordRight"), kGetDisplayPos = Symbol("_getDisplayPos"), kHistoryNext = Symbol("_historyNext"), kHistoryPrev = Symbol("_historyPrev"), kInsertString = Symbol("_insertString"), kLine = Symbol("_line"), kLine_buffer = Symbol("_line_buffer"), kKillRing = Symbol("_killRing"), kKillRingCursor = Symbol("_killRingCursor"), kMoveCursor = Symbol("_moveCursor"), kNormalWrite = Symbol("_normalWrite"), kOldPrompt = Symbol("_oldPrompt"), kOnLine = Symbol("_onLine"), kPreviousKey = Symbol("_previousKey"), kPrompt = Symbol("_prompt"), kPushToKillRing = Symbol("_pushToKillRing"), kPushToUndoStack = Symbol("_pushToUndoStack"), kQuestionCallback = Symbol("_questionCallback"), kRedo = Symbol("_redo"), kRedoStack = Symbol("_redoStack"), kRefreshLine = Symbol("_refreshLine"), kSawKeyPress = Symbol("_sawKeyPress"), kSawReturnAt = Symbol("_sawReturnAt"), kSetRawMode = Symbol("_setRawMode"), kTabComplete = Symbol("_tabComplete"), kTabCompleter = Symbol("_tabCompleter"), kTtyWrite = Symbol("_ttyWrite"), kUndo = Symbol("_undo"), kUndoStack = Symbol("_undoStack"), kWordLeft = Symbol("_wordLeft"), kWordRight = Symbol("_wordRight"), kWriteToOutput = Symbol("_writeToOutput"), kYank = Symbol("_yank"), kYanking = Symbol("_yanking"), kYankPop = Symbol("_yankPop"), kFirstEventParam = Symbol("nodejs.kFirstEventParam"), kOnSelfCloseWithTerminal = Symbol("_onSelfCloseWithTerminal"), kOnSelfCloseWithoutTerminal = Symbol("_onSelfCloseWithoutTerminal"), kOnKeyPress = Symbol("_onKeyPress"), kOnError = Symbol("_onError"), kOnData = Symbol("_onData"), kOnEnd = Symbol("_onEnd"), kOnTermEnd = Symbol("_onTermEnd"), kOnResize = Symbol("_onResize");
 ObjectSetPrototypeOf(InterfaceConstructor.prototype, EventEmitter.prototype);
-ObjectSetPrototypeOf(InterfaceConstructor, EventEmitter);
 var _Interface = class Interface2 extends InterfaceConstructor {
   constructor(input, output, completer, terminal) {
     super(input, output, completer, terminal);

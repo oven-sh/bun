@@ -1,6 +1,9 @@
-const assert = require("assert");
-import { test, expect } from "bun:test";
-const types = require("util/types");
+import assert from "assert";
+import { describe, test, expect } from "bun:test";
+import def from "util/types";
+import * as ns from "util/types";
+
+const req = require("util/types");
 
 function inspect(val) {
   return Bun.inspect(val);
@@ -52,15 +55,21 @@ for (const [value, _method] of [
     assert(method in types, `Missing ${method} for ${inspect(value)}`);
     assert(types[method](value), `Want ${inspect(value)} to match ${method}`);
 
-    for (const key of Object.keys(types)) {
-      if (
-        ((types.isArrayBufferView(value) || types.isAnyArrayBuffer(value)) && key.includes("Array")) ||
-        key === "isBoxedPrimitive"
-      ) {
-        continue;
-      }
+    for (const [types, label] of [
+      [def, "default import"],
+      [ns, "ns import"],
+      [req, "require esm"],
+    ]) {
+      for (const key of Object.keys(types).filter(x => x !== "default")) {
+        if (
+          ((types.isArrayBufferView(value) || types.isAnyArrayBuffer(value)) && key.includes("Array")) ||
+          key === "isBoxedPrimitive"
+        ) {
+          continue;
+        }
 
-      expect(types[key](value)).toBe(key === method);
+        expect(types[key](value)).toBe(key === method);
+      }
     }
   });
 }
@@ -238,3 +247,4 @@ test("isBoxedPrimitive", () => {
     });
   }
 }
+// */

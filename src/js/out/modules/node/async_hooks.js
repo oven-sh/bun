@@ -1,4 +1,4 @@
-import {drainMicrotasks} from "bun:jsc";
+var {drainMicrotasks } = import.meta.require("bun:jsc");
 var createHook = function() {
   return {
     enable() {

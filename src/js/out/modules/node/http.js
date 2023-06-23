@@ -1,8 +1,8 @@
-import EventEmitter from "node:events";
-import {isIPv6} from "node:net";
-import {Readable, Writable, Duplex} from "node:stream";
-import {URL} from "node:url";
-import {isTypedArray} from "node:util/types";
+var EventEmitter = import.meta.require("node:events");
+var {isIPv6 } = import.meta.require("node:net");
+var {Readable, Writable, Duplex } = import.meta.require("node:stream");
+var {URL } = import.meta.require("node:url");
+var {isTypedArray } = import.meta.require("node:util/types");
 var isValidTLSArray = function(obj) {
   if (typeof obj === "string" || isTypedArray(obj) || obj instanceof ArrayBuffer || obj instanceof Blob)
     return !0;

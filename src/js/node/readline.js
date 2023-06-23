@@ -26,7 +26,7 @@
 // Section: Imports
 // ----------------------------------------------------------------------------
 var { Array, RegExp, String, Bun } = globalThis[Symbol.for("Bun.lazy")]("primordials");
-import EventEmitter from "node:events";
+import { EventEmitter } from "node:events";
 import { clearTimeout, setTimeout } from "timers";
 import { StringDecoder } from "string_decoder";
 var isWritable;
@@ -1573,7 +1573,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
 }
 
 ObjectSetPrototypeOf(InterfaceConstructor.prototype, EventEmitter.prototype);
-ObjectSetPrototypeOf(InterfaceConstructor, EventEmitter);
+// ObjectSetPrototypeOf(InterfaceConstructor, EventEmitter);
 
 var _Interface = class Interface extends InterfaceConstructor {
   // TODO: Enumerate all the properties of the class

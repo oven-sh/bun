@@ -1,4 +1,4 @@
-import {strict as strictBase} from "node:assert";
+var {strict: strictBase } = import.meta.require("node:assert");
 var {
   fail,
   AssertionError,

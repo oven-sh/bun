@@ -1,5 +1,5 @@
-import {Duplex} from "node:stream";
-import {EventEmitter} from "node:events";
+var {Duplex } = import.meta.require("node:stream");
+var {EventEmitter } = import.meta.require("node:events");
 var isIPv4 = function(s) {
   return IPv4Reg.test(s);
 }, isIPv6 = function(s) {

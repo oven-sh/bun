@@ -1,7 +1,7 @@
-import {EventEmitter} from "node:events";
-import * as StreamModule from "node:stream";
-import {constants} from "node:os";
-import {promisify} from "node:util";
+var {EventEmitter } = import.meta.require("node:events");
+var StreamModule =import.meta.require("node:stream");
+var {constants } = import.meta.require("node:os");
+var {promisify } = import.meta.require("node:util");
 function spawn(file, args, options) {
   options = normalizeSpawnArguments(file, args, options), validateTimeout(options.timeout), validateAbortSignal(options.signal, "options.signal");
   const killSignal2 = sanitizeKillSignal(options.killSignal), child = new ChildProcess;

@@ -1,4 +1,4 @@
-import {promises} from "node:readline";
+var {promises } = import.meta.require("node:readline");
 var { Readline, Interface, createInterface } = promises, readline_promises_default = {
   Readline,
   Interface,

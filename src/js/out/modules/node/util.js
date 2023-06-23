@@ -1,5 +1,5 @@
-import * as types from "node:util/types";
-import {default as default2} from "node:util/types";
+var types =import.meta.require("node:util/types");
+var {default: default2 } = import.meta.require("node:util/types");
 var isBufferInterface = function({ copy, fill, readUint8 }) {
   return typeof copy === "function" && typeof fill === "function" && typeof readUint8 === "function";
 };

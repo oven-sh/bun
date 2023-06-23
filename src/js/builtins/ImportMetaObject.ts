@@ -31,7 +31,7 @@ export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
       var state = flags & $promiseStateMask;
       // this branch should never happen, but just to be safe
       if (state === $promiseStatePending || (reactionsOrResult && $isPromise(reactionsOrResult))) {
-        throw new TypeError(`require() async module "${key}" is unsupported`);
+        throw new TypeError(`require() async module "${key}" is unsupported. use "await import()" instead.`);
       } else if (state === $promiseStateRejected) {
         if (!reactionsOrResult?.message) {
           throw new TypeError(
@@ -82,7 +82,9 @@ export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
   if (linkAndEvaluateResult && $isPromise(linkAndEvaluateResult)) {
     // if you use top-level await, or any dependencies use top-level await, then we throw here
     // this means the module will still actually load eventually, but that's okay.
-    throw new TypeError(`require() async module \"${resolvedSpecifier}\" is unsupported`);
+    throw new TypeError(
+      `require() async module \"${resolvedSpecifier}\" is unsupported. use "await import()" instead.`,
+    );
   }
 
   return loader.registry.$get(resolvedSpecifier);

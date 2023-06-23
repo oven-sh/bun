@@ -71,12 +71,6 @@
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 
-namespace JSC {
-// this is not correct
-class JSModuleEnvironment : public JSScope {
-};
-}
-
 namespace Bun {
 using namespace JSC;
 

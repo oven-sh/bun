@@ -8,20 +8,20 @@ const { _ReadableFromWeb } = NodeStreamModule[Symbol.for("::bunternal::")];
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);
 
-export var fetch = Bun.fetch;
-export var Response = globalThis.Response;
-export var Headers = globalThis.Headers;
-export var Request = globalThis.Request;
-export var URLSearchParams = globalThis.URLSearchParams;
-export var URL = globalThis.URL;
-export class File extends Blob {}
-export class FileReader extends EventTarget {
+var fetch = Bun.fetch;
+var Response = globalThis.Response;
+var Headers = globalThis.Headers;
+var Request = globalThis.Request;
+var URLSearchParams = globalThis.URLSearchParams;
+var URL = globalThis.URL;
+class File extends Blob {}
+class FileReader extends EventTarget {
   constructor() {
     throw new Error("Not implemented yet!");
   }
 }
 
-export var FormData = globalThis.FormData;
+var FormData = globalThis.FormData;
 function notImplemented() {
   throw new Error("Not implemented in bun");
 }
@@ -127,7 +127,7 @@ class BodyReadable extends _ReadableFromWeb {
  *   context: Object<string, *>;
  * }}
  */
-export async function request(
+async function request(
   url,
   options = {
     method: "GET",
@@ -228,40 +228,40 @@ export async function request(
   return { statusCode, headers: headers.toJSON(), body, trailers, opaque: kEmptyObject, context: kEmptyObject };
 }
 
-export function stream() {
+function stream() {
   throw new Error("Not implemented in bun");
 }
-export function pipeline() {
+function pipeline() {
   throw new Error("Not implemented in bun");
 }
-export function connect() {
+function connect() {
   throw new Error("Not implemented in bun");
 }
-export function upgrade() {
+function upgrade() {
   throw new Error("Not implemented in bun");
 }
 
-export class MockClient {
+class MockClient {
   constructor() {
     throw new Error("Not implemented in bun");
   }
 }
-export class MockPool {
+class MockPool {
   constructor() {
     throw new Error("Not implemented in bun");
   }
 }
-export class MockAgent {
+class MockAgent {
   constructor() {
     throw new Error("Not implemented in bun");
   }
 }
 
-export function mockErrors() {
+function mockErrors() {
   throw new Error("Not implemented in bun");
 }
 
-export function Undici() {
+function Undici() {
   throw new Error("Not implemented in bun");
 }
 
@@ -328,4 +328,30 @@ export default {
   Agent,
   Undici,
   [Symbol.for("CommonJS")]: 0,
+};
+
+export {
+  fetch,
+  Response,
+  Headers,
+  Request,
+  URLSearchParams,
+  URL,
+  File,
+  FileReader,
+  FormData,
+  request,
+  stream,
+  pipeline,
+  connect,
+  upgrade,
+  MockClient,
+  MockPool,
+  MockAgent,
+  mockErrors,
+  Dispatcher,
+  Pool,
+  BalancedPool,
+  Client,
+  Agent,
 };

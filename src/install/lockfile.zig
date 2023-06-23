@@ -343,6 +343,32 @@ pub const Tree = struct {
         dependencies: []const Dependency,
         resolution_lists: []const Lockfile.DependencyIDSlice,
         queue: Lockfile.TreeFiller,
+        log: ?*logger.Log = null,
+        old_lockfile: ?*Lockfile = null,
+
+        pub fn maybeReportError(this: *Builder, comptime fmt: string, args: anytype) void {
+            var log = this.log orelse return;
+            if (this.old_lockfile == null) return;
+
+            log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
+        }
+
+        pub fn buf(this: *const Builder) []const u8 {
+            var lockfile = this.old_lockfile orelse return "";
+            return lockfile.buffers.string_bytes.items;
+        }
+
+        pub fn packageName(this: *Builder, id: PackageID) String.Formatter {
+            var lockfile = this.old_lockfile orelse return undefined;
+
+            return lockfile.packages.items(.name)[id].fmt(lockfile.buffers.string_bytes.items);
+        }
+
+        pub fn packageVersion(this: *Builder, id: PackageID) Resolution.Formatter {
+            var lockfile = this.old_lockfile orelse return undefined;
+
+            return lockfile.packages.items(.resolution)[id].fmt(lockfile.buffers.string_bytes.items);
+        }
 
         pub const Entry = struct {
             tree: Tree,
@@ -472,7 +498,18 @@ pub const Tree = struct {
             const dep = builder.dependencies[dep_id];
             if (dep.name_hash != dependency.name_hash) continue;
             if (builder.resolutions[dep_id] != package_id) {
-                if (as_defined and !dep.behavior.isPeer()) return error.DependencyLoop;
+                if (as_defined and !dep.behavior.isPeer()) {
+                    if (builder.log != null)
+                        builder.maybeReportError("Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"", .{
+                            builder.packageName(package_id),
+                            builder.packageVersion(package_id),
+                            builder.packageName(builder.resolutions[dep_id]),
+                            builder.packageVersion(builder.resolutions[dep_id]),
+                            dependency.name.fmt(builder.buf()),
+                            dependency.version.literal.fmt(builder.buf()),
+                        });
+                    return error.DependencyLoop;
+                }
                 // ignore versioning conflicts caused by peer dependencies
                 return dependency_loop;
             }
@@ -591,8 +628,11 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
         }
     }
 }
-
 pub fn clean(old: *Lockfile, updates: []PackageManager.UpdateRequest) !*Lockfile {
+    return old.cleanWithLogger(updates, null);
+}
+
+pub fn cleanWithLogger(old: *Lockfile, updates: []PackageManager.UpdateRequest, log: ?*logger.Log) !*Lockfile {
     const old_scripts = old.scripts;
     // We will only shrink the number of packages here.
     // never grow
@@ -653,8 +693,7 @@ pub fn clean(old: *Lockfile, updates: []PackageManager.UpdateRequest) !*Lockfile
     const root = old.rootPackage() orelse return error.NoPackage;
 
     var package_id_mapping = try old.allocator.alloc(PackageID, old.packages.len);
-    std.mem.set(
-        PackageID,
+    @memset(
         package_id_mapping,
         invalid_package_id,
     );
@@ -664,6 +703,7 @@ pub fn clean(old: *Lockfile, updates: []PackageManager.UpdateRequest) !*Lockfile
         .lockfile = new,
         .mapping = package_id_mapping,
         .clone_queue = clone_queue_,
+        .log = log,
     };
     // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
     _ = try root.clone(old, new, package_id_mapping, &cloner);
@@ -740,6 +780,7 @@ const Cloner = struct {
     mapping: []PackageID,
     trees: Tree.List = Tree.List{},
     trees_count: u32 = 1,
+    log: ?*logger.Log = null,
 
     pub fn flush(this: *Cloner) anyerror!void {
         const max_package_id = this.old.packages.len;
@@ -783,6 +824,8 @@ const Cloner = struct {
             .resolutions = this.lockfile.buffers.resolutions.items,
             .allocator = allocator,
             .dependencies = this.lockfile.buffers.dependencies.items,
+            .log = this.log,
+            .old_lockfile = this.old,
         };
 
         try (Tree{}).processSubtree(Tree.root_dep_id, &builder);
@@ -954,7 +997,7 @@ pub const Printer = struct {
             const dependencies_buffer: []const Dependency = this.lockfile.buffers.dependencies.items;
             const string_buf = this.lockfile.buffers.string_bytes.items;
             var id_map = try default_allocator.alloc(DependencyID, this.updates.len);
-            std.mem.set(DependencyID, id_map, invalid_package_id);
+            @memset(id_map, invalid_package_id);
             defer if (id_map.len > 0) default_allocator.free(id_map);
 
             visited.set(0);
@@ -1167,12 +1210,12 @@ pub const Printer = struct {
                     }
 
                     var dependency_versions = requested_version_start[0..j];
-                    if (dependency_versions.len > 1) std.sort.insertionSort(Dependency.Version, dependency_versions, string_buf, Dependency.Version.isLessThan);
+                    if (dependency_versions.len > 1) std.sort.insertion(Dependency.Version, dependency_versions, string_buf, Dependency.Version.isLessThan);
                     try requested_versions.put(i, dependency_versions);
                 }
             }
 
-            std.sort.sort(
+            std.sort.block(
                 PackageID,
                 alphabetized_names,
                 Lockfile.Package.Alphabetizer{
@@ -1864,11 +1907,11 @@ pub const Package = extern struct {
         field: string,
         behavior: Behavior,
 
-        pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = @intToEnum(Behavior, Behavior.normal) };
-        pub const dev = DependencyGroup{ .prop = "devDependencies", .field = "dev_dependencies", .behavior = @intToEnum(Behavior, Behavior.dev) };
-        pub const optional = DependencyGroup{ .prop = "optionalDependencies", .field = "optional_dependencies", .behavior = @intToEnum(Behavior, Behavior.optional) };
-        pub const peer = DependencyGroup{ .prop = "peerDependencies", .field = "peer_dependencies", .behavior = @intToEnum(Behavior, Behavior.peer) };
-        pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = @intToEnum(Behavior, Behavior.workspace) };
+        pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = @enumFromInt(Behavior, Behavior.normal) };
+        pub const dev = DependencyGroup{ .prop = "devDependencies", .field = "dev_dependencies", .behavior = @enumFromInt(Behavior, Behavior.dev) };
+        pub const optional = DependencyGroup{ .prop = "optionalDependencies", .field = "optional_dependencies", .behavior = @enumFromInt(Behavior, Behavior.optional) };
+        pub const peer = DependencyGroup{ .prop = "peerDependencies", .field = "peer_dependencies", .behavior = @enumFromInt(Behavior, Behavior.peer) };
+        pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = @enumFromInt(Behavior, Behavior.workspace) };
     };
 
     pub inline fn isDisabled(this: *const Lockfile.Package) bool {
@@ -1988,7 +2031,7 @@ pub const Package = extern struct {
 
         builder.clamp();
 
-        cloner.trees_count += @as(u32, @boolToInt(old_resolutions.len > 0));
+        cloner.trees_count += @as(u32, @intFromBool(old_resolutions.len > 0));
 
         for (old_resolutions, 0..) |old_resolution, i| {
             if (old_resolution >= max_package_id) continue;
@@ -2064,7 +2107,7 @@ pub const Package = extern struct {
             if (comptime Environment.allow_assert) std.debug.assert(dependencies_list.items.len == resolutions_list.items.len);
 
             var dependencies: []Dependency = dependencies_list.items.ptr[dependencies_list.items.len..total_len];
-            std.mem.set(Dependency, dependencies, Dependency{});
+            @memset(dependencies, Dependency{});
 
             const package_dependencies = package_json.dependencies.map.values();
             const source_buf = package_json.dependencies.source_buf;
@@ -2091,7 +2134,7 @@ pub const Package = extern struct {
 
             const new_length = package.dependencies.len + dependencies_list.items.len;
 
-            std.mem.set(PackageID, resolutions_list.items.ptr[package.dependencies.off .. package.dependencies.off + package.dependencies.len], invalid_package_id);
+            @memset(resolutions_list.items.ptr[package.dependencies.off .. package.dependencies.off + package.dependencies.len], invalid_package_id);
 
             dependencies_list.items = dependencies_list.items.ptr[0..new_length];
             resolutions_list.items = resolutions_list.items.ptr[0..new_length];
@@ -2116,10 +2159,10 @@ pub const Package = extern struct {
 
         const dependency_groups = comptime brk: {
             var out_groups: [
-                @as(usize, @boolToInt(features.dependencies)) +
-                    @as(usize, @boolToInt(features.dev_dependencies)) +
-                    @as(usize, @boolToInt(features.optional_dependencies)) +
-                    @as(usize, @boolToInt(features.peer_dependencies))
+                @as(usize, @intFromBool(features.dependencies)) +
+                    @as(usize, @intFromBool(features.dev_dependencies)) +
+                    @as(usize, @intFromBool(features.optional_dependencies)) +
+                    @as(usize, @intFromBool(features.peer_dependencies))
             ]DependencyGroup = undefined;
             var out_group_i: usize = 0;
 
@@ -2208,7 +2251,7 @@ pub const Package = extern struct {
             if (comptime Environment.allow_assert) std.debug.assert(dependencies_list.items.len == resolutions_list.items.len);
 
             var dependencies = dependencies_list.items.ptr[dependencies_list.items.len..total_len];
-            std.mem.set(Dependency, dependencies, .{});
+            @memset(dependencies, .{});
 
             total_dependencies_count = 0;
             inline for (dependency_groups) |group| {
@@ -2279,7 +2322,7 @@ pub const Package = extern struct {
 
             const new_length = package.dependencies.len + dependencies_list.items.len;
 
-            std.mem.set(PackageID, resolutions_list.items.ptr[package.dependencies.off .. package.dependencies.off + package.dependencies.len], invalid_package_id);
+            @memset(resolutions_list.items.ptr[package.dependencies.off .. package.dependencies.off + package.dependencies.len], invalid_package_id);
 
             dependencies_list.items = dependencies_list.items.ptr[0..new_length];
             resolutions_list.items = resolutions_list.items.ptr[0..new_length];
@@ -2364,7 +2407,7 @@ pub const Package = extern struct {
     };
 
     pub fn hash(name: string, version: Semver.Version) u64 {
-        var hasher = std.hash.Wyhash.init(0);
+        var hasher = bun.Wyhash.init(0);
         hasher.update(name);
         hasher.update(std.mem.asBytes(&version));
         return hasher.final();
@@ -2922,11 +2965,11 @@ pub const Package = extern struct {
 
         const dependency_groups = comptime brk: {
             var out_groups: [
-                @as(usize, @boolToInt(features.dependencies)) +
-                    @as(usize, @boolToInt(features.dev_dependencies)) +
-                    @as(usize, @boolToInt(features.optional_dependencies)) +
-                    @as(usize, @boolToInt(features.peer_dependencies)) +
-                    @as(usize, @boolToInt(features.workspaces))
+                @as(usize, @intFromBool(features.dependencies)) +
+                    @as(usize, @intFromBool(features.dev_dependencies)) +
+                    @as(usize, @intFromBool(features.optional_dependencies)) +
+                    @as(usize, @intFromBool(features.peer_dependencies)) +
+                    @as(usize, @intFromBool(features.workspaces))
             ]DependencyGroup = undefined;
             var out_group_i: usize = 0;
 
@@ -3276,7 +3319,7 @@ pub const Package = extern struct {
             }
         }
 
-        std.sort.sort(
+        std.sort.block(
             Dependency,
             package_dependencies[0..total_dependencies_count],
             lockfile.buffers.string_bytes.items,
@@ -3288,7 +3331,7 @@ pub const Package = extern struct {
 
         package.resolutions = @bitCast(@TypeOf(package.resolutions), package.dependencies);
 
-        std.mem.set(PackageID, lockfile.buffers.resolutions.items.ptr[off..total_len], invalid_package_id);
+        @memset(lockfile.buffers.resolutions.items.ptr[off..total_len], invalid_package_id);
 
         const new_len = off + total_dependencies_count;
         lockfile.buffers.dependencies.items = lockfile.buffers.dependencies.items.ptr[0..new_len];
@@ -3353,7 +3396,7 @@ pub const Package = extern struct {
                 }
             };
             var trash: i32 = undefined; // workaround for stage1 compiler bug
-            std.sort.sort(Data, &data, &trash, Sort.lessThan);
+            std.sort.block(Data, &data, &trash, Sort.lessThan);
             var sizes_bytes: [fields.len]usize = undefined;
             var field_indexes: [fields.len]usize = undefined;
             var Types: [fields.len]type = undefined;
@@ -3448,10 +3491,10 @@ pub const Package = extern struct {
                 var bytes = std.mem.sliceAsBytes(sliced.items(@field(Lockfile.Package.List.Field, field.name)));
                 const end_pos = stream.pos + bytes.len;
                 if (end_pos <= end_at) {
-                    @memcpy(bytes.ptr, stream.buffer[stream.pos..].ptr, bytes.len);
+                    @memcpy(bytes, stream.buffer[stream.pos..][0..bytes.len]);
                     stream.pos = end_pos;
                 } else if (comptime strings.eqlComptime(field.name, "scripts")) {
-                    @memset(bytes.ptr, 0, bytes.len);
+                    @memset(bytes, 0);
                 } else {
                     return error.@"Lockfile validation failed: invalid package list range";
                 }
@@ -3520,7 +3563,7 @@ const Buffers = struct {
             }
         };
         var trash: i32 = undefined; // workaround for stage1 compiler bug
-        std.sort.sort(Data, &data, &trash, Sort.lessThan);
+        std.sort.block(Data, &data, &trash, Sort.lessThan);
         var sizes_bytes: [fields.len]usize = undefined;
         var names: [fields.len][]const u8 = undefined;
         var types: [fields.len]type = undefined;
@@ -3764,7 +3807,7 @@ pub const Serializer = struct {
 
         var writer = stream.writer();
         try writer.writeAll(header_bytes);
-        try writer.writeIntLittle(u32, @enumToInt(this.format));
+        try writer.writeIntLittle(u32, @intFromEnum(this.format));
 
         try writer.writeAll(&this.meta_hash);
 
@@ -3796,7 +3839,7 @@ pub const Serializer = struct {
         }
 
         var format = try reader.readIntLittle(u32);
-        if (format != @enumToInt(Lockfile.FormatVersion.current)) {
+        if (format != @intFromEnum(Lockfile.FormatVersion.current)) {
             return error.@"Outdated lockfile version";
         }
 
@@ -3884,7 +3927,7 @@ fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash 
         }
     }
 
-    std.sort.sort(
+    std.sort.block(
         PackageID,
         alphabetized_names,
         Lockfile.Package.Alphabetizer{

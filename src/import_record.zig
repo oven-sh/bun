@@ -207,7 +207,7 @@ pub const ImportRecord = struct {
         }
 
         pub inline fn isInternal(this: Tag) bool {
-            return @enumToInt(this) >= @enumToInt(Tag.runtime);
+            return @intFromEnum(this) >= @intFromEnum(Tag.runtime);
         }
 
         pub fn useDirective(this: Tag) bun.JSAst.UseDirective {

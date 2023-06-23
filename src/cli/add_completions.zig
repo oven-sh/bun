@@ -66,7 +66,7 @@ pub const index: Index = if (Environment.isDebug) Index.initFill(&.{"OOMWorkArou
                 break;
             }
         }
-        array.set(@intToEnum(FirstLetter, i), &record);
+        array.set(@enumFromInt(FirstLetter, i), &record);
 
         @setEvalBranchQuota(999999);
         i = next_i;

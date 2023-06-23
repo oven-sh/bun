@@ -386,7 +386,7 @@ pub const Response = struct {
 
         const json_value = args.nextEat() orelse JSC.JSValue.zero;
 
-        if (@enumToInt(json_value) != 0) {
+        if (@intFromEnum(json_value) != 0) {
             var zig_str = JSC.ZigString.init("");
             // calling JSON.stringify on an empty string adds extra quotes
             // so this is correct
@@ -448,7 +448,7 @@ pub const Response = struct {
         const url_string_value = args.nextEat() orelse JSC.JSValue.zero;
         var url_string = ZigString.init("");
 
-        if (@enumToInt(url_string_value) != 0) {
+        if (@intFromEnum(url_string_value) != 0) {
             url_string = url_string_value.getZigString(globalThis.ptr());
         }
         var url_string_slice = url_string.toSlice(getAllocator(globalThis));
@@ -1147,9 +1147,9 @@ pub const Fetch = struct {
                                 JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
                                 return .zero;
                             };
-                            @memcpy(buffer.ptr, url_slice.ptr, url_slice.len);
+                            @memcpy(buffer[0..url_slice.len], url_slice);
                             var proxy_url_slice = buffer[url_slice.len..];
-                            @memcpy(proxy_url_slice.ptr, proxy_url_zig.ptr, proxy_url_zig.len);
+                            @memcpy(proxy_url_slice[0..proxy_url_zig.len], proxy_url_zig.ptr[0..proxy_url_zig.len]);
 
                             url = ZigURL.parse(buffer[0..url_slice.len]);
                             proxy = ZigURL.parse(proxy_url_slice);
@@ -1283,9 +1283,9 @@ pub const Fetch = struct {
                                 JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
                                 return .zero;
                             };
-                            @memcpy(buffer.ptr, url_slice.ptr, url_slice.len);
+                            @memcpy(buffer[0..url_slice.len], url_slice.ptr[0..url_slice.len]);
                             var proxy_url_slice = buffer[url_slice.len..];
-                            @memcpy(proxy_url_slice.ptr, proxy_url_zig.ptr, proxy_url_zig.len);
+                            @memcpy(proxy_url_slice[0..proxy_url_zig.len], proxy_url_zig.ptr[0..proxy_url_zig.len]);
 
                             url = ZigURL.parse(buffer[0..url_slice.len]);
                             proxy = ZigURL.parse(proxy_url_slice);
@@ -1695,7 +1695,7 @@ pub const FetchEvent = struct {
 
         defer {
             if (!VirtualMachine.get().had_errors) {
-                Output.printElapsed(@intToFloat(f64, (request_context.timer.lap())) / std.time.ns_per_ms);
+                Output.printElapsed(@floatFromInt(f64, (request_context.timer.lap())) / std.time.ns_per_ms);
 
                 Output.prettyError(
                     " <b>{s}<r><d> - <b>{d}<r> <d>transpiled, <d><b>{d}<r> <d>imports<r>\n",

@@ -887,8 +887,8 @@ pub fn sk_OPENSSL_STRING_call_cmp_func(arg_cmp_func: stack_cmp_func, arg_a: [*c]
     var cmp_func = arg_cmp_func;
     var a = arg_a;
     var b = arg_b;
-    const a_ptr: OPENSSL_STRING = @intToPtr(OPENSSL_STRING, @ptrToInt(a.*));
-    const b_ptr: OPENSSL_STRING = @intToPtr(OPENSSL_STRING, @ptrToInt(b.*));
+    const a_ptr: OPENSSL_STRING = @ptrFromInt(OPENSSL_STRING, @intFromPtr(a.*));
+    const b_ptr: OPENSSL_STRING = @ptrFromInt(OPENSSL_STRING, @intFromPtr(b.*));
     return @ptrCast(stack_OPENSSL_STRING_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]const OPENSSL_STRING, [*c]const OPENSSL_STRING) callconv(.C) c_int), cmp_func)).?(&a_ptr, &b_ptr);
 }
 pub fn sk_OPENSSL_STRING_new(arg_comp: stack_OPENSSL_STRING_cmp_func) callconv(.C) ?*struct_stack_st_OPENSSL_STRING {
@@ -5237,7 +5237,7 @@ pub fn sk_SSL_CIPHER_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*a
 pub fn sk_SSL_CIPHER_call_copy_func(arg_copy_func: stack_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
     var copy_func = arg_copy_func;
     var ptr = arg_ptr;
-    return @intToPtr(?*anyopaque, @ptrToInt(@ptrCast(stack_SSL_CIPHER_copy_func, @alignCast(@import("std").meta.alignment(fn (?*const SSL_CIPHER) callconv(.C) ?*const SSL_CIPHER), copy_func)).?(@ptrCast(?*const SSL_CIPHER, ptr))));
+    return @ptrFromInt(?*anyopaque, @intFromPtr(@ptrCast(stack_SSL_CIPHER_copy_func, @alignCast(@import("std").meta.alignment(fn (?*const SSL_CIPHER) callconv(.C) ?*const SSL_CIPHER), copy_func)).?(@ptrCast(?*const SSL_CIPHER, ptr))));
 }
 pub fn sk_SSL_CIPHER_call_cmp_func(arg_cmp_func: stack_cmp_func, arg_a: [*c]?*const anyopaque, arg_b: [*c]?*const anyopaque) callconv(.C) c_int {
     var cmp_func = arg_cmp_func;
@@ -5271,7 +5271,7 @@ pub fn sk_SSL_CIPHER_set(arg_sk: ?*struct_stack_st_SSL_CIPHER, arg_i: usize, arg
     var sk = arg_sk;
     var i = arg_i;
     var p = arg_p;
-    return @ptrCast(?*const SSL_CIPHER, sk_set(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), i, @intToPtr(?*anyopaque, @ptrToInt(p))));
+    return @ptrCast(?*const SSL_CIPHER, sk_set(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), i, @ptrFromInt(?*anyopaque, @intFromPtr(p))));
 }
 pub fn sk_SSL_CIPHER_free(arg_sk: ?*struct_stack_st_SSL_CIPHER) callconv(.C) void {
     var sk = arg_sk;
@@ -5286,7 +5286,7 @@ pub fn sk_SSL_CIPHER_insert(arg_sk: ?*struct_stack_st_SSL_CIPHER, arg_p: ?*const
     var sk = arg_sk;
     var p = arg_p;
     var where = arg_where;
-    return sk_insert(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @intToPtr(?*anyopaque, @ptrToInt(p)), where);
+    return sk_insert(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrFromInt(?*anyopaque, @intFromPtr(p)), where);
 }
 pub fn sk_SSL_CIPHER_delete(arg_sk: ?*struct_stack_st_SSL_CIPHER, arg_where: usize) callconv(.C) ?*const SSL_CIPHER {
     var sk = arg_sk;
@@ -5311,7 +5311,7 @@ pub fn sk_SSL_CIPHER_shift(arg_sk: ?*struct_stack_st_SSL_CIPHER) callconv(.C) ?*
 pub fn sk_SSL_CIPHER_push(arg_sk: ?*struct_stack_st_SSL_CIPHER, arg_p: ?*const SSL_CIPHER) callconv(.C) usize {
     var sk = arg_sk;
     var p = arg_p;
-    return sk_push(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @intToPtr(?*anyopaque, @ptrToInt(p)));
+    return sk_push(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrFromInt(?*anyopaque, @intFromPtr(p)));
 }
 pub fn sk_SSL_CIPHER_pop(arg_sk: ?*struct_stack_st_SSL_CIPHER) callconv(.C) ?*const SSL_CIPHER {
     var sk = arg_sk;
@@ -5545,7 +5545,7 @@ pub fn sk_SRTP_PROTECTION_PROFILE_call_free_func(arg_free_func: stack_free_func,
 pub fn sk_SRTP_PROTECTION_PROFILE_call_copy_func(arg_copy_func: stack_copy_func, arg_ptr: ?*anyopaque) callconv(.C) ?*anyopaque {
     var copy_func = arg_copy_func;
     var ptr = arg_ptr;
-    return @intToPtr(?*anyopaque, @ptrToInt(@ptrCast(stack_SRTP_PROTECTION_PROFILE_copy_func, @alignCast(@import("std").meta.alignment(fn ([*c]const SRTP_PROTECTION_PROFILE) callconv(.C) [*c]const SRTP_PROTECTION_PROFILE), copy_func)).?(@ptrCast([*c]const SRTP_PROTECTION_PROFILE, @alignCast(@import("std").meta.alignment(SRTP_PROTECTION_PROFILE), ptr)))));
+    return @ptrFromInt(?*anyopaque, @intFromPtr(@ptrCast(stack_SRTP_PROTECTION_PROFILE_copy_func, @alignCast(@import("std").meta.alignment(fn ([*c]const SRTP_PROTECTION_PROFILE) callconv(.C) [*c]const SRTP_PROTECTION_PROFILE), copy_func)).?(@ptrCast([*c]const SRTP_PROTECTION_PROFILE, @alignCast(@import("std").meta.alignment(SRTP_PROTECTION_PROFILE), ptr)))));
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_call_cmp_func(arg_cmp_func: stack_cmp_func, arg_a: [*c]?*const anyopaque, arg_b: [*c]?*const anyopaque) callconv(.C) c_int {
     var cmp_func = arg_cmp_func;
@@ -5579,7 +5579,7 @@ pub fn sk_SRTP_PROTECTION_PROFILE_set(arg_sk: ?*struct_stack_st_SRTP_PROTECTION_
     var sk = arg_sk;
     var i = arg_i;
     var p = arg_p;
-    return @ptrCast([*c]const SRTP_PROTECTION_PROFILE, @alignCast(@import("std").meta.alignment(SRTP_PROTECTION_PROFILE), sk_set(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), i, @intToPtr(?*anyopaque, @ptrToInt(p)))));
+    return @ptrCast([*c]const SRTP_PROTECTION_PROFILE, @alignCast(@import("std").meta.alignment(SRTP_PROTECTION_PROFILE), sk_set(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), i, @ptrFromInt(?*anyopaque, @intFromPtr(p)))));
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_free(arg_sk: ?*struct_stack_st_SRTP_PROTECTION_PROFILE) callconv(.C) void {
     var sk = arg_sk;
@@ -5594,7 +5594,7 @@ pub fn sk_SRTP_PROTECTION_PROFILE_insert(arg_sk: ?*struct_stack_st_SRTP_PROTECTI
     var sk = arg_sk;
     var p = arg_p;
     var where = arg_where;
-    return sk_insert(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @intToPtr(?*anyopaque, @ptrToInt(p)), where);
+    return sk_insert(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrFromInt(?*anyopaque, @intFromPtr(p)), where);
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_delete(arg_sk: ?*struct_stack_st_SRTP_PROTECTION_PROFILE, arg_where: usize) callconv(.C) [*c]const SRTP_PROTECTION_PROFILE {
     var sk = arg_sk;
@@ -5619,7 +5619,7 @@ pub fn sk_SRTP_PROTECTION_PROFILE_shift(arg_sk: ?*struct_stack_st_SRTP_PROTECTIO
 pub fn sk_SRTP_PROTECTION_PROFILE_push(arg_sk: ?*struct_stack_st_SRTP_PROTECTION_PROFILE, arg_p: [*c]const SRTP_PROTECTION_PROFILE) callconv(.C) usize {
     var sk = arg_sk;
     var p = arg_p;
-    return sk_push(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @intToPtr(?*anyopaque, @ptrToInt(p)));
+    return sk_push(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrFromInt(?*anyopaque, @intFromPtr(p)));
 }
 pub fn sk_SRTP_PROTECTION_PROFILE_pop(arg_sk: ?*struct_stack_st_SRTP_PROTECTION_PROFILE) callconv(.C) [*c]const SRTP_PROTECTION_PROFILE {
     var sk = arg_sk;

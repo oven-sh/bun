@@ -28,11 +28,12 @@ pub const Mutex = struct {
         }
 
         const cas_fn = comptime switch (strong) {
-            true => "compareAndSwap",
-            else => "tryCompareAndSwap",
+            true => Atomic(u32).compareAndSwap,
+            else => Atomic(u32).tryCompareAndSwap,
         };
 
-        return @field(self.state, cas_fn)(
+        return cas_fn(
+            &self.state,
             UNLOCKED,
             LOCKED,
             .Acquire,

@@ -309,6 +309,7 @@ CPP_DECL double JSC__JSValue__asNumber(JSC__JSValue JSValue0);
 CPP_DECL bJSC__JSObject JSC__JSValue__asObject(JSC__JSValue JSValue0);
 CPP_DECL JSC__JSPromise* JSC__JSValue__asPromise(JSC__JSValue JSValue0);
 CPP_DECL JSC__JSString* JSC__JSValue__asString(JSC__JSValue JSValue0);
+CPP_DECL double JSC__JSValue__coerceToDouble(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL int32_t JSC__JSValue__coerceToInt32(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL int64_t JSC__JSValue__coerceToInt64(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL JSC__JSValue JSC__JSValue__createEmptyArray(JSC__JSGlobalObject* arg0, size_t arg1);
@@ -340,6 +341,7 @@ CPP_DECL double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC__JSValue JSV
 CPP_DECL void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2);
 CPP_DECL JSC__JSValue JSC__JSValue__getPrototype(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL void JSC__JSValue__getSymbolDescription(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2);
+CPP_DECL double JSC__JSValue__getUnixTimestamp(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isAggregateError(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL bool JSC__JSValue__isAnyError(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isAnyInt(JSC__JSValue JSValue0);
@@ -365,6 +367,9 @@ CPP_DECL bool JSC__JSValue__isSameValue(JSC__JSValue JSValue0, JSC__JSValue JSVa
 CPP_DECL bool JSC__JSValue__isSymbol(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isTerminationException(JSC__JSValue JSValue0, JSC__VM* arg1);
 CPP_DECL bool JSC__JSValue__isUInt32AsAnyInt(JSC__JSValue JSValue0);
+CPP_DECL bool JSC__JSValue__jestDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2);
+CPP_DECL bool JSC__JSValue__jestDeepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2, bool arg3);
+CPP_DECL bool JSC__JSValue__jestStrictDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2);
 CPP_DECL JSC__JSValue JSC__JSValue__jsBoolean(bool arg0);
 CPP_DECL JSC__JSValue JSC__JSValue__jsDoubleNumber(double arg0);
 CPP_DECL JSC__JSValue JSC__JSValue__jsNull();

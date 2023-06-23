@@ -215,13 +215,13 @@ pub const TestRunner = struct {
         const start = @truncate(Test.ID, this.tests.len);
         this.tests.len += count;
         var statuses = this.tests.items(.status)[start..][0..count];
-        std.mem.set(Test.Status, statuses, Test.Status.pending);
+        @memset(statuses, Test.Status.pending);
         this.callback.onUpdateCount(this.callback, count, count + start);
         return start;
     }
 
     pub fn getOrPutFile(this: *TestRunner, file_path: string) *DescribeScope {
-        var entry = this.index.getOrPut(this.allocator, @truncate(u32, std.hash.Wyhash.hash(0, file_path))) catch unreachable;
+        var entry = this.index.getOrPut(this.allocator, @truncate(u32, bun.hash(file_path))) catch unreachable;
         if (entry.found_existing) {
             return this.files.items(.module_scope)[entry.value_ptr.*];
         }
@@ -435,21 +435,21 @@ pub const Jest = struct {
             Expect.getConstructor(globalObject),
         );
 
-        const mock_object = JSMockFunction__createObject(globalObject);
+        const mock_fn = JSMockFunction__createObject(globalObject);
         const spyOn = JSC.NewFunction(globalObject, ZigString.static("spyOn"), 2, JSMock__spyOn, false);
         const restoreAllMocks = JSC.NewFunction(globalObject, ZigString.static("restoreAllMocks"), 2, jsFunctionResetSpies, false);
-        module.put(
-            globalObject,
-            ZigString.static("mock"),
-            mock_object,
-        );
+        module.put(globalObject, ZigString.static("mock"), mock_fn);
 
         const jest = JSValue.createEmptyObject(globalObject, 3);
-        jest.put(globalObject, ZigString.static("fn"), mock_object);
+        jest.put(globalObject, ZigString.static("fn"), mock_fn);
         jest.put(globalObject, ZigString.static("spyOn"), spyOn);
         jest.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
         module.put(globalObject, ZigString.static("jest"), jest);
         module.put(globalObject, ZigString.static("spyOn"), spyOn);
+
+        const vi = JSValue.createEmptyObject(globalObject, 1);
+        vi.put(globalObject, ZigString.static("fn"), mock_fn);
+        module.put(globalObject, ZigString.static("vi"), vi);
 
         return module;
     }

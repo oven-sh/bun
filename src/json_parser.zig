@@ -542,7 +542,7 @@ pub fn toAST(
             return Expr{
                 .data = .{
                     .e_number = .{
-                        .value = @intToFloat(f64, value),
+                        .value = @floatFromInt(f64, value),
                     },
                 },
                 .loc = logger.Loc{},
@@ -626,7 +626,7 @@ pub fn toAST(
             }
         },
         .Enum => {
-            _ = std.meta.intToEnum(Type, @enumToInt(value)) catch {
+            _ = std.meta.intToEnum(Type, @intFromEnum(value)) catch {
                 return Expr{ .data = .{ .e_null = .{} }, .loc = logger.Loc{} };
             };
 

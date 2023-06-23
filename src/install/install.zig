@@ -146,12 +146,12 @@ pub fn ExternalSliceAligned(comptime Type: type, comptime alignment_: ?u29) type
 
         pub fn init(buf: []const Type, in: []const Type) Slice {
             // if (comptime Environment.allow_assert) {
-            //     std.debug.assert(@ptrToInt(buf.ptr) <= @ptrToInt(in.ptr));
-            //     std.debug.assert((@ptrToInt(in.ptr) + in.len) <= (@ptrToInt(buf.ptr) + buf.len));
+            //     std.debug.assert(@intFromPtr(buf.ptr) <= @intFromPtr(in.ptr));
+            //     std.debug.assert((@intFromPtr(in.ptr) + in.len) <= (@intFromPtr(buf.ptr) + buf.len));
             // }
 
             return Slice{
-                .off = @truncate(u32, (@ptrToInt(in.ptr) - @ptrToInt(buf.ptr)) / @sizeOf(Type)),
+                .off = @truncate(u32, (@intFromPtr(in.ptr) - @intFromPtr(buf.ptr)) / @sizeOf(Type)),
                 .len = @truncate(u32, in.len),
             };
         }
@@ -183,7 +183,7 @@ pub const Aligner = struct {
     }
 
     pub inline fn skipAmount(comptime Type: type, pos: usize) usize {
-        return std.mem.alignForward(pos, @alignOf(Type)) - pos;
+        return std.mem.alignForward(usize, pos, @alignOf(Type)) - pos;
     }
 };
 
@@ -351,7 +351,7 @@ const NetworkTask = struct {
                 },
             );
             header_builder.header_count = 1;
-            header_builder.content = GlobalStringBuilder{ .ptr = @intToPtr([*]u8, @ptrToInt(bun.span(default_headers_buf).ptr)), .len = default_headers_buf.len, .cap = default_headers_buf.len };
+            header_builder.content = GlobalStringBuilder{ .ptr = @ptrFromInt([*]u8, @intFromPtr(bun.span(default_headers_buf).ptr)), .len = default_headers_buf.len, .cap = default_headers_buf.len };
         }
 
         this.response_buffer = try MutableString.init(allocator, 0);
@@ -474,12 +474,12 @@ pub const Features = struct {
 
     pub fn behavior(this: Features) Behavior {
         var out: u8 = 0;
-        out |= @as(u8, @boolToInt(this.dependencies)) << 1;
-        out |= @as(u8, @boolToInt(this.optional_dependencies)) << 2;
-        out |= @as(u8, @boolToInt(this.dev_dependencies)) << 3;
-        out |= @as(u8, @boolToInt(this.peer_dependencies)) << 4;
-        out |= @as(u8, @boolToInt(this.workspaces)) << 5;
-        return @intToEnum(Behavior, out);
+        out |= @as(u8, @intFromBool(this.dependencies)) << 1;
+        out |= @as(u8, @intFromBool(this.optional_dependencies)) << 2;
+        out |= @as(u8, @intFromBool(this.dev_dependencies)) << 3;
+        out |= @as(u8, @intFromBool(this.peer_dependencies)) << 4;
+        out |= @as(u8, @intFromBool(this.workspaces)) << 5;
+        return @enumFromInt(Behavior, out);
     }
 
     pub const main = Features{
@@ -541,7 +541,7 @@ const Task = struct {
     /// An ID that lets us register a callback without keeping the same pointer around
     pub const Id = struct {
         pub fn forNPMPackage(package_name: string, package_version: Semver.Version) u64 {
-            var hasher = std.hash.Wyhash.init(0);
+            var hasher = bun.Wyhash.init(0);
             hasher.update(package_name);
             hasher.update("@");
             hasher.update(std.mem.asBytes(&package_version));
@@ -549,28 +549,28 @@ const Task = struct {
         }
 
         pub fn forBinLink(package_id: PackageID) u64 {
-            const hash = std.hash.Wyhash.hash(0, std.mem.asBytes(&package_id));
+            const hash = bun.Wyhash.hash(0, std.mem.asBytes(&package_id));
             return @as(u64, 1 << 61) | @as(u64, @truncate(u61, hash));
         }
 
         pub fn forManifest(name: string) u64 {
-            return @as(u64, 2 << 61) | @as(u64, @truncate(u61, std.hash.Wyhash.hash(0, name)));
+            return @as(u64, 2 << 61) | @as(u64, @truncate(u61, bun.Wyhash.hash(0, name)));
         }
 
         pub fn forTarball(url: string) u64 {
-            var hasher = std.hash.Wyhash.init(0);
+            var hasher = bun.Wyhash.init(0);
             hasher.update(url);
             return @as(u64, 3 << 61) | @as(u64, @truncate(u61, hasher.final()));
         }
 
         pub fn forGitClone(url: string) u64 {
-            var hasher = std.hash.Wyhash.init(0);
+            var hasher = bun.Wyhash.init(0);
             hasher.update(url);
             return @as(u64, 4 << 61) | @as(u64, @truncate(u61, hasher.final()));
         }
 
         pub fn forGitCheckout(url: string, resolved: string) u64 {
-            var hasher = std.hash.Wyhash.init(0);
+            var hasher = bun.Wyhash.init(0);
             hasher.update(url);
             hasher.update("@");
             hasher.update(resolved);
@@ -1079,10 +1079,10 @@ const PackageInstall = struct {
                 var stackpath: [bun.MAX_PATH_BYTES]u8 = undefined;
                 while (try walker.next()) |entry| {
                     switch (entry.kind) {
-                        .Directory => {
+                        .directory => {
                             std.os.mkdirat(destination_dir_.dir.fd, entry.path, 0o755) catch {};
                         },
-                        .File => {
+                        .file => {
                             bun.copy(u8, &stackpath, entry.path);
                             stackpath[entry.path.len] = 0;
                             var path: [:0]u8 = stackpath[0..entry.path.len :0];
@@ -1190,7 +1190,7 @@ const PackageInstall = struct {
             ) !u32 {
                 var real_file_count: u32 = 0;
                 while (try walker.next()) |entry| {
-                    if (entry.kind != .File) continue;
+                    if (entry.kind != .file) continue;
                     real_file_count += 1;
 
                     var outfile = destination_dir_.createFile(entry.path, .{}) catch brk: {
@@ -1268,10 +1268,10 @@ const PackageInstall = struct {
                 var real_file_count: u32 = 0;
                 while (try walker.next()) |entry| {
                     switch (entry.kind) {
-                        .Directory => {
+                        .directory => {
                             std.os.mkdirat(destination_dir_.dir.fd, entry.path, 0o755) catch {};
                         },
-                        .File => {
+                        .file => {
                             try std.os.linkat(entry.dir.dir.fd, entry.basename, destination_dir_.dir.fd, entry.path, 0);
                             real_file_count += 1;
                         },
@@ -1351,16 +1351,16 @@ const PackageInstall = struct {
                 while (try walker.next()) |entry| {
                     switch (entry.kind) {
                         // directories are created
-                        .Directory => {
+                        .directory => {
                             std.os.mkdirat(dest_dir_fd, entry.path, 0o755) catch {};
                         },
                         // but each file in the directory is a symlink
-                        .File => {
-                            @memcpy(remain.ptr, entry.path.ptr, entry.path.len);
+                        .file => {
+                            @memcpy(remain[0..entry.path.len], entry.path);
                             remain[entry.path.len] = 0;
                             var from_path = buf[0 .. cache_dir_offset + entry.path.len :0];
 
-                            @memcpy(dest_remaining.ptr, entry.path.ptr, entry.path.len);
+                            @memcpy(dest_remaining[0..entry.path.len], entry.path);
                             dest_remaining[entry.path.len] = 0;
                             var to_path = dest_buf[0 .. dest_dir_offset + entry.path.len :0];
 
@@ -1830,7 +1830,7 @@ pub const PackageManager = struct {
         const offset = this.preinstall_state.items.len;
         try this.preinstall_state.ensureTotalCapacity(this.allocator, count);
         this.preinstall_state.expandToCapacity();
-        std.mem.set(PreinstallState, this.preinstall_state.items[offset..], PreinstallState.unknown);
+        @memset(this.preinstall_state.items[offset..], PreinstallState.unknown);
     }
 
     pub fn setPreinstallState(this: *PackageManager, package_id: PackageID, lockfile: *Lockfile, value: PreinstallState) void {
@@ -2263,7 +2263,7 @@ pub const PackageManager = struct {
         var iter = dir.iterate();
 
         while (try iter.next()) |entry| {
-            if (entry.kind != .Directory and entry.kind != .SymLink) continue;
+            if (entry.kind != .directory and entry.kind != .sym_link) continue;
             const name = entry.name;
             const sliced = SlicedString.init(name, name);
             const parsed = Semver.Version.parse(sliced, allocator);
@@ -2305,7 +2305,7 @@ pub const PackageManager = struct {
         };
 
         // TODO: make this fewer passes
-        std.sort.sort(
+        std.sort.block(
             Semver.Version,
             installed_versions.items,
             @as([]const u8, tags_buf.items),
@@ -3752,7 +3752,7 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.isVerbose()) {
                         Output.prettyError("    ", .{});
-                        Output.printElapsed(@intToFloat(f64, task.http.elapsed) / std.time.ns_per_ms);
+                        Output.printElapsed(@floatFromInt(f64, task.http.elapsed) / std.time.ns_per_ms);
                         Output.prettyError("\n <d>Downloaded <r><green>{s}<r> versions\n", .{name.slice()});
                         Output.flush();
                     }
@@ -3886,7 +3886,7 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.isVerbose()) {
                         Output.prettyError("    ", .{});
-                        Output.printElapsed(@floatCast(f64, @intToFloat(f64, task.http.elapsed) / std.time.ns_per_ms));
+                        Output.printElapsed(@floatCast(f64, @floatFromInt(f64, task.http.elapsed) / std.time.ns_per_ms));
                         Output.prettyError(" <d>Downloaded <r><green>{s}<r> tarball\n", .{extract.name.slice()});
                         Output.flush();
                     }
@@ -4814,7 +4814,7 @@ pub const PackageManager = struct {
 
                 var new_dependencies = try allocator.alloc(G.Property, dependencies.len + remaining - replacing);
                 bun.copy(G.Property, new_dependencies, dependencies);
-                std.mem.set(G.Property, new_dependencies[dependencies.len..], G.Property{});
+                @memset(new_dependencies[dependencies.len..], G.Property{});
 
                 outer: for (updates) |*update| {
                     if (update.e_string != null) continue;
@@ -6372,7 +6372,7 @@ pub const PackageManager = struct {
                     var iter: std.fs.IterableDir.Iterator = node_modules_bin.iterate();
                     iterator: while (iter.next() catch null) |entry| {
                         switch (entry.kind) {
-                            std.fs.IterableDir.Entry.Kind.SymLink => {
+                            std.fs.IterableDir.Entry.Kind.sym_link => {
 
                                 // any symlinks which we are unable to open are assumed to be dangling
                                 // note that using access won't work here, because access doesn't resolve symlinks
@@ -6547,7 +6547,7 @@ pub const PackageManager = struct {
                     if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
                         installer.cache_dir_subpath = ".";
                     } else {
-                        @memcpy(&this.folder_path_buf, folder.ptr, folder.len);
+                        @memcpy(this.folder_path_buf[0..folder.len], folder);
                         this.folder_path_buf[folder.len] = 0;
                         installer.cache_dir_subpath = this.folder_path_buf[0..folder.len :0];
                     }
@@ -6567,7 +6567,7 @@ pub const PackageManager = struct {
                     if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
                         installer.cache_dir_subpath = ".";
                     } else {
-                        @memcpy(&this.folder_path_buf, folder.ptr, folder.len);
+                        @memcpy(this.folder_path_buf[0..folder.len], folder);
                         this.folder_path_buf[folder.len] = 0;
                         installer.cache_dir_subpath = this.folder_path_buf[0..folder.len :0];
                     }
@@ -6608,16 +6608,16 @@ pub const PackageManager = struct {
                         const global_link_dir = this.manager.globalLinkDirPath() catch unreachable;
                         var ptr = &this.folder_path_buf;
                         var remain: []u8 = this.folder_path_buf[0..];
-                        @memcpy(ptr, global_link_dir.ptr, global_link_dir.len);
+                        @memcpy(ptr[0..global_link_dir.len], global_link_dir);
                         remain = remain[global_link_dir.len..];
                         if (global_link_dir[global_link_dir.len - 1] != std.fs.path.sep) {
                             remain[0] = std.fs.path.sep;
                             remain = remain[1..];
                         }
-                        @memcpy(remain.ptr, folder.ptr, folder.len);
+                        @memcpy(remain[0..folder.len], folder);
                         remain = remain[folder.len..];
                         remain[0] = 0;
-                        const len = @ptrToInt(remain.ptr) - @ptrToInt(ptr);
+                        const len = @intFromPtr(remain.ptr) - @intFromPtr(ptr);
                         installer.cache_dir_subpath = this.folder_path_buf[0..len :0];
                         installer.cache_dir = directory;
                     }
@@ -6626,7 +6626,7 @@ pub const PackageManager = struct {
             }
 
             const needs_install = this.force_install or this.skip_verify_installed_version_number or !installer.verify(resolution, buf);
-            this.summary.skipped += @as(u32, @boolToInt(!needs_install));
+            this.summary.skipped += @as(u32, @intFromBool(!needs_install));
 
             if (needs_install) {
                 const result: PackageInstall.Result = switch (resolution.tag) {
@@ -6637,7 +6637,7 @@ pub const PackageManager = struct {
                 switch (result) {
                     .success => {
                         const is_duplicate = this.successfully_installed.isSet(package_id);
-                        this.summary.success += @as(u32, @boolToInt(!is_duplicate));
+                        this.summary.success += @as(u32, @intFromBool(!is_duplicate));
                         this.successfully_installed.set(package_id);
 
                         if (comptime log_level.showProgress()) {
@@ -7390,7 +7390,7 @@ pub const PackageManager = struct {
                         );
                     }
                     var mapping = try manager.lockfile.allocator.alloc(PackageID, maybe_root.dependencies.len);
-                    std.mem.set(PackageID, mapping, invalid_package_id);
+                    @memset(mapping, invalid_package_id);
 
                     manager.summary = try Package.Diff.generate(
                         ctx.allocator,
@@ -7443,8 +7443,8 @@ pub const PackageManager = struct {
                         var resolutions = manager.lockfile.buffers.resolutions.items.ptr[off .. off + len];
 
                         // It is too easy to accidentally undefined memory
-                        std.mem.set(PackageID, resolutions, invalid_package_id);
-                        std.mem.set(Dependency, dependencies, Dependency{});
+                        @memset(resolutions, invalid_package_id);
+                        @memset(dependencies, Dependency{});
 
                         manager.lockfile.buffers.dependencies.items = manager.lockfile.buffers.dependencies.items.ptr[0 .. off + len];
                         manager.lockfile.buffers.resolutions.items = manager.lockfile.buffers.resolutions.items.ptr[0 .. off + len];
@@ -7565,7 +7565,7 @@ pub const PackageManager = struct {
         const needs_clean_lockfile = had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0;
         var did_meta_hash_change = needs_clean_lockfile;
         if (needs_clean_lockfile) {
-            manager.lockfile = try manager.lockfile.clean(manager.package_json_updates);
+            manager.lockfile = try manager.lockfile.cleanWithLogger(manager.package_json_updates, manager.log);
         }
 
         if (manager.lockfile.packages.len > 0) {

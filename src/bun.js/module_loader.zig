@@ -1298,7 +1298,7 @@ pub const ModuleLoader = struct {
                             var encoded = JSC.EncodedJSValue{
                                 .asPtr = globalThis,
                             };
-                            const globalValue = @intToEnum(JSC.JSValue, encoded.asInt64);
+                            const globalValue = @enumFromInt(JSC.JSValue, encoded.asInt64);
                             globalValue.put(
                                 globalThis,
                                 JSC.ZigString.static("wasmSourceBytes"),

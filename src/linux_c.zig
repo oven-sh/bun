@@ -148,7 +148,7 @@ pub const SystemErrno = enum(u8) {
         }
 
         if (code >= max) return null;
-        return @intToEnum(SystemErrno, code);
+        return @enumFromInt(SystemErrno, code);
     }
 
     pub fn label(this: SystemErrno) ?[]const u8 {
@@ -385,9 +385,9 @@ pub fn splice(fd_in: std.os.fd_t, off_in: ?*i64, fd_out: std.os.fd_t, off_out: ?
     return std.os.linux.syscall6(
         .splice,
         @bitCast(usize, @as(isize, fd_in)),
-        @ptrToInt(off_in),
+        @intFromPtr(off_in),
         @bitCast(usize, @as(isize, fd_out)),
-        @ptrToInt(off_out),
+        @intFromPtr(off_out),
         len,
         flags,
     );
@@ -438,9 +438,9 @@ pub fn get_system_loadavg() [3]f64 {
     var info: struct_sysinfo = undefined;
     if (sysinfo(&info) == @as(c_int, 0)) {
         return [3]f64{
-            std.math.ceil((@intToFloat(f64, info.loads[0]) / 65536.0) * 100.0) / 100.0,
-            std.math.ceil((@intToFloat(f64, info.loads[1]) / 65536.0) * 100.0) / 100.0,
-            std.math.ceil((@intToFloat(f64, info.loads[2]) / 65536.0) * 100.0) / 100.0,
+            std.math.ceil((@floatFromInt(f64, info.loads[0]) / 65536.0) * 100.0) / 100.0,
+            std.math.ceil((@floatFromInt(f64, info.loads[1]) / 65536.0) * 100.0) / 100.0,
+            std.math.ceil((@floatFromInt(f64, info.loads[2]) / 65536.0) * 100.0) / 100.0,
         };
     }
     return [3]f64{ 0, 0, 0 };

@@ -55,7 +55,7 @@ pub const version: @import("./install/semver.zig").Version = .{
 
 pub fn setThreadName(name: StringTypes.stringZ) void {
     if (Environment.isLinux) {
-        _ = std.os.prctl(.SET_NAME, .{@ptrToInt(name.ptr)}) catch 0;
+        _ = std.os.prctl(.SET_NAME, .{@intFromPtr(name.ptr)}) catch 0;
     } else if (Environment.isMac) {
         _ = std.c.pthread_setname_np(name);
     }

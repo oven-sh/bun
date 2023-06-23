@@ -28,7 +28,7 @@ pub const ThreadPool = struct {
 
         errdefer self.deinit();
 
-        const num_workers = std.math.max(1, config.max_threads orelse std.Thread.cpuCount() catch 1);
+        const num_workers = @max(1, config.max_threads orelse std.Thread.cpuCount() catch 1);
         self.workers = try self.allocator.alloc(Worker, num_workers);
 
         for (&self.workers) |*worker| {
@@ -91,8 +91,8 @@ pub const ThreadPool = struct {
         idle_workers: usize = 0,
 
         fn pack(self: State) usize {
-            return ((@as(usize, @boolToInt(self.is_shutdown)) << 0) |
-                (@as(usize, @boolToInt(self.is_notified)) << 1) |
+            return ((@as(usize, @intFromBool(self.is_shutdown)) << 0) |
+                (@as(usize, @intFromBool(self.is_notified)) << 1) |
                 (self.idle_workers << 2));
         }
 
@@ -225,7 +225,7 @@ pub const ThreadPool = struct {
             current = self;
             defer current = old_current;
 
-            var tick = @ptrToInt(self);
+            var tick = @intFromPtr(self);
             var prng = std.rand.DefaultPrng.init(tick);
 
             while (true) {
@@ -978,7 +978,7 @@ else if (@import("builtin").os.tag == .linux)
 
                 Futex.wait(
                     @ptrCast(*const i32, &self.state),
-                    @enumToInt(new_state),
+                    @intFromEnum(new_state),
                 );
             }
         }

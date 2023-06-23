@@ -1355,6 +1355,14 @@ inline void TransformStreamBuiltinsWrapper::exportNames()
 #undef EXPORT_FUNCTION_NAME
 }
 /* Module.ts */
+// main
+#define WEBCORE_BUILTIN_MODULE_MAIN 1
+extern const char* const s_moduleMainCode;
+extern const int s_moduleMainCodeLength;
+extern const JSC::ConstructAbility s_moduleMainCodeConstructAbility;
+extern const JSC::ConstructorKind s_moduleMainCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_moduleMainCodeImplementationVisibility;
+
 // require
 #define WEBCORE_BUILTIN_MODULE_REQUIRE 1
 extern const char* const s_moduleRequireCode;
@@ -1372,14 +1380,17 @@ extern const JSC::ConstructorKind s_moduleRequireResolveCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_moduleRequireResolveCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_MODULE_BUILTIN_DATA(macro) \
+    macro(main, moduleMain, 0) \
     macro(require, moduleRequire, 1) \
     macro(requireResolve, moduleRequireResolve, 1) \
 
 #define WEBCORE_FOREACH_MODULE_BUILTIN_CODE(macro) \
+    macro(moduleMainCode, main, "get main"_s, s_moduleMainCodeLength) \
     macro(moduleRequireCode, require, ASCIILiteral(), s_moduleRequireCodeLength) \
     macro(moduleRequireResolveCode, requireResolve, ASCIILiteral(), s_moduleRequireResolveCodeLength) \
 
 #define WEBCORE_FOREACH_MODULE_BUILTIN_FUNCTION_NAME(macro) \
+    macro(main) \
     macro(require) \
     macro(requireResolve) \
 

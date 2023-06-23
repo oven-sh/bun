@@ -235,7 +235,17 @@ JSObject* Zig::ImportMetaObject::createRequireFunction(VM& vm, JSGlobalObject* l
     auto* globalObject = lexicalGlobalObject;
     JSFunction* requireFunction = JSFunction::create(vm, importMetaObjectRequireCodeGenerator(vm), lexicalGlobalObject);
 
-    requireFunction->putDirect(vm, JSC::Identifier::fromString(vm, "main"_s), jsUndefined(), 0);
+    JSC::JSFunction* requireDotMainFunction = JSFunction::create(
+        vm,
+        moduleMainCodeGenerator(vm),
+        globalObject->globalScope());
+
+    requireFunction->putDirect(
+        vm,
+        JSC::Identifier::fromString(vm, "main"_s),
+        JSC::GetterSetter::create(vm, globalObject, requireDotMainFunction, JSValue()),
+        PropertyAttribute::Builtin | PropertyAttribute::Accessor | PropertyAttribute::ReadOnly | 0);
+
     requireFunction->putDirect(vm, JSC::Identifier::fromString(vm, "extensions"_s), JSC::constructEmptyObject(globalObject), 0);
     requireFunction->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "cache"_s), JSC::CustomGetterSetter::create(vm, Zig::jsRequireCacheGetter, Zig::jsRequireCacheSetter), 0);
     requireFunction->putDirect(vm, JSC::Identifier::fromString(vm, "resolve"_s), ResolveFunction::create(globalObject), JSC::PropertyAttribute::Function | 0);

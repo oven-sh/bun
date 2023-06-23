@@ -6,8 +6,13 @@ interface Module {
   children: Module[];
 }
 
+$getter;
+export function main() {
+  return $requireMap.$get(Bun.main);
+}
+
 export function require(this: Module, id: string) {
-  const existing = $requireMap.$get(id) || $requireMap.$get((id = $resolveSync(id, this.id, false)));
+  const existing = $requireMap.$get(id) || $requireMap.$get((id = $resolveSync(id, this.path, false)));
   if (existing) {
     return existing.exports;
   }

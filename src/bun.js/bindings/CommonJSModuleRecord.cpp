@@ -185,7 +185,16 @@ public:
         ASSERT(inherits(vm, info()));
 
         reifyStaticProperties(vm, info(), RequireFunctionPrototypeValues, *this);
-        this->putDirect(vm, JSC::Identifier::fromString(vm, "main"_s), jsUndefined(), 0);
+        JSC::JSFunction* requireDotMainFunction = JSFunction::create(
+            vm,
+            moduleMainCodeGenerator(vm),
+            globalObject()->globalScope());
+
+        this->putDirect(
+            vm,
+            JSC::Identifier::fromString(vm, "main"_s),
+            JSC::GetterSetter::create(vm, globalObject(), requireDotMainFunction, JSValue()),
+            PropertyAttribute::Builtin | PropertyAttribute::Accessor | PropertyAttribute::ReadOnly | 0);
         this->putDirect(vm, JSC::Identifier::fromString(vm, "extensions"_s), constructEmptyObject(globalObject()), 0);
     }
 };

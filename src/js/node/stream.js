@@ -2283,6 +2283,7 @@ var require_from = __commonJS({
 });
 
 var _ReadableFromWeb;
+var _ReadableFromWebForUndici;
 
 // node_modules/readable-stream/lib/internal/streams/readable.js
 var require_readable = __commonJS({
@@ -2486,6 +2487,8 @@ var require_readable = __commonJS({
         }
       }
     }
+
+    _ReadableFromWebForUndici = ReadableFromWeb;
 
     /**
      * @param {ReadableStream} readableStream
@@ -5576,7 +5579,7 @@ var NativeWritable = class NativeWritable extends Writable {
 
 const stream_exports = require_ours();
 stream_exports[Symbol.for("CommonJS")] = 0;
-stream_exports[Symbol.for("::bunternal::")] = { _ReadableFromWeb };
+stream_exports[Symbol.for("::bunternal::")] = { _ReadableFromWeb, _ReadableFromWebForUndici };
 export default stream_exports;
 export var _uint8ArrayToBuffer = stream_exports._uint8ArrayToBuffer;
 export var _isUint8Array = stream_exports._isUint8Array;

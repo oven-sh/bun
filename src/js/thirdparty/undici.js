@@ -3,7 +3,7 @@ import { EventEmitter } from "events";
 import NodeStreamModule from "node:stream";
 import { Readable } from "node:stream";
 
-const { _ReadableFromWeb } = NodeStreamModule[Symbol.for("::bunternal::")];
+const { _ReadableFromWebForUndici: ReadableFromWeb } = NodeStreamModule[Symbol.for("::bunternal::")];
 
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);
@@ -45,7 +45,7 @@ function notImplemented() {
  * @typedef {import('events').EventEmitter} EventEmitter
  */
 
-class BodyReadable extends _ReadableFromWeb {
+class BodyReadable extends ReadableFromWeb {
   #response;
   #bodyUsed;
 

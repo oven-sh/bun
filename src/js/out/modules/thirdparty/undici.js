@@ -83,7 +83,7 @@ var stream = function() {
 function Undici() {
   throw new Error("Not implemented in bun");
 }
-var { Object } = globalThis[Symbol.for("Bun.lazy")]("primordials"), { _ReadableFromWeb } = NodeStreamModule[Symbol.for("::bunternal::")], ObjectCreate = Object.create, kEmptyObject = ObjectCreate(null), fetch = Bun.fetch, Response = globalThis.Response, Headers = globalThis.Headers, Request = globalThis.Request, URLSearchParams = globalThis.URLSearchParams, URL = globalThis.URL;
+var { Object } = globalThis[Symbol.for("Bun.lazy")]("primordials"), { _ReadableFromWebForUndici: ReadableFromWeb } = NodeStreamModule[Symbol.for("::bunternal::")], ObjectCreate = Object.create, kEmptyObject = ObjectCreate(null), fetch = Bun.fetch, Response = globalThis.Response, Headers = globalThis.Headers, Request = globalThis.Request, URLSearchParams = globalThis.URLSearchParams, URL = globalThis.URL;
 
 class File extends Blob {
 }
@@ -95,7 +95,7 @@ class FileReader extends EventTarget {
 }
 var FormData = globalThis.FormData;
 
-class BodyReadable extends _ReadableFromWeb {
+class BodyReadable extends ReadableFromWeb {
   #response;
   #bodyUsed;
   constructor(response, options = {}) {

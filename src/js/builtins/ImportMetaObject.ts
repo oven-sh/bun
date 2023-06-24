@@ -135,15 +135,15 @@ export function internalRequire(this: ImportMetaObject, id) {
     return exports;
   } else {
     var exports = $requireESM(id);
-    const cachedExports = $requireMap.$get(id);
-    if (cachedExports) {
-      return cachedExports.exports;
+    const cachedModule = $requireMap.$get(id);
+    if (cachedModule) {
+      return cachedModule.exports;
     }
-    var module = $createCommonJSModule(id, exports);
-    $requireMap.$set(id, module);
-    if (module.exports?.default?.[$commonJSSymbol] === 0) {
-      return (module.exports = module.exports.default);
+    var defaultExport = exports?.default;
+    if (defaultExport?.[$commonJSSymbol] === 0) {
+      exports = defaultExport;
     }
+    $requireMap.$set(id, $createCommonJSModule(id, exports));
     return exports;
   }
 }

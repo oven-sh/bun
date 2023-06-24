@@ -816,7 +816,9 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
     if (entry) {
         moduleObject = jsDynamicCast<JSCommonJSModule*>(entry);
-        sourceProvider->deref();
+        if (moduleObject) {
+            sourceProvider->deref();
+        }
     }
 
     if (!moduleObject) {

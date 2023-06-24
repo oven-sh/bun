@@ -2609,6 +2609,13 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             return this.tombstones.get(key);
         }
 
+        pub fn onError(
+            _: *@This(),
+            err: anyerror,
+        ) void {
+            Output.prettyErrorln("<r>Watcher crashed: <red><b>{s}<r>", .{@errorName(err)});
+        }
+
         pub fn onFileUpdate(
             this: *@This(),
             events: []watcher.WatchEvent,

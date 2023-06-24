@@ -3238,7 +3238,12 @@ pub const Server = struct {
 
     threadlocal var filechange_buf: [32]u8 = undefined;
     threadlocal var filechange_buf_hinted: [32]u8 = undefined;
-
+    pub fn onError(
+        _: *@This(),
+        err: anyerror,
+    ) void {
+        Output.prettyErrorln("<r>Watcher crashed: <red><b>{s}<r>", .{@errorName(err)});
+    }
     pub fn onFileUpdate(
         ctx: *Server,
         events: []watcher.WatchEvent,

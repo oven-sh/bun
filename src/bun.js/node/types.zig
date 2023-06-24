@@ -93,6 +93,10 @@ pub fn Maybe(comptime ResultType: type) type {
                         return JSC.JSValue.jsUndefined();
                     }
 
+                    if (comptime ReturnType == JSC.JSValue) {
+                        return r;
+                    }
+
                     if (comptime ReturnType == JSC.ArrayBuffer) {
                         return r.toJS(globalThis, null);
                     }

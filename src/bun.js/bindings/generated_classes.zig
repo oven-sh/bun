@@ -1406,6 +1406,96 @@ pub const JSExpectStringMatching = struct {
         }
     }
 };
+pub const JSFSWatcher = struct {
+    const FSWatcher = Classes.FSWatcher;
+    const GetterType = fn (*FSWatcher, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*FSWatcher, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*FSWatcher, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*FSWatcher, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*FSWatcher, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*FSWatcher {
+        JSC.markBinding(@src());
+        return FSWatcher__fromJS(value);
+    }
+
+    extern fn FSWatcherPrototype__listenerSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn FSWatcherPrototype__listenerGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `FSWatcher.listener` setter
+    /// This value will be visited by the garbage collector.
+    pub fn listenerSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        FSWatcherPrototype__listenerSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `FSWatcher.listener` getter
+    /// This value will be visited by the garbage collector.
+    pub fn listenerGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = FSWatcherPrototype__listenerGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of FSWatcher
+    pub fn toJS(this: *FSWatcher, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = FSWatcher__create(globalObject, this);
+            std.debug.assert(value__.as(FSWatcher).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return FSWatcher__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of FSWatcher.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*FSWatcher) bool {
+        JSC.markBinding(@src());
+        return FSWatcher__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *FSWatcher, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(FSWatcher__dangerouslySetPtr(value, null));
+    }
+
+    extern fn FSWatcher__fromJS(JSC.JSValue) ?*FSWatcher;
+    extern fn FSWatcher__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn FSWatcher__create(globalObject: *JSC.JSGlobalObject, ptr: ?*FSWatcher) JSC.JSValue;
+
+    extern fn FSWatcher__dangerouslySetPtr(JSC.JSValue, ?*FSWatcher) bool;
+
+    comptime {
+        if (@TypeOf(FSWatcher.finalize) != (fn (*FSWatcher) callconv(.C) void)) {
+            @compileLog("FSWatcher.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(FSWatcher.doClose) != CallbackType)
+            @compileLog("Expected FSWatcher.doClose to be a callback but received " ++ @typeName(@TypeOf(FSWatcher.doClose)));
+        if (@TypeOf(FSWatcher.hasRef) != CallbackType)
+            @compileLog("Expected FSWatcher.hasRef to be a callback but received " ++ @typeName(@TypeOf(FSWatcher.hasRef)));
+        if (@TypeOf(FSWatcher.doRef) != CallbackType)
+            @compileLog("Expected FSWatcher.doRef to be a callback but received " ++ @typeName(@TypeOf(FSWatcher.doRef)));
+        if (@TypeOf(FSWatcher.doUnref) != CallbackType)
+            @compileLog("Expected FSWatcher.doUnref to be a callback but received " ++ @typeName(@TypeOf(FSWatcher.doUnref)));
+        if (!JSC.is_bindgen) {
+            @export(FSWatcher.doClose, .{ .name = "FSWatcherPrototype__doClose" });
+            @export(FSWatcher.doRef, .{ .name = "FSWatcherPrototype__doRef" });
+            @export(FSWatcher.doUnref, .{ .name = "FSWatcherPrototype__doUnref" });
+            @export(FSWatcher.finalize, .{ .name = "FSWatcherClass__finalize" });
+            @export(FSWatcher.hasRef, .{ .name = "FSWatcherPrototype__hasRef" });
+        }
+    }
+};
 pub const JSFileSystemRouter = struct {
     const FileSystemRouter = Classes.FileSystemRouter;
     const GetterType = fn (*FileSystemRouter, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -2312,6 +2402,8 @@ pub const JSNodeJSFS = struct {
             @compileLog("Expected NodeJSFS.utimes to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.utimes)));
         if (@TypeOf(NodeJSFS.utimesSync) != CallbackType)
             @compileLog("Expected NodeJSFS.utimesSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.utimesSync)));
+        if (@TypeOf(NodeJSFS.watch) != CallbackType)
+            @compileLog("Expected NodeJSFS.watch to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.watch)));
         if (@TypeOf(NodeJSFS.write) != CallbackType)
             @compileLog("Expected NodeJSFS.write to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.write)));
         if (@TypeOf(NodeJSFS.writeFile) != CallbackType)
@@ -2402,6 +2494,7 @@ pub const JSNodeJSFS = struct {
             @export(NodeJSFS.unlinkSync, .{ .name = "NodeJSFSPrototype__unlinkSync" });
             @export(NodeJSFS.utimes, .{ .name = "NodeJSFSPrototype__utimes" });
             @export(NodeJSFS.utimesSync, .{ .name = "NodeJSFSPrototype__utimesSync" });
+            @export(NodeJSFS.watch, .{ .name = "NodeJSFSPrototype__watch" });
             @export(NodeJSFS.write, .{ .name = "NodeJSFSPrototype__write" });
             @export(NodeJSFS.writeFile, .{ .name = "NodeJSFSPrototype__writeFile" });
             @export(NodeJSFS.writeFileSync, .{ .name = "NodeJSFSPrototype__writeFileSync" });
@@ -4855,6 +4948,7 @@ comptime {
     _ = JSExpectAnything;
     _ = JSExpectStringContaining;
     _ = JSExpectStringMatching;
+    _ = JSFSWatcher;
     _ = JSFileSystemRouter;
     _ = JSListener;
     _ = JSMD4;

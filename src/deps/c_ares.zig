@@ -515,7 +515,7 @@ pub const Channel = opaque {
             if (name.len == 0 or name.len >= 1023) {
                 break :brk null;
             }
-            const len = @min(name_buf.len, name_buf.len - 1);
+            const len = @min(name.len, name_buf.len - 1);
             @memcpy(name_buf[0..len], name[0..len]);
 
             name_buf[len] = 0;

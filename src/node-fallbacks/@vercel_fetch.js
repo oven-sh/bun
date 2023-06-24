@@ -1,5 +1,5 @@
 // This is just a no-op. Intent is to prevent importing a bunch of stuff that isn't relevant.
-module.exports = (wrapper = "Bun" in globalThis ? Bun.fetch : globalThis.fetch) => {
+export default (wrapper = "Bun" in globalThis ? Bun.fetch : globalThis.fetch) => {
   async function vercelFetch(url, opts = {}) {
     // Convert Object bodies to JSON if they are JS objects
     if (

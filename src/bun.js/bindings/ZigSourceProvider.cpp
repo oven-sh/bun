@@ -61,24 +61,12 @@ static SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
 Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, ResolvedSource resolvedSource, JSC::SourceProviderSourceType sourceType, bool isBuiltin)
 {
 
-    uintptr_t providerKey = 0;
-    if (globalObject->isThreadLocalDefaultGlobalObject) {
-        auto& sourceProviderMap = globalObject->sourceProviderMap;
-        providerKey = getSourceProviderMapKey(resolvedSource);
-        if (providerKey) {
-            auto sourceProvider = sourceProviderMap.get(providerKey);
-            if (sourceProvider != nullptr) {
-                sourceProvider->ref();
-                return adoptRef(*reinterpret_cast<Zig::SourceProvider*>(sourceProvider));
-            }
-        }
-    }
-    auto stringImpl = Bun::toWTFString(resolvedSource.source_code).isolatedCopy();
+    auto stringImpl = Bun::toWTFString(resolvedSource.source_code);
     auto sourceURLString = toStringCopy(resolvedSource.source_url);
 
-    // if (stringImpl.impl()->refCount() > 1)
-    //     // Deref because we don't call a destructor for BunString
-    //     stringImpl.impl()->deref();
+    if (stringImpl.impl()->refCount() > 1)
+        // Deref because we don't call a destructor for BunString
+        stringImpl.impl()->deref();
 
     auto provider = adoptRef(*new SourceProvider(
         globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
@@ -86,10 +74,6 @@ Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, Reso
         toSourceOrigin(sourceURLString, isBuiltin),
         sourceURLString.impl(), TextPosition(),
         sourceType));
-
-    if (providerKey) {
-        globalObject->sourceProviderMap.set(providerKey, provider.copyRef());
-    }
 
     return provider;
 }
@@ -105,11 +89,6 @@ unsigned SourceProvider::hash() const
 
 void SourceProvider::freeSourceCode()
 {
-    if (m_globalObjectForSourceProviderMap) {
-        m_globalObjectForSourceProviderMap->sourceProviderMap.remove((uintptr_t)m_source.get().characters8());
-    }
-
-    m_source = *WTF::StringImpl::empty();
 }
 
 void SourceProvider::updateCache(const UnlinkedFunctionExecutable* executable, const SourceCode&,

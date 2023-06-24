@@ -1,8 +1,8 @@
 import assert from "assert";
 import dedent from "dedent";
+
 import { ESBUILD_PATH, RUN_UNCHECKED_TESTS, itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
-
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_default_test.go
 
@@ -375,7 +375,10 @@ describe("bundler", () => {
 
       // assert bundles weird as of writing
       "/test.js": /* js */ `
-        globalThis.assert = import.meta.require('assert');
+        globalThis.assert = require('assert');
+        if (typeof assert.deepEqual !== 'function') {
+          throw new Error('assert.deepEqual is not a function');
+        }
         require('./out.js');
       `,
     },
@@ -1335,8 +1338,8 @@ describe("bundler", () => {
         import fs from "fs";
         import assert from "assert";
         import * as module from './out.js';
-        assert(module.fs === fs, 'export * as fs from "fs"; works')
-        assert(module.readFileSync === fs.readFileSync, 'export {readFileSync} from "fs"; works')
+        assert(module.fs.default === fs, 'export * as fs from "fs"; works')
+        assert(module.fs.default.readFileSync === fs.readFileSync, 'export {readFileSync} from "fs"; works')
       `,
     },
     target: "node",
@@ -1356,10 +1359,10 @@ describe("bundler", () => {
       `,
 
       "/test.js": /* js */ `
-        import fs from "fs";
+        import * as fs from "fs";
         import assert from "assert";
         import * as module from './out.js';
-        assert(module.f === fs, 'export {fs as f} works')
+        assert(module.f.default === fs.default, 'export {fs as f} works')
         assert(module.rfs === fs.readFileSync, 'export {rfs} works')
       `,
     },
@@ -1379,7 +1382,7 @@ describe("bundler", () => {
       `,
 
       "/test.js": /* js */ `
-        import fs from "fs";
+        import * as fs from "fs";
         import assert from "assert";
         import * as mod from './out.js';
         assert(mod.fs === fs, 'exports.fs')

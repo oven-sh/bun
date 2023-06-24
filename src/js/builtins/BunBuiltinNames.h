@@ -37,6 +37,7 @@ using namespace JSC;
     macro(WritableStream) \
     macro(WritableStreamDefaultController) \
     macro(WritableStreamDefaultWriter) \
+    macro(__esModule) \
     macro(_events) \
     macro(abortAlgorithm) \
     macro(abortSteps) \
@@ -59,11 +60,11 @@ using namespace JSC;
     macro(cloneArrayBuffer) \
     macro(close) \
     macro(closeAlgorithm) \
+    macro(closeRequest) \
+    macro(closeRequested) \
     macro(closed) \
     macro(closedPromise) \
     macro(closedPromiseCapability) \
-    macro(closeRequest) \
-    macro(closeRequested) \
     macro(code) \
     macro(commonJSSymbol) \
     macro(connect) \
@@ -94,6 +95,7 @@ using namespace JSC;
     macro(end) \
     macro(errno) \
     macro(errorSteps) \
+    macro(evaluateCommonJSModule) \
     macro(execArgv) \
     macro(exports) \
     macro(extname) \
@@ -137,7 +139,6 @@ using namespace JSC;
     macro(lazyLoad) \
     macro(lazyStreamPrototypeMap) \
     macro(loadCJS2ESM) \
-    macro(evaluateCommonJSModule) \
     macro(localStreams) \
     macro(main) \
     macro(makeDOMException) \

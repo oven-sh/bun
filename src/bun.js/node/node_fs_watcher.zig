@@ -39,7 +39,12 @@ pub const FSWatcher = struct {
     last_change_event: ChangeEvent = .{},
 
     pub fn toJS(this: *FSWatcher) JSC.JSValue {
-        return if (this.js_watcher) |js| js.js_this else JSC.JSValue.jsUndefined();
+        if (this.js_watcher) |js| {
+            if (js.js_this.get()) |js_this| {
+                return js_this;
+            }
+        }
+        return JSC.JSValue.jsUndefined();
     }
 
     pub fn eventLoop(this: FSWatcher) *EventLoop {
@@ -107,7 +112,7 @@ pub const FSWatcher = struct {
         }
 
         pub fn run(this: *FSWatchTask) void {
-            // this runs on JS Context
+            // this runs on JS Context Thread
             if (this.ctx.js_watcher) |js_watcher| {
                 for (this.entries[0..this.count]) |entry| {
                     switch (entry.event_type) {
@@ -126,6 +131,8 @@ pub const FSWatcher = struct {
                         },
                     }
                 }
+
+                _ = js_watcher.unref();
             }
         }
 
@@ -133,15 +140,22 @@ pub const FSWatcher = struct {
             if (this.count == 0)
                 return;
 
-            var that = bun.default_allocator.create(FSWatchTask) catch unreachable;
+            if (this.ctx.js_watcher) |js_watcher| {
+                // if 0 is closed or detached (can still contain valid refs but will not create a new one)
+                if (js_watcher.ref() > 0) {
+                    var that = bun.default_allocator.create(FSWatchTask) catch unreachable;
 
-            that.* = this.*;
-            this.count = 0;
-            that.concurrent_task.task = JSC.Task.init(that);
-            this.ctx.enqueueTaskConcurrent(&that.concurrent_task);
+                    that.* = this.*;
+                    this.count = 0;
+                    that.concurrent_task.task = JSC.Task.init(that);
+                    this.ctx.enqueueTaskConcurrent(&that.concurrent_task);
+                    return;
+                }
+            }
+            // no js_watcher reference so we just cleanEntries
+            this.cleanEntries();
         }
-
-        pub fn deinit(this: *FSWatchTask) void {
+        pub fn cleanEntries(this: *FSWatchTask) void {
             while (this.count > 0) {
                 this.count -= 1;
                 switch (this.entries[this.count].free_type) {
@@ -150,6 +164,10 @@ pub const FSWatcher = struct {
                     else => {},
                 }
             }
+        }
+
+        pub fn deinit(this: *FSWatchTask) void {
+            this.cleanEntries();
             bun.default_allocator.destroy(this);
         }
     };
@@ -551,10 +569,10 @@ pub const FSWatcher = struct {
         fsevents_watcher: ?*FSEvents.FSEventsWatcher,
         poll_ref: JSC.PollRef = .{},
         globalThis: ?*JSC.JSGlobalObject,
-        js_this: JSC.JSValue,
+        js_this: JSC.Strong,
         encoding: JSC.Node.Encoding,
         closed: bool,
-
+        ref_count: std.atomic.Atomic(u32),
         pub usingnamespace JSC.Codegen.JSFSWatcher;
 
         pub fn getFSWatcher(this: *JSObject) *FSWatcher {
@@ -572,9 +590,10 @@ pub const FSWatcher = struct {
                 .manager = manager,
                 .fsevents_watcher = fsevents_watcher,
                 .globalThis = globalThis,
-                .js_this = .zero,
+                .js_this = .{},
                 .encoding = encoding,
                 .closed = false,
+                .ref_count = std.atomic.Atomic(u32).init(1),
             };
             const instance = obj.getFSWatcher();
 
@@ -584,14 +603,16 @@ pub const FSWatcher = struct {
 
             var js_this = JSObject.toJS(obj, globalThis);
             JSObject.listenerSetCached(js_this, globalThis, listener);
-            obj.js_this = js_this;
-            obj.js_this.protect();
+            obj.js_this = JSC.Strong.create(js_this, globalThis);
 
             if (signal) |s| {
 
                 // already aborted?
                 if (s.aborted()) {
                     obj.signal = s.ref();
+                    // pre-set js instance and increment ref
+                    instance.js_watcher = obj;
+                    _ = obj.ref();
                     // abort next tick
                     var current_task: FSWatchTask = .{
                         .ctx = instance,
@@ -620,10 +641,9 @@ pub const FSWatcher = struct {
             defer this.close(true);
 
             err.ensureStillAlive();
-
-            if (this.globalThis) |globalThis| {
-                if (this.js_this != .zero) {
-                    if (JSObject.listenerGetCached(this.js_this)) |listener| {
+            if (this.js_this.get()) |js_this| {
+                if (this.globalThis) |globalThis| {
+                    if (JSObject.listenerGetCached(js_this)) |listener| {
                         var args = [_]JSC.JSValue{
                             JSC.ZigString.static("error").toValue(globalThis),
                             if (err.isEmptyOrUndefinedOrNull()) JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, globalThis) else err,
@@ -640,9 +660,9 @@ pub const FSWatcher = struct {
             if (this.closed) return;
             defer this.close(true);
 
-            if (this.globalThis) |globalThis| {
-                if (this.js_this != .zero) {
-                    if (JSObject.listenerGetCached(this.js_this)) |listener| {
+            if (this.js_this.get()) |js_this| {
+                if (this.globalThis) |globalThis| {
+                    if (JSObject.listenerGetCached(js_this)) |listener| {
                         var args = [_]JSC.JSValue{
                             JSC.ZigString.static("error").toValue(globalThis),
                             JSC.ZigString.fromUTF8(err).toErrorInstance(globalThis),
@@ -657,9 +677,9 @@ pub const FSWatcher = struct {
         }
 
         pub fn emit(this: *JSObject, file_name: string, comptime eventType: string) void {
-            if (this.globalThis) |globalThis| {
-                if (this.js_this != .zero) {
-                    if (JSObject.listenerGetCached(this.js_this)) |listener| {
+            if (this.js_this.get()) |js_this| {
+                if (this.globalThis) |globalThis| {
+                    if (JSObject.listenerGetCached(js_this)) |listener| {
                         var filename: JSC.JSValue = JSC.JSValue.jsUndefined();
                         if (file_name.len > 0) {
                             if (this.encoding == .buffer)
@@ -684,34 +704,43 @@ pub const FSWatcher = struct {
             }
         }
 
-        pub fn ref(this: *JSObject) void {
-            if (this.closed) return;
-
-            if (!this.persistent) {
+        pub fn doRef(this: *JSObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+            if (!this.closed and !this.persistent) {
                 this.persistent = true;
                 this.poll_ref.ref(this.getFSWatcher().ctx);
             }
-        }
-
-        pub fn doRef(this: *JSObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-            this.ref();
             return JSC.JSValue.jsUndefined();
         }
 
-        pub fn unref(this: *JSObject) void {
+        pub fn doUnref(this: *JSObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
             if (this.persistent) {
                 this.persistent = false;
                 this.poll_ref.unref(this.getFSWatcher().ctx);
             }
-        }
-
-        pub fn doUnref(this: *JSObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-            this.unref();
             return JSC.JSValue.jsUndefined();
         }
 
         pub fn hasRef(this: *JSObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
             return JSC.JSValue.jsBoolean(this.persistent);
+        }
+
+        // this can be called from Watcher Thread or JS Context Thread
+        pub fn ref(this: *JSObject) u32 {
+            // stop new references
+            if (this.closed) return 0;
+
+            return this.ref_count.fetchAdd(1, .Monotonic);
+        }
+
+        // unref is always called on main JS Context Thread
+        pub fn unref(this: *JSObject) u32 {
+            const count = this.ref_count.fetchSub(1, .Monotonic);
+            if (count == 1) {
+                this.closed = true;
+                this.detach();
+                bun.default_allocator.destroy(this);
+            }
+            return count;
         }
 
         pub fn close(
@@ -728,16 +757,18 @@ pub const FSWatcher = struct {
                     this.emit("", "close");
                 }
 
-                this.detach();
+                _ = this.unref();
             }
         }
 
         pub fn detach(this: *JSObject) void {
-            this.unref();
+            if (this.persistent) {
+                this.persistent = false;
+                this.poll_ref.unref(this.getFSWatcher().ctx);
+            }
 
-            if (this.js_this != .zero) {
-                this.js_this.unprotect();
-                this.js_this = .zero;
+            if (this.js_this.has()) {
+                this.js_this.deinit();
             }
 
             this.globalThis = null;
@@ -768,11 +799,7 @@ pub const FSWatcher = struct {
         }
 
         pub fn finalize(this: *JSObject) callconv(.C) void {
-            if (!this.closed) {
-                this.detach();
-            }
-
-            bun.default_allocator.destroy(this);
+            _ = this.unref();
         }
     };
 

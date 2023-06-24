@@ -300,7 +300,7 @@ describe("fs.watch", () => {
   });
 });
 
-describe("fs.promises.watchFile", () => {
+describe("fs.promises.watch", () => {
   test("add file/folder to folder", async () => {
     let count = 0;
     const root = path.join(testDir, "add-promise-directory");

@@ -22,7 +22,8 @@
     "supertest": "^6.1.6",
     "svelte": "^3.55.1",
     "typescript": "^5.0.2",
-    "undici": "^5.20.0"
+    "undici": "^5.20.0",
+    "vitest": "^0.32.2"
   },
   "private": true,
   "scripts": {

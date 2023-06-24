@@ -1,3 +1,4 @@
+import {EventEmitter} from "node:events";
 import {default as default2} from "node:fs/promises";
 import promises2 from "node:fs/promises";
 import * as Stream from "node:stream";
@@ -20,7 +21,47 @@ function createWriteStream(path, options) {
 }
 import {constants} from "node:fs/promises";
 var ReadStream, WriteStream, { direct, isPromise, isCallable } = globalThis[Symbol.for("Bun.lazy")]("primordials"), fs = Bun.fs(), debug = process.env.DEBUG ? console.log : () => {
-}, access = function access2(...args) {
+};
+
+class FSWatcher extends EventEmitter {
+  #watcher;
+  #listener;
+  constructor(path, options, listener) {
+    super();
+    if (typeof options === "function")
+      listener = options, options = {};
+    else if (typeof options === "string")
+      options = { encoding: options };
+    if (typeof listener !== "function")
+      listener = () => {
+      };
+    this.#listener = listener;
+    try {
+      this.#watcher = fs.watch(path, options || {}, this.#onEvent.bind(this));
+    } catch (e) {
+      if (!e.message?.startsWith("FileNotFound"))
+        throw e;
+      const notFound = new Error(`ENOENT: no such file or directory, watch '${path}'`);
+      throw notFound.code = "ENOENT", notFound.errno = -2, notFound.path = path, notFound.syscall = "watch", notFound.filename = path, notFound;
+    }
+  }
+  #onEvent(eventType, filenameOrError) {
+    if (eventType === "error" || eventType === "close")
+      this.emit(eventType, filenameOrError);
+    else
+      this.emit("change", eventType, filenameOrError), this.#listener(eventType, filenameOrError);
+  }
+  close() {
+    this.#watcher?.close(), this.#watcher = null;
+  }
+  ref() {
+    this.#watcher?.ref();
+  }
+  unref() {
+    this.#watcher?.unref();
+  }
+}
+var access = function access2(...args) {
   callbackify(fs.accessSync, args);
 }, appendFile = function appendFile2(...args) {
   callbackify(fs.appendFileSync, args);
@@ -92,7 +133,9 @@ var ReadStream, WriteStream, { direct, isPromise, isCallable } = globalThis[Symb
   callbackify(fs.utimesSync, args);
 }, lutimes = function lutimes2(...args) {
   callbackify(fs.lutimesSync, args);
-}, accessSync = fs.accessSync.bind(fs), appendFileSync = fs.appendFileSync.bind(fs), closeSync = fs.closeSync.bind(fs), copyFileSync = fs.copyFileSync.bind(fs), existsSync = fs.existsSync.bind(fs), chownSync = fs.chownSync.bind(fs), chmodSync = fs.chmodSync.bind(fs), fchmodSync = fs.fchmodSync.bind(fs), fchownSync = fs.fchownSync.bind(fs), fstatSync = fs.fstatSync.bind(fs), fsyncSync = fs.fsyncSync.bind(fs), ftruncateSync = fs.ftruncateSync.bind(fs), futimesSync = fs.futimesSync.bind(fs), lchmodSync = fs.lchmodSync.bind(fs), lchownSync = fs.lchownSync.bind(fs), linkSync = fs.linkSync.bind(fs), lstatSync = fs.lstatSync.bind(fs), mkdirSync = fs.mkdirSync.bind(fs), mkdtempSync = fs.mkdtempSync.bind(fs), openSync = fs.openSync.bind(fs), readSync = fs.readSync.bind(fs), writeSync = fs.writeSync.bind(fs), readdirSync = fs.readdirSync.bind(fs), readFileSync = fs.readFileSync.bind(fs), writeFileSync = fs.writeFileSync.bind(fs), readlinkSync = fs.readlinkSync.bind(fs), realpathSync = fs.realpathSync.bind(fs), renameSync = fs.renameSync.bind(fs), statSync = fs.statSync.bind(fs), symlinkSync = fs.symlinkSync.bind(fs), truncateSync = fs.truncateSync.bind(fs), unlinkSync = fs.unlinkSync.bind(fs), utimesSync = fs.utimesSync.bind(fs), lutimesSync = fs.lutimesSync.bind(fs), rmSync = fs.rmSync.bind(fs), rmdirSync = fs.rmdirSync.bind(fs), Dirent = fs.Dirent, Stats = fs.Stats, readStreamPathFastPathSymbol = Symbol.for("Bun.Node.readStreamPathFastPath"), readStreamSymbol = Symbol.for("Bun.NodeReadStream"), readStreamPathOrFdSymbol = Symbol.for("Bun.NodeReadStreamPathOrFd"), writeStreamSymbol = Symbol.for("Bun.NodeWriteStream"), writeStreamPathFastPathSymbol = Symbol.for("Bun.NodeWriteStreamFastPath"), writeStreamPathFastPathCallSymbol = Symbol.for("Bun.NodeWriteStreamFastPathCall"), kIoDone = Symbol.for("kIoDone"), defaultReadStreamOptions = {
+}, accessSync = fs.accessSync.bind(fs), appendFileSync = fs.appendFileSync.bind(fs), closeSync = fs.closeSync.bind(fs), copyFileSync = fs.copyFileSync.bind(fs), existsSync = fs.existsSync.bind(fs), chownSync = fs.chownSync.bind(fs), chmodSync = fs.chmodSync.bind(fs), fchmodSync = fs.fchmodSync.bind(fs), fchownSync = fs.fchownSync.bind(fs), fstatSync = fs.fstatSync.bind(fs), fsyncSync = fs.fsyncSync.bind(fs), ftruncateSync = fs.ftruncateSync.bind(fs), futimesSync = fs.futimesSync.bind(fs), lchmodSync = fs.lchmodSync.bind(fs), lchownSync = fs.lchownSync.bind(fs), linkSync = fs.linkSync.bind(fs), lstatSync = fs.lstatSync.bind(fs), mkdirSync = fs.mkdirSync.bind(fs), mkdtempSync = fs.mkdtempSync.bind(fs), openSync = fs.openSync.bind(fs), readSync = fs.readSync.bind(fs), writeSync = fs.writeSync.bind(fs), readdirSync = fs.readdirSync.bind(fs), readFileSync = fs.readFileSync.bind(fs), writeFileSync = fs.writeFileSync.bind(fs), readlinkSync = fs.readlinkSync.bind(fs), realpathSync = fs.realpathSync.bind(fs), renameSync = fs.renameSync.bind(fs), statSync = fs.statSync.bind(fs), symlinkSync = fs.symlinkSync.bind(fs), truncateSync = fs.truncateSync.bind(fs), unlinkSync = fs.unlinkSync.bind(fs), utimesSync = fs.utimesSync.bind(fs), lutimesSync = fs.lutimesSync.bind(fs), rmSync = fs.rmSync.bind(fs), rmdirSync = fs.rmdirSync.bind(fs), Dirent = fs.Dirent, Stats = fs.Stats, watch = function watch2(path, options, listener) {
+  return new FSWatcher(path, options, listener);
+}, readStreamPathFastPathSymbol = Symbol.for("Bun.Node.readStreamPathFastPath"), readStreamSymbol = Symbol.for("Bun.NodeReadStream"), readStreamPathOrFdSymbol = Symbol.for("Bun.NodeReadStreamPathOrFd"), writeStreamSymbol = Symbol.for("Bun.NodeWriteStream"), writeStreamPathFastPathSymbol = Symbol.for("Bun.NodeWriteStreamFastPath"), writeStreamPathFastPathCallSymbol = Symbol.for("Bun.NodeWriteStreamFastPathCall"), kIoDone = Symbol.for("kIoDone"), defaultReadStreamOptions = {
   file: void 0,
   fd: void 0,
   flags: "r",
@@ -597,6 +640,8 @@ var fs_default = {
   writeSync,
   WriteStream,
   ReadStream,
+  watch,
+  FSWatcher,
   [Symbol.for("::bunternal::")]: {
     ReadStreamClass,
     WriteStreamClass
@@ -607,6 +652,7 @@ export {
   writeFileSync,
   writeFile,
   write,
+  watch,
   utimesSync,
   utimes,
   unlinkSync,

@@ -1,4 +1,5 @@
 // Hardcoded module "node:fs/promises"
+
 // Note: `constants` is injected into the top of this file
 declare var constants: typeof import("node:fs/promises").constants;
 
@@ -38,6 +39,55 @@ var promisify = {
   },
 }[notrace];
 
+export function watch(
+  filename: string | Buffer | URL,
+  options: { encoding?: BufferEncoding; persistent?: boolean; recursive?: boolean; signal?: AbortSignal } = {},
+) {
+  type Event = {
+    eventType: string;
+    filename: string | Buffer | undefined;
+  };
+  const events: Array<Event> = [];
+  if (filename instanceof URL) {
+    throw new TypeError("Watch URLs are not supported yet");
+  } else if (Buffer.isBuffer(filename)) {
+    filename = filename.toString();
+  } else if (typeof filename !== "string") {
+    throw new TypeError("Expected path to be a string or Buffer");
+  }
+  let nextEventResolve: Function | null = null;
+  if (typeof options === "string") {
+    options = { encoding: options };
+  }
+  fs.watch(filename, options || {}, (eventType: string, filename: string | Buffer | undefined) => {
+    events.push({ eventType, filename });
+    if (nextEventResolve) {
+      const resolve = nextEventResolve;
+      nextEventResolve = null;
+      resolve();
+    }
+  });
+  return {
+    async *[Symbol.asyncIterator]() {
+      let closed = false;
+      while (!closed) {
+        while (events.length) {
+          let event = events.shift() as Event;
+          if (event.eventType === "close") {
+            closed = true;
+            break;
+          }
+          if (event.eventType === "error") {
+            closed = true;
+            throw event.filename;
+          }
+          yield event;
+        }
+        await new Promise((resolve: Function) => (nextEventResolve = resolve));
+      }
+    },
+  };
+}
 export var access = promisify(fs.accessSync),
   appendFile = promisify(fs.appendFileSync),
   close = promisify(fs.closeSync),
@@ -112,6 +162,7 @@ export default {
   lutimes,
   rm,
   rmdir,
+  watch,
   constants,
   [Symbol.for("CommonJS")]: 0,
 };

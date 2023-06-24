@@ -1,5 +1,8 @@
 export var ReadStream;
 export var WriteStream;
+
+import { EventEmitter } from "node:events";
+
 // Hardcoded module "node:fs"
 var { direct, isPromise, isCallable } = globalThis[Symbol.for("Bun.lazy")]("primordials");
 export { default as promises } from "node:fs/promises";
@@ -9,6 +12,63 @@ import * as Stream from "node:stream";
 
 var fs = Bun.fs();
 var debug = process.env.DEBUG ? console.log : () => {};
+
+class FSWatcher extends EventEmitter {
+  #watcher;
+  #listener;
+  constructor(path, options, listener) {
+    super();
+
+    if (typeof options === "function") {
+      listener = options;
+      options = {};
+    } else if (typeof options === "string") {
+      options = { encoding: options };
+    }
+
+    if (typeof listener !== "function") {
+      listener = () => {};
+    }
+
+    this.#listener = listener;
+    try {
+      this.#watcher = fs.watch(path, options || {}, this.#onEvent.bind(this));
+    } catch (e) {
+      if (!e.message?.startsWith("FileNotFound")) {
+        throw e;
+      }
+      const notFound = new Error(`ENOENT: no such file or directory, watch '${path}'`);
+      notFound.code = "ENOENT";
+      notFound.errno = -2;
+      notFound.path = path;
+      notFound.syscall = "watch";
+      notFound.filename = path;
+      throw notFound;
+    }
+  }
+
+  #onEvent(eventType, filenameOrError) {
+    if (eventType === "error" || eventType === "close") {
+      this.emit(eventType, filenameOrError);
+    } else {
+      this.emit("change", eventType, filenameOrError);
+      this.#listener(eventType, filenameOrError);
+    }
+  }
+
+  close() {
+    this.#watcher?.close();
+    this.#watcher = null;
+  }
+
+  ref() {
+    this.#watcher?.ref();
+  }
+
+  unref() {
+    this.#watcher?.unref();
+  }
+}
 export var access = function access(...args) {
     callbackify(fs.accessSync, args);
   },
@@ -154,7 +214,10 @@ export var access = function access(...args) {
   rmSync = fs.rmSync.bind(fs),
   rmdirSync = fs.rmdirSync.bind(fs),
   Dirent = fs.Dirent,
-  Stats = fs.Stats;
+  Stats = fs.Stats,
+  watch = function watch(path, options, listener) {
+    return new FSWatcher(path, options, listener);
+  };
 
 function callbackify(fsFunction, args) {
   try {
@@ -1004,7 +1067,8 @@ export default {
   writeSync,
   WriteStream,
   ReadStream,
-
+  watch,
+  FSWatcher,
   [Symbol.for("::bunternal::")]: {
     ReadStreamClass,
     WriteStreamClass,

@@ -1,5 +1,5 @@
 export * from "node:http";
-var {default: default2 } = import.meta.require("node:http");
+import {default as default2} from "node:http";
 export {
   default2 as default
 };

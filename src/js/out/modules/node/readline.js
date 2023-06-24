@@ -1,6 +1,6 @@
-var {EventEmitter } = import.meta.require("node:events");
-var {clearTimeout, setTimeout } = import.meta.require("node:timers");
-var {StringDecoder } = import.meta.require("node:string_decoder");
+import {EventEmitter} from "node:events";
+import {clearTimeout, setTimeout} from "node:timers";
+import {StringDecoder} from "node:string_decoder";
 var stripVTControlCharacters = function(str) {
   return validateString(str, "str"), RegExpPrototypeSymbolReplace.call(ansi, str, "");
 }, promisify = function(original) {

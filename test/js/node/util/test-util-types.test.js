@@ -2,8 +2,8 @@ import assert from "assert";
 import { describe, test, expect } from "bun:test";
 import def from "util/types";
 import * as ns from "util/types";
-
 const req = require("util/types");
+const types = def;
 
 function inspect(val) {
   return Bun.inspect(val);

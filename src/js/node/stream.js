@@ -5598,4 +5598,4 @@ export var Stream = stream_exports.Stream;
 export var eos = (stream_exports["eos"] = require_end_of_stream);
 export var _getNativeReadableStreamPrototype = stream_exports._getNativeReadableStreamPrototype;
 export var NativeWritable = stream_exports.NativeWritable;
-export var promises = Stream.promise;
+export var promises = Stream.promises;

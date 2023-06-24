@@ -1,5 +1,7 @@
 // Hardcoded module "node:tls"
 import { isTypedArray } from "util/types";
+import net, { Server as NetServer } from "node:net";
+const InternalTCPSocket = net[Symbol.for("::bunternal::")];
 
 function parseCertString() {
   throwNotImplemented("Not implemented");
@@ -80,9 +82,6 @@ function SecureContext(options) {
 function createSecureContext(options) {
   return new SecureContext(options);
 }
-
-import NodeNet from "node:net";
-const { [Symbol.for("::bunternal::")]: InternalTCPSocket, Server: NetServer } = NodeNet;
 
 const buntls = Symbol.for("::buntls::");
 

@@ -1,5 +1,5 @@
-var {EventEmitter } = import.meta.require("node:events");
-var http = import.meta.require("node:http");
+import {EventEmitter} from "node:events";
+import http from "node:http";
 var emitWarning = function(type, message) {
   if (emittedWarnings.has(type))
     return;

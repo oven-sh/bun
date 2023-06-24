@@ -1,1 +1,1 @@
-var{promises:c}=import.meta.require("node:stream");var{pipeline:g,finished:j}=c,k={pipeline:g,finished:j,[Symbol.for("CommonJS")]:0};export{g as pipeline,j as finished,k as default};
+import{promises as S} from"node:stream";var{pipeline:b,finished:c}=S,g={pipeline:b,finished:c,[Symbol.for("CommonJS")]:0};export{b as pipeline,c as finished,g as default};

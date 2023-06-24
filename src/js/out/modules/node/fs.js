@@ -1,6 +1,6 @@
-var {default: default2 } = import.meta.require("node:fs/promises");
-var promises2 = import.meta.require("node:fs/promises");
-var Stream =import.meta.require("node:stream");
+import {default as default2} from "node:fs/promises";
+import promises2 from "node:fs/promises";
+import * as Stream from "node:stream";
 var callbackify = function(fsFunction, args) {
   try {
     const result = fsFunction.apply(fs, args.slice(0, args.length - 1)), callback = args[args.length - 1];
@@ -18,7 +18,7 @@ function createReadStream(path, options) {
 function createWriteStream(path, options) {
   return new WriteStream(path, options);
 }
-var {constants } = import.meta.require("node:fs/promises");
+import {constants} from "node:fs/promises";
 var ReadStream, WriteStream, { direct, isPromise, isCallable } = globalThis[Symbol.for("Bun.lazy")]("primordials"), fs = Bun.fs(), debug = process.env.DEBUG ? console.log : () => {
 }, access = function access2(...args) {
   callbackify(fs.accessSync, args);

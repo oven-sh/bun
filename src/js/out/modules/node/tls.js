@@ -1,4 +1,5 @@
-var {isTypedArray } = import.meta.require("node:util/types");
+import {isTypedArray} from "node:util/types";
+import net, {Server as NetServer} from "node:net";
 var parseCertString = function() {
   throwNotImplemented("Not implemented");
 }, isValidTLSArray = function(obj) {
@@ -14,11 +15,9 @@ var parseCertString = function() {
   return new InternalSecureContext(options);
 }, createSecureContext = function(options) {
   return new SecureContext(options);
-};
-var NodeNet = import.meta.require("node:net");
-var createServer = function(options, connectionListener) {
+}, createServer = function(options, connectionListener) {
   return new Server(options, connectionListener);
-}, InternalSecureContext = class SecureContext2 {
+}, InternalTCPSocket = net[Symbol.for("::bunternal::")], InternalSecureContext = class SecureContext2 {
   context;
   constructor(options) {
     const context = {};
@@ -56,7 +55,7 @@ var createServer = function(options, connectionListener) {
     }
     this.context = context;
   }
-}, { [Symbol.for("::bunternal::")]: InternalTCPSocket, Server: NetServer } = NodeNet, buntls = Symbol.for("::buntls::"), SocketClass, TLSSocket = function(InternalTLSSocket) {
+}, buntls = Symbol.for("::buntls::"), SocketClass, TLSSocket = function(InternalTLSSocket) {
   return SocketClass = InternalTLSSocket, Object.defineProperty(SocketClass.prototype, Symbol.toStringTag, {
     value: "TLSSocket",
     enumerable: !1

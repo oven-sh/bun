@@ -1,4 +1,4 @@
-// Hardcoded module "node:stream"
+// Hardcoded module "node:stream/promises"
 import { promises } from "node:stream";
 
 export var { pipeline, finished } = promises;

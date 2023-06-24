@@ -1,8 +1,8 @@
-var {default: assert } = import.meta.require("node:assert");
-var AssertModule =import.meta.require("node:assert");
-var BufferModule =import.meta.require("node:buffer");
-var StreamModule =import.meta.require("node:stream");
-var Util =import.meta.require("node:util");
+import {default as assert} from "node:assert";
+import * as AssertModule from "node:assert";
+import * as BufferModule from "node:buffer";
+import * as StreamModule from "node:stream";
+import * as Util from "node:util";
 var Deflate, Inflate, Gzip, Gunzip, DeflateRaw, InflateRaw, Unzip, createDeflate, createInflate, createDeflateRaw, createInflateRaw, createGzip, createGunzip, createUnzip, deflate, deflateSync, gzip, gzipSync, deflateRaw, deflateRawSync, unzip, unzipSync, inflate, inflateSync, gunzip, gunzipSync, inflateRaw, inflateRawSync, constants;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __commonJS = (cb, mod) => function __require() {

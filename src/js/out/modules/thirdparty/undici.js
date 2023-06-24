@@ -1,6 +1,6 @@
-var {EventEmitter } = import.meta.require("node:events");
-var NodeStreamModule = import.meta.require("node:stream");
-var {Readable } = import.meta.require("node:stream");
+import {EventEmitter} from "node:events";
+import NodeStreamModule from "node:stream";
+import {Readable} from "node:stream";
 var notImplemented = function() {
   throw new Error("Not implemented in bun");
 };

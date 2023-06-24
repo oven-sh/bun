@@ -7,7 +7,7 @@ import { isTypedArray } from "util/types";
 function isIPv6(input) {
   const v4Seg = "(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])";
   const v4Str = `(${v4Seg}[.]){3}${v4Seg}`;
-
+  const v6Seg = "(?:[0-9a-fA-F]{1,4})";
   const IPv6Reg = new RegExp(
     "^(" +
       `(?:${v6Seg}:){7}(?:${v6Seg}|:)|` +

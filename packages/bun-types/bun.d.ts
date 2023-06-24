@@ -3978,6 +3978,20 @@ declare module "bun" {
     buffer: ArrayBufferView | ArrayBufferLike,
     offset?: number,
   ): number;
+
+  interface EventStreamOptions {
+    signal?: AbortSignal;
+    start?(sse: EventStream): void;
+    cancel?(sse: EventStream): void;
+    headers?: HeadersInit;
+  }
+
+  class EventStream extends ReadableStream {
+    constructor(options?: EventStreamOptions);
+
+    send(data?: any): void;
+    send(event: string, data?: any): void;
+  }
 }
 
 type TypedArray =

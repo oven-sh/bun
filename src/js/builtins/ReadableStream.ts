@@ -318,11 +318,11 @@ export function pipeThrough(this, streams, options) {
   const transforms = streams;
 
   const readable = transforms["readable"];
-  if (!$isReadableStream(readable)) throw $makeTypeError("readable should be ReadableStream");
+  if (!$isReadableStream(readable)) throw new TypeError("readable should be ReadableStream");
 
   const writable = transforms["writable"];
   const internalWritable = $getInternalWritableStream(writable);
-  if (!$isWritableStream(internalWritable)) throw $makeTypeError("writable should be WritableStream");
+  if (!$isWritableStream(internalWritable)) throw new TypeError("writable should be WritableStream");
 
   let preventClose = false;
   let preventAbort = false;

@@ -2104,7 +2104,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             this.setAbortHandler();
             streamLog("is in progress, but did not return a Promise. Finalizing request context", .{});
-            this.finalize();
+            this.finalizeWithoutDeinit();
             stream.value.unprotect();
         }
 

@@ -8,9 +8,9 @@ export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
     // we need to explicitly check because state could be $ModuleFetch
     // it will throw this error if we do not:
     //    $throwTypeError("Requested module is already fetched.");
-    var entry = loader.registry.$get(key);
+    var entry = loader.registry.$get(key)!;
 
-    if (!entry || !entry.state || entry.state <= $ModuleFetch) {
+    if ((entry?.state ?? 0) <= $ModuleFetch) {
       $fulfillModuleSync(key);
       entry = loader.registry.$get(key)!;
     }
@@ -121,17 +121,17 @@ export function internalRequire(this: ImportMetaObject, id) {
   if (last5 === ".json") {
     var fs = (globalThis[Symbol.for("_fs")] ||= Bun.fs());
     var exports = JSON.parse(fs.readFileSync(id, "utf8"));
-    $requireMap.$set(id, $createCommonJSModule(id, exports));
+    $requireMap.$set(id, $createCommonJSModule(id, exports, true));
     return exports;
   } else if (last5 === ".node") {
-    const module = $createCommonJSModule(id, {});
+    const module = $createCommonJSModule(id, {}, true);
     process.dlopen(module, id);
     $requireMap.$set(id, module);
     return module.exports;
   } else if (last5 === ".toml") {
     var fs = (globalThis[Symbol.for("_fs")] ||= Bun.fs());
     var exports = Bun.TOML.parse(fs.readFileSync(id, "utf8"));
-    $requireMap.$set(id, $createCommonJSModule(id, exports));
+    $requireMap.$set(id, $createCommonJSModule(id, exports, true));
     return exports;
   } else {
     var exports = $requireESM(id);
@@ -143,7 +143,7 @@ export function internalRequire(this: ImportMetaObject, id) {
     if (defaultExport?.[$commonJSSymbol] === 0) {
       exports = defaultExport;
     }
-    $requireMap.$set(id, $createCommonJSModule(id, exports));
+    $requireMap.$set(id, $createCommonJSModule(id, exports, true));
     return exports;
   }
 }
@@ -157,11 +157,11 @@ export function createRequireCache() {
       if (entry) return entry;
 
       const esm = Loader.registry.$get(key);
-      if (esm && esm.evaluated) {
+      if (esm?.evaluated) {
         const namespace = Loader.getModuleNamespaceObject(esm.module);
         const exports =
           namespace[$commonJSSymbol] === 0 || namespace.default?.[$commonJSSymbol] ? namespace.default : namespace;
-        const mod = $createCommonJSModule(key, exports);
+        const mod = $createCommonJSModule(key, exports, true);
         $requireMap.$set(key, mod);
         return mod;
       }

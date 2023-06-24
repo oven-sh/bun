@@ -13,8 +13,8 @@ class AbstractModuleRecord;
 
 namespace Bun {
 
-JSC_DECLARE_HOST_FUNCTION(jsCommonJSLoadModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionLoadModule);
 
 class JSCommonJSModule final : public JSC::JSDestructibleObject {
 public:
@@ -25,8 +25,6 @@ public:
     mutable JSC::WriteBarrier<JSC::JSString> m_filename;
     mutable JSC::WriteBarrier<JSC::JSString> m_dirname;
     mutable JSC::WriteBarrier<JSC::JSSourceCode> sourceCode;
-
-    mutable JSC::WriteBarrier<JSC::JSFunction> m_compiledFunction;
 
     static void destroy(JSC::JSCell*);
     ~JSCommonJSModule();
@@ -47,7 +45,8 @@ public:
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,
         const WTF::String& key,
-        JSValue exportsObject);
+        JSValue exportsObject,
+        bool hasEvaluated = false);
 
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,
@@ -75,6 +74,8 @@ public:
     DECLARE_INFO;
     template<typename, SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
+
+    bool hasEvaluated = false;
 
     JSCommonJSModule(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)

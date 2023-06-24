@@ -402,7 +402,7 @@ declare function $writer(): TODO;
 declare function $writing(): TODO;
 declare function $written(): TODO;
 
-declare function $createCommonJSModule(id: string, exports: any): NodeModule;
+declare function $createCommonJSModule(id: string, exports: any, hasEvaluated: boolean): NodeModule;
 
 // The following I cannot find any definitions of, but they are functional.
 declare function $toLength(length: number): number;

@@ -14,6 +14,21 @@ export function main() {
 export function require(this: Module, id: string) {
   const existing = $requireMap.$get(id) || $requireMap.$get((id = $resolveSync(id, this.path, false)));
   if (existing) {
+    // Scenario where this is necessary:
+    //
+    // In an ES Module, we have:
+    //
+    //    import "react-dom/server"
+    //    import "react"
+    //
+    // Synchronously, the "react" import is created first, and then the
+    // "react-dom/server" import is created. Then, at ES Module link time, they
+    // are evaluated. The "react-dom/server" import is evaluated first, and it
+    // require() react React was previously created as an ESM module, so we wait
+    // for the ESM module to load ...and then when this code is reached, unless
+    // we evaluate it "early", we'll get an empty object instead of the module
+    // exports.
+    $evaluateCommonJSModule(existing);
     return existing.exports;
   }
 
@@ -27,7 +42,7 @@ export function require(this: Module, id: string) {
     const namespace = Loader.getModuleNamespaceObject(mod);
     const exports =
       namespace?.[$commonJSSymbol] === 0 || namespace?.default?.[$commonJSSymbol] === 0 ? namespace.default : namespace;
-    $requireMap.$set(id, $createCommonJSModule(id, exports));
+    $requireMap.$set(id, $createCommonJSModule(id, exports, true));
     return exports;
   }
 
@@ -37,7 +52,7 @@ export function require(this: Module, id: string) {
   if (out === -1) {
     // To handle import/export cycles, we need to create a module object and put
     // it into the map before we import it.
-    const mod = $createCommonJSModule(id, {});
+    const mod = $createCommonJSModule(id, {}, false);
     $requireMap.$set(id, mod);
 
     try {
@@ -65,6 +80,7 @@ export function require(this: Module, id: string) {
 
   const existing2 = $requireMap.$get(id);
   if (existing2) {
+    $evaluateCommonJSModule(existing2);
     return existing2.exports;
   }
 

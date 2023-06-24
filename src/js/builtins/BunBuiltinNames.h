@@ -137,7 +137,7 @@ using namespace JSC;
     macro(lazyLoad) \
     macro(lazyStreamPrototypeMap) \
     macro(loadCJS2ESM) \
-    macro(loadModule) \
+    macro(evaluateCommonJSModule) \
     macro(localStreams) \
     macro(main) \
     macro(makeDOMException) \

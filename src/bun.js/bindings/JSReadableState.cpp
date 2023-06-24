@@ -26,7 +26,7 @@ int64_t getHighWaterMark(JSC::VM& vm, JSC::JSGlobalObject* globalObject, bool is
     auto* clientData = WebCore::clientData(vm);
     if (JSValue highWaterMarkVal = options->getIfPropertyExists(globalObject, clientData->builtinNames().highWaterMarkPublicName())) {
         if (isDuplex && (highWaterMarkVal.isUndefined() || highWaterMarkVal.isNull())) {
-            highWaterMarkVal = options->getDirect(vm, JSC::Identifier::fromString(vm, "readableObjectMode"_s));
+            highWaterMarkVal = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "readableObjectMode"_s));
         }
 
         if (!highWaterMarkVal.isUndefinedOrNull()) {
@@ -42,9 +42,9 @@ void JSReadableState::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObj
     Base::finishCreation(vm);
 
     if (options != nullptr) {
-        JSC::JSValue objectModeVal = options->getDirect(vm, JSC::Identifier::fromString(vm, "objectMode"_s));
+        JSC::JSValue objectModeVal = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "objectMode"_s));
         if (isDuplex && !objectModeVal) {
-            objectModeVal = options->getDirect(vm, JSC::Identifier::fromString(vm, "readableObjectMode"_s));
+            objectModeVal = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "readableObjectMode"_s));
         }
         if (objectModeVal && objectModeVal.toBoolean(globalObject))
             setBool(JSReadableState::Mask::objectMode, true);
@@ -65,11 +65,11 @@ void JSReadableState::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObj
     m_pipes.set(vm, this, JSC::constructEmptyArray(globalObject, nullptr, 0));
 
     if (options != nullptr) {
-        JSC::JSValue emitCloseVal = options->getDirect(vm, JSC::Identifier::fromString(vm, "emitClose"_s));
+        JSC::JSValue emitCloseVal = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "emitClose"_s));
         if (!emitCloseVal.isBoolean() || emitCloseVal.toBoolean(globalObject))
             setBool(JSReadableState::Mask::emitClose, true);
         // Has it been destroyed.
-        JSC::JSValue autoDestroyVal = options->getDirect(vm, JSC::Identifier::fromString(vm, "autoDestroy"_s));
+        JSC::JSValue autoDestroyVal = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "autoDestroy"_s));
         if (!autoDestroyVal.isBoolean() || autoDestroyVal.toBoolean(globalObject))
             setBool(JSReadableState::Mask::autoDestroy, true);
     }
@@ -90,25 +90,24 @@ void JSReadableState::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObj
     }
 
     m_awaitDrainWriters.set(vm, this, JSC::jsNull());
+    JSValue decodeValue = JSC::jsNull();
+    JSValue encodingValue = JSC::jsNull();
 
-    if (options == nullptr) {
-        m_decoder.set(vm, this, JSC::jsNull());
-        m_encoding.set(vm, this, JSC::jsNull());
-    } else {
-        JSC::JSValue encodingVal = options->getDirect(vm, JSC::Identifier::fromString(vm, "encoding"_s));
+    if (options != nullptr) {
+        JSC::JSValue encodingVal = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "encoding"_s));
         if (encodingVal && encodingVal.isString()) {
             auto constructor = reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSStringDecoder();
             auto constructData = JSC::getConstructData(constructor);
             MarkedArgumentBuffer args;
             args.append(encodingVal);
             JSObject* decoder = JSC::construct(globalObject, constructor, constructData, args);
-            m_decoder.set(vm, this, decoder);
-            m_encoding.set(vm, this, encodingVal);
-        } else {
-            m_decoder.set(vm, this, JSC::jsNull());
-            m_encoding.set(vm, this, JSC::jsNull());
+            decodeValue = decoder;
+            encodingValue = encodingVal;
         }
     }
+
+    m_decoder.set(vm, this, decodeValue);
+    m_encoding.set(vm, this, encodingValue);
 
     // ReadableState.constructed is set to false during construction when a _construct method is implemented
     // this is here so that the ReadableState behavior tracks the behavior in node, and that calling Readable.read
@@ -403,10 +402,12 @@ JSC::EncodedJSValue JSReadableStateConstructor::construct(JSC::JSGlobalObject* l
         return JSValue::encode(jsUndefined());
     }
     isDuplex = isDuplexVal.toBoolean(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     JSObject* options = nullptr;
-    if (optionsVal.toBoolean(lexicalGlobalObject) && optionsVal.isObject()) {
+    if (optionsVal && optionsVal.isObject()) {
         options = optionsVal.toObject(lexicalGlobalObject);
     }
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
     JSReadableState* stringDecoder = JSReadableState::create(
         vm, lexicalGlobalObject, reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSReadableStateStructure(), isDuplex, options);

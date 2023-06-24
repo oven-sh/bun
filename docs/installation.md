@@ -143,3 +143,29 @@ To write the completions to a custom location:
 $ bun completions > path-to-file      # write to file
 $ bun completions /path/to/directory  # write into directory
 ```
+
+## Troubleshooting
+
+### Unzip is required
+
+Unzip is required to install Bun on Linux. You can use one of the following commands to install `unzip`:
+
+{% codetabs %}
+
+```sh#Debian/Ubuntu/Mint
+$ sudo apt install unzip
+```
+
+```sh#RedHat/CentOS/Fedora
+$ sudo dnf install unzip
+```
+
+```sh#Arch/Manjaro
+$ sudo pacman -S unzip
+```
+
+```sh#OpenSUSE
+$ sudo zypper install unzip
+```
+
+{% /codetabs %}

@@ -95,6 +95,10 @@ static bool canPerformFastEnumeration(Structure* s)
 
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSString* filename)
 {
+    if (!moduleObject->sourceCode) {
+        return false;
+    }
+
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSC::Structure* thisObjectStructure = globalObject->commonJSFunctionArgumentsStructure();
     JSC::JSObject* thisObject = JSC::constructEmptyObject(
@@ -298,7 +302,12 @@ JSC_DEFINE_CUSTOM_SETTER(setterLoaded,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
-    return false;
+    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    if (!thisObject)
+        return false;
+
+    thisObject->hasEvaluated = JSValue::decode(value).toBoolean(globalObject);
+    return true;
 }
 
 JSC_DEFINE_CUSTOM_SETTER(setterFilename,

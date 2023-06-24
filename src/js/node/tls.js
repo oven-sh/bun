@@ -320,6 +320,8 @@ var exports = {
   CLIENT_RENEG_WINDOW,
   connect,
   convertALPNProtocols,
+  createConnection,
+  createSecureContext,
   createServer,
   DEFAULT_CIPHERS,
   DEFAULT_ECDH_CURVE,

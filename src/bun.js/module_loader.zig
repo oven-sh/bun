@@ -1850,7 +1850,9 @@ pub const ModuleLoader = struct {
                 .@"node:v8" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:v8", "node/v8.js", specifier),
             }
         } else if (specifier.hasPrefixComptime(js_ast.Macro.namespaceWithColon)) {
-            if (jsc_vm.macro_entry_points.get(MacroEntryPoint.generateIDFromSpecifier(specifier.byteSlice()))) |entry| {
+            const spec = specifier.toUTF8(bun.default_allocator);
+            defer spec.deinit();
+            if (jsc_vm.macro_entry_points.get(MacroEntryPoint.generateIDFromSpecifier(spec.slice()))) |entry| {
                 return ResolvedSource{
                     .allocator = null,
                     .source_code = bun.String.create(entry.source.contents),

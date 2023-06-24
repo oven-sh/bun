@@ -22,9 +22,8 @@ export function require(this: Module, id: string) {
   }
 
   let esm = Loader.registry.$get(id);
-
   if (esm?.evaluated) {
-    const mod = esm!.module;
+    const mod = esm.module;
     const namespace = Loader.getModuleNamespaceObject(mod);
     const exports =
       namespace?.[$commonJSSymbol] === 0 || namespace?.default?.[$commonJSSymbol] === 0 ? namespace.default : namespace;

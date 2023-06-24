@@ -139,47 +139,16 @@ export function internalRequire(this: ImportMetaObject, id) {
     if (cachedExports) {
       return cachedExports.exports;
     }
-    $requireMap.$set(id, $createCommonJSModule(id, exports));
+    var module = $createCommonJSModule(id, exports);
+    $requireMap.$set(id, module);
+    if (module.exports?.default?.[$commonJSSymbol] === 0) {
+      return (module.exports = module.exports.default);
+    }
     return exports;
   }
 }
 
 export function createRequireCache() {
-  class Module {
-    id;
-    parent;
-    filename;
-    children = [];
-    paths = [];
-
-    constructor(filename) {
-      this.id = filename;
-      // TODO: windows
-      const lastSlash = filename.lastIndexOf("/");
-      if (lastSlash !== -1 && filename.length > lastSlash + 1) {
-        this.filename = filename.substring(lastSlash + 1);
-      } else {
-        this.filename = filename;
-      }
-    }
-
-    get loaded() {
-      return true;
-    }
-
-    require(path) {
-      return $internalRequire($resolveSync(path, this.id));
-    }
-
-    get exports() {
-      return $requireMap.$get(this.id) ?? {};
-    }
-
-    set exports(value) {
-      $requireMap.$set(this.id, value);
-    }
-  }
-
   var moduleMap = new Map();
   var inner = {};
   return new Proxy(inner, {

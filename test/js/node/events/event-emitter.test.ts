@@ -1,5 +1,6 @@
 import { test, describe, expect } from "bun:test";
 import { sleep } from "bun";
+import { createRequire } from "module";
 
 // this is also testing that imports with default and named imports in the same statement work
 // our transpiler transform changes this to a var with import.meta.require
@@ -534,4 +535,10 @@ describe("EventEmitter constructors", () => {
       expect(called).toBe(true);
     });
   }
+
+  test("with createRequire, events is callable", () => {
+    const req = createRequire(import.meta.path);
+    const events = req("events");
+    new events();
+  });
 });

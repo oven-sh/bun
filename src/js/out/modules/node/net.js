@@ -466,6 +466,7 @@ var net_default = {
   isIPv4,
   isIPv6,
   Socket,
+  [Symbol.for("CommonJS")]: 0,
   [Symbol.for("::bunternal::")]: SocketClass
 };
 export {

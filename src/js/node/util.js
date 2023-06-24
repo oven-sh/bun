@@ -87,20 +87,18 @@ function format(f) {
   return str;
 }
 
-function deprecate(fn, msg) {
-  if (typeof process !== "undefined" && process.noDeprecation === true) {
+function deprecate(fn, msg, code) {
+  if (process.noDeprecation === true) {
     return fn;
   }
-  if (typeof process === "undefined") {
-    return function () {
-      return deprecate(fn, msg).apply(this, arguments);
-    };
-  }
+
   var warned = false;
   function deprecated() {
     if (!warned) {
       if (process.throwDeprecation) {
-        throw new Error(msg);
+        var err = new Error(msg);
+        if (code) err.code = code;
+        throw err;
       } else if (process.traceDeprecation) {
         console.trace(msg);
       } else {

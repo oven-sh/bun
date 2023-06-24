@@ -41,27 +41,24 @@ var isFunction = function(value) {
     else
       str += " " + inspect(x);
   return str;
-}, deprecate = function(fn, msg) {
-  if (typeof process !== "undefined" && process.noDeprecation === !0)
+}, deprecate = function(fn, msg, code) {
+  if (process.noDeprecation === !0)
     return fn;
-  if (typeof process === "undefined")
-    return function() {
-      return deprecate(fn, msg).apply(this, arguments);
-    };
-  var warned = !1;
-  function deprecated() {
-    if (!warned) {
-      if (process.throwDeprecation)
-        throw new Error(msg);
-      else if (process.traceDeprecation)
-        console.trace(msg);
-      else
-        console.error(msg);
-      warned = !0;
-    }
-    return fn.apply(this, arguments);
-  }
-  return deprecated;
+  var realFn = fn, wrapper = () => {
+    return fnToWrap.apply(this, arguments);
+  }, deprecater = () => {
+    if (process.throwDeprecation) {
+      var err = new Error(msg);
+      if (code)
+        err.code = code;
+      throw err;
+    } else if (process.traceDeprecation)
+      console.trace(msg);
+    else
+      console.error(msg);
+    return fnToWrap = realFn, realFn.apply(this, arguments);
+  }, fnToWrap = deprecater;
+  return wrapper;
 }, debuglog = function(set) {
   if (set = set.toUpperCase(), !debugs[set])
     if (debugEnvRegex.test(set)) {

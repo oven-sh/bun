@@ -510,7 +510,20 @@ JSCommonJSModule* JSCommonJSModule::create(
         size_t count = propertyNames.size();
         JSObject* defaultObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(count, 64UL));
         for (size_t i = 0; i < count; ++i) {
-            defaultObject->putDirect(vm, propertyNames[i], arguments.at(i), 0);
+            auto prop = propertyNames[i];
+            unsigned attributes = 0;
+
+            JSValue value = arguments.at(i);
+
+            if (prop.isSymbol()) {
+                attributes |= JSC::PropertyAttribute::DontEnum;
+            }
+
+            if (value.isCell() && value.isCallable()) {
+                attributes |= JSC::PropertyAttribute::Function;
+            }
+
+            defaultObject->putDirect(vm, prop, value, attributes);
         }
 
         return defaultObject;
@@ -522,6 +535,7 @@ JSCommonJSModule* JSCommonJSModule::create(
         globalObject->CommonJSModuleObjectStructure(),
         JSC::jsString(vm, key), JSC::jsString(vm, key), JSC::jsString(vm, dirname), nullptr);
     result->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), defaultValue, 0);
+    result->hasEvaluated = true;
     globalObject->requireMap()->set(globalObject, result->id(), result);
     return result;
 }

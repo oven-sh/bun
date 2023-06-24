@@ -1,9 +1,9 @@
-import EventEmitter from "node:events";
-import {isIPv6} from "node:net";
+import {EventEmitter} from "node:events";
 import {Readable, Writable, Duplex} from "node:stream";
-import {URL} from "node:url";
 import {isTypedArray} from "node:util/types";
-var isValidTLSArray = function(obj) {
+var isIPv6 = function(input) {
+  return new RegExp("^(" + `(?:${v6Seg}:){7}(?:${v6Seg}|:)|` + `(?:${v6Seg}:){6}(?:((?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])[.]){3}(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])|:${v6Seg}|:)|` + `(?:${v6Seg}:){5}(?::((?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])[.]){3}(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])|(:${v6Seg}){1,2}|:)|` + `(?:${v6Seg}:){4}(?:(:${v6Seg}){0,1}:((?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])[.]){3}(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])|(:${v6Seg}){1,3}|:)|` + `(?:${v6Seg}:){3}(?:(:${v6Seg}){0,2}:((?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])[.]){3}(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])|(:${v6Seg}){1,4}|:)|` + `(?:${v6Seg}:){2}(?:(:${v6Seg}){0,3}:((?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])[.]){3}(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])|(:${v6Seg}){1,5}|:)|` + `(?:${v6Seg}:){1}(?:(:${v6Seg}){0,4}:((?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])[.]){3}(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])|(:${v6Seg}){1,6}|:)|` + `(?::((?::${v6Seg}){0,5}:((?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])[.]){3}(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])|(?::${v6Seg}){1,7}|:))` + ")(%[0-9a-zA-Z-.:]{1,})?$").test(input);
+}, isValidTLSArray = function(obj) {
   if (typeof obj === "string" || isTypedArray(obj) || obj instanceof ArrayBuffer || obj instanceof Blob)
     return !0;
   if (Array.isArray(obj)) {
@@ -97,7 +97,7 @@ function get(url, options, cb) {
   const req = request(url, options, cb);
   return req.end(), req;
 }
-var { newArrayWithSize, String, Object, Array } = globalThis[Symbol.for("Bun.lazy")]("primordials"), globalReportError = globalThis.reportError, setTimeout = globalThis.setTimeout, fetch = Bun.fetch, nop = () => {
+var { URL } = globalThis, { newArrayWithSize, String, Object, Array } = globalThis[Symbol.for("Bun.lazy")]("primordials"), globalReportError = globalThis.reportError, setTimeout = globalThis.setTimeout, fetch = Bun.fetch, nop = () => {
 }, __DEBUG__ = process.env.__DEBUG__, debug = __DEBUG__ ? (...args) => console.log("node:http", ...args) : nop, kEmptyObject = Object.freeze(Object.create(null)), kOutHeaders = Symbol.for("kOutHeaders"), kEndCalled = Symbol.for("kEndCalled"), kAbortController = Symbol.for("kAbortController"), kClearTimeout = Symbol("kClearTimeout"), kCorked = Symbol.for("kCorked"), searchParamsSymbol = Symbol.for("query"), StringPrototypeSlice = String.prototype.slice, StringPrototypeStartsWith = String.prototype.startsWith, StringPrototypeToUpperCase = String.prototype.toUpperCase, StringPrototypeIncludes = String.prototype.includes, StringPrototypeCharCodeAt = String.prototype.charCodeAt, StringPrototypeIndexOf = String.prototype.indexOf, ArrayIsArray = Array.isArray, RegExpPrototypeExec = RegExp.prototype.exec, ObjectAssign = Object.assign, ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty, INVALID_PATH_REGEX = /[^\u0021-\u00ff]/, NODE_HTTP_WARNING = "WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.", _globalAgent, _defaultHTTPSAgent, kInternalRequest = Symbol("kInternalRequest"), kInternalSocketData = Symbol.for("::bunternal::"), kEmptyBuffer = Buffer.alloc(0), FakeSocket = class Socket extends Duplex {
   bytesRead = 0;
   bytesWritten = 0;
@@ -1090,7 +1090,9 @@ var tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/, METHODS = [
   509: "Bandwidth Limit Exceeded",
   510: "Not Extended",
   511: "Network Authentication Required"
-}, defaultObject = {
+};
+_globalAgent ??= new Agent;
+var defaultObject = {
   Agent,
   Server,
   METHODS,
@@ -1105,7 +1107,7 @@ var tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/, METHODS = [
     debug(`${NODE_HTTP_WARNING}\n`, "setMaxIdleHTTPParsers() is a no-op");
   },
   get globalAgent() {
-    return _globalAgent ??= new Agent;
+    return _globalAgent;
   },
   set globalAgent(agent) {
   },
@@ -1113,6 +1115,7 @@ var tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/, METHODS = [
 }, http_default = defaultObject;
 export {
   request,
+  _globalAgent as globalAgent,
   get,
   http_default as default,
   createServer,

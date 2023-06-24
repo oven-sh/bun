@@ -1,9 +1,32 @@
 // Hardcoded module "node:http"
-import EventEmitter from "node:events";
-import { isIPv6 } from "node:net";
+import { EventEmitter } from "node:events";
 import { Readable, Writable, Duplex } from "node:stream";
-import { URL } from "node:url";
 import { isTypedArray } from "util/types";
+
+// Cheaper to duplicate this than to import it from node:net
+function isIPv6(input) {
+  const v4Seg = "(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])";
+  const v4Str = `(${v4Seg}[.]){3}${v4Seg}`;
+
+  const IPv6Reg = new RegExp(
+    "^(" +
+      `(?:${v6Seg}:){7}(?:${v6Seg}|:)|` +
+      `(?:${v6Seg}:){6}(?:${v4Str}|:${v6Seg}|:)|` +
+      `(?:${v6Seg}:){5}(?::${v4Str}|(:${v6Seg}){1,2}|:)|` +
+      `(?:${v6Seg}:){4}(?:(:${v6Seg}){0,1}:${v4Str}|(:${v6Seg}){1,3}|:)|` +
+      `(?:${v6Seg}:){3}(?:(:${v6Seg}){0,2}:${v4Str}|(:${v6Seg}){1,4}|:)|` +
+      `(?:${v6Seg}:){2}(?:(:${v6Seg}){0,3}:${v4Str}|(:${v6Seg}){1,5}|:)|` +
+      `(?:${v6Seg}:){1}(?:(:${v6Seg}){0,4}:${v4Str}|(:${v6Seg}){1,6}|:)|` +
+      `(?::((?::${v6Seg}){0,5}:${v4Str}|(?::${v6Seg}){1,7}|:))` +
+      ")(%[0-9a-zA-Z-.:]{1,})?$",
+  );
+
+  return IPv6Reg.test(input);
+}
+
+// TODO: add primordial for URL
+// Importing from node:url is unnecessary
+const { URL } = globalThis;
 
 const { newArrayWithSize, String, Object, Array } = globalThis[Symbol.for("Bun.lazy")]("primordials");
 
@@ -1789,7 +1812,7 @@ export function get(url, options, cb) {
   req.end();
   return req;
 }
-
+_globalAgent ??= new Agent();
 var defaultObject = {
   Agent,
   Server,
@@ -1807,10 +1830,12 @@ var defaultObject = {
     debug(`${NODE_HTTP_WARNING}\n`, "setMaxIdleHTTPParsers() is a no-op");
   },
   get globalAgent() {
-    return (_globalAgent ??= new Agent());
+    return _globalAgent;
   },
   set globalAgent(agent) {},
   [Symbol.for("CommonJS")]: 0,
 };
 
 export default defaultObject;
+
+export { _globalAgent as globalAgent };

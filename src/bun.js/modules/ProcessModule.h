@@ -50,7 +50,7 @@ inline void generateProcessSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
   process->getPropertyNames(globalObject, properties,
                             DontEnumPropertiesMode::Exclude);
 
-  exportNames.append(JSC::Identifier::fromString(vm, "default"_s));
+  exportNames.append(vm.propertyNames->defaultKeyword);
   exportValues.append(process);
 
   exportNames.append(

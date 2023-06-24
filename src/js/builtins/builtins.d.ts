@@ -341,9 +341,9 @@ declare function $releaseLock(): TODO;
 declare function $removeEventListener(): TODO;
 declare function $require(): TODO;
 declare function $requireESM(path: string): any;
-declare const $requireMap: Map<string, TODO>;
+declare const $requireMap: Map<string, NodeModule>;
 declare function $resolve(name: string, from: string): Promise<string>;
-declare function $resolveSync(name: string, from: string): string;
+declare function $resolveSync(name: string, from: string, isESM?: boolean): string;
 declare function $resume(): TODO;
 declare function $search(): TODO;
 declare function $searchParams(): TODO;
@@ -401,6 +401,8 @@ declare function $writeRequests(): TODO;
 declare function $writer(): TODO;
 declare function $writing(): TODO;
 declare function $written(): TODO;
+
+declare function $createCommonJSModule(id: string, exports: any, hasEvaluated: boolean): NodeModule;
 
 // The following I cannot find any definitions of, but they are functional.
 declare function $toLength(length: number): number;

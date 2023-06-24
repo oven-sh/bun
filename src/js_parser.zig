@@ -21217,7 +21217,7 @@ fn NewParser_(
                         logger.Loc.Empty,
                     );
                     const cjsGlobal = p.newSymbol(.unbound, "$_BunCommonJSModule_$") catch unreachable;
-                    var call_args = allocator.alloc(Expr, 6) catch unreachable;
+                    var all_call_args = allocator.alloc(Expr, 7) catch unreachable;
                     const this_module = p.newExpr(
                         E.Dot{
                             .name = "module",
@@ -21226,14 +21226,72 @@ fn NewParser_(
                         },
                         logger.Loc.Empty,
                     );
+                    var call_args = all_call_args[1..];
+                    var bind_args = all_call_args[0..1];
+                    bind_args[0] = this_module;
+                    const get_require = p.newExpr(
+                        E.Dot{
+                            .name = "require",
+                            .target = this_module,
+                            .name_loc = logger.Loc.Empty,
+                        },
+                        logger.Loc.Empty,
+                    );
+
+                    const create_binding = p.newExpr(
+                        E.Call{
+                            .target = p.newExpr(E.Dot{
+                                .name = "bind",
+                                .name_loc = logger.Loc.Empty,
+                                .target = get_require,
+                            }, logger.Loc.Empty),
+                            .args = bun.BabyList(Expr).init(bind_args),
+                        },
+                        logger.Loc.Empty,
+                    );
+
+                    const module_id = p.newExpr(E.Dot{
+                        .name = "id",
+                        .target = this_module,
+                        .name_loc = logger.Loc.Empty,
+                    }, logger.Loc.Empty);
+
+                    const require_path = p.newExpr(
+                        E.Dot{
+                            .name = "path",
+                            .target = get_require,
+                            .name_loc = logger.Loc.Empty,
+                        },
+                        logger.Loc.Empty,
+                    );
+                    const assign_binding = p.newExpr(
+                        E.Binary{
+                            .left = get_require,
+                            .right = create_binding,
+                            .op = .bin_assign,
+                        },
+                        logger.Loc.Empty,
+                    );
+
+                    const assign_id = p.newExpr(E.Binary{
+                        .left = require_path,
+                        .right = module_id,
+                        .op = .bin_assign,
+                    }, logger.Loc.Empty);
+
+                    var create_require = [3]Expr{
+                        assign_binding,
+                        assign_id,
+                        get_require,
+                    };
 
                     //
-                    // (function(module, exports, require, __dirname, __filename) {}).call(this.exports, this.module, this.exports, this.require, __dirname, __filename)
+                    // (function(module, exports, require, __dirname, __filename) {}).call(this.exports, this.module, this.exports, this.module.require = this.module.require.bind(module), (this.module.require.id = this.module.id, this.module.require), __dirname, __filename)
                     call_args[0..6].* = .{
                         p.newExpr(
                             E.Dot{
                                 .name = "exports",
-                                .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
+                                .target = this_module,
                                 .name_loc = logger.Loc.Empty,
                             },
                             logger.Loc.Empty,
@@ -21242,33 +21300,12 @@ fn NewParser_(
                         p.newExpr(
                             E.Dot{
                                 .name = "exports",
-                                .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
+                                .target = this_module,
                                 .name_loc = logger.Loc.Empty,
                             },
                             logger.Loc.Empty,
                         ),
-                        p.newExpr(
-                            E.Binary{
-                                .left = p.newExpr(
-                                    E.Dot{
-                                        .name = "require",
-                                        .target = this_module,
-                                        .name_loc = logger.Loc.Empty,
-                                    },
-                                    logger.Loc.Empty,
-                                ),
-                                .op = .bin_assign,
-                                .right = p.newExpr(
-                                    E.Dot{
-                                        .name = "require",
-                                        .target = p.newExpr(E.Identifier{ .ref = cjsGlobal }, logger.Loc.Empty),
-                                        .name_loc = logger.Loc.Empty,
-                                    },
-                                    logger.Loc.Empty,
-                                ),
-                            },
-                            logger.Loc.Empty,
-                        ),
+                        Expr.joinAllWithComma(&create_require, p.allocator),
                         p.newExpr(
                             E.Dot{
                                 .name = "__dirname",

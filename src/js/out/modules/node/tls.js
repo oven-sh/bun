@@ -1,4 +1,5 @@
-var {isTypedArray } = import.meta.require("node:util/types");
+import {isTypedArray} from "node:util/types";
+import net, {Server as NetServer} from "node:net";
 var parseCertString = function() {
   throwNotImplemented("Not implemented");
 }, isValidTLSArray = function(obj) {
@@ -16,7 +17,12 @@ var parseCertString = function() {
   return new SecureContext(options);
 }, createServer = function(options, connectionListener) {
   return new Server(options, connectionListener);
-}, InternalSecureContext = class SecureContext2 {
+}, getCiphers = function() {
+  return DEFAULT_CIPHERS.split(":");
+}, getCurves = function() {
+  return;
+}, convertALPNProtocols = function(protocols, out) {
+}, InternalTCPSocket = net[Symbol.for("::bunternal::")], InternalSecureContext = class SecureContext2 {
   context;
   constructor(options) {
     const context = {};
@@ -54,7 +60,7 @@ var parseCertString = function() {
     }
     this.context = context;
   }
-}, { [Symbol.for("::bunternal::")]: InternalTCPSocket, Server: NetServer } = import.meta.require("net"), buntls = Symbol.for("::buntls::"), SocketClass, TLSSocket = function(InternalTLSSocket) {
+}, buntls = Symbol.for("::buntls::"), SocketClass, TLSSocket = function(InternalTLSSocket) {
   return SocketClass = InternalTLSSocket, Object.defineProperty(SocketClass.prototype, Symbol.toStringTag, {
     value: "TLSSocket",
     enumerable: !1
@@ -209,37 +215,37 @@ var CLIENT_RENEG_LIMIT = 3, CLIENT_RENEG_WINDOW = 600, DEFAULT_ECDH_CURVE = "aut
     return new TLSSocket(port).connect(port, host, connectListener);
   return new TLSSocket().connect(port, host, connectListener);
 }, connect = createConnection, exports = {
-  createSecureContext,
-  parseCertString,
-  getCiphers() {
-    return DEFAULT_CIPHERS.split(":");
-  },
-  getCurves() {
-    return;
-  },
-  convertALPNProtocols(protocols, out) {
-  },
-  TLSSocket,
-  SecureContext,
+  [Symbol.for("CommonJS")]: 0,
   CLIENT_RENEG_LIMIT,
   CLIENT_RENEG_WINDOW,
-  DEFAULT_ECDH_CURVE,
-  DEFAULT_CIPHERS,
-  DEFAULT_MIN_VERSION,
-  DEFAULT_MAX_VERSION,
-  [Symbol.for("CommonJS")]: 0,
   connect,
+  convertALPNProtocols,
   createConnection,
+  createSecureContext,
+  createServer,
+  DEFAULT_CIPHERS,
+  DEFAULT_ECDH_CURVE,
+  DEFAULT_MAX_VERSION,
+  DEFAULT_MIN_VERSION,
+  getCiphers,
+  getCurves,
+  parseCertString,
+  SecureContext,
   Server,
-  createServer
-}, tls_default = exports;
+  TLSSocket
+};
 export {
   parseCertString,
-  tls_default as default,
+  getCurves,
+  getCiphers,
+  exports as default,
+  createServer,
   createSecureContext,
   createConnection,
+  convertALPNProtocols,
   connect,
   TLSSocket,
+  Server,
   SecureContext,
   DEFAULT_MIN_VERSION,
   DEFAULT_MAX_VERSION,

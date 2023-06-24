@@ -1,4 +1,9 @@
-var isValidTLSArray = function(obj) {
+import {EventEmitter} from "node:events";
+import {Readable, Writable, Duplex} from "node:stream";
+import {isTypedArray} from "node:util/types";
+var isIPv6 = function(input) {
+  return new RegExp("^((?:(?:[0-9a-fA-F]{1,4}):){7}(?:(?:[0-9a-fA-F]{1,4})|:)|(?:(?:[0-9a-fA-F]{1,4}):){6}(?:((?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])[.]){3}(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])|:(?:[0-9a-fA-F]{1,4})|:)|(?:(?:[0-9a-fA-F]{1,4}):){5}(?::((?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])[.]){3}(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])|(:(?:[0-9a-fA-F]{1,4})){1,2}|:)|(?:(?:[0-9a-fA-F]{1,4}):){4}(?:(:(?:[0-9a-fA-F]{1,4})){0,1}:((?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])[.]){3}(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])|(:(?:[0-9a-fA-F]{1,4})){1,3}|:)|(?:(?:[0-9a-fA-F]{1,4}):){3}(?:(:(?:[0-9a-fA-F]{1,4})){0,2}:((?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])[.]){3}(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])|(:(?:[0-9a-fA-F]{1,4})){1,4}|:)|(?:(?:[0-9a-fA-F]{1,4}):){2}(?:(:(?:[0-9a-fA-F]{1,4})){0,3}:((?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])[.]){3}(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])|(:(?:[0-9a-fA-F]{1,4})){1,5}|:)|(?:(?:[0-9a-fA-F]{1,4}):){1}(?:(:(?:[0-9a-fA-F]{1,4})){0,4}:((?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])[.]){3}(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])|(:(?:[0-9a-fA-F]{1,4})){1,6}|:)|(?::((?::(?:[0-9a-fA-F]{1,4})){0,5}:((?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])[.]){3}(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])|(?::(?:[0-9a-fA-F]{1,4})){1,7}|:)))(%[0-9a-zA-Z-.:]{1,})?$").test(input);
+}, isValidTLSArray = function(obj) {
   if (typeof obj === "string" || isTypedArray(obj) || obj instanceof ArrayBuffer || obj instanceof Blob)
     return !0;
   if (Array.isArray(obj)) {
@@ -92,9 +97,8 @@ function get(url, options, cb) {
   const req = request(url, options, cb);
   return req.end(), req;
 }
-var { EventEmitter } = import.meta.require("node:events"), { isIPv6 } = import.meta.require("node:net"), { Readable, Writable, Duplex } = import.meta.require("node:stream"), { URL } = import.meta.require("node:url"), { newArrayWithSize, String, Object, Array } = import.meta.primordials, { isTypedArray } = import.meta.require("util/types"), globalReportError = globalThis.reportError, setTimeout = globalThis.setTimeout, fetch = Bun.fetch, nop = () => {
-}, __DEBUG__ = process.env.__DEBUG__, debug = __DEBUG__ ? (...args) => console.log("node:http", ...args) : nop, kEmptyObject = Object.freeze(Object.create(null)), kOutHeaders = Symbol.for("kOutHeaders"), kEndCalled = Symbol.for("kEndCalled"), kAbortController = Symbol.for("kAbortController"), kClearTimeout = Symbol("kClearTimeout"), kCorked = Symbol.for("kCorked"), searchParamsSymbol = Symbol.for("query"), StringPrototypeSlice = String.prototype.slice, StringPrototypeStartsWith = String.prototype.startsWith, StringPrototypeToUpperCase = String.prototype.toUpperCase, StringPrototypeIncludes = String.prototype.includes, StringPrototypeCharCodeAt = String.prototype.charCodeAt, StringPrototypeIndexOf = String.prototype.indexOf, ArrayIsArray = Array.isArray, RegExpPrototypeExec = RegExp.prototype.exec, ObjectAssign = Object.assign, ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty, INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
-var _globalAgent, _defaultHTTPSAgent, kInternalRequest = Symbol("kInternalRequest"), kInternalSocketData = Symbol.for("::bunternal::"), kEmptyBuffer = Buffer.alloc(0), FakeSocket = class Socket extends Duplex {
+var { URL } = globalThis, { newArrayWithSize, String, Object, Array } = globalThis[Symbol.for("Bun.lazy")]("primordials"), globalReportError = globalThis.reportError, setTimeout = globalThis.setTimeout, fetch = Bun.fetch, nop = () => {
+}, __DEBUG__ = process.env.__DEBUG__, debug = __DEBUG__ ? (...args) => console.log("node:http", ...args) : nop, kEmptyObject = Object.freeze(Object.create(null)), kOutHeaders = Symbol.for("kOutHeaders"), kEndCalled = Symbol.for("kEndCalled"), kAbortController = Symbol.for("kAbortController"), kClearTimeout = Symbol("kClearTimeout"), kCorked = Symbol.for("kCorked"), searchParamsSymbol = Symbol.for("query"), StringPrototypeSlice = String.prototype.slice, StringPrototypeStartsWith = String.prototype.startsWith, StringPrototypeToUpperCase = String.prototype.toUpperCase, StringPrototypeIncludes = String.prototype.includes, StringPrototypeCharCodeAt = String.prototype.charCodeAt, StringPrototypeIndexOf = String.prototype.indexOf, ArrayIsArray = Array.isArray, RegExpPrototypeExec = RegExp.prototype.exec, ObjectAssign = Object.assign, ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty, INVALID_PATH_REGEX = /[^\u0021-\u00ff]/, NODE_HTTP_WARNING = "WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.", _globalAgent, _defaultHTTPSAgent, kInternalRequest = Symbol("kInternalRequest"), kInternalSocketData = Symbol.for("::bunternal::"), kEmptyBuffer = Buffer.alloc(0), FakeSocket = class Socket extends Duplex {
   bytesRead = 0;
   bytesWritten = 0;
   connecting = !1;
@@ -230,7 +234,7 @@ class Agent extends EventEmitter {
     return this.#totalSocketCount;
   }
   createConnection() {
-    return debug("WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.\n", "WARN: Agent.createConnection is a no-op, returns fake socket"), this.#fakeSocket ??= new FakeSocket;
+    return debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.createConnection is a no-op, returns fake socket"), this.#fakeSocket ??= new FakeSocket;
   }
   getName(options = kEmptyObject) {
     let name = `http:${options.host || "localhost"}:`;
@@ -245,22 +249,22 @@ class Agent extends EventEmitter {
     return name;
   }
   addRequest() {
-    debug("WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.\n", "WARN: Agent.addRequest is a no-op");
+    debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.addRequest is a no-op");
   }
   createSocket(req, options, cb) {
-    debug("WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.\n", "WARN: Agent.createSocket returns fake socket"), cb(null, this.#fakeSocket ??= new FakeSocket);
+    debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.createSocket returns fake socket"), cb(null, this.#fakeSocket ??= new FakeSocket);
   }
   removeSocket() {
-    debug("WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.\n", "WARN: Agent.removeSocket is a no-op");
+    debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.removeSocket is a no-op");
   }
   keepSocketAlive() {
-    return debug("WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.\n", "WARN: Agent.keepSocketAlive is a no-op"), !0;
+    return debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.keepSocketAlive is a no-op"), !0;
   }
   reuseSocket() {
-    debug("WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.\n", "WARN: Agent.reuseSocket is a no-op");
+    debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.reuseSocket is a no-op");
   }
   destroy() {
-    debug("WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.\n", "WARN: Agent.destroy is a no-op");
+    debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.destroy is a no-op");
   }
 }
 
@@ -968,10 +972,10 @@ class ClientRequest extends OutgoingMessage {
       this.setTimeout(timeout);
   }
   setSocketKeepAlive(enable = !0, initialDelay = 0) {
-    __DEBUG__ && debug("WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.\n", "WARN: ClientRequest.setSocketKeepAlive is a no-op");
+    __DEBUG__ && debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setSocketKeepAlive is a no-op");
   }
   setNoDelay(noDelay = !0) {
-    __DEBUG__ && debug("WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.\n", "WARN: ClientRequest.setNoDelay is a no-op");
+    __DEBUG__ && debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setNoDelay is a no-op");
   }
   [kClearTimeout]() {
     if (this.#timeoutTimer)
@@ -1086,7 +1090,9 @@ var tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/, METHODS = [
   509: "Bandwidth Limit Exceeded",
   510: "Not Extended",
   511: "Network Authentication Required"
-}, defaultObject = {
+};
+_globalAgent ??= new Agent;
+var defaultObject = {
   Agent,
   Server,
   METHODS,
@@ -1098,10 +1104,10 @@ var tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/, METHODS = [
   get,
   maxHeaderSize: 16384,
   setMaxIdleHTTPParsers(max) {
-    debug("WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.\n", "setMaxIdleHTTPParsers() is a no-op");
+    debug(`${NODE_HTTP_WARNING}\n`, "setMaxIdleHTTPParsers() is a no-op");
   },
   get globalAgent() {
-    return _globalAgent ??= new Agent;
+    return _globalAgent;
   },
   set globalAgent(agent) {
   },
@@ -1109,6 +1115,7 @@ var tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/, METHODS = [
 }, http_default = defaultObject;
 export {
   request,
+  _globalAgent as globalAgent,
   get,
   http_default as default,
   createServer,

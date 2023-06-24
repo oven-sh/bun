@@ -4379,10 +4379,10 @@ fn NewPrinter(
                                 p.printGlobalBunImportStatement(s.*);
                                 return;
                             },
-                            .hardcoded => {
-                                p.printHardcodedImportStatement(s.*);
-                                return;
-                            },
+                            // .hardcoded => {
+                            //     p.printHardcodedImportStatement(s.*);
+                            //     return;
+                            // },
                             else => {},
                         }
                     }
@@ -4391,71 +4391,6 @@ fn NewPrinter(
                         const require_ref = p.options.require_ref;
 
                         const module_id = record.module_id;
-
-                        if (comptime is_bun_platform) {
-                            if (!record.path.is_disabled) {
-                                if (record.contains_import_star) {
-                                    p.print("var ");
-                                    p.printSymbol(s.namespace_ref);
-                                    p.@"print = "();
-                                    p.print("import.meta.require(");
-                                    p.printImportRecordPath(record);
-                                    p.print(")");
-                                    p.printSemicolonAfterStatement();
-                                }
-
-                                if (s.items.len > 0 or s.default_name != null) {
-                                    p.printIndent();
-                                    p.printSpaceBeforeIdentifier();
-                                    p.printWhitespacer(ws("var {"));
-
-                                    if (s.default_name) |default_name| {
-                                        p.printSpace();
-                                        p.print("default:");
-                                        p.printSpace();
-                                        p.printSymbol(default_name.ref.?);
-
-                                        if (s.items.len > 0) {
-                                            p.printSpace();
-                                            p.print(",");
-                                            p.printSpace();
-                                            for (s.items, 0..) |item, i| {
-                                                p.printClauseItemAs(item, .@"var");
-
-                                                if (i < s.items.len - 1) {
-                                                    p.print(",");
-                                                    p.printSpace();
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        for (s.items, 0..) |item, i| {
-                                            p.printClauseItemAs(item, .@"var");
-
-                                            if (i < s.items.len - 1) {
-                                                p.print(",");
-                                                p.printSpace();
-                                            }
-                                        }
-                                    }
-
-                                    p.print("}");
-                                    p.@"print = "();
-
-                                    if (record.contains_import_star) {
-                                        p.printSymbol(s.namespace_ref);
-                                        p.printSemicolonAfterStatement();
-                                    } else {
-                                        p.print("import.meta.require(");
-                                        p.printImportRecordPath(record);
-                                        p.print(")");
-                                        p.printSemicolonAfterStatement();
-                                    }
-                                }
-
-                                return;
-                            }
-                        }
 
                         if (!record.path.is_disabled and std.mem.indexOfScalar(u32, p.imported_module_ids.items, module_id) == null) {
                             p.printWhitespacer(ws("import * as"));

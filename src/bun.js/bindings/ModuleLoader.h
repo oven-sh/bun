@@ -15,6 +15,8 @@ class JSInternalPromise;
 namespace Bun {
 using namespace JSC;
 
+class JSCommonJSModule;
+
 typedef uint8_t OnLoadResultType;
 const OnLoadResultType OnLoadResultTypeError = 0;
 const OnLoadResultType OnLoadResultTypeCode = 1;
@@ -88,6 +90,13 @@ JSValue fetchSourceCodeSync(
 JSValue fetchSourceCodeAsync(
     Zig::GlobalObject* globalObject,
     ErrorableResolvedSource* res,
+    BunString* specifier,
+    BunString* referrer);
+
+JSValue fetchCommonJSModule(
+    Zig::GlobalObject* globalObject,
+    JSCommonJSModule* moduleObject,
+    JSValue specifierValue,
     BunString* specifier,
     BunString* referrer);
 

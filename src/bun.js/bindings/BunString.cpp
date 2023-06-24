@@ -7,6 +7,11 @@
 #include "GCDefferalContext.h"
 using namespace JSC;
 
+extern "C" bool Bun__WTFStringImpl__hasPrefix(const WTF::StringImpl* impl, const char* bytes, size_t length)
+{
+    return impl->startsWith(bytes, length);
+}
+
 extern "C" void Bun__WTFStringImpl__deref(WTF::StringImpl* impl)
 {
     impl->deref();

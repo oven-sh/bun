@@ -1,5 +1,7 @@
 // Hardcoded module "node:tls"
 import { isTypedArray } from "util/types";
+import net, { Server as NetServer } from "node:net";
+const InternalTCPSocket = net[Symbol.for("::bunternal::")];
 
 function parseCertString() {
   throwNotImplemented("Not implemented");
@@ -80,8 +82,6 @@ function SecureContext(options) {
 function createSecureContext(options) {
   return new SecureContext(options);
 }
-
-const { [Symbol.for("::bunternal::")]: InternalTCPSocket, Server: NetServer } = import.meta.require("net");
 
 const buntls = Symbol.for("::buntls::");
 
@@ -286,7 +286,7 @@ class Server extends NetServer {
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
-export const CLIENT_RENEG_LIMIT = 3,
+const CLIENT_RENEG_LIMIT = 3,
   CLIENT_RENEG_WINDOW = 600,
   DEFAULT_ECDH_CURVE = "auto",
   // https://github.com/Jarred-Sumner/uSockets/blob/fafc241e8664243fc0c51d69684d5d02b9805134/src/crypto/openssl.c#L519-L523
@@ -304,34 +304,54 @@ export const CLIENT_RENEG_LIMIT = 3,
   },
   connect = createConnection;
 
+function getCiphers() {
+  return DEFAULT_CIPHERS.split(":");
+}
+
+function getCurves() {
+  return;
+}
+
+function convertALPNProtocols(protocols, out) {}
+
 var exports = {
-  createSecureContext,
-  parseCertString,
-
-  getCiphers() {
-    return DEFAULT_CIPHERS.split(":");
-  },
-
-  getCurves() {
-    return;
-  },
-
-  convertALPNProtocols(protocols, out) {},
-  TLSSocket,
-  SecureContext,
+  [Symbol.for("CommonJS")]: 0,
   CLIENT_RENEG_LIMIT,
   CLIENT_RENEG_WINDOW,
-  DEFAULT_ECDH_CURVE,
-  DEFAULT_CIPHERS,
-  DEFAULT_MIN_VERSION,
-  DEFAULT_MAX_VERSION,
-  [Symbol.for("CommonJS")]: 0,
   connect,
+  convertALPNProtocols,
   createConnection,
-  Server,
+  createSecureContext,
   createServer,
+  DEFAULT_CIPHERS,
+  DEFAULT_ECDH_CURVE,
+  DEFAULT_MAX_VERSION,
+  DEFAULT_MIN_VERSION,
+  getCiphers,
+  getCurves,
+  parseCertString,
+  SecureContext,
+  Server,
+  TLSSocket,
 };
 
-export default exports;
-
-export { createSecureContext, parseCertString, TLSSocket, SecureContext };
+export {
+  CLIENT_RENEG_LIMIT,
+  CLIENT_RENEG_WINDOW,
+  connect,
+  convertALPNProtocols,
+  createConnection,
+  createSecureContext,
+  createServer,
+  DEFAULT_CIPHERS,
+  DEFAULT_ECDH_CURVE,
+  DEFAULT_MAX_VERSION,
+  DEFAULT_MIN_VERSION,
+  getCiphers,
+  getCurves,
+  parseCertString,
+  SecureContext,
+  Server,
+  TLSSocket,
+  exports as default,
+};

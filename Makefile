@@ -561,6 +561,9 @@ builtins:
 esm:
 	NODE_ENV=production bun src/js/build-esm.ts
 
+esm-debug:
+	BUN_DEBUG_QUIET_LOGS=1 NODE_ENV=production bun-debug src/js/build-esm.ts
+
 .PHONY: generate-builtins
 generate-builtins: builtins
 

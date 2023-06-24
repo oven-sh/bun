@@ -1,11 +1,14 @@
-import { EventEmitter } from "stream";
+export var ReadStream;
+export var WriteStream;
+
+import { EventEmitter } from "node:events";
 
 // Hardcoded module "node:fs"
-var { direct, isPromise, isCallable } = import.meta.primordials;
-var promises = import.meta.require("node:fs/promises");
+var { direct, isPromise, isCallable } = globalThis[Symbol.for("Bun.lazy")]("primordials");
+export { default as promises } from "node:fs/promises";
+import promises from "node:fs/promises";
 
-var { Readable, NativeWritable, _getNativeReadableStreamPrototype, eos: eos_ } = import.meta.require("node:stream");
-var NativeReadable = _getNativeReadableStreamPrototype(2, Readable); // 2 means native type is a file here
+import * as Stream from "node:stream";
 
 var fs = Bun.fs();
 var debug = process.env.DEBUG ? console.log : () => {};
@@ -214,8 +217,7 @@ export var access = function access(...args) {
   Stats = fs.Stats,
   watch = function watch(path, options, listener) {
     return new FSWatcher(path, options, listener);
-  },
-  promises = import.meta.require("node:fs/promises");
+  };
 
 function callbackify(fsFunction, args) {
   try {
@@ -284,7 +286,8 @@ var defaultReadStreamOptions = {
 };
 
 var ReadStreamClass;
-export var ReadStream = (function (InternalReadStream) {
+
+ReadStream = (function (InternalReadStream) {
   ReadStreamClass = InternalReadStream;
   Object.defineProperty(ReadStreamClass.prototype, Symbol.toStringTag, {
     value: "ReadStream",
@@ -303,7 +306,7 @@ export var ReadStream = (function (InternalReadStream) {
     },
   );
 })(
-  class ReadStream extends NativeReadable {
+  class ReadStream extends Stream._getNativeReadableStreamPrototype(2, Stream.Readable) {
     constructor(pathOrFd, options = defaultReadStreamOptions) {
       if (typeof options !== "object" || !options) {
         throw new TypeError("Expected options to be an object");
@@ -631,7 +634,7 @@ var defaultWriteStreamOptions = {
 };
 
 var WriteStreamClass;
-export var WriteStream = (function (InternalWriteStream) {
+WriteStream = (function (InternalWriteStream) {
   WriteStreamClass = InternalWriteStream;
   Object.defineProperty(WriteStreamClass.prototype, Symbol.toStringTag, {
     value: "WritesStream",
@@ -650,7 +653,7 @@ export var WriteStream = (function (InternalWriteStream) {
     },
   );
 })(
-  class WriteStream extends NativeWritable {
+  class WriteStream extends Stream.NativeWritable {
     constructor(path, options = defaultWriteStreamOptions) {
       if (!options) {
         throw new TypeError("Expected options to be an object");
@@ -939,7 +942,7 @@ export function createWriteStream(path, options) {
 }
 
 // NOTE: This was too smart and doesn't actually work
-// export var WriteStream = Object.defineProperty(
+// WriteStream = Object.defineProperty(
 //   function WriteStream(path, options) {
 //     var _InternalWriteStream = getLazyWriteStream();
 //     return new _InternalWriteStream(path, options);
@@ -948,7 +951,7 @@ export function createWriteStream(path, options) {
 //   { value: (instance) => instance[writeStreamSymbol] === true },
 // );
 
-// export var ReadStream = Object.defineProperty(
+// ReadStream = Object.defineProperty(
 //   function ReadStream(path, options) {
 //     var _InternalReadStream = getLazyReadStream();
 //     return new _InternalReadStream(path, options);
@@ -1077,3 +1080,5 @@ export default {
   //   return getLazyReadStream();
   // },
 };
+
+export { constants } from "node:fs/promises";

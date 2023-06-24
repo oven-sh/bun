@@ -11,7 +11,7 @@
     "bktree-fast": "^0.0.7",
     "body-parser": "^1.20.2",
     "dedent": "^0.7.0",
-    "esbuild": "^0.17.16",
+    "esbuild": "^0.18.6",
     "express": "^4.18.2",
     "iconv-lite": "^0.6.3",
     "jest-extended": "^4.0.0",

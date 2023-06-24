@@ -3,7 +3,7 @@
 // this just wraps WebSocket to look like an EventEmitter
 // without actually using an EventEmitter polyfill
 
-import EventEmitter from "events";
+import { EventEmitter } from "events";
 import http from "http";
 
 const kBunInternals = Symbol.for("::bunternal::");

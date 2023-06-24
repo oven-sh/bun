@@ -29,6 +29,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableState;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPendingVirtualModuleResult;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCallSite;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForImportMeta;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiExternal;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRequireResolveFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBundlerPlugin;

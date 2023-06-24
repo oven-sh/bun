@@ -1,15 +1,11 @@
 // Hardcoded module "node:child_process"
-const EventEmitter = import.meta.require("node:events");
-const {
-  Readable: { fromWeb: ReadableFromWeb },
-  NativeWritable,
-} = import.meta.require("node:stream");
-const {
-  constants: { signals },
-} = import.meta.require("node:os");
-const { promisify } = import.meta.require("node:util");
+import { EventEmitter } from "node:events";
+import * as StreamModule from "node:stream";
+import { constants } from "node:os";
+import { promisify } from "node:util";
+const signals = constants.signals;
 
-const { ArrayBuffer, Uint8Array, String, Object, Buffer, Promise } = import.meta.primordials;
+const { ArrayBuffer, Uint8Array, String, Object, Buffer, Promise } = globalThis[Symbol.for("Bun.lazy")]("primordials");
 
 var ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 var ObjectCreate = Object.create;
@@ -21,8 +17,6 @@ var BufferIsEncoding = Buffer.isEncoding;
 var kEmptyObject = ObjectCreate(null);
 
 var ArrayPrototypePush = Array.prototype.push;
-var ArrayPrototypeReduce = Array.prototype.reduce;
-var ArrayPrototypeFilter = Array.prototype.filter;
 var ArrayPrototypeJoin = Array.prototype.join;
 var ArrayPrototypeMap = Array.prototype.map;
 var ArrayPrototypeIncludes = Array.prototype.includes;
@@ -59,6 +53,9 @@ if (__TRACK_STDIO__) {
     return globalThis.__lastId !== null ? globalThis.__lastId++ : 0;
   };
 }
+
+var NativeWritable;
+var ReadableFromWeb;
 
 // Sections:
 // 1. Exported child_process functions
@@ -961,6 +958,10 @@ export class ChildProcess extends EventEmitter {
         debug("ChildProcess: getBunSpawnIo: this.#handle is undefined");
       }
     }
+
+    NativeWritable ||= StreamModule.NativeWritable;
+    ReadableFromWeb ||= StreamModule.Readable.fromWeb;
+
     const io = this.#stdioOptions[i];
     switch (i) {
       case 0: {
@@ -979,15 +980,7 @@ export class ChildProcess extends EventEmitter {
       case 1: {
         switch (io) {
           case "pipe":
-            return ReadableFromWeb(
-              this.#handle[fdToStdioName(i)],
-              __TRACK_STDIO__
-                ? {
-                    encoding,
-                    __id: `PARENT_${fdToStdioName(i).toUpperCase()}-${globalThis.__getId()}`,
-                  }
-                : { encoding },
-            );
+            return ReadableFromWeb(this.#handle[fdToStdioName(i)], { encoding });
           case "inherit":
             return process[fdToStdioName(i)] || null;
           case "destroyed":

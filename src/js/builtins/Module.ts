@@ -2,7 +2,7 @@ interface Module {
   id: string;
   path: string;
 
-  $require(id: string): any;
+  $require(id: string, mod: any): any;
   children: Module[];
 }
 
@@ -49,21 +49,25 @@ export function require(this: Module, id: string) {
     return exports;
   }
 
-  let out = this.$require(id);
+  // To handle import/export cycles, we need to create a module object and put
+  // it into the map before we import it.
+  const mod = $createCommonJSModule(id, {}, false);
+  $requireMap.$set(id, mod);
+
+  // This is where we load the module. We will see if Module._load and
+  // Module._compile are actually important for compatibility.
+  //
+  // Note: we do not need to wrap this in a try/catch, if it throws the C++ code will
+  // clear the module from the map.
+  //
+  var out = this.$require(id, mod);
 
   // -1 means we need to lookup the module from the ESM registry.
   if (out === -1) {
-    // To handle import/export cycles, we need to create a module object and put
-    // it into the map before we import it.
-    const mod = $createCommonJSModule(id, {}, false);
-    $requireMap.$set(id, mod);
-
     try {
       out = $requireESM(id);
     } catch (exception) {
-      // If the ESM module failed to load, we need to remove the module from the
-      // CommonJS map as well. That way, if there's a syntax error, we don't
-      // prevent you from reloading the module once you fix the syntax error.
+      // Since the ESM code is mostly JS, we need to handle exceptions here.
       $requireMap.$delete(id);
       throw exception;
     }
@@ -81,13 +85,8 @@ export function require(this: Module, id: string) {
     }
   }
 
-  const existing2 = $requireMap.$get(id);
-  if (existing2) {
-    $evaluateCommonJSModule(existing2);
-    return existing2.exports;
-  }
-
-  return out;
+  $evaluateCommonJSModule(mod);
+  return mod.exports;
 }
 
 export function requireResolve(this: Module, id: string) {

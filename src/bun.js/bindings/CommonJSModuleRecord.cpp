@@ -257,14 +257,6 @@ public:
     }
 };
 
-JSC_DEFINE_CUSTOM_GETTER(getterLoaded, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
-        return JSValue::encode(jsUndefined());
-    }
-    return JSValue::encode(jsBoolean(thisObject->hasEvaluated));
-}
 JSC_DEFINE_CUSTOM_GETTER(getterFilename, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
@@ -303,18 +295,6 @@ JSC_DEFINE_CUSTOM_SETTER(setterPath,
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setterLoaded,
-    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
-{
-    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
-    if (!thisObject)
-        return false;
-
-    thisObject->hasEvaluated = JSValue::decode(value).toBoolean(globalObject);
-    return true;
-}
-
 JSC_DEFINE_CUSTOM_SETTER(setterFilename,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
@@ -342,7 +322,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterId,
 static JSValue createLoaded(VM& vm, JSObject* object)
 {
     JSCommonJSModule* cjs = jsCast<JSCommonJSModule*>(object);
-    return jsBoolean(true);
+    return jsBoolean(cjs->hasEvaluated);
 }
 static JSValue createParent(VM& vm, JSObject* object)
 {
@@ -357,7 +337,7 @@ static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
     { "children"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback | PropertyAttribute::DontEnum | 0), NoIntrinsic, { HashTableValue::LazyPropertyType, createChildren } },
     { "filename"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterFilename, setterFilename } },
     { "id"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterId, setterId } },
-    { "loaded"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterLoaded, setterLoaded } },
+    { "loaded"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback | PropertyAttribute::DontEnum | 0), NoIntrinsic, { HashTableValue::LazyPropertyType, createLoaded } },
     { "parent"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback | PropertyAttribute::DontEnum | 0), NoIntrinsic, { HashTableValue::LazyPropertyType, createParent } },
     { "path"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterPath, setterPath } },
 };

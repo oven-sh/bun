@@ -1957,45 +1957,29 @@ pub fn elementLengthLatin1IntoUTF8(comptime Type: type, latin1_: Type) usize {
 
         if (comptime Environment.enableSIMD) {
             const wrapped_len = latin1.len - (latin1.len % ascii_vector_size);
-            const latin1_vec_end = ptr + wrapped_len;
-            while (ptr != latin1_vec_end) {
-                const vec: AsciiVector = ptr[0..ascii_vector_size].*;
-                const cmp = vec & @splat(ascii_vector_size, @as(u8, 0x80));
-                total_non_ascii_count += @reduce(.Add, cmp);
-                ptr += ascii_vector_size;
-            }
-        } else {
-            while (@intFromPtr(ptr + 8) < @intFromPtr(latin1_last)) {
-                if (comptime Environment.allow_assert) std.debug.assert(@intFromPtr(ptr) <= @intFromPtr(latin1_last) and @intFromPtr(ptr) >= @intFromPtr(latin1_.ptr));
-                const bytes = @bitCast(u64, ptr[0..8].*) & 0x8080808080808080;
-                total_non_ascii_count += @popCount(bytes);
-                ptr += 8;
-            }
-
-            if (@intFromPtr(ptr + 4) < @intFromPtr(latin1_last)) {
-                if (comptime Environment.allow_assert) std.debug.assert(@intFromPtr(ptr) <= @intFromPtr(latin1_last) and @intFromPtr(ptr) >= @intFromPtr(latin1_.ptr));
-                const bytes = @bitCast(u32, ptr[0..4].*) & 0x80808080;
-                total_non_ascii_count += @popCount(bytes);
-                ptr += 4;
-            }
-
-            if (@intFromPtr(ptr + 2) < @intFromPtr(latin1_last)) {
-                if (comptime Environment.allow_assert) std.debug.assert(@intFromPtr(ptr) <= @intFromPtr(latin1_last) and @intFromPtr(ptr) >= @intFromPtr(latin1_.ptr));
-                const bytes = @bitCast(u16, ptr[0..2].*) & 0x8080;
-                total_non_ascii_count += @popCount(bytes);
-                ptr += 2;
+            var i: usize = 0;
+            while (i < wrapped_len) : (i += ascii_vector_size) {
+                const vec: AsciiVector = latin1[0..ascii_vector_size].*;
+                const cmp = @bitCast(
+                    AsciiVectorU1,
+                    (vec >> @splat(
+                        ascii_vector_size,
+                        @as(u3, 7),
+                    )) > @splat(
+                        ascii_vector_size,
+                        @as(u3, 0),
+                    ),
+                );
+                total_non_ascii_count += @as(usize, @popCount(@bitCast(u16, cmp)));
+                latin1 = latin1[ascii_vector_size..];
             }
         }
 
-        while (ptr != latin1_last) {
+        for (latin1) |c| {
             if (comptime Environment.allow_assert) std.debug.assert(@intFromPtr(ptr) < @intFromPtr(latin1_last));
 
-            total_non_ascii_count += @as(usize, @intFromBool(ptr[0] > 127));
-            ptr += 1;
+            total_non_ascii_count += @as(usize, @intFromBool(c > 127));
         }
-
-        // assert we never go out of bounds
-        if (comptime Environment.allow_assert) std.debug.assert(@intFromPtr(ptr) <= @intFromPtr(latin1_last) and @intFromPtr(ptr) >= @intFromPtr(latin1_.ptr));
     }
 
     // each non-ascii latin1 character becomes 2 UTF8 characters

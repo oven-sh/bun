@@ -35,7 +35,8 @@ public:
 
     static JSC::Structure* createStructure(JSC::JSGlobalObject* globalObject);
 
-    JSFunction* compile(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
+    bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource resolvedSource);
+    bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& key, const SyntheticSourceProvider::SyntheticSourceGenerator& generator);
 
     static JSCommonJSModule* create(JSC::VM& vm, JSC::Structure* structure,
         JSC::JSString* id,
@@ -52,10 +53,6 @@ public:
         Zig::GlobalObject* globalObject,
         const WTF::String& key,
         ResolvedSource resolvedSource);
-
-    static JSCommonJSModule* create(Zig::GlobalObject* globalObject, const WTF::String& key,
-        const WTF::String& dirname,
-        const SyntheticSourceProvider::SyntheticSourceGenerator& generator);
 
     void toSyntheticSource(JSC::JSGlobalObject* globalObject,
         JSC::Identifier moduleKey,

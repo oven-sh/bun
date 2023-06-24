@@ -357,6 +357,7 @@ extern "C" void Bun__onFulfillAsyncModule(
 
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
+    JSCommonJSModule* target,
     JSValue specifierValue,
     BunString* specifier,
     BunString* referrer)
@@ -369,45 +370,51 @@ JSValue fetchCommonJSModule(
 
     auto& builtinNames = WebCore::clientData(vm)->builtinNames();
 
-    auto synthetic = [specifier, globalObject, referrer](const SyntheticSourceProvider::SyntheticSourceGenerator& generator) -> JSValue {
-        return JSCommonJSModule::create(
-            globalObject,
-            Bun::toWTFString(*specifier),
-            Bun::toWTFString(*referrer),
-            generator);
-    };
-
     if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, referrer, res)) {
         if (!res->success) {
             throwException(scope, res->result.err, globalObject);
-            RELEASE_AND_RETURN(scope, JSValue());
+            return JSValue();
         }
 
         switch (res->result.value.tag) {
         case SyntheticModuleType::Module: {
-            return synthetic(generateNodeModuleModule);
+            target->evaluate(globalObject, Bun::toWTFString(*specifier), generateNodeModuleModule);
+            RETURN_IF_EXCEPTION(scope, {});
+            RELEASE_AND_RETURN(scope, target);
         }
 
         case SyntheticModuleType::Buffer: {
-            return synthetic(generateBufferSourceCode);
+            target->evaluate(globalObject, Bun::toWTFString(*specifier), generateBufferSourceCode);
+            RETURN_IF_EXCEPTION(scope, {});
+            RELEASE_AND_RETURN(scope, target);
         }
         case SyntheticModuleType::TTY: {
-            return synthetic(generateTTYSourceCode);
+            target->evaluate(globalObject, Bun::toWTFString(*specifier), generateTTYSourceCode);
+            RETURN_IF_EXCEPTION(scope, {});
+            RELEASE_AND_RETURN(scope, target);
         }
         case SyntheticModuleType::NodeUtilTypes: {
-            return synthetic(Bun::generateNodeUtilTypesSourceCode);
+            target->evaluate(globalObject, Bun::toWTFString(*specifier), Bun::generateNodeUtilTypesSourceCode);
+            RETURN_IF_EXCEPTION(scope, {});
+            RELEASE_AND_RETURN(scope, target);
         }
         case SyntheticModuleType::Process: {
-            return synthetic(generateProcessSourceCode);
+            target->evaluate(globalObject, Bun::toWTFString(*specifier), generateProcessSourceCode);
+            RETURN_IF_EXCEPTION(scope, {});
+            RELEASE_AND_RETURN(scope, target);
         }
         case SyntheticModuleType::Events: {
-            return synthetic(generateEventsSourceCode);
+            target->evaluate(globalObject, Bun::toWTFString(*specifier), generateEventsSourceCode);
+            RETURN_IF_EXCEPTION(scope, {});
+            RELEASE_AND_RETURN(scope, target);
         }
         case SyntheticModuleType::StringDecoder: {
-            return synthetic(generateStringDecoderSourceCode);
+            target->evaluate(globalObject, Bun::toWTFString(*specifier), generateStringDecoderSourceCode);
+            RETURN_IF_EXCEPTION(scope, {});
+            RELEASE_AND_RETURN(scope, target);
         }
         default: {
-            return jsNumber(-1);
+            RELEASE_AND_RETURN(scope, jsNumber(-1));
         }
         }
     }
@@ -430,18 +437,15 @@ JSValue fetchCommonJSModule(
     };
 
     if (hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice()) {
-        return jsNumber(-1);
+        RELEASE_AND_RETURN(scope, jsNumber(-1));
     }
 
     Bun__transpileFile(bunVM, globalObject, specifier, referrer, res, false);
 
     if (res->success && res->result.value.commonJSExportsLen) {
-        auto* mod = Bun::JSCommonJSModule::create(globalObject, Bun::toWTFString(*specifier).isolatedCopy(), res->result.value);
-        if (mod) {
-            RELEASE_AND_RETURN(scope, mod);
-        } else {
-            RELEASE_AND_RETURN(scope, {});
-        }
+        target->evaluate(globalObject, Bun::toWTFString(*specifier).isolatedCopy(), res->result.value);
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, target);
     }
 
     if (!res->success) {
@@ -451,7 +455,8 @@ JSValue fetchCommonJSModule(
 
     auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);
     globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, JSC::SourceCode(provider));
-    return jsNumber(-1);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, jsNumber(-1));
 }
 
 template<bool allowPromise>

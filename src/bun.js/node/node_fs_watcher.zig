@@ -736,8 +736,10 @@ pub const FSWatcher = struct {
         pub fn unref(this: *JSObject) u32 {
             const count = this.ref_count.fetchSub(1, .Monotonic);
             if (count == 1) {
-                this.closed = true;
-                this.detach();
+                if(!this.closed) {
+                    this.closed = true;
+                    this.detach();
+                }
                 bun.default_allocator.destroy(this);
             }
             return count;
@@ -757,7 +759,7 @@ pub const FSWatcher = struct {
                     this.emit("", "close");
                 }
 
-                _ = this.unref();
+                this.detach();
             }
         }
 
@@ -765,10 +767,6 @@ pub const FSWatcher = struct {
             if (this.persistent) {
                 this.persistent = false;
                 this.poll_ref.unref(this.getFSWatcher().ctx);
-            }
-
-            if (this.js_this.has()) {
-                this.js_this.deinit();
             }
 
             this.globalThis = null;
@@ -790,6 +788,10 @@ pub const FSWatcher = struct {
                 ctx.js_watcher = null;
                 ctx.deinit();
                 manager.deinit();
+            }
+
+            if (this.js_this.has()) {
+                this.js_this.deinit();
             }
         }
 

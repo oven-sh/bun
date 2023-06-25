@@ -1492,6 +1492,7 @@ pub const JSFSWatcher = struct {
             @export(FSWatcher.doRef, .{ .name = "FSWatcherPrototype__doRef" });
             @export(FSWatcher.doUnref, .{ .name = "FSWatcherPrototype__doUnref" });
             @export(FSWatcher.finalize, .{ .name = "FSWatcherClass__finalize" });
+            @export(FSWatcher.hasPendingActivity, .{ .name = "FSWatcher__hasPendingActivity" });
             @export(FSWatcher.hasRef, .{ .name = "FSWatcherPrototype__hasRef" });
         }
     }

@@ -105,6 +105,7 @@ describe("fs.watch", () => {
     let err = undefined;
     watcher.on("change", (event, filename) => {
       const basename = path.basename(filename);
+
       if (basename === "subfolder") return;
       count++;
       try {

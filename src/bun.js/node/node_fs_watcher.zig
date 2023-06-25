@@ -609,7 +609,7 @@ pub const FSWatcher = struct {
 
     pub fn emitAbort(this: *FSWatcher, err: JSC.JSValue) void {
         if (this.closed) return;
-        defer this.close(true);
+        defer this.close();
 
         err.ensureStillAlive();
         if (this.js_this != .zero) {
@@ -630,7 +630,7 @@ pub const FSWatcher = struct {
     }
     pub fn emitError(this: *FSWatcher, err: string) void {
         if (this.closed) return;
-        defer this.close(true);
+        defer this.close();
 
         if (this.js_this != .zero) {
             const js_this = this.js_this;
@@ -730,22 +730,19 @@ pub const FSWatcher = struct {
 
     pub fn close(
         this: *FSWatcher,
-        emitEvent: bool,
     ) void {
         this.mutex.lock();
         if (!this.closed) {
             this.closed = true;
+
+            // emit should only be called unlocked
             this.mutex.unlock();
 
-            if (emitEvent) {
-                this.emit("", "close");
-            }
-
+            this.emit("", "close");
             // we immediately detach here
             this.detach();
 
-            this.mutex.lock();
-            defer this.mutex.unlock();
+            // no need to lock again, because ref checks closed and unref is only called on main thread
             if (this.task_count == 0) {
                 this.updateHasPendingActivity();
             }
@@ -780,7 +777,7 @@ pub const FSWatcher = struct {
     }
 
     pub fn doClose(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        this.close(true);
+        this.close();
         return JSC.JSValue.jsUndefined();
     }
 

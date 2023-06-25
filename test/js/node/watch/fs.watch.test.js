@@ -17,6 +17,8 @@ const testDir = tempDirWithFiles("watch", {
   "relative.txt": "hello",
   "abort.txt": "hello",
   "url.txt": "hello",
+  "close.txt": "hello",
+  "close-close.txt": "hello",
   [encodingFileName]: "hello",
 });
 
@@ -105,6 +107,7 @@ describe("fs.watch", () => {
     let err = undefined;
     watcher.on("change", (event, filename) => {
       const basename = path.basename(filename);
+
       if (basename === "subfolder") return;
       count++;
       try {
@@ -274,6 +277,46 @@ describe("fs.watch", () => {
     }
   });
 
+  test("calling close from error event should not throw", done => {
+    const filepath = path.join(testDir, "close.txt");
+    try {
+      const ac = new AbortController();
+      const watcher = fs.watch(pathToFileURL(filepath), { signal: ac.signal });
+      watcher.once("error", () => {
+        try {
+          watcher.close();
+          done();
+        } catch (e) {
+          done("Should not error when calling close from error event");
+        }
+      });
+      ac.abort();
+    } catch (e) {
+      done(e);
+    }
+  });
+
+  test("calling close from close event should not throw", done => {
+    const filepath = path.join(testDir, "close-close.txt");
+    try {
+      const ac = new AbortController();
+      const watcher = fs.watch(pathToFileURL(filepath), { signal: ac.signal });
+
+      watcher.once("close", () => {
+        try {
+          watcher.close();
+          done();
+        } catch (e) {
+          done("Should not error when calling close from close event");
+        }
+      });
+
+      ac.abort();
+    } catch (e) {
+      done(e);
+    }
+  });
+
   test("Signal aborted after creating the watcher", async () => {
     const filepath = path.join(testDir, "abort.txt");
 
@@ -300,7 +343,7 @@ describe("fs.watch", () => {
   });
 });
 
-describe("fs.promises.watchFile", () => {
+describe("fs.promises.watch", () => {
   test("add file/folder to folder", async () => {
     let count = 0;
     const root = path.join(testDir, "add-promise-directory");

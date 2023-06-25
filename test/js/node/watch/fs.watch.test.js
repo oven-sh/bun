@@ -17,6 +17,7 @@ const testDir = tempDirWithFiles("watch", {
   "relative.txt": "hello",
   "abort.txt": "hello",
   "url.txt": "hello",
+  "close.txt": "hello",
   [encodingFileName]: "hello",
 });
 
@@ -270,6 +271,25 @@ describe("fs.watch", () => {
       const interval = repeat(() => {
         fs.writeFileSync(filepath, "world");
       });
+    } catch (e) {
+      done(e);
+    }
+  });
+
+  test("calling close from error event should not throw", done => {
+    const filepath = path.join(testDir, "close.txt");
+    try {
+      const ac = new AbortController();
+      const watcher = fs.watch(pathToFileURL(filepath), { signal: ac.signal });
+      watcher.once("error", () => {
+        try {
+          watcher.close();
+          done();
+        } catch (e) {
+          done("Should not error when calling close from error event");
+        }
+      });
+      ac.abort();
     } catch (e) {
       done(e);
     }

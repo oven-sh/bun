@@ -366,8 +366,8 @@ WriteStream = function(InternalWriteStream) {
   return WriteStreamClass = InternalWriteStream, Object.defineProperty(WriteStreamClass.prototype, Symbol.toStringTag, {
     value: "WritesStream",
     enumerable: !1
-  }), Object.defineProperty(function WriteStream(options) {
-    return new InternalWriteStream(options);
+  }), Object.defineProperty(function WriteStream(path, options) {
+    return new InternalWriteStream(path, options);
   }, Symbol.hasInstance, {
     value(instance) {
       return instance instanceof InternalWriteStream;

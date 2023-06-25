@@ -4,6 +4,7 @@ const bun = @import("root").bun;
 const Fs = @import("../../fs.zig");
 const Path = @import("../../resolver/resolve_path.zig");
 const Encoder = JSC.WebCore.Encoder;
+const Mutex = @import("../../lock.zig").Lock;
 
 const FSEvents = @import("./fs_events.zig");
 
@@ -37,6 +38,7 @@ pub const FSWatcher = struct {
     last_change_event: ChangeEvent = .{},
 
     // JSObject
+    mutex: Mutex,
     signal: ?*JSC.AbortSignal,
     persistent: bool,
     default_watcher: ?*FSWatcher.Watcher,
@@ -46,9 +48,10 @@ pub const FSWatcher = struct {
     js_this: JSC.JSValue,
     encoding: JSC.Node.Encoding,
     // user can call close and pre-detach so we need to track this
-    closed: std.atomic.Atomic(bool),
+    closed: bool,
     // counts pending tasks so we only deinit after all tasks are done
-    task_count: std.atomic.Atomic(u32),
+    task_count: u32,
+    has_pending_activity: std.atomic.Atomic(bool),
     pub usingnamespace JSC.Codegen.JSFSWatcher;
 
     pub fn eventLoop(this: FSWatcher) *EventLoop {
@@ -574,8 +577,10 @@ pub const FSWatcher = struct {
             this.poll_ref.ref(this.ctx);
         }
 
-        this.js_this = FSWatcher.toJS(this, this.globalThis);
-        FSWatcher.listenerSetCached(this.js_this, this.globalThis, listener);
+        const js_this = FSWatcher.toJS(this, this.globalThis);
+        js_this.ensureStillAlive();
+        this.js_this = js_this;
+        FSWatcher.listenerSetCached(js_this, this.globalThis, listener);
 
         if (this.signal) |s| {
             // already aborted?
@@ -603,12 +608,15 @@ pub const FSWatcher = struct {
     }
 
     pub fn emitAbort(this: *FSWatcher, err: JSC.JSValue) void {
-        if (this.isClosed()) return;
+        if (this.closed) return;
         defer this.close(true);
 
         err.ensureStillAlive();
         if (this.js_this != .zero) {
-            if (FSWatcher.listenerGetCached(this.js_this)) |listener| {
+            const js_this = this.js_this;
+            js_this.ensureStillAlive();
+            if (FSWatcher.listenerGetCached(js_this)) |listener| {
+                listener.ensureStillAlive();
                 var args = [_]JSC.JSValue{
                     JSC.ZigString.static("error").toValue(this.globalThis),
                     if (err.isEmptyOrUndefinedOrNull()) JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.globalThis) else err,
@@ -621,11 +629,14 @@ pub const FSWatcher = struct {
         }
     }
     pub fn emitError(this: *FSWatcher, err: string) void {
-        if (this.isClosed()) return;
+        if (this.closed) return;
         defer this.close(true);
 
         if (this.js_this != .zero) {
-            if (FSWatcher.listenerGetCached(this.js_this)) |listener| {
+            const js_this = this.js_this;
+            js_this.ensureStillAlive();
+            if (FSWatcher.listenerGetCached(js_this)) |listener| {
+                listener.ensureStillAlive();
                 var args = [_]JSC.JSValue{
                     JSC.ZigString.static("error").toValue(this.globalThis),
                     JSC.ZigString.fromUTF8(err).toErrorInstance(this.globalThis),
@@ -639,8 +650,13 @@ pub const FSWatcher = struct {
     }
 
     pub fn emit(this: *FSWatcher, file_name: string, comptime eventType: string) void {
+        if (this.closed) return;
+
         if (this.js_this != .zero) {
-            if (FSWatcher.listenerGetCached(this.js_this)) |listener| {
+            const js_this = this.js_this;
+            js_this.ensureStillAlive();
+            if (FSWatcher.listenerGetCached(js_this)) |listener| {
+                listener.ensureStillAlive();
                 var filename: JSC.JSValue = JSC.JSValue.jsUndefined();
                 if (file_name.len > 0) {
                     if (this.encoding == .buffer)
@@ -665,7 +681,7 @@ pub const FSWatcher = struct {
     }
 
     pub fn doRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        if (!this.isClosed() and !this.persistent) {
+        if (!this.closed and !this.persistent) {
             this.persistent = true;
             this.poll_ref.ref(this.ctx);
         }
@@ -686,42 +702,52 @@ pub const FSWatcher = struct {
 
     // this can be called from Watcher Thread or JS Context Thread
     pub fn refTask(this: *FSWatcher) bool {
+        this.mutex.lock();
+        defer this.mutex.unlock();
         // stop new references
-        if (this.isClosed()) return false;
-        _ = this.task_count.fetchAdd(1, .Monotonic);
+        if (this.closed) return false;
+        this.task_count += 1;
         return true;
     }
 
     pub fn hasPendingActivity(this: *FSWatcher) callconv(.C) bool {
         @fence(.Acquire);
-        return this.task_count.load(.Acquire) > 0 or !this.closed.load(.Acquire);
+        return this.has_pending_activity.load(.Acquire);
     }
-
-    // returns true if the value was updated to closed == true
-    pub fn updateClosedFlag(this: *FSWatcher) bool {
-        return this.closed.compareAndSwap(false, true, .Acquire, .Monotonic) == null;
-    }
-
-    pub fn isClosed(this: *FSWatcher) bool {
-        @fence(.Acquire);
-        return this.closed.load(.Acquire);
+    // only called from Main Thread
+    pub fn updateHasPendingActivity(this: *FSWatcher) void {
+        @fence(.Release);
+        this.has_pending_activity.store(false, .Release);
     }
 
     // unref is always called on main JS Context Thread
     pub fn unrefTask(this: *FSWatcher) void {
-        _ = this.task_count.fetchSub(1, .Monotonic);
+        this.mutex.lock();
+        defer this.mutex.unlock();
+        this.task_count -= 1;
+        if (this.closed and this.task_count == 0) {
+            this.updateHasPendingActivity();
+        }
     }
 
     pub fn close(
         this: *FSWatcher,
         emitEvent: bool,
     ) void {
-        if (this.updateClosedFlag()) {
+        this.mutex.lock();
+        defer this.mutex.unlock();
+        if (!this.closed) {
             if (emitEvent) {
                 this.emit("", "close");
             }
+            this.closed = true;
+
             // we immediately detach here
             this.detach();
+
+            if (this.task_count == 0) {
+                this.updateHasPendingActivity();
+            }
         }
     }
 
@@ -820,6 +846,7 @@ pub const FSWatcher = struct {
         const vm = args.global_this.bunVM();
         ctx.* = .{
             .ctx = vm,
+            .mutex = Mutex.init(),
             .signal = if (args.signal) |s| s.ref() else null,
             .persistent = args.persistent,
             .default_watcher = null,
@@ -827,8 +854,9 @@ pub const FSWatcher = struct {
             .globalThis = args.global_this,
             .js_this = .zero,
             .encoding = args.encoding,
-            .closed = std.atomic.Atomic(bool).init(false),
-            .task_count = std.atomic.Atomic(u32).init(0),
+            .closed = false,
+            .task_count = 0,
+            .has_pending_activity = std.atomic.Atomic(bool).init(true),
             .verbose = args.verbose,
             .file_paths = bun.BabyList(string).initCapacity(bun.default_allocator, 1) catch |err| {
                 ctx.deinit();

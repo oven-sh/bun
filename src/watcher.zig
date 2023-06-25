@@ -369,7 +369,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         watchloop_handle: ?std.Thread.Id = null,
         cwd: string,
         thread: std.Thread = undefined,
-        running: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(true),
+        running: bool = true,
         close_descriptors: bool = false,
 
         pub const HashType = u32;
@@ -405,20 +405,15 @@ pub fn NewWatcher(comptime ContextType: type) type {
             this.thread = try std.Thread.spawn(.{}, Watcher.watchLoop, .{this});
         }
 
-        pub fn isRunning(this: *Watcher) bool {
-            @fence(.Acquire);
-            return this.running.load(.Acquire);
-        }
-
         pub fn deinit(this: *Watcher, close_descriptors: bool) void {
             this.mutex.lock();
             defer this.mutex.unlock();
 
             this.close_descriptors = close_descriptors;
             if (this.watchloop_handle != null) {
-                this.running.store(false, .SeqCst);
+                this.running = false;
             } else {
-                if (this.close_descriptors and this.running.compareAndSwap(false, true, .Acquire, .Monotonic) == null) {
+                if (this.close_descriptors and this.running) {
                     const fds = this.watchlist.items(.fd);
                     for (fds) |fd| {
                         std.os.close(fd);
@@ -441,7 +436,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             this._watchLoop() catch |err| {
                 this.watchloop_handle = null;
                 PlatformWatcher.stop();
-                if (this.isRunning()) {
+                if (this.running) {
                     this.ctx.onError(err);
                 }
             };
@@ -524,7 +519,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
                 var changelist_array: [128]KEvent = std.mem.zeroes([128]KEvent);
                 var changelist = &changelist_array;
-                while (this.isRunning()) {
+                while (true) {
                     defer Output.flush();
 
                     var count_ = std.os.system.kevent(
@@ -579,12 +574,14 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
                     this.mutex.lock();
                     defer this.mutex.unlock();
-                    if (this.isRunning()) {
+                    if (this.running) {
                         this.ctx.onFileUpdate(watchevents, this.changed_filepaths[0..watchevents.len], this.watchlist);
+                    } else {
+                        break;
                     }
                 }
             } else if (Environment.isLinux) {
-                restart: while (this.isRunning()) {
+                restart: while (true) {
                     defer Output.flush();
 
                     var events = try INotify.read();
@@ -650,8 +647,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
                         this.mutex.lock();
                         defer this.mutex.unlock();
-                        if (this.isRunning()) {
+                        if (this.running) {
                             this.ctx.onFileUpdate(all_events[0 .. last_event_index + 1], this.changed_filepaths[0 .. name_off + 1], this.watchlist);
+                        } else {
+                            break;
                         }
                         remaining_events -= slice.len;
                     }

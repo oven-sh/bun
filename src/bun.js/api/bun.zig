@@ -896,6 +896,9 @@ pub fn createNodeFS(
 ) js.JSValueRef {
     var module = ctx.allocator().create(JSC.Node.NodeJSFS) catch unreachable;
     module.* = .{};
+    var vm = ctx.bunVM();
+    if (vm.standalone_module_graph != null)
+        module.node_fs.vm = vm;
 
     return module.toJS(ctx).asObjectRef();
 }

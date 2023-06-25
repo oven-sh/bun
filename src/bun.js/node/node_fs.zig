@@ -2492,6 +2492,7 @@ pub const NodeFS = struct {
     /// That means a stack-allocated buffer won't suffice. Instead, we re-use
     /// the heap allocated buffer on the NodefS struct
     sync_error_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
+    vm: ?*JSC.VirtualMachine = null,
 
     pub const ReturnType = Return;
 
@@ -3442,6 +3443,35 @@ pub const NodeFS = struct {
                 const fd = switch (args.path) {
                     .path => brk: {
                         path = args.path.path.sliceZ(&this.sync_error_buf);
+                        if (this.vm) |vm| {
+                            if (vm.standalone_module_graph) |graph| {
+                                if (graph.find(path)) |file| {
+                                    if (args.encoding == .buffer) {
+                                        return .{
+                                            .result = .{
+                                                .buffer = Buffer.fromBytes(
+                                                    bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"),
+                                                    bun.default_allocator,
+                                                    .Uint8Array,
+                                                ),
+                                            },
+                                        };
+                                    } else if (comptime string_type == .default)
+                                        .{
+                                            .result = .{
+                                                .string = bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"),
+                                            },
+                                        }
+                                    else
+                                        .{
+                                            .result = .{
+                                                .null_terminated = bun.default_allocator.dupeZ(u8, file.contents) catch @panic("out of memory"),
+                                            },
+                                        };
+                                }
+                            }
+                        }
+
                         break :brk switch (Syscall.open(
                             path,
                             os.O.RDONLY | os.O.NOCTTY,

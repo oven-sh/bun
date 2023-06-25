@@ -2744,19 +2744,15 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // 1. Bun.file("foo")
             // 2. The content-disposition header is not present
             if (!has_content_disposition and content_type.category.autosetFilename()) {
-                if (this.blob.store()) |store| {
-                    if (store.data == .file) {
-                        if (store.data.file.pathlike == .path) {
-                            const basename = std.fs.path.basename(store.data.file.pathlike.path.slice());
-                            if (basename.len > 0) {
-                                var filename_buf: [1024]u8 = undefined;
+                if (this.blob.getFileName()) |filename| {
+                    const basename = std.fs.path.basename(filename);
+                    if (basename.len > 0) {
+                        var filename_buf: [1024]u8 = undefined;
 
-                                resp.writeHeader(
-                                    "content-disposition",
-                                    std.fmt.bufPrint(&filename_buf, "filename=\"{s}\"", .{basename[0..@min(basename.len, 1024 - 32)]}) catch "",
-                                );
-                            }
-                        }
+                        resp.writeHeader(
+                            "content-disposition",
+                            std.fmt.bufPrint(&filename_buf, "filename=\"{s}\"", .{basename[0..@min(basename.len, 1024 - 32)]}) catch "",
+                        );
                     }
                 }
             }

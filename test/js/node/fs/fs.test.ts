@@ -1068,6 +1068,44 @@ describe("createWriteStream", () => {
       expect(exception.code).toBe("ERR_INVALID_ARG_TYPE");
     }
   });
+
+  it("writing in append mode should not truncate the file", async () => {
+    const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStreamAppend.txt`;
+    const stream = createWriteStream(path, {
+      // @ts-ignore-next-line
+      flags: "a",
+    });
+    stream.write("first line\n");
+    stream.end();
+
+    await new Promise((resolve, reject) => {
+      stream.on("error", e => {
+        reject(e);
+      });
+
+      stream.on("finish", () => {
+        resolve(true);
+      });
+    });
+
+    const stream2 = createWriteStream(path, {
+      // @ts-ignore-next-line
+      flags: "a",
+    });
+    stream2.write("second line\n");
+    stream2.end();
+
+    return await new Promise((resolve, reject) => {
+      stream2.on("error", e => {
+        reject(e);
+      });
+
+      stream2.on("finish", () => {
+        expect(readFileSync(path, "utf8")).toBe("first line\nsecond line\n");
+        resolve(true);
+      });
+    });
+  });
 });
 
 describe("fs/promises", () => {

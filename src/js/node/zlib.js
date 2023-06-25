@@ -3,6 +3,41 @@
 // This is a very slow module!
 // It should really be fixed. It will show up in benchmarking. It also loads
 // slowly. We need to fix it!
+import { default as assert } from "node:assert";
+import * as AssertModule from "node:assert";
+import * as BufferModule from "node:buffer";
+import * as StreamModule from "node:stream";
+import * as Util from "node:util";
+
+export var Deflate,
+  Inflate,
+  Gzip,
+  Gunzip,
+  DeflateRaw,
+  InflateRaw,
+  Unzip,
+  createDeflate,
+  createInflate,
+  createDeflateRaw,
+  createInflateRaw,
+  createGzip,
+  createGunzip,
+  createUnzip,
+  deflate,
+  deflateSync,
+  gzip,
+  gzipSync,
+  deflateRaw,
+  deflateRawSync,
+  unzip,
+  unzipSync,
+  inflate,
+  inflateSync,
+  gunzip,
+  gunzipSync,
+  inflateRaw,
+  inflateRawSync,
+  constants;
 
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -37,8 +72,6 @@ var __toESM = (mod, isNodeMode, target) => (
   )
 );
 var __toCommonJS = mod => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-
-const require = id => import.meta.require(id);
 
 // node_modules/pako/lib/zlib/zstream.js
 var require_zstream = __commonJS({
@@ -3593,7 +3626,7 @@ var require_constants = __commonJS({
 var require_binding = __commonJS({
   "node_modules/browserify-zlib/lib/binding.js"(exports) {
     "use strict";
-    var assert = require("assert");
+
     var Zstream = require_zstream();
     var zlib_deflate = require_deflate();
     var zlib_inflate = require_inflate();
@@ -3937,12 +3970,12 @@ var require_binding = __commonJS({
 var require_lib = __commonJS({
   "node_modules/browserify-zlib/lib/index.js"(exports) {
     "use strict";
-    var Buffer2 = require("buffer").Buffer;
-    var Transform = require("stream").Transform;
+    var Buffer2 = BufferModule.Buffer;
+    var Transform = StreamModule.Transform;
     var binding = require_binding();
-    var util = require("util");
-    var assert = require("assert").ok;
-    var kMaxLength = require("buffer").kMaxLength;
+    var util = Util;
+    var assert = AssertModule.ok;
+    var kMaxLength = BufferModule.kMaxLength;
     var kRangeErrorMessage =
       "Cannot create final Buffer. It would be larger than 0x" + kMaxLength.toString(16) + " bytes";
     binding.Z_MIN_WINDOWBITS = 8;
@@ -4437,36 +4470,35 @@ var require_lib = __commonJS({
 // zlib.js
 var zlib_exports = require_lib();
 zlib_exports[Symbol.for("CommonJS")] = 0;
+
 export default zlib_exports;
 
-export var {
-  Deflate,
-  Inflate,
-  Gzip,
-  Gunzip,
-  DeflateRaw,
-  InflateRaw,
-  Unzip,
-  createDeflate,
-  createInflate,
-  createDeflateRaw,
-  createInflateRaw,
-  createGzip,
-  createGunzip,
-  createUnzip,
-  deflate,
-  deflateSync,
-  gzip,
-  gzipSync,
-  deflateRaw,
-  deflateRawSync,
-  unzip,
-  unzipSync,
-  inflate,
-  inflateSync,
-  gunzip,
-  gunzipSync,
-  inflateRaw,
-  inflateRawSync,
-  constants,
-} = zlib_exports;
+Deflate = zlib_exports.Deflate;
+Inflate = zlib_exports.Inflate;
+Gzip = zlib_exports.Gzip;
+Gunzip = zlib_exports.Gunzip;
+DeflateRaw = zlib_exports.DeflateRaw;
+InflateRaw = zlib_exports.InflateRaw;
+Unzip = zlib_exports.Unzip;
+createDeflate = zlib_exports.createDeflate;
+createInflate = zlib_exports.createInflate;
+createDeflateRaw = zlib_exports.createDeflateRaw;
+createInflateRaw = zlib_exports.createInflateRaw;
+createGzip = zlib_exports.createGzip;
+createGunzip = zlib_exports.createGunzip;
+createUnzip = zlib_exports.createUnzip;
+deflate = zlib_exports.deflate;
+deflateSync = zlib_exports.deflateSync;
+gzip = zlib_exports.gzip;
+gzipSync = zlib_exports.gzipSync;
+deflateRaw = zlib_exports.deflateRaw;
+deflateRawSync = zlib_exports.deflateRawSync;
+unzip = zlib_exports.unzip;
+unzipSync = zlib_exports.unzipSync;
+inflate = zlib_exports.inflate;
+inflateSync = zlib_exports.inflateSync;
+gunzip = zlib_exports.gunzip;
+gunzipSync = zlib_exports.gunzipSync;
+inflateRaw = zlib_exports.inflateRaw;
+inflateRawSync = zlib_exports.inflateRawSync;
+constants = zlib_exports.constants;

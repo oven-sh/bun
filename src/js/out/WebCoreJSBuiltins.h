@@ -1354,6 +1354,106 @@ inline void TransformStreamBuiltinsWrapper::exportNames()
     WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
 #undef EXPORT_FUNCTION_NAME
 }
+/* Module.ts */
+// main
+#define WEBCORE_BUILTIN_MODULE_MAIN 1
+extern const char* const s_moduleMainCode;
+extern const int s_moduleMainCodeLength;
+extern const JSC::ConstructAbility s_moduleMainCodeConstructAbility;
+extern const JSC::ConstructorKind s_moduleMainCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_moduleMainCodeImplementationVisibility;
+
+// require
+#define WEBCORE_BUILTIN_MODULE_REQUIRE 1
+extern const char* const s_moduleRequireCode;
+extern const int s_moduleRequireCodeLength;
+extern const JSC::ConstructAbility s_moduleRequireCodeConstructAbility;
+extern const JSC::ConstructorKind s_moduleRequireCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_moduleRequireCodeImplementationVisibility;
+
+// requireResolve
+#define WEBCORE_BUILTIN_MODULE_REQUIRERESOLVE 1
+extern const char* const s_moduleRequireResolveCode;
+extern const int s_moduleRequireResolveCodeLength;
+extern const JSC::ConstructAbility s_moduleRequireResolveCodeConstructAbility;
+extern const JSC::ConstructorKind s_moduleRequireResolveCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_moduleRequireResolveCodeImplementationVisibility;
+
+#define WEBCORE_FOREACH_MODULE_BUILTIN_DATA(macro) \
+    macro(main, moduleMain, 0) \
+    macro(require, moduleRequire, 1) \
+    macro(requireResolve, moduleRequireResolve, 1) \
+
+#define WEBCORE_FOREACH_MODULE_BUILTIN_CODE(macro) \
+    macro(moduleMainCode, main, "get main"_s, s_moduleMainCodeLength) \
+    macro(moduleRequireCode, require, ASCIILiteral(), s_moduleRequireCodeLength) \
+    macro(moduleRequireResolveCode, requireResolve, ASCIILiteral(), s_moduleRequireResolveCodeLength) \
+
+#define WEBCORE_FOREACH_MODULE_BUILTIN_FUNCTION_NAME(macro) \
+    macro(main) \
+    macro(require) \
+    macro(requireResolve) \
+
+#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
+    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
+
+WEBCORE_FOREACH_MODULE_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+#undef DECLARE_BUILTIN_GENERATOR
+
+class ModuleBuiltinsWrapper : private JSC::WeakHandleOwner {
+public:
+    explicit ModuleBuiltinsWrapper(JSC::VM& vm)
+        : m_vm(vm)
+        WEBCORE_FOREACH_MODULE_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+        WEBCORE_FOREACH_MODULE_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
+    {
+    }
+
+#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+    JSC::UnlinkedFunctionExecutable* name##Executable(); \
+    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
+    WEBCORE_FOREACH_MODULE_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+#undef EXPOSE_BUILTIN_EXECUTABLES
+
+    WEBCORE_FOREACH_MODULE_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+
+    void exportNames();
+
+private:
+    JSC::VM& m_vm;
+
+    WEBCORE_FOREACH_MODULE_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+
+#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
+    JSC::SourceCode m_##name##Source;\
+    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
+    WEBCORE_FOREACH_MODULE_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+#undef DECLARE_BUILTIN_SOURCE_MEMBERS
+
+};
+
+#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+inline JSC::UnlinkedFunctionExecutable* ModuleBuiltinsWrapper::name##Executable() \
+{\
+    if (!m_##name##Executable) {\
+        JSC::Identifier executableName = functionName##PublicName();\
+        if (overriddenName)\
+            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+    }\
+    return m_##name##Executable.get();\
+}
+WEBCORE_FOREACH_MODULE_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+#undef DEFINE_BUILTIN_EXECUTABLES
+
+inline void ModuleBuiltinsWrapper::exportNames()
+{
+#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
+    WEBCORE_FOREACH_MODULE_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+#undef EXPORT_FUNCTION_NAME
+}
 /* JSBufferPrototype.ts */
 // setBigUint64
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_SETBIGUINT64 1
@@ -5488,6 +5588,7 @@ public:
         , m_transformStreamInternalsBuiltins(m_vm)
         , m_processObjectInternalsBuiltins(m_vm)
         , m_transformStreamBuiltins(m_vm)
+        , m_moduleBuiltins(m_vm)
         , m_jsBufferPrototypeBuiltins(m_vm)
         , m_readableByteStreamControllerBuiltins(m_vm)
         , m_consoleObjectBuiltins(m_vm)
@@ -5520,6 +5621,7 @@ public:
     TransformStreamInternalsBuiltinsWrapper& transformStreamInternalsBuiltins() { return m_transformStreamInternalsBuiltins; }
     ProcessObjectInternalsBuiltinsWrapper& processObjectInternalsBuiltins() { return m_processObjectInternalsBuiltins; }
     TransformStreamBuiltinsWrapper& transformStreamBuiltins() { return m_transformStreamBuiltins; }
+    ModuleBuiltinsWrapper& moduleBuiltins() { return m_moduleBuiltins; }
     JSBufferPrototypeBuiltinsWrapper& jsBufferPrototypeBuiltins() { return m_jsBufferPrototypeBuiltins; }
     ReadableByteStreamControllerBuiltinsWrapper& readableByteStreamControllerBuiltins() { return m_readableByteStreamControllerBuiltins; }
     ConsoleObjectBuiltinsWrapper& consoleObjectBuiltins() { return m_consoleObjectBuiltins; }
@@ -5547,6 +5649,7 @@ private:
     TransformStreamInternalsBuiltinsWrapper m_transformStreamInternalsBuiltins;
     ProcessObjectInternalsBuiltinsWrapper m_processObjectInternalsBuiltins;
     TransformStreamBuiltinsWrapper m_transformStreamBuiltins;
+    ModuleBuiltinsWrapper m_moduleBuiltins;
     JSBufferPrototypeBuiltinsWrapper m_jsBufferPrototypeBuiltins;
     ReadableByteStreamControllerBuiltinsWrapper m_readableByteStreamControllerBuiltins;
     ConsoleObjectBuiltinsWrapper m_consoleObjectBuiltins;

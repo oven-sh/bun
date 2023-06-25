@@ -757,7 +757,7 @@ const Copy = union(enum) {
                 return WebsocketHeader.frameSizeIncludingMask(byte_len.*);
             },
             .latin1 => {
-                byte_len.* = this.latin1.len;
+                byte_len.* = strings.elementLengthLatin1IntoUTF8([]const u8, this.latin1);
                 return WebsocketHeader.frameSizeIncludingMask(byte_len.*);
             },
             .bytes => {
@@ -821,7 +821,10 @@ const Copy = union(enum) {
             .latin1 => |latin1| {
                 const encode_into_result = strings.copyLatin1IntoUTF8(to_mask, []const u8, latin1);
                 std.debug.assert(@as(usize, encode_into_result.written) == content_byte_len);
+
+                // latin1 can contain non-ascii
                 std.debug.assert(@as(usize, encode_into_result.read) == latin1.len);
+
                 header.len = WebsocketHeader.packLength(encode_into_result.written);
                 header.opcode = Opcode.Text;
                 var fib = std.io.fixedBufferStream(buf);
@@ -1467,9 +1470,10 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 // fast path: small frame, no backpressure, attempt to send without allocating
                 if (!str.is16Bit() and str.len < stack_frame_size) {
                     const bytes = Copy{ .latin1 = str.slice() };
-                    const frame_size = WebsocketHeader.frameSizeIncludingMask(str.len);
+                    var byte_len: usize = 0;
+                    const frame_size = bytes.len(&byte_len);
                     if (!this.hasBackpressure() and frame_size < stack_frame_size) {
-                        bytes.copy(this.globalThis, inline_buf[0..frame_size], str.len);
+                        bytes.copy(this.globalThis, inline_buf[0..frame_size], byte_len);
                         _ = this.enqueueEncodedBytes(this.tcp, inline_buf[0..frame_size]);
                         return;
                     }

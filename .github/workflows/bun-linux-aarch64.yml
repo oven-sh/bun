@@ -36,7 +36,7 @@ jobs:
             arch: aarch64
             build_arch: arm64
             runner: linux-arm64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/may20/bun-webkit-linux-arm64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/may20-1/bun-webkit-linux-arm64-lto.tar.gz"
             webkit_basename: "bun-webkit-linux-arm64-lto"
             build_machine_arch: aarch64
 

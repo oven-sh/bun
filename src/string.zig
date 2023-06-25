@@ -164,8 +164,13 @@ pub const WTFStringImplStruct = extern struct {
         return std.mem.Allocator{ .ptr = self, .vtable = StringImplAllocator.VTablePtr };
     }
 
+    pub fn hasPrefix(self: WTFStringImpl, text: []const u8) bool {
+        return Bun__WTFStringImpl__hasPrefix(self, text.ptr, text.len);
+    }
+
     extern fn Bun__WTFStringImpl__deref(self: WTFStringImpl) void;
     extern fn Bun__WTFStringImpl__ref(self: WTFStringImpl) void;
+    extern fn Bun__WTFStringImpl__hasPrefix(self: *const WTFStringImplStruct, offset: [*]const u8, length: usize) bool;
 };
 
 pub const StringImplAllocator = struct {
@@ -616,6 +621,10 @@ pub const String = extern struct {
     }
 
     pub fn hasPrefixComptime(this: String, comptime value: []const u8) bool {
+        if (this.tag == .WTFStringImpl) {
+            return this.value.WTFStringImpl.hasPrefix(value);
+        }
+
         return this.toZigString().substring(0, value.len).eqlComptime(value);
     }
 

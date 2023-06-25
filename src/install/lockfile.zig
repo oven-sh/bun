@@ -343,31 +343,23 @@ pub const Tree = struct {
         dependencies: []const Dependency,
         resolution_lists: []const Lockfile.DependencyIDSlice,
         queue: Lockfile.TreeFiller,
-        log: ?*logger.Log = null,
-        old_lockfile: ?*Lockfile = null,
+        log: *logger.Log,
+        old_lockfile: *Lockfile,
 
         pub fn maybeReportError(this: *Builder, comptime fmt: string, args: anytype) void {
-            var log = this.log orelse return;
-            if (this.old_lockfile == null) return;
-
-            log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
+            this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
         }
 
         pub fn buf(this: *const Builder) []const u8 {
-            var lockfile = this.old_lockfile orelse return "";
-            return lockfile.buffers.string_bytes.items;
+            return this.old_lockfile.buffers.string_bytes.items;
         }
 
         pub fn packageName(this: *Builder, id: PackageID) String.Formatter {
-            var lockfile = this.old_lockfile orelse return undefined;
-
-            return lockfile.packages.items(.name)[id].fmt(lockfile.buffers.string_bytes.items);
+            return this.old_lockfile.packages.items(.name)[id].fmt(this.old_lockfile.buffers.string_bytes.items);
         }
 
         pub fn packageVersion(this: *Builder, id: PackageID) Resolution.Formatter {
-            var lockfile = this.old_lockfile orelse return undefined;
-
-            return lockfile.packages.items(.resolution)[id].fmt(lockfile.buffers.string_bytes.items);
+            return this.old_lockfile.packages.items(.resolution)[id].fmt(this.old_lockfile.buffers.string_bytes.items);
         }
 
         pub const Entry = struct {
@@ -499,15 +491,14 @@ pub const Tree = struct {
             if (dep.name_hash != dependency.name_hash) continue;
             if (builder.resolutions[dep_id] != package_id) {
                 if (as_defined and !dep.behavior.isPeer()) {
-                    if (builder.log != null)
-                        builder.maybeReportError("Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"", .{
-                            builder.packageName(package_id),
-                            builder.packageVersion(package_id),
-                            builder.packageName(builder.resolutions[dep_id]),
-                            builder.packageVersion(builder.resolutions[dep_id]),
-                            dependency.name.fmt(builder.buf()),
-                            dependency.version.literal.fmt(builder.buf()),
-                        });
+                    builder.maybeReportError("Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"", .{
+                        builder.packageName(package_id),
+                        builder.packageVersion(package_id),
+                        builder.packageName(builder.resolutions[dep_id]),
+                        builder.packageVersion(builder.resolutions[dep_id]),
+                        dependency.name.fmt(builder.buf()),
+                        dependency.version.literal.fmt(builder.buf()),
+                    });
                     return error.DependencyLoop;
                 }
                 // ignore versioning conflicts caused by peer dependencies
@@ -629,10 +620,19 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
     }
 }
 pub fn clean(old: *Lockfile, updates: []PackageManager.UpdateRequest) !*Lockfile {
-    return old.cleanWithLogger(updates, null);
+    // This is wasteful, but we rarely log anything so it's fine.
+    var log = logger.Log.init(bun.default_allocator);
+    defer {
+        for (log.msgs.items) |*item| {
+            item.deinit(bun.default_allocator);
+        }
+        log.deinit();
+    }
+
+    return old.cleanWithLogger(updates, &log);
 }
 
-pub fn cleanWithLogger(old: *Lockfile, updates: []PackageManager.UpdateRequest, log: ?*logger.Log) !*Lockfile {
+pub fn cleanWithLogger(old: *Lockfile, updates: []PackageManager.UpdateRequest, log: *logger.Log) !*Lockfile {
     const old_scripts = old.scripts;
     // We will only shrink the number of packages here.
     // never grow
@@ -780,7 +780,7 @@ const Cloner = struct {
     mapping: []PackageID,
     trees: Tree.List = Tree.List{},
     trees_count: u32 = 1,
-    log: ?*logger.Log = null,
+    log: *logger.Log,
 
     pub fn flush(this: *Cloner) anyerror!void {
         const max_package_id = this.old.packages.len;
@@ -2033,19 +2033,20 @@ pub const Package = extern struct {
 
         cloner.trees_count += @as(u32, @intFromBool(old_resolutions.len > 0));
 
-        for (old_resolutions, 0..) |old_resolution, i| {
-            if (old_resolution >= max_package_id) continue;
+        for (old_resolutions, resolutions, 0..) |old_resolution, *resolution, i| {
+            if (old_resolution >= max_package_id) {
+                resolution.* = invalid_package_id;
+                continue;
+            }
 
             const mapped = package_id_mapping[old_resolution];
-            const resolve_id = new_package.resolutions.off + @intCast(PackageID, i);
-
             if (mapped < max_package_id) {
-                resolutions[i] = mapped;
+                resolution.* = mapped;
             } else {
                 try cloner.clone_queue.append(.{
                     .old_resolution = old_resolution,
                     .parent = new_package.meta.id,
-                    .resolve_id = resolve_id,
+                    .resolve_id = new_package.resolutions.off + @intCast(PackageID, i),
                 });
             }
         }

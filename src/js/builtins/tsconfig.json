@@ -3,5 +3,11 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": [".", "../private.d.ts", "builtins.d.ts", "../generated/builtins/WebCoreJSBuiltins.d.ts", "../../../packages/bun-types/index.d.ts"]
+  "include": [
+    ".",
+    "../private.d.ts",
+    "builtins.d.ts",
+    "../out/WebCoreJSBuiltins.d.ts",
+    "../../../packages/bun-types/index.d.ts"
+  ]
 }

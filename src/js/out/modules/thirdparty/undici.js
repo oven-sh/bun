@@ -1,3 +1,6 @@
+import {EventEmitter} from "node:events";
+import NodeStreamModule from "node:stream";
+import {Readable} from "node:stream";
 var notImplemented = function() {
   throw new Error("Not implemented in bun");
 };
@@ -66,28 +69,21 @@ async function request(url, options = {
   const body = resp.body ? new BodyReadable(resp) : null;
   return { statusCode, headers: headers.toJSON(), body, trailers, opaque: kEmptyObject, context: kEmptyObject };
 }
-function stream() {
+var stream = function() {
   throw new Error("Not implemented in bun");
-}
-function pipeline() {
+}, pipeline = function() {
   throw new Error("Not implemented in bun");
-}
-function connect() {
+}, connect = function() {
   throw new Error("Not implemented in bun");
-}
-function upgrade() {
+}, upgrade = function() {
   throw new Error("Not implemented in bun");
-}
-function mockErrors() {
+}, mockErrors = function() {
   throw new Error("Not implemented in bun");
-}
+};
 function Undici() {
   throw new Error("Not implemented in bun");
 }
-var { EventEmitter } = import.meta.require("events"), {
-  Readable,
-  [Symbol.for("::bunternal::")]: { _ReadableFromWeb }
-} = import.meta.require("node:stream"), ObjectCreate = Object.create, kEmptyObject = ObjectCreate(null), fetch = Bun.fetch, Response = globalThis.Response, Headers = globalThis.Headers, Request = globalThis.Request, URLSearchParams = globalThis.URLSearchParams, URL = globalThis.URL;
+var { Object } = globalThis[Symbol.for("Bun.lazy")]("primordials"), { _ReadableFromWebForUndici: ReadableFromWeb } = NodeStreamModule[Symbol.for("::bunternal::")], ObjectCreate = Object.create, kEmptyObject = ObjectCreate(null), fetch = Bun.fetch, Response = globalThis.Response, Headers = globalThis.Headers, Request = globalThis.Request, URLSearchParams = globalThis.URLSearchParams, URL = globalThis.URL;
 
 class File extends Blob {
 }
@@ -99,7 +95,7 @@ class FileReader extends EventTarget {
 }
 var FormData = globalThis.FormData;
 
-class BodyReadable extends _ReadableFromWeb {
+class BodyReadable extends ReadableFromWeb {
   #response;
   #bodyUsed;
   constructor(response, options = {}) {
@@ -220,11 +216,16 @@ export {
   URL,
   Response,
   Request,
+  Pool,
   MockPool,
   MockClient,
   MockAgent,
   Headers,
   FormData,
   FileReader,
-  File
+  File,
+  Dispatcher,
+  Client,
+  BalancedPool,
+  Agent
 };

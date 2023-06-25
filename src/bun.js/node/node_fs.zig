@@ -34,7 +34,6 @@ const Mode = JSC.Node.Mode;
 
 const uid_t = std.os.uid_t;
 const gid_t = std.os.gid_t;
-
 /// u63 to allow one null bit
 const ReadPosition = u63;
 
@@ -2313,7 +2312,7 @@ pub const Arguments = struct {
     };
 
     pub const UnwatchFile = void;
-    pub const Watch = void;
+    pub const Watch = JSC.Node.FSWatcher.Arguments;
     pub const WatchFile = void;
     pub const Fsync = struct {
         fd: FileDescriptor,
@@ -2475,7 +2474,7 @@ const Return = struct {
     pub const Truncate = void;
     pub const Unlink = void;
     pub const UnwatchFile = void;
-    pub const Watch = void;
+    pub const Watch = JSC.JSValue;
     pub const WatchFile = void;
     pub const Utimes = void;
 
@@ -2493,6 +2492,7 @@ pub const NodeFS = struct {
     /// That means a stack-allocated buffer won't suffice. Instead, we re-use
     /// the heap allocated buffer on the NodefS struct
     sync_error_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
+    vm: ?*JSC.VirtualMachine = null,
 
     pub const ReturnType = Return;
 
@@ -3443,6 +3443,35 @@ pub const NodeFS = struct {
                 const fd = switch (args.path) {
                     .path => brk: {
                         path = args.path.path.sliceZ(&this.sync_error_buf);
+                        if (this.vm) |vm| {
+                            if (vm.standalone_module_graph) |graph| {
+                                if (graph.find(path)) |file| {
+                                    if (args.encoding == .buffer) {
+                                        return .{
+                                            .result = .{
+                                                .buffer = Buffer.fromBytes(
+                                                    bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"),
+                                                    bun.default_allocator,
+                                                    .Uint8Array,
+                                                ),
+                                            },
+                                        };
+                                    } else if (comptime string_type == .default)
+                                        return .{
+                                            .result = .{
+                                                .string = bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"),
+                                            },
+                                        }
+                                    else
+                                        return .{
+                                            .result = .{
+                                                .null_terminated = bun.default_allocator.dupeZ(u8, file.contents) catch @panic("out of memory"),
+                                            },
+                                        };
+                                }
+                            }
+                        }
+
                         break :brk switch (Syscall.open(
                             path,
                             os.O.RDONLY | os.O.NOCTTY,
@@ -4181,8 +4210,12 @@ pub const NodeFS = struct {
 
         return Maybe(Return.Lutimes).todo;
     }
-    pub fn watch(_: *NodeFS, _: Arguments.Watch, comptime _: Flavor) Maybe(Return.Watch) {
-        return Maybe(Return.Watch).todo;
+    pub fn watch(_: *NodeFS, args: Arguments.Watch, comptime _: Flavor) Maybe(Return.Watch) {
+        const watcher = args.createFSWatcher() catch |err| {
+            args.global_this.throwError(err, "Failed to watch filename");
+            return Maybe(Return.Watch){ .result = JSC.JSValue.jsUndefined() };
+        };
+        return Maybe(Return.Watch){ .result = watcher };
     }
     pub fn createReadStream(_: *NodeFS, _: Arguments.CreateReadStream, comptime _: Flavor) Maybe(Return.CreateReadStream) {
         return Maybe(Return.CreateReadStream).todo;

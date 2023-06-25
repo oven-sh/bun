@@ -108,6 +108,10 @@ pub const INotify = struct {
         std.os.inotify_rm_watch(inotify_fd, wd);
     }
 
+    pub fn isRunning() bool {
+        return loaded_inotify;
+    }
+
     var coalesce_interval: isize = 100_000;
     pub fn init() !void {
         std.debug.assert(!loaded_inotify);
@@ -227,6 +231,10 @@ const DarwinWatcher = struct {
 
         fd = try std.os.kqueue();
         if (fd == 0) return error.KQueueError;
+    }
+
+    pub fn isRunning() bool {
+        return fd != 0;
     }
 
     pub fn stop() void {
@@ -361,6 +369,8 @@ pub fn NewWatcher(comptime ContextType: type) type {
         watchloop_handle: ?std.Thread.Id = null,
         cwd: string,
         thread: std.Thread = undefined,
+        running: bool = true,
+        close_descriptors: bool = false,
 
         pub const HashType = u32;
 
@@ -372,7 +382,9 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         pub fn init(ctx: ContextType, fs: *Fs.FileSystem, allocator: std.mem.Allocator) !*Watcher {
             var watcher = try allocator.create(Watcher);
-            try PlatformWatcher.init();
+            if (!PlatformWatcher.isRunning()) {
+                try PlatformWatcher.init();
+            }
 
             watcher.* = Watcher{
                 .fs = fs,
@@ -393,6 +405,26 @@ pub fn NewWatcher(comptime ContextType: type) type {
             this.thread = try std.Thread.spawn(.{}, Watcher.watchLoop, .{this});
         }
 
+        pub fn deinit(this: *Watcher, close_descriptors: bool) void {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+
+            this.close_descriptors = close_descriptors;
+            if (this.watchloop_handle != null) {
+                this.running = false;
+            } else {
+                if (this.close_descriptors and this.running) {
+                    const fds = this.watchlist.items(.fd);
+                    for (fds) |fd| {
+                        std.os.close(fd);
+                    }
+                }
+                this.watchlist.deinit(this.allocator);
+                const allocator = this.allocator;
+                allocator.destroy(this);
+            }
+        }
+
         // This must only be called from the watcher thread
         pub fn watchLoop(this: *Watcher) !void {
             this.watchloop_handle = std.Thread.getCurrentId();
@@ -402,12 +434,24 @@ pub fn NewWatcher(comptime ContextType: type) type {
             if (FeatureFlags.verbose_watcher) Output.prettyln("Watcher started", .{});
 
             this._watchLoop() catch |err| {
-                Output.prettyErrorln("<r>Watcher crashed: <red><b>{s}<r>", .{@errorName(err)});
-
                 this.watchloop_handle = null;
                 PlatformWatcher.stop();
-                return;
+                if (this.running) {
+                    this.ctx.onError(err);
+                }
             };
+
+            // deinit and close descriptors if needed
+            if (this.close_descriptors) {
+                const fds = this.watchlist.items(.fd);
+                for (fds) |fd| {
+                    std.os.close(fd);
+                }
+            }
+            this.watchlist.deinit(this.allocator);
+
+            const allocator = this.allocator;
+            allocator.destroy(this);
         }
 
         var evict_list_i: WatchItemIndex = 0;
@@ -530,8 +574,11 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
                     this.mutex.lock();
                     defer this.mutex.unlock();
-
-                    this.ctx.onFileUpdate(watchevents, this.changed_filepaths[0..watchevents.len], this.watchlist);
+                    if (this.running) {
+                        this.ctx.onFileUpdate(watchevents, this.changed_filepaths[0..watchevents.len], this.watchlist);
+                    } else {
+                        break;
+                    }
                 }
             } else if (Environment.isLinux) {
                 restart: while (true) {
@@ -543,14 +590,14 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     // TODO: is this thread safe?
                     var remaining_events = events.len;
 
-                    var name_off: u8 = 0;
-                    var temp_name_list: [128]?[:0]u8 = undefined;
-                    var temp_name_off: u8 = 0;
-
                     const eventlist_index = this.watchlist.items(.eventlist_index);
 
                     while (remaining_events > 0) {
-                        const slice = events[0..@min(remaining_events, this.watch_events.len)];
+                        var name_off: u8 = 0;
+                        var temp_name_list: [128]?[:0]u8 = undefined;
+                        var temp_name_off: u8 = 0;
+
+                        const slice = events[0..@min(128, remaining_events, this.watch_events.len)];
                         var watchevents = this.watch_events[0..slice.len];
                         var watch_event_id: u32 = 0;
                         for (slice) |event| {
@@ -600,8 +647,11 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
                         this.mutex.lock();
                         defer this.mutex.unlock();
-
-                        this.ctx.onFileUpdate(all_events[0 .. last_event_index + 1], this.changed_filepaths[0 .. name_off + 1], this.watchlist);
+                        if (this.running) {
+                            this.ctx.onFileUpdate(all_events[0 .. last_event_index + 1], this.changed_filepaths[0 .. name_off + 1], this.watchlist);
+                        } else {
+                            break;
+                        }
                         remaining_events -= slice.len;
                     }
                 }

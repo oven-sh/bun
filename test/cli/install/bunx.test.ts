@@ -1,7 +1,6 @@
-import { spawn } from "bun";
+import { file, spawn } from "bun";
 import { afterEach, beforeEach, expect, it } from "bun:test";
 import { bunExe, bunEnv as env } from "harness";
-import { realpathSync } from "fs";
 import { mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -10,7 +9,7 @@ import { readdirSorted } from "./dummy.registry";
 let x_dir: string;
 
 beforeEach(async () => {
-  x_dir = realpathSync(await mkdtemp(join(tmpdir(), "bun-x.test")));
+  x_dir = await realpath(await mkdtemp(join(tmpdir(), "bun-x.test")));
 });
 afterEach(async () => {
   await rm(x_dir, { force: true, recursive: true });
@@ -167,6 +166,16 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).toBe("");
+  expect(await readdirSorted(x_dir)).toEqual([".cache", "test.js"]);
+  expect(await readdirSorted(join(x_dir, ".cache"))).toContain("decompress");
+  expect(await readdirSorted(join(x_dir, ".cache", "decompress"))).toEqual(["4.2.1"]);
+  expect(await readdirSorted(join(x_dir, ".cache", "decompress", "4.2.1"))).toEqual([
+    "index.js",
+    "license",
+    "package.json",
+    "readme.md",
+  ]);
+  expect(await file(join(x_dir, ".cache", "decompress", "4.2.1", "index.js")).text()).toContain("\nmodule.exports = ");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.split(/\r?\n/)).toEqual([
@@ -176,7 +185,6 @@ for (const entry of await decompress(Buffer.from(buffer))) {
     "",
   ]);
   expect(await exited).toBe(0);
-  expect(await readdirSorted(x_dir)).toEqual([".cache", "test.js"]);
 });
 
 it("should execute from current working directory", async () => {

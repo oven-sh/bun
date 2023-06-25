@@ -593,7 +593,10 @@ pub const VirtualMachine = struct {
     pub inline fn nodeFS(this: *VirtualMachine) *Node.NodeFS {
         return this.node_fs orelse brk: {
             this.node_fs = bun.default_allocator.create(Node.NodeFS) catch unreachable;
-            this.node_fs.?.* = Node.NodeFS{};
+            this.node_fs.?.* = Node.NodeFS{
+                // only used when standalone module graph is enabled
+                .vm = if (this.standalone_module_graph != null) this else null,
+            };
             break :brk this.node_fs.?;
         };
     }
@@ -651,6 +654,10 @@ pub const VirtualMachine = struct {
 
     pub fn waitForPromise(this: *VirtualMachine, promise: JSC.AnyPromise) void {
         this.eventLoop().waitForPromise(promise);
+    }
+
+    pub fn waitForPromiseWithTimeout(this: *VirtualMachine, promise: JSC.AnyPromise, timeout: u32) bool {
+        return this.eventLoop().waitForPromiseWithTimeout(promise, timeout);
     }
 
     pub fn waitForTasks(this: *VirtualMachine) void {
@@ -957,6 +964,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
+        JSC.markBinding(@src());
         const hash = hash_ orelse JSC.RefString.computeHash(input_);
 
         var entry = this.ref_strings.getOrPut(hash) catch unreachable;
@@ -2602,6 +2610,13 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
         fn getTombstone(this: *@This(), key: []const u8) ?*bun.fs.FileSystem.RealFS.EntriesOption {
             return this.tombstones.get(key);
+        }
+
+        pub fn onError(
+            _: *@This(),
+            err: anyerror,
+        ) void {
+            Output.prettyErrorln("<r>Watcher crashed: <red><b>{s}<r>", .{@errorName(err)});
         }
 
         pub fn onFileUpdate(

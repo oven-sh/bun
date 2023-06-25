@@ -1,3 +1,7 @@
+import {EventEmitter} from "node:events";
+import {default as default2} from "node:fs/promises";
+import promises2 from "node:fs/promises";
+import * as Stream from "node:stream";
 var callbackify = function(fsFunction, args) {
   try {
     const result = fsFunction.apply(fs, args.slice(0, args.length - 1)), callback = args[args.length - 1];
@@ -15,8 +19,49 @@ function createReadStream(path, options) {
 function createWriteStream(path, options) {
   return new WriteStream(path, options);
 }
-var { direct, isPromise, isCallable } = import.meta.primordials, promises = import.meta.require("node:fs/promises"), { Readable, NativeWritable, _getNativeReadableStreamPrototype, eos: eos_ } = import.meta.require("node:stream"), NativeReadable = _getNativeReadableStreamPrototype(2, Readable), fs = Bun.fs(), debug = process.env.DEBUG ? console.log : () => {
-}, access = function access2(...args) {
+import {constants} from "node:fs/promises";
+var ReadStream, WriteStream, { direct, isPromise, isCallable } = globalThis[Symbol.for("Bun.lazy")]("primordials"), fs = Bun.fs(), debug = process.env.DEBUG ? console.log : () => {
+};
+
+class FSWatcher extends EventEmitter {
+  #watcher;
+  #listener;
+  constructor(path, options, listener) {
+    super();
+    if (typeof options === "function")
+      listener = options, options = {};
+    else if (typeof options === "string")
+      options = { encoding: options };
+    if (typeof listener !== "function")
+      listener = () => {
+      };
+    this.#listener = listener;
+    try {
+      this.#watcher = fs.watch(path, options || {}, this.#onEvent.bind(this));
+    } catch (e) {
+      if (!e.message?.startsWith("FileNotFound"))
+        throw e;
+      const notFound = new Error(`ENOENT: no such file or directory, watch '${path}'`);
+      throw notFound.code = "ENOENT", notFound.errno = -2, notFound.path = path, notFound.syscall = "watch", notFound.filename = path, notFound;
+    }
+  }
+  #onEvent(eventType, filenameOrError) {
+    if (eventType === "error" || eventType === "close")
+      this.emit(eventType, filenameOrError);
+    else
+      this.emit("change", eventType, filenameOrError), this.#listener(eventType, filenameOrError);
+  }
+  close() {
+    this.#watcher?.close(), this.#watcher = null;
+  }
+  ref() {
+    this.#watcher?.ref();
+  }
+  unref() {
+    this.#watcher?.unref();
+  }
+}
+var access = function access2(...args) {
   callbackify(fs.accessSync, args);
 }, appendFile = function appendFile2(...args) {
   callbackify(fs.appendFileSync, args);
@@ -88,7 +133,9 @@ var { direct, isPromise, isCallable } = import.meta.primordials, promises = impo
   callbackify(fs.utimesSync, args);
 }, lutimes = function lutimes2(...args) {
   callbackify(fs.lutimesSync, args);
-}, accessSync = fs.accessSync.bind(fs), appendFileSync = fs.appendFileSync.bind(fs), closeSync = fs.closeSync.bind(fs), copyFileSync = fs.copyFileSync.bind(fs), existsSync = fs.existsSync.bind(fs), chownSync = fs.chownSync.bind(fs), chmodSync = fs.chmodSync.bind(fs), fchmodSync = fs.fchmodSync.bind(fs), fchownSync = fs.fchownSync.bind(fs), fstatSync = fs.fstatSync.bind(fs), fsyncSync = fs.fsyncSync.bind(fs), ftruncateSync = fs.ftruncateSync.bind(fs), futimesSync = fs.futimesSync.bind(fs), lchmodSync = fs.lchmodSync.bind(fs), lchownSync = fs.lchownSync.bind(fs), linkSync = fs.linkSync.bind(fs), lstatSync = fs.lstatSync.bind(fs), mkdirSync = fs.mkdirSync.bind(fs), mkdtempSync = fs.mkdtempSync.bind(fs), openSync = fs.openSync.bind(fs), readSync = fs.readSync.bind(fs), writeSync = fs.writeSync.bind(fs), readdirSync = fs.readdirSync.bind(fs), readFileSync = fs.readFileSync.bind(fs), writeFileSync = fs.writeFileSync.bind(fs), readlinkSync = fs.readlinkSync.bind(fs), realpathSync = fs.realpathSync.bind(fs), renameSync = fs.renameSync.bind(fs), statSync = fs.statSync.bind(fs), symlinkSync = fs.symlinkSync.bind(fs), truncateSync = fs.truncateSync.bind(fs), unlinkSync = fs.unlinkSync.bind(fs), utimesSync = fs.utimesSync.bind(fs), lutimesSync = fs.lutimesSync.bind(fs), rmSync = fs.rmSync.bind(fs), rmdirSync = fs.rmdirSync.bind(fs), Dirent = fs.Dirent, Stats = fs.Stats, promises = import.meta.require("node:fs/promises"), readStreamPathFastPathSymbol = Symbol.for("Bun.Node.readStreamPathFastPath"), readStreamSymbol = Symbol.for("Bun.NodeReadStream"), readStreamPathOrFdSymbol = Symbol.for("Bun.NodeReadStreamPathOrFd"), writeStreamSymbol = Symbol.for("Bun.NodeWriteStream"), writeStreamPathFastPathSymbol = Symbol.for("Bun.NodeWriteStreamFastPath"), writeStreamPathFastPathCallSymbol = Symbol.for("Bun.NodeWriteStreamFastPathCall"), kIoDone = Symbol.for("kIoDone"), defaultReadStreamOptions = {
+}, accessSync = fs.accessSync.bind(fs), appendFileSync = fs.appendFileSync.bind(fs), closeSync = fs.closeSync.bind(fs), copyFileSync = fs.copyFileSync.bind(fs), existsSync = fs.existsSync.bind(fs), chownSync = fs.chownSync.bind(fs), chmodSync = fs.chmodSync.bind(fs), fchmodSync = fs.fchmodSync.bind(fs), fchownSync = fs.fchownSync.bind(fs), fstatSync = fs.fstatSync.bind(fs), fsyncSync = fs.fsyncSync.bind(fs), ftruncateSync = fs.ftruncateSync.bind(fs), futimesSync = fs.futimesSync.bind(fs), lchmodSync = fs.lchmodSync.bind(fs), lchownSync = fs.lchownSync.bind(fs), linkSync = fs.linkSync.bind(fs), lstatSync = fs.lstatSync.bind(fs), mkdirSync = fs.mkdirSync.bind(fs), mkdtempSync = fs.mkdtempSync.bind(fs), openSync = fs.openSync.bind(fs), readSync = fs.readSync.bind(fs), writeSync = fs.writeSync.bind(fs), readdirSync = fs.readdirSync.bind(fs), readFileSync = fs.readFileSync.bind(fs), writeFileSync = fs.writeFileSync.bind(fs), readlinkSync = fs.readlinkSync.bind(fs), realpathSync = fs.realpathSync.bind(fs), renameSync = fs.renameSync.bind(fs), statSync = fs.statSync.bind(fs), symlinkSync = fs.symlinkSync.bind(fs), truncateSync = fs.truncateSync.bind(fs), unlinkSync = fs.unlinkSync.bind(fs), utimesSync = fs.utimesSync.bind(fs), lutimesSync = fs.lutimesSync.bind(fs), rmSync = fs.rmSync.bind(fs), rmdirSync = fs.rmdirSync.bind(fs), Dirent = fs.Dirent, Stats = fs.Stats, watch = function watch2(path, options, listener) {
+  return new FSWatcher(path, options, listener);
+}, readStreamPathFastPathSymbol = Symbol.for("Bun.Node.readStreamPathFastPath"), readStreamSymbol = Symbol.for("Bun.NodeReadStream"), readStreamPathOrFdSymbol = Symbol.for("Bun.NodeReadStreamPathOrFd"), writeStreamSymbol = Symbol.for("Bun.NodeWriteStream"), writeStreamPathFastPathSymbol = Symbol.for("Bun.NodeWriteStreamFastPath"), writeStreamPathFastPathCallSymbol = Symbol.for("Bun.NodeWriteStreamFastPathCall"), kIoDone = Symbol.for("kIoDone"), defaultReadStreamOptions = {
   file: void 0,
   fd: void 0,
   flags: "r",
@@ -115,7 +162,8 @@ var { direct, isPromise, isCallable } = import.meta.primordials, promises = impo
     close
   },
   autoDestroy: !0
-}, ReadStreamClass, ReadStream = function(InternalReadStream) {
+}, ReadStreamClass;
+ReadStream = function(InternalReadStream) {
   return ReadStreamClass = InternalReadStream, Object.defineProperty(ReadStreamClass.prototype, Symbol.toStringTag, {
     value: "ReadStream",
     enumerable: !1
@@ -126,7 +174,7 @@ var { direct, isPromise, isCallable } = import.meta.primordials, promises = impo
       return instance instanceof InternalReadStream;
     }
   });
-}(class ReadStream2 extends NativeReadable {
+}(class ReadStream2 extends Stream._getNativeReadableStreamPrototype(2, Stream.Readable) {
   constructor(pathOrFd, options = defaultReadStreamOptions) {
     if (typeof options !== "object" || !options)
       throw new TypeError("Expected options to be an object");
@@ -299,7 +347,8 @@ var { direct, isPromise, isCallable } = import.meta.primordials, promises = impo
     }
     return this[readStreamPathFastPathSymbol] = !1, super.pipe(dest, pipeOpts);
   }
-}), defaultWriteStreamOptions = {
+});
+var defaultWriteStreamOptions = {
   fd: null,
   start: void 0,
   pos: void 0,
@@ -312,7 +361,8 @@ var { direct, isPromise, isCallable } = import.meta.primordials, promises = impo
     open,
     openSync
   }
-}, WriteStreamClass, WriteStream = function(InternalWriteStream) {
+}, WriteStreamClass;
+WriteStream = function(InternalWriteStream) {
   return WriteStreamClass = InternalWriteStream, Object.defineProperty(WriteStreamClass.prototype, Symbol.toStringTag, {
     value: "WritesStream",
     enumerable: !1
@@ -323,7 +373,7 @@ var { direct, isPromise, isCallable } = import.meta.primordials, promises = impo
       return instance instanceof InternalWriteStream;
     }
   });
-}(class WriteStream2 extends NativeWritable {
+}(class WriteStream2 extends Stream.NativeWritable {
   constructor(path, options = defaultWriteStreamOptions) {
     if (!options)
       throw new TypeError("Expected options to be an object");
@@ -520,7 +570,7 @@ var fs_default = {
   chownSync,
   close,
   closeSync,
-  constants: promises.constants,
+  constants: promises2.constants,
   copyFile,
   copyFileSync,
   createReadStream,
@@ -556,7 +606,7 @@ var fs_default = {
   mkdtempSync,
   open,
   openSync,
-  promises,
+  promises: promises2,
   read,
   readFile,
   readFileSync,
@@ -590,6 +640,8 @@ var fs_default = {
   writeSync,
   WriteStream,
   ReadStream,
+  watch,
+  FSWatcher,
   [Symbol.for("::bunternal::")]: {
     ReadStreamClass,
     WriteStreamClass
@@ -600,6 +652,7 @@ export {
   writeFileSync,
   writeFile,
   write,
+  watch,
   utimesSync,
   utimes,
   unlinkSync,
@@ -626,7 +679,7 @@ export {
   readFileSync,
   readFile,
   read,
-  promises,
+  default2 as promises,
   openSync,
   open,
   mkdtempSync,
@@ -662,6 +715,7 @@ export {
   createReadStream,
   copyFileSync,
   copyFile,
+  constants,
   closeSync,
   close,
   chownSync,

@@ -1,5 +1,5 @@
 // Hardcoded module "node:stream/consumers" / "readable-stream/consumer"
-const { Bun } = import.meta.primordials;
+const { Bun } = globalThis[Symbol.for("Bun.lazy")]("primordials");
 
 export const arrayBuffer = Bun.readableStreamToArrayBuffer;
 export const text = Bun.readableStreamToText;

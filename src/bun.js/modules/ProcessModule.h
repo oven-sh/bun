@@ -50,26 +50,23 @@ inline void generateProcessSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
   process->getPropertyNames(globalObject, properties,
                             DontEnumPropertiesMode::Exclude);
 
-  exportNames.append(JSC::Identifier::fromString(vm, "default"_s));
-  JSFunction *processModuleCommonJS = JSFunction::create(
-      vm, globalObject, 0, "process"_s, jsFunctionProcessModuleCommonJS,
-      ImplementationVisibility::Public);
-  processModuleCommonJS->putDirect(
-      vm,
-      PropertyName(
-          Identifier::fromUid(vm.symbolRegistry().symbolForKey("CommonJS"_s))),
-      jsBoolean(true), 0);
-  exportValues.append(processModuleCommonJS);
+  exportNames.append(vm.propertyNames->defaultKeyword);
+  exportValues.append(process);
+
+  exportNames.append(
+      Identifier::fromUid(vm.symbolRegistry().symbolForKey("CommonJS"_s)));
+  exportValues.append(jsNumber(0));
 
   for (auto &entry : properties) {
     exportNames.append(entry);
-    exportValues.append(process->get(globalObject, entry));
-    processModuleCommonJS->putDirectCustomAccessor(
-        vm, entry,
-        JSC::CustomGetterSetter::create(vm,
-                                        jsFunctionProcessModuleCommonJSGetter,
-                                        jsFunctionProcessModuleCommonJSSetter),
-        0);
+    auto catchScope = DECLARE_CATCH_SCOPE(vm);
+    JSValue result = process->get(globalObject, entry);
+    if (catchScope.exception()) {
+      result = jsUndefined();
+      catchScope.clearException();
+    }
+
+    exportValues.append(result);
   }
 }
 

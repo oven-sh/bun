@@ -9,7 +9,7 @@ import sync from "./require-json.json";
 const { path, dir } = import.meta;
 
 it("primordials are not here!", () => {
-  expect(import.meta.primordials === undefined).toBe(true);
+  expect(globalThis[Symbol.for("Bun.lazy")]("primordials") === undefined).toBe(true);
 });
 
 it("import.meta.main", () => {

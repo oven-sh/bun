@@ -391,6 +391,7 @@ void JSMockFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(fn->instances);
     visitor.append(fn->returnValues);
     visitor.append(fn->invocationCallOrder);
+    visitor.append(fn->spyOriginal);
     fn->mock.visit(visitor);
 }
 DEFINE_VISIT_CHILDREN(JSMockFunction);
@@ -526,13 +527,13 @@ extern "C" void JSMock__resetSpies(Zig::GlobalObject* globalObject)
     globalObject->mockModule.activeSpies.clear();
 }
 
-extern "C" EncodedJSValue jsFunctionResetSpies(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
+extern "C" EncodedJSValue JSMock__jsRestoreAllMocks(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
 {
     JSMock__resetSpies(jsCast<Zig::GlobalObject*>(globalObject));
     return JSValue::encode(jsUndefined());
 }
 
-extern "C" EncodedJSValue JSMock__spyOn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe)
+extern "C" EncodedJSValue JSMock__jsSpyOn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe)
 {
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -963,7 +964,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMockFunctionGetter_protoImpl, (JSC::JSGlobalObject * 
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstructor, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+extern "C" EncodedJSValue JSMock__jsMockFn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe)
 {
     auto& vm = lexicalGlobalObject->vm();
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -997,11 +998,6 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstructor, (JSC::JSGlobalObject * lexic
     return JSValue::encode(thisObject);
 }
 
-extern "C" EncodedJSValue JSMockFunction__createObject(Zig::GlobalObject* globalObject)
-{
-    auto& vm = globalObject->vm();
-    return JSValue::encode(JSC::JSFunction::create(vm, globalObject, 0, "mock"_s, jsMockFunctionConstructor, ImplementationVisibility::Public));
-}
 extern "C" EncodedJSValue JSMockFunction__getCalls(EncodedJSValue encodedValue)
 {
     JSValue value = JSValue::decode(encodedValue);

@@ -654,7 +654,6 @@ pub fn NewWatcher(comptime ContextType: type) type {
                             this.ctx.onFileUpdate(all_events[0 .. last_event_index + 1], this.changed_filepaths[0 .. name_off + 1], this.watchlist);
                         }
                         remaining_events -= slice.len;
-
                     }
                 }
             }

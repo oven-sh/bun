@@ -3457,13 +3457,13 @@ pub const NodeFS = struct {
                                             },
                                         };
                                     } else if (comptime string_type == .default)
-                                        .{
+                                        return .{
                                             .result = .{
                                                 .string = bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"),
                                             },
                                         }
                                     else
-                                        .{
+                                        return .{
                                             .result = .{
                                                 .null_terminated = bun.default_allocator.dupeZ(u8, file.contents) catch @panic("out of memory"),
                                             },

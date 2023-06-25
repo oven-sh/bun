@@ -2033,19 +2033,20 @@ pub const Package = extern struct {
 
         cloner.trees_count += @as(u32, @intFromBool(old_resolutions.len > 0));
 
-        for (old_resolutions, 0..) |old_resolution, i| {
-            if (old_resolution >= max_package_id) continue;
+        for (old_resolutions, resolutions, 0..) |old_resolution, *resolution, i| {
+            if (old_resolution >= max_package_id) {
+                resolution.* = invalid_package_id;
+                continue;
+            }
 
             const mapped = package_id_mapping[old_resolution];
-            const resolve_id = new_package.resolutions.off + @intCast(PackageID, i);
-
             if (mapped < max_package_id) {
-                resolutions[i] = mapped;
+                resolution.* = mapped;
             } else {
                 try cloner.clone_queue.append(.{
                     .old_resolution = old_resolution,
                     .parent = new_package.meta.id,
-                    .resolve_id = resolve_id,
+                    .resolve_id = new_package.resolutions.off + @intCast(PackageID, i),
                 });
             }
         }

@@ -1032,6 +1032,17 @@ void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t buffe
 
     this->didConnect();
 }
+
+#define LAZY_NEVER_DESTROYED(name)                        \
+    ([]() -> const String& {                              \
+        static LazyNeverDestroyed<String> str;            \
+        static std::once_flag onceFlag;                   \
+        std::call_once(onceFlag, [] {                     \
+            str.construct(MAKE_STATIC_STRING_IMPL(name)); \
+        });                                               \
+        return str;                                       \
+    })()
+
 void WebSocket::didFailWithErrorCode(int32_t code)
 {
     // from new WebSocket() -> connect()
@@ -1050,158 +1061,158 @@ void WebSocket::didFailWithErrorCode(int32_t code)
     }
     // invalid_response
     case 1: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Invalid response");
+        const String& message = LAZY_NEVER_DESTROYED("Invalid response");
         didReceiveMessageError(1002, message);
         break;
     }
     // expected_101_status_code
     case 2: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Expected 101 status code");
+        const String& message = LAZY_NEVER_DESTROYED("Expected 101 status code");
         didReceiveMessageError(1002, message);
         break;
     }
     // missing_upgrade_header
     case 3: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Missing upgrade header");
+        const String& message = LAZY_NEVER_DESTROYED("Missing upgrade header");
         didReceiveMessageError(1002, message);
         break;
     }
     // missing_connection_header
     case 4: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Missing connection header");
+        const String& message = LAZY_NEVER_DESTROYED("Missing connection header");
         didReceiveMessageError(1002, message);
         break;
     }
     // missing_websocket_accept_header
     case 5: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Missing websocket accept header");
+        const String& message = LAZY_NEVER_DESTROYED("Missing websocket accept header");
         didReceiveMessageError(1002, message);
         break;
     }
     // invalid_upgrade_header
     case 6: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Invalid upgrade header");
+        const String& message = LAZY_NEVER_DESTROYED("Invalid upgrade header");
         didReceiveMessageError(1002, message);
         break;
     }
     // invalid_connection_header
     case 7: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Invalid connection header");
+        const String& message = LAZY_NEVER_DESTROYED("Invalid connection header");
         didReceiveMessageError(1002, message);
         break;
     }
     // invalid_websocket_version
     case 8: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Invalid websocket version");
+        const String& message = LAZY_NEVER_DESTROYED("Invalid websocket version");
         didReceiveMessageError(1002, message);
         break;
     }
     // mismatch_websocket_accept_header
     case 9: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Mismatch websocket accept header");
+        const String& message = LAZY_NEVER_DESTROYED("Mismatch websocket accept header");
         didReceiveMessageError(1002, message);
         break;
     }
     // missing_client_protocol
     case 10: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Missing client protocol");
+        const String& message = LAZY_NEVER_DESTROYED("Missing client protocol");
         didReceiveMessageError(1002, message);
         break;
     }
     // mismatch_client_protocol
     case 11: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Mismatch client protocol");
+        const String& message = LAZY_NEVER_DESTROYED("Mismatch client protocol");
         didReceiveMessageError(1002, message);
         break;
     }
     // timeout
     case 12: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Timeout");
+        const String& message = LAZY_NEVER_DESTROYED("Timeout");
         didReceiveMessageError(1013, message);
         break;
     }
     // closed
     case 13: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Closed by client");
+        const String& message = LAZY_NEVER_DESTROYED("Closed by client");
         didReceiveMessageError(1000, message);
         break;
     }
     // failed_to_write
     case 14: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Failed to write");
+        const String& message = LAZY_NEVER_DESTROYED("Failed to write");
         didReceiveMessageError(1006, message);
         break;
     }
     // failed_to_connect
     case 15: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Failed to connect");
+        const String& message = LAZY_NEVER_DESTROYED("Failed to connect");
         didReceiveMessageError(1006, message);
         break;
     }
     // headers_too_large
     case 16: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Headers too large");
+        const String& message = LAZY_NEVER_DESTROYED("Headers too large");
         didReceiveMessageError(1007, message);
         break;
     }
     // ended
     case 17: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Closed by server");
+        const String& message = LAZY_NEVER_DESTROYED("Closed by server");
         didReceiveMessageError(1001, message);
         break;
     }
 
     // failed_to_allocate_memory
     case 18: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Failed to allocate memory");
+        const String& message = LAZY_NEVER_DESTROYED("Failed to allocate memory");
         didReceiveMessageError(1001, message);
         break;
     }
     // control_frame_is_fragmented
     case 19: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Protocol error - control frame is fragmented");
+        const String& message = LAZY_NEVER_DESTROYED("Protocol error - control frame is fragmented");
         didReceiveMessageError(1002, message);
         break;
     }
     // invalid_control_frame
     case 20: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Protocol error - invalid control frame");
+        const String& message = LAZY_NEVER_DESTROYED("Protocol error - invalid control frame");
         didReceiveMessageError(1002, message);
         break;
     }
     // compression_unsupported
     case 21: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Compression not implemented yet");
+        const String& message = LAZY_NEVER_DESTROYED("Compression not implemented yet");
         didReceiveMessageError(1011, message);
         break;
     }
     // unexpected_mask_from_server
     case 22: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Protocol error - unexpected mask from server");
+        const String& message = LAZY_NEVER_DESTROYED("Protocol error - unexpected mask from server");
         didReceiveMessageError(1002, message);
         break;
     }
     // expected_control_frame
     case 23: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Protocol error - expected control frame");
+        const String& message = LAZY_NEVER_DESTROYED("Protocol error - expected control frame");
         didReceiveMessageError(1002, message);
         break;
     }
     // unsupported_control_frame
     case 24: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Protocol error - unsupported control frame");
+        const String& message = LAZY_NEVER_DESTROYED("Protocol error - unsupported control frame");
         didReceiveMessageError(1002, message);
         break;
     }
     // unexpected_opcode
     case 25: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Protocol error - unexpected opcode");
+        const String& message = LAZY_NEVER_DESTROYED("Protocol error - unexpected opcode");
         didReceiveMessageError(1002, message);
         break;
     }
     // invalid_utf8
     case 26: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Server sent invalid UTF8");
+        const String& message = LAZY_NEVER_DESTROYED("Server sent invalid UTF8");
         didReceiveMessageError(1003, message);
         break;
     }

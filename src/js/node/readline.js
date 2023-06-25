@@ -25,10 +25,10 @@
 // ----------------------------------------------------------------------------
 // Section: Imports
 // ----------------------------------------------------------------------------
-var { Array, RegExp, String, Bun } = import.meta.primordials;
-var EventEmitter = import.meta.require("node:events");
-var { clearTimeout, setTimeout } = import.meta.require("timers");
-var { StringDecoder } = import.meta.require("string_decoder");
+var { Array, RegExp, String, Bun } = globalThis[Symbol.for("Bun.lazy")]("primordials");
+import { EventEmitter } from "node:events";
+import { clearTimeout, setTimeout } from "timers";
+import { StringDecoder } from "string_decoder";
 var isWritable;
 
 var { inspect } = Bun;
@@ -1573,7 +1573,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
 }
 
 ObjectSetPrototypeOf(InterfaceConstructor.prototype, EventEmitter.prototype);
-ObjectSetPrototypeOf(InterfaceConstructor, EventEmitter);
+// ObjectSetPrototypeOf(InterfaceConstructor, EventEmitter);
 
 var _Interface = class Interface extends InterfaceConstructor {
   // TODO: Enumerate all the properties of the class

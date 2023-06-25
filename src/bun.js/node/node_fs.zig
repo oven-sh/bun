@@ -34,7 +34,6 @@ const Mode = JSC.Node.Mode;
 
 const uid_t = std.os.uid_t;
 const gid_t = std.os.gid_t;
-
 /// u63 to allow one null bit
 const ReadPosition = u63;
 
@@ -2313,7 +2312,7 @@ pub const Arguments = struct {
     };
 
     pub const UnwatchFile = void;
-    pub const Watch = void;
+    pub const Watch = JSC.Node.FSWatcher.Arguments;
     pub const WatchFile = void;
     pub const Fsync = struct {
         fd: FileDescriptor,
@@ -2475,7 +2474,7 @@ const Return = struct {
     pub const Truncate = void;
     pub const Unlink = void;
     pub const UnwatchFile = void;
-    pub const Watch = void;
+    pub const Watch = JSC.JSValue;
     pub const WatchFile = void;
     pub const Utimes = void;
 
@@ -4181,8 +4180,12 @@ pub const NodeFS = struct {
 
         return Maybe(Return.Lutimes).todo;
     }
-    pub fn watch(_: *NodeFS, _: Arguments.Watch, comptime _: Flavor) Maybe(Return.Watch) {
-        return Maybe(Return.Watch).todo;
+    pub fn watch(_: *NodeFS, args: Arguments.Watch, comptime _: Flavor) Maybe(Return.Watch) {
+        const watcher = args.createFSWatcher() catch |err| {
+            args.global_this.throwError(err, "Failed to watch filename");
+            return Maybe(Return.Watch){ .result = JSC.JSValue.jsUndefined() };
+        };
+        return Maybe(Return.Watch){ .result = watcher };
     }
     pub fn createReadStream(_: *NodeFS, _: Arguments.CreateReadStream, comptime _: Flavor) Maybe(Return.CreateReadStream) {
         return Maybe(Return.CreateReadStream).todo;

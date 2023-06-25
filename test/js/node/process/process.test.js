@@ -226,10 +226,9 @@ it("process.binding", () => {
   expect(() => process.binding("buffer")).toThrow();
 });
 
-it("process.argv", () => {
+it("process.argv in testing", () => {
   expect(process.argv).toBeInstanceOf(Array);
   expect(process.argv[0]).toBe(bunExe());
-  expect(process.argv).toEqual(Bun.argv);
 
   // assert we aren't creating a new process.argv each call
   expect(process.argv).toBe(process.argv);

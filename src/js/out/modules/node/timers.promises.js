@@ -173,8 +173,10 @@ class AbortError extends Error {
     this.code = "ABORT_ERR";
   }
 }
+var timers_promises_default = { setTimeout: setTimeoutPromise, setImmediate: setImmediatePromise, setInterval: setIntervalPromise };
 export {
   setTimeoutPromise as setTimeout,
   setIntervalPromise as setInterval,
-  setImmediatePromise as setImmediate
+  setImmediatePromise as setImmediate,
+  timers_promises_default as default
 };

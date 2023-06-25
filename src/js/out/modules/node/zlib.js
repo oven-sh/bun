@@ -1,8 +1,14 @@
+import {default as assert} from "node:assert";
+import * as AssertModule from "node:assert";
+import * as BufferModule from "node:buffer";
+import * as StreamModule from "node:stream";
+import * as Util from "node:util";
+var Deflate, Inflate, Gzip, Gunzip, DeflateRaw, InflateRaw, Unzip, createDeflate, createInflate, createDeflateRaw, createInflateRaw, createGzip, createGunzip, createUnzip, deflate, deflateSync, gzip, gzipSync, deflateRaw, deflateRawSync, unzip, unzipSync, inflate, inflateSync, gunzip, gunzipSync, inflateRaw, inflateRawSync, constants;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
-var require2 = (id) => import.meta.require(id), require_zstream = __commonJS({
+var require_zstream = __commonJS({
   "node_modules/pako/lib/zlib/zstream.js"(exports, module2) {
     function ZStream() {
       this.input = null, this.next_in = 0, this.avail_in = 0, this.total_in = 0, this.output = null, this.next_out = 0, this.avail_out = 0, this.total_out = 0, this.msg = "", this.state = null, this.data_type = 2, this.adler = 0;
@@ -816,7 +822,7 @@ var require2 = (id) => import.meta.require(id), require_zstream = __commonJS({
     function deflateInit(strm, level) {
       return deflateInit2(strm, level, Z_DEFLATED, MAX_WBITS, DEF_MEM_LEVEL, Z_DEFAULT_STRATEGY);
     }
-    function deflate(strm, flush) {
+    function deflate2(strm, flush) {
       var old_flush, s, beg, val;
       if (!strm || !strm.state || flush > Z_BLOCK || flush < 0)
         return strm ? err(strm, Z_STREAM_ERROR) : Z_STREAM_ERROR;
@@ -995,7 +1001,7 @@ var require2 = (id) => import.meta.require(id), require_zstream = __commonJS({
       }
       return s.strstart += s.lookahead, s.block_start = s.strstart, s.insert = s.lookahead, s.lookahead = 0, s.match_length = s.prev_length = MIN_MATCH - 1, s.match_available = 0, strm.next_in = next, strm.input = input, strm.avail_in = avail, s.wrap = wrap, Z_OK;
     }
-    exports.deflateInit = deflateInit, exports.deflateInit2 = deflateInit2, exports.deflateReset = deflateReset, exports.deflateResetKeep = deflateResetKeep, exports.deflateSetHeader = deflateSetHeader, exports.deflate = deflate, exports.deflateEnd = deflateEnd, exports.deflateSetDictionary = deflateSetDictionary, exports.deflateInfo = "pako deflate (from Nodeca project)";
+    exports.deflateInit = deflateInit, exports.deflateInit2 = deflateInit2, exports.deflateReset = deflateReset, exports.deflateResetKeep = deflateResetKeep, exports.deflateSetHeader = deflateSetHeader, exports.deflate = deflate2, exports.deflateEnd = deflateEnd, exports.deflateSetDictionary = deflateSetDictionary, exports.deflateInfo = "pako deflate (from Nodeca project)";
   }
 }), require_inffast = __commonJS({
   "node_modules/pako/lib/zlib/inffast.js"(exports, module2) {
@@ -1416,7 +1422,7 @@ var require2 = (id) => import.meta.require(id), require_zstream = __commonJS({
       }
       return 0;
     }
-    function inflate(strm, flush) {
+    function inflate2(strm, flush) {
       var state, input, output, next, put, have, left, hold, bits, _in, _out, copy, from, from_source, here = 0, here_bits, here_op, here_val, last_bits, last_op, last_val, len, ret, hbuf = new utils.Buf8(4), opts, n, order = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
       if (!strm || !strm.state || !strm.output || !strm.input && strm.avail_in !== 0)
         return Z_STREAM_ERROR;
@@ -1948,7 +1954,7 @@ var require2 = (id) => import.meta.require(id), require_zstream = __commonJS({
         return state.mode = MEM, Z_MEM_ERROR;
       return state.havedict = 1, Z_OK;
     }
-    exports.inflateReset = inflateReset, exports.inflateReset2 = inflateReset2, exports.inflateResetKeep = inflateResetKeep, exports.inflateInit = inflateInit, exports.inflateInit2 = inflateInit2, exports.inflate = inflate, exports.inflateEnd = inflateEnd, exports.inflateGetHeader = inflateGetHeader, exports.inflateSetDictionary = inflateSetDictionary, exports.inflateInfo = "pako inflate (from Nodeca project)";
+    exports.inflateReset = inflateReset, exports.inflateReset2 = inflateReset2, exports.inflateResetKeep = inflateResetKeep, exports.inflateInit = inflateInit, exports.inflateInit2 = inflateInit2, exports.inflate = inflate2, exports.inflateEnd = inflateEnd, exports.inflateGetHeader = inflateGetHeader, exports.inflateSetDictionary = inflateSetDictionary, exports.inflateInfo = "pako inflate (from Nodeca project)";
   }
 }), require_constants = __commonJS({
   "node_modules/pako/lib/zlib/constants.js"(exports, module2) {
@@ -1984,9 +1990,9 @@ var require2 = (id) => import.meta.require(id), require_zstream = __commonJS({
   }
 }), require_binding = __commonJS({
   "node_modules/browserify-zlib/lib/binding.js"(exports) {
-    var assert = require2("assert"), Zstream = require_zstream(), zlib_deflate = require_deflate(), zlib_inflate = require_inflate(), constants = require_constants();
-    for (key in constants)
-      exports[key] = constants[key];
+    var Zstream = require_zstream(), zlib_deflate = require_deflate(), zlib_inflate = require_inflate(), constants2 = require_constants();
+    for (key in constants2)
+      exports[key] = constants2[key];
     var key;
     exports.NONE = 0, exports.DEFLATE = 1, exports.INFLATE = 2, exports.GZIP = 3, exports.GUNZIP = 4, exports.DEFLATERAW = 5, exports.INFLATERAW = 6, exports.UNZIP = 7;
     var GZIP_HEADER_ID1 = 31, GZIP_HEADER_ID2 = 139;
@@ -2169,7 +2175,7 @@ var require2 = (id) => import.meta.require(id), require_zstream = __commonJS({
   }
 }), require_lib = __commonJS({
   "node_modules/browserify-zlib/lib/index.js"(exports) {
-    var Buffer2 = require2("buffer").Buffer, Transform = require2("stream").Transform, binding = require_binding(), util = require2("util"), assert = require2("assert").ok, kMaxLength = require2("buffer").kMaxLength, kRangeErrorMessage = "Cannot create final Buffer. It would be larger than 0x" + kMaxLength.toString(16) + " bytes";
+    var Buffer22 = BufferModule.Buffer, Transform2 = StreamModule.Transform, binding = require_binding(), util = Util, assert2 = AssertModule.ok, kMaxLength2 = BufferModule.kMaxLength, kRangeErrorMessage = "Cannot create final Buffer. It would be larger than 0x" + kMaxLength2.toString(16) + " bytes";
     binding.Z_MIN_WINDOWBITS = 8, binding.Z_MAX_WINDOWBITS = 15, binding.Z_DEFAULT_WINDOWBITS = 15, binding.Z_MIN_CHUNK = 64, binding.Z_MAX_CHUNK = Infinity, binding.Z_DEFAULT_CHUNK = 16384, binding.Z_MIN_MEMLEVEL = 1, binding.Z_MAX_MEMLEVEL = 9, binding.Z_DEFAULT_MEMLEVEL = 8, binding.Z_MIN_LEVEL = -1, binding.Z_MAX_LEVEL = 9, binding.Z_DEFAULT_LEVEL = binding.Z_DEFAULT_COMPRESSION;
     var bkeys = Object.keys(binding);
     for (bk = 0;bk < bkeys.length; bk++)
@@ -2197,62 +2203,62 @@ var require2 = (id) => import.meta.require(id), require_zstream = __commonJS({
       enumerable: !0,
       value: Object.freeze(codes),
       writable: !1
-    }), exports.constants = require_constants(), exports.Deflate = Deflate, exports.Inflate = Inflate, exports.Gzip = Gzip, exports.Gunzip = Gunzip, exports.DeflateRaw = DeflateRaw, exports.InflateRaw = InflateRaw, exports.Unzip = Unzip, exports.createDeflate = function(o) {
-      return new Deflate(o);
+    }), exports.constants = require_constants(), exports.Deflate = Deflate2, exports.Inflate = Inflate2, exports.Gzip = Gzip2, exports.Gunzip = Gunzip2, exports.DeflateRaw = DeflateRaw2, exports.InflateRaw = InflateRaw2, exports.Unzip = Unzip2, exports.createDeflate = function(o) {
+      return new Deflate2(o);
     }, exports.createInflate = function(o) {
-      return new Inflate(o);
+      return new Inflate2(o);
     }, exports.createDeflateRaw = function(o) {
-      return new DeflateRaw(o);
+      return new DeflateRaw2(o);
     }, exports.createInflateRaw = function(o) {
-      return new InflateRaw(o);
+      return new InflateRaw2(o);
     }, exports.createGzip = function(o) {
-      return new Gzip(o);
+      return new Gzip2(o);
     }, exports.createGunzip = function(o) {
-      return new Gunzip(o);
+      return new Gunzip2(o);
     }, exports.createUnzip = function(o) {
-      return new Unzip(o);
+      return new Unzip2(o);
     }, exports.deflate = function(buffer, opts, callback) {
       if (typeof opts === "function")
         callback = opts, opts = {};
-      return zlibBuffer(new Deflate(opts), buffer, callback);
+      return zlibBuffer(new Deflate2(opts), buffer, callback);
     }, exports.deflateSync = function(buffer, opts) {
-      return zlibBufferSync(new Deflate(opts), buffer);
+      return zlibBufferSync(new Deflate2(opts), buffer);
     }, exports.gzip = function(buffer, opts, callback) {
       if (typeof opts === "function")
         callback = opts, opts = {};
-      return zlibBuffer(new Gzip(opts), buffer, callback);
+      return zlibBuffer(new Gzip2(opts), buffer, callback);
     }, exports.gzipSync = function(buffer, opts) {
-      return zlibBufferSync(new Gzip(opts), buffer);
+      return zlibBufferSync(new Gzip2(opts), buffer);
     }, exports.deflateRaw = function(buffer, opts, callback) {
       if (typeof opts === "function")
         callback = opts, opts = {};
-      return zlibBuffer(new DeflateRaw(opts), buffer, callback);
+      return zlibBuffer(new DeflateRaw2(opts), buffer, callback);
     }, exports.deflateRawSync = function(buffer, opts) {
-      return zlibBufferSync(new DeflateRaw(opts), buffer);
+      return zlibBufferSync(new DeflateRaw2(opts), buffer);
     }, exports.unzip = function(buffer, opts, callback) {
       if (typeof opts === "function")
         callback = opts, opts = {};
-      return zlibBuffer(new Unzip(opts), buffer, callback);
+      return zlibBuffer(new Unzip2(opts), buffer, callback);
     }, exports.unzipSync = function(buffer, opts) {
-      return zlibBufferSync(new Unzip(opts), buffer);
+      return zlibBufferSync(new Unzip2(opts), buffer);
     }, exports.inflate = function(buffer, opts, callback) {
       if (typeof opts === "function")
         callback = opts, opts = {};
-      return zlibBuffer(new Inflate(opts), buffer, callback);
+      return zlibBuffer(new Inflate2(opts), buffer, callback);
     }, exports.inflateSync = function(buffer, opts) {
-      return zlibBufferSync(new Inflate(opts), buffer);
+      return zlibBufferSync(new Inflate2(opts), buffer);
     }, exports.gunzip = function(buffer, opts, callback) {
       if (typeof opts === "function")
         callback = opts, opts = {};
-      return zlibBuffer(new Gunzip(opts), buffer, callback);
+      return zlibBuffer(new Gunzip2(opts), buffer, callback);
     }, exports.gunzipSync = function(buffer, opts) {
-      return zlibBufferSync(new Gunzip(opts), buffer);
+      return zlibBufferSync(new Gunzip2(opts), buffer);
     }, exports.inflateRaw = function(buffer, opts, callback) {
       if (typeof opts === "function")
         callback = opts, opts = {};
-      return zlibBuffer(new InflateRaw(opts), buffer, callback);
+      return zlibBuffer(new InflateRaw2(opts), buffer, callback);
     }, exports.inflateRawSync = function(buffer, opts) {
-      return zlibBufferSync(new InflateRaw(opts), buffer);
+      return zlibBufferSync(new InflateRaw2(opts), buffer);
     };
     function zlibBuffer(engine, buffer, callback) {
       var buffers = [], nread = 0;
@@ -2268,54 +2274,54 @@ var require2 = (id) => import.meta.require(id), require_zstream = __commonJS({
       }
       function onEnd() {
         var buf, err = null;
-        if (nread >= kMaxLength)
+        if (nread >= kMaxLength2)
           err = new RangeError(kRangeErrorMessage);
         else
-          buf = Buffer2.concat(buffers, nread);
+          buf = Buffer22.concat(buffers, nread);
         buffers = [], engine.close(), callback(err, buf);
       }
     }
     function zlibBufferSync(engine, buffer) {
       if (typeof buffer === "string")
-        buffer = Buffer2.from(buffer);
-      if (!Buffer2.isBuffer(buffer))
+        buffer = Buffer22.from(buffer);
+      if (!Buffer22.isBuffer(buffer))
         throw new TypeError("Not a string or buffer");
       var flushFlag = engine._finishFlushFlag;
       return engine._processChunk(buffer, flushFlag);
     }
-    function Deflate(opts) {
-      if (!(this instanceof Deflate))
-        return new Deflate(opts);
+    function Deflate2(opts) {
+      if (!(this instanceof Deflate2))
+        return new Deflate2(opts);
       Zlib.call(this, opts, binding.DEFLATE);
     }
-    function Inflate(opts) {
-      if (!(this instanceof Inflate))
-        return new Inflate(opts);
+    function Inflate2(opts) {
+      if (!(this instanceof Inflate2))
+        return new Inflate2(opts);
       Zlib.call(this, opts, binding.INFLATE);
     }
-    function Gzip(opts) {
-      if (!(this instanceof Gzip))
-        return new Gzip(opts);
+    function Gzip2(opts) {
+      if (!(this instanceof Gzip2))
+        return new Gzip2(opts);
       Zlib.call(this, opts, binding.GZIP);
     }
-    function Gunzip(opts) {
-      if (!(this instanceof Gunzip))
-        return new Gunzip(opts);
+    function Gunzip2(opts) {
+      if (!(this instanceof Gunzip2))
+        return new Gunzip2(opts);
       Zlib.call(this, opts, binding.GUNZIP);
     }
-    function DeflateRaw(opts) {
-      if (!(this instanceof DeflateRaw))
-        return new DeflateRaw(opts);
+    function DeflateRaw2(opts) {
+      if (!(this instanceof DeflateRaw2))
+        return new DeflateRaw2(opts);
       Zlib.call(this, opts, binding.DEFLATERAW);
     }
-    function InflateRaw(opts) {
-      if (!(this instanceof InflateRaw))
-        return new InflateRaw(opts);
+    function InflateRaw2(opts) {
+      if (!(this instanceof InflateRaw2))
+        return new InflateRaw2(opts);
       Zlib.call(this, opts, binding.INFLATERAW);
     }
-    function Unzip(opts) {
-      if (!(this instanceof Unzip))
-        return new Unzip(opts);
+    function Unzip2(opts) {
+      if (!(this instanceof Unzip2))
+        return new Unzip2(opts);
       Zlib.call(this, opts, binding.UNZIP);
     }
     function isValidFlushFlag(flag) {
@@ -2323,7 +2329,7 @@ var require2 = (id) => import.meta.require(id), require_zstream = __commonJS({
     }
     function Zlib(opts, mode) {
       var _this = this;
-      if (this._opts = opts = opts || {}, this._chunkSize = opts.chunkSize || exports.Z_DEFAULT_CHUNK, Transform.call(this, opts), opts.flush && !isValidFlushFlag(opts.flush))
+      if (this._opts = opts = opts || {}, this._chunkSize = opts.chunkSize || exports.Z_DEFAULT_CHUNK, Transform2.call(this, opts), opts.flush && !isValidFlushFlag(opts.flush))
         throw new Error("Invalid flush flag: " + opts.flush);
       if (opts.finishFlush && !isValidFlushFlag(opts.finishFlush))
         throw new Error("Invalid flush flag: " + opts.finishFlush);
@@ -2348,7 +2354,7 @@ var require2 = (id) => import.meta.require(id), require_zstream = __commonJS({
           throw new Error("Invalid strategy: " + opts.strategy);
       }
       if (opts.dictionary) {
-        if (!Buffer2.isBuffer(opts.dictionary))
+        if (!Buffer22.isBuffer(opts.dictionary))
           throw new Error("Invalid dictionary: it should be a Buffer instance");
       }
       this._handle = new binding.Zlib(mode);
@@ -2364,7 +2370,7 @@ var require2 = (id) => import.meta.require(id), require_zstream = __commonJS({
       var strategy = exports.Z_DEFAULT_STRATEGY;
       if (typeof opts.strategy === "number")
         strategy = opts.strategy;
-      this._handle.init(opts.windowBits || exports.Z_DEFAULT_WINDOWBITS, level, opts.memLevel || exports.Z_DEFAULT_MEMLEVEL, strategy, opts.dictionary), this._buffer = Buffer2.allocUnsafe(this._chunkSize), this._offset = 0, this._level = level, this._strategy = strategy, this.once("end", this.close), Object.defineProperty(this, "_closed", {
+      this._handle.init(opts.windowBits || exports.Z_DEFAULT_WINDOWBITS, level, opts.memLevel || exports.Z_DEFAULT_MEMLEVEL, strategy, opts.dictionary), this._buffer = Buffer22.allocUnsafe(this._chunkSize), this._offset = 0, this._level = level, this._strategy = strategy, this.once("end", this.close), Object.defineProperty(this, "_closed", {
         get: function() {
           return !_this._handle;
         },
@@ -2372,7 +2378,7 @@ var require2 = (id) => import.meta.require(id), require_zstream = __commonJS({
         enumerable: !0
       });
     }
-    util.inherits(Zlib, Transform), Zlib.prototype.params = function(level, strategy, callback) {
+    util.inherits(Zlib, Transform2), Zlib.prototype.params = function(level, strategy, callback) {
       if (level < exports.Z_MIN_LEVEL || level > exports.Z_MAX_LEVEL)
         throw new RangeError("Invalid compression level: " + level);
       if (strategy != exports.Z_FILTERED && strategy != exports.Z_HUFFMAN_ONLY && strategy != exports.Z_RLE && strategy != exports.Z_FIXED && strategy != exports.Z_DEFAULT_STRATEGY)
@@ -2380,7 +2386,7 @@ var require2 = (id) => import.meta.require(id), require_zstream = __commonJS({
       if (this._level !== level || this._strategy !== strategy) {
         var self = this;
         this.flush(binding.Z_SYNC_FLUSH, function() {
-          if (assert(self._handle, "zlib binding closed"), self._handle.params(level, strategy), !self._hadError) {
+          if (assert2(self._handle, "zlib binding closed"), self._handle.params(level, strategy), !self._hadError) {
             if (self._level = level, self._strategy = strategy, callback)
               callback();
           }
@@ -2388,9 +2394,9 @@ var require2 = (id) => import.meta.require(id), require_zstream = __commonJS({
       } else
         process.nextTick(callback);
     }, Zlib.prototype.reset = function() {
-      return assert(this._handle, "zlib binding closed"), this._handle.reset();
+      return assert2(this._handle, "zlib binding closed"), this._handle.reset();
     }, Zlib.prototype._flush = function(callback) {
-      this._transform(Buffer2.alloc(0), "", callback);
+      this._transform(Buffer22.alloc(0), "", callback);
     }, Zlib.prototype.flush = function(kind, callback) {
       var _this2 = this, ws = this._writableState;
       if (typeof kind === "function" || kind === void 0 && !callback)
@@ -2407,7 +2413,7 @@ var require2 = (id) => import.meta.require(id), require_zstream = __commonJS({
             return _this2.flush(kind, callback);
           });
       } else
-        this._flushFlag = kind, this.write(Buffer2.alloc(0), "", callback);
+        this._flushFlag = kind, this.write(Buffer22.alloc(0), "", callback);
     }, Zlib.prototype.close = function(callback) {
       _close(this, callback), process.nextTick(emitCloseNT, this);
     };
@@ -2423,7 +2429,7 @@ var require2 = (id) => import.meta.require(id), require_zstream = __commonJS({
     }
     Zlib.prototype._transform = function(chunk, encoding, cb) {
       var flushFlag, ws = this._writableState, ending = ws.ending || ws.ended, last = ending && (!chunk || ws.length === chunk.length);
-      if (chunk !== null && !Buffer2.isBuffer(chunk))
+      if (chunk !== null && !Buffer22.isBuffer(chunk))
         return cb(new Error("invalid input"));
       if (!this._handle)
         return cb(new Error("zlib binding closed"));
@@ -2438,18 +2444,18 @@ var require2 = (id) => import.meta.require(id), require_zstream = __commonJS({
         var buffers = [], nread = 0, error;
         this.on("error", function(er) {
           error = er;
-        }), assert(this._handle, "zlib binding closed");
+        }), assert2(this._handle, "zlib binding closed");
         do
           var res = this._handle.writeSync(flushFlag, chunk, inOff, availInBefore, this._buffer, this._offset, availOutBefore);
         while (!this._hadError && callback(res[0], res[1]));
         if (this._hadError)
           throw error;
-        if (nread >= kMaxLength)
+        if (nread >= kMaxLength2)
           throw _close(this), new RangeError(kRangeErrorMessage);
-        var buf = Buffer2.concat(buffers, nread);
+        var buf = Buffer22.concat(buffers, nread);
         return _close(this), buf;
       }
-      assert(this._handle, "zlib binding closed");
+      assert2(this._handle, "zlib binding closed");
       var req = this._handle.write(flushFlag, chunk, inOff, availInBefore, this._buffer, this._offset, availOutBefore);
       req.buffer = chunk, req.callback = callback;
       function callback(availInAfter, availOutAfter) {
@@ -2458,7 +2464,7 @@ var require2 = (id) => import.meta.require(id), require_zstream = __commonJS({
         if (self._hadError)
           return;
         var have = availOutBefore - availOutAfter;
-        if (assert(have >= 0, "have should not go down"), have > 0) {
+        if (assert2(have >= 0, "have should not go down"), have > 0) {
           var out = self._buffer.slice(self._offset, self._offset + have);
           if (self._offset += have, async)
             self.push(out);
@@ -2466,7 +2472,7 @@ var require2 = (id) => import.meta.require(id), require_zstream = __commonJS({
             buffers.push(out), nread += out.length;
         }
         if (availOutAfter === 0 || self._offset >= self._chunkSize)
-          availOutBefore = self._chunkSize, self._offset = 0, self._buffer = Buffer2.allocUnsafe(self._chunkSize);
+          availOutBefore = self._chunkSize, self._offset = 0, self._buffer = Buffer22.allocUnsafe(self._chunkSize);
         if (availOutAfter === 0) {
           if (inOff += availInBefore - availInAfter, availInBefore = availInAfter, !async)
             return !0;
@@ -2478,41 +2484,40 @@ var require2 = (id) => import.meta.require(id), require_zstream = __commonJS({
           return !1;
         cb();
       }
-    }, util.inherits(Deflate, Zlib), util.inherits(Inflate, Zlib), util.inherits(Gzip, Zlib), util.inherits(Gunzip, Zlib), util.inherits(DeflateRaw, Zlib), util.inherits(InflateRaw, Zlib), util.inherits(Unzip, Zlib);
+    }, util.inherits(Deflate2, Zlib), util.inherits(Inflate2, Zlib), util.inherits(Gzip2, Zlib), util.inherits(Gunzip2, Zlib), util.inherits(DeflateRaw2, Zlib), util.inherits(InflateRaw2, Zlib), util.inherits(Unzip2, Zlib);
   }
 }), zlib_exports = require_lib();
 zlib_exports[Symbol.for("CommonJS")] = 0;
-var zlib_default = zlib_exports, {
-  Deflate,
-  Inflate,
-  Gzip,
-  Gunzip,
-  DeflateRaw,
-  InflateRaw,
-  Unzip,
-  createDeflate,
-  createInflate,
-  createDeflateRaw,
-  createInflateRaw,
-  createGzip,
-  createGunzip,
-  createUnzip,
-  deflate,
-  deflateSync,
-  gzip,
-  gzipSync,
-  deflateRaw,
-  deflateRawSync,
-  unzip,
-  unzipSync,
-  inflate,
-  inflateSync,
-  gunzip,
-  gunzipSync,
-  inflateRaw,
-  inflateRawSync,
-  constants
-} = zlib_exports;
+var zlib_default = zlib_exports;
+Deflate = zlib_exports.Deflate;
+Inflate = zlib_exports.Inflate;
+Gzip = zlib_exports.Gzip;
+Gunzip = zlib_exports.Gunzip;
+DeflateRaw = zlib_exports.DeflateRaw;
+InflateRaw = zlib_exports.InflateRaw;
+Unzip = zlib_exports.Unzip;
+createDeflate = zlib_exports.createDeflate;
+createInflate = zlib_exports.createInflate;
+createDeflateRaw = zlib_exports.createDeflateRaw;
+createInflateRaw = zlib_exports.createInflateRaw;
+createGzip = zlib_exports.createGzip;
+createGunzip = zlib_exports.createGunzip;
+createUnzip = zlib_exports.createUnzip;
+deflate = zlib_exports.deflate;
+deflateSync = zlib_exports.deflateSync;
+gzip = zlib_exports.gzip;
+gzipSync = zlib_exports.gzipSync;
+deflateRaw = zlib_exports.deflateRaw;
+deflateRawSync = zlib_exports.deflateRawSync;
+unzip = zlib_exports.unzip;
+unzipSync = zlib_exports.unzipSync;
+inflate = zlib_exports.inflate;
+inflateSync = zlib_exports.inflateSync;
+gunzip = zlib_exports.gunzip;
+gunzipSync = zlib_exports.gunzipSync;
+inflateRaw = zlib_exports.inflateRaw;
+inflateRawSync = zlib_exports.inflateRawSync;
+constants = zlib_exports.constants;
 export {
   unzipSync,
   unzip,

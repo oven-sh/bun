@@ -19,6 +19,8 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
+import { Duplex } from "node:stream";
+import { EventEmitter } from "node:events";
 
 // IPv4 Segment
 const v4Seg = "(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])";
@@ -54,10 +56,8 @@ function isIP(s) {
   return 0;
 }
 
-const { Bun, createFIFO, Object } = import.meta.primordials;
+const { Bun, createFIFO, Object } = globalThis[Symbol.for("Bun.lazy")]("primordials");
 const { connect: bunConnect } = Bun;
-const { Duplex } = import.meta.require("node:stream");
-const { EventEmitter } = import.meta.require("node:events");
 var { setTimeout } = globalThis;
 
 const bunTlsSymbol = Symbol.for("::buntls::");

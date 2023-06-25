@@ -322,7 +322,7 @@ void generateNodeUtilTypesSourceCode(JSC::JSGlobalObject* lexicalGlobalObject,
 
     JSC::VM& vm = globalObject->vm();
 
-    JSC::JSObject* defaultObject = constructEmptyObject(globalObject, globalObject->objectPrototype(), 43);
+    JSC::JSObject* defaultObject = constructEmptyObject(globalObject, globalObject->objectPrototype(), 42);
     exportNames.reserveCapacity(43);
     exportValues.ensureCapacity(43);
 

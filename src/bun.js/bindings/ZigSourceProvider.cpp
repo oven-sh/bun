@@ -43,21 +43,24 @@ static uintptr_t getSourceProviderMapKey(ResolvedSource& resolvedSource)
     }
 }
 
-Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, ResolvedSource resolvedSource, JSC::SourceProviderSourceType sourceType)
+static SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
 {
-
-    uintptr_t providerKey = 0;
-    if (globalObject->isThreadLocalDefaultGlobalObject) {
-        auto& sourceProviderMap = globalObject->sourceProviderMap;
-        providerKey = getSourceProviderMapKey(resolvedSource);
-        if (providerKey) {
-            auto sourceProvider = sourceProviderMap.get(providerKey);
-            if (sourceProvider != nullptr) {
-                sourceProvider->ref();
-                return adoptRef(*reinterpret_cast<Zig::SourceProvider*>(sourceProvider));
-            }
+    if (isBuiltin) {
+        if (sourceURL.startsWith("node:"_s)) {
+            return SourceOrigin(WTF::URL(makeString("builtin://node/", sourceURL.substring(5))));
+        } else if (sourceURL.startsWith("bun:"_s)) {
+            return SourceOrigin(WTF::URL(makeString("builtin://bun/", sourceURL.substring(4))));
+        } else {
+            return SourceOrigin(WTF::URL(makeString("builtin://", sourceURL)));
         }
     }
+
+    return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
+}
+
+Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, ResolvedSource resolvedSource, JSC::SourceProviderSourceType sourceType, bool isBuiltin)
+{
+
     auto stringImpl = Bun::toWTFString(resolvedSource.source_code);
     auto sourceURLString = toStringCopy(resolvedSource.source_url);
 
@@ -68,13 +71,9 @@ Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, Reso
     auto provider = adoptRef(*new SourceProvider(
         globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
         resolvedSource, stringImpl.releaseImpl().releaseNonNull(),
-        JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURLString)),
+        toSourceOrigin(sourceURLString, isBuiltin),
         sourceURLString.impl(), TextPosition(),
         sourceType));
-
-    if (providerKey) {
-        globalObject->sourceProviderMap.set(providerKey, provider.copyRef());
-    }
 
     return provider;
 }
@@ -90,11 +89,6 @@ unsigned SourceProvider::hash() const
 
 void SourceProvider::freeSourceCode()
 {
-    if (m_globalObjectForSourceProviderMap) {
-        m_globalObjectForSourceProviderMap->sourceProviderMap.remove((uintptr_t)m_source.get().characters8());
-    }
-
-    m_source = *WTF::StringImpl::empty();
 }
 
 void SourceProvider::updateCache(const UnlinkedFunctionExecutable* executable, const SourceCode&,

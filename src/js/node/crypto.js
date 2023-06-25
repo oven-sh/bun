@@ -5,10 +5,12 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf,
   __hasOwnProp = Object.prototype.hasOwnProperty;
+import { StringDecoder } from "node:string_decoder";
+import * as BufferModule from "node:buffer";
+import * as StreamModule from "node:stream";
 
 const MAX_STRING_LENGTH = 536870888;
-
-var __require = id => import.meta.require(id);
+var Buffer = globalThis.Buffer;
 const crypto = globalThis.crypto;
 const globalCrypto = crypto;
 
@@ -48,7 +50,7 @@ var __export = (target, all) => {
 // node_modules/safe-buffer/index.js
 var require_safe_buffer = __commonJS({
   "node_modules/safe-buffer/index.js"(exports, module) {
-    var buffer = __require("buffer"),
+    var buffer = BufferModule,
       Buffer2 = buffer.Buffer;
     function copyProps(src, dst) {
       for (var key in src) dst[key] = src[key];
@@ -146,21 +148,20 @@ var require_hash_base = __commonJS({
   "node_modules/hash-base/index.js"(exports, module) {
     "use strict";
     var Buffer2 = require_safe_buffer().Buffer,
-      Transform = __require("readable-stream").Transform,
       inherits = require_inherits_browser();
     function throwIfNotStringOrBuffer(val, prefix) {
       if (!Buffer2.isBuffer(val) && typeof val != "string")
         throw new TypeError(prefix + " must be a string or a buffer");
     }
     function HashBase(blockSize) {
-      Transform.call(this),
+      StreamModule.Transform.call(this),
         (this._block = Buffer2.allocUnsafe(blockSize)),
         (this._blockSize = blockSize),
         (this._blockOffset = 0),
         (this._length = [0, 0, 0, 0]),
         (this._finalized = !1);
     }
-    inherits(HashBase, Transform);
+    inherits(HashBase, StreamModule.Transform);
     HashBase.prototype._transform = function (chunk, encoding, callback) {
       var error = null;
       try {
@@ -341,7 +342,7 @@ var require_md5 = __commonJS({
 var require_ripemd160 = __commonJS({
   "node_modules/ripemd160/index.js"(exports, module) {
     "use strict";
-    var Buffer2 = __require("buffer").Buffer,
+    var Buffer2 = Buffer,
       inherits = require_inherits_browser(),
       HashBase = require_hash_base(),
       ARRAY16 = new Array(16),
@@ -1063,25 +1064,20 @@ var require_sha2 = __commonJS({
   },
 });
 
-// stream.js
-var stream_exports = import.meta.require("node:stream");
-
 // node_modules/cipher-base/index.js
 var require_cipher_base = __commonJS({
   "node_modules/cipher-base/index.js"(exports, module) {
     var Buffer2 = require_safe_buffer().Buffer,
-      Transform = stream_exports.Transform,
-      StringDecoder = __require("string_decoder").StringDecoder,
       inherits = require_inherits_browser();
     function CipherBase(hashMode) {
-      Transform.call(this),
+      StreamModule.Transform.call(this),
         (this.hashMode = typeof hashMode == "string"),
         this.hashMode ? (this[hashMode] = this._finalOrDigest) : (this.final = this._finalOrDigest),
         this._final && ((this.__final = this._final), (this._final = null)),
         (this._decoder = null),
         (this._encoding = null);
     }
-    inherits(CipherBase, Transform);
+    inherits(CipherBase, StreamModule.Transform);
     CipherBase.prototype.update = function (data, inputEnc, outputEnc) {
       typeof data == "string" && (data = Buffer2.from(data, inputEnc));
       var outData = this._update(data);
@@ -1134,15 +1130,13 @@ var require_cipher_base = __commonJS({
 var require_browser2 = __commonJS({
   "node_modules/create-hash/browser.js"(exports, module) {
     ("use strict");
-    const { Transform } = stream_exports;
-
     // does not become a node stream unless you create it into one
     const LazyHash = function Hash(algorithm, options) {
       this._options = options;
       this._hasher = new CryptoHasher(algorithm, options);
       this._finalized = false;
     };
-    LazyHash.prototype = Object.create(Transform.prototype);
+    LazyHash.prototype = Object.create(StreamModule.Transform.prototype);
     LazyHash.prototype.update = function update(data, encoding) {
       this._checkFinalized();
       this._hasher.update(data, encoding);
@@ -1169,7 +1163,7 @@ var require_browser2 = __commonJS({
     };
 
     const lazyHashFullInitProto = {
-      __proto__: Transform.prototype,
+      __proto__: StreamModule.Transform.prototype,
       ...LazyHash.prototype,
       _transform(data, encoding, callback) {
         this.update(data, encoding);
@@ -1271,7 +1265,7 @@ var require_browser2 = __commonJS({
       Object.defineProperty(LazyHash.prototype, method, {
         get() {
           Object.setPrototypeOf(this, lazyHashFullInitProto);
-          Transform.call(this, this._options);
+          StreamModule.Transform.call(this, this._options);
           return this[method];
         },
         enumerable: false,
@@ -3330,12 +3324,7 @@ var require_bn = __commonJS({
             this._init(number || 0, base || 10, endian || "be"));
       }
       typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN), (BN.BN = BN), (BN.wordSize = 26);
-      var Buffer2;
-      try {
-        typeof window < "u" && typeof window.Buffer < "u"
-          ? (Buffer2 = window.Buffer)
-          : (Buffer2 = __require("buffer").Buffer);
-      } catch {}
+      var Buffer2 = Buffer;
       (BN.isBN = function (num) {
         return num instanceof BN
           ? !0
@@ -5322,12 +5311,7 @@ var require_bn2 = __commonJS({
             this._init(number || 0, base || 10, endian || "be"));
       }
       typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN), (BN.BN = BN), (BN.wordSize = 26);
-      var Buffer2;
-      try {
-        typeof window < "u" && typeof window.Buffer < "u"
-          ? (Buffer2 = window.Buffer)
-          : (Buffer2 = __require("buffer").Buffer);
-      } catch {}
+      var Buffer2 = Buffer;
       (BN.isBN = function (num) {
         return num instanceof BN
           ? !0
@@ -7670,12 +7654,7 @@ var require_bn3 = __commonJS({
             this._init(number || 0, base || 10, endian || "be"));
       }
       typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN), (BN.BN = BN), (BN.wordSize = 26);
-      var Buffer2;
-      try {
-        typeof window < "u" && typeof window.Buffer < "u"
-          ? (Buffer2 = window.Buffer)
-          : (Buffer2 = __require("buffer").Buffer);
-      } catch {}
+      var Buffer2 = Buffer;
       (BN.isBN = function (num) {
         return num instanceof BN
           ? !0
@@ -9797,12 +9776,7 @@ var require_bn4 = __commonJS({
             this._init(number || 0, base || 10, endian || "be"));
       }
       typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN), (BN.BN = BN), (BN.wordSize = 26);
-      var Buffer2;
-      try {
-        typeof window < "u" && typeof window.Buffer < "u"
-          ? (Buffer2 = window.Buffer)
-          : (Buffer2 = __require("buffer").Buffer);
-      } catch {}
+      var Buffer2 = Buffer;
       (BN.isBN = function (num) {
         return num instanceof BN
           ? !0
@@ -15491,12 +15465,8 @@ var require_bn5 = __commonJS({
             this._init(number || 0, base || 10, endian || "be"));
       }
       typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN), (BN.BN = BN), (BN.wordSize = 26);
-      var Buffer2;
-      try {
-        typeof window < "u" && typeof window.Buffer < "u"
-          ? (Buffer2 = window.Buffer)
-          : (Buffer2 = __require("buffer").Buffer);
-      } catch {}
+      var Buffer2 = Buffer;
+
       (BN.isBN = function (num) {
         return num instanceof BN
           ? !0
@@ -17461,8 +17431,8 @@ var require_bn5 = __commonJS({
 var require_safer = __commonJS({
   "node_modules/safer-buffer/safer.js"(exports, module) {
     "use strict";
-    var buffer = __require("buffer"),
-      Buffer2 = buffer.Buffer,
+    var buffer = BufferModule,
+      Buffer2 = Buffer,
       safer = {},
       key;
     for (key in buffer)
@@ -19334,7 +19304,6 @@ var require_browser8 = __commonJS({
   "node_modules/browserify-sign/browser/index.js"(exports, module) {
     var Buffer2 = require_safe_buffer().Buffer,
       createHash = require_browser2(),
-      stream = __require("readable-stream"),
       inherits = require_inherits_browser(),
       sign = require_sign(),
       verify = require_verify(),
@@ -19343,7 +19312,7 @@ var require_browser8 = __commonJS({
       (algorithms[key].id = Buffer2.from(algorithms[key].id, "hex")), (algorithms[key.toLowerCase()] = algorithms[key]);
     });
     function Sign(algorithm) {
-      stream.Writable.call(this);
+      StreamModule.Writable.call(this);
       var data = algorithms[algorithm];
       if (!data) throw new Error("Unknown message digest");
       (this._hashType = data.hash),
@@ -19351,7 +19320,7 @@ var require_browser8 = __commonJS({
         (this._tag = data.id),
         (this._signType = data.sign);
     }
-    inherits(Sign, stream.Writable);
+    inherits(Sign, StreamModule.Writable);
     Sign.prototype._write = function (data, _, done) {
       this._hash.update(data), done();
     };
@@ -19365,12 +19334,12 @@ var require_browser8 = __commonJS({
       return enc ? sig.toString(enc) : sig;
     };
     function Verify(algorithm) {
-      stream.Writable.call(this);
+      StreamModule.Writable.call(this);
       var data = algorithms[algorithm];
       if (!data) throw new Error("Unknown message digest");
       (this._hash = createHash(data.hash)), (this._tag = data.id), (this._signType = data.sign);
     }
-    inherits(Verify, stream.Writable);
+    inherits(Verify, StreamModule.Writable);
     Verify.prototype._write = function (data, _, done) {
       this._hash.update(data), done();
     };
@@ -19423,12 +19392,7 @@ var require_bn6 = __commonJS({
             this._init(number || 0, base || 10, endian || "be"));
       }
       typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN), (BN.BN = BN), (BN.wordSize = 26);
-      var Buffer2;
-      try {
-        typeof window < "u" && typeof window.Buffer < "u"
-          ? (Buffer2 = window.Buffer)
-          : (Buffer2 = __require("buffer").Buffer);
-      } catch {}
+      var Buffer2 = Buffer;
       (BN.isBN = function (num) {
         return num instanceof BN
           ? !0

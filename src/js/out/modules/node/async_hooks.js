@@ -1,3 +1,4 @@
+import {drainMicrotasks} from "bun:jsc";
 var createHook = function() {
   return {
     enable() {
@@ -13,8 +14,6 @@ var createHook = function() {
   return 0;
 }, executionAsyncResource = function() {
   return null;
-}, drainMicrotasks = () => {
-  ({ drainMicrotasks } = import.meta.require("bun:jsc")), drainMicrotasks();
 }, notImplemented = () => {
   console.warn("[bun] Warning: async_hooks has not been implemented yet. See https://github.com/oven-sh/bun/issues/1832"), notImplemented = () => {
   };

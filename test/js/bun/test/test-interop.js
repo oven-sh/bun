@@ -20,6 +20,25 @@ module.exports = () => {
       vi: bunTest.vi,
       spyOn: bunTest.spyOn,
     };
+  } else if (process.env.VITEST) {
+    const vi = require("vitest");
+
+    return {
+      isBun: false,
+      bunTest: null,
+      test: vi.test,
+      describe: vi.describe,
+      it: vi.it,
+      expect: vi.expect,
+      beforeEach: vi.beforeEach,
+      afterEach: vi.afterEach,
+      beforeAll: vi.beforeAll,
+      afterAll: vi.afterAll,
+      jest: { fn: vi.fn },
+      mock: null,
+      vi,
+      spyOn: vi.spyOn,
+    };
   } else {
     const globals = require("@jest/globals");
     const extended = require("jest-extended");

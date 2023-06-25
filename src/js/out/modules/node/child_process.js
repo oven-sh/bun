@@ -1,3 +1,7 @@
+import {EventEmitter} from "node:events";
+import * as StreamModule from "node:stream";
+import {constants} from "node:os";
+import {promisify} from "node:util";
 function spawn(file, args, options) {
   options = normalizeSpawnArguments(file, args, options), validateTimeout(options.timeout), validateAbortSignal(options.signal, "options.signal");
   const killSignal2 = sanitizeKillSignal(options.killSignal), child = new ChildProcess;
@@ -449,19 +453,14 @@ var validateFunction = function(value, name) {
   return new TypeError(`The value "${value}" is invalid for option "${name}"`);
 }, ERR_INVALID_ARG_VALUE = function(name, value, reason) {
   return new Error(`The value "${value}" is invalid for argument '${name}'. Reason: ${reason}`);
-}, EventEmitter = import.meta.require("node:events"), {
-  Readable: { fromWeb: ReadableFromWeb },
-  NativeWritable
-} = import.meta.require("node:stream"), {
-  constants: { signals }
-} = import.meta.require("node:os"), { promisify } = import.meta.require("node:util"), { ArrayBuffer, Uint8Array, String, Object, Buffer, Promise: Promise2 } = import.meta.primordials, ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty, ObjectCreate = Object.create, ObjectAssign = Object.assign, ObjectDefineProperty = Object.defineProperty, BufferConcat = Buffer.concat, BufferIsEncoding = Buffer.isEncoding, kEmptyObject = ObjectCreate(null), ArrayPrototypePush = Array.prototype.push, ArrayPrototypeReduce = Array.prototype.reduce, ArrayPrototypeFilter = Array.prototype.filter, ArrayPrototypeJoin = Array.prototype.join, ArrayPrototypeMap = Array.prototype.map, ArrayPrototypeIncludes = Array.prototype.includes, ArrayPrototypeSlice = Array.prototype.slice, ArrayPrototypeUnshift = Array.prototype.unshift, ArrayIsArray = Array.isArray, ArrayBufferIsView = ArrayBuffer.isView, NumberIsInteger = Number.isInteger;
+}, signals = constants.signals, { ArrayBuffer, Uint8Array, String, Object, Buffer, Promise: Promise2 } = globalThis[Symbol.for("Bun.lazy")]("primordials"), ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty, ObjectCreate = Object.create, ObjectAssign = Object.assign, ObjectDefineProperty = Object.defineProperty, BufferConcat = Buffer.concat, BufferIsEncoding = Buffer.isEncoding, kEmptyObject = ObjectCreate(null), ArrayPrototypePush = Array.prototype.push, ArrayPrototypeJoin = Array.prototype.join, ArrayPrototypeMap = Array.prototype.map, ArrayPrototypeIncludes = Array.prototype.includes, ArrayPrototypeSlice = Array.prototype.slice, ArrayPrototypeUnshift = Array.prototype.unshift, ArrayIsArray = Array.isArray, ArrayBufferIsView = ArrayBuffer.isView, NumberIsInteger = Number.isInteger;
 var StringPrototypeToUpperCase = String.prototype.toUpperCase, StringPrototypeIncludes = String.prototype.includes, StringPrototypeSlice = String.prototype.slice, Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes, MAX_BUFFER = 1048576, __DEBUG__ = process.env.DEBUG || !1, __TRACK_STDIO__ = process.env.DEBUG_STDIO, debug = __DEBUG__ ? console.log : () => {
 };
 if (__TRACK_STDIO__)
   debug("child_process: debug mode on"), globalThis.__lastId = null, globalThis.__getId = () => {
     return globalThis.__lastId !== null ? globalThis.__lastId++ : 0;
   };
-var customPromiseExecFunction = (orig) => {
+var NativeWritable2, ReadableFromWeb, customPromiseExecFunction = (orig) => {
   return (...args) => {
     let resolve, reject;
     const promise = new Promise2((res, rej) => {
@@ -520,12 +519,13 @@ class ChildProcess extends EventEmitter {
         debug("ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited");
       else
         debug("ChildProcess: getBunSpawnIo: this.#handle is undefined");
+    NativeWritable2 ||= StreamModule.NativeWritable, ReadableFromWeb ||= StreamModule.Readable.fromWeb;
     const io = this.#stdioOptions[i];
     switch (i) {
       case 0:
         switch (io) {
           case "pipe":
-            return new NativeWritable(this.#handle.stdin);
+            return new NativeWritable2(this.#handle.stdin);
           case "inherit":
             return process.stdin || null;
           case "destroyed":
@@ -537,10 +537,7 @@ class ChildProcess extends EventEmitter {
       case 1:
         switch (io) {
           case "pipe":
-            return ReadableFromWeb(this.#handle[fdToStdioName(i)], __TRACK_STDIO__ ? {
-              encoding,
-              __id: `PARENT_${fdToStdioName(i).toUpperCase()}-${globalThis.__getId()}`
-            } : { encoding });
+            return ReadableFromWeb(this.#handle[fdToStdioName(i)], { encoding });
           case "inherit":
             return process[fdToStdioName(i)] || null;
           case "destroyed":

@@ -1,43 +1,12 @@
 // Hardcoded module "node:assert"
-var { Bun } = import.meta.primordials;
+var { Bun } = globalThis[Symbol.for("Bun.lazy")]("primordials");
+import util from "node:util";
+
 var isDeepEqual = Bun.deepEquals;
-var __create = Object.create;
-var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __getProtoOf = Object.getPrototypeOf,
-  __hasOwnProp = Object.prototype.hasOwnProperty;
-var __markAsModule = target => __defProp(target, "__esModule", { value: !0 });
 var __commonJS = (cb, mod) =>
   function () {
     return mod || (0, cb[Object.keys(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
   };
-var __reExport = (target, module2, desc) => {
-    if ((module2 && typeof module2 == "object") || typeof module2 == "function")
-      for (let key of __getOwnPropNames(module2))
-        !__hasOwnProp.call(target, key) &&
-          key !== "default" &&
-          __defProp(target, key, {
-            get: () => module2[key],
-            enumerable: !(desc = __getOwnPropDesc(module2, key)) || desc.enumerable,
-          });
-    return target;
-  },
-  __toModule = module2 =>
-    __reExport(
-      __markAsModule(
-        __defProp(
-          module2 != null ? __create(__getProtoOf(module2)) : {},
-          "default",
-          module2 && module2.__esModule && "default" in module2
-            ? { get: () => module2.default, enumerable: !0 }
-            : { value: module2, enumerable: !0 },
-        ),
-      ),
-      module2,
-    );
-
-var require = path => import.meta.require(path);
 
 // assert/build/internal/errors.js
 var require_errors = __commonJS({
@@ -175,7 +144,6 @@ var require_errors = __commonJS({
       "ERR_INVALID_ARG_VALUE",
       function (name, value) {
         var reason = arguments.length > 2 && arguments[2] !== void 0 ? arguments[2] : "is invalid";
-        util === void 0 && (util = require("util"));
         var inspected = util.inspect(value);
         return (
           inspected.length > 128 && (inspected = "".concat(inspected.slice(0, 128), "...")),
@@ -387,8 +355,7 @@ var require_assertion_error = __commonJS({
         _typeof(obj)
       );
     }
-    var _require = require("util"),
-      inspect = _require.inspect,
+    var inspect = util.inspect,
       _require2 = require_errors(),
       ERR_INVALID_ARG_TYPE = _require2.codes.ERR_INVALID_ARG_TYPE;
     function endsWith(str, search, this_len) {
@@ -871,9 +838,9 @@ var require_assert = __commonJS({
       ERR_INVALID_RETURN_VALUE = _require$codes.ERR_INVALID_RETURN_VALUE,
       ERR_MISSING_ARGS = _require$codes.ERR_MISSING_ARGS,
       AssertionError = require_assertion_error(),
-      _require2 = require("util"),
+      _require2 = util,
       inspect = _require2.inspect,
-      _require$types = require("util").types,
+      _require$types = util.types,
       isPromise = _require$types.isPromise,
       isRegExp = _require$types.isRegExp,
       objectAssign = Object.assign,

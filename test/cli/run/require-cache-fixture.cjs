@@ -3,6 +3,11 @@ const Bun = (globalThis.Bun ??= { gc() {} });
 
 const { resolve } = require("path");
 
+if (require.main !== module) {
+  console.error(__filename, module.id);
+  throw new Error("require.main !== module");
+}
+
 if (__filename !== resolve(module.filename)) {
   console.error(__filename, module.id);
   throw new Error("__filename !== module.id");

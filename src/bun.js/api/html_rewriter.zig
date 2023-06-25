@@ -1016,6 +1016,9 @@ pub const TextChunk = struct {
             .removed = .{
                 .get = getterWrap(TextChunk, "removed"),
             },
+            .lastInTextNode = .{
+                .get = getterWrap(TextChunk, "lastInTextNode"),
+            },
             .text = .{
                 .get = getterWrap(TextChunk, "getText"),
             },
@@ -1082,6 +1085,10 @@ pub const TextChunk = struct {
 
     pub fn removed(this: *TextChunk, _: *JSGlobalObject) JSValue {
         return JSC.JSValue.jsBoolean(this.text_chunk.?.isRemoved());
+    }
+
+    pub fn lastInTextNode(this: *TextChunk, _: *JSGlobalObject) JSValue {
+        return JSC.JSValue.jsBoolean(this.text_chunk.?.isLastInTextNode());
     }
 
     pub fn finalize(this: *TextChunk) void {

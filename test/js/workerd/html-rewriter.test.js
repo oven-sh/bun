@@ -300,4 +300,19 @@ describe("HTMLRewriter", () => {
         .text(),
     ).toEqual("<div></div>");
   });
+
+  it("it supports lastInTextNode", async () => {
+    let lastInTextNode;
+
+    await new HTMLRewriter()
+      .on("p", {
+        text(text) {
+          lastInTextNode ??= text.lastInTextNode;
+        },
+      })
+      .transform(new Response("<p>Lorem ipsum!</p>"))
+      .text();
+
+    expect(lastInTextNode).toBeBoolean();
+  });
 });

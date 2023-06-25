@@ -71,8 +71,11 @@ it("import.meta.require (json)", () => {
 });
 
 it("const f = require;require(json)", () => {
+  function capture(f) {
+    return f.length;
+  }
   const f = require;
-  console.log(f);
+  capture(f);
   expect(f("./require-json.json").hello).toBe(sync.hello);
 });
 

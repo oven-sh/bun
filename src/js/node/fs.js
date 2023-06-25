@@ -642,8 +642,8 @@ WriteStream = (function (InternalWriteStream) {
   });
 
   return Object.defineProperty(
-    function WriteStream(options) {
-      return new InternalWriteStream(options);
+    function WriteStream(path, options) {
+      return new InternalWriteStream(path, options);
     },
     Symbol.hasInstance,
     {

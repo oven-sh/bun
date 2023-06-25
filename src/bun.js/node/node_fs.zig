@@ -3446,31 +3446,32 @@ pub const NodeFS = struct {
                         if (this.vm) |vm| {
                             if (vm.standalone_module_graph) |graph| {
                                 if (graph.find(path)) |file| {
-                                    return switch (args.encoding) {
-                                        .buffer => .{
+                                    if (args.encoding == .buffer) {
+                                        return .{
                                             .result = .{
-                                                .buffer = Buffer.fromBytes(bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"), bun.default_allocator, .Uint8Array),
+                                                .buffer = Buffer.fromBytes(
+                                                    bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"),
+                                                    bun.default_allocator,
+                                                    .Uint8Array,
+                                                ),
                                             },
-                                        },
-                                        else => brk2: {
-                                            if (comptime string_type == .default) {
-                                                break :brk2 .{
-                                                    .result = .{
-                                                        .string = bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"),
-                                                    },
-                                                };
-                                            } else {
-                                                break :brk2 .{
-                                                    .result = .{
-                                                        .null_terminated = bun.default_allocator.dupeZ(u8, file.contents) catch @panic("out of memory"),
-                                                    },
-                                                };
-                                            }
-                                        },
-                                    };
+                                        };
+                                    } else if (comptime string_type == .default)
+                                        .{
+                                            .result = .{
+                                                .string = bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"),
+                                            },
+                                        }
+                                    else
+                                        .{
+                                            .result = .{
+                                                .null_terminated = bun.default_allocator.dupeZ(u8, file.contents) catch @panic("out of memory"),
+                                            },
+                                        };
                                 }
                             }
                         }
+
                         break :brk switch (Syscall.open(
                             path,
                             os.O.RDONLY | os.O.NOCTTY,

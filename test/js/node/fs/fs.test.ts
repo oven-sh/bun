@@ -1078,6 +1078,16 @@ describe("createWriteStream", () => {
     stream.write("first line\n");
     stream.end();
 
+    await new Promise((resolve, reject) => {
+      stream.on("error", e => {
+        reject(e);
+      });
+
+      stream.on("finish", () => {
+        resolve(true);
+      });
+    });
+
     const stream2 = createWriteStream(path, {
       // @ts-ignore-next-line
       flags: "a",

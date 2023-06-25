@@ -46,7 +46,7 @@ namespace Zig {
 using namespace JSC;
 using namespace WebCore;
 
-static EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const WTF::String& fromStr)
+static EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -59,6 +59,7 @@ static EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObject, 
         return JSC::JSValue::encode(JSC::JSValue {});
     }
     default: {
+        JSValue thisValue = callFrame->thisValue();
         JSC::JSValue moduleName = callFrame->argument(0);
 
         auto doIt = [&](const WTF::String& fromStr) -> JSC::EncodedJSValue {
@@ -104,6 +105,17 @@ static EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObject, 
             }
         }
 
+        WTF::String fromStr;
+
+        if (thisValue.isObject()) {
+            auto* thisObject = thisValue.getObject();
+            auto clientData = WebCore::clientData(vm);
+            JSValue pathProperty = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().pathPublicName());
+
+            if (pathProperty && pathProperty.isString())
+                fromStr = pathProperty.toWTFString(globalObject);
+        }
+
         return doIt(fromStr);
     }
     }
@@ -130,7 +142,7 @@ Zig::ImportMetaObject* Zig::ImportMetaObject::create(JSC::JSGlobalObject* global
 JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireResolve);
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireResolve, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return functionRequireResolve(globalObject, callFrame, callFrame->thisValue().toWTFString(globalObject));
+    return functionRequireResolve(globalObject, callFrame);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsRequireCacheGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
@@ -226,30 +238,32 @@ public:
 
 Structure* Zig::ImportMetaObject::createRequireFunctionStructure(VM& vm, JSGlobalObject* globalObject)
 {
-
-    return nullptr;
-}
-
-JSObject* Zig::ImportMetaObject::createRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString)
-{
-    auto* globalObject = lexicalGlobalObject;
-    JSFunction* requireFunction = JSFunction::create(vm, importMetaObjectRequireCodeGenerator(vm), lexicalGlobalObject);
+    auto& builtinNames = WebCore::builtinNames(vm);
 
     JSC::JSFunction* requireDotMainFunction = JSFunction::create(
         vm,
         moduleMainCodeGenerator(vm),
         globalObject->globalScope());
 
-    requireFunction->putDirect(
+    auto* prototype = JSC::constructEmptyObject(globalObject, globalObject->functionPrototype());
+    prototype->putDirect(
         vm,
         JSC::Identifier::fromString(vm, "main"_s),
         JSC::GetterSetter::create(vm, globalObject, requireDotMainFunction, JSValue()),
         PropertyAttribute::Builtin | PropertyAttribute::Accessor | PropertyAttribute::ReadOnly | 0);
+    prototype->putDirect(vm, JSC::Identifier::fromString(vm, "extensions"_s), constructEmptyObject(globalObject), 0);
+    prototype->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "cache"_s), JSC::CustomGetterSetter::create(vm, Zig::jsRequireCacheGetter, Zig::jsRequireCacheSetter), 0);
+    prototype->putDirect(vm, builtinNames.resolvePublicName(), ResolveFunction::create(globalObject), JSC::PropertyAttribute::Function | 0);
+    return JSFunction::createStructure(vm, globalObject, prototype);
+}
 
-    requireFunction->putDirect(vm, JSC::Identifier::fromString(vm, "extensions"_s), JSC::constructEmptyObject(globalObject), 0);
-    requireFunction->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "cache"_s), JSC::CustomGetterSetter::create(vm, Zig::jsRequireCacheGetter, Zig::jsRequireCacheSetter), 0);
-    requireFunction->putDirect(vm, JSC::Identifier::fromString(vm, "resolve"_s), ResolveFunction::create(globalObject), JSC::PropertyAttribute::Function | 0);
-    requireFunction->putDirect(vm, JSC::Identifier::fromString(vm, "path"_s), jsString(vm, pathString));
+JSObject* Zig::ImportMetaObject::createRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString)
+{
+    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSFunction* requireFunction = JSFunction::create(vm, importMetaObjectRequireCodeGenerator(vm), lexicalGlobalObject, globalObject->importMetaRequireStructure());
+    auto& builtinNames = WebCore::builtinNames(vm);
+
+    requireFunction->putDirect(vm, builtinNames.pathPublicName(), jsString(vm, pathString), 0);
 
     return requireFunction;
 }

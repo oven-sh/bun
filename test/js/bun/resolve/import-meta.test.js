@@ -25,6 +25,9 @@ it("import.meta.main", () => {
 
 it("import.meta.resolveSync", () => {
   expect(import.meta.resolveSync("./" + import.meta.file, import.meta.path)).toBe(path);
+});
+
+it("Module.createRequire", () => {
   const require = Module.createRequire(import.meta.path);
   expect(require.resolve(import.meta.path)).toBe(path);
   expect(require.resolve("./" + import.meta.file)).toBe(path);

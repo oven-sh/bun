@@ -650,8 +650,6 @@ pub const FSWatcher = struct {
     }
 
     pub fn emit(this: *FSWatcher, file_name: string, comptime eventType: string) void {
-        if (this.closed) return;
-
         if (this.js_this != .zero) {
             const js_this = this.js_this;
             js_this.ensureStillAlive();
@@ -737,10 +735,10 @@ pub const FSWatcher = struct {
         this.mutex.lock();
         defer this.mutex.unlock();
         if (!this.closed) {
+            this.closed = true;
             if (emitEvent) {
                 this.emit("", "close");
             }
-            this.closed = true;
 
             // we immediately detach here
             this.detach();

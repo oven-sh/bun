@@ -301,3 +301,24 @@ describe("HTMLRewriter", () => {
     ).toEqual("<div></div>");
   });
 });
+
+// By not segfaulting, this test passes
+it("#3334 regression", async () => {
+  for (let i = 0; i < 10; i++) {
+    const headers = new Headers({
+      "content-type": "text/html",
+    });
+    const response = new Response("<div>content</div>", { headers });
+
+    const result = await new HTMLRewriter()
+      .on("div", {
+        element(elem) {
+          elem.setInnerContent("new");
+        },
+      })
+      .transform(response)
+      .text();
+    expect(result).toEqual("<div>new</div>");
+  }
+  Bun.gc(true);
+});

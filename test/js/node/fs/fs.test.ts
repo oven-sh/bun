@@ -1073,14 +1073,14 @@ describe("createWriteStream", () => {
     const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStreamAppend.txt`;
     const stream = createWriteStream(path, {
       // @ts-ignore-next-line
-      flags: "a"
+      flags: "a",
     });
     stream.write("first line\n");
     stream.end();
 
     const stream2 = createWriteStream(path, {
       // @ts-ignore-next-line
-      flags: "a"
+      flags: "a",
     });
     stream2.write("second line\n");
     stream2.end();
@@ -1096,7 +1096,6 @@ describe("createWriteStream", () => {
       });
     });
   });
-
 });
 
 describe("fs/promises", () => {

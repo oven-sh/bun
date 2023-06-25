@@ -8,6 +8,11 @@ if (require.main !== module) {
   throw new Error("require.main !== module");
 }
 
+if (process.mainModule !== module) {
+  console.error(__filename, module.id);
+  throw new Error("process.mainModule !== module");
+}
+
 if (__filename !== resolve(module.filename)) {
   console.error(__filename, module.id);
   throw new Error("__filename !== module.id");

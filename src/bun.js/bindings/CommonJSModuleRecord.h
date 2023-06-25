@@ -25,6 +25,7 @@ public:
     mutable JSC::WriteBarrier<JSC::JSString> m_filename;
     mutable JSC::WriteBarrier<JSC::JSString> m_dirname;
     mutable JSC::WriteBarrier<JSC::JSSourceCode> sourceCode;
+    bool ignoreESModuleAnnotation { false };
 
     static void destroy(JSC::JSCell*);
     ~JSCommonJSModule();

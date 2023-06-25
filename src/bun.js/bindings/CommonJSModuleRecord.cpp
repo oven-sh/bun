@@ -602,7 +602,7 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
         auto catchScope = DECLARE_CATCH_SCOPE(vm);
 
         Identifier esModuleMarker = builtinNames(vm).__esModulePublicName();
-        bool hasESModuleMarker = exports->hasProperty(globalObject, esModuleMarker);
+        bool hasESModuleMarker = !this->ignoreESModuleAnnotation && exports->hasProperty(globalObject, esModuleMarker);
         if (catchScope.exception()) {
             catchScope.clearException();
         }
@@ -818,6 +818,7 @@ bool JSCommonJSModule::evaluate(
 {
     auto& vm = globalObject->vm();
     auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program);
+    this->ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
     JSC::SourceCode rawInputSource(
         WTFMove(sourceProvider));
 
@@ -856,6 +857,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     JSValue entry = globalObject->requireMap()->get(globalObject, specifierValue);
 
     auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program);
+    bool ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
     SourceOrigin sourceOrigin = sourceProvider->sourceOrigin();
 
     if (entry) {
@@ -886,6 +888,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
         globalObject->requireMap()->set(globalObject, requireMapKey, moduleObject);
     }
+
+    moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
 
     return JSC::SourceCode(
         JSC::SyntheticSourceProvider::create(

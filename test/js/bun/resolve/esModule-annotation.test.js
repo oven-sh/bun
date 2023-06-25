@@ -1,43 +1,68 @@
-import { test, expect } from "bun:test";
-import * as ExportEsModuleAnnotationMissingDefault from "./export-esModule-annotation-empty.cjs";
-import * as ExportEsModuleAnnotationNoDefault from "./export-esModule-annotation-no-default.cjs";
-import * as ExportEsModuleAnnotation from "./export-esModule-annotation.cjs";
-import * as ExportEsModuleNoAnnotation from "./export-esModule-no-annotation.cjs";
-import DefaultExportForExportEsModuleAnnotationNoDefault from "./export-esModule-annotation-no-default.cjs";
-import DefaultExportForExportEsModuleAnnotation from "./export-esModule-annotation.cjs";
-import DefaultExportForExportEsModuleNoAnnotation from "./export-esModule-no-annotation.cjs";
+import { test, expect, describe } from "bun:test";
+import * as WithTypeModuleExportEsModuleAnnotationMissingDefault from "./with-type-module/export-esModule-annotation-empty.cjs";
+import * as WithTypeModuleExportEsModuleAnnotationNoDefault from "./with-type-module/export-esModule-annotation-no-default.cjs";
+import * as WithTypeModuleExportEsModuleAnnotation from "./with-type-module/export-esModule-annotation.cjs";
+import * as WithTypeModuleExportEsModuleNoAnnotation from "./with-type-module/export-esModule-no-annotation.cjs";
+import * as WithoutTypeModuleExportEsModuleAnnotationMissingDefault from "./without-type-module/export-esModule-annotation-empty.cjs";
+import * as WithoutTypeModuleExportEsModuleAnnotationNoDefault from "./without-type-module/export-esModule-annotation-no-default.cjs";
+import * as WithoutTypeModuleExportEsModuleAnnotation from "./without-type-module/export-esModule-annotation.cjs";
+import * as WithoutTypeModuleExportEsModuleNoAnnotation from "./without-type-module/export-esModule-no-annotation.cjs";
 
-test("empty exports object", () => {
-  expect(ExportEsModuleAnnotationMissingDefault.default).toBe(undefined);
-  expect(ExportEsModuleAnnotationMissingDefault.__esModule).toBeUndefined();
-});
-
-test("exports.__esModule = true", () => {
-  expect(ExportEsModuleAnnotationNoDefault.default).toEqual({
-    // in this case, since it's the CommonJS module.exports object, it leaks the __esModule
-    __esModule: true,
+describe('without type: "module"', () => {
+  test("module.exports = {}", () => {
+    expect(WithoutTypeModuleExportEsModuleAnnotationMissingDefault.default).toEqual({});
+    expect(WithoutTypeModuleExportEsModuleAnnotationMissingDefault.__esModule).toBeUndefined();
   });
 
-  // The module namespace object will not have the __esModule property.
-  expect(ExportEsModuleAnnotationNoDefault).not.toHaveProperty("__esModule");
+  test("exports.__esModule = true", () => {
+    expect(WithoutTypeModuleExportEsModuleAnnotationNoDefault.default).toEqual({
+      __esModule: true,
+    });
 
-  expect(DefaultExportForExportEsModuleAnnotationNoDefault).toEqual({
-    __esModule: true,
+    // The module namespace object will not have the __esModule property.
+    expect(WithoutTypeModuleExportEsModuleAnnotationNoDefault).not.toHaveProperty("__esModule");
+  });
+
+  test("exports.default = true; exports.__esModule = true;", () => {
+    expect(WithoutTypeModuleExportEsModuleAnnotation.default).toBeTrue();
+    expect(WithoutTypeModuleExportEsModuleAnnotation.__esModule).toBeUndefined();
+  });
+
+  test("exports.default = true;", () => {
+    expect(WithoutTypeModuleExportEsModuleNoAnnotation.default).toEqual({
+      default: true,
+    });
+    expect(WithoutTypeModuleExportEsModuleAnnotation.__esModule).toBeUndefined();
   });
 });
 
-test("exports.default = true; exports.__esModule = true;", () => {
-  expect(ExportEsModuleAnnotation.default).toBeTrue();
-  expect(ExportEsModuleAnnotation.__esModule).toBeUndefined();
-  expect(DefaultExportForExportEsModuleAnnotation).toBeTrue();
-});
-
-test("exports.default = true;", () => {
-  expect(ExportEsModuleNoAnnotation.default).toEqual({
-    default: true,
+describe('with type: "module"', () => {
+  test("module.exports = {}", () => {
+    expect(WithTypeModuleExportEsModuleAnnotationMissingDefault.default).toEqual({});
+    expect(WithTypeModuleExportEsModuleAnnotationMissingDefault.__esModule).toBeUndefined();
   });
-  expect(ExportEsModuleAnnotation.__esModule).toBeUndefined();
-  expect(DefaultExportForExportEsModuleNoAnnotation).toEqual({
-    default: true,
+
+  test("exports.__esModule = true", () => {
+    expect(WithTypeModuleExportEsModuleAnnotationNoDefault.default).toEqual({
+      __esModule: true,
+    });
+
+    // The module namespace object WILL have the __esModule property.
+    expect(WithTypeModuleExportEsModuleAnnotationNoDefault).toHaveProperty("__esModule");
+  });
+
+  test("exports.default = true; exports.__esModule = true;", () => {
+    expect(WithTypeModuleExportEsModuleAnnotation.default).toEqual({
+      default: true,
+      __esModule: true,
+    });
+    expect(WithTypeModuleExportEsModuleAnnotation.__esModule).toBeTrue();
+  });
+
+  test("exports.default = true;", () => {
+    expect(WithTypeModuleExportEsModuleNoAnnotation.default).toEqual({
+      default: true,
+    });
+    expect(WithTypeModuleExportEsModuleAnnotation.__esModule).toBeTrue();
   });
 });

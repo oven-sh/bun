@@ -733,9 +733,10 @@ pub const FSWatcher = struct {
         emitEvent: bool,
     ) void {
         this.mutex.lock();
-        defer this.mutex.unlock();
         if (!this.closed) {
             this.closed = true;
+            this.mutex.unlock();
+
             if (emitEvent) {
                 this.emit("", "close");
             }
@@ -743,9 +744,13 @@ pub const FSWatcher = struct {
             // we immediately detach here
             this.detach();
 
+            this.mutex.lock();
+            defer this.mutex.unlock();
             if (this.task_count == 0) {
                 this.updateHasPendingActivity();
             }
+        } else {
+            this.mutex.unlock();
         }
     }
 

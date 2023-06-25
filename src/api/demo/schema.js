@@ -2992,6 +2992,10 @@ function decodeBunInstall(bb) {
         result["global_bin_dir"] = bb.readString();
         break;
 
+      case 19:
+        result["frozen-lockfile"] = !!bb.readByte();
+        break;
+
       default:
         throw new Error("Attempted to parse invalid message");
     }

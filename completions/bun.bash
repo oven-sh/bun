@@ -92,10 +92,10 @@ _bun_completions() {
     PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]="";
     PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]="";
 
-    PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]="--config --yarn --production --no-save --dry-run --lockfile --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help";
+    PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]="--config --yarn --production --frozen-lockfile --no-save --dry-run --lockfile --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help";
     PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]="-c -y -p -f -g";
 
-    PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --no-save --dry-run --lockfile --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --help"
+    PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --frozen-lockfile --no-save --dry-run --lockfile --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --help"
     PM_OPTIONS[SHORT_OPTIONS]="-c -y -p -f -g"
      
     local cur_word="${COMP_WORDS[${COMP_CWORD}]}";

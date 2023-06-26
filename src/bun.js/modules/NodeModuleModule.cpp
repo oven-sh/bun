@@ -19,24 +19,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
     return JSC::JSValue::encode(JSC::jsUndefined());
   }
 
-  auto str = callFrame->uncheckedArgument(0).toStringOrNull(globalObject);
+  auto val = callFrame->uncheckedArgument(0).toWTFString(globalObject);
   RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-  WTF::String val = str->value(globalObject);
-  auto *meta = Zig::ImportMetaObject::create(globalObject, str);
   auto clientData = WebCore::clientData(vm);
-  auto requireFunction =
-      Zig::ImportMetaObject::createRequireFunction(vm, globalObject, val);
-  auto nameStr = jsCast<JSFunction *>(requireFunction)->name(vm);
-  JSC::JSBoundFunction *boundRequireFunction =
-      JSC::JSBoundFunction::create(vm, globalObject, requireFunction, meta,
-                                   ArgList(), 0, jsString(vm, nameStr));
-  boundRequireFunction->putDirect(
-      vm, clientData->builtinNames().resolvePublicName(),
-      requireFunction->getDirect(
-          vm, clientData->builtinNames().resolvePublicName()),
-      0);
-
-  RELEASE_AND_RETURN(scope, JSValue::encode(boundRequireFunction));
+  RELEASE_AND_RETURN(
+      scope, JSValue::encode(Zig::ImportMetaObject::createRequireFunction(
+                 vm, globalObject, val)));
 }
 extern "C" EncodedJSValue Resolver__nodeModulePathsForJS(JSGlobalObject *,
                                                          CallFrame *);
@@ -151,7 +139,8 @@ void generateNodeModuleModule(JSC::JSGlobalObject *globalObject,
       Resolver__nodeModulePathsForJS, ImplementationVisibility::Public));
 
   exportNames.append(JSC::Identifier::fromString(vm, "_cache"_s));
-  exportValues.append(JSC::constructEmptyObject(globalObject));
+  exportValues.append(
+      jsCast<Zig::GlobalObject *>(globalObject)->lazyRequireCacheObject());
 
   exportNames.append(JSC::Identifier::fromString(vm, "builtinModules"_s));
 

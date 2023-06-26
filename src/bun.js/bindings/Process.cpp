@@ -10,6 +10,7 @@
 #include "ImportMetaObject.h"
 #include <sys/stat.h>
 #include "ZigConsoleClient.h"
+#include <JavaScriptCore/GetterSetter.h>
 #pragma mark - Node.js Process
 
 namespace Zig {
@@ -787,6 +788,17 @@ void Process::finishCreation(JSC::VM& vm)
 
     this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "emitWarning"_s),
         1, Process_emitWarning, ImplementationVisibility::Public, NoIntrinsic, 0);
+
+    JSC::JSFunction* requireDotMainFunction = JSFunction::create(
+        vm,
+        moduleMainCodeGenerator(vm),
+        globalObject->globalScope());
+    // https://nodejs.org/api/process.html#processmainmodule
+    this->putDirect(
+        vm,
+        JSC::Identifier::fromString(vm, "mainModule"_s),
+        JSC::GetterSetter::create(vm, globalObject, requireDotMainFunction, JSValue()),
+        PropertyAttribute::Builtin | PropertyAttribute::Accessor | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
 }
 
 const JSC::ClassInfo Process::s_info = { "Process"_s, &Base::s_info, nullptr, nullptr,

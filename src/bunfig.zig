@@ -322,6 +322,12 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (_bun.get("frozenLockfile")) |frozen_lockfile| {
+                        if (frozen_lockfile.asBool()) |value| {
+                            install.frozen_lockfile = value;
+                        }
+                    }
+
                     if (_bun.get("lockfile")) |lockfile_expr| {
                         if (lockfile_expr.get("print")) |lockfile| {
                             try this.expect(lockfile, .e_string);

@@ -212,15 +212,8 @@ export function createRequireCache() {
   });
 }
 
-$sloppy;
-export function require(this: ImportMetaObject, name) {
-  var from = this?.path ?? arguments.callee?.path;
-
-  if (typeof name !== "string") {
-    throw new TypeError("require(name) must be a string");
-  }
-
-  return $internalRequire($resolveSync(name, from));
+export function require(this: string, name) {
+  return $internalRequire($resolveSync(name, $toString(this), false));
 }
 
 $getter;

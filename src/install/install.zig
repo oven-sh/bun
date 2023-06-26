@@ -5725,7 +5725,7 @@ pub const PackageManager = struct {
     const add_params = install_params_ ++ [_]ParamType{
         clap.parseParam("-d, --development                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
-        clap.parseParam("--save-exact                      Add the exact version instead of the ^range") catch unreachable,
+        clap.parseParam("--exact                      Add the exact version instead of the ^range") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of packages to install") catch unreachable,
     };
 
@@ -5856,7 +5856,7 @@ pub const PackageManager = struct {
             if (comptime subcommand == .add) {
                 cli.development = args.flag("--development");
                 cli.optional = args.flag("--optional");
-                cli.exact = args.flag("--save-exact");
+                cli.exact = args.flag("--exact");
             }
 
             // for (args.options("--omit")) |omit| {

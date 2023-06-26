@@ -314,7 +314,7 @@ it("should add exact version", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "--save-exact", "BaR"],
+    cmd: [bunExe(), "add", "--exact", "BaR"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",

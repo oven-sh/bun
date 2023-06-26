@@ -593,7 +593,10 @@ pub const VirtualMachine = struct {
     pub inline fn nodeFS(this: *VirtualMachine) *Node.NodeFS {
         return this.node_fs orelse brk: {
             this.node_fs = bun.default_allocator.create(Node.NodeFS) catch unreachable;
-            this.node_fs.?.* = Node.NodeFS{};
+            this.node_fs.?.* = Node.NodeFS{
+                // only used when standalone module graph is enabled
+                .vm = if (this.standalone_module_graph != null) this else null,
+            };
             break :brk this.node_fs.?;
         };
     }

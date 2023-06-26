@@ -952,6 +952,13 @@ pub const Blob = struct {
             switch (path_) {
                 .path => {
                     const slice = path_.path.slice();
+
+                    if (vm.standalone_module_graph) |graph| {
+                        if (graph.find(slice)) |file| {
+                            return file.blob(globalThis).dupe();
+                        }
+                    }
+
                     var cloned = (allocator.dupeZ(u8, slice) catch unreachable)[0..slice.len];
 
                     break :brk .{
@@ -2195,6 +2202,9 @@ pub const Blob = struct {
         cap: SizeType = 0,
         allocator: std.mem.Allocator,
 
+        /// Used by standalone module graph
+        stored_name: bun.PathString = bun.PathString.empty,
+
         pub fn init(bytes: []u8, allocator: std.mem.Allocator) ByteStore {
             return .{
                 .ptr = bytes.ptr,
@@ -2528,17 +2538,31 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSValue {
+        if (this.getFileName()) |path| {
+            var str = bun.String.create(path);
+            return str.toJS(globalThis);
+        }
+
+        return JSValue.undefined;
+    }
+
+    pub fn getFileName(
+        this: *const Blob,
+    ) ?[]const u8 {
         if (this.store) |store| {
             if (store.data == .file) {
                 if (store.data.file.pathlike == .path) {
-                    return ZigString.fromUTF8(store.data.file.pathlike.path.slice()).toValueGC(globalThis);
+                    return store.data.file.pathlike.path.slice();
                 }
 
                 // we shouldn't return Number here.
+            } else if (store.data == .bytes) {
+                if (store.data.bytes.stored_name.slice().len > 0)
+                    return store.data.bytes.stored_name.slice();
             }
         }
 
-        return JSC.JSValue.jsUndefined();
+        return null;
     }
 
     // TODO: Move this to a separate `File` object or BunFile
@@ -3468,6 +3492,14 @@ pub const AnyBlob = union(enum) {
     // InlineBlob: InlineBlob,
     InternalBlob: InternalBlob,
     WTFStringImpl: bun.WTF.StringImpl,
+
+    pub fn getFileName(this: *const AnyBlob) ?[]const u8 {
+        return switch (this.*) {
+            .Blob => this.Blob.getFileName(),
+            .WTFStringImpl => null,
+            .InternalBlob => null,
+        };
+    }
 
     pub inline fn fastSize(this: *const AnyBlob) Blob.SizeType {
         return switch (this.*) {

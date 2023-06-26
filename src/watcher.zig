@@ -519,7 +519,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
                 var changelist_array: [128]KEvent = std.mem.zeroes([128]KEvent);
                 var changelist = &changelist_array;
-                while (this.running) {
+                while (true) {
                     defer Output.flush();
 
                     var count_ = std.os.system.kevent(
@@ -576,10 +576,12 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     defer this.mutex.unlock();
                     if (this.running) {
                         this.ctx.onFileUpdate(watchevents, this.changed_filepaths[0..watchevents.len], this.watchlist);
+                    } else {
+                        break;
                     }
                 }
             } else if (Environment.isLinux) {
-                restart: while (this.running) {
+                restart: while (true) {
                     defer Output.flush();
 
                     var events = try INotify.read();
@@ -588,14 +590,14 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     // TODO: is this thread safe?
                     var remaining_events = events.len;
 
-                    var name_off: u8 = 0;
-                    var temp_name_list: [128]?[:0]u8 = undefined;
-                    var temp_name_off: u8 = 0;
-
                     const eventlist_index = this.watchlist.items(.eventlist_index);
 
                     while (remaining_events > 0) {
-                        const slice = events[0..@min(remaining_events, this.watch_events.len)];
+                        var name_off: u8 = 0;
+                        var temp_name_list: [128]?[:0]u8 = undefined;
+                        var temp_name_off: u8 = 0;
+
+                        const slice = events[0..@min(128, remaining_events, this.watch_events.len)];
                         var watchevents = this.watch_events[0..slice.len];
                         var watch_event_id: u32 = 0;
                         for (slice) |event| {
@@ -647,8 +649,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
                         defer this.mutex.unlock();
                         if (this.running) {
                             this.ctx.onFileUpdate(all_events[0 .. last_event_index + 1], this.changed_filepaths[0 .. name_off + 1], this.watchlist);
-                            remaining_events -= slice.len;
+                        } else {
+                            break;
                         }
+                        remaining_events -= slice.len;
                     }
                 }
             }

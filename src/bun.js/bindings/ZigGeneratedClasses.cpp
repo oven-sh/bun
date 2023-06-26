@@ -5565,6 +5565,12 @@ void JSFSWatcherPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* glob
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
+extern "C" bool FSWatcher__hasPendingActivity(void* ptr);
+bool JSFSWatcher::hasPendingActivity(void* ctx)
+{
+    return FSWatcher__hasPendingActivity(ctx);
+}
+
 JSFSWatcher::~JSFSWatcher()
 {
     if (m_ctx) {
@@ -5649,6 +5655,8 @@ void JSFSWatcher::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_listener);
+
+    visitor.addOpaqueRoot(thisObject->wrapped());
 }
 
 DEFINE_VISIT_CHILDREN(JSFSWatcher);
@@ -5659,6 +5667,8 @@ void JSFSWatcher::visitAdditionalChildren(Visitor& visitor)
     JSFSWatcher* thisObject = this;
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     visitor.append(thisObject->m_listener);
+
+    visitor.addOpaqueRoot(this->wrapped());
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSFSWatcher);

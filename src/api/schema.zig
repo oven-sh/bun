@@ -2901,6 +2901,9 @@ pub const Api = struct {
         /// global_bin_dir
         global_bin_dir: ?[]const u8 = null,
 
+        /// frozen_lockfile
+        frozen_lockfile: ?bool = null,
+
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);
 
@@ -2963,6 +2966,9 @@ pub const Api = struct {
                     },
                     18 => {
                         this.global_bin_dir = try reader.readValue([]const u8);
+                    },
+                    19 => {
+                        this.frozen_lockfile = try reader.readValue(bool);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -3044,6 +3050,10 @@ pub const Api = struct {
             if (this.global_bin_dir) |global_bin_dir| {
                 try writer.writeFieldID(18);
                 try writer.writeValue(@TypeOf(global_bin_dir), global_bin_dir);
+            }
+            if (this.frozen_lockfile) |frozen_lockfile| {
+                try writer.writeFieldID(19);
+                try writer.writeInt(@as(u8, @intFromBool(frozen_lockfile)));
             }
             try writer.endMessage();
         }

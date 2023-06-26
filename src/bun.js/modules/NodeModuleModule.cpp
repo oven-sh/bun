@@ -142,10 +142,10 @@ void generateNodeModuleModule(JSC::JSGlobalObject *globalObject,
   exportValues.append(
       jsCast<Zig::GlobalObject *>(globalObject)->lazyRequireCacheObject());
 
-  exportNames.append(JSC::Identifier::fromString(vm, "builtinModules"_s));
+  exportNames.append(JSC::Identifier::fromString(vm, "prototype"_s));
+  exportValues.append(constructEmptyObject(globalObject));
 
-  exportNames.append(JSC::Identifier::fromString(vm, "globalPaths"_s));
-  exportValues.append(JSC::constructEmptyArray(globalObject, 0));
+  exportNames.append(JSC::Identifier::fromString(vm, "builtinModules"_s));
 
   JSC::JSArray *builtinModules = JSC::JSArray::create(
       vm,
@@ -167,5 +167,8 @@ void generateNodeModuleModule(JSC::JSGlobalObject *globalObject,
   builtinModules->putDirectIndex(globalObject, 6,
                                  JSC::jsString(vm, String("bun:sqlite"_s)));
   exportValues.append(builtinModules);
+
+  exportNames.append(JSC::Identifier::fromString(vm, "globalPaths"_s));
+  exportValues.append(JSC::constructEmptyArray(globalObject, 0));
 }
 } // namespace Zig

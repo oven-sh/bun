@@ -6,7 +6,7 @@ import { EventEmitter } from "node:events";
 // Hardcoded module "node:fs"
 var { direct, isPromise, isCallable } = globalThis[Symbol.for("Bun.lazy")]("primordials");
 import promises from "node:fs/promises";
-export { promises } from "node:fs/promises";
+export { default as promises } from "node:fs/promises";
 import * as Stream from "node:stream";
 
 var fs = Bun.fs();

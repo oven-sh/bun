@@ -1,5 +1,6 @@
 import {EventEmitter} from "node:events";
 import promises2 from "node:fs/promises";
+import {default as default2} from "node:fs/promises";
 import * as Stream from "node:stream";
 var callbackify = function(fsFunction, args) {
   try {
@@ -708,6 +709,7 @@ export {
   readFileSync,
   readFile,
   read,
+  default2 as promises,
   openSync,
   open,
   mkdtempSync,

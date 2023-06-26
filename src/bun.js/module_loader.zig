@@ -1225,6 +1225,25 @@ pub const ModuleLoader = struct {
                     return resolved_source;
                 }
 
+                // Pass along package.json type "module" if set.
+                const tag = brk: {
+                    if (parse_result.ast.exports_kind == .cjs and parse_result.source.path.isFile()) {
+                        var actual_package_json: *PackageJSON = package_json orelse brk2: {
+                            // this should already be cached virtually always so it's fine to do this
+                            var dir_info = (jsc_vm.bundler.resolver.readDirInfo(parse_result.source.path.name.dir) catch null) orelse
+                                break :brk .javascript;
+
+                            break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;
+                        } orelse break :brk .javascript;
+
+                        if (actual_package_json.module_type == .esm) {
+                            break :brk ResolvedSource.Tag.package_json_type_module;
+                        }
+                    }
+
+                    break :brk ResolvedSource.Tag.javascript;
+                };
+
                 return .{
                     .allocator = null,
                     .source_code = bun.String.createLatin1(printer.ctx.getWritten()),
@@ -1245,6 +1264,8 @@ pub const ModuleLoader = struct {
 
                     // having JSC own the memory causes crashes
                     .hash = 0,
+
+                    .tag = tag,
                 };
             },
             // provideFetch() should be called

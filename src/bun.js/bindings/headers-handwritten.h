@@ -72,6 +72,7 @@ typedef struct ResolvedSource {
     void* allocator;
     uint64_t tag;
 } ResolvedSource;
+static const uint64_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
     ZigErrorType err;

@@ -3119,10 +3119,18 @@ pub const Resolver = struct {
 
         const in_str = argument.toBunString(globalThis);
         var r = &globalThis.bunVM().bundler.resolver;
-        return nodeModulePathsForJS(r, in_str, globalThis);
+        return nodeModulePathsJSValue(r, in_str, globalThis);
     }
 
-    pub fn nodeModulePathsForJS(
+    pub export fn Resolver__propForRequireMainPaths(globalThis: *bun.JSC.JSGlobalObject) callconv(.C) bun.JSC.JSValue {
+        bun.JSC.markBinding(@src());
+
+        const in_str = bun.String.create(".");
+        var r = &globalThis.bunVM().bundler.resolver;
+        return nodeModulePathsJSValue(r, in_str, globalThis);
+    }
+
+    pub fn nodeModulePathsJSValue(
         r: *ThisResolver,
         in_str: bun.String,
         globalObject: *bun.JSC.JSGlobalObject,
@@ -3147,20 +3155,40 @@ pub const Resolver = struct {
 
             while (true) {
                 const path_without_trailing_slash = strings.withoutTrailingSlash(dir_info.abs_path);
-                if (dir_info.hasNodeModules()) {
-                    list.append(
-                        bun.String.create(
-                            bun.strings.concat(
-                                stack_fallback_allocator.get(),
-                                &[_]string{
-                                    path_without_trailing_slash,
-                                    "/node_modules",
-                                },
-                            ) catch unreachable,
-                        ),
-                    ) catch unreachable;
-                }
+                const path_parts = brk: {
+                    if (path_without_trailing_slash.len == 1 and path_without_trailing_slash[0] == '/') {
+                        break :brk [2]string{ "", "/node_modules" };
+                    }
+
+                    break :brk [2]string{ path_without_trailing_slash, "/node_modules" };
+                };
+                list.append(
+                    bun.String.create(
+                        bun.strings.concat(stack_fallback_allocator.get(), &path_parts) catch unreachable,
+                    ),
+                ) catch unreachable;
                 dir_info = (r.readDirInfo(std.fs.path.dirname(path_without_trailing_slash) orelse break) catch null) orelse break;
+            }
+        } else {
+            // does not exist
+            const full_path = std.fs.path.resolve(r.allocator, &[1][]const u8{str}) catch unreachable;
+            var path = full_path;
+            while (true) {
+                const path_without_trailing_slash = strings.withoutTrailingSlash(path);
+
+                list.append(
+                    bun.String.create(
+                        bun.strings.concat(
+                            stack_fallback_allocator.get(),
+                            &[_]string{
+                                path_without_trailing_slash,
+                                "/node_modules",
+                            },
+                        ) catch unreachable,
+                    ),
+                ) catch unreachable;
+
+                path = path[0 .. strings.lastIndexOfChar(path, '/') orelse break];
             }
         }
 
@@ -3956,5 +3984,6 @@ pub const GlobalCache = enum {
 comptime {
     if (!bun.JSC.is_bindgen) {
         _ = Resolver.Resolver__nodeModulePathsForJS;
+        _ = Resolver.Resolver__propForRequireMainPaths;
     }
 }

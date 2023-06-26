@@ -5838,7 +5838,7 @@ pub const PackageManager = struct {
             if (comptime subcommand == .add) {
                 cli.development = args.flag("--development");
                 cli.optional = args.flag("--optional");
-                cli.exact = args.flag("--exact");
+                cli.exact = args.flag("--save-exact");
             }
 
             // for (args.options("--omit")) |omit| {

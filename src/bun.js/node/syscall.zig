@@ -327,7 +327,7 @@ pub fn writev(fd: os.fd_t, buffers: []std.os.iovec) Maybe(usize) {
         return Maybe(usize){ .result = @intCast(usize, rc) };
     } else {
         while (true) {
-            const rc = writev_sym(fd, @ptrCast([*]std.os.iovec_const, buffers.ptr), @intCast(i32, buffers.len));
+            const rc = writev_sym(fd, @ptrCast([*]std.os.iovec_const, buffers.ptr), buffers.len);
             if (comptime Environment.allow_assert)
                 log("writev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -355,7 +355,7 @@ pub fn pwritev(fd: os.fd_t, buffers: []std.os.iovec, position: isize) Maybe(usiz
         return Maybe(usize){ .result = @intCast(usize, rc) };
     } else {
         while (true) {
-            const rc = pwritev_sym(fd, @ptrCast([*]std.os.iovec_const, buffers.ptr), @intCast(i32, buffers.len), position);
+            const rc = pwritev_sym(fd, @ptrCast([*]std.os.iovec_const, buffers.ptr), buffers.len, position);
             if (comptime Environment.allow_assert)
                 log("pwritev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -383,7 +383,7 @@ pub fn readv(fd: os.fd_t, buffers: []std.os.iovec) Maybe(usize) {
         return Maybe(usize){ .result = @intCast(usize, rc) };
     } else {
         while (true) {
-            const rc = readv_sym(fd, buffers.ptr, @intCast(i32, buffers.len));
+            const rc = readv_sym(fd, buffers.ptr, buffers.len);
             if (comptime Environment.allow_assert)
                 log("readv({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -411,7 +411,7 @@ pub fn preadv(fd: os.fd_t, buffers: []std.os.iovec, position: isize) Maybe(usize
         return Maybe(usize){ .result = @intCast(usize, rc) };
     } else {
         while (true) {
-            const rc = preadv_sym(fd, buffers.ptr, @intCast(i32, buffers.len), position);
+            const rc = preadv_sym(fd, buffers.ptr, buffers.len, position);
             if (comptime Environment.allow_assert)
                 log("preadv({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 

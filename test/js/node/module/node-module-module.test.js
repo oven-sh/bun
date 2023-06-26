@@ -1,7 +1,4 @@
 import { expect, test } from "bun:test";
-import { bunExe } from "harness";
-import { tmpdir } from "os";
-import { mkdirSync, writeFileSync, rmdirSync } from "fs";
 import { _nodeModulePaths } from "module";
 
 test("module.globalPaths exists", () => {

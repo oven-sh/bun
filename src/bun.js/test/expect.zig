@@ -73,32 +73,25 @@ pub const Expect = struct {
     }
 
     pub fn getResolves(this: *Expect, thisValue: JSValue, globalThis: *JSGlobalObject) callconv(.C) JSValue {
-        switch (this.flags.promise) {
+        this.flags.promise = switch (this.flags.promise) {
+            .resolves, .none => .resolves,
             .rejects => {
                 globalThis.throw("Cannot chain .resolves() after .rejects()", .{});
                 return .zero;
             },
-            .resolves => {},
-            .none => {
-                this.flags.promise = .resolves;
-            },
-        }
+        };
+
         return thisValue;
     }
 
     pub fn getRejects(this: *Expect, thisValue: JSValue, globalThis: *JSGlobalObject) callconv(.C) JSValue {
-        switch (this.flags.promise) {
-            .rejects => {
-                this.flags.promise = .rejects;
-            },
+        this.flags.promise = switch (this.flags.promise) {
+            .none, .rejects => .rejects,
             .resolves => {
                 globalThis.throw("Cannot chain .rejects() after .resolves()", .{});
                 return .zero;
             },
-            .none => {
-                this.flags.promise = .resolves;
-            },
-        }
+        };
 
         return thisValue;
     }

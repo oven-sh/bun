@@ -6,6 +6,28 @@
 var { isBun, test, describe, expect, jest, vi, mock, bunTest, spyOn } = require("./test-interop.js")();
 
 describe("expect()", () => {
+  test("rejects", async () => {
+    await expect(Promise.reject(1)).rejects.toBe(1);
+
+    // Different task
+    await expect(
+      new Promise((_, reject) => {
+        setTimeout(() => reject(1), 0);
+      }),
+    ).rejects.toBe(1);
+  });
+
+  test("resolves", async () => {
+    await expect(Promise.resolve(1)).resolves.toBe(1);
+
+    // Different task
+    await expect(
+      new Promise(resolve => {
+        setTimeout(() => resolve(1), 0);
+      }),
+    ).resolves.toBe(1);
+  });
+
   test("can call without an argument", () => {
     expect().toBe(undefined);
   });

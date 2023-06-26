@@ -25,9 +25,14 @@ it("import.meta.main", () => {
 
 it("import.meta.resolveSync", () => {
   expect(import.meta.resolveSync("./" + import.meta.file, import.meta.path)).toBe(path);
+});
+
+it("Module.createRequire", () => {
   const require = Module.createRequire(import.meta.path);
   expect(require.resolve(import.meta.path)).toBe(path);
   expect(require.resolve("./" + import.meta.file)).toBe(path);
+  const { resolve } = require;
+  expect(resolve("./" + import.meta.file)).toBe(path);
 
   // check it works with URL objects
   expect(Module.createRequire(new URL(import.meta.url)).resolve(import.meta.path)).toBe(import.meta.path);
@@ -68,8 +73,11 @@ it("import.meta.require (json)", () => {
 });
 
 it("const f = require;require(json)", () => {
+  function capture(f) {
+    return f.length;
+  }
   const f = require;
-  console.log(f);
+  capture(f);
   expect(f("./require-json.json").hello).toBe(sync.hello);
 });
 
@@ -107,7 +115,6 @@ it("Module.createRequire(file://url).resolve(file://url)", () => {
   const createdRequire = Module.createRequire(import.meta.url);
   const result1 = createdRequire.resolve("./require-json.json");
   const result2 = createdRequire.resolve("file://./require-json.json");
-
   expect(result1).toBe(expected);
   expect(result2).toBe(expected);
 });

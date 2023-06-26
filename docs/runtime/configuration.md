@@ -129,6 +129,9 @@ peer = false
 # equivalent to `--production` flag
 production = false
 
+# equivalent to `--frozen-lockfile` flag
+frozenLockfile = false
+
 # equivalent to `--dry-run` flag
 dryRun = false
 ```

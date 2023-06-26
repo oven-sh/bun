@@ -4,6 +4,7 @@ const bun = @import("root").bun;
 const Fs = @import("../../fs.zig");
 const Path = @import("../../resolver/resolve_path.zig");
 const Encoder = JSC.WebCore.Encoder;
+const Mutex = @import("../../lock.zig").Lock;
 
 const FSEvents = @import("./fs_events.zig");
 
@@ -30,17 +31,28 @@ pub const FSWatcher = struct {
 
     onAccept: std.ArrayHashMapUnmanaged(FSWatcher.Watcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
     ctx: *VirtualMachine,
-    js_watcher: ?*JSObject = null,
-    watcher_instance: ?*FSWatcher.Watcher = null,
     verbose: bool = false,
     file_paths: bun.BabyList(string) = .{},
     entry_path: ?string = null,
     entry_dir: string = "",
     last_change_event: ChangeEvent = .{},
 
-    pub fn toJS(this: *FSWatcher) JSC.JSValue {
-        return if (this.js_watcher) |js| js.js_this else JSC.JSValue.jsUndefined();
-    }
+    // JSObject
+    mutex: Mutex,
+    signal: ?*JSC.AbortSignal,
+    persistent: bool,
+    default_watcher: ?*FSWatcher.Watcher,
+    fsevents_watcher: ?*FSEvents.FSEventsWatcher,
+    poll_ref: JSC.PollRef = .{},
+    globalThis: *JSC.JSGlobalObject,
+    js_this: JSC.JSValue,
+    encoding: JSC.Node.Encoding,
+    // user can call close and pre-detach so we need to track this
+    closed: bool,
+    // counts pending tasks so we only deinit after all tasks are done
+    task_count: u32,
+    has_pending_activity: std.atomic.Atomic(bool),
+    pub usingnamespace JSC.Codegen.JSFSWatcher;
 
     pub fn eventLoop(this: FSWatcher) *EventLoop {
         return this.ctx.eventLoop();
@@ -51,6 +63,9 @@ pub const FSWatcher = struct {
     }
 
     pub fn deinit(this: *FSWatcher) void {
+        // stop all managers and signals
+        this.detach();
+
         while (this.file_paths.popOrNull()) |file_path| {
             bun.default_allocator.destroy(file_path);
         }
@@ -107,41 +122,47 @@ pub const FSWatcher = struct {
         }
 
         pub fn run(this: *FSWatchTask) void {
-            // this runs on JS Context
-            if (this.ctx.js_watcher) |js_watcher| {
-                for (this.entries[0..this.count]) |entry| {
-                    switch (entry.event_type) {
-                        .rename => {
-                            js_watcher.emit(entry.file_path, "rename");
-                        },
-                        .change => {
-                            js_watcher.emit(entry.file_path, "change");
-                        },
-                        .@"error" => {
-                            // file_path is the error message in this case
-                            js_watcher.emitError(entry.file_path);
-                        },
-                        .abort => {
-                            js_watcher.emitIfAborted();
-                        },
-                    }
+            // this runs on JS Context Thread
+
+            for (this.entries[0..this.count]) |entry| {
+                switch (entry.event_type) {
+                    .rename => {
+                        this.ctx.emit(entry.file_path, "rename");
+                    },
+                    .change => {
+                        this.ctx.emit(entry.file_path, "change");
+                    },
+                    .@"error" => {
+                        // file_path is the error message in this case
+                        this.ctx.emitError(entry.file_path);
+                    },
+                    .abort => {
+                        this.ctx.emitIfAborted();
+                    },
                 }
             }
+
+            this.ctx.unrefTask();
         }
 
         pub fn enqueue(this: *FSWatchTask) void {
             if (this.count == 0)
                 return;
 
-            var that = bun.default_allocator.create(FSWatchTask) catch unreachable;
+            // if false is closed or detached (can still contain valid refs but will not create a new one)
+            if (this.ctx.refTask()) {
+                var that = bun.default_allocator.create(FSWatchTask) catch unreachable;
 
-            that.* = this.*;
-            this.count = 0;
-            that.concurrent_task.task = JSC.Task.init(that);
-            this.ctx.enqueueTaskConcurrent(&that.concurrent_task);
+                that.* = this.*;
+                this.count = 0;
+                that.concurrent_task.task = JSC.Task.init(that);
+                this.ctx.enqueueTaskConcurrent(&that.concurrent_task);
+                return;
+            }
+            // closed or detached so just cleanEntries
+            this.cleanEntries();
         }
-
-        pub fn deinit(this: *FSWatchTask) void {
+        pub fn cleanEntries(this: *FSWatchTask) void {
             while (this.count > 0) {
                 this.count -= 1;
                 switch (this.entries[this.count].free_type) {
@@ -150,6 +171,10 @@ pub const FSWatcher = struct {
                     else => {},
                 }
             }
+        }
+
+        pub fn deinit(this: *FSWatchTask) void {
+            this.cleanEntries();
             bun.default_allocator.destroy(this);
         }
     };
@@ -275,7 +300,7 @@ pub const FSWatcher = struct {
         const kinds = slice.items(.kind);
         var _on_file_update_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-        var ctx = this.watcher_instance.?;
+        var ctx = this.default_watcher.?;
         defer ctx.flushEvictions();
         defer Output.flush();
 
@@ -540,241 +565,225 @@ pub const FSWatcher = struct {
 
         pub fn createFSWatcher(this: Arguments) !JSC.JSValue {
             const obj = try FSWatcher.init(this);
-            return obj.toJS();
+            if (obj.js_this != .zero) {
+                return obj.js_this;
+            }
+            return JSC.JSValue.jsUndefined();
         }
     };
 
-    pub const JSObject = struct {
-        signal: ?*JSC.AbortSignal,
-        persistent: bool,
-        manager: ?*FSWatcher.Watcher,
-        fsevents_watcher: ?*FSEvents.FSEventsWatcher,
-        poll_ref: JSC.PollRef = .{},
-        globalThis: ?*JSC.JSGlobalObject,
-        js_this: JSC.JSValue,
-        encoding: JSC.Node.Encoding,
-        closed: bool,
-
-        pub usingnamespace JSC.Codegen.JSFSWatcher;
-
-        pub fn getFSWatcher(this: *JSObject) *FSWatcher {
-            if (this.manager) |manager| return manager.ctx;
-            if (this.fsevents_watcher) |manager| return bun.cast(*FSWatcher, manager.ctx.?);
-
-            @panic("No context attached to JSFSWatcher");
+    pub fn initJS(this: *FSWatcher, listener: JSC.JSValue) void {
+        if (this.persistent) {
+            this.poll_ref.ref(this.ctx);
         }
 
-        pub fn init(globalThis: *JSC.JSGlobalObject, manager: ?*FSWatcher.Watcher, fsevents_watcher: ?*FSEvents.FSEventsWatcher, signal: ?*JSC.AbortSignal, listener: JSC.JSValue, persistent: bool, encoding: JSC.Node.Encoding) !*JSObject {
-            var obj = try globalThis.allocator().create(JSObject);
-            obj.* = .{
-                .signal = null,
-                .persistent = persistent,
-                .manager = manager,
-                .fsevents_watcher = fsevents_watcher,
-                .globalThis = globalThis,
-                .js_this = .zero,
-                .encoding = encoding,
-                .closed = false,
-            };
-            const instance = obj.getFSWatcher();
+        const js_this = FSWatcher.toJS(this, this.globalThis);
+        js_this.ensureStillAlive();
+        this.js_this = js_this;
+        FSWatcher.listenerSetCached(js_this, this.globalThis, listener);
 
-            if (persistent) {
-                obj.poll_ref.ref(instance.ctx);
-            }
-
-            var js_this = JSObject.toJS(obj, globalThis);
-            JSObject.listenerSetCached(js_this, globalThis, listener);
-            obj.js_this = js_this;
-            obj.js_this.protect();
-
-            if (signal) |s| {
-
-                // already aborted?
-                if (s.aborted()) {
-                    obj.signal = s.ref();
-                    // abort next tick
-                    var current_task: FSWatchTask = .{
-                        .ctx = instance,
-                    };
-                    current_task.append("", .abort, .none);
-                    current_task.enqueue();
-                } else {
-                    // watch for abortion
-                    obj.signal = s.ref().listen(JSObject, obj, JSObject.emitAbort);
-                }
-            }
-            return obj;
-        }
-
-        pub fn emitIfAborted(this: *JSObject) void {
-            if (this.signal) |s| {
-                if (s.aborted()) {
-                    const err = s.abortReason();
-                    this.emitAbort(err);
-                }
+        if (this.signal) |s| {
+            // already aborted?
+            if (s.aborted()) {
+                // safely abort next tick
+                var current_task: FSWatchTask = .{
+                    .ctx = this,
+                };
+                current_task.append("", .abort, .none);
+                current_task.enqueue();
+            } else {
+                // watch for abortion
+                this.signal = s.listen(FSWatcher, this, FSWatcher.emitAbort);
             }
         }
+    }
 
-        pub fn emitAbort(this: *JSObject, err: JSC.JSValue) void {
-            if (this.closed) return;
-            defer this.close(true);
+    pub fn emitIfAborted(this: *FSWatcher) void {
+        if (this.signal) |s| {
+            if (s.aborted()) {
+                const err = s.abortReason();
+                this.emitAbort(err);
+            }
+        }
+    }
 
-            err.ensureStillAlive();
+    pub fn emitAbort(this: *FSWatcher, err: JSC.JSValue) void {
+        if (this.closed) return;
+        defer this.close();
 
-            if (this.globalThis) |globalThis| {
-                if (this.js_this != .zero) {
-                    if (JSObject.listenerGetCached(this.js_this)) |listener| {
-                        var args = [_]JSC.JSValue{
-                            JSC.ZigString.static("error").toValue(globalThis),
-                            if (err.isEmptyOrUndefinedOrNull()) JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, globalThis) else err,
-                        };
-                        _ = listener.callWithGlobalThis(
-                            globalThis,
-                            &args,
-                        );
+        err.ensureStillAlive();
+        if (this.js_this != .zero) {
+            const js_this = this.js_this;
+            js_this.ensureStillAlive();
+            if (FSWatcher.listenerGetCached(js_this)) |listener| {
+                listener.ensureStillAlive();
+                var args = [_]JSC.JSValue{
+                    JSC.ZigString.static("error").toValue(this.globalThis),
+                    if (err.isEmptyOrUndefinedOrNull()) JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.globalThis) else err,
+                };
+                _ = listener.callWithGlobalThis(
+                    this.globalThis,
+                    &args,
+                );
+            }
+        }
+    }
+    pub fn emitError(this: *FSWatcher, err: string) void {
+        if (this.closed) return;
+        defer this.close();
+
+        if (this.js_this != .zero) {
+            const js_this = this.js_this;
+            js_this.ensureStillAlive();
+            if (FSWatcher.listenerGetCached(js_this)) |listener| {
+                listener.ensureStillAlive();
+                var args = [_]JSC.JSValue{
+                    JSC.ZigString.static("error").toValue(this.globalThis),
+                    JSC.ZigString.fromUTF8(err).toErrorInstance(this.globalThis),
+                };
+                _ = listener.callWithGlobalThis(
+                    this.globalThis,
+                    &args,
+                );
+            }
+        }
+    }
+
+    pub fn emit(this: *FSWatcher, file_name: string, comptime eventType: string) void {
+        if (this.js_this != .zero) {
+            const js_this = this.js_this;
+            js_this.ensureStillAlive();
+            if (FSWatcher.listenerGetCached(js_this)) |listener| {
+                listener.ensureStillAlive();
+                var filename: JSC.JSValue = JSC.JSValue.jsUndefined();
+                if (file_name.len > 0) {
+                    if (this.encoding == .buffer)
+                        filename = JSC.ArrayBuffer.createBuffer(this.globalThis, file_name)
+                    else if (this.encoding == .utf8) {
+                        filename = JSC.ZigString.fromUTF8(file_name).toValueGC(this.globalThis);
+                    } else {
+                        // convert to desired encoding
+                        filename = Encoder.toStringAtRuntime(file_name.ptr, file_name.len, this.globalThis, this.encoding);
                     }
                 }
+                var args = [_]JSC.JSValue{
+                    JSC.ZigString.static(eventType).toValue(this.globalThis),
+                    filename,
+                };
+                _ = listener.callWithGlobalThis(
+                    this.globalThis,
+                    &args,
+                );
             }
         }
-        pub fn emitError(this: *JSObject, err: string) void {
-            if (this.closed) return;
-            defer this.close(true);
+    }
 
-            if (this.globalThis) |globalThis| {
-                if (this.js_this != .zero) {
-                    if (JSObject.listenerGetCached(this.js_this)) |listener| {
-                        var args = [_]JSC.JSValue{
-                            JSC.ZigString.static("error").toValue(globalThis),
-                            JSC.ZigString.fromUTF8(err).toErrorInstance(globalThis),
-                        };
-                        _ = listener.callWithGlobalThis(
-                            globalThis,
-                            &args,
-                        );
-                    }
-                }
+    pub fn doRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        if (!this.closed and !this.persistent) {
+            this.persistent = true;
+            this.poll_ref.ref(this.ctx);
+        }
+        return JSC.JSValue.jsUndefined();
+    }
+
+    pub fn doUnref(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        if (this.persistent) {
+            this.persistent = false;
+            this.poll_ref.unref(this.ctx);
+        }
+        return JSC.JSValue.jsUndefined();
+    }
+
+    pub fn hasRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(this.persistent);
+    }
+
+    // this can be called from Watcher Thread or JS Context Thread
+    pub fn refTask(this: *FSWatcher) bool {
+        this.mutex.lock();
+        defer this.mutex.unlock();
+        // stop new references
+        if (this.closed) return false;
+        this.task_count += 1;
+        return true;
+    }
+
+    pub fn hasPendingActivity(this: *FSWatcher) callconv(.C) bool {
+        @fence(.Acquire);
+        return this.has_pending_activity.load(.Acquire);
+    }
+    // only called from Main Thread
+    pub fn updateHasPendingActivity(this: *FSWatcher) void {
+        @fence(.Release);
+        this.has_pending_activity.store(false, .Release);
+    }
+
+    // unref is always called on main JS Context Thread
+    pub fn unrefTask(this: *FSWatcher) void {
+        this.mutex.lock();
+        defer this.mutex.unlock();
+        this.task_count -= 1;
+        if (this.closed and this.task_count == 0) {
+            this.updateHasPendingActivity();
+        }
+    }
+
+    pub fn close(
+        this: *FSWatcher,
+    ) void {
+        this.mutex.lock();
+        if (!this.closed) {
+            this.closed = true;
+
+            // emit should only be called unlocked
+            this.mutex.unlock();
+
+            this.emit("", "close");
+            // we immediately detach here
+            this.detach();
+
+            // no need to lock again, because ref checks closed and unref is only called on main thread
+            if (this.task_count == 0) {
+                this.updateHasPendingActivity();
             }
+        } else {
+            this.mutex.unlock();
+        }
+    }
+
+    // this can be called multiple times
+    pub fn detach(this: *FSWatcher) void {
+        if (this.persistent) {
+            this.persistent = false;
+            this.poll_ref.unref(this.ctx);
         }
 
-        pub fn emit(this: *JSObject, file_name: string, comptime eventType: string) void {
-            if (this.globalThis) |globalThis| {
-                if (this.js_this != .zero) {
-                    if (JSObject.listenerGetCached(this.js_this)) |listener| {
-                        var filename: JSC.JSValue = JSC.JSValue.jsUndefined();
-                        if (file_name.len > 0) {
-                            if (this.encoding == .buffer)
-                                filename = JSC.ArrayBuffer.createBuffer(globalThis, file_name)
-                            else if (this.encoding == .utf8) {
-                                filename = JSC.ZigString.fromUTF8(file_name).toValueGC(globalThis);
-                            } else {
-                                // convert to desired encoding
-                                filename = Encoder.toStringAtRuntime(file_name.ptr, file_name.len, globalThis, this.encoding);
-                            }
-                        }
-                        var args = [_]JSC.JSValue{
-                            JSC.ZigString.static(eventType).toValue(globalThis),
-                            filename,
-                        };
-                        _ = listener.callWithGlobalThis(
-                            globalThis,
-                            &args,
-                        );
-                    }
-                }
-            }
+        if (this.signal) |signal| {
+            this.signal = null;
+            signal.detach(this);
         }
 
-        pub fn ref(this: *JSObject) void {
-            if (this.closed) return;
-
-            if (!this.persistent) {
-                this.persistent = true;
-                this.poll_ref.ref(this.getFSWatcher().ctx);
-            }
+        if (this.default_watcher) |default_watcher| {
+            this.default_watcher = null;
+            default_watcher.deinit(true);
         }
 
-        pub fn doRef(this: *JSObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-            this.ref();
-            return JSC.JSValue.jsUndefined();
+        if (this.fsevents_watcher) |fsevents_watcher| {
+            this.fsevents_watcher = null;
+            fsevents_watcher.deinit();
         }
 
-        pub fn unref(this: *JSObject) void {
-            if (this.persistent) {
-                this.persistent = false;
-                this.poll_ref.unref(this.getFSWatcher().ctx);
-            }
-        }
+        this.js_this = .zero;
+    }
 
-        pub fn doUnref(this: *JSObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-            this.unref();
-            return JSC.JSValue.jsUndefined();
-        }
+    pub fn doClose(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        this.close();
+        return JSC.JSValue.jsUndefined();
+    }
 
-        pub fn hasRef(this: *JSObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(this.persistent);
-        }
-
-        pub fn close(
-            this: *JSObject,
-            emitEvent: bool,
-        ) void {
-            if (!this.closed) {
-                if (this.signal) |signal| {
-                    this.signal = null;
-                    signal.detach(this);
-                }
-                this.closed = true;
-                if (emitEvent) {
-                    this.emit("", "close");
-                }
-
-                this.detach();
-            }
-        }
-
-        pub fn detach(this: *JSObject) void {
-            this.unref();
-
-            if (this.js_this != .zero) {
-                this.js_this.unprotect();
-                this.js_this = .zero;
-            }
-
-            this.globalThis = null;
-
-            if (this.signal) |signal| {
-                this.signal = null;
-                signal.detach(this);
-            }
-            if (this.manager) |manager| {
-                var ctx = manager.ctx;
-                this.manager = null;
-                ctx.js_watcher = null;
-                ctx.deinit();
-                manager.deinit(true);
-            }
-
-            if (this.fsevents_watcher) |manager| {
-                var ctx = bun.cast(*FSWatcher, manager.ctx.?);
-                ctx.js_watcher = null;
-                ctx.deinit();
-                manager.deinit();
-            }
-        }
-
-        pub fn doClose(this: *JSObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-            this.close(true);
-            return JSC.JSValue.jsUndefined();
-        }
-
-        pub fn finalize(this: *JSObject) callconv(.C) void {
-            if (!this.closed) {
-                this.detach();
-            }
-
-            bun.default_allocator.destroy(this);
-        }
-    };
+    pub fn finalize(this: *FSWatcher) callconv(.C) void {
+        this.deinit();
+    }
 
     const PathResult = struct {
         fd: StoredFileDescriptorType = 0,
@@ -837,6 +846,17 @@ pub const FSWatcher = struct {
         const vm = args.global_this.bunVM();
         ctx.* = .{
             .ctx = vm,
+            .mutex = Mutex.init(),
+            .signal = if (args.signal) |s| s.ref() else null,
+            .persistent = args.persistent,
+            .default_watcher = null,
+            .fsevents_watcher = null,
+            .globalThis = args.global_this,
+            .js_this = .zero,
+            .encoding = args.encoding,
+            .closed = false,
+            .task_count = 0,
+            .has_pending_activity = std.atomic.Atomic(bool).init(true),
             .verbose = args.verbose,
             .file_paths = bun.BabyList(string).initCapacity(bun.default_allocator, 1) catch |err| {
                 ctx.deinit();
@@ -850,22 +870,17 @@ pub const FSWatcher = struct {
                 ctx.entry_path = dir_path_clone;
                 ctx.entry_dir = dir_path_clone;
 
-                var fsevents_watcher = FSEvents.watch(dir_path_clone, args.recursive, onFSEventUpdate, bun.cast(*anyopaque, ctx)) catch |err| {
+                ctx.fsevents_watcher = FSEvents.watch(dir_path_clone, args.recursive, onFSEventUpdate, bun.cast(*anyopaque, ctx)) catch |err| {
                     ctx.deinit();
                     return err;
                 };
 
-                ctx.js_watcher = JSObject.init(args.global_this, null, fsevents_watcher, args.signal, args.listener, args.persistent, args.encoding) catch |err| {
-                    ctx.deinit();
-                    fsevents_watcher.deinit();
-                    return err;
-                };
-
+                ctx.initJS(args.listener);
                 return ctx;
             }
         }
 
-        var fs_watcher = FSWatcher.Watcher.init(
+        var default_watcher = FSWatcher.Watcher.init(
             ctx,
             vm.bundler.fs,
             bun.default_allocator,
@@ -874,7 +889,7 @@ pub const FSWatcher = struct {
             return err;
         };
 
-        ctx.watcher_instance = fs_watcher;
+        ctx.default_watcher = default_watcher;
 
         if (fs_type.is_file) {
             var file_path_clone = bun.default_allocator.dupeZ(u8, file_path) catch unreachable;
@@ -882,32 +897,23 @@ pub const FSWatcher = struct {
             ctx.entry_path = file_path_clone;
             ctx.entry_dir = std.fs.path.dirname(file_path_clone) orelse file_path_clone;
 
-            fs_watcher.addFile(fs_type.fd, file_path_clone, FSWatcher.Watcher.getHash(file_path), options.Loader.file, 0, null, false) catch |err| {
+            default_watcher.addFile(fs_type.fd, file_path_clone, FSWatcher.Watcher.getHash(file_path), options.Loader.file, 0, null, false) catch |err| {
                 ctx.deinit();
-                fs_watcher.deinit(true);
                 return err;
             };
         } else {
-            addDirectory(ctx, fs_watcher, fs_type.fd, file_path, args.recursive, &buf, true) catch |err| {
+            addDirectory(ctx, default_watcher, fs_type.fd, file_path, args.recursive, &buf, true) catch |err| {
                 ctx.deinit();
-                fs_watcher.deinit(true);
                 return err;
             };
         }
 
-        fs_watcher.start() catch |err| {
+        default_watcher.start() catch |err| {
             ctx.deinit();
-
-            fs_watcher.deinit(true);
             return err;
         };
 
-        ctx.js_watcher = JSObject.init(args.global_this, fs_watcher, null, args.signal, args.listener, args.persistent, args.encoding) catch |err| {
-            ctx.deinit();
-            fs_watcher.deinit(true);
-            return err;
-        };
-
+        ctx.initJS(args.listener);
         return ctx;
     }
 };

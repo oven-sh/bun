@@ -393,7 +393,8 @@ pub const Element = opaque {
     extern fn lol_html_element_is_removed(element: *const Element) bool;
     extern fn lol_html_element_user_data_set(element: *const Element, user_data: ?*anyopaque) void;
     extern fn lol_html_element_user_data_get(element: *const Element) ?*anyopaque;
-    extern fn lol_html_element_on_end_tag(element: *Element, end_tag_handler: lol_html_end_tag_handler_t, user_data: ?*anyopaque) c_int;
+    extern fn lol_html_element_add_end_tag_handler(element: *Element, end_tag_handler: lol_html_end_tag_handler_t, user_data: ?*anyopaque) c_int;
+    extern fn lol_html_element_clear_end_tag_handlers(element: *Element) void;
 
     pub fn getAttribute(element: *const Element, name: []const u8) HTMLString {
         auto_disable();
@@ -502,7 +503,10 @@ pub const Element = opaque {
     }
     pub fn onEndTag(element: *Element, end_tag_handler: lol_html_end_tag_handler_t, user_data: ?*anyopaque) Error!void {
         auto_disable();
-        return switch (lol_html_element_on_end_tag(element, end_tag_handler, user_data)) {
+
+        lol_html_element_clear_end_tag_handlers(element);
+
+        return switch (lol_html_element_add_end_tag_handler(element, end_tag_handler, user_data)) {
             0 => {},
             -1 => error.Fail,
             else => unreachable,

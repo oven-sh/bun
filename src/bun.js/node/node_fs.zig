@@ -2368,7 +2368,7 @@ const Return = struct {
     pub const Lchown = void;
     pub const Link = void;
     pub const Lstat = Stats;
-    pub const Mkdir = string;
+    pub const Mkdir = bun.String;
     pub const Mkdtemp = JSC.ZigString;
     pub const Open = FileDescriptor;
     pub const WriteFile = void;
@@ -2492,6 +2492,7 @@ pub const NodeFS = struct {
     /// That means a stack-allocated buffer won't suffice. Instead, we re-use
     /// the heap allocated buffer on the NodefS struct
     sync_error_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
+    vm: ?*JSC.VirtualMachine = null,
 
     pub const ReturnType = Return;
 
@@ -2996,7 +2997,7 @@ pub const NodeFS = struct {
             .sync => {
                 const path = args.path.sliceZ(&this.sync_error_buf);
                 return switch (Syscall.mkdir(path, args.mode)) {
-                    .result => Maybe(Return.Mkdir){ .result = "" },
+                    .result => Maybe(Return.Mkdir){ .result = bun.String.empty },
                     .err => |err| Maybe(Return.Mkdir){ .err = err },
                 };
             },
@@ -3030,14 +3031,19 @@ pub const NodeFS = struct {
                             },
 
                             .EXIST => {
-                                return Option{ .result = "" };
+                                return Option{ .result = bun.String.empty };
                             },
                             // continue
                             .NOENT => {},
                         }
                     },
                     .result => {
-                        return Option{ .result = args.path.slice() };
+                        return Option{
+                            .result = if (args.path == .slice_with_underlying_string)
+                                args.path.slice_with_underlying_string.underlying
+                            else
+                                bun.String.create(args.path.slice()),
+                        };
                     },
                 }
 
@@ -3110,10 +3116,9 @@ pub const NodeFS = struct {
                         switch (err.getErrno()) {
                             // handle the race condition
                             .EXIST => {
-                                var display_path: []const u8 = "";
+                                var display_path = bun.String.empty;
                                 if (first_match != std.math.maxInt(u16)) {
-                                    // TODO: this leaks memory
-                                    display_path = bun.default_allocator.dupe(u8, display_path[0..first_match]) catch unreachable;
+                                    display_path = bun.String.create(working_mem[0..first_match]);
                                 }
                                 return Option{ .result = display_path };
                             },
@@ -3125,12 +3130,14 @@ pub const NodeFS = struct {
                         }
                     },
                     .result => {
-                        var display_path = args.path.slice();
-                        if (first_match != std.math.maxInt(u16)) {
-                            // TODO: this leaks memory
-                            display_path = bun.default_allocator.dupe(u8, display_path[0..first_match]) catch unreachable;
-                        }
-                        return Option{ .result = display_path };
+                        return Option{
+                            .result = if (first_match != std.math.maxInt(u16))
+                                bun.String.create(working_mem[0..first_match])
+                            else if (args.path == .slice_with_underlying_string)
+                                args.path.slice_with_underlying_string.underlying
+                            else
+                                bun.String.create(args.path.slice()),
+                        };
                     },
                 }
             },
@@ -3442,6 +3449,35 @@ pub const NodeFS = struct {
                 const fd = switch (args.path) {
                     .path => brk: {
                         path = args.path.path.sliceZ(&this.sync_error_buf);
+                        if (this.vm) |vm| {
+                            if (vm.standalone_module_graph) |graph| {
+                                if (graph.find(path)) |file| {
+                                    if (args.encoding == .buffer) {
+                                        return .{
+                                            .result = .{
+                                                .buffer = Buffer.fromBytes(
+                                                    bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"),
+                                                    bun.default_allocator,
+                                                    .Uint8Array,
+                                                ),
+                                            },
+                                        };
+                                    } else if (comptime string_type == .default)
+                                        return .{
+                                            .result = .{
+                                                .string = bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"),
+                                            },
+                                        }
+                                    else
+                                        return .{
+                                            .result = .{
+                                                .null_terminated = bun.default_allocator.dupeZ(u8, file.contents) catch @panic("out of memory"),
+                                            },
+                                        };
+                                }
+                            }
+                        }
+
                         break :brk switch (Syscall.open(
                             path,
                             os.O.RDONLY | os.O.NOCTTY,

@@ -1,5 +1,4 @@
 import {EventEmitter} from "node:events";
-import {default as default2} from "node:fs/promises";
 import promises2 from "node:fs/promises";
 import * as Stream from "node:stream";
 var callbackify = function(fsFunction, args) {
@@ -133,7 +132,29 @@ var access = function access2(...args) {
   callbackify(fs.utimesSync, args);
 }, lutimes = function lutimes2(...args) {
   callbackify(fs.lutimesSync, args);
-}, accessSync = fs.accessSync.bind(fs), appendFileSync = fs.appendFileSync.bind(fs), closeSync = fs.closeSync.bind(fs), copyFileSync = fs.copyFileSync.bind(fs), existsSync = fs.existsSync.bind(fs), chownSync = fs.chownSync.bind(fs), chmodSync = fs.chmodSync.bind(fs), fchmodSync = fs.fchmodSync.bind(fs), fchownSync = fs.fchownSync.bind(fs), fstatSync = fs.fstatSync.bind(fs), fsyncSync = fs.fsyncSync.bind(fs), ftruncateSync = fs.ftruncateSync.bind(fs), futimesSync = fs.futimesSync.bind(fs), lchmodSync = fs.lchmodSync.bind(fs), lchownSync = fs.lchownSync.bind(fs), linkSync = fs.linkSync.bind(fs), lstatSync = fs.lstatSync.bind(fs), mkdirSync = fs.mkdirSync.bind(fs), mkdtempSync = fs.mkdtempSync.bind(fs), openSync = fs.openSync.bind(fs), readSync = fs.readSync.bind(fs), writeSync = fs.writeSync.bind(fs), readdirSync = fs.readdirSync.bind(fs), readFileSync = fs.readFileSync.bind(fs), writeFileSync = fs.writeFileSync.bind(fs), readlinkSync = fs.readlinkSync.bind(fs), realpathSync = fs.realpathSync.bind(fs), renameSync = fs.renameSync.bind(fs), statSync = fs.statSync.bind(fs), symlinkSync = fs.symlinkSync.bind(fs), truncateSync = fs.truncateSync.bind(fs), unlinkSync = fs.unlinkSync.bind(fs), utimesSync = fs.utimesSync.bind(fs), lutimesSync = fs.lutimesSync.bind(fs), rmSync = fs.rmSync.bind(fs), rmdirSync = fs.rmdirSync.bind(fs), Dirent = fs.Dirent, Stats = fs.Stats, watch = function watch2(path, options, listener) {
+}, accessSync = fs.accessSync.bind(fs), appendFileSync = fs.appendFileSync.bind(fs), closeSync = fs.closeSync.bind(fs), copyFileSync = fs.copyFileSync.bind(fs), existsSync = fs.existsSync.bind(fs), chownSync = fs.chownSync.bind(fs), chmodSync = fs.chmodSync.bind(fs), fchmodSync = fs.fchmodSync.bind(fs), fchownSync = fs.fchownSync.bind(fs), fstatSync = fs.fstatSync.bind(fs), fsyncSync = fs.fsyncSync.bind(fs), ftruncateSync = fs.ftruncateSync.bind(fs), futimesSync = fs.futimesSync.bind(fs), lchmodSync = fs.lchmodSync.bind(fs), lchownSync = fs.lchownSync.bind(fs), linkSync = fs.linkSync.bind(fs), lstatSync = fs.lstatSync.bind(fs), mkdirSync = fs.mkdirSync.bind(fs), mkdtempSync = fs.mkdtempSync.bind(fs), openSync = fs.openSync.bind(fs), readSync = fs.readSync.bind(fs), writeSync = fs.writeSync.bind(fs), readdirSync = fs.readdirSync.bind(fs), readFileSync = fs.readFileSync.bind(fs), writeFileSync = fs.writeFileSync.bind(fs), readlinkSync = fs.readlinkSync.bind(fs), realpathSync = fs.realpathSync.bind(fs), renameSync = fs.renameSync.bind(fs), statSync = fs.statSync.bind(fs), symlinkSync = fs.symlinkSync.bind(fs), truncateSync = fs.truncateSync.bind(fs), unlinkSync = fs.unlinkSync.bind(fs), utimesSync = fs.utimesSync.bind(fs), lutimesSync = fs.lutimesSync.bind(fs), rmSync = fs.rmSync.bind(fs), rmdirSync = fs.rmdirSync.bind(fs), writev = (fd, buffers, position, callback) => {
+  if (typeof position === "function")
+    callback = position, position = null;
+  queueMicrotask(() => {
+    try {
+      var written = fs.writevSync(fd, buffers, position);
+    } catch (e) {
+      callback(e);
+    }
+    callback(null, written, buffers);
+  });
+}, writevSync = fs.writevSync.bind(fs), readv = (fd, buffers, position, callback) => {
+  if (typeof position === "function")
+    callback = position, position = null;
+  queueMicrotask(() => {
+    try {
+      var written = fs.readvSync(fd, buffers, position);
+    } catch (e) {
+      callback(e);
+    }
+    callback(null, written, buffers);
+  });
+}, readvSync = fs.readvSync.bind(fs), Dirent = fs.Dirent, Stats = fs.Stats, watch = function watch2(path, options, listener) {
   return new FSWatcher(path, options, listener);
 }, readStreamPathFastPathSymbol = Symbol.for("Bun.Node.readStreamPathFastPath"), readStreamSymbol = Symbol.for("Bun.NodeReadStream"), readStreamPathOrFdSymbol = Symbol.for("Bun.NodeReadStreamPathOrFd"), writeStreamSymbol = Symbol.for("Bun.NodeWriteStream"), writeStreamPathFastPathSymbol = Symbol.for("Bun.NodeWriteStreamFastPath"), writeStreamPathFastPathCallSymbol = Symbol.for("Bun.NodeWriteStreamFastPathCall"), kIoDone = Symbol.for("kIoDone"), defaultReadStreamOptions = {
   file: void 0,
@@ -366,8 +387,8 @@ WriteStream = function(InternalWriteStream) {
   return WriteStreamClass = InternalWriteStream, Object.defineProperty(WriteStreamClass.prototype, Symbol.toStringTag, {
     value: "WritesStream",
     enumerable: !1
-  }), Object.defineProperty(function WriteStream(options) {
-    return new InternalWriteStream(options);
+  }), Object.defineProperty(function WriteStream(path, options) {
+    return new InternalWriteStream(path, options);
   }, Symbol.hasInstance, {
     value(instance) {
       return instance instanceof InternalWriteStream;
@@ -642,12 +663,18 @@ var fs_default = {
   ReadStream,
   watch,
   FSWatcher,
+  writev,
+  writevSync,
+  readv,
+  readvSync,
   [Symbol.for("::bunternal::")]: {
     ReadStreamClass,
     WriteStreamClass
   }
 };
 export {
+  writevSync,
+  writev,
   writeSync,
   writeFileSync,
   writeFile,
@@ -671,6 +698,8 @@ export {
   rename,
   realpathSync,
   realpath,
+  readvSync,
+  readv,
   readlinkSync,
   readlink,
   readdirSync,
@@ -679,7 +708,6 @@ export {
   readFileSync,
   readFile,
   read,
-  default2 as promises,
   openSync,
   open,
   mkdtempSync,

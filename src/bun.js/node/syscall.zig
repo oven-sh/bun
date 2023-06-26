@@ -106,6 +106,10 @@ pub const Tag = enum(u8) {
     waitpid,
     posix_spawn,
     getaddrinfo,
+    writev,
+    pwritev,
+    readv,
+    preadv,
     pub var strings = std.EnumMap(Tag, JSC.C.JSStringRef).initFull(null);
 };
 const PathString = @import("root").bun.PathString;
@@ -301,6 +305,154 @@ pub fn write(fd: os.fd_t, bytes: []const u8) Maybe(usize) {
         unreachable;
     }
 }
+
+fn veclen(buffers: []std.os.iovec) usize {
+    var len: usize = 0;
+    for (buffers) |buffer| {
+        len += buffer.iov_len;
+    }
+    return len;
+}
+
+pub fn writev(fd: os.fd_t, buffers: []std.os.iovec) Maybe(usize) {
+    if (comptime Environment.isMac) {
+        const rc = writev_sym(fd, buffers.ptr, @intCast(i32, buffers.len));
+        if (comptime Environment.allow_assert)
+            log("writev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+
+        if (Maybe(usize).errnoSysFd(rc, .writev, fd)) |err| {
+            return err;
+        }
+
+        return Maybe(usize){ .result = @intCast(usize, rc) };
+    } else {
+        while (true) {
+            const rc = writev_sym(fd, buffers.ptr, @intCast(i32, buffers.len));
+            if (comptime Environment.allow_assert)
+                log("writev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+
+            if (Maybe(usize).errnoSysFd(rc, .writev, fd)) |err| {
+                if (err.getErrno() == .INTR) continue;
+                return err;
+            }
+
+            return Maybe(usize){ .result = @intCast(usize, rc) };
+        }
+        unreachable;
+    }
+}
+
+pub fn pwritev(fd: os.fd_t, buffers: []std.os.iovec, position: isize) Maybe(usize) {
+    if (comptime Environment.isMac) {
+        const rc = pwritev_sym(fd, buffers.ptr, @intCast(i32, buffers.len), position);
+        if (comptime Environment.allow_assert)
+            log("pwritev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+
+        if (Maybe(usize).errnoSysFd(rc, .pwritev, fd)) |err| {
+            return err;
+        }
+
+        return Maybe(usize){ .result = @intCast(usize, rc) };
+    } else {
+        while (true) {
+            const rc = pwritev_sym(fd, buffers.ptr, @intCast(i32, buffers.len), position);
+            if (comptime Environment.allow_assert)
+                log("pwritev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+
+            if (Maybe(usize).errnoSysFd(rc, .pwritev, fd)) |err| {
+                if (err.getErrno() == .INTR) continue;
+                return err;
+            }
+
+            return Maybe(usize){ .result = @intCast(usize, rc) };
+        }
+        unreachable;
+    }
+}
+
+pub fn readv(fd: os.fd_t, buffers: []std.os.iovec) Maybe(usize) {
+    if (comptime Environment.isMac) {
+        const rc = readv_sym(fd, buffers.ptr, @intCast(i32, buffers.len));
+        if (comptime Environment.allow_assert)
+            log("readv({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+
+        if (Maybe(usize).errnoSysFd(rc, .readv, fd)) |err| {
+            return err;
+        }
+
+        return Maybe(usize){ .result = @intCast(usize, rc) };
+    } else {
+        while (true) {
+            const rc = readv_sym(fd, buffers.ptr, @intCast(i32, buffers.len));
+            if (comptime Environment.allow_assert)
+                log("readv({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+
+            if (Maybe(usize).errnoSysFd(rc, .readv, fd)) |err| {
+                if (err.getErrno() == .INTR) continue;
+                return err;
+            }
+
+            return Maybe(usize){ .result = @intCast(usize, rc) };
+        }
+        unreachable;
+    }
+}
+
+pub fn preadv(fd: os.fd_t, buffers: []std.os.iovec, position: isize) Maybe(usize) {
+    if (comptime Environment.isMac) {
+        const rc = preadv_sym(fd, buffers.ptr, @intCast(i32, buffers.len), position);
+        if (comptime Environment.allow_assert)
+            log("preadv({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+
+        if (Maybe(usize).errnoSysFd(rc, .preadv, fd)) |err| {
+            return err;
+        }
+
+        return Maybe(usize){ .result = @intCast(usize, rc) };
+    } else {
+        while (true) {
+            const rc = preadv_sym(fd, buffers.ptr, @intCast(i32, buffers.len), position);
+            if (comptime Environment.allow_assert)
+                log("preadv({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+
+            if (Maybe(usize).errnoSysFd(rc, .preadv, fd)) |err| {
+                if (err.getErrno() == .INTR) continue;
+                return err;
+            }
+
+            return Maybe(usize){ .result = @intCast(usize, rc) };
+        }
+        unreachable;
+    }
+}
+
+const preadv_sym = if (builtin.os.tag == .linux and builtin.link_libc)
+    std.os.linux.preadv
+else if (builtin.os.tag.isDarwin())
+    system.@"preadv$NOCANCEL"
+else
+    system.preadv;
+
+const readv_sym = if (builtin.os.tag == .linux and builtin.link_libc)
+    std.os.linux.readv
+else if (builtin.os.tag.isDarwin())
+    system.@"readv$NOCANCEL"
+else
+    system.readv;
+
+const pwritev_sym = if (builtin.os.tag == .linux and builtin.link_libc)
+    std.os.linux.pwritev
+else if (builtin.os.tag.isDarwin())
+    system.@"pwritev$NOCANCEL"
+else
+    system.pwritev;
+
+const writev_sym = if (builtin.os.tag == .linux and builtin.link_libc)
+    std.os.linux.writev
+else if (builtin.os.tag.isDarwin())
+    system.@"writev$NOCANCEL"
+else
+    system.writev;
 
 const pread_sym = if (builtin.os.tag == .linux and builtin.link_libc)
     sys.pread64

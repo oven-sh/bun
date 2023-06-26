@@ -123,7 +123,37 @@ export var access = promisify(fs.accessSync),
   utimes = promisify(fs.utimesSync),
   lutimes = promisify(fs.lutimesSync),
   rm = promisify(fs.rmSync),
-  rmdir = promisify(fs.rmdirSync);
+  rmdir = promisify(fs.rmdirSync),
+  writev = (fd, buffers, position) => {
+    return new Promise((resolve, reject) => {
+      try {
+        var bytesWritten = fs.writevSync(fd, buffers, position);
+      } catch (err) {
+        reject(err);
+        return;
+      }
+
+      resolve({
+        bytesWritten,
+        buffers,
+      });
+    });
+  },
+  readv = (fd, buffers, position) => {
+    return new Promise((resolve, reject) => {
+      try {
+        var bytesRead = fs.readvSync(fd, buffers, position);
+      } catch (err) {
+        reject(err);
+        return;
+      }
+
+      resolve({
+        bytesRead,
+        buffers,
+      });
+    });
+  };
 
 export default {
   access,
@@ -163,6 +193,8 @@ export default {
   rm,
   rmdir,
   watch,
+  writev,
+  readv,
   constants,
   [Symbol.for("CommonJS")]: 0,
 };

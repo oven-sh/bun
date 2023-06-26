@@ -10,6 +10,7 @@ const std = @import("std");
 const bun = @import("root").bun;
 const string = bun.string;
 pub const AbortSignal = @import("./bindings/bindings.zig").AbortSignal;
+pub const JSValue = @import("./bindings/bindings.zig").JSValue;
 
 pub const Lifetime = enum {
     clone,
@@ -374,6 +375,7 @@ pub const Crypto = struct {
             .getRandomValues = JSC.DOMCall("Crypto", @This(), "getRandomValues", JSC.JSValue, JSC.DOMEffect.top),
             .randomUUID = JSC.DOMCall("Crypto", @This(), "randomUUID", *JSC.JSString, JSC.DOMEffect.top),
             .timingSafeEqual = JSC.DOMCall("Crypto", @This(), "timingSafeEqual", JSC.JSValue, JSC.DOMEffect.top),
+            .randomInt = .{ .rfn = &JSC.wrapWithHasContainer(Crypto, "randomInt", false, false, false) },
             .scryptSync = .{ .rfn = &JSC.wrapWithHasContainer(Crypto, "scryptSync", false, false, false) },
         },
         .{},
@@ -696,6 +698,24 @@ pub const Crypto = struct {
         };
         uuid.print(&out);
         return JSC.ZigString.init(&out).toValueGC(globalThis);
+    }
+
+    pub fn randomInt(globalThis: *JSC.JSGlobalObject, min_value: ?JSValue, max_value: ?JSValue) JSValue {
+        _ = globalThis;
+
+        var at_least: u52 = 0;
+        var at_most: u52 = std.math.maxInt(u52);
+
+        if (min_value) |min| {
+            if (max_value) |max| {
+                if (min.isNumber()) at_least = min.to(u52);
+                if (max.isNumber()) at_most = max.to(u52);
+            } else {
+                if (min.isNumber()) at_most = min.to(u52);
+            }
+        }
+
+        return JSValue.jsNumberFromUint64(std.crypto.random.intRangeAtMost(u52, at_least, at_most));
     }
 
     pub fn randomUUIDWithoutTypeChecks(

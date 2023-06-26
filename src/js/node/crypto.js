@@ -23752,6 +23752,7 @@ var crypto_exports = {
 var DEFAULT_ENCODING = "buffer",
   getRandomValues = array => crypto.getRandomValues(array),
   randomUUID = () => crypto.randomUUID(),
+  randomInt = (...args) => crypto.randomInt(...args),
   timingSafeEqual =
     "timingSafeEqual" in crypto
       ? (a, b) => {
@@ -23806,6 +23807,7 @@ __export(crypto_exports, {
   DEFAULT_ENCODING: () => DEFAULT_ENCODING,
   getRandomValues: () => getRandomValues,
   randomUUID: () => randomUUID,
+  randomInt: () => randomInt,
   scrypt: () => scrypt,
   scryptSync: () => scryptSync,
   timingSafeEqual: () => timingSafeEqual,

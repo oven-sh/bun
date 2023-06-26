@@ -135,6 +135,154 @@ pub const Arguments = struct {
         }
     };
 
+    pub const Writev = struct {
+        fd: FileDescriptor,
+        buffers: JSC.Node.VectorArrayBuffer,
+        position: ?u52 = 0,
+
+        pub fn deinit(_: *const @This()) void {}
+
+        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Writev {
+            const fd_value = arguments.nextEat() orelse {
+                if (exception.* == null) {
+                    JSC.throwInvalidArguments(
+                        "file descriptor is required",
+                        .{},
+                        ctx,
+                        exception,
+                    );
+                }
+                return null;
+            };
+
+            const fd = JSC.Node.fileDescriptorFromJS(ctx, fd_value, exception) orelse {
+                if (exception.* == null) {
+                    JSC.throwInvalidArguments(
+                        "file descriptor must be a number",
+                        .{},
+                        ctx,
+                        exception,
+                    );
+                }
+                return null;
+            };
+
+            const buffers = JSC.Node.VectorArrayBuffer.fromJS(
+                ctx,
+                arguments.protectEatNext() orelse {
+                    JSC.throwInvalidArguments("Expected an ArrayBufferView[]", .{}, ctx, exception);
+                    return null;
+                },
+                exception,
+                arguments.arena.allocator(),
+            ) orelse {
+                if (exception.* == null) {
+                    JSC.throwInvalidArguments(
+                        "buffers must be an array of TypedArray",
+                        .{},
+                        ctx,
+                        exception,
+                    );
+                }
+                return null;
+            };
+
+            var position: ?u52 = null;
+
+            if (arguments.nextEat()) |pos_value| {
+                if (!pos_value.isUndefinedOrNull()) {
+                    if (pos_value.isNumber()) {
+                        position = pos_value.to(u52);
+                    } else {
+                        JSC.throwInvalidArguments(
+                            "position must be a number",
+                            .{},
+                            ctx,
+                            exception,
+                        );
+                        return null;
+                    }
+                }
+            }
+
+            return Writev{ .fd = fd, .buffers = buffers, .position = position };
+        }
+    };
+
+    pub const Readv = struct {
+        fd: FileDescriptor,
+        buffers: JSC.Node.VectorArrayBuffer,
+        position: ?u52 = 0,
+
+        pub fn deinit(_: *const @This()) void {}
+
+        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Readv {
+            const fd_value = arguments.nextEat() orelse {
+                if (exception.* == null) {
+                    JSC.throwInvalidArguments(
+                        "file descriptor is required",
+                        .{},
+                        ctx,
+                        exception,
+                    );
+                }
+                return null;
+            };
+
+            const fd = JSC.Node.fileDescriptorFromJS(ctx, fd_value, exception) orelse {
+                if (exception.* == null) {
+                    JSC.throwInvalidArguments(
+                        "file descriptor must be a number",
+                        .{},
+                        ctx,
+                        exception,
+                    );
+                }
+                return null;
+            };
+
+            const buffers = JSC.Node.VectorArrayBuffer.fromJS(
+                ctx,
+                arguments.protectEatNext() orelse {
+                    JSC.throwInvalidArguments("Expected an ArrayBufferView[]", .{}, ctx, exception);
+                    return null;
+                },
+                exception,
+                arguments.arena.allocator(),
+            ) orelse {
+                if (exception.* == null) {
+                    JSC.throwInvalidArguments(
+                        "buffers must be an array of TypedArray",
+                        .{},
+                        ctx,
+                        exception,
+                    );
+                }
+                return null;
+            };
+
+            var position: ?u52 = null;
+
+            if (arguments.nextEat()) |pos_value| {
+                if (!pos_value.isUndefinedOrNull()) {
+                    if (pos_value.isNumber()) {
+                        position = pos_value.to(u52);
+                    } else {
+                        JSC.throwInvalidArguments(
+                            "position must be a number",
+                            .{},
+                            ctx,
+                            exception,
+                        );
+                        return null;
+                    }
+                }
+            }
+
+            return Readv{ .fd = fd, .buffers = buffers, .position = position };
+        }
+    };
+
     pub const FTruncate = struct {
         fd: FileDescriptor,
         len: ?JSC.WebCore.Blob.SizeType = null,
@@ -2372,6 +2520,7 @@ const Return = struct {
     pub const Mkdtemp = JSC.ZigString;
     pub const Open = FileDescriptor;
     pub const WriteFile = void;
+    pub const Readv = Read;
     pub const Read = struct {
         bytes_read: u52,
 
@@ -2480,6 +2629,8 @@ const Return = struct {
 
     pub const Chown = void;
     pub const Lutimes = void;
+
+    pub const Writev = Write;
 };
 
 /// Bun's implementation of the Node.js "fs" module
@@ -3256,6 +3407,14 @@ pub const NodeFS = struct {
             );
     }
 
+    pub fn readv(this: *NodeFS, args: Arguments.Readv, comptime flavor: Flavor) Maybe(Return.Read) {
+        return if (args.position != null) _preadv(this, args, flavor) else _readv(this, args, flavor);
+    }
+
+    pub fn writev(this: *NodeFS, args: Arguments.Writev, comptime flavor: Flavor) Maybe(Return.Write) {
+        return if (args.position != null) _pwritev(this, args, flavor) else _writev(this, args, flavor);
+    }
+
     pub fn write(this: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {
         return if (args.position != null) _pwrite(this, args, flavor) else _write(this, args, flavor);
     }
@@ -3293,6 +3452,82 @@ pub const NodeFS = struct {
                 buf = buf[0..@min(args.length, buf.len)];
 
                 return switch (Syscall.pwrite(args.fd, buf, position)) {
+                    .err => |err| .{
+                        .err = err,
+                    },
+                    .result => |amt| .{ .result = .{
+                        .bytes_written = @truncate(u52, amt),
+                    } },
+                };
+            },
+            else => {},
+        }
+
+        return Maybe(Return.Write).todo;
+    }
+
+    fn _preadv(_: *NodeFS, args: Arguments.Readv, comptime flavor: Flavor) Maybe(Return.Readv) {
+        const position = args.position.?;
+
+        switch (comptime flavor) {
+            .sync => {
+                return switch (Syscall.preadv(args.fd, args.buffers.buffers.items, position)) {
+                    .err => |err| .{
+                        .err = err,
+                    },
+                    .result => |amt| .{ .result = .{
+                        .bytes_read = @truncate(u52, amt),
+                    } },
+                };
+            },
+            else => {},
+        }
+
+        return Maybe(Return.Write).todo;
+    }
+
+    fn _readv(_: *NodeFS, args: Arguments.Readv, comptime flavor: Flavor) Maybe(Return.Readv) {
+        switch (comptime flavor) {
+            .sync => {
+                return switch (Syscall.readv(args.fd, args.buffers.buffers.items)) {
+                    .err => |err| .{
+                        .err = err,
+                    },
+                    .result => |amt| .{ .result = .{
+                        .bytes_read = @truncate(u52, amt),
+                    } },
+                };
+            },
+            else => {},
+        }
+
+        return Maybe(Return.Write).todo;
+    }
+
+    fn _pwritev(_: *NodeFS, args: Arguments.Writev, comptime flavor: Flavor) Maybe(Return.Write) {
+        const position = args.position.?;
+
+        switch (comptime flavor) {
+            .sync => {
+                return switch (Syscall.pwritev(args.fd, args.buffers.buffers.items, position)) {
+                    .err => |err| .{
+                        .err = err,
+                    },
+                    .result => |amt| .{ .result = .{
+                        .bytes_written = @truncate(u52, amt),
+                    } },
+                };
+            },
+            else => {},
+        }
+
+        return Maybe(Return.Write).todo;
+    }
+
+    fn _writev(_: *NodeFS, args: Arguments.Writev, comptime flavor: Flavor) Maybe(Return.Write) {
+        switch (comptime flavor) {
+            .sync => {
+                return switch (Syscall.writev(args.fd, args.buffers.buffers.items)) {
                     .err => |err| .{
                         .err = err,
                     },

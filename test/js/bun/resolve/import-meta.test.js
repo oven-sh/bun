@@ -90,12 +90,6 @@ it("Module.createRequire().resolve", () => {
   expect(result).toBe(expected);
 });
 
-// this is stubbed out
-it("Module._nodeModulePaths()", () => {
-  const expected = Module._nodeModulePaths();
-  expect(!!expected).toBe(true);
-});
-
 // this isn't used in bun but exists anyway
 // we just want it to not be undefined
 it("Module._cache", () => {

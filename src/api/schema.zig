@@ -3053,7 +3053,7 @@ pub const Api = struct {
             }
             if (this.frozen_lockfile) |frozen_lockfile| {
                 try writer.writeFieldID(19);
-                try writer.writeInt(@as(u8, @boolToInt(frozen_lockfile)));
+                try writer.writeInt(@as(u8, @intFromBool(frozen_lockfile)));
             }
             try writer.endMessage();
         }

@@ -277,8 +277,8 @@ pub const darwin = struct {
     pub extern "c" fn @"preadv$NOCANCEL"(fd: c.fd_t, uf: [*]std.os.iovec, count: i32, offset: c.off_t) isize;
     pub extern "c" fn @"readv$NOCANCEL"(fd: c.fd_t, uf: [*]std.os.iovec, count: i32) isize;
     pub extern "c" fn @"write$NOCANCEL"(fd: c.fd_t, buf: [*]const u8, nbyte: usize) isize;
-    pub extern "c" fn @"writev$NOCANCEL"(fd: c.fd_t, buf: [*]std.os.iovec, count: i32) isize;
-    pub extern "c" fn @"pwritev$NOCANCEL"(fd: c.fd_t, buf: [*]std.os.iovec, count: i32, offset: c.off_t) isize;
+    pub extern "c" fn @"writev$NOCANCEL"(fd: c.fd_t, buf: [*]std.os.iovec_const, count: i32) isize;
+    pub extern "c" fn @"pwritev$NOCANCEL"(fd: c.fd_t, buf: [*]std.os.iovec_const, count: i32, offset: c.off_t) isize;
 };
 pub const OpenError = error{
     /// In WASI, this error may occur when the file descriptor does

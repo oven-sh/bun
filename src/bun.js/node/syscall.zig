@@ -306,7 +306,7 @@ pub fn write(fd: os.fd_t, bytes: []const u8) Maybe(usize) {
     }
 }
 
-fn veclen(buffers: []std.os.iovec) usize {
+fn veclen(buffers: anytype) usize {
     var len: usize = 0;
     for (buffers) |buffer| {
         len += buffer.iov_len;
@@ -316,7 +316,7 @@ fn veclen(buffers: []std.os.iovec) usize {
 
 pub fn writev(fd: os.fd_t, buffers: []std.os.iovec) Maybe(usize) {
     if (comptime Environment.isMac) {
-        const rc = writev_sym(fd, buffers.ptr, @intCast(i32, buffers.len));
+        const rc = writev_sym(fd, @ptrCast([*]std.os.iovec_const, buffers.ptr), @intCast(i32, buffers.len));
         if (comptime Environment.allow_assert)
             log("writev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -327,7 +327,7 @@ pub fn writev(fd: os.fd_t, buffers: []std.os.iovec) Maybe(usize) {
         return Maybe(usize){ .result = @intCast(usize, rc) };
     } else {
         while (true) {
-            const rc = writev_sym(fd, buffers.ptr, @intCast(i32, buffers.len));
+            const rc = writev_sym(fd, @ptrCast([*]std.os.iovec_const, buffers.ptr), @intCast(i32, buffers.len));
             if (comptime Environment.allow_assert)
                 log("writev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -344,7 +344,7 @@ pub fn writev(fd: os.fd_t, buffers: []std.os.iovec) Maybe(usize) {
 
 pub fn pwritev(fd: os.fd_t, buffers: []std.os.iovec, position: isize) Maybe(usize) {
     if (comptime Environment.isMac) {
-        const rc = pwritev_sym(fd, buffers.ptr, @intCast(i32, buffers.len), position);
+        const rc = pwritev_sym(fd, @ptrCast([*]std.os.iovec_const, buffers.ptr), @intCast(i32, buffers.len), position);
         if (comptime Environment.allow_assert)
             log("pwritev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -355,7 +355,7 @@ pub fn pwritev(fd: os.fd_t, buffers: []std.os.iovec, position: isize) Maybe(usiz
         return Maybe(usize){ .result = @intCast(usize, rc) };
     } else {
         while (true) {
-            const rc = pwritev_sym(fd, buffers.ptr, @intCast(i32, buffers.len), position);
+            const rc = pwritev_sym(fd, @ptrCast([*]std.os.iovec_const, buffers.ptr), @intCast(i32, buffers.len), position);
             if (comptime Environment.allow_assert)
                 log("pwritev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 

@@ -248,7 +248,8 @@ public:
 
     JSC::JSFunction* emitReadableNextTickFunction() { return m_emitReadableNextTickFunction.getInitializedOnMainThread(this); }
 
-    Structure* importMetaRequireStructure() { return m_importMetaRequireStructure.getInitializedOnMainThread(this); }
+    JSObject* importMetaRequireFunctionUnbound() { return m_importMetaRequireFunctionUnbound.getInitializedOnMainThread(this); }
+    JSObject* importMetaRequireResolveFunctionUnbound() { return m_importMetaRequireResolveFunctionUnbound.getInitializedOnMainThread(this); }
 
     JSObject* lazyRequireCacheObject() { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
 
@@ -494,7 +495,8 @@ private:
     LazyProperty<JSGlobalObject, Structure> m_commonJSModuleObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSFunctionArgumentsStructure;
 
-    LazyProperty<JSGlobalObject, JSC::Structure> m_importMetaRequireStructure;
+    LazyProperty<JSGlobalObject, JSC::JSObject> m_importMetaRequireFunctionUnbound;
+    LazyProperty<JSGlobalObject, JSC::JSObject> m_importMetaRequireResolveFunctionUnbound;
     LazyProperty<JSGlobalObject, JSC::Structure> m_importMetaObjectStructure;
 
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);

@@ -538,6 +538,7 @@ pub const Tree = struct {
 pub fn maybeCloneFilteringRootPackages(
     old: *Lockfile,
     features: Features,
+    exact_versions: bool,
 ) !*Lockfile {
     const old_root_dependenices_list = old.packages.items(.dependencies)[0];
     var old_root_resolutions = old.packages.items(.resolutions)[0];
@@ -555,10 +556,10 @@ pub fn maybeCloneFilteringRootPackages(
 
     if (!any_changes) return old;
 
-    return try old.clean(&.{});
+    return try old.clean(&.{}, exact_versions);
 }
 
-fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequest) !void {
+fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequest, exact_versions: bool) !void {
     const root_deps_list: Lockfile.DependencySlice = old.packages.items(.dependencies)[0];
     if (@as(usize, root_deps_list.off) < old.buffers.dependencies.items.len) {
         var string_builder = old.stringBuilder();
@@ -575,7 +576,10 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
                         if (dep.name_hash == String.Builder.stringHash(update.name)) {
                             if (old_resolution > old.packages.len) continue;
                             const res = resolutions_of_yore[old_resolution];
-                            const len = std.fmt.count("^{}", .{res.value.npm.fmt(old.buffers.string_bytes.items)});
+                            const len = switch (exact_versions) {
+                                false => std.fmt.count("^{}", .{res.value.npm.fmt(old.buffers.string_bytes.items)}),
+                                true => std.fmt.count("{}", .{res.value.npm.fmt(old.buffers.string_bytes.items)}),
+                            };
                             if (len >= String.max_inline_len) {
                                 string_builder.cap += len;
                             }
@@ -603,7 +607,10 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
                         if (dep.name_hash == String.Builder.stringHash(update.name)) {
                             if (old_resolution > old.packages.len) continue;
                             const res = resolutions_of_yore[old_resolution];
-                            var buf = std.fmt.bufPrint(&temp_buf, "^{}", .{res.value.npm.fmt(old.buffers.string_bytes.items)}) catch break;
+                            var buf = switch (exact_versions) {
+                                false => std.fmt.bufPrint(&temp_buf, "^{}", .{res.value.npm.fmt(old.buffers.string_bytes.items)}) catch break,
+                                true => std.fmt.bufPrint(&temp_buf, "{}", .{res.value.npm.fmt(old.buffers.string_bytes.items)}) catch break,
+                            };
                             const external_version = string_builder.append(ExternalString, buf);
                             const sliced = external_version.value.sliced(old.buffers.string_bytes.items);
                             dep.version = Dependency.parse(
@@ -622,7 +629,11 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
         }
     }
 }
-pub fn clean(old: *Lockfile, updates: []PackageManager.UpdateRequest) !*Lockfile {
+pub fn clean(
+    old: *Lockfile,
+    updates: []PackageManager.UpdateRequest,
+    exact_versions: bool,
+) !*Lockfile {
     // This is wasteful, but we rarely log anything so it's fine.
     var log = logger.Log.init(bun.default_allocator);
     defer {
@@ -632,17 +643,22 @@ pub fn clean(old: *Lockfile, updates: []PackageManager.UpdateRequest) !*Lockfile
         log.deinit();
     }
 
-    return old.cleanWithLogger(updates, &log);
+    return old.cleanWithLogger(updates, &log, exact_versions);
 }
 
-pub fn cleanWithLogger(old: *Lockfile, updates: []PackageManager.UpdateRequest, log: *logger.Log) !*Lockfile {
+pub fn cleanWithLogger(
+    old: *Lockfile,
+    updates: []PackageManager.UpdateRequest,
+    log: *logger.Log,
+    exact_versions: bool,
+) !*Lockfile {
     const old_trusted_dependencies = old.trusted_dependencies;
     const old_scripts = old.scripts;
     // We will only shrink the number of packages here.
     // never grow
 
     if (updates.len > 0) {
-        try old.preprocessUpdateRequests(updates);
+        try old.preprocessUpdateRequests(updates, exact_versions);
     }
 
     // Deduplication works like this

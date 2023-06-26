@@ -3048,6 +3048,10 @@ function decodeBunInstall(bb) {
         result["frozen_lockfile"] = !!bb.readByte();
         break;
 
+      case 20:
+        result["exact"] = !!bb.readByte();
+        break;
+
       default:
         throw new Error("Attempted to parse invalid message");
     }
@@ -3172,6 +3176,12 @@ function encodeBunInstall(message, bb) {
   var value = message["frozen_lockfile"];
   if (value != null) {
     bb.writeByte(19);
+    bb.writeByte(value);
+  }
+
+  var value = message["exact"];
+  if (value != null) {
+    bb.writeByte(20);
     bb.writeByte(value);
   }
   bb.writeByte(0);

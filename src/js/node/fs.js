@@ -5,9 +5,8 @@ import { EventEmitter } from "node:events";
 
 // Hardcoded module "node:fs"
 var { direct, isPromise, isCallable } = globalThis[Symbol.for("Bun.lazy")]("primordials");
-export { default as promises } from "node:fs/promises";
 import promises from "node:fs/promises";
-
+export { default as promises } from "node:fs/promises";
 import * as Stream from "node:stream";
 
 var fs = Bun.fs();
@@ -213,6 +212,40 @@ export var access = function access(...args) {
   lutimesSync = fs.lutimesSync.bind(fs),
   rmSync = fs.rmSync.bind(fs),
   rmdirSync = fs.rmdirSync.bind(fs),
+  writev = (fd, buffers, position, callback) => {
+    if (typeof position === "function") {
+      callback = position;
+      position = null;
+    }
+
+    queueMicrotask(() => {
+      try {
+        var written = fs.writevSync(fd, buffers, position);
+      } catch (e) {
+        callback(e);
+      }
+
+      callback(null, written, buffers);
+    });
+  },
+  writevSync = fs.writevSync.bind(fs),
+  readv = (fd, buffers, position, callback) => {
+    if (typeof position === "function") {
+      callback = position;
+      position = null;
+    }
+
+    queueMicrotask(() => {
+      try {
+        var written = fs.readvSync(fd, buffers, position);
+      } catch (e) {
+        callback(e);
+      }
+
+      callback(null, written, buffers);
+    });
+  },
+  readvSync = fs.readvSync.bind(fs),
   Dirent = fs.Dirent,
   Stats = fs.Stats,
   watch = function watch(path, options, listener) {
@@ -1069,6 +1102,10 @@ export default {
   ReadStream,
   watch,
   FSWatcher,
+  writev,
+  writevSync,
+  readv,
+  readvSync,
   [Symbol.for("::bunternal::")]: {
     ReadStreamClass,
     WriteStreamClass,

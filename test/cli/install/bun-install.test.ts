@@ -1,7 +1,7 @@
 import { file, listen, Socket, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { bunExe, bunEnv as env } from "harness";
-import { access, mkdir, readlink, rm, writeFile } from "fs/promises";
+import { access, mkdir, readlink, realpath, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import {
   dummyAfterAll,
@@ -4473,3 +4473,75 @@ cache = false
   expect(await file(join(package_dir, "package.json")).text()).toEqual(foo_package);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([]);
 }, 20000);
+
+it("should handle trustedDependencies", async () => {
+  const scripts = {
+    preinstall: `${bunExe()} echo.js preinstall`,
+    install: `${bunExe()} echo.js install`,
+    postinstall: `${bunExe()} echo.js postinstall`,
+    preprepare: `${bunExe()} echo.js preprepare`,
+    prepare: `${bunExe()} echo.js prepare`,
+    postprepare: `${bunExe()} echo.js postprepare`,
+  };
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.1.0",
+      dependencies: {
+        bar: "file:./bar",
+        moo: "file:./moo",
+      },
+      trustedDependencies: ["moo"],
+    }),
+  );
+  await mkdir(join(package_dir, "bar"));
+  const bar_package = JSON.stringify({
+    name: "bar",
+    version: "0.2.0",
+    scripts,
+  });
+  await writeFile(join(package_dir, "bar", "package.json"), bar_package);
+  await writeFile(join(package_dir, "bar", "echo.js"), "console.log(`bar|${process.argv[2]}|${import.meta.dir}`);");
+  await mkdir(join(package_dir, "moo"));
+  const moo_package = JSON.stringify({
+    name: "moo",
+    version: "0.3.0",
+    scripts,
+  });
+  await writeFile(join(package_dir, "moo", "package.json"), moo_package);
+  await writeFile(join(package_dir, "moo", "echo.js"), "console.log(`moo|${process.argv[2]}|${import.meta.dir}`);");
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  const moo_dir = await realpath(join(package_dir, "node_modules", "moo"));
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    `moo|preinstall|${moo_dir}`,
+    " + bar@bar",
+    " + moo@moo",
+    `moo|install|${moo_dir}`,
+    `moo|postinstall|${moo_dir}`,
+    `moo|preprepare|${moo_dir}`,
+    `moo|prepare|${moo_dir}`,
+    `moo|postprepare|${moo_dir}`,
+    "",
+    " 2 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar", "moo"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["echo.js", "package.json"]);
+  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
+  expect(await readdirSorted(join(package_dir, "node_modules", "moo"))).toEqual(["echo.js", "package.json"]);
+  expect(await file(join(package_dir, "node_modules", "moo", "package.json")).text()).toEqual(moo_package);
+  await access(join(package_dir, "bun.lockb"));
+});

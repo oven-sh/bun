@@ -80,14 +80,14 @@ pub const Registry = struct {
                             url.path = pathname;
                         }
 
-                        while (std.mem.lastIndexOfScalar(u8, pathname, ':')) |colon| {
+                        while (strings.lastIndexOfChar(pathname, ':')) |colon| {
                             var segment = pathname[colon + 1 ..];
                             pathname = pathname[0..colon];
                             if (pathname.len > 1 and pathname[pathname.len - 1] == '/') {
                                 pathname = pathname[0 .. pathname.len - 1];
                             }
 
-                            const eql_i = std.mem.indexOfScalar(u8, segment, '=') orelse continue;
+                            const eql_i = strings.indexOfChar(segment, '=') orelse continue;
                             var value = segment[eql_i + 1 ..];
                             segment = segment[0..eql_i];
 
@@ -847,11 +847,11 @@ pub const PackageManifest = struct {
                 for (versions) |prop| {
                     const version_name = prop.key.?.asString(allocator) orelse continue;
 
-                    if (std.mem.indexOfScalar(u8, version_name, '-') != null) {
+                    if (strings.indexOfChar(version_name, '-') != null) {
                         pre_versions_len += 1;
                         extern_string_count += 1;
                     } else {
-                        extern_string_count += @as(usize, @intFromBool(std.mem.indexOfScalar(u8, version_name, '+') != null));
+                        extern_string_count += @as(usize, @intFromBool(strings.indexOfChar(version_name, '+') != null));
                         release_versions_len += 1;
                     }
 

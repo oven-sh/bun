@@ -813,6 +813,50 @@ pub const Valid = struct {
     }
 };
 
+pub const VectorArrayBuffer = struct {
+    value: JSC.JSValue,
+    buffers: std.ArrayList(std.os.iovec),
+
+    pub fn toJS(this: VectorArrayBuffer, _: *JSC.JSGlobalObject) JSC.JSValue {
+        return this.value;
+    }
+
+    pub fn fromJS(globalObject: *JSC.JSGlobalObject, val: JSC.JSValue, exception: JSC.C.ExceptionRef, allocator: std.mem.Allocator) ?VectorArrayBuffer {
+        if (!val.jsType().isArrayLike()) {
+            JSC.throwInvalidArguments("Expected ArrayBufferView[]", .{}, globalObject, exception);
+            return null;
+        }
+
+        var bufferlist = std.ArrayList(std.os.iovec).init(allocator);
+        var i: usize = 0;
+        const len = val.getLength(globalObject);
+        bufferlist.ensureTotalCapacityPrecise(len) catch @panic("Failed to allocate memory for ArrayBuffer[]");
+
+        while (i < len) {
+            const element = val.getIndex(globalObject, @truncate(u32, i));
+
+            if (!element.isCell()) {
+                JSC.throwInvalidArguments("Expected ArrayBufferView[]", .{}, globalObject, exception);
+                return null;
+            }
+
+            const array_buffer = element.asArrayBuffer(globalObject) orelse {
+                JSC.throwInvalidArguments("Expected ArrayBufferView[]", .{}, globalObject, exception);
+                return null;
+            };
+
+            var buf = array_buffer.byteSlice();
+            bufferlist.append(std.os.iovec{
+                .iov_base = buf.ptr,
+                .iov_len = buf.len,
+            }) catch @panic("Failed to allocate memory for ArrayBuffer[]");
+            i += 1;
+        }
+
+        return VectorArrayBuffer{ .value = val, .buffers = bufferlist };
+    }
+};
+
 pub const ArgumentsSlice = struct {
     remaining: []const JSC.JSValue,
     vm: *JSC.VirtualMachine,

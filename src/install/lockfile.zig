@@ -85,6 +85,7 @@ const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const MetaHash = [std.crypto.hash.sha2.Sha512256.digest_length]u8;
 const zero_hash = std.mem.zeroes(MetaHash);
 const NameHashMap = std.ArrayHashMapUnmanaged(u32, String, ArrayIdentityContext, false);
+const NameHashSet = std.ArrayHashMapUnmanaged(u32, void, ArrayIdentityContext, false);
 
 // Serialized data
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
@@ -103,6 +104,7 @@ allocator: Allocator,
 scratch: Scratch = .{},
 
 scripts: Scripts = .{},
+trusted_dependencies: NameHashSet = .{},
 workspace_paths: NameHashMap = .{},
 
 const Stream = std.io.FixedBufferStream([]u8);
@@ -113,15 +115,15 @@ pub const Scripts = struct {
         cwd: string,
         script: string,
     };
-    const StringArrayList = std.ArrayListUnmanaged(Entry);
+    const Entries = std.ArrayListUnmanaged(Entry);
     const RunCommand = @import("../cli/run_command.zig").RunCommand;
 
-    preinstall: StringArrayList = .{},
-    install: StringArrayList = .{},
-    postinstall: StringArrayList = .{},
-    preprepare: StringArrayList = .{},
-    prepare: StringArrayList = .{},
-    postprepare: StringArrayList = .{},
+    preinstall: Entries = .{},
+    install: Entries = .{},
+    postinstall: Entries = .{},
+    preprepare: Entries = .{},
+    prepare: Entries = .{},
+    postprepare: Entries = .{},
 
     pub fn hasAny(this: *Scripts) bool {
         inline for (Package.Scripts.Hooks) |hook| {
@@ -195,6 +197,7 @@ pub fn loadFromBytes(this: *Lockfile, buf: []u8, allocator: Allocator, log: *log
 
     this.format = FormatVersion.current;
     this.scripts = .{};
+    this.trusted_dependencies = .{};
     this.workspace_paths = .{};
 
     Lockfile.Serializer.load(this, &stream, allocator, log) catch |err| {
@@ -649,6 +652,7 @@ pub fn cleanWithLogger(
     log: *logger.Log,
     exact_versions: bool,
 ) !*Lockfile {
+    const old_trusted_dependencies = old.trusted_dependencies;
     const old_scripts = old.scripts;
     // We will only shrink the number of packages here.
     // never grow
@@ -754,6 +758,7 @@ pub fn cleanWithLogger(
             }
         }
     }
+    new.trusted_dependencies = old_trusted_dependencies;
     new.scripts = old_scripts;
     return new;
 }
@@ -925,10 +930,10 @@ pub const Printer = struct {
                     }),
                 }
                 if (log.errors > 0) {
-                    if (Output.enable_ansi_colors) {
-                        try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
-                    } else {
-                        try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
+                    switch (Output.enable_ansi_colors) {
+                        inline else => |enable_ansi_colors| {
+                            try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors);
+                        },
                     }
                 }
                 Global.crash();
@@ -1509,6 +1514,7 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) !void {
         .allocator = allocator,
         .scratch = Scratch.init(allocator),
         .scripts = .{},
+        .trusted_dependencies = .{},
         .workspace_paths = .{},
     };
 }
@@ -2454,12 +2460,11 @@ pub const Package = extern struct {
         initializeStore();
 
         const json = json_parser.ParseJSONUTF8(&source, log, allocator) catch |err| {
-            if (Output.enable_ansi_colors) {
-                log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+            switch (Output.enable_ansi_colors) {
+                inline else => |enable_ansi_colors| {
+                    log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
+                },
             }
-
             Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), source.path.prettyDir() });
             Global.crash();
         };
@@ -2972,9 +2977,7 @@ pub const Package = extern struct {
             }
         }
 
-        if (comptime features.scripts) {
-            Package.Scripts.parseCount(allocator, &string_builder, json);
-        }
+        Package.Scripts.parseCount(allocator, &string_builder, json);
 
         if (comptime ResolverContext != void) {
             resolver.count(*Lockfile.StringBuilder, &string_builder, json);
@@ -3129,6 +3132,37 @@ pub const Package = extern struct {
             }
         }
 
+        if (comptime features.trusted_dependencies) {
+            if (json.asProperty("trustedDependencies")) |q| {
+                switch (q.expr.data) {
+                    .e_array => |arr| {
+                        try lockfile.trusted_dependencies.ensureUnusedCapacity(allocator, arr.items.len);
+                        for (arr.slice()) |item| {
+                            const name = item.asString(allocator) orelse {
+                                log.addErrorFmt(&source, q.loc, allocator,
+                                    \\trustedDependencies expects an array of strings, e.g.
+                                    \\"trustedDependencies": [
+                                    \\  "package_name"
+                                    \\]
+                                , .{}) catch {};
+                                return error.InvalidPackageJSON;
+                            };
+                            lockfile.trusted_dependencies.putAssumeCapacity(@truncate(u32, String.Builder.stringHash(name)), {});
+                        }
+                    },
+                    else => {
+                        log.addErrorFmt(&source, q.loc, allocator,
+                            \\trustedDependencies expects an array of strings, e.g.
+                            \\"trustedDependencies": [
+                            \\  "package_name"
+                            \\]
+                        , .{}) catch {};
+                        return error.InvalidPackageJSON;
+                    },
+                }
+            }
+        }
+
         try string_builder.allocate();
         try lockfile.buffers.dependencies.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
         try lockfile.buffers.resolutions.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
@@ -3249,9 +3283,7 @@ pub const Package = extern struct {
             }
         }
 
-        if (comptime features.scripts) {
-            package.scripts.parseAlloc(allocator, &string_builder, json);
-        }
+        package.scripts.parseAlloc(allocator, &string_builder, json);
         package.scripts.filled = true;
 
         // It is allowed for duplicate dependencies to exist in optionalDependencies and regular dependencies
@@ -3527,6 +3559,7 @@ pub fn deinit(this: *Lockfile) void {
     this.packages.deinit(this.allocator);
     this.string_pool.deinit();
     this.scripts.deinit(this.allocator);
+    this.trusted_dependencies.deinit(this.allocator);
     this.workspace_paths.deinit(this.allocator);
 }
 

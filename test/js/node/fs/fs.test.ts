@@ -29,6 +29,8 @@ import fs, {
   realpathSync,
   readlinkSync,
   symlinkSync,
+  writevSync,
+  readvSync,
 } from "node:fs";
 
 import _promises from "node:fs/promises";
@@ -299,6 +301,69 @@ describe("readSync", () => {
     }
     closeSync(fd);
   });
+});
+
+it("writevSync", () => {
+  var fd = openSync(`${tmpdir()}/writevSync.txt`, "w");
+  fs.ftruncateSync(fd, 0);
+  const buffers = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6]), new Uint8Array([7, 8, 9])];
+  const result = writevSync(fd, buffers);
+  expect(result).toBe(9);
+  closeSync(fd);
+
+  fd = openSync(`${tmpdir()}/writevSync.txt`, "r");
+  const buf = new Uint8Array(9);
+  readSync(fd, buf, 0, 9, 0);
+  expect(buf).toEqual(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9]));
+});
+
+it("pwritevSync", () => {
+  var fd = openSync(`${tmpdir()}/pwritevSync.txt`, "w");
+  fs.ftruncateSync(fd, 0);
+  writeSync(fd, "lalalala", 0);
+  const buffers = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6]), new Uint8Array([7, 8, 9])];
+  const result = writevSync(fd, buffers, "lalalala".length);
+  expect(result).toBe(9);
+  closeSync(fd);
+
+  const out = readFileSync(`${tmpdir()}/pwritevSync.txt`);
+  expect(out.slice(0, "lalalala".length).toString()).toBe("lalalala");
+  expect(out.slice("lalalala".length)).toEqual(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9]));
+});
+
+it("readvSync", () => {
+  var fd = openSync(`${tmpdir()}/readv.txt`, "w");
+  fs.ftruncateSync(fd, 0);
+
+  const buf = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  writeSync(fd, buf, 0, 9, 0);
+  closeSync(fd);
+
+  var fd = openSync(`${tmpdir()}/readv.txt`, "r");
+  const buffers = [new Uint8Array(3), new Uint8Array(3), new Uint8Array(3)];
+  const result = readvSync(fd, buffers);
+  expect(result).toBe(9);
+  expect(buffers[0]).toEqual(new Uint8Array([1, 2, 3]));
+  expect(buffers[1]).toEqual(new Uint8Array([4, 5, 6]));
+  expect(buffers[2]).toEqual(new Uint8Array([7, 8, 9]));
+  closeSync(fd);
+});
+
+it("preadv", () => {
+  var fd = openSync(`${tmpdir()}/preadv.txt`, "w");
+  fs.ftruncateSync(fd, 0);
+
+  const buf = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  writeSync(fd, buf, 0, buf.byteLength, 0);
+  closeSync(fd);
+
+  var fd = openSync(`${tmpdir()}/preadv.txt`, "r");
+  const buffers = [new Uint8Array(3), new Uint8Array(3), new Uint8Array(3)];
+  const result = readvSync(fd, buffers, 3);
+  expect(result).toBe(9);
+  expect(buffers[0]).toEqual(new Uint8Array([4, 5, 6]));
+  expect(buffers[1]).toEqual(new Uint8Array([7, 8, 9]));
+  expect(buffers[2]).toEqual(new Uint8Array([10, 11, 12]));
 });
 
 describe("writeSync", () => {

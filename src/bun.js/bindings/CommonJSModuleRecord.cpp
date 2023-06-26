@@ -295,6 +295,35 @@ JSC_DEFINE_CUSTOM_SETTER(setterPath,
     return true;
 }
 
+extern "C" EncodedJSValue Resolver__propForRequireMainPaths(JSGlobalObject*);
+
+JSC_DEFINE_CUSTOM_GETTER(getterPaths, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    if (UNLIKELY(!thisObject)) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    if (!thisObject->m_paths) {
+        JSValue paths = JSValue::decode(Resolver__propForRequireMainPaths(globalObject));
+        thisObject->m_paths.set(globalObject->vm(), thisObject, paths);
+    }
+
+    return JSValue::encode(thisObject->m_paths.get());
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setterPaths,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
+{
+    JSCommonJSModule* thisObject = jsDynamicCast<JSCommonJSModule*>(JSValue::decode(thisValue));
+    if (!thisObject)
+        return false;
+
+    thisObject->m_paths.set(globalObject->vm(), thisObject, JSValue::decode(value));
+    return true;
+}
+
 JSC_DEFINE_CUSTOM_SETTER(setterFilename,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
@@ -340,6 +369,7 @@ static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
     { "loaded"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback | PropertyAttribute::DontEnum | 0), NoIntrinsic, { HashTableValue::LazyPropertyType, createLoaded } },
     { "parent"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback | PropertyAttribute::DontEnum | 0), NoIntrinsic, { HashTableValue::LazyPropertyType, createParent } },
     { "path"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterPath, setterPath } },
+    { "paths"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterPaths, setterPaths } },
 };
 
 class JSCommonJSModulePrototype final : public JSC::JSNonFinalObject {
@@ -675,6 +705,7 @@ void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->sourceCode);
     visitor.append(thisObject->m_filename);
     visitor.append(thisObject->m_dirname);
+    visitor.append(thisObject->m_paths);
 }
 
 DEFINE_VISIT_CHILDREN(JSCommonJSModule);

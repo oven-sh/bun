@@ -710,6 +710,7 @@ export interface BunInstall {
   global_dir?: string;
   global_bin_dir?: string;
   frozen_lockfile?: boolean;
+  exact?: boolean;
 }
 
 export interface ClientServerModule {

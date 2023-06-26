@@ -2904,6 +2904,9 @@ pub const Api = struct {
         /// frozen_lockfile
         frozen_lockfile: ?bool = null,
 
+        /// exact
+        exact: ?bool = null,
+
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);
 
@@ -2969,6 +2972,9 @@ pub const Api = struct {
                     },
                     19 => {
                         this.frozen_lockfile = try reader.readValue(bool);
+                    },
+                    20 => {
+                        this.exact = try reader.readValue(bool);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -3054,6 +3060,10 @@ pub const Api = struct {
             if (this.frozen_lockfile) |frozen_lockfile| {
                 try writer.writeFieldID(19);
                 try writer.writeInt(@as(u8, @intFromBool(frozen_lockfile)));
+            }
+            if (this.exact) |exact| {
+                try writer.writeFieldID(20);
+                try writer.writeInt(@as(u8, @intFromBool(exact)));
             }
             try writer.endMessage();
         }

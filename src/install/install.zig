@@ -4434,6 +4434,10 @@ pub const PackageManager = struct {
                     this.remote_package_features.peer_dependencies = save;
                 }
 
+                if (bun_install.exact) |exact| {
+                    this.enable.exact_versions = exact;
+                }
+
                 if (bun_install.production) |production| {
                     if (production) {
                         this.local_package_features.dev_dependencies = false;
@@ -4540,6 +4544,10 @@ pub const PackageManager = struct {
                     strings.startsWith(cli.registry, "http://"))
                 {
                     this.scope.url = URL.parse(cli.registry);
+                }
+
+                if (cli.exact) {
+                    this.enable.exact_versions = true;
                 }
 
                 if (cli.token.len > 0) {
@@ -4728,6 +4736,8 @@ pub const PackageManager = struct {
             force_save_lockfile: bool = false,
 
             force_install: bool = false,
+
+            exact_versions: bool = false,
         };
     };
 
@@ -4775,6 +4785,7 @@ pub const PackageManager = struct {
             updates: []UpdateRequest,
             current_package_json: *JSAst.Expr,
             dependency_list: string,
+            exact_versions: bool,
         ) !void {
             const G = JSAst.G;
 
@@ -4962,9 +4973,14 @@ pub const PackageManager = struct {
                 if (update.e_string) |e_string| {
                     e_string.data = switch (update.resolution.tag) {
                         .npm => if (update.version.tag == .dist_tag and update.version.literal.isEmpty())
-                            std.fmt.allocPrint(allocator, "^{}", .{
-                                update.resolution.value.npm.version.fmt(update.version_buf),
-                            }) catch unreachable
+                            switch (exact_versions) {
+                                false => std.fmt.allocPrint(allocator, "^{}", .{
+                                    update.resolution.value.npm.version.fmt(update.version_buf),
+                                }) catch unreachable,
+                                true => std.fmt.allocPrint(allocator, "{}", .{
+                                    update.resolution.value.npm.version.fmt(update.version_buf),
+                                }) catch unreachable,
+                            }
                         else
                             null,
                         .uninitialized => switch (update.version.tag) {
@@ -5691,6 +5707,7 @@ pub const PackageManager = struct {
     const add_params = install_params_ ++ [_]ParamType{
         clap.parseParam("-d, --development                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
+        clap.parseParam("--exact                           Add the exact version instead of the ^range") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of packages to install") catch unreachable,
     };
 
@@ -5740,6 +5757,8 @@ pub const PackageManager = struct {
 
         no_optional: bool = false,
         omit: Omit = Omit{},
+
+        exact: bool = false,
 
         const Omit = struct {
             dev: bool = false,
@@ -5819,6 +5838,7 @@ pub const PackageManager = struct {
             if (comptime subcommand == .add) {
                 cli.development = args.flag("--development");
                 cli.optional = args.flag("--optional");
+                cli.exact = args.flag("--exact");
             }
 
             // for (args.options("--omit")) |omit| {
@@ -6280,7 +6300,13 @@ pub const PackageManager = struct {
                 manager.to_remove = updates;
             },
             .link, .add, .update => {
-                try PackageJSONEditor.edit(ctx.allocator, updates, &current_package_json, dependency_list);
+                try PackageJSONEditor.edit(
+                    ctx.allocator,
+                    updates,
+                    &current_package_json,
+                    dependency_list,
+                    manager.options.enable.exact_versions,
+                );
                 manager.package_json_updates = updates;
             },
             else => {},
@@ -6333,7 +6359,13 @@ pub const PackageManager = struct {
                 return;
             };
 
-            try PackageJSONEditor.edit(ctx.allocator, updates, &current_package_json, dependency_list);
+            try PackageJSONEditor.edit(
+                ctx.allocator,
+                updates,
+                &current_package_json,
+                dependency_list,
+                manager.options.enable.exact_versions,
+            );
             var buffer_writer_two = try JSPrinter.BufferWriter.init(ctx.allocator);
             try buffer_writer_two.buffer.list.ensureTotalCapacity(ctx.allocator, new_package_json_source.len + 1);
             buffer_writer_two.append_newline =
@@ -7027,7 +7059,10 @@ pub const PackageManager = struct {
     ) !PackageInstall.Summary {
         var lockfile = lockfile_;
         if (!this.options.local_package_features.dev_dependencies) {
-            lockfile = try lockfile.maybeCloneFilteringRootPackages(this.options.local_package_features);
+            lockfile = try lockfile.maybeCloneFilteringRootPackages(
+                this.options.local_package_features,
+                this.options.enable.exact_versions,
+            );
         }
 
         var root_node: *Progress.Node = undefined;
@@ -7578,7 +7613,11 @@ pub const PackageManager = struct {
         const needs_clean_lockfile = had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0;
         var did_meta_hash_change = needs_clean_lockfile;
         if (needs_clean_lockfile) {
-            manager.lockfile = try manager.lockfile.cleanWithLogger(manager.package_json_updates, manager.log);
+            manager.lockfile = try manager.lockfile.cleanWithLogger(
+                manager.package_json_updates,
+                manager.log,
+                manager.options.enable.exact_versions,
+            );
         }
 
         if (manager.lockfile.packages.len > 0) {

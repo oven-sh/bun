@@ -29,7 +29,7 @@ int64_t getHighWaterMark(JSC::VM& vm, JSC::JSGlobalObject* globalObject, bool is
             highWaterMarkVal = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "readableObjectMode"_s));
         }
 
-        if (!highWaterMarkVal.isUndefinedOrNull()) {
+        if (highWaterMarkVal && !highWaterMarkVal.isUndefinedOrNull()) {
             return highWaterMarkVal.toInt32(globalObject);
         }
     }
@@ -66,11 +66,11 @@ void JSReadableState::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObj
 
     if (options != nullptr) {
         JSC::JSValue emitCloseVal = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "emitClose"_s));
-        if (!emitCloseVal.isBoolean() || emitCloseVal.toBoolean(globalObject))
+        if (!emitCloseVal || emitCloseVal.toBoolean(globalObject))
             setBool(JSReadableState::Mask::emitClose, true);
         // Has it been destroyed.
         JSC::JSValue autoDestroyVal = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "autoDestroy"_s));
-        if (!autoDestroyVal.isBoolean() || autoDestroyVal.toBoolean(globalObject))
+        if (!autoDestroyVal || autoDestroyVal.toBoolean(globalObject))
             setBool(JSReadableState::Mask::autoDestroy, true);
     }
 

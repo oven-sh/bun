@@ -1,12 +1,6 @@
 // so it can run in environments without node module resolution
 import { bench, run } from "../node_modules/mitata/src/cli.mjs";
-
-var crypto = globalThis.crypto;
-
-if (!crypto) {
-  crypto = await import("node:crypto");
-}
-
+import crypto from "node:crypto";
 var foo = new Uint8Array(65536);
 bench("crypto.getRandomValues(65536)", () => {
   crypto.getRandomValues(foo);
@@ -23,7 +17,7 @@ bench("crypto.randomUUID()", () => {
 });
 
 bench("crypto.randomInt()", () => {
-  return crypto.randomInt();
+  return crypto.randomInt(0, 100);
 });
 
 await run();

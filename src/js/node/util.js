@@ -518,6 +518,7 @@ function callbackifyOnRejected(reason, cb) {
   if (!reason) {
     var newReason = new Error("Promise was rejected with a falsy value");
     newReason.reason = reason;
+    newReason.code = "ERR_FALSY_VALUE_REJECTION";
     reason = newReason;
   }
   return cb(reason);
@@ -538,10 +539,10 @@ function callbackify(original) {
     };
     original.apply(this, args).then(
       function (ret) {
-        process.nextTick(cb, null, null, ret);
+        process.nextTick(cb, null, ret);
       },
       function (rej) {
-        process.nextTick(callbackifyOnRejected, null, rej, cb);
+        process.nextTick(callbackifyOnRejected, rej, cb);
       },
     );
   }

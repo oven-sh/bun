@@ -603,5 +603,19 @@ describe("spyOn", () => {
     });
   }
 
+  test("spyOn twice works", () => {
+    var obj = {
+      original() {
+        return 42;
+      },
+    };
+    const _original = obj.original;
+    const fn = spyOn(obj, "original");
+    const fn2 = spyOn(obj, "original");
+    expect(fn).toBe(obj.original);
+    expect(fn2).toBe(fn);
+    expect(fn).not.toBe(_original);
+  });
+
   // spyOn does not work with getters/setters yet.
 });

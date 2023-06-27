@@ -569,15 +569,19 @@ extern "C" EncodedJSValue JSMock__jsSpyOn(JSC::JSGlobalObject* lexicalGlobalObje
 
     // easymode: regular property or missing property
     if (!hasValue || slot.isValue()) {
+        JSValue value = jsUndefined();
+        if (hasValue) {
+            value = slot.getValue(globalObject, propertyKey);
+            if (jsDynamicCast<JSMockFunction*>(value)) {
+                return JSValue::encode(value);
+            }
+        }
+
         auto* mock = JSMockFunction::create(vm, globalObject, globalObject->mockModule.mockFunctionStructure.getInitializedOnMainThread(globalObject), CallbackKind::GetterSetter);
         mock->spyTarget = JSC::Weak<JSObject>(object, &weakValueHandleOwner(), nullptr);
         mock->spyIdentifier = propertyKey.isSymbol() ? Identifier::fromUid(vm, propertyKey.uid()) : Identifier::fromString(vm, propertyKey.publicName());
         mock->spyAttributes = hasValue ? slot.attributes() : 0;
         unsigned attributes = 0;
-        JSValue value = jsUndefined();
-
-        if (hasValue)
-            value = slot.getValue(globalObject, propertyKey);
 
         if (hasValue && ((slot.attributes() & PropertyAttribute::Function) != 0 || (value.isCell() && value.isCallable()))) {
             if (hasValue)

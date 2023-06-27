@@ -518,6 +518,7 @@ function callbackifyOnRejected(reason, cb) {
   if (!reason) {
     var newReason = new Error("Promise was rejected with a falsy value");
     newReason.reason = reason;
+    newReason.code = "ERR_FALSY_VALUE_REJECTION";
     reason = newReason;
   }
   return cb(reason);

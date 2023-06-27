@@ -361,7 +361,15 @@ declare function $size(): TODO;
 declare function $start(): TODO;
 declare function $startAlgorithm(): TODO;
 declare function $startConsumingStream(): TODO;
-declare function $startDirectStream(): TODO;
+/** C++ functionStartDirectStream
+ *  @param this - the sink
+ */
+declare function $startDirectStream(
+  this: any,
+  stream: ReadableStream,
+  pull: DirectUnderlyingSource["pull"] | undefined,
+  close: ((stream: ReadableStream, reason: any) => void) | undefined,
+): TODO;
 declare function $started(): TODO;
 declare function $startedPromise(): TODO;
 declare function $state(): TODO;
@@ -405,6 +413,7 @@ declare function $writeRequests(): TODO;
 declare function $writer(): TODO;
 declare function $writing(): TODO;
 declare function $written(): TODO;
+declare function $rejectPromise(promise: Promise, error: any): void;
 
 declare function $createCommonJSModule(id: string, exports: any, hasEvaluated: boolean): NodeModule;
 

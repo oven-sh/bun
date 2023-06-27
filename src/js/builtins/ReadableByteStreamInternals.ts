@@ -133,7 +133,7 @@ export function readableByteStreamControllerClose(controller) {
   var first = $getByIdDirectPrivate(controller, "pendingPullIntos")?.peek();
   if (first) {
     if (first.bytesFilled > 0) {
-      const e = $makeTypeError("Close requested while there remain pending bytes");
+      const e = new TypeError("Close requested while there remain pending bytes");
       $readableByteStreamControllerError(controller, e);
       throw e;
     }
@@ -629,7 +629,7 @@ export function readableByteStreamControllerPullInto(controller, view) {
       return $createFulfilledPromise({ value: filledView, done: false });
     }
     if ($getByIdDirectPrivate(controller, "closeRequested")) {
-      const e = $makeTypeError("Closing stream has been requested");
+      const e = new TypeError("Closing stream has been requested");
       $readableByteStreamControllerError(controller, e);
       return Promise.$reject(e);
     }

@@ -288,7 +288,7 @@ export function createNativeReadableStream(nativePtr, nativeType, autoAllocateCh
 export function cancel(this, reason) {
   if (!$isReadableStream(this)) return Promise.$reject($makeThisTypeError("ReadableStream", "cancel"));
 
-  if ($isReadableStreamLocked(this)) return Promise.$reject($makeTypeError("ReadableStream is locked"));
+  if ($isReadableStreamLocked(this)) return Promise.$reject(new TypeError("ReadableStream is locked"));
 
   return $readableStreamCancel(this, reason);
 }
@@ -329,21 +329,21 @@ export function pipeThrough(this, streams, options) {
   let preventCancel = false;
   let signal;
   if (!$isUndefinedOrNull(options)) {
-    if (!$isObject(options)) throw $makeTypeError("options must be an object");
+    if (!$isObject(options)) throw new TypeError("options must be an object");
 
     preventAbort = !!options["preventAbort"];
     preventCancel = !!options["preventCancel"];
     preventClose = !!options["preventClose"];
 
     signal = options["signal"];
-    if (signal !== undefined && !$isAbortSignal(signal)) throw $makeTypeError("options.signal must be AbortSignal");
+    if (signal !== undefined && !$isAbortSignal(signal)) throw new TypeError("options.signal must be AbortSignal");
   }
 
   if (!$isReadableStream(this)) throw $makeThisTypeError("ReadableStream", "pipeThrough");
 
-  if ($isReadableStreamLocked(this)) throw $makeTypeError("ReadableStream is locked");
+  if ($isReadableStreamLocked(this)) throw new TypeError("ReadableStream is locked");
 
-  if ($isWritableStreamLocked(internalWritable)) throw $makeTypeError("WritableStream is locked");
+  if ($isWritableStreamLocked(internalWritable)) throw new TypeError("WritableStream is locked");
 
   $readableStreamPipeToWritableStream(this, internalWritable, preventClose, preventAbort, preventCancel, signal);
 
@@ -353,7 +353,7 @@ export function pipeThrough(this, streams, options) {
 export function pipeTo(this, destination) {
   if (!$isReadableStream(this)) return Promise.$reject($makeThisTypeError("ReadableStream", "pipeTo"));
 
-  if ($isReadableStreamLocked(this)) return Promise.$reject($makeTypeError("ReadableStream is locked"));
+  if ($isReadableStreamLocked(this)) return Promise.$reject(new TypeError("ReadableStream is locked"));
 
   // FIXME: https://bugs.webkit.org/show_bug.cgi?id=159869.
   // Built-in generator should be able to parse function signature to compute the function length correctly.
@@ -364,7 +364,7 @@ export function pipeTo(this, destination) {
   let preventCancel = false;
   let signal;
   if (!$isUndefinedOrNull(options)) {
-    if (!$isObject(options)) return Promise.$reject($makeTypeError("options must be an object"));
+    if (!$isObject(options)) return Promise.$reject(new TypeError("options must be an object"));
 
     try {
       preventAbort = !!options["preventAbort"];

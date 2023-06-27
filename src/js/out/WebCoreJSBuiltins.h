@@ -3021,7 +3021,7 @@ extern const JSC::ImplementationVisibility s_readableStreamInternalsReadableStre
     macro(createTextStream, readableStreamInternalsCreateTextStream, 1) \
     macro(initializeTextStream, readableStreamInternalsInitializeTextStream, 2) \
     macro(initializeArrayStream, readableStreamInternalsInitializeArrayStream, 2) \
-    macro(initializeArrayBufferStream, readableStreamInternalsInitializeArrayBufferStream, 2) \
+    macro(initializeArrayBufferStream, readableStreamInternalsInitializeArrayBufferStream, 3) \
     macro(readableStreamError, readableStreamInternalsReadableStreamError, 2) \
     macro(readableStreamDefaultControllerShouldCallPull, readableStreamInternalsReadableStreamDefaultControllerShouldCallPull, 1) \
     macro(readableStreamDefaultControllerCallPullIfNeeded, readableStreamInternalsReadableStreamDefaultControllerCallPullIfNeeded, 1) \

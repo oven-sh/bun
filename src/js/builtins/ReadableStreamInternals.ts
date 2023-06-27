@@ -152,10 +152,11 @@ export function createReadableStreamController(stream, underlyingSource, strateg
 
   if (typeString === "bytes") {
     // if (!$readableByteStreamAPIEnabled())
-    //     $throwTypeError("ReadableByteStreamController is not implemented");
+    //     throw new TypeError("ReadableByteStreamController is not implemented");
 
     if (strategy.highWaterMark === undefined) strategy.highWaterMark = 0;
-    if (strategy.size !== undefined) $throwRangeError("Strategy for a ReadableByteStreamController cannot have a size");
+    if (strategy.size !== undefined)
+      throw new RangeError("Strategy for a ReadableByteStreamController cannot have a size");
 
     $putByIdDirectPrivate(
       stream,
@@ -604,16 +605,17 @@ export function readDirectStream(stream, sink, underlyingSource) {
   $putByIdDirectPrivate(stream, "underlyingSource", undefined);
   $putByIdDirectPrivate(stream, "start", undefined);
 
-  function close(stream, reason) {
-    if (reason && underlyingSource?.cancel) {
+  function close(stream: ReadableStream, reason?: any) {
+    var cancel = underlyingSource?.cancel;
+    if (cancel) {
       try {
-        var prom = underlyingSource.cancel(reason);
-        $markPromiseAsHandled(prom);
+        var prom = cancel.$apply(underlyingSource, reason);
+        if ($isPromise(prom)) {
+          $markPromiseAsHandled(prom);
+        }
       } catch (e) {}
-
       underlyingSource = undefined;
     }
-
     if (stream) {
       $putByIdDirectPrivate(stream, "readableStreamController", undefined);
       $putByIdDirectPrivate(stream, "reader", undefined);
@@ -623,19 +625,17 @@ export function readDirectStream(stream, sink, underlyingSource) {
       } else {
         $putByIdDirectPrivate(stream, "state", $streamClosed);
       }
-      stream = undefined;
     }
   }
 
   if (!underlyingSource.pull) {
-    close();
+    close(stream);
     return;
   }
 
   if (!$isCallable(underlyingSource.pull)) {
-    close();
-    $throwTypeError("pull is not a function");
-    return;
+    close(stream);
+    throw new TypeError("pull is not a function");
   }
 
   $putByIdDirectPrivate(stream, "readableStreamController", sink);
@@ -767,7 +767,7 @@ export async function readStreamIntoSink(stream, sink, isNative) {
   }
 }
 
-export function handleDirectStreamError(e) {
+export function handleDirectStreamError(this, e) {
   var controller = this;
   var sink = controller.$sink;
   if (sink) {
@@ -871,10 +871,10 @@ export function noopDoneFunction() {
 }
 
 export function onReadableStreamDirectControllerClosed(reason) {
-  $throwTypeError("ReadableStreamDirectController is now closed");
+  throw new TypeError("ReadableStreamDirectController is now closed");
 }
 
-export function onCloseDirectStream(reason) {
+export function onCloseDirectStream(this, reason) {
   var stream = this.$controlledReadableStream;
   if (!stream || $getByIdDirectPrivate(stream, "state") !== $streamReadable) return;
 
@@ -1170,16 +1170,19 @@ export function initializeArrayStream(underlyingSource, highWaterMark) {
   return closingPromise;
 }
 
-export function initializeArrayBufferStream(underlyingSource, highWaterMark) {
+export function initializeArrayBufferStream(
+  this: ReadableStream,
+  underlyingSource: UnderlyingSource,
+  highWaterMark: number,
+) {
   // This is the fallback implementation for direct streams
   // When we don't know what the destination type is
   // We assume it is a Uint8Array.
-
   var opts =
     highWaterMark && typeof highWaterMark === "number"
       ? { highWaterMark, stream: true, asUint8Array: true }
       : { stream: true, asUint8Array: true };
-  var sink = new $Bun.ArrayBufferSink();
+  var sink = new Bun.ArrayBufferSink();
   sink.start(opts);
 
   var controller = {
@@ -1324,7 +1327,7 @@ export function readableStreamCancel(stream, reason) {
     return Promise.$resolve(controller.close(reason));
   }
 
-  $throwTypeError("ReadableStreamController has no cancel or close method");
+  return Promise.$reject(new TypeError("ReadableStreamController has no cancel or close method"));
 }
 
 export function readableStreamDefaultControllerCancel(controller, reason) {
@@ -1441,11 +1444,11 @@ export function readableStreamReaderGenericRelease(reader) {
   if ($getByIdDirectPrivate($getByIdDirectPrivate(reader, "ownerReadableStream"), "state") === $streamReadable)
     $getByIdDirectPrivate(reader, "closedPromiseCapability").$reject.$call(
       undefined,
-      $makeTypeError("releasing lock of reader whose stream is still in readable state"),
+      new TypeError("releasing lock of reader whose stream is still in readable state"),
     );
   else
     $putByIdDirectPrivate(reader, "closedPromiseCapability", {
-      $promise: $newHandledRejectedPromise($makeTypeError("reader released lock")),
+      $promise: $newHandledRejectedPromise(new TypeError("reader released lock")),
     });
 
   const promise = $getByIdDirectPrivate(reader, "closedPromiseCapability").$promise;

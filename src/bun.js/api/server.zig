@@ -2061,7 +2061,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 onRejectStream,
                             );
                             // the response_stream should be GC'd
-
                         },
                         .Fulfilled => {
                             streamLog("promise Fulfilled", .{});

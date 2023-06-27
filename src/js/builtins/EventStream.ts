@@ -12,17 +12,17 @@ export function getEventStream() {
           opts?.start?.(this);
         },
         cancel: () => {
-          console.log("Cancel!");
           opts?.cancel?.(this);
+          this.#ctrl = undefined;
         },
       });
     }
 
     send(event?: unknown, data?: unknown): void {
       var ctrl = this.#ctrl!;
-      // if (!ctrl) {
-      //   throw new Error("EventStream has ended");
-      // }
+      if (!ctrl) {
+        throw new Error("EventStream has ended");
+      }
       if (!data) {
         data = event;
         event = undefined;

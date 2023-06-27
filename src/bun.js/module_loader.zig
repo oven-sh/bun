@@ -271,14 +271,8 @@ pub const ModuleLoader = struct {
 
             pub fn onPoll(this: *Queue) void {
                 debug("onPoll", .{});
-                var pm = this.vm().packageManager();
-
                 this.runTasks();
-                _ = pm.scheduleTasks();
-                this.runTasks();
-
                 this.pollModules();
-                _ = pm.flushDependencyQueue();
             }
 
             pub fn runTasks(this: *Queue) void {

@@ -135,8 +135,8 @@ void generateNodeModuleModule(JSC::JSGlobalObject *globalObject,
                             ImplementationVisibility::Public, NoIntrinsic,
                             jsFunctionSourceMap, nullptr));
 
-  append(JSC::Identifier::fromString(vm, "_resolveFileName"_s),
-         JSFunction::create(vm, globalObject, 3, String("_resolveFileName"_s),
+  append(JSC::Identifier::fromString(vm, "_resolveFilename"_s),
+         JSFunction::create(vm, globalObject, 3, String("_resolveFilename"_s),
                             jsFunctionResolveFileName,
                             ImplementationVisibility::Public));
 
@@ -150,6 +150,9 @@ void generateNodeModuleModule(JSC::JSGlobalObject *globalObject,
 
   append(JSC::Identifier::fromString(vm, "globalPaths"_s),
          JSC::constructEmptyArray(globalObject, nullptr, 0));
+
+  append(JSC::Identifier::fromString(vm, "prototype"_s),
+         JSC::constructEmptyObject(globalObject));
 
   JSC::JSArray *builtinModules = JSC::JSArray::create(
       vm,

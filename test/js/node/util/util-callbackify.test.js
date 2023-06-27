@@ -65,7 +65,12 @@ describe("util.callbackify", () => {
         });
 
         const cbPromiseFn = callbackify(promiseFn);
-        expect(promiseFn.name).toStrictEqual(obj);
+        try {
+          expect(promiseFn.name).toStrictEqual(obj);
+        } catch (error) {
+          done(error);
+        }
+
         cbPromiseFn(
           mustCall((err, ret) => {
             try {

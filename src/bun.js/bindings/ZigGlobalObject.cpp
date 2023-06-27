@@ -280,7 +280,13 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         // crypto.createHash("sha1")    985.26 ns/iter    (956.7 ns … 1.12 µs)      1 µs   1.12 µs   1.12 µs
         // Peak memory usage: 56 MB
         size_t ramSize = WTF::ramSize();
-        ramSize /= 1024;
+
+        // We originally went with a hardcoded /= 1024 here
+        // But if you don't have much memory, that becomes a problem.
+        // Instead, we do 65%
+        double ramSizeDouble = static_cast<double>(ramSize);
+        ramSizeDouble *= 0.65;
+        ramSize = static_cast<size_t>(ramSizeDouble);
 
         if (ramSize > 0) {
             JSC::Options::forceRAMSize() = ramSize;

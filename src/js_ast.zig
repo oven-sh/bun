@@ -10052,7 +10052,7 @@ pub const Macro = struct {
                 }
             };
 
-            return CallData.callWrapper(.{
+            return CallData.callWrapper(CallArgs{
                 macro,
                 log,
                 allocator,

@@ -125,7 +125,7 @@ public:
 
     void didReceiveMessage(String&& message);
     void didReceiveData(const char* data, size_t length);
-    void didReceiveBinaryData(Vector<uint8_t>&& binaryData);
+    void didReceiveBinaryData(const AtomString& eventName, Vector<uint8_t>&& binaryData);
 
     void updateHasPendingActivity();
     bool hasPendingActivity() const
@@ -176,12 +176,12 @@ private:
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
-    void didReceiveMessageError(unsigned short code, WTF::String reason);
+    void didReceiveClose(bool wasClean, unsigned short code, WTF::String reason);
     void didUpdateBufferedAmount(unsigned bufferedAmount);
     void didStartClosingHandshake();
 
-    void sendWebSocketString(const String& message);
-    void sendWebSocketData(const char* data, size_t length);
+    void sendWebSocketString(const String& message, const Opcode opcode);
+    void sendWebSocketData(const char* data, size_t length, const Opcode opcode);
 
     void failAsynchronously();
 

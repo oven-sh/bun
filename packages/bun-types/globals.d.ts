@@ -1914,21 +1914,21 @@ interface WebSocket extends EventTarget {
    *
    * To gracefuly close the connection, use `close()` instead.
    */
-  // terminate(): void;
+  terminate(): void;
 
   /**
    * Sends a ping.
    *
    * @param data the string, ArrayBuffer, or ArrayBufferView to send
    */
-  // ping(data?: string | BufferSource): void;
+  ping(data?: string | BufferSource): void;
 
   /**
    * Sends a pong.
    *
    * @param data the string, ArrayBuffer, or ArrayBufferView to send
    */
-  // pong(data?: string | BufferSource): void;
+  pong(data?: string | BufferSource): void;
 
   /**
    * Sets how binary data is returned in events.

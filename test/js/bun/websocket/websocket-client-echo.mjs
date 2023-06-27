@@ -39,17 +39,17 @@ ws.on("message", (data, isBinary) => {
   }
 });
 
-ws.on("ping", (data) => {
+ws.on("ping", data => {
   console.error("Received ping:", data);
   ws.ping(data);
 });
 
-ws.on("pong", (data) => {
+ws.on("pong", data => {
   console.error("Received pong:", data);
   ws.pong(data);
 });
 
-ws.on("error", (error) => {
+ws.on("error", error => {
   console.error("Received error:", error);
 });
 
@@ -61,7 +61,7 @@ ws.on("close", (code, reason, wasClean) => {
   }
 });
 
-ws.on("redirect", (url) => {
+ws.on("redirect", url => {
   console.error("Received redirect:", url);
 });
 

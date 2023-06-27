@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { WebSocketServer } from "ws";
 
 const server = createServer();
-const wss = new WebSocketServer({  
+const wss = new WebSocketServer({
   perMessageDeflate: false,
   noServer: true,
 });
@@ -11,6 +11,7 @@ server.on("listening", () => {
   const { address, port, family } = server.address();
   const { href } = new URL(family === "IPv6" ? `ws://[${address}]:${port}` : `ws://${address}:${port}`);
   console.log(href);
+  console.error("Listening:", href);
 });
 
 server.on("request", (request, response) => {
@@ -23,18 +24,18 @@ server.on("clientError", (error, socket) => {
   socket.end();
 });
 
-server.on("error", (error) => {
+server.on("error", error => {
   console.error("Received error:", error);
 });
 
 server.on("upgrade", (request, socket, head) => {
   console.error("Received upgrade:", { ...request.headers });
 
-  socket.on("data", (data) => {
+  socket.on("data", data => {
     console.error("Received bytes:", data);
   });
 
-  wss.handleUpgrade(request, socket, head, (ws) => {
+  wss.handleUpgrade(request, socket, head, ws => {
     wss.emit("connection", ws, request);
   });
 });
@@ -42,7 +43,7 @@ server.on("upgrade", (request, socket, head) => {
 wss.on("connection", (ws, request) => {
   console.error("Received connection:", request.socket.remoteAddress);
 
-  ws.on("message", (message) => {
+  ws.on("message", message => {
     console.error("Received message:", message);
     ws.send(message);
 
@@ -61,20 +62,21 @@ wss.on("connection", (ws, request) => {
     }
   });
 
-  ws.on("ping", (data) => {
+  ws.on("ping", data => {
     console.error("Received ping:", data);
-    ws.pong(data);
+    ws.ping(data);
   });
 
-  ws.on("pong", (data) => {
+  ws.on("pong", data => {
     console.error("Received pong:", data);
+    ws.pong(data);
   });
 
   ws.on("close", (code, reason) => {
     console.error("Received close:", code, reason);
   });
 
-  ws.on("error", (error) => {
+  ws.on("error", error => {
     console.error("Received error:", error);
   });
 });
@@ -83,10 +85,10 @@ server.on("close", () => {
   console.error("Server closed");
 });
 
-process.on("exit", (exitCode) => {
+process.on("exit", exitCode => {
   console.error("Server exited:", exitCode);
 });
 
-const hostname = process.env.HOST || "localhost";
+const hostname = process.env.HOST || "127.0.0.1";
 const port = parseInt(process.env.PORT) || 0;
 server.listen(port, hostname);

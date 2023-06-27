@@ -458,8 +458,7 @@ ExceptionOr<void> WebSocket::send(const String& message)
         return {};
     }
 
-    // 0-length is allowed
-    this->sendWebSocketString(message);
+    this->sendWebSocketString(message, Opcode::Text);
 
     return {};
 }
@@ -477,8 +476,8 @@ ExceptionOr<void> WebSocket::send(ArrayBuffer& binaryData)
     }
     char* data = static_cast<char*>(binaryData.data());
     size_t length = binaryData.byteLength();
-    // 0-length is allowed
-    this->sendWebSocketData(data, length);
+    this->sendWebSocketData(data, length, Opcode::Binary);
+
     return {};
 }
 
@@ -498,8 +497,7 @@ ExceptionOr<void> WebSocket::send(ArrayBufferView& arrayBufferView)
     auto buffer = arrayBufferView.unsharedBuffer().get();
     char* baseAddress = reinterpret_cast<char*>(buffer->data()) + arrayBufferView.byteOffset();
     size_t length = arrayBufferView.byteLength();
-    // 0-length is allowed
-    this->sendWebSocketData(baseAddress, length);
+    this->sendWebSocketData(baseAddress, length, Opcode::Binary);
 
     return {};
 }
@@ -521,17 +519,17 @@ ExceptionOr<void> WebSocket::send(ArrayBufferView& arrayBufferView)
 //     return {};
 // }
 
-void WebSocket::sendWebSocketData(const char* baseAddress, size_t length)
+void WebSocket::sendWebSocketData(const char* baseAddress, size_t length, const Opcode op)
 {
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
-        Bun__WebSocketClient__writeBinaryData(this->m_connectedWebSocket.client, reinterpret_cast<const unsigned char*>(baseAddress), length);
+        Bun__WebSocketClient__writeBinaryData(this->m_connectedWebSocket.client, reinterpret_cast<const unsigned char*>(baseAddress), length, static_cast<uint8_t>(op));
         // this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
         // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
-        Bun__WebSocketClientTLS__writeBinaryData(this->m_connectedWebSocket.clientSSL, reinterpret_cast<const unsigned char*>(baseAddress), length);
+        Bun__WebSocketClientTLS__writeBinaryData(this->m_connectedWebSocket.clientSSL, reinterpret_cast<const unsigned char*>(baseAddress), length, static_cast<uint8_t>(op));
         break;
     }
     // case ConnectedWebSocketKind::Server: {
@@ -550,19 +548,19 @@ void WebSocket::sendWebSocketData(const char* baseAddress, size_t length)
     }
 }
 
-void WebSocket::sendWebSocketString(const String& message)
+void WebSocket::sendWebSocketString(const String& message, const Opcode op)
 {
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
         auto zigStr = Zig::toZigString(message);
-        Bun__WebSocketClient__writeString(this->m_connectedWebSocket.client, &zigStr);
+        Bun__WebSocketClient__writeString(this->m_connectedWebSocket.client, &zigStr, static_cast<uint8_t>(op));
         // this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
         // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
         auto zigStr = Zig::toZigString(message);
-        Bun__WebSocketClientTLS__writeString(this->m_connectedWebSocket.clientSSL, &zigStr);
+        Bun__WebSocketClientTLS__writeString(this->m_connectedWebSocket.clientSSL, &zigStr, static_cast<uint8_t>(op));
         break;
     }
     // case ConnectedWebSocketKind::Server: {
@@ -586,8 +584,8 @@ void WebSocket::sendWebSocketString(const String& message)
 
 ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, const String& reason)
 {
-    int code = optionalCode ? optionalCode.value() : static_cast<int>(0);
-    if (code == 0) {
+    int code = optionalCode ? optionalCode.value() : static_cast<int>(1000);
+    if (code == 1000) {
         // LOG(Network, "WebSocket %p close() without code and reason", this);
     } else {
         // LOG(Network, "WebSocket %p close() code=%d reason='%s'", this, code, reason.utf8().data());
@@ -706,7 +704,7 @@ ExceptionOr<void> WebSocket::ping()
         return {};
     }
 
-    // TODO: this->sendWebSocketString(message, Opcode::Ping);
+    this->sendWebSocketString(message, Opcode::Ping);
 
     return {};
 }
@@ -726,7 +724,7 @@ ExceptionOr<void> WebSocket::ping(const String& message)
         return {};
     }
 
-    // TODO: this->sendWebSocketString(message, Opcode::Ping);
+    this->sendWebSocketString(message, Opcode::Ping);
 
     return {};
 }
@@ -746,7 +744,7 @@ ExceptionOr<void> WebSocket::ping(ArrayBuffer& binaryData)
 
     char* data = static_cast<char*>(binaryData.data());
     size_t length = binaryData.byteLength();
-    // TODO: this->sendWebSocketData(data, length, Opcode::Ping);
+    this->sendWebSocketData(data, length, Opcode::Ping);
 
     return {};
 }
@@ -768,7 +766,7 @@ ExceptionOr<void> WebSocket::ping(ArrayBufferView& arrayBufferView)
     auto buffer = arrayBufferView.unsharedBuffer().get();
     char* baseAddress = reinterpret_cast<char*>(buffer->data()) + arrayBufferView.byteOffset();
     size_t length = arrayBufferView.byteLength();
-    // TODO: this->sendWebSocketData(baseAddress, length, Opcode::Ping);
+    this->sendWebSocketData(baseAddress, length, Opcode::Ping);
 
     return {};
 }
@@ -788,7 +786,7 @@ ExceptionOr<void> WebSocket::pong()
         return {};
     }
 
-    // TODO: this->sendWebSocketString(message, Opcode::Pong);
+    this->sendWebSocketString(message, Opcode::Pong);
 
     return {};
 }
@@ -808,7 +806,7 @@ ExceptionOr<void> WebSocket::pong(const String& message)
         return {};
     }
 
-    // TODO: this->sendWebSocketString(message, Opcode::Pong);
+    this->sendWebSocketString(message, Opcode::Pong);
 
     return {};
 }
@@ -828,7 +826,7 @@ ExceptionOr<void> WebSocket::pong(ArrayBuffer& binaryData)
 
     char* data = static_cast<char*>(binaryData.data());
     size_t length = binaryData.byteLength();
-    // TODO: this->sendWebSocketData(data, length, Opcode::Pong);
+    this->sendWebSocketData(data, length, Opcode::Pong);
 
     return {};
 }
@@ -850,7 +848,7 @@ ExceptionOr<void> WebSocket::pong(ArrayBufferView& arrayBufferView)
     auto buffer = arrayBufferView.unsharedBuffer().get();
     char* baseAddress = reinterpret_cast<char*>(buffer->data()) + arrayBufferView.byteOffset();
     size_t length = arrayBufferView.byteLength();
-    // TODO: this->sendWebSocketData(baseAddress, length, Opcode::Pong);
+    this->sendWebSocketData(baseAddress, length, Opcode::Pong);
 
     return {};
 }
@@ -1034,7 +1032,7 @@ void WebSocket::didReceiveMessage(String&& message)
     // });
 }
 
-void WebSocket::didReceiveBinaryData(Vector<uint8_t>&& binaryData)
+void WebSocket::didReceiveBinaryData(const AtomString& eventName, Vector<uint8_t>&& binaryData)
 {
     // LOG(Network, "WebSocket %p didReceiveBinaryData() %u byte binary message", this, static_cast<unsigned>(binaryData.size()));
     // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, binaryData = WTFMove(binaryData)]() mutable {
@@ -1045,7 +1043,6 @@ void WebSocket::didReceiveBinaryData(Vector<uint8_t>&& binaryData)
     //     if (auto* inspector = m_channel->channelInspector())
     //         inspector->didReceiveWebSocketFrame(WebSocketChannelInspector::createFrame(binaryData.data(), binaryData.size(), WebSocketFrame::OpCode::OpCodeBinary));
     // }
-    auto eventName = "message"_s;
     switch (m_binaryType) {
     // case BinaryType::Blob:
     //     // FIXME: We just received the data from NetworkProcess, and are sending it back. This is inefficient.
@@ -1119,7 +1116,7 @@ void WebSocket::didReceiveBinaryData(Vector<uint8_t>&& binaryData)
     // });
 }
 
-void WebSocket::didReceiveMessageError(unsigned short code, WTF::String reason)
+void WebSocket::didReceiveClose(bool wasClean, unsigned short code, WTF::String reason)
 {
     // LOG(Network, "WebSocket %p didReceiveErrorMessage()", this);
     // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, reason = WTFMove(reason)] {
@@ -1129,7 +1126,7 @@ void WebSocket::didReceiveMessageError(unsigned short code, WTF::String reason)
     if (auto* context = scriptExecutionContext()) {
         this->incPendingActivityCount();
         // https://html.spec.whatwg.org/multipage/web-sockets.html#feedback-from-the-protocol:concept-websocket-closed, we should synchronously fire a close event.
-        dispatchEvent(CloseEvent::create(code < 1002, code, reason));
+        dispatchEvent(CloseEvent::create(wasClean, code, reason));
         this->decPendingActivityCount();
     }
 }
@@ -1256,158 +1253,158 @@ void WebSocket::didFailWithErrorCode(int32_t code)
     // invalid_response
     case 1: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Invalid response");
-        didReceiveMessageError(1002, message);
+        didReceiveClose(false, 1002, message);
         break;
     }
     // expected_101_status_code
     case 2: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Expected 101 status code");
-        didReceiveMessageError(1002, message);
+        didReceiveClose(false, 1002, message);
         break;
     }
     // missing_upgrade_header
     case 3: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Missing upgrade header");
-        didReceiveMessageError(1002, message);
+        didReceiveClose(false, 1002, message);
         break;
     }
     // missing_connection_header
     case 4: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Missing connection header");
-        didReceiveMessageError(1002, message);
+        didReceiveClose(false, 1002, message);
         break;
     }
     // missing_websocket_accept_header
     case 5: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Missing websocket accept header");
-        didReceiveMessageError(1002, message);
+        didReceiveClose(false, 1002, message);
         break;
     }
     // invalid_upgrade_header
     case 6: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Invalid upgrade header");
-        didReceiveMessageError(1002, message);
+        didReceiveClose(false, 1002, message);
         break;
     }
     // invalid_connection_header
     case 7: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Invalid connection header");
-        didReceiveMessageError(1002, message);
+        didReceiveClose(false, 1002, message);
         break;
     }
     // invalid_websocket_version
     case 8: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Invalid websocket version");
-        didReceiveMessageError(1002, message);
+        didReceiveClose(false, 1002, message);
         break;
     }
     // mismatch_websocket_accept_header
     case 9: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Mismatch websocket accept header");
-        didReceiveMessageError(1002, message);
+        didReceiveClose(false, 1002, message);
         break;
     }
     // missing_client_protocol
     case 10: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Missing client protocol");
-        didReceiveMessageError(1002, message);
+        didReceiveClose(true, 1002, message);
         break;
     }
     // mismatch_client_protocol
     case 11: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Mismatch client protocol");
-        didReceiveMessageError(1002, message);
+        didReceiveClose(true, 1002, message);
         break;
     }
     // timeout
     case 12: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Timeout");
-        didReceiveMessageError(1013, message);
+        didReceiveClose(true, 1013, message);
         break;
     }
     // closed
     case 13: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Closed by client");
-        didReceiveMessageError(1000, message);
+        didReceiveClose(true, 1000, message);
         break;
     }
     // failed_to_write
     case 14: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Failed to write");
-        didReceiveMessageError(1006, message);
+        didReceiveClose(false, 1006, message);
         break;
     }
     // failed_to_connect
     case 15: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Failed to connect");
-        didReceiveMessageError(1006, message);
+        didReceiveClose(false, 1006, message);
         break;
     }
     // headers_too_large
     case 16: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Headers too large");
-        didReceiveMessageError(1007, message);
+        didReceiveClose(false, 1007, message);
         break;
     }
     // ended
     case 17: {
-        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Closed by server");
-        didReceiveMessageError(1001, message);
+        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Connection ended");
+        didReceiveClose(false, 1006, message);
         break;
     }
 
     // failed_to_allocate_memory
     case 18: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Failed to allocate memory");
-        didReceiveMessageError(1001, message);
+        didReceiveClose(false, 1001, message);
         break;
     }
     // control_frame_is_fragmented
     case 19: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Protocol error - control frame is fragmented");
-        didReceiveMessageError(1002, message);
+        didReceiveClose(false, 1002, message);
         break;
     }
     // invalid_control_frame
     case 20: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Protocol error - invalid control frame");
-        didReceiveMessageError(1002, message);
+        didReceiveClose(false, 1002, message);
         break;
     }
     // compression_unsupported
     case 21: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Compression not implemented yet");
-        didReceiveMessageError(1011, message);
+        didReceiveClose(true, 1011, message);
         break;
     }
     // unexpected_mask_from_server
     case 22: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Protocol error - unexpected mask from server");
-        didReceiveMessageError(1002, message);
+        didReceiveClose(false, 1002, message);
         break;
     }
     // expected_control_frame
     case 23: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Protocol error - expected control frame");
-        didReceiveMessageError(1002, message);
+        didReceiveClose(false, 1002, message);
         break;
     }
     // unsupported_control_frame
     case 24: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Protocol error - unsupported control frame");
-        didReceiveMessageError(1002, message);
+        didReceiveClose(false, 1002, message);
         break;
     }
     // unexpected_opcode
     case 25: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Protocol error - unexpected opcode");
-        didReceiveMessageError(1002, message);
+        didReceiveClose(false, 1002, message);
         break;
     }
     // invalid_utf8
     case 26: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Server sent invalid UTF8");
-        didReceiveMessageError(1003, message);
+        didReceiveClose(false, 1003, message);
         break;
     }
     }
@@ -1430,9 +1427,14 @@ extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t
 {
     webSocket->didConnect(socket, bufferedData, len);
 }
-extern "C" void WebSocket__didCloseWithErrorCode(WebCore::WebSocket* webSocket, int32_t errorCode)
+extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, int32_t errorCode)
 {
     webSocket->didFailWithErrorCode(errorCode);
+}
+extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, const ZigString *reason)
+{
+    WTF::String wtf_reason = Zig::toString(*reason);
+    webSocket->didClose(0, errorCode, WTFMove(wtf_reason));
 }
 
 extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, bool clone, const ZigString* str)
@@ -1440,9 +1442,20 @@ extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, bool cl
     WTF::String wtf_str = clone ? Zig::toStringCopy(*str) : Zig::toString(*str);
     webSocket->didReceiveMessage(WTFMove(wtf_str));
 }
-extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, uint8_t* bytes, size_t len)
+extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, uint8_t* bytes, size_t len, const uint8_t op)
 {
-    webSocket->didReceiveBinaryData({ bytes, len });
+    auto opcode = static_cast<WebCore::WebSocket::Opcode>(op);
+    switch (opcode) {
+    case WebCore::WebSocket::Opcode::Binary:
+        webSocket->didReceiveBinaryData("message"_s, { bytes, len });
+        break;
+    case WebCore::WebSocket::Opcode::Ping:
+        webSocket->didReceiveBinaryData("ping"_s, { bytes, len });
+        break;
+    case WebCore::WebSocket::Opcode::Pong:
+        webSocket->didReceiveBinaryData("pong"_s, { bytes, len });
+        break;
+    }
 }
 
 extern "C" void WebSocket__incrementPendingActivity(WebCore::WebSocket* webSocket)

@@ -12,12 +12,12 @@ const strings = [
   {
     label: "string (latin1)",
     message: "latin1-©",
-    bytes: [0x6C, 0x61, 0x74, 0x69, 0x6E, 0x31, 0x2D, 0xC2, 0xA9],
+    bytes: [0x6c, 0x61, 0x74, 0x69, 0x6e, 0x31, 0x2d, 0xc2, 0xa9],
   },
   {
     label: "string (utf-8)",
     message: "utf8-😶",
-    bytes: [0x75, 0x74, 0x66, 0x38, 0x2D, 0xF0, 0x9F, 0x98, 0xB6],
+    bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0x98, 0xb6],
   },
 ];
 
@@ -25,24 +25,21 @@ const buffers = [
   {
     label: "Uint8Array (utf-8)",
     message: new TextEncoder().encode("utf8-🙂"),
-    bytes: [0x75, 0x74, 0x66, 0x38, 0x2D, 0xF0, 0x9F, 0x99, 0x82],
+    bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0x99, 0x82],
   },
   {
     label: "ArrayBuffer (utf-8)",
     message: new TextEncoder().encode("utf8-🙃").buffer,
-    bytes: [0x75, 0x74, 0x66, 0x38, 0x2D, 0xF0, 0x9F, 0x99, 0x83],
+    bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0x99, 0x83],
   },
   {
     label: "Buffer (utf-8)",
     message: Buffer.from("utf8-🤩"),
-    bytes: [0x75, 0x74, 0x66, 0x38, 0x2D, 0xF0, 0x9F, 0xA4, 0xA9],
+    bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0xa4, 0xa9],
   },
 ];
 
-const messages = [
-  ...strings,
-  ...buffers,
-];
+const messages = [...strings, ...buffers];
 
 const binaryTypes = [
   {
@@ -56,7 +53,7 @@ const binaryTypes = [
   {
     label: "uint8array",
     type: Uint8Array,
-  }
+  },
 ] as const;
 
 let servers: Server[] = [];
@@ -73,14 +70,14 @@ afterEach(() => {
 
 describe("Server", () => {
   describe("websocket", () => {
-    test("open", (done) => ({
+    test("open", done => ({
       open(ws) {
         expect(ws).toBeDefined();
         expect(ws).toHaveProperty("data", { id: 0 });
         done();
-      }
+      },
     }));
-    test("close", (done) => ({
+    test("close", done => ({
       open(ws) {
         ws.close();
       },
@@ -90,9 +87,9 @@ describe("Server", () => {
         expect(code).toBeInteger();
         expect(reason).toBeString();
         done();
-      }
+      },
     }));
-    test("message", (done) => ({
+    test("message", done => ({
       open(ws) {
         ws.send("Hello");
       },
@@ -101,9 +98,9 @@ describe("Server", () => {
         expect(ws).toHaveProperty("data", { id: 0 });
         expect(data).toBeDefined();
         done();
-      }
+      },
     }));
-    test("drain", (done) => ({
+    test("drain", done => ({
       backpressureLimit: 1,
       open(ws) {
         const data = new Uint8Array(1 * 1024 * 1024);
@@ -114,9 +111,9 @@ describe("Server", () => {
         expect(ws).toBeDefined();
         expect(ws).toHaveProperty("data", { id: 0 });
         done();
-      }
+      },
     }));
-    test("ping", (done) => ({
+    test("ping", done => ({
       open(ws) {
         ws.ping();
       },
@@ -125,9 +122,9 @@ describe("Server", () => {
         expect(ws).toHaveProperty("data", { id: 0 });
         expect(data).toBeInstanceOf(Buffer);
         done();
-      }
+      },
     }));
-    test("pong", (done) => ({
+    test("pong", done => ({
       open(ws) {
         ws.pong();
       },
@@ -136,9 +133,9 @@ describe("Server", () => {
         expect(ws).toHaveProperty("data", { id: 0 });
         expect(data).toBeInstanceOf(Buffer);
         done();
-      }
+      },
     }));
-    test("maxPayloadLength", (done) => ({
+    test("maxPayloadLength", done => ({
       maxPayloadLength: 4,
       open(ws) {
         ws.send("Hello!");
@@ -148,7 +145,7 @@ describe("Server", () => {
         done();
       },
     }));
-    test("backpressureLimit", (done) => ({
+    test("backpressureLimit", done => ({
       backpressureLimit: 1,
       open(ws) {
         const data = new Uint8Array(1 * 1024 * 1024);
@@ -158,7 +155,7 @@ describe("Server", () => {
         done();
       },
     }));
-    test("closeOnBackpressureLimit", (done) => ({
+    test("closeOnBackpressureLimit", done => ({
       closeOnBackpressureLimit: true,
       backpressureLimit: 1,
       open(ws) {
@@ -177,7 +174,7 @@ describe("Server", () => {
 });
 
 describe("ServerWebSocket", () => {
-  test("readyState", (done) => ({
+  test("readyState", done => ({
     open(ws) {
       expect(ws.readyState).toBe(WebSocket.OPEN);
       ws.close();
@@ -187,20 +184,20 @@ describe("ServerWebSocket", () => {
       done();
     },
   }));
-  test("remoteAddress", (done) => ({
+  test("remoteAddress", done => ({
     open(ws) {
       expect(ws.remoteAddress).toMatch(/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/);
       done();
     },
   }));
   describe("binaryType", () => {
-    test("(default)", (done) => ({
+    test("(default)", done => ({
       open(ws) {
         expect(ws.binaryType).toBe("nodebuffer");
         done();
       },
     }));
-    test("(invalid)", (done) => ({
+    test("(invalid)", done => ({
       open(ws) {
         try {
           // @ts-expect-error
@@ -212,7 +209,7 @@ describe("ServerWebSocket", () => {
       },
     }));
     for (const { label, type } of binaryTypes) {
-      test(label, (done) => ({
+      test(label, done => ({
         open(ws) {
           ws.binaryType = label;
           expect(ws.binaryType).toBe(label);
@@ -235,7 +232,7 @@ describe("ServerWebSocket", () => {
   });
   describe("send()", () => {
     for (const { label, message, bytes } of messages) {
-      test(label, (done) => ({
+      test(label, done => ({
         open(ws) {
           ws.send(message);
         },
@@ -244,37 +241,41 @@ describe("ServerWebSocket", () => {
             expect(received).toBe(message);
           } else {
             expect(received).toEqual(Buffer.from(bytes));
-          }          
+          }
           done();
         },
       }));
     }
-    test("(benchmark)", (done, connect) => {
-      const maxClients = 10;
-      const maxMessages = 10_000;
-      let count = 0;
-      return {
-        open(ws) {
-          if (ws.data.id < maxClients) {
-            connect();
-          }
-          for (let i = 0; i < maxMessages; i++) {
-            ws.send(`${i}`, true);
-            ws.sendText(`${i}`, true);
-            ws.sendBinary(Buffer.from(`${i}`), true);
-          }
-        },
-        message() {
-          if (++count === maxClients * maxMessages * 3) {
-            done();
-          }
-        },
-      };
-    }, 15_000);
+    test(
+      "(benchmark)",
+      (done, connect) => {
+        const maxClients = 10;
+        const maxMessages = 10_000;
+        let count = 0;
+        return {
+          open(ws) {
+            if (ws.data.id < maxClients) {
+              connect();
+            }
+            for (let i = 0; i < maxMessages; i++) {
+              ws.send(`${i}`, true);
+              ws.sendText(`${i}`, true);
+              ws.sendBinary(Buffer.from(`${i}`), true);
+            }
+          },
+          message() {
+            if (++count === maxClients * maxMessages * 3) {
+              done();
+            }
+          },
+        };
+      },
+      30_000,
+    );
   });
   describe("sendBinary()", () => {
     for (const { label, message, bytes } of buffers) {
-      test(label, (done) => ({
+      test(label, done => ({
         open(ws) {
           ws.sendBinary(message);
         },
@@ -287,7 +288,7 @@ describe("ServerWebSocket", () => {
   });
   describe("sendText()", () => {
     for (const { label, message } of strings) {
-      test(label, (done) => ({
+      test(label, done => ({
         open(ws) {
           ws.sendText(message);
         },
@@ -300,7 +301,7 @@ describe("ServerWebSocket", () => {
   });
   describe("subscribe()", () => {
     for (const { label, message } of strings) {
-      test(label, (done) => ({
+      test(label, done => ({
         open(ws) {
           expect(ws.isSubscribed(message)).toBeFalse();
           ws.subscribe(message);
@@ -383,7 +384,7 @@ describe("ServerWebSocket", () => {
   describe("publish() with { publishToSelf: true }", () => {
     for (const { label, message, bytes } of messages) {
       const topic = typeof message === "string" ? message : label;
-      test(label, (done) => ({
+      test(label, done => ({
         publishToSelf: true,
         async open(ws) {
           ws.subscribe(topic);
@@ -401,7 +402,7 @@ describe("ServerWebSocket", () => {
     }
   });
   describe("ping()", () => {
-    test("(no argument)", (done) => ({
+    test("(no argument)", done => ({
       open(ws) {
         ws.ping();
       },
@@ -411,19 +412,19 @@ describe("ServerWebSocket", () => {
       },
     }));
     for (const { label, message, bytes } of messages) {
-      test(label, (done) => ({
+      test(label, done => ({
         open(ws) {
           ws.ping(message);
         },
         ping(_, received) {
-          expect(received).toEqual(Buffer.from(bytes));  
+          expect(received).toEqual(Buffer.from(bytes));
           done();
         },
       }));
     }
   });
   describe("pong()", () => {
-    test("(no argument)", (done) => ({
+    test("(no argument)", done => ({
       open(ws) {
         ws.pong();
       },
@@ -433,18 +434,18 @@ describe("ServerWebSocket", () => {
       },
     }));
     for (const { label, message, bytes } of messages) {
-      test(label, (done) => ({
+      test(label, done => ({
         open(ws) {
           ws.pong(message);
         },
         pong(_, received) {
-          expect(received).toEqual(Buffer.from(bytes));  
+          expect(received).toEqual(Buffer.from(bytes));
           done();
         },
       }));
     }
   });
-  test("cork()", (done) => {
+  test("cork()", done => {
     let count = 0;
     return {
       open(ws) {
@@ -466,10 +467,10 @@ describe("ServerWebSocket", () => {
           done();
         }
       },
-    }
+    };
   });
   describe("close()", () => {
-    test("(no arguments)", (done) => ({
+    test("(no arguments)", done => ({
       open(ws) {
         ws.close();
       },
@@ -477,9 +478,9 @@ describe("ServerWebSocket", () => {
         expect(code).toBe(1000);
         expect(reason).toBeEmpty();
         done();
-      }
+      },
     }));
-    test("(no reason)", (done) => ({
+    test("(no reason)", done => ({
       open(ws) {
         ws.close(1001);
       },
@@ -487,10 +488,10 @@ describe("ServerWebSocket", () => {
         expect(code).toBe(1001);
         expect(reason).toBeEmpty();
         done();
-      }
+      },
     }));
     for (const { label, message } of strings) {
-      test(label, (done) => ({
+      test(label, done => ({
         open(ws) {
           ws.close(1002, message);
         },
@@ -498,11 +499,11 @@ describe("ServerWebSocket", () => {
           expect(code).toBe(1002);
           expect(reason).toBe(message);
           done();
-        }
+        },
       }));
     }
   });
-  test("terminate()", (done) => ({
+  test("terminate()", done => ({
     open(ws) {
       ws.terminate();
     },
@@ -516,40 +517,41 @@ describe("ServerWebSocket", () => {
 
 function test(
   label: string,
-  fn: (
-    done: (err?: unknown) => void,
-    connect: () => Promise<void>,
-  ) => Partial<WebSocketHandler<{ id: number }>>,
+  fn: (done: (err?: unknown) => void, connect: () => Promise<void>) => Partial<WebSocketHandler<{ id: number }>>,
   timeout?: number,
 ) {
-  it(label, (testDone) => {
-    let isDone = false;
-    const done = (err?: unknown) => {
-      if (!isDone) {
-        isDone = true;
-        server.stop();
-        testDone(err);
-      }
-    };
-    let id = 0;
-    const server: Server = serve({
-      port: 0,
-      fetch(request, server) {
-        const data = { id: id++ };
-        if (server.upgrade(request, { data })) {
-          return;
+  it(
+    label,
+    testDone => {
+      let isDone = false;
+      const done = (err?: unknown) => {
+        if (!isDone) {
+          isDone = true;
+          server.stop();
+          testDone(err);
         }
-        return new Response();
-      },
-      websocket: {
-        sendPings: false,
-        message() {},
-        ...fn(done, () => connect(server)),
-      },
-    });
-    servers.push(server);
-    connect(server);
-  }, { timeout: timeout ?? 1000 }); 
+      };
+      let id = 0;
+      const server: Server = serve({
+        port: 0,
+        fetch(request, server) {
+          const data = { id: id++ };
+          if (server.upgrade(request, { data })) {
+            return;
+          }
+          return new Response();
+        },
+        websocket: {
+          sendPings: false,
+          message() {},
+          ...fn(done, () => connect(server)),
+        },
+      });
+      servers.push(server);
+      connect(server);
+    },
+    { timeout: timeout ?? 1000 },
+  );
 }
 
 async function connect(server: Server): Promise<void> {

@@ -517,7 +517,7 @@ it("supports FTS5", () => {
   const db = new Database();
   db.run("CREATE VIRTUAL TABLE movies USING fts5(title, tokenize='trigram')");
   const insert = db.prepare("INSERT INTO movies VALUES ($title)");
-  const insertMovies = db.transaction((movies) => {
+  const insertMovies = db.transaction(movies => {
     for (const movie of movies) insert.run(movie);
   });
   insertMovies([
@@ -528,9 +528,7 @@ it("supports FTS5", () => {
     { $title: "City of God" },
     { $title: "Spirited Away" },
   ]);
-  expect(db.query("SELECT * FROM movies('game')").all()).toEqual([
-    { title: "WarGames" },
-  ]);
+  expect(db.query("SELECT * FROM movies('game')").all()).toEqual([{ title: "WarGames" }]);
 });
 
 describe("Database.run", () => {

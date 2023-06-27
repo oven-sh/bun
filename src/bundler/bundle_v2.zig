@@ -1617,8 +1617,8 @@ pub const BundleV2 = struct {
         bundler.resolver.generation = generation;
         bundler.options.code_splitting = config.code_splitting;
 
-        try bundler.configureDefines();
         bundler.configureLinker();
+        try bundler.configureDefines();
 
         bundler.resolver.opts = bundler.options;
 

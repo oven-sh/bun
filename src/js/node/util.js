@@ -538,10 +538,10 @@ function callbackify(original) {
     };
     original.apply(this, args).then(
       function (ret) {
-        process.nextTick(cb, null, null, ret);
+        process.nextTick(cb, null, ret);
       },
       function (rej) {
-        process.nextTick(callbackifyOnRejected, null, rej, cb);
+        process.nextTick(callbackifyOnRejected, rej, cb);
       },
     );
   }

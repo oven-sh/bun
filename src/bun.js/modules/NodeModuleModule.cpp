@@ -103,49 +103,53 @@ void generateNodeModuleModule(JSC::JSGlobalObject *globalObject,
                               JSC::MarkedArgumentBuffer &exportValues) {
   JSC::VM &vm = globalObject->vm();
 
-  exportValues.append(JSFunction::create(
-      vm, globalObject, 1, String("createRequire"_s),
-      jsFunctionNodeModuleCreateRequire, ImplementationVisibility::Public));
-  exportValues.append(JSFunction::create(vm, globalObject, 1, String("paths"_s),
-                                         Resolver__nodeModulePathsForJS,
-                                         ImplementationVisibility::Public));
-  exportValues.append(JSFunction::create(
-      vm, globalObject, 1, String("findSourceMap"_s), jsFunctionFindSourceMap,
-      ImplementationVisibility::Public));
-  exportValues.append(JSFunction::create(
-      vm, globalObject, 0, String("syncBuiltinExports"_s),
-      jsFunctionSyncBuiltinExports, ImplementationVisibility::Public));
-  exportValues.append(
-      JSFunction::create(vm, globalObject, 1, String("SourceMap"_s),
-                         jsFunctionSourceMap, ImplementationVisibility::Public,
-                         NoIntrinsic, jsFunctionSourceMap, nullptr));
+  JSObject *defaultObject = JSC::constructEmptyObject(
+      vm, globalObject->nullPrototypeObjectStructure());
+  auto append = [&](Identifier name, JSValue value) {
+    defaultObject->putDirect(vm, name, value);
+    exportNames.append(name);
+    exportValues.append(value);
+  };
 
-  exportNames.append(JSC::Identifier::fromString(vm, "createRequire"_s));
-  exportNames.append(JSC::Identifier::fromString(vm, "paths"_s));
-  exportNames.append(JSC::Identifier::fromString(vm, "findSourceMap"_s));
-  exportNames.append(JSC::Identifier::fromString(vm, "syncBuiltinExports"_s));
-  exportNames.append(JSC::Identifier::fromString(vm, "SourceMap"_s));
+  append(Identifier::fromString(vm, "createRequire"_s),
+         JSFunction::create(vm, globalObject, 1, String("createRequire"_s),
+                            jsFunctionNodeModuleCreateRequire,
+                            ImplementationVisibility::Public));
 
-  // note: this is not technically correct
-  // it doesn't set process.mainModule
-  exportNames.append(JSC::Identifier::fromString(vm, "_resolveFileName"_s));
-  exportValues.append(JSFunction::create(
-      vm, globalObject, 3, String("_resolveFileName"_s),
-      jsFunctionResolveFileName, ImplementationVisibility::Public));
+  append(Identifier::fromString(vm, "paths"_s),
+         JSFunction::create(vm, globalObject, 1, String("paths"_s),
+                            Resolver__nodeModulePathsForJS,
+                            ImplementationVisibility::Public));
 
-  exportNames.append(JSC::Identifier::fromString(vm, "_nodeModulePaths"_s));
-  exportValues.append(JSFunction::create(
-      vm, globalObject, 0, String("_nodeModulePaths"_s),
-      Resolver__nodeModulePathsForJS, ImplementationVisibility::Public));
+  append(Identifier::fromString(vm, "findSourceMap"_s),
+         JSFunction::create(vm, globalObject, 1, String("findSourceMap"_s),
+                            jsFunctionFindSourceMap,
+                            ImplementationVisibility::Public));
+  append(Identifier::fromString(vm, "syncBuiltinExports"_s),
+         JSFunction::create(vm, globalObject, 0, String("syncBuiltinExports"_s),
+                            jsFunctionSyncBuiltinExports,
+                            ImplementationVisibility::Public));
+  append(Identifier::fromString(vm, "SourceMap"_s),
+         JSFunction::create(vm, globalObject, 1, String("SourceMap"_s),
+                            jsFunctionSourceMap,
+                            ImplementationVisibility::Public, NoIntrinsic,
+                            jsFunctionSourceMap, nullptr));
 
-  exportNames.append(JSC::Identifier::fromString(vm, "_cache"_s));
-  exportValues.append(
-      jsCast<Zig::GlobalObject *>(globalObject)->lazyRequireCacheObject());
+  append(JSC::Identifier::fromString(vm, "_resolveFileName"_s),
+         JSFunction::create(vm, globalObject, 3, String("_resolveFileName"_s),
+                            jsFunctionResolveFileName,
+                            ImplementationVisibility::Public));
 
-  exportNames.append(JSC::Identifier::fromString(vm, "prototype"_s));
-  exportValues.append(constructEmptyObject(globalObject));
+  append(JSC::Identifier::fromString(vm, "_nodeModulePaths"_s),
+         JSFunction::create(vm, globalObject, 0, String("_nodeModulePaths"_s),
+                            Resolver__nodeModulePathsForJS,
+                            ImplementationVisibility::Public));
 
-  exportNames.append(JSC::Identifier::fromString(vm, "builtinModules"_s));
+  append(JSC::Identifier::fromString(vm, "_cache"_s),
+         jsCast<Zig::GlobalObject *>(globalObject)->lazyRequireCacheObject());
+
+  append(JSC::Identifier::fromString(vm, "globalPaths"_s),
+         JSC::constructEmptyArray(globalObject, nullptr, 0));
 
   JSC::JSArray *builtinModules = JSC::JSArray::create(
       vm,
@@ -166,9 +170,15 @@ void generateNodeModuleModule(JSC::JSGlobalObject *globalObject,
                                  JSC::jsString(vm, String("bun:ffi"_s)));
   builtinModules->putDirectIndex(globalObject, 6,
                                  JSC::jsString(vm, String("bun:sqlite"_s)));
-  exportValues.append(builtinModules);
 
-  exportNames.append(JSC::Identifier::fromString(vm, "globalPaths"_s));
-  exportValues.append(JSC::constructEmptyArray(globalObject, 0));
+  append(JSC::Identifier::fromString(vm, "builtinModules"_s), builtinModules);
+
+  defaultObject->putDirect(vm,
+                           JSC::PropertyName(Identifier::fromUid(
+                               vm.symbolRegistry().symbolForKey("CommonJS"_s))),
+                           jsNumber(0), 0);
+
+  exportNames.append(vm.propertyNames->defaultKeyword);
+  exportValues.append(defaultObject);
 }
 } // namespace Zig

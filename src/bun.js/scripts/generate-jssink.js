@@ -1,7 +1,6 @@
 import { resolve } from "path";
 
 const classes = ["ArrayBufferSink", "FileSink", "HTTPResponseSink", "HTTPSResponseSink"];
-const SINK_COUNT = 5;
 
 function names(name) {
   return {

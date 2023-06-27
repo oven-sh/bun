@@ -127,11 +127,11 @@ export function initializeWritableStreamSlots(stream, underlyingSink) {
 
 export function writableStreamCloseForBindings(stream) {
   if ($isWritableStreamLocked(stream))
-    return Promise.$reject($makeTypeError("WritableStream.close method can only be used on non locked WritableStream"));
+    return Promise.$reject(new TypeError("WritableStream.close method can only be used on non locked WritableStream"));
 
   if ($writableStreamCloseQueuedOrInFlight(stream))
     return Promise.$reject(
-      $makeTypeError("WritableStream.close method can only be used on a being close WritableStream"),
+      new TypeError("WritableStream.close method can only be used on a being close WritableStream"),
     );
 
   return $writableStreamClose(stream);
@@ -139,7 +139,7 @@ export function writableStreamCloseForBindings(stream) {
 
 export function writableStreamAbortForBindings(stream, reason) {
   if ($isWritableStreamLocked(stream))
-    return Promise.$reject($makeTypeError("WritableStream.abort method can only be used on non locked WritableStream"));
+    return Promise.$reject(new TypeError("WritableStream.abort method can only be used on non locked WritableStream"));
 
   return $writableStreamAbort(stream, reason);
 }
@@ -207,7 +207,7 @@ export function writableStreamAbort(stream, reason) {
 export function writableStreamClose(stream) {
   const state = $getByIdDirectPrivate(stream, "state");
   if (state === "closed" || state === "errored")
-    return Promise.$reject($makeTypeError("Cannot close a writable stream that is closed or errored"));
+    return Promise.$reject(new TypeError("Cannot close a writable stream that is closed or errored"));
 
   $assert(state === "writable" || state === "erroring");
   $assert(!$writableStreamCloseQueuedOrInFlight(stream));
@@ -509,7 +509,7 @@ export function writableStreamDefaultWriterRelease(writer) {
   $assert(stream !== undefined);
   $assert($getByIdDirectPrivate(stream, "writer") === writer);
 
-  const releasedError = $makeTypeError("writableStreamDefaultWriterRelease");
+  const releasedError = new TypeError("writableStreamDefaultWriterRelease");
 
   $writableStreamDefaultWriterEnsureReadyPromiseRejected(writer, releasedError);
   $writableStreamDefaultWriterEnsureClosedPromiseRejected(writer, releasedError);
@@ -527,16 +527,16 @@ export function writableStreamDefaultWriterWrite(writer, chunk) {
   const chunkSize = $writableStreamDefaultControllerGetChunkSize(controller, chunk);
 
   if (stream !== $getByIdDirectPrivate(writer, "stream"))
-    return Promise.$reject($makeTypeError("writer is not stream's writer"));
+    return Promise.$reject(new TypeError("writer is not stream's writer"));
 
   const state = $getByIdDirectPrivate(stream, "state");
   if (state === "errored") return Promise.$reject($getByIdDirectPrivate(stream, "storedError"));
 
   if ($writableStreamCloseQueuedOrInFlight(stream) || state === "closed")
-    return Promise.$reject($makeTypeError("stream is closing or closed"));
+    return Promise.$reject(new TypeError("stream is closing or closed"));
 
   if ($writableStreamCloseQueuedOrInFlight(stream) || state === "closed")
-    return Promise.$reject($makeTypeError("stream is closing or closed"));
+    return Promise.$reject(new TypeError("stream is closing or closed"));
 
   if (state === "erroring") return Promise.$reject($getByIdDirectPrivate(stream, "storedError"));
 

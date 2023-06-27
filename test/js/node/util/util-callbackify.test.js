@@ -292,7 +292,7 @@ describe("util.callbackify", () => {
 
     it("callback is async function", done => {
       const iAmThis = {
-        fn(arg) {
+        async fn(arg) {
           try {
             expect(this).toStrictEqual(iAmThis);
           } catch (error) {

@@ -220,7 +220,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::useShadowRealm() = true;
         JSC::Options::useResizableArrayBuffer() = true;
 #ifdef BUN_DEBUG
-        // JSC::Options::showPrivateScriptsInStackTraces() = true;
+        JSC::Options::showPrivateScriptsInStackTraces() = true;
 #endif
         JSC::Options::useSetMethods() = true;
 

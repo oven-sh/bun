@@ -226,8 +226,10 @@ pub const Response = struct {
                 // EventStream defines "contentType"
                 const locked = this.body.value.Locked;
                 if (locked.readable) |readable| {
-                    if (readable.value.getOptional(locked.global, "contentType", ZigString.Slice) catch null) |slice| {
-                        this.body.init.headers.?.put("content-type", slice.slice(), globalThis);
+                    if (readable.value.fastGetDirect(globalThis, .contentType)) |value| {
+                        if (value.isString()) {
+                            this.body.init.headers.?.put("content-type", value.getZigString(globalThis).slice(), globalThis);
+                        }
                     }
                 }
             }
@@ -544,19 +546,34 @@ pub const Response = struct {
             .url = "",
         };
 
-        if (response.body.init.headers != null) {
+        if (response.body.init.headers != null and !response.body.init.headers.?.fastHas(.ContentType)) {
             if (response.body.value == .Blob and
-                response.body.value.Blob.content_type.len > 0 and
-                !response.body.init.headers.?.fastHas(.ContentType))
+                response.body.value.Blob.content_type.len > 0)
             {
                 response.body.init.headers.?.put("content-type", response.body.value.Blob.content_type, globalThis);
             } else if (response.body.value == .Locked) {
                 const locked = response.body.value.Locked;
                 if (locked.readable) |readable| {
-                    if (readable.value.fastGetDirect(locked.global, .contentType) catch null) |value| {
+                    if (readable.value.fastGetDirect(globalThis, .contentType)) |value| {
                         if (value.isString()) {
-                            response.body.init.headers.?.put("content-type", value.toBunString(locked.global).toSlice(), globalThis);
+                            response.body.init.headers.?.put("content-type", value.getZigString(globalThis).slice(), globalThis);
                         }
+                    }
+                }
+            }
+        }
+
+        // TODO: we should be able to do this without constructing a headers object
+        // but for now this workaround is needed to support the following code snippet
+        //    Bun.serve({ fetch() { return new Response(new EventStream()); }})
+        // and the lazy headers do not pick up on this.
+        else if (response.body.init.headers == null and response.body.value == .Locked) {
+            const locked = response.body.value.Locked;
+            if (locked.readable) |readable| {
+                if (readable.value.fastGetDirect(globalThis, .contentType)) |value| {
+                    if (value.isString()) {
+                        response.body.init.headers = FetchHeaders.createEmpty();
+                        response.body.init.headers.?.put("content-type", value.getZigString(globalThis).slice(), globalThis);
                     }
                 }
             }

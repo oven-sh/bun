@@ -312,6 +312,109 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 }
 
 extern "C" void* Bun__getVM();
+extern "C" JSGlobalObject* Bun__getDefaultGlobal();
+
+static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSObject* errorInstance)
+{
+    if (!errorInstance) {
+        return String();
+    }
+
+    WTF::String name = "Error"_s;
+    WTF::String message;
+
+    if (errorInstance) {
+        Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(errorInstance->globalObject());
+        // Note that we are not allowed to allocate memory in here. It's called inside a finalizer.
+        if (auto* instance = jsDynamicCast<ErrorInstance*>(errorInstance)) {
+            name = instance->sanitizedNameString(globalObject);
+            message = instance->sanitizedMessageString(globalObject);
+        }
+    }
+
+    WTF::StringBuilder sb;
+
+    if (!name.isEmpty()) {
+        sb.append(name);
+        sb.append(": "_s);
+    }
+
+    if (!message.isEmpty()) {
+        sb.append(message);
+    }
+
+    if (stackTrace.isEmpty()) {
+        return sb.toString();
+    }
+
+    if ((!message.isEmpty() || !name.isEmpty())) {
+        sb.append("\n"_s);
+    }
+
+    size_t framesCount = stackTrace.size();
+    ZigStackFrame remappedFrames[framesCount];
+    bool hasSet = false;
+    for (size_t i = 0; i < framesCount; i++) {
+        const StackFrame& frame = stackTrace.at(i);
+
+        sb.append("    at "_s);
+
+        WTF::String functionName = frame.functionName(vm);
+        if (functionName.isEmpty()) {
+            sb.append("<anonymous>"_s);
+        } else {
+            sb.append(functionName);
+        }
+
+        sb.append(" ("_s);
+        if (frame.hasLineAndColumnInfo()) {
+            unsigned int thisLine = 0;
+            unsigned int thisColumn = 0;
+            frame.computeLineAndColumn(thisLine, thisColumn);
+            auto thisSourceURL = frame.sourceURL(vm);
+            remappedFrames[i].source_url = Zig::toZigString(thisSourceURL);
+            remappedFrames[i].position.line = thisLine;
+            remappedFrames[i].position.column_start = thisColumn;
+
+            // This ensures the lifetime of the sourceURL is accounted for correctly
+            Bun__remapStackFramePositions(errorInstance ? errorInstance->globalObject() : Bun__getDefaultGlobal(), remappedFrames + i, 1);
+
+            if (!hasSet) {
+                hasSet = true;
+                line = thisLine;
+                column = thisColumn;
+                sourceURL = thisSourceURL;
+
+                if (errorInstance) {
+                    if (remappedFrames[i].remapped) {
+                        errorInstance->putDirect(vm, Identifier::fromString(vm, "originalLine"_s), jsNumber(thisLine), 0);
+                        errorInstance->putDirect(vm, Identifier::fromString(vm, "originalColumn"_s), jsNumber(thisColumn), 0);
+                    }
+                }
+            }
+
+            sb.append(sourceURL);
+            sb.append(":"_s);
+            sb.append(remappedFrames[i].position.line);
+            sb.append(":"_s);
+            sb.append(remappedFrames[i].position.column_start);
+        } else {
+            sb.append("native"_s);
+        }
+        sb.append(")"_s);
+
+        if (i != framesCount - 1) {
+            sb.append("\n"_s);
+        }
+    }
+
+    return sb.toString();
+}
+
+static String computeErrorInfo(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSObject* errorInstance)
+{
+    return computeErrorInfoWithoutPrepareStackTrace(vm, stackTrace, line, column, sourceURL, errorInstance);
+}
 
 extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObjectClass, int count,
     void* console_client)
@@ -329,6 +432,9 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObje
     Zig::GlobalObject* globalObject = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::JSGlobalObject::create(vm, JSC::JSGlobalObject::createStructure(vm, JSC::jsNull())), JSC::jsNull()));
     globalObject->setConsole(globalObject);
     globalObject->isThreadLocalDefaultGlobalObject = true;
+    globalObject->setStackTraceLimit(24);
+    vm.setOnComputeErrorInfo(computeErrorInfo);
+
     if (count > 0) {
         globalObject->installAPIGlobals(globalObjectClass, count, vm);
     }
@@ -2599,6 +2705,13 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
 
     JSC::JSObject* errorObject = objectArg.asCell()->getObject();
     JSC::JSValue caller = callFrame->argument(1);
+
+    if (!caller || !caller.isObject()) {
+        if (auto* instance = jsDynamicCast<JSC::ErrorInstance*>(errorObject)) {
+            instance->captureStackTrace(vm, globalObject, 1);
+            return JSC::JSValue::encode(jsUndefined());
+        }
+    }
 
     JSValue errorValue = lexicalGlobalObject->get(lexicalGlobalObject, vm.propertyNames->Error);
     auto* errorConstructor = jsDynamicCast<JSC::JSObject*>(errorValue);

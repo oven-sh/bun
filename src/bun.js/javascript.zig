@@ -1981,21 +1981,21 @@ pub const VirtualMachine = struct {
     }
 
     pub fn remapStackFramePositions(this: *VirtualMachine, frames: [*]JSC.ZigStackFrame, frames_count: usize) void {
-        var i: usize = 0;
-        while (i < frames_count) : (i += 1) {
-            if (frames[i].position.isInvalid()) continue;
-            var sourceURL = frames[i].source_url.toSlice(bun.default_allocator);
+        for (frames[0..frames_count]) |*frame| {
+            if (frame.position.isInvalid() or frame.remapped) continue;
+            var sourceURL = frame.source_url.toSlice(bun.default_allocator);
             defer sourceURL.deinit();
+
             if (this.source_mappings.resolveMapping(
                 sourceURL.slice(),
-                @max(frames[i].position.line, 0),
-                @max(frames[i].position.column_start, 0),
+                @max(frame.position.line, 0),
+                @max(frame.position.column_start, 0),
             )) |mapping| {
-                frames[i].position.line = mapping.original.lines;
-                frames[i].position.column_start = mapping.original.columns;
-                frames[i].remapped = true;
+                frame.position.line = mapping.original.lines;
+                frame.position.column_start = mapping.original.columns;
+                frame.remapped = true;
             } else {
-                frames[i].remapped = true;
+                frame.remapped = true;
             }
         }
     }

@@ -190,6 +190,9 @@ export default {
     page("test/lifecycle", "Lifecycle hooks", {
       description: "Add lifecycle hooks to your tests that run before/after each test or test run",
     }),
+    page("test/mocks", "Mocks", {
+      description: "Mocks functions and track method calls",
+    }),
     page("test/snapshots", "Snapshots", {
       description: "Add lifecycle hooks to your tests that run before/after each test or test run",
     }),

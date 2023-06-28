@@ -1891,10 +1891,10 @@ bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release
 .PHONY: bindings
 bindings:
 	@make clean-bindings builtins
-	@make bindings -j$(CPU_COUNT)
+	@make generate-bindings -j$(CPU_COUNT)
 
 .PHONY: setup
-setup: vendor-dev identifier-cache clean-bindings
+setup: vendor-dev identifier-cache
 	make jsc-check
 	make bindings -j$(CPU_COUNT)
 	@echo ""

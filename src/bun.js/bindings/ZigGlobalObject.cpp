@@ -322,11 +322,16 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
         return String();
     }
 
+    Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(errorInstance->globalObject());
+    if (!globalObject) {
+        // Happens in node:vm
+        globalObject = jsDynamicCast<Zig::GlobalObject*>(Bun__getDefaultGlobal());
+    }
+
     WTF::String name = "Error"_s;
     WTF::String message;
 
     if (errorInstance) {
-        Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(errorInstance->globalObject());
         // Note that we are not allowed to allocate memory in here. It's called inside a finalizer.
         if (auto* instance = jsDynamicCast<ErrorInstance*>(errorInstance)) {
             name = instance->sanitizedNameString(globalObject);
@@ -379,7 +384,7 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
             remappedFrames[i].source_url = Zig::toZigString(frame.sourceURL(vm));
 
             // This ensures the lifetime of the sourceURL is accounted for correctly
-            Bun__remapStackFramePositions(errorInstance ? errorInstance->globalObject() : Bun__getDefaultGlobal(), remappedFrames + i, 1);
+            Bun__remapStackFramePositions(globalObject, remappedFrames + i, 1);
 
             if (!hasSet) {
                 hasSet = true;
@@ -434,7 +439,7 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObje
     Zig::GlobalObject* globalObject = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::JSGlobalObject::create(vm, JSC::JSGlobalObject::createStructure(vm, JSC::jsNull())), JSC::jsNull()));
     globalObject->setConsole(globalObject);
     globalObject->isThreadLocalDefaultGlobalObject = true;
-    globalObject->setStackTraceLimit(24);
+    globalObject->setStackTraceLimit(10); // Node.js default is 10
     vm.setOnComputeErrorInfo(computeErrorInfo);
 
     if (count > 0) {
@@ -3258,12 +3263,8 @@ void GlobalObject::finishCreation(VM& vm)
     RELEASE_ASSERT(classInfo());
 
     JSC::JSObject* errorConstructor = this->errorConstructor();
-    errorConstructor->putDirectNativeFunctionWithoutTransition(vm, this, JSC::Identifier::fromString(vm, "captureStackTrace"_s), 2, errorConstructorFuncCaptureStackTrace, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
-    errorConstructor->putDirectNativeFunctionWithoutTransition(vm, this, JSC::Identifier::fromString(vm, "appendStackTrace"_s), 2, errorConstructorFuncAppendStackTrace, ImplementationVisibility::Private, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
-
-    // JSC default is 100
-    errorConstructor->putDirect(vm, vm.propertyNames->stackTraceLimit, jsNumber(DEFAULT_ERROR_STACK_TRACE_LIMIT), JSC::PropertyAttribute::DontEnum | 0);
-
+    errorConstructor->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "captureStackTrace"_s), 2, errorConstructorFuncCaptureStackTrace, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
+    errorConstructor->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "appendStackTrace"_s), 2, errorConstructorFuncAppendStackTrace, ImplementationVisibility::Private, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
     JSC::JSValue console = this->get(this, JSC::Identifier::fromString(vm, "console"_s));
     JSC::JSObject* consoleObject = console.getObject();
     consoleObject->putDirectBuiltinFunction(vm, this, vm.propertyNames->asyncIteratorSymbol, consoleObjectAsyncIteratorCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete);

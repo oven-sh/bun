@@ -3980,17 +3980,43 @@ declare module "bun" {
   ): number;
 
   interface EventStreamOptions {
-    signal?: AbortSignal;
+    /** Called once the EventStream is ready to start sending events. */
     start?(sse: EventStream): void;
+    /** Called when the EventStream is closed. */
     cancel?(sse: EventStream): void;
-    headers?: HeadersInit;
+    /**
+     * Set the event stream's reconnection time to the given number. This is set on the stream,
+     * but bun does not handle reconnection on it's own.
+     */
+    reconnectionTime?: number;
   }
 
+  /**
+   * Abstraction over ReadableStream for responding with the `text/event-stream` spec.
+   */
   class EventStream extends ReadableStream {
     constructor(options?: EventStreamOptions);
 
+    /**
+     * Send a "message" event with the given data.
+     * - Strings and Buffers are sent as-is.
+     * - Objects are serialized as JSON.
+     */
     send(data?: any): void;
-    send(event: string, data?: any): void;
+
+    /**
+     * Send an event with the given name and data.
+     * - Strings and Buffers are sent as-is.
+     * - Objects are serialized as JSON.
+     *
+     * As per the spec, if the event name is "message", it won't be explicitly sent as it is the default message type.
+     */
+    send(event: string, data?: any, id?: number): void;
+
+    /** Sends the "retry" field, which sets the client's reconnection time. */
+    setReconnectionTime(time: number): void;
+
+    close(): void;
   }
 }
 

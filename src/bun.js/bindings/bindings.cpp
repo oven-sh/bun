@@ -3970,7 +3970,7 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
         return clientData->builtinNames().redirectPublicName();
     }
     case BuiltinNamesMap::contentType: {
-        return clientData->builtinNames().connectPrivateName();
+        return clientData->builtinNames().contentTypePrivateName();
     }
     }
 }

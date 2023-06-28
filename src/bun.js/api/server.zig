@@ -1961,10 +1961,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             // uWS automatically adds the status line if needed
             // we want to batch network calls as much as possible
-            if (!(this.response_ptr.?.statusCode() == 200 and this.response_ptr.?.body.init.headers == null)) {
-                this.renderMetadata();
-            }
-
+            // if (!(this.response_ptr.?.statusCode() == 200 and this.response_ptr.?.body.init.headers == null)) {
+            // }
+            this.renderMetadata();
             stream.value.ensureStillAlive();
 
             var response_stream = this.allocator.create(ResponseStream.JSSink) catch unreachable;
@@ -2089,22 +2088,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             stream.value.ensureStillAlive();
-
-            // This is commented out for now because new ReadableStream({ type: 'direct' })
-            // that doesn't write immediately will cause the request to exit early.
-
-            // const is_in_progress = response_stream.sink.has_backpressure or !(response_stream.sink.wrote == 0 and
-            //     response_stream.sink.buffer.len == 0);
-
-            // if (!stream.isLocked(this.server.globalThis) and !is_in_progress) {
-            //     if (JSC.WebCore.ReadableStream.fromJS(stream.value, this.server.globalThis)) |comparator| {
-            //         if (std.meta.activeTag(comparator.ptr) == std.meta.activeTag(stream.ptr)) {
-            //             streamLog("is not locked", .{});
-            //             this.renderMissing();
-            //             return;
-            //         }
-            //     }
-            // }
 
             this.setAbortHandler();
             streamLog("is in progress, but did not return a Promise", .{});

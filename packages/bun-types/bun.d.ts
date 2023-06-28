@@ -673,7 +673,29 @@ declare module "bun" {
     /**
      * The name or path of the file, as specified in the constructor.
      */
-    name?: number;
+    readonly name?: string;
+
+    /**
+     * Does the file exist?
+     *
+     * This returns true for regular files and FIFOs. It returns false for
+     * directories. Note that a race condition can occur where the file is
+     * deleted or renamed after this is called but before you open it.
+     *
+     * This does a system call to check if the file exists, which can be
+     * slow.
+     *
+     * If using this in an HTTP server, it's faster to instead use `return new
+     * Response(Bun.file(path))` and then an `error` handler to handle
+     * exceptions.
+     *
+     * Instead of checking for a file's existence and then performing the
+     * operation, it is faster to just perform the operation and handle the
+     * error.
+     *
+     * For empty Blob, this always returns true.
+     */
+    exists(): Promise<boolean>;
   }
 
   /**

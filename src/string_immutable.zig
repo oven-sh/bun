@@ -2488,11 +2488,11 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                             continue :scan_and_allocate_lazily;
                         }
 
-                        buf = try std.ArrayList(u16).initCapacity(allocator, utf16.len + 6);
                         if (comptime Environment.allow_assert) std.debug.assert(@intFromPtr(remaining.ptr + i) >= @intFromPtr(utf16.ptr));
                         const to_copy = std.mem.sliceAsBytes(utf16)[0 .. @intFromPtr(remaining.ptr + i) - @intFromPtr(utf16.ptr)];
-                        @memcpy(@ptrCast([*]align(2) u8, buf.items[0..to_copy.len]), to_copy);
-                        buf.items.len = std.mem.bytesAsSlice(u16, to_copy).len;
+                        var to_copy_16 = std.mem.bytesAsSlice(u16, to_copy);
+                        buf = try std.ArrayList(u16).initCapacity(allocator, utf16.len + 6);
+                        try buf.appendSlice(to_copy_16);
 
                         while (i < ascii_u16_vector_size) {
                             switch (remaining[i]) {
@@ -2603,13 +2603,8 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                             if (comptime Environment.allow_assert) std.debug.assert(@intFromPtr(ptr) >= @intFromPtr(utf16.ptr));
 
                             const to_copy = std.mem.sliceAsBytes(utf16)[0 .. @intFromPtr(ptr) - @intFromPtr(utf16.ptr)];
-
-                            @memcpy(
-                                @ptrCast([*]align(2) u8, buf.items[0..to_copy.len]),
-                                to_copy,
-                            );
-
-                            buf.items.len = std.mem.bytesAsSlice(u16, to_copy).len;
+                            var to_copy_16 = std.mem.bytesAsSlice(u16, to_copy);
+                            try buf.appendSlice(to_copy_16);
                             any_needs_escape = true;
                             break :scan_and_allocate_lazily;
                         },

@@ -230,24 +230,23 @@ Changes not staged for commit:
 	modified:   src/bun.js/WebKit (new commits)
 ```
 
-For performance reasons, `bun submodule update` does not automatically update the WebKit submodule; it must be updated manually. Check the [Bun repo](https://github.com/oven-sh/bun/tree/main/src/bun.js) to get the hash of the commit of WebKit is currently being used.
+For performance reasons, `bun submodule update` does not automatically update the WebKit submodule; it must be updated manually. From the root of the repo, run:
 
-{% image width="270" src="https://github.com/oven-sh/bun/assets/3084745/51730b73-89ef-4358-9a41-9563a60a54be" /%}
+```bash
+$ bun install
+$ make bindings
+```
 
-Then, run the following:
+<!-- Check the [Bun repo](https://github.com/oven-sh/bun/tree/main/src/bun.js) to get the hash of the commit of WebKit is currently being used.
 
+{% image width="270" src="https://github.com/oven-sh/bun/assets/3084745/51730b73-89ef-4358-9a41-9563a60a54be" /%} -->
+
+<!--
 ```bash
 $ cd src/bun.js/WebKit
 $ git fetch
 $ git checkout <hash>
-```
-
-Then, from the root:
-
-```bash
-$ bun install
-$ make regenerate-bindings
-```
+``` -->
 
 ## Troubleshooting
 

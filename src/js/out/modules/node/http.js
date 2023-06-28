@@ -543,6 +543,8 @@ class OutgoingMessage extends Writable {
   #fakeSocket;
   #timeoutTimer = null;
   [kAbortController] = null;
+  _implicitHeader() {
+  }
   get headers() {
     if (!this.#headers)
       return kEmptyObject;
@@ -647,6 +649,8 @@ class ServerResponse extends Writable {
   _removedContLen = !1;
   #deferred = void 0;
   #finished = !1;
+  _implicitHeader() {
+  }
   _write(chunk, encoding, callback) {
     if (!this.#firstWrite && !this.headersSent) {
       this.#firstWrite = chunk, callback();

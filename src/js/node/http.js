@@ -835,6 +835,9 @@ export class OutgoingMessage extends Writable {
   #timeoutTimer = null;
   [kAbortController] = null;
 
+  // Express "compress" package uses this
+  _implicitHeader() {}
+
   // For compat with IncomingRequest
   get headers() {
     if (!this.#headers) return kEmptyObject;
@@ -976,6 +979,9 @@ export class ServerResponse extends Writable {
   _removedContLen = false;
   #deferred = undefined;
   #finished = false;
+
+  // Express "compress" package uses this
+  _implicitHeader() {}
 
   _write(chunk, encoding, callback) {
     if (!this.#firstWrite && !this.headersSent) {

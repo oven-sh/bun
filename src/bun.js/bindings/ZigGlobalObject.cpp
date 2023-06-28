@@ -2812,10 +2812,10 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         errorObject->deleteProperty(lexicalGlobalObject, vm.propertyNames->stack);
     }
     if (formattedStackTrace.isUndefinedOrNull()) {
-        errorObject->putDirect(vm, vm.propertyNames->stack, jsUndefined(), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    } else {
-        errorObject->putDirect(vm, vm.propertyNames->stack, formattedStackTrace, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
+        formattedStackTrace = jsEmptyString(vm);
     }
+
+    errorObject->putDirect(vm, vm.propertyNames->stack, formattedStackTrace, 0);
 
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSValue {}));
 

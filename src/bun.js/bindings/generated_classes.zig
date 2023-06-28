@@ -108,6 +108,8 @@ pub const JSBlob = struct {
 
         if (@TypeOf(Blob.getArrayBuffer) != CallbackType)
             @compileLog("Expected Blob.getArrayBuffer to be a callback but received " ++ @typeName(@TypeOf(Blob.getArrayBuffer)));
+        if (@TypeOf(Blob.getExists) != CallbackType)
+            @compileLog("Expected Blob.getExists to be a callback but received " ++ @typeName(@TypeOf(Blob.getExists)));
         if (@TypeOf(Blob.getFormData) != CallbackType)
             @compileLog("Expected Blob.getFormData to be a callback but received " ++ @typeName(@TypeOf(Blob.getFormData)));
         if (@TypeOf(Blob.getJSON) != CallbackType)
@@ -136,6 +138,7 @@ pub const JSBlob = struct {
             @export(Blob.constructor, .{ .name = "BlobClass__construct" });
             @export(Blob.finalize, .{ .name = "BlobClass__finalize" });
             @export(Blob.getArrayBuffer, .{ .name = "BlobPrototype__getArrayBuffer" });
+            @export(Blob.getExists, .{ .name = "BlobPrototype__getExists" });
             @export(Blob.getFormData, .{ .name = "BlobPrototype__getFormData" });
             @export(Blob.getJSON, .{ .name = "BlobPrototype__getJSON" });
             @export(Blob.getLastModified, .{ .name = "BlobPrototype__getLastModified" });

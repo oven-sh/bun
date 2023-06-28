@@ -319,6 +319,7 @@ pub const Blob = struct {
             },
         );
     }
+
     pub fn writeFormat(this: *const Blob, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
 
@@ -2322,6 +2323,34 @@ pub const Blob = struct {
         _: *JSC.CallFrame,
     ) callconv(.C) JSValue {
         return promisified(this.toFormData(globalThis, .temporary), globalThis);
+    }
+
+    fn getExistsSync(this: *Blob) JSC.JSValue {
+        if (this.size == Blob.max_size) {
+            this.resolveSize();
+        }
+
+        // If there's no store that means it's empty and we just return true
+        // it will not error to return an empty Blob
+        var store = this.store orelse return JSValue.jsBoolean(true);
+
+        if (store.data == .bytes) {
+            // Bytes will never error
+            return JSValue.jsBoolean(true);
+        }
+
+        // We say regular files and pipes exist.
+        // This is mostly meant for "Can we use this in new Response(file)?"
+        return JSValue.jsBoolean(std.os.S.ISREG(store.data.file.mode) or std.os.S.ISFIFO(store.data.file.mode));
+    }
+
+    // This mostly means 'can it be read?'
+    pub fn getExists(
+        this: *Blob,
+        globalThis: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        return JSC.JSPromise.resolvedPromiseValue(globalThis, this.getExistsSync());
     }
 
     pub fn getWriter(

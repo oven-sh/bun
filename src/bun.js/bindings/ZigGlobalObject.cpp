@@ -367,6 +367,15 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
         sb.append("    at "_s);
 
         WTF::String functionName = frame.functionName(vm);
+
+        if (auto codeblock = frame.codeBlock()) {
+            if (codeblock->isConstructor()) {
+                sb.append("new "_s);
+            }
+
+            // TODO: async
+        }
+
         if (functionName.isEmpty()) {
             sb.append("<anonymous>"_s);
         } else {
@@ -439,7 +448,7 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObje
     Zig::GlobalObject* globalObject = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::JSGlobalObject::create(vm, JSC::JSGlobalObject::createStructure(vm, JSC::jsNull())), JSC::jsNull()));
     globalObject->setConsole(globalObject);
     globalObject->isThreadLocalDefaultGlobalObject = true;
-    globalObject->setStackTraceLimit(10); // Node.js default is 10
+    globalObject->setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT); // Node.js defaults to 10
     vm.setOnComputeErrorInfo(computeErrorInfo);
 
     if (count > 0) {
@@ -2738,25 +2747,15 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSC::JSObject* errorObject = objectArg.asCell()->getObject();
     JSC::JSValue caller = callFrame->argument(1);
 
-    if (!caller || !caller.isObject()) {
-        if (auto* instance = jsDynamicCast<JSC::ErrorInstance*>(errorObject)) {
-            instance->captureStackTrace(vm, globalObject, 1);
-            return JSC::JSValue::encode(jsUndefined());
-        }
-    }
-
+    // We cannot use our ErrorInstance::captureStackTrace() fast path here unfortunately.
+    // We need to return these CallSite array objects which means we need to create them
     JSValue errorValue = lexicalGlobalObject->get(lexicalGlobalObject, vm.propertyNames->Error);
     auto* errorConstructor = jsDynamicCast<JSC::JSObject*>(errorValue);
-
-    size_t stackTraceLimit = DEFAULT_ERROR_STACK_TRACE_LIMIT;
-    if (JSC::JSValue stackTraceLimitProp = errorConstructor->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->stackTraceLimit)) {
-        if (stackTraceLimitProp.isNumber()) {
-            stackTraceLimit = std::min(std::max(static_cast<size_t>(stackTraceLimitProp.toIntegerOrInfinity(lexicalGlobalObject)), 0ul), 2048ul);
-            if (stackTraceLimit == 0) {
-                stackTraceLimit = 2048;
-            }
-        }
+    size_t stackTraceLimit = globalObject->stackTraceLimit().value();
+    if (stackTraceLimit == 0) {
+        stackTraceLimit = DEFAULT_ERROR_STACK_TRACE_LIMIT;
     }
+
     JSCStackTrace stackTrace = JSCStackTrace::captureCurrentJSStackTrace(globalObject, callFrame, stackTraceLimit, caller);
 
     // Create an (uninitialized) array for our "call sites"
@@ -2817,10 +2816,21 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         errorObject->deleteProperty(lexicalGlobalObject, vm.propertyNames->stack);
     }
     if (formattedStackTrace.isUndefinedOrNull()) {
-        formattedStackTrace = jsEmptyString(vm);
+        formattedStackTrace = JSC::jsUndefined();
     }
 
     errorObject->putDirect(vm, vm.propertyNames->stack, formattedStackTrace, 0);
+
+    if (!(caller && caller.isObject())) {
+        if (auto* instance = jsDynamicCast<JSC::ErrorInstance*>(errorObject)) {
+            // we make a separate copy of the StackTrace unfortunately so that we
+            // can later console.log it without losing the info
+            //
+            // This is not good. We should remove this in the future as it strictly makes this function
+            // already slower than necessary.
+            instance->captureStackTrace(vm, globalObject, 1, false);
+        }
+    }
 
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSValue {}));
 

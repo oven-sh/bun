@@ -16,12 +16,13 @@ export function getEventStream() {
           this.#ctrl = undefined;
         },
       });
+      $putByIdDirectPrivate(this, "contentType", "text/event-stream");
     }
 
     send(event?: unknown, data?: unknown): void {
       var ctrl = this.#ctrl!;
       if (!ctrl) {
-        throw new Error("EventStream has ended");
+        throw new Error("EventStream is closed");
       }
       if (!data) {
         data = event;
@@ -41,6 +42,10 @@ export function getEventStream() {
         ctrl.write("data: " + JSON.stringify(data) + "\n\n");
       }
       ctrl.flush();
+    }
+
+    close() {
+      this.#ctrl?.close();
     }
   };
 }

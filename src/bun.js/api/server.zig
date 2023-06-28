@@ -1435,16 +1435,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // this request was already finalized
             if (this.sink) |wrapper| {
                 wrapper.sink.abort();
-                this.markComplete();
-                this.deinit();
+                this.finalize();
                 return;
             }
 
             // if we can, free the request now.
             if (this.isDeadRequest()) {
-                this.finalizeWithoutDeinit();
-                this.markComplete();
-                this.deinit();
+                this.finalize();
                 return;
             }
 
@@ -2109,8 +2106,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // }
 
             this.setAbortHandler();
-            streamLog("is in progress, but did not return a Promise. Finalizing request context", .{});
-            this.finalizeWithoutDeinit();
+            streamLog("is in progress, but did not return a Promise", .{});
             stream.value.unprotect();
         }
 

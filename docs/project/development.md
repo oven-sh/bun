@@ -230,7 +230,7 @@ Changes not staged for commit:
 	modified:   src/bun.js/WebKit (new commits)
 ```
 
-For performance reasons, `bun submodule update` does not automatically update the WebKit submodule; it must be updated manually. From the root of the repo, run:
+For performance reasons, `bun submodule update` does not automatically update the WebKit submodule. To update, run the following commands from the root of the Bun repo:
 
 ```bash
 $ bun install

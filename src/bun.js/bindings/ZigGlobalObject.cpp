@@ -357,7 +357,7 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
     ZigStackFrame remappedFrames[framesCount];
     bool hasSet = false;
     for (size_t i = 0; i < framesCount; i++) {
-        const StackFrame& frame = stackTrace.at(i);
+        StackFrame& frame = stackTrace.at(i);
 
         sb.append("    at "_s);
 
@@ -369,14 +369,14 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
         }
 
         sb.append(" ("_s);
+
         if (frame.hasLineAndColumnInfo()) {
             unsigned int thisLine = 0;
             unsigned int thisColumn = 0;
             frame.computeLineAndColumn(thisLine, thisColumn);
-            auto thisSourceURL = frame.sourceURL(vm);
-            remappedFrames[i].source_url = Zig::toZigString(thisSourceURL);
             remappedFrames[i].position.line = thisLine;
             remappedFrames[i].position.column_start = thisColumn;
+            remappedFrames[i].source_url = Zig::toZigString(frame.sourceURL(vm));
 
             // This ensures the lifetime of the sourceURL is accounted for correctly
             Bun__remapStackFramePositions(errorInstance ? errorInstance->globalObject() : Bun__getDefaultGlobal(), remappedFrames + i, 1);
@@ -385,7 +385,7 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
                 hasSet = true;
                 line = thisLine;
                 column = thisColumn;
-                sourceURL = thisSourceURL;
+                sourceURL = frame.sourceURL(vm);
 
                 if (errorInstance) {
                     if (remappedFrames[i].remapped) {
@@ -395,7 +395,7 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
                 }
             }
 
-            sb.append(sourceURL);
+            sb.append(frame.sourceURL(vm));
             sb.append(":"_s);
             sb.append(remappedFrames[i].position.line);
             sb.append(":"_s);

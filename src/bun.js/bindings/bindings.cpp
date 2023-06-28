@@ -3528,12 +3528,13 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     JSC::JSValue val)
 {
     JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(val);
+    JSC::VM& vm = global->vm();
 
     bool getFromSourceURL = false;
     if (stackTrace != nullptr && stackTrace->size() > 0) {
-        populateStackTrace(global->vm(), *stackTrace, &except->stack);
+        populateStackTrace(vm, *stackTrace, &except->stack);
     } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
-        populateStackTrace(global->vm(), *err->stackTrace(), &except->stack);
+        populateStackTrace(vm, *err->stackTrace(), &except->stack);
     } else {
         getFromSourceURL = true;
     }
@@ -3546,7 +3547,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     }
     if (except->code == SYNTAX_ERROR_CODE) {
         except->message = Zig::toZigString(err->sanitizedMessageString(global));
-    } else if (JSC::JSValue message = obj->getIfPropertyExists(global, global->vm().propertyNames->message)) {
+    } else if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
 
         except->message = Zig::toZigString(message, global);
 
@@ -3556,7 +3557,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     except->name = Zig::toZigString(err->sanitizedNameString(global));
     except->runtime_type = err->runtimeTypeForCause();
 
-    auto clientData = WebCore::clientData(global->vm());
+    auto clientData = WebCore::clientData(vm);
     if (except->code != SYNTAX_ERROR_CODE) {
 
         if (JSC::JSValue syscall = obj->getIfPropertyExists(global, clientData->builtinNames().syscallPublicName())) {
@@ -3571,7 +3572,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
             except->path = Zig::toZigString(path, global);
         }
 
-        if (JSC::JSValue fd = obj->getIfPropertyExists(global, Identifier::fromString(global->vm(), "fd"_s))) {
+        if (JSC::JSValue fd = obj->getIfPropertyExists(global, Identifier::fromString(vm, "fd"_s))) {
             if (fd.isAnyInt()) {
                 except->fd = fd.toInt32(global);
             }
@@ -3583,17 +3584,17 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     }
 
     if (getFromSourceURL) {
-        if (JSC::JSValue sourceURL = obj->getIfPropertyExists(global, global->vm().propertyNames->sourceURL)) {
+        if (JSC::JSValue sourceURL = obj->getIfPropertyExists(global, vm.propertyNames->sourceURL)) {
             except->stack.frames_ptr[0].source_url = Zig::toZigString(sourceURL, global);
 
-            if (JSC::JSValue column = obj->getIfPropertyExists(global, global->vm().propertyNames->column)) {
+            if (JSC::JSValue column = obj->getIfPropertyExists(global, vm.propertyNames->column)) {
                 except->stack.frames_ptr[0].position.column_start = column.toInt32(global);
             }
 
-            if (JSC::JSValue line = obj->getIfPropertyExists(global, global->vm().propertyNames->line)) {
+            if (JSC::JSValue line = obj->getIfPropertyExists(global, vm.propertyNames->line)) {
                 except->stack.frames_ptr[0].position.line = line.toInt32(global);
 
-                if (JSC::JSValue lineText = obj->getIfPropertyExists(global, JSC::Identifier::fromString(global->vm(), "lineText"_s))) {
+                if (JSC::JSValue lineText = obj->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "lineText"_s))) {
                     if (JSC::JSString* jsStr = lineText.toStringOrNull(global)) {
                         auto str = jsStr->value(global);
                         except->stack.source_lines_ptr[0] = Zig::toZigString(str);
@@ -3603,7 +3604,9 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
                     }
                 }
             }
+
             except->stack.frames_len = 1;
+            except->stack.frames_ptr[0].remapped = obj->hasProperty(global, JSC::Identifier::fromString(vm, "originalLine"_s));
         }
     }
 
@@ -3654,7 +3657,12 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
 
         if (JSC::JSValue line = obj->getIfPropertyExists(global, global->vm().propertyNames->line)) {
             if (line) {
-                except->stack.frames_ptr[0].position.line = line.toInt32(global);
+                // TODO: don't sourcemap it twice
+                if (auto originalLine = obj->getIfPropertyExists(global, JSC::Identifier::fromString(global->vm(), "originalLine"_s))) {
+                    except->stack.frames_ptr[0].position.line = originalLine.toInt32(global);
+                } else {
+                    except->stack.frames_ptr[0].position.line = line.toInt32(global);
+                }
                 except->stack.frames_len = 1;
             }
         }

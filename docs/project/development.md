@@ -217,6 +217,38 @@ You'll need a very recent version of Valgrind due to DWARF 5 debug symbols. You 
 $ valgrind --fair-sched=try --track-origins=yes bun-debug <args>
 ```
 
+## Updating `WebKit`
+
+The Bun team will occasionally bump the version of WebKit used in Bun. When this happens, you may see something like this with you run `git status`.
+
+```bash
+$ git status
+On branch my-branch
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   src/bun.js/WebKit (new commits)
+```
+
+For performance reasons, `bun submodule update` does not automatically update the WebKit submodule; it must be updated manually. Check the [Bun repo](https://github.com/oven-sh/bun/tree/main/src/bun.js) to get the hash of the commit of WebKit is currently being used.
+
+{% image width="270" src="https://github.com/oven-sh/bun/assets/3084745/51730b73-89ef-4358-9a41-9563a60a54be" /%}
+
+Then, run the following:
+
+```bash
+$ cd src/bun.js/WebKit
+$ git fetch
+$ git checkout <hash>
+```
+
+Then, from the root:
+
+```bash
+$ bun install
+$ make regenerate-bindings
+```
+
 ## Troubleshooting
 
 ### libarchive

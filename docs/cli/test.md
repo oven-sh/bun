@@ -65,6 +65,24 @@ $ bun test --preload ./setup.ts
 
 See [Test > Lifecycle](/docs/test/lifecycle) for complete documentation.
 
+## Mocks
+
+Create mocks with the `mock` function. Mocks are automatically reset between tests.
+
+```
+import { test, expect, mock } from "bun:test";
+const random = mock(() => Math.random());
+
+test("random", async () => {
+  const val = random();
+  expect(val).toBeGreaterThan(0);
+  expect(random).toHaveBeenCalled();
+  expect(random).toHaveBeenCalledTimes(1);
+});
+```
+
+See [Test > Mocks](/docs/test/mocks) for complete documentation.
+
 ## Snapshot testing
 
 Snapshots are supported by `bun test`. See [Test > Snapshots](/docs/test/snapshots) for complete documentation.

@@ -44,7 +44,9 @@ export function require(this: Module, id: string) {
     const mod = esm.module;
     const namespace = Loader.getModuleNamespaceObject(mod);
     const exports =
-      namespace?.[$commonJSSymbol] === 0 || namespace?.default?.[$commonJSSymbol] === 0 ? namespace.default : namespace;
+      namespace?.[$commonJSSymbol] === 0 || namespace?.default?.[$commonJSSymbol] === 0
+        ? namespace.default
+        : Object.create(namespace, { __esModule: { value: true } });
     $requireMap.$set(id, $createCommonJSModule(id, exports, true));
     return exports;
   }
@@ -81,7 +83,7 @@ export function require(this: Module, id: string) {
         // if they choose a module
         namespace?.[$commonJSSymbol] === 0 || namespace?.default?.[$commonJSSymbol] === 0
           ? namespace.default
-          : namespace);
+          : Object.create(namespace, { __esModule: { value: true } }));
     }
   }
 

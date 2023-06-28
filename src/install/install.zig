@@ -1718,9 +1718,8 @@ pub const PackageManager = struct {
     }
 
     pub fn wake(this: *PackageManager) void {
-        if (this.onWake.context != null) {
-            this.onWake.getHandler()(this.onWake.context.?, this);
-            return;
+        if (this.onWake.context) |ctx| {
+            this.onWake.getHandler()(ctx, this);
         }
 
         _ = this.wait_count.fetchAdd(1, .Monotonic);
@@ -1791,12 +1790,37 @@ pub const PackageManager = struct {
             return .{ .failure = err };
         };
 
-        const resolution_id = this.lockfile.buffers.resolutions.items[index];
+        const resolution_id = switch (this.lockfile.buffers.resolutions.items[index]) {
+            invalid_package_id => brk: {
+                this.drainDependencyList();
 
-        // check if we managed to synchronously resolve the dependency
-        if (resolution_id == invalid_package_id) return .{ .pending = index };
+                switch (this.options.log_level) {
+                    inline else => |log_level| {
+                        if (log_level.showProgress()) this.startProgressBarIfNone();
+                        while (this.pending_tasks > 0) : (this.sleep()) {
+                            this.runTasks(
+                                void,
+                                {},
+                                .{
+                                    .onExtract = {},
+                                    .onResolve = {},
+                                    .onPackageManifestError = {},
+                                    .onPackageDownloadError = {},
+                                },
+                                log_level,
+                            ) catch |err| {
+                                return .{ .failure = err };
+                            };
+                        }
+                    },
+                }
 
-        this.drainDependencyList();
+                break :brk this.lockfile.buffers.resolutions.items[index];
+            },
+            // we managed to synchronously resolve the dependency
+            else => |pkg_id| pkg_id,
+        };
+
         return .{
             .resolution = .{
                 .resolution = this.lockfile.packages.items(.resolution)[resolution_id],
@@ -5310,6 +5334,8 @@ pub const PackageManager = struct {
             manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
             manager.root_progress_node = manager.progress.start("", 0);
             manager.root_download_node = manager.root_progress_node.start(ProgressStrings.download(), 0);
+        } else {
+            manager.options.log_level = .default_no_progress;
         }
 
         if (!manager.options.enable.cache) {

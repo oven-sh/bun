@@ -534,20 +534,19 @@ pub const Resolver = struct {
     dir_cache: *DirInfo.HashMap,
 
     pub fn getPackageManager(this: *Resolver) *PackageManager {
-        if (this.package_manager != null) {
-            return this.package_manager.?;
-        }
-        bun.HTTPThead.init() catch unreachable;
-        this.package_manager = PackageManager.initWithRuntime(
-            this.log,
-            this.opts.install,
-            this.allocator,
-            .{},
-            this.env_loader.?,
-        ) catch @panic("Failed to initialize package manager");
-        this.package_manager.?.onWake = this.onWakePackageManager;
-
-        return this.package_manager.?;
+        return this.package_manager orelse brk: {
+            bun.HTTPThead.init() catch unreachable;
+            const pm = PackageManager.initWithRuntime(
+                this.log,
+                this.opts.install,
+                this.allocator,
+                .{},
+                this.env_loader.?,
+            ) catch @panic("Failed to initialize package manager");
+            pm.onWake = this.onWakePackageManager;
+            this.package_manager = pm;
+            break :brk pm;
+        };
     }
 
     pub inline fn usePackageManager(self: *const ThisResolver) bool {

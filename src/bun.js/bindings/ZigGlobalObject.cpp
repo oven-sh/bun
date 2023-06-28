@@ -219,7 +219,9 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::useJITCage() = false;
         JSC::Options::useShadowRealm() = true;
         JSC::Options::useResizableArrayBuffer() = true;
-        JSC::Options::showPrivateScriptsInStackTraces() = true;
+#ifdef BUN_DEBUG
+        // JSC::Options::showPrivateScriptsInStackTraces() = true;
+#endif
         JSC::Options::useSetMethods() = true;
 
         /*
@@ -2691,7 +2693,32 @@ JSC::JSValue GlobalObject::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* le
 
 extern "C" EncodedJSValue JSPasswordObject__create(JSC::JSGlobalObject*, bool);
 
-JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace);
+JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::ErrorInstance* source = jsDynamicCast<JSC::ErrorInstance*>(callFrame->argument(0));
+    JSC::ErrorInstance* destination = jsDynamicCast<JSC::ErrorInstance*>(callFrame->argument(1));
+
+    if (!source || !destination) {
+        throwTypeError(lexicalGlobalObject, scope, "First & second argument must be an Error object"_s);
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    if (!destination->stackTrace()) {
+        destination->captureStackTrace(vm, globalObject, 1);
+    }
+
+    if (source->stackTrace()) {
+        destination->stackTrace()->appendVector(*source->stackTrace());
+        source->stackTrace()->clear();
+    }
+
+    return JSC::JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
@@ -3232,6 +3259,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     JSC::JSObject* errorConstructor = this->errorConstructor();
     errorConstructor->putDirectNativeFunctionWithoutTransition(vm, this, JSC::Identifier::fromString(vm, "captureStackTrace"_s), 2, errorConstructorFuncCaptureStackTrace, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
+    errorConstructor->putDirectNativeFunctionWithoutTransition(vm, this, JSC::Identifier::fromString(vm, "appendStackTrace"_s), 2, errorConstructorFuncAppendStackTrace, ImplementationVisibility::Private, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
 
     // JSC default is 100
     errorConstructor->putDirect(vm, vm.propertyNames->stackTraceLimit, jsNumber(DEFAULT_ERROR_STACK_TRACE_LIMIT), JSC::PropertyAttribute::DontEnum | 0);

@@ -3408,7 +3408,10 @@ pub const Resolver = struct {
                             // with this same path. The goal of this code is to avoid having
                             // both the "module" file and the "main" file in the bundle at the
                             // same time.
-                            if (kind != ast.ImportKind.require) {
+                            //
+                            // Additionally, if this is for the runtime, use the "main" field.
+                            // If it doesn't exist, the "module" field will be used.
+                            if (!r.opts.runtime and kind != ast.ImportKind.require) {
                                 if (r.debug_logs) |*debug| {
                                     debug.addNoteFmt("Resolved to \"{s}\" using the \"module\" field in \"{s}\"", .{ auto_main_result.path_pair.primary.text, pkg_json.source.key_path.text });
 

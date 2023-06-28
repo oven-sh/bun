@@ -1451,6 +1451,10 @@ pub const BundleOptions = struct {
 
     compile: bool = false,
 
+    /// Used for resolver. We need to know this when
+    /// deciding which main field to use in package.json
+    runtime: bool = false,
+
     /// This is a list of packages which even when require() is used, we will
     /// instead convert to ESM import statements.
     ///

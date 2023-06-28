@@ -164,6 +164,8 @@ pub const Run = struct {
         vm.arena = &run.arena;
         vm.allocator = arena.allocator();
 
+        b.options.runtime = true;
+        b.resolver.opts.runtime = true;
         b.options.install = ctx.install;
         b.resolver.opts.install = ctx.install;
         b.resolver.opts.global_cache = ctx.debug.global_cache;

@@ -1984,8 +1984,10 @@ pub const VirtualMachine = struct {
         var i: usize = 0;
         while (i < frames_count) : (i += 1) {
             if (frames[i].position.isInvalid()) continue;
+            var sourceURL = frames[i].source_url.toSlice(bun.default_allocator);
+            defer sourceURL.deinit();
             if (this.source_mappings.resolveMapping(
-                frames[i].source_url.slice(),
+                sourceURL.slice(),
                 @max(frames[i].position.line, 0),
                 @max(frames[i].position.column_start, 0),
             )) |mapping| {

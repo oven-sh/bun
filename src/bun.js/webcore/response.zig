@@ -222,6 +222,14 @@ pub const Response = struct {
                 if (content_type.len > 0) {
                     this.body.init.headers.?.put("content-type", content_type, globalThis);
                 }
+            } else if (this.body.value == .Locked) {
+                // EventStream defines "contentType"
+                const locked = this.body.value.Locked;
+                if (locked.readable) |readable| {
+                    if (readable.value.getOptional(locked.global, "contentType", ZigString.Slice) catch null) |slice| {
+                        this.body.init.headers.?.put("content-type", slice.slice(), globalThis);
+                    }
+                }
             }
         }
 
@@ -536,12 +544,22 @@ pub const Response = struct {
             .url = "",
         };
 
-        if (response.body.value == .Blob and
-            response.body.init.headers != null and
-            response.body.value.Blob.content_type.len > 0 and
-            !response.body.init.headers.?.fastHas(.ContentType))
-        {
-            response.body.init.headers.?.put("content-type", response.body.value.Blob.content_type, globalThis);
+        if (response.body.init.headers != null) {
+            if (response.body.value == .Blob and
+                response.body.value.Blob.content_type.len > 0 and
+                !response.body.init.headers.?.fastHas(.ContentType))
+            {
+                response.body.init.headers.?.put("content-type", response.body.value.Blob.content_type, globalThis);
+            } else if (response.body.value == .Locked) {
+                const locked = response.body.value.Locked;
+                if (locked.readable) |readable| {
+                    if (readable.value.fastGetDirect(locked.global, .contentType) catch null) |value| {
+                        if (value.isString()) {
+                            response.body.init.headers.?.put("content-type", value.toBunString(locked.global).toSlice(), globalThis);
+                        }
+                    }
+                }
+            }
         }
 
         return response;
@@ -1725,14 +1743,11 @@ pub const FetchEvent = struct {
 
                 if (strings.eqlComptime(name, "content-length")) {
                     content_length = std.fmt.parseInt(usize, headers.asStr(header.value), 10) catch null;
-                    continue;
                 }
 
                 // Some headers need to be managed by bun
                 if (strings.eqlComptime(name, "transfer-encoding") or
-                    strings.eqlComptime(name, "content-encoding") or
-                    strings.eqlComptime(name, "strict-transport-security") or
-                    strings.eqlComptime(name, "content-security-policy"))
+                    strings.eqlComptime(name, "content-encoding"))
                 {
                     continue;
                 }

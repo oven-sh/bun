@@ -23856,6 +23856,6 @@ export const {
   createCredentials,
   constants,
 } = crypto_exports;
-export { DEFAULT_ENCODING, getRandomValues, randomUUID, scrypt, scryptSync, timingSafeEqual, webcrypto };
+export { DEFAULT_ENCODING, getRandomValues, randomUUID, randomInt, scrypt, scryptSync, timingSafeEqual, webcrypto };
 export default crypto_exports;
 /*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */

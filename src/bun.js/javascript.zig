@@ -801,6 +801,7 @@ pub const VirtualMachine = struct {
 
         vm.bundler.macro_context = null;
         vm.bundler.resolver.store_fd = false;
+        vm.bundler.resolver.prefer_module_field = false;
 
         vm.bundler.resolver.onWakePackageManager = .{
             .context = &vm.modules,

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import * as dns from "node:dns";
+import * as dns_promises from "node:dns/promises";
 
 // TODO:
 test("it exists", () => {
@@ -18,6 +19,38 @@ test("it exists", () => {
   expect(dns.resolveNs).toBeDefined();
   expect(dns.resolvePtr).toBeDefined();
   expect(dns.resolveCname).toBeDefined();
+
+  expect(dns.promises).toBeDefined();
+  expect(dns.promises.lookup).toBeDefined();
+  expect(dns.promises.lookupService).toBeDefined();
+  expect(dns.promises.resolve).toBeDefined();
+  expect(dns.promises.resolve4).toBeDefined();
+  expect(dns.promises.resolve6).toBeDefined();
+  expect(dns.promises.resolveSrv).toBeDefined();
+  expect(dns.promises.resolveTxt).toBeDefined();
+  expect(dns.promises.resolveSoa).toBeDefined();
+  expect(dns.promises.resolveNaptr).toBeDefined();
+  expect(dns.promises.resolveMx).toBeDefined();
+  expect(dns.promises.resolveCaa).toBeDefined();
+  expect(dns.promises.resolveNs).toBeDefined();
+  expect(dns.promises.resolvePtr).toBeDefined();
+  expect(dns.promises.resolveCname).toBeDefined();
+
+  expect(dns_promises).toBeDefined();
+  expect(dns_promises.lookup).toBeDefined();
+  expect(dns_promises.lookupService).toBeDefined();
+  expect(dns_promises.resolve).toBeDefined();
+  expect(dns_promises.resolve4).toBeDefined();
+  expect(dns_promises.resolve6).toBeDefined();
+  expect(dns_promises.resolveSrv).toBeDefined();
+  expect(dns_promises.resolveTxt).toBeDefined();
+  expect(dns_promises.resolveSoa).toBeDefined();
+  expect(dns_promises.resolveNaptr).toBeDefined();
+  expect(dns_promises.resolveMx).toBeDefined();
+  expect(dns_promises.resolveCaa).toBeDefined();
+  expect(dns_promises.resolveNs).toBeDefined();
+  expect(dns_promises.resolvePtr).toBeDefined();
+  expect(dns_promises.resolveCname).toBeDefined();
 });
 
 // //TODO: use a bun.sh SRV for testing

@@ -25,7 +25,8 @@
     "undici": "5.20.0",
     "vitest": "0.32.2",
     "webpack": "5.88.0",
-    "webpack-cli": "4.7.2"
+    "webpack-cli": "4.7.2",
+    "nodemailer": "^6.9.3"
   },
   "private": true,
   "scripts": {

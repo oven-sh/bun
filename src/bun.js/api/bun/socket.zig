@@ -131,19 +131,21 @@ const Handlers = struct {
     pub fn markInactive(this: *Handlers, ssl: bool, ctx: *uws.SocketContext, wrapped: WrappedType) void {
         Listener.log("markInactive", .{});
         this.active_connections -= 1;
-        if (this.active_connections == 0 and this.is_server) {
-            var listen_socket: *Listener = @fieldParentPtr(Listener, "handlers", this);
-            // allow it to be GC'd once the last connection is closed and it's not listening anymore
-            if (listen_socket.listener == null) {
-                listen_socket.strong_self.clear();
+        if (this.active_connections == 0) {
+            if (this.is_server) {
+                var listen_socket: *Listener = @fieldParentPtr(Listener, "handlers", this);
+                // allow it to be GC'd once the last connection is closed and it's not listening anymore
+                if (listen_socket.listener == null) {
+                    listen_socket.strong_self.clear();
+                }
+            } else {
+                this.unprotect();
+                // will deinit when is not wrapped or when is the TCP wrapped connection
+                if (wrapped != .tls) {
+                    ctx.deinit(ssl);
+                }
+                bun.default_allocator.destroy(this);
             }
-        } else if (this.active_connections == 0 and !this.is_server) {
-            this.unprotect();
-            // when is not wrapped and wrapped TCP will deinit it
-            if (wrapped != .tls) {
-                ctx.deinit(ssl);
-            }
-            bun.default_allocator.destroy(this);
         }
     }
 
@@ -1741,17 +1743,18 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn finalize(this: *This) callconv(.C) void {
             log("finalize()", .{});
-            if (this.detached) return;
-            this.detached = true;
-            if (!this.socket.isClosed()) {
-                this.socket.close(0, null);
+            if (!this.detached) {
+                this.detached = true;
+                if (!this.socket.isClosed()) {
+                    this.socket.close(0, null);
+                }
+                this.markInactive();
+                this.poll_ref.unref(JSC.VirtualMachine.get());
             }
             if (this.connection) |connection| {
                 connection.deinit();
                 this.connection = null;
             }
-            this.markInactive();
-            this.poll_ref.unref(JSC.VirtualMachine.get());
         }
 
         pub fn reload(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
@@ -1894,7 +1897,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             // reconfigure context to use the new wrapper handlers
             Socket.unsafeConfigure(this.socket.context(), true, true, WrappedSocket, TCPHandler);
-
+            const old_context = this.socket.context();
             const TLSHandler = NewWrappedHandler(true);
             const new_socket = this.socket.wrapTLS(
                 options,
@@ -1929,9 +1932,9 @@ fn NewSocket(comptime ssl: bool) type {
 
             //detach and invalidate this
             this.detached = true;
-            var vm = this.handlers.vm;
+            var vm = globalObject.bunVM();
             this.reffer.unref(vm);
-            this.handlers.markInactive(ssl, this.socket.context(), this.wrapped);
+            this.handlers.markInactive(ssl, old_context, this.wrapped);
             this.poll_ref.unref(vm);
             this.has_pending_activity.store(false, .Release);
 

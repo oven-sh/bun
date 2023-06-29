@@ -446,7 +446,7 @@ const Socket = (function (InternalSocket) {
             this[bunSocketInternal] = tls;
             tls.ref();
             tls.timeout(tls.timeout);
-            tls.connecting = false;
+            tls.connecting = true;
             this[bunSocketInternal] = socket;
             // start tls
             tls.open();
@@ -477,7 +477,7 @@ const Socket = (function (InternalSocket) {
               this[bunSocketInternal] = tls;
               tls.ref();
               tls.timeout(tls.timeout);
-              tls.connecting = false;
+              tls.connecting = true;
               this[bunSocketInternal] = socket;
               // start tls
               tls.open();

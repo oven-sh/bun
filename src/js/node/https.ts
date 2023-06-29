@@ -10,8 +10,8 @@ var {
   ServerResponse,
   IncomingMessage,
   maxHeaderSize,
-  // validateHeaderName,
-  // validateHeaderValue,
+  validateHeaderName,
+  validateHeaderValue,
   globalAgent,
 } = http;
 
@@ -42,8 +42,8 @@ var defaultExport = {
   request,
   get,
   maxHeaderSize,
-  // validateHeaderName,
-  // validateHeaderValue,
+  validateHeaderName,
+  validateHeaderValue,
   globalAgent,
 };
 
@@ -58,8 +58,8 @@ export {
   request,
   get,
   maxHeaderSize,
-  // validateHeaderName,
-  // validateHeaderValue,
+  validateHeaderName,
+  validateHeaderValue,
   globalAgent,
 };
 export default defaultExport;

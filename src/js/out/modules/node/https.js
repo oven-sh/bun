@@ -17,6 +17,8 @@ var request2 = function(input, options, cb) {
   ServerResponse,
   IncomingMessage,
   maxHeaderSize,
+  validateHeaderName,
+  validateHeaderValue,
   globalAgent
 } = http, defaultExport = {
   Agent,
@@ -29,10 +31,14 @@ var request2 = function(input, options, cb) {
   request: request2,
   get,
   maxHeaderSize,
+  validateHeaderName,
+  validateHeaderValue,
   globalAgent
 };
 var https_default = defaultExport;
 export {
+  validateHeaderValue,
+  validateHeaderName,
   request2 as request,
   maxHeaderSize,
   globalAgent,

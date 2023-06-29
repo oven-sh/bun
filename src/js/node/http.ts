@@ -3,6 +3,35 @@ import { EventEmitter } from "node:events";
 import { Readable, Writable, Duplex } from "node:stream";
 import { isTypedArray } from "util/types";
 
+const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
+/**
+ * True if val contains an invalid field-vchar
+ *  field-value    = *( field-content / obs-fold )
+ *  field-content  = field-vchar [ 1*( SP / HTAB ) field-vchar ]
+ *  field-vchar    = VCHAR / obs-text
+ */
+function checkInvalidHeaderChar(val: string) {
+  return RegExpPrototypeExec.call(headerCharRegex, val) !== null;
+}
+
+export const validateHeaderName = (name, label) => {
+  if (typeof name !== "string" || !name || !checkIsHttpToken(name)) {
+    // throw new ERR_INVALID_HTTP_TOKEN(label || "Header name", name);
+    throw new Error("ERR_INVALID_HTTP_TOKEN");
+  }
+};
+
+export const validateHeaderValue = (name, value) => {
+  if (value === undefined) {
+    // throw new ERR_HTTP_INVALID_HEADER_VALUE(value, name);
+    throw new Error("ERR_HTTP_INVALID_HEADER_VALUE");
+  }
+  if (checkInvalidHeaderChar(value)) {
+    // throw new ERR_INVALID_CHAR("header content", name);
+    throw new Error("ERR_INVALID_CHAR");
+  }
+};
+
 // Cheaper to duplicate this than to import it from node:net
 function isIPv6(input) {
   const v4Seg = "(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])";
@@ -484,7 +513,7 @@ export class Server extends EventEmitter {
         this.serverName = tls.serverName || host || "localhost";
       }
       this.#server = Bun.serve<any>({
-        // tls,
+        tls,
         port,
         hostname: host,
         // Bindings to be used for WS Server
@@ -677,10 +706,8 @@ export class IncomingMessage extends Readable {
         this.push(null);
         return;
       }
-
-      this.#consumeStream(reader);
-
       this.#bodyStream = reader;
+      this.#consumeStream(reader);
     }
   }
 
@@ -1810,6 +1837,7 @@ export function get(url, options, cb) {
   req.end();
   return req;
 }
+
 export var globalAgent = new Agent();
 var defaultObject = {
   Agent,
@@ -1822,8 +1850,8 @@ var defaultObject = {
   request,
   get,
   maxHeaderSize: 16384,
-  // validateHeaderName,
-  // validateHeaderValue,
+  validateHeaderName,
+  validateHeaderValue,
   setMaxIdleHTTPParsers(max) {
     debug(`${NODE_HTTP_WARNING}\n`, "setMaxIdleHTTPParsers() is a no-op");
   },

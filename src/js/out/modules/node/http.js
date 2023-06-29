@@ -490,7 +490,7 @@ class IncomingMessage extends Readable {
   get aborted() {
     return this.#aborted;
   }
-  abort() {
+  #abort() {
     if (this.#aborted)
       return;
     this.#aborted = !0;

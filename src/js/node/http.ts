@@ -688,7 +688,7 @@ export class IncomingMessage extends Readable {
     return this.#aborted;
   }
 
-  abort() {
+  #abort() {
     if (this.#aborted) return;
     this.#aborted = true;
     var bodyStream = this.#bodyStream;

@@ -1282,7 +1282,6 @@ fn NewSocket(comptime ssl: bool) type {
             log("onClose", .{});
             this.detached = true;
             defer this.markInactive();
-
             const handlers = this.handlers;
             this.poll_ref.unref(handlers.vm);
 
@@ -1751,6 +1750,7 @@ fn NewSocket(comptime ssl: bool) type {
                 this.markInactive();
                 this.poll_ref.unref(JSC.VirtualMachine.get());
             }
+            // need to deinit event without being attached
             if (this.connection) |connection| {
                 connection.deinit();
                 this.connection = null;
@@ -1927,6 +1927,8 @@ fn NewSocket(comptime ssl: bool) type {
                 raw_default_data.ensureStillAlive();
                 TLSSocket.dataSetCached(raw_js_value, globalObject, raw_default_data);
             }
+            //this is important because open will not be called again for TCP
+            raw.markActive();
 
             new_socket.ext(WrappedSocket).?.* = .{ .tcp = raw, .tls = tls };
 
@@ -1962,10 +1964,9 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
             this: WrappedSocket,
             socket: Socket,
         ) void {
+            // only TLS will call onOpen
             if (comptime tls) {
                 TLSSocket.onOpen(this.tls, socket);
-            } else {
-                TLSSocket.onOpen(this.tcp, socket);
             }
         }
 
@@ -1986,10 +1987,9 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
             success: i32,
             ssl_error: uws.us_bun_verify_error_t,
         ) void {
+            // only TLS will call onHandshake
             if (comptime tls) {
                 TLSSocket.onHandshake(this.tls, socket, success, ssl_error);
-            } else {
-                TLSSocket.onHandshake(this.tcp, socket, success, ssl_error);
             }
         }
 

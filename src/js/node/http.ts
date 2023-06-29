@@ -989,6 +989,19 @@ export class ServerResponse extends Writable {
   _removedContLen = false;
   #deferred: (() => void) | undefined = undefined;
   #finished = false;
+  #flushScheduled = false;
+
+  #scheduleFlush() {
+    if (this.#flushScheduled) return;
+    this.#flushScheduled = true;
+    process.nextTick(() => {
+      if (this.#finished) return;
+      this.#flushScheduled = false;
+      this.#ensureReadableStreamController(controller => {
+        controller.flush();
+      });
+    });
+  }
 
   // Express "compress" package uses this
   _implicitHeader() {}
@@ -996,12 +1009,14 @@ export class ServerResponse extends Writable {
   _write(chunk, encoding, callback) {
     if (!this.#firstWrite && !this.headersSent) {
       this.#firstWrite = chunk;
+      this.#scheduleFlush();
       callback();
       return;
     }
 
     this.#ensureReadableStreamController(controller => {
       controller.write(chunk);
+      this.#scheduleFlush();
       callback();
     });
   }
@@ -1017,7 +1032,7 @@ export class ServerResponse extends Writable {
       for (const chunk of chunks) {
         controller.write(chunk.chunk);
       }
-
+      this.#scheduleFlush();
       callback();
     });
   }
@@ -1043,6 +1058,10 @@ export class ServerResponse extends Writable {
               });
             }
           },
+          cancel: () => {
+            this.destroy();
+            this.#finished = true;
+          },
         }),
         {
           headers: this.#headers,
@@ -1054,10 +1073,10 @@ export class ServerResponse extends Writable {
   }
 
   _final(callback) {
+    this.#finished = true;
     if (!this.headersSent) {
       var data = this.#firstWrite || "";
       this.#firstWrite = undefined;
-      this.#finished = true;
       this._reply(
         new Response(data, {
           headers: this.#headers,
@@ -1068,8 +1087,6 @@ export class ServerResponse extends Writable {
       callback && callback();
       return;
     }
-
-    this.#finished = true;
     this.#ensureReadableStreamController(controller => {
       controller.end();
 

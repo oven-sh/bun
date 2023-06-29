@@ -647,15 +647,27 @@ class ServerResponse extends Writable {
   _removedContLen = !1;
   #deferred = void 0;
   #finished = !1;
+  #flushScheduled = !1;
+  #scheduleFlush() {
+    if (this.#flushScheduled)
+      return;
+    this.#flushScheduled = !0, process.nextTick(() => {
+      if (this.#finished)
+        return;
+      this.#flushScheduled = !1, this.#ensureReadableStreamController((controller) => {
+        controller.flush();
+      });
+    });
+  }
   _implicitHeader() {
   }
   _write(chunk, encoding, callback) {
     if (!this.#firstWrite && !this.headersSent) {
-      this.#firstWrite = chunk, callback();
+      this.#firstWrite = chunk, this.#scheduleFlush(), callback();
       return;
     }
     this.#ensureReadableStreamController((controller) => {
-      controller.write(chunk), callback();
+      controller.write(chunk), this.#scheduleFlush(), callback();
     });
   }
   _writev(chunks, callback) {
@@ -666,7 +678,7 @@ class ServerResponse extends Writable {
     this.#ensureReadableStreamController((controller) => {
       for (let chunk of chunks)
         controller.write(chunk.chunk);
-      callback();
+      this.#scheduleFlush(), callback();
     });
   }
   #ensureReadableStreamController(run) {
@@ -684,6 +696,9 @@ class ServerResponse extends Writable {
           return new Promise((resolve) => {
             this.#deferred = resolve;
           });
+      },
+      cancel: () => {
+        this.destroy(), this.#finished = !0;
       }
     }), {
       headers: this.#headers,
@@ -692,16 +707,16 @@ class ServerResponse extends Writable {
     }));
   }
   _final(callback) {
-    if (!this.headersSent) {
+    if (this.#finished = !0, !this.headersSent) {
       var data = this.#firstWrite || "";
-      this.#firstWrite = void 0, this.#finished = !0, this._reply(new Response(data, {
+      this.#firstWrite = void 0, this._reply(new Response(data, {
         headers: this.#headers,
         status: this.statusCode,
         statusText: this.statusMessage ?? STATUS_CODES[this.statusCode]
       })), callback && callback();
       return;
     }
-    this.#finished = !0, this.#ensureReadableStreamController((controller) => {
+    this.#ensureReadableStreamController((controller) => {
       controller.end(), callback();
       var deferred = this.#deferred;
       if (deferred)

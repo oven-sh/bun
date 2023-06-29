@@ -1532,8 +1532,8 @@ inline fn createIfScope(
 // In Github Actions, emit an annotation that renders the error and location.
 // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-error-message
 pub fn printGithubAnnotation(exception: *JSC.ZigException) void {
-    const name = exception.name;
-    const message = exception.message;
+    const name = @field(exception, "name");
+    const message = @field(exception, "message");
     const frames = exception.stack.frames();
     const top_frame = if (frames.len > 0) frames[0] else null;
     const dir = bun.getenvZ("GITHUB_WORKSPACE") orelse bun.fs.FileSystem.instance.top_level_dir;
@@ -1543,7 +1543,7 @@ pub fn printGithubAnnotation(exception: *JSC.ZigException) void {
 
     if (top_frame) |frame| {
         if (!frame.position.isInvalid()) {
-            const source_url = frame.source_url.toSlice(allocator);
+            const source_url = frame.source_url.toUTF8(allocator);
             defer source_url.deinit();
             const file = bun.path.relative(dir, source_url.slice());
             Output.printError("\n::error file={s},line={d},col={d},title=", .{
@@ -1559,14 +1559,14 @@ pub fn printGithubAnnotation(exception: *JSC.ZigException) void {
         Output.printError("\n::error title=", .{});
     }
 
-    if (name.len == 0 or name.eqlComptime("Error")) {
+    if (name.isEmpty() or name.eqlComptime("Error")) {
         Output.printError("error", .{});
     } else {
         Output.printError("{s}", .{name.githubAction()});
     }
 
-    if (message.len > 0) {
-        const message_slice = message.toSlice(allocator);
+    if (!message.isEmpty()) {
+        const message_slice = message.toUTF8(allocator);
         defer message_slice.deinit();
         const msg = message_slice.slice();
 
@@ -1574,7 +1574,7 @@ pub fn printGithubAnnotation(exception: *JSC.ZigException) void {
         while (strings.indexOfNewlineOrNonASCIIOrANSI(msg, cursor)) |i| {
             cursor = i + 1;
             if (msg[i] == '\n') {
-                const first_line = ZigString.init(msg[0..i]);
+                const first_line = bun.String.fromUTF8(msg[0..i]);
                 Output.printError(": {s}::", .{first_line.githubAction()});
                 break;
             }
@@ -1605,10 +1605,10 @@ pub fn printGithubAnnotation(exception: *JSC.ZigException) void {
         var i: i16 = 0;
         while (i < frames.len) : (i += 1) {
             const frame = frames[@intCast(usize, i)];
-            const source_url = frame.source_url.toSlice(allocator);
+            const source_url = frame.source_url.toUTF8(allocator);
             defer source_url.deinit();
             const file = bun.path.relative(dir, source_url.slice());
-            const func = frame.function_name.toSlice(allocator);
+            const func = frame.function_name.toUTF8(allocator);
 
             if (file.len == 0 and func.len == 0) continue;
 

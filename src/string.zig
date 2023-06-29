@@ -247,6 +247,26 @@ pub const String = extern struct {
     extern fn BunString__fromLatin1(bytes: [*]const u8, len: usize) String;
     extern fn BunString__fromBytes(bytes: [*]const u8, len: usize) String;
 
+    pub fn toOwnedSlice(this: String, allocator: std.mem.Allocator) ![]u8 {
+        switch (this.tag) {
+            .ZigString => return try this.value.ZigString.toOwnedSlice(allocator),
+            .WTFStringImpl => {
+                var utf8_slice = this.value.WTFStringImpl.toUTF8(allocator);
+
+                if (utf8_slice.allocator.get()) |alloc| {
+                    if (isWTFAllocator(alloc)) {
+                        return @constCast((try utf8_slice.clone(allocator)).slice());
+                    }
+                }
+
+                return @constCast(utf8_slice.slice());
+            },
+            .StaticZigString => return try this.value.StaticZigString.toOwnedSlice(allocator),
+            .Empty => return &[_]u8{},
+            else => unreachable,
+        }
+    }
+
     pub fn createLatin1(bytes: []const u8) String {
         JSC.markBinding(@src());
         return BunString__fromLatin1(bytes.ptr, bytes.len);
@@ -427,6 +447,10 @@ pub const String = extern struct {
         }
 
         return .latin1;
+    }
+
+    pub fn githubAction(self: String) ZigString.GithubActionFormatter {
+        return self.toZigString().githubAction();
     }
 
     pub fn byteSlice(this: String) []const u8 {

@@ -29,7 +29,7 @@ int64_t getHighWaterMark(JSC::VM& vm, JSC::JSGlobalObject* globalObject, bool is
             highWaterMarkVal = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "readableObjectMode"_s));
         }
 
-        if (highWaterMarkVal && !highWaterMarkVal.isUndefinedOrNull()) {
+        if (highWaterMarkVal && highWaterMarkVal.isInt32()) {
             return highWaterMarkVal.toInt32(globalObject);
         }
     }

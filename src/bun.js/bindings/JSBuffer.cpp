@@ -1468,7 +1468,8 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
             if (argsCount == 2)
                 break;
 
-            length = std::min(byteLength, static_cast<uint32_t>(arg3.toInt32(lexicalGlobalObject)));
+            if (!arg3.isUndefined())
+                length = std::min(byteLength, static_cast<uint32_t>(arg3.toInt32(lexicalGlobalObject)));
             break;
         }
         case false: {
@@ -1481,12 +1482,16 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
             if (argsCount == 1)
                 break;
 
-            length = std::min(byteLength, static_cast<uint32_t>(arg2.toInt32(lexicalGlobalObject)));
+            if (!arg2.isUndefined())
+                length = std::min(byteLength, static_cast<uint32_t>(arg2.toInt32(lexicalGlobalObject)));
+
             if (argsCount == 2)
                 break;
 
-            encoding = parseEncoding(lexicalGlobalObject, scope, arg3);
-            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+            if (!arg3.isUndefined()) {
+                encoding = parseEncoding(lexicalGlobalObject, scope, arg3);
+                RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+            }
         }
     }
 

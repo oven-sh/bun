@@ -433,9 +433,9 @@ declare interface ArrayBufferConstructor<T> extends ClassWithIntrinsics<ArrayBuf
 declare interface PromiseConstructor<T> extends ClassWithIntrinsics<PromiseConstructor<T>> {}
 
 declare interface UnderlyingSource {
-  $lazy: boolean;
-  $bunNativeType: number;
-  $bunNativePtr: number;
+  $lazy?: boolean;
+  $bunNativeType?: number;
+  $bunNativePtr?: number;
   autoAllocateChunkSize?: number;
 }
 

@@ -43,7 +43,7 @@ export function cancel(this, reason) {
   return $readableStreamReaderGenericCancel(this, reason);
 }
 
-export function readMany<T>(this: ReadableStreamDefaultReader<T>): ReadableStreamDefaultReadManyResult<T> {
+export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefaultReadManyResult<any> {
   if (!$isReadableStreamDefaultReader(this))
     throw new TypeError("ReadableStreamDefaultReader.readMany() should not be called directly");
 

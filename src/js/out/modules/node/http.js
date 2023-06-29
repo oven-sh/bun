@@ -462,12 +462,18 @@ class IncomingMessage extends Readable {
     }
     callback();
   }
-  #abortBodyStream() {
-    debug("closeBodyStream()");
-    var bodyStream = this.#bodyStream;
-    if (!bodyStream)
-      return;
-    bodyStream.cancel(), this.complete = !0, this.#bodyStream = void 0, this.push(null);
+  async#consumeStream(reader) {
+    while (!0) {
+      var { done, value } = await reader.readMany();
+      if (this.#aborted)
+        return;
+      if (done) {
+        this.push(null), this.destroy();
+        break;
+      }
+      for (var v of value)
+        this.push(v);
+    }
   }
   _read(size) {
     if (this.#noBody)
@@ -475,22 +481,10 @@ class IncomingMessage extends Readable {
     else if (this.#bodyStream == null) {
       const reader = this.#req.body?.getReader();
       if (!reader) {
-        this.push(null), this.complete = !0;
+        this.push(null);
         return;
       }
-      (async () => {
-        while (!0) {
-          var { done, value } = await reader.readMany();
-          if (this.#aborted)
-            return;
-          if (done) {
-            this.push(null), this.complete = !0;
-            break;
-          }
-          for (var v of value)
-            this.push(v);
-        }
-      })(), this.#bodyStream = reader;
+      this.#consumeStream(reader), this.#bodyStream = reader;
     }
   }
   get aborted() {

@@ -72,6 +72,9 @@ void JSReadableState::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObj
         JSC::JSValue autoDestroyVal = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "autoDestroy"_s));
         if (!autoDestroyVal || autoDestroyVal.toBoolean(globalObject))
             setBool(JSReadableState::Mask::autoDestroy, true);
+    } else {
+        setBool(JSReadableState::Mask::emitClose, true);
+        setBool(JSReadableState::Mask::autoDestroy, true);
     }
 
     // Indicates whether the stream has finished destroying.

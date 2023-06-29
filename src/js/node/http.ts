@@ -652,14 +652,19 @@ export class IncomingMessage extends Readable {
     callback();
   }
 
-  #abortBodyStream() {
-    debug("closeBodyStream()");
-    var bodyStream = this.#bodyStream;
-    if (!bodyStream) return;
-    bodyStream.cancel();
-    this.complete = true;
-    this.#bodyStream = undefined;
-    this.push(null);
+  async #consumeStream(reader: ReadableStreamDefaultReader) {
+    while (true) {
+      var { done, value } = await reader.readMany();
+      if (this.#aborted) return;
+      if (done) {
+        this.push(null);
+        this.destroy();
+        break;
+      }
+      for (var v of value) {
+        this.push(v);
+      }
+    }
   }
 
   _read(size) {
@@ -670,24 +675,11 @@ export class IncomingMessage extends Readable {
       const reader = this.#req.body?.getReader() as ReadableStreamDefaultReader;
       if (!reader) {
         this.push(null);
-        this.complete = true;
         return;
       }
 
-      (async () => {
-        while (true) {
-          var { done, value } = await reader.readMany();
-          if (this.#aborted) return;
-          if (done) {
-            this.push(null);
-            this.complete = true;
-            break;
-          }
-          for (var v of value) {
-            this.push(v);
-          }
-        }
-      })();
+      this.#consumeStream(reader);
+
       this.#bodyStream = reader;
     }
   }

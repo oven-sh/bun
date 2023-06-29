@@ -6765,4 +6765,75 @@ describe("bundler", () => {
       stdout: "hello index.esm.js",
     },
   });
+  itBundled("default/RequireProperlyHandlesNamedExportDeclsInCjsModule", {
+    files: {
+      "/entry.js": `
+        const { a, b, c, d } = require('foo');
+        console.log(a, b, c, d);
+      `,
+      "/node_modules/foo/package.json": `
+        {
+          "name": "foo",
+          "version": "2.0.0"
+        }
+      `,
+      "/node_modules/foo/index.js": `
+        if (!exports.d) {
+          exports.d = 7;
+        }
+        if (exports.hasOwnProperty("d")) {
+          exports.a = 5;
+        }
+        
+        exports.b;
+        exports.b = 8;
+        exports.b = 9;
+        
+        var c;
+        c = 2;
+        exports.c = c;
+      `,
+    },
+    run: {
+      stdout: "5 9 2 7",
+    },
+    onAfterBundle(api) {
+      const contents = api.readFile("out.js");
+      expect(contents).not.toContain("undefined");
+      expect(contents).not.toContain("$");
+    },
+  });
+  itBundled("default/EsmImportProperlyHandlesNamedExportDeclsInUnwrappedCjsModule", {
+    files: {
+      "/entry.js": `
+        import { a, b, c, d } from 'foo';
+        console.log(a, b, c, d);
+      `,
+      "/node_modules/foo/package.json": `
+        {
+          "name": "foo",
+          "version": "2.0.0"
+        }
+      `,
+      "/node_modules/foo/index.js": `
+        if (!exports.d) {
+          exports.d = 7;
+        }
+        if (exports.hasOwnProperty("d")) {
+          exports.a = 5;
+        }
+        
+        exports.b;
+        exports.b = 8;
+        exports.b = 9;
+        
+        var c;
+        c = 2;
+        exports.c = c;
+      `,
+    },
+    run: {
+      stdout: "5 9 2 7",
+    },
+  });
 });

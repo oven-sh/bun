@@ -533,6 +533,10 @@ pub const Resolver = struct {
     // all parent directories
     dir_cache: *DirInfo.HashMap,
 
+    /// This is set to false for the runtime. The runtime should choose "main"
+    /// over "module" in package.json
+    prefer_module_field: bool = true,
+
     pub fn getPackageManager(this: *Resolver) *PackageManager {
         return this.package_manager orelse brk: {
             bun.HTTPThead.init() catch unreachable;
@@ -3411,7 +3415,7 @@ pub const Resolver = struct {
                             //
                             // Additionally, if this is for the runtime, use the "main" field.
                             // If it doesn't exist, the "module" field will be used.
-                            if (!r.opts.runtime and kind != ast.ImportKind.require) {
+                            if (r.prefer_module_field and kind != ast.ImportKind.require) {
                                 if (r.debug_logs) |*debug| {
                                     debug.addNoteFmt("Resolved to \"{s}\" using the \"module\" field in \"{s}\"", .{ auto_main_result.path_pair.primary.text, pkg_json.source.key_path.text });
 

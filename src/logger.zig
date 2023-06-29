@@ -421,12 +421,12 @@ pub const Msg = struct {
         if (err.toError()) |value| {
             value.toZigException(globalObject, zig_exception_holder.zigException());
         } else {
-            zig_exception_holder.zig_exception.message = JSC.ZigString.fromUTF8(err.toSlice(globalObject, allocator).slice());
+            zig_exception_holder.zig_exception.message = err.toBunString(globalObject);
         }
 
         return Msg{
             .data = .{
-                .text = zig_exception_holder.zigException().message.toSliceClone(allocator).slice(),
+                .text = try zig_exception_holder.zigException().message.toOwnedSlice(allocator),
                 .location = Location{
                     .file = file,
                 },

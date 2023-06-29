@@ -1916,7 +1916,22 @@ fn NewSocket(comptime ssl: bool) type {
 
             var raw = handlers.vm.allocator.create(TLSSocket) catch @panic("OOM");
             var raw_handlers_ptr = handlers.vm.allocator.create(Handlers) catch @panic("OOM");
-            raw_handlers_ptr.* = this.handlers.*;
+            var cloned_handlers: Handlers = .{
+                .vm = globalObject.bunVM(),
+                .globalObject = globalObject,
+                .onOpen = this.handlers.onOpen,
+                .onClose = this.handlers.onClose,
+                .onData = this.handlers.onData,
+                .onWritable = this.handlers.onWritable,
+                .onTimeout = this.handlers.onTimeout,
+                .onConnectError = this.handlers.onConnectError,
+                .onEnd = this.handlers.onEnd,
+                .onError = this.handlers.onError,
+                .onHandshake = this.handlers.onHandshake,
+                .binary_type = this.handlers.binary_type,
+            };
+
+            raw_handlers_ptr.* = cloned_handlers;
             raw_handlers_ptr.is_server = this.handlers.is_server;
             raw_handlers_ptr.protect();
             raw.* = .{ .handlers = raw_handlers_ptr, .this_value = .zero, .socket = undefined, .connection = if (this.connection) |c| c.clone() else null, .wrapped = .tcp };

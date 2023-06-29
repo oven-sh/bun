@@ -7950,27 +7950,31 @@ const LinkerContext = struct {
                         } else if (FeatureFlags.unwrap_commonjs_to_esm and s.was_commonjs_export and wrap == .cjs) {
                             std.debug.assert(stmt.data.s_local.decls.len == 1);
                             const decl = stmt.data.s_local.decls.ptr[0];
-                            stmt = Stmt.alloc(
-                                S.SExpr,
-                                S.SExpr{
-                                    .value = Expr.init(
-                                        E.Binary,
-                                        E.Binary{
-                                            .op = .bin_assign,
-                                            .left = Expr.init(
-                                                E.CommonJSExportIdentifier,
-                                                E.CommonJSExportIdentifier{
-                                                    .ref = decl.binding.data.b_identifier.ref,
-                                                },
-                                                decl.binding.loc,
-                                            ),
-                                            .right = decl.value orelse Expr.init(E.Undefined, E.Undefined{}, Logger.Loc.Empty),
-                                        },
-                                        stmt.loc,
-                                    ),
-                                },
-                                stmt.loc,
-                            );
+                            if (decl.value) |decl_value| {
+                                stmt = Stmt.alloc(
+                                    S.SExpr,
+                                    S.SExpr{
+                                        .value = Expr.init(
+                                            E.Binary,
+                                            E.Binary{
+                                                .op = .bin_assign,
+                                                .left = Expr.init(
+                                                    E.CommonJSExportIdentifier,
+                                                    E.CommonJSExportIdentifier{
+                                                        .ref = decl.binding.data.b_identifier.ref,
+                                                    },
+                                                    decl.binding.loc,
+                                                ),
+                                                .right = decl_value,
+                                            },
+                                            stmt.loc,
+                                        ),
+                                    },
+                                    stmt.loc,
+                                );
+                            } else {
+                                continue;
+                            }
                         }
                     },
 

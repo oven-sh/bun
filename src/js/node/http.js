@@ -648,14 +648,14 @@ export class IncomingMessage extends Readable {
     callback();
   }
 
-  #closeBodyStream() {
+  #abortBodyStream() {
     debug("closeBodyStream()");
     var bodyStream = this.#bodyStream;
     if (bodyStream == null) return;
+    bodyStream.cancel();
     this.complete = true;
     this.#bodyStream = undefined;
     this.push(null);
-    // process.nextTick(destroyBodyStreamNT, bodyStream);
   }
 
   _read(size) {
@@ -665,34 +665,27 @@ export class IncomingMessage extends Readable {
     } else if (this.#bodyStream == null) {
       const contentLength = this.#req.headers.get("content-length");
       let remaining = contentLength ? parseInt(contentLength, 10) : 0;
-      this.#bodyStream = Readable.fromWeb(this.#req.body, {
-        highWaterMark: Number.isFinite(remaining) ? Math.min(remaining, 16384) : 16384,
-      });
-
-      const isBodySizeKnown = remaining > 0 && Number.isSafeInteger(remaining);
-      if (isBodySizeKnown) {
-        this.#bodyStream.on("data", chunk => {
-          debug("body size known", remaining);
-          this.push(chunk);
-          // when we are streaming a known body size, automatically close the stream when we have read enough
-          remaining -= chunk?.byteLength ?? 0;
-          if (remaining <= 0) {
-            this.#closeBodyStream();
-          }
-        });
-      } else {
-        this.#bodyStream.on("data", chunk => {
-          this.push(chunk);
-        });
+      /** @type {ReadableStreamDefaultReader} */
+      const reader = this.#req.body?.getReader();
+      if (!reader) {
+        this.push(null);
+        this.complete = true;
+        return;
       }
 
-      // this can be closed by the time we get here if enough data was synchronously available
-      this.#bodyStream &&
-        this.#bodyStream.on("end", () => {
-          this.#closeBodyStream();
-        });
-    } else {
-      // this.#bodyStream.read(size);
+      (async () => {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (this.#aborted) return;
+          if (done) {
+            this.push(null);
+            this.complete = true;
+            break;
+          }
+          this.push(value);
+        }
+      })();
+      this.#bodyStream = reader;
     }
   }
 
@@ -703,8 +696,12 @@ export class IncomingMessage extends Readable {
   abort() {
     if (this.#aborted) return;
     this.#aborted = true;
-
-    this.#closeBodyStream();
+    var bodyStream = this.#bodyStream;
+    if (!bodyStream) return;
+    bodyStream.cancel();
+    this.complete = true;
+    this.#bodyStream = undefined;
+    this.push(null);
   }
 
   get connection() {
@@ -1326,8 +1323,8 @@ export class ClientRequest extends OutgoingMessage {
       } else {
         protocol = defaultAgent.protocol || "http:";
       }
-      this.#protocol = protocol;
     }
+    this.#protocol = protocol;
 
     switch (this.#agent?.protocol) {
       case undefined: {

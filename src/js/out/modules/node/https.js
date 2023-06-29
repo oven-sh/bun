@@ -1,12 +1,12 @@
 import * as http from "node:http";
 var request2 = function(input, options, cb) {
-  if (console.log([input, options, cb]), input && typeof input === "object" && !(input instanceof URL))
+  if (input && typeof input === "object" && !(input instanceof URL))
     input.protocol ??= "https:";
   else if (typeof options === "object")
     options.protocol ??= "https:";
   return http.request(input, options, cb);
 }, get = function(input, options, cb) {
-  const req = request2(url, options, cb);
+  const req = request2(input, options, cb);
   return req.end(), req;
 }, {
   Agent,

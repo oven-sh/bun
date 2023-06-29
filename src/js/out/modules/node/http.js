@@ -91,7 +91,7 @@ var _writeHead = function(statusCode, reason, obj, response) {
   }
 };
 function request(url, options, cb) {
-  return console.log("request"), new ClientRequest(url, options, cb);
+  return new ClientRequest(url, options, cb);
 }
 function get(url, options, cb) {
   const req = request(url, options, cb);
@@ -461,12 +461,12 @@ class IncomingMessage extends Readable {
     }
     callback();
   }
-  #closeBodyStream() {
+  #abortBodyStream() {
     debug("closeBodyStream()");
     var bodyStream = this.#bodyStream;
     if (bodyStream == null)
       return;
-    this.complete = !0, this.#bodyStream = void 0, this.push(null);
+    bodyStream.cancel(), this.complete = !0, this.#bodyStream = void 0, this.push(null);
   }
   _read(size) {
     if (this.#noBody)
@@ -474,20 +474,23 @@ class IncomingMessage extends Readable {
     else if (this.#bodyStream == null) {
       const contentLength = this.#req.headers.get("content-length");
       let remaining = contentLength ? parseInt(contentLength, 10) : 0;
-      if (this.#bodyStream = Readable.fromWeb(this.#req.body, {
-        highWaterMark: Number.isFinite(remaining) ? Math.min(remaining, 16384) : 16384
-      }), remaining > 0 && Number.isSafeInteger(remaining))
-        this.#bodyStream.on("data", (chunk) => {
-          if (debug("body size known", remaining), this.push(chunk), remaining -= chunk?.byteLength ?? 0, remaining <= 0)
-            this.#closeBodyStream();
-        });
-      else
-        this.#bodyStream.on("data", (chunk) => {
-          this.push(chunk);
-        });
-      this.#bodyStream && this.#bodyStream.on("end", () => {
-        this.#closeBodyStream();
-      });
+      const reader = this.#req.body?.getReader();
+      if (!reader) {
+        this.push(null), this.complete = !0;
+        return;
+      }
+      (async () => {
+        while (!0) {
+          const { done, value } = await reader.read();
+          if (this.#aborted)
+            return;
+          if (done) {
+            this.push(null), this.complete = !0;
+            break;
+          }
+          this.push(value);
+        }
+      })(), this.#bodyStream = reader;
     }
   }
   get aborted() {
@@ -496,7 +499,11 @@ class IncomingMessage extends Readable {
   abort() {
     if (this.#aborted)
       return;
-    this.#aborted = !0, this.#closeBodyStream();
+    this.#aborted = !0;
+    var bodyStream = this.#bodyStream;
+    if (!bodyStream)
+      return;
+    bodyStream.cancel(), this.complete = !0, this.#bodyStream = void 0, this.push(null);
   }
   get connection() {
     return this.#fakeSocket;
@@ -901,14 +908,12 @@ class ClientRequest extends OutgoingMessage {
       options = ObjectAssign(input || {}, options);
     var defaultAgent = options._defaultAgent || Agent.globalAgent;
     let protocol = options.protocol;
-    if (!protocol) {
+    if (!protocol)
       if (options.port === 443)
         protocol = "https:";
       else
         protocol = defaultAgent.protocol || "http:";
-      this.#protocol = protocol;
-    }
-    switch (this.#agent?.protocol) {
+    switch (this.#protocol = protocol, this.#agent?.protocol) {
       case void 0:
         break;
       case "http:":

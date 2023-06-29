@@ -27,7 +27,7 @@ function request(input, options, cb) {
 }
 
 function get(input, options, cb) {
-  const req = request(url, options, cb);
+  const req = request(input, options, cb);
   req.end();
   return req;
 }

@@ -43,7 +43,7 @@ export function cancel(this, reason) {
   return $readableStreamReaderGenericCancel(this, reason);
 }
 
-export function readMany(this) {
+export function readMany<T>(this: ReadableStreamDefaultReader<T>): ReadableStreamDefaultReadManyResult<T> {
   if (!$isReadableStreamDefaultReader(this))
     throw new TypeError("ReadableStreamDefaultReader.readMany() should not be called directly");
 
@@ -75,7 +75,7 @@ export function readMany(this) {
   var length = values.length;
 
   if (length > 0) {
-    var outValues = $newArrayWithSize(length);
+    var outValues = $newArrayWithSize<T>(length);
     if ($isReadableByteStreamController(controller)) {
       {
         const buf = values[0];

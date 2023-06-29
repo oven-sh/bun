@@ -12,7 +12,6 @@ var {
   maxHeaderSize,
   // validateHeaderName,
   // validateHeaderValue,
-  setMaxIdleHTTPParsers,
   globalAgent,
 } = http;
 
@@ -45,7 +44,6 @@ var defaultExport = {
   maxHeaderSize,
   // validateHeaderName,
   // validateHeaderValue,
-  setMaxIdleHTTPParsers,
   globalAgent,
 };
 
@@ -62,7 +60,6 @@ export {
   maxHeaderSize,
   // validateHeaderName,
   // validateHeaderValue,
-  setMaxIdleHTTPParsers,
   globalAgent,
 };
 export default defaultExport;

@@ -17,7 +17,6 @@ var request2 = function(input, options, cb) {
   ServerResponse,
   IncomingMessage,
   maxHeaderSize,
-  setMaxIdleHTTPParsers,
   globalAgent
 } = http, defaultExport = {
   Agent,
@@ -30,12 +29,10 @@ var request2 = function(input, options, cb) {
   request: request2,
   get,
   maxHeaderSize,
-  setMaxIdleHTTPParsers,
   globalAgent
 };
 var https_default = defaultExport;
 export {
-  setMaxIdleHTTPParsers,
   request2 as request,
   maxHeaderSize,
   globalAgent,

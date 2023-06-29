@@ -103,7 +103,6 @@ var { URL } = globalThis, { newArrayWithSize, String, Object, Array } = globalTh
   bytesWritten = 0;
   connecting = !1;
   remoteAddress = null;
-  localAddress = "127.0.0.1";
   remotePort;
   timeout = 0;
   isServer = !1;
@@ -274,6 +273,7 @@ class Server extends EventEmitter {
   #tls;
   #is_tls = !1;
   listening = !1;
+  serverName;
   constructor(options, callback) {
     super();
     if (typeof options === "function")
@@ -372,7 +372,6 @@ class Server extends EventEmitter {
       if (tls)
         this.serverName = tls.serverName || host || "localhost";
       this.#server = Bun.serve({
-        tls,
         port,
         hostname: host,
         websocket: {
@@ -425,12 +424,14 @@ class Server extends EventEmitter {
   }
 }
 class IncomingMessage extends Readable {
+  method;
+  complete;
   constructor(req, defaultIncomingOpts) {
     const method = req.method;
     super();
     const url = new URL(req.url);
     var { type = "request", [kInternalRequest]: nodeReq } = defaultIncomingOpts || {};
-    this.#noBody = type === "request" ? method === "GET" || method === "HEAD" || method === "TRACE" || method === "CONNECT" || method === "OPTIONS" || (parseInt(req.headers.get("Content-Length") || "") || 0) === 0 : !1, this.#req = req, this.method = method, this.#type = type, this.complete = !!this.#noBody, this.#bodyStream = null;
+    this.#noBody = type === "request" ? method === "GET" || method === "HEAD" || method === "TRACE" || method === "CONNECT" || method === "OPTIONS" || (parseInt(req.headers.get("Content-Length") || "") || 0) === 0 : !1, this.#req = req, this.method = method, this.#type = type, this.complete = !!this.#noBody, this.#bodyStream = void 0;
     const socket = new FakeSocket;
     socket.remoteAddress = url.hostname, socket.remotePort = url.port, this.#fakeSocket = socket, this.url = url.pathname + url.search, this.#nodeReq = nodeReq, assignHeaders(this, req);
   }
@@ -438,8 +439,8 @@ class IncomingMessage extends Readable {
   rawHeaders;
   _consuming = !1;
   _dumped = !1;
-  #bodyStream = null;
-  #fakeSocket = void 0;
+  #bodyStream;
+  #fakeSocket;
   #noBody = !1;
   #aborted = !1;
   #req;
@@ -464,7 +465,7 @@ class IncomingMessage extends Readable {
   #abortBodyStream() {
     debug("closeBodyStream()");
     var bodyStream = this.#bodyStream;
-    if (bodyStream == null)
+    if (!bodyStream)
       return;
     bodyStream.cancel(), this.complete = !0, this.#bodyStream = void 0, this.push(null);
   }
@@ -472,8 +473,6 @@ class IncomingMessage extends Readable {
     if (this.#noBody)
       this.push(null), this.complete = !0;
     else if (this.#bodyStream == null) {
-      const contentLength = this.#req.headers.get("content-length");
-      let remaining = contentLength ? parseInt(contentLength, 10) : 0;
       const reader = this.#req.body?.getReader();
       if (!reader) {
         this.push(null), this.complete = !0;
@@ -481,14 +480,15 @@ class IncomingMessage extends Readable {
       }
       (async () => {
         while (!0) {
-          const { done, value } = await reader.read();
+          var { done, value, size: size2 } = await reader.readMany();
           if (this.#aborted)
             return;
           if (done) {
             this.push(null), this.complete = !0;
             break;
           }
-          this.push(value);
+          for (var v of value)
+            this.push(v);
         }
       })(), this.#bodyStream = reader;
     }
@@ -541,6 +541,9 @@ class IncomingMessage extends Readable {
 }
 
 class OutgoingMessage extends Writable {
+  constructor() {
+    super(...arguments);
+  }
   #headers;
   headersSent = !1;
   sendDate = !0;

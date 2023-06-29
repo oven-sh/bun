@@ -86,12 +86,12 @@ function getHeader(headers, name) {
   return result == null ? undefined : result;
 }
 
+type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
   bytesRead = 0;
   bytesWritten = 0;
   connecting = false;
-  remoteAddress = null;
-  localAddress = "127.0.0.1";
+  remoteAddress: string | null = null;
   remotePort;
   timeout = 0;
 
@@ -338,6 +338,7 @@ export class Server extends EventEmitter {
   #tls;
   #is_tls = false;
   listening = false;
+  serverName;
 
   constructor(options, callback) {
     super();
@@ -426,7 +427,7 @@ export class Server extends EventEmitter {
     // not actually implemented
   }
 
-  close(optionalCallback) {
+  close(optionalCallback?) {
     const server = this.#server;
     if (!server) {
       if (typeof optionalCallback === "function")
@@ -482,8 +483,8 @@ export class Server extends EventEmitter {
       if (tls) {
         this.serverName = tls.serverName || host || "localhost";
       }
-      this.#server = Bun.serve({
-        tls,
+      this.#server = Bun.serve<any>({
+        // tls,
         port,
         hostname: host,
         // Bindings to be used for WS Server
@@ -578,6 +579,9 @@ function getDefaultHTTPSAgent() {
 }
 
 export class IncomingMessage extends Readable {
+  method: string;
+  complete: boolean;
+
   constructor(req, defaultIncomingOpts) {
     const method = req.method;
 
@@ -602,7 +606,7 @@ export class IncomingMessage extends Readable {
     this.#type = type;
     this.complete = !!this.#noBody;
 
-    this.#bodyStream = null;
+    this.#bodyStream = undefined;
     const socket = new FakeSocket();
     socket.remoteAddress = url.hostname;
     socket.remotePort = url.port;
@@ -617,8 +621,8 @@ export class IncomingMessage extends Readable {
   rawHeaders;
   _consuming = false;
   _dumped = false;
-  #bodyStream = null;
-  #fakeSocket = undefined;
+  #bodyStream: ReadableStreamDefaultReader | undefined;
+  #fakeSocket: FakeSocket | undefined;
   #noBody = false;
   #aborted = false;
   #req;
@@ -651,7 +655,7 @@ export class IncomingMessage extends Readable {
   #abortBodyStream() {
     debug("closeBodyStream()");
     var bodyStream = this.#bodyStream;
-    if (bodyStream == null) return;
+    if (!bodyStream) return;
     bodyStream.cancel();
     this.complete = true;
     this.#bodyStream = undefined;
@@ -663,10 +667,7 @@ export class IncomingMessage extends Readable {
       this.push(null);
       this.complete = true;
     } else if (this.#bodyStream == null) {
-      const contentLength = this.#req.headers.get("content-length");
-      let remaining = contentLength ? parseInt(contentLength, 10) : 0;
-      /** @type {ReadableStreamDefaultReader} */
-      const reader = this.#req.body?.getReader();
+      const reader = this.#req.body?.getReader() as ReadableStreamDefaultReader;
       if (!reader) {
         this.push(null);
         this.complete = true;
@@ -675,14 +676,16 @@ export class IncomingMessage extends Readable {
 
       (async () => {
         while (true) {
-          const { done, value } = await reader.read();
+          var { done, value, size } = await reader.readMany();
           if (this.#aborted) return;
           if (done) {
             this.push(null);
             this.complete = true;
             break;
           }
-          this.push(value);
+          for (var v of value) {
+            this.push(v);
+          }
         }
       })();
       this.#bodyStream = reader;
@@ -827,8 +830,8 @@ export class OutgoingMessage extends Writable {
   [kEndCalled] = false;
 
   #fakeSocket;
-  #timeoutTimer = null;
-  [kAbortController] = null;
+  #timeoutTimer: Timer | null = null;
+  [kAbortController]: AbortController | null = null;
 
   // Express "compress" package uses this
   _implicitHeader() {}
@@ -945,6 +948,8 @@ export class OutgoingMessage extends Writable {
 }
 
 export class ServerResponse extends Writable {
+  declare _writableState: any;
+
   constructor({ req, reply }) {
     super();
     this.req = req;
@@ -972,7 +977,7 @@ export class ServerResponse extends Writable {
   _defaultKeepAlive = false;
   _removedConnection = false;
   _removedContLen = false;
-  #deferred = undefined;
+  #deferred: (() => void) | undefined = undefined;
   #finished = false;
 
   // Express "compress" package uses this
@@ -1163,7 +1168,7 @@ export class ServerResponse extends Writable {
 
 export class ClientRequest extends OutgoingMessage {
   #timeout;
-  #res = null;
+  #res: IncomingMessage | null = null;
   #upgradeOrConnect = false;
   #parser = null;
   #maxHeadersCount = null;
@@ -1179,11 +1184,11 @@ export class ClientRequest extends OutgoingMessage {
   #path;
   #socketPath;
 
-  #body = null;
+  #body: string | null = null;
   #fetchRequest;
-  #signal = null;
-  [kAbortController] = null;
-  #timeoutTimer = null;
+  #signal: AbortSignal | null = null;
+  [kAbortController]: AbortController | null = null;
+  #timeoutTimer: Timer | null = null;
   #options;
   #finished;
 
@@ -1283,7 +1288,7 @@ export class ClientRequest extends OutgoingMessage {
 
   abort() {
     if (this.aborted) return;
-    this[kAbortController].abort();
+    this[kAbortController]!.abort();
     // TODO: Close stream if body streaming
   }
 
@@ -1537,7 +1542,7 @@ export class ClientRequest extends OutgoingMessage {
     }
   }
 
-  setTimeout(msecs, callback) {
+  setTimeout(msecs, callback?) {
     if (this.#timeoutTimer) return this;
     if (callback) {
       this.on("timeout", callback);
@@ -1727,7 +1732,7 @@ function _normalizeArgs(args) {
   }
 
   const arg0 = args[0];
-  let options = {};
+  let options: any = {};
   if (typeof arg0 === "object" && arg0 !== null) {
     // (options[...][, cb])
     options = arg0;

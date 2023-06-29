@@ -1,3 +1,68 @@
 // Hardcoded module "node:https"
-export * from "node:http";
-export { default as default } from "node:http";
+import * as http from "node:http";
+
+var {
+  Agent,
+  Server,
+  METHODS,
+  STATUS_CODES,
+  createServer,
+  ServerResponse,
+  IncomingMessage,
+  maxHeaderSize,
+  // validateHeaderName,
+  // validateHeaderValue,
+  setMaxIdleHTTPParsers,
+  globalAgent,
+} = http;
+
+function request(input, options, cb) {
+  if (input && typeof input === "object" && !(input instanceof URL)) {
+    input.protocol ??= "https:";
+  } else if (typeof options === "object") {
+    options.protocol ??= "https:";
+  }
+
+  return http.request(input, options, cb);
+}
+
+function get(input, options, cb) {
+  const req = request(url, options, cb);
+  req.end();
+  return req;
+}
+
+var defaultExport = {
+  Agent,
+  Server,
+  METHODS,
+  STATUS_CODES,
+  createServer,
+  ServerResponse,
+  IncomingMessage,
+  request,
+  get,
+  maxHeaderSize,
+  // validateHeaderName,
+  // validateHeaderValue,
+  setMaxIdleHTTPParsers,
+  globalAgent,
+};
+
+export {
+  Agent,
+  Server,
+  METHODS,
+  STATUS_CODES,
+  createServer,
+  ServerResponse,
+  IncomingMessage,
+  request,
+  get,
+  maxHeaderSize,
+  // validateHeaderName,
+  // validateHeaderValue,
+  setMaxIdleHTTPParsers,
+  globalAgent,
+};
+export default defaultExport;

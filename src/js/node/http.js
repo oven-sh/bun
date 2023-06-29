@@ -63,7 +63,6 @@ const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
 const NODE_HTTP_WARNING =
   "WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.";
 
-var _globalAgent;
 var _defaultHTTPSAgent;
 var kInternalRequest = Symbol("kInternalRequest");
 var kInternalSocketData = Symbol.for("::bunternal::");
@@ -191,7 +190,7 @@ export class Agent extends EventEmitter {
   #fakeSocket;
 
   static get globalAgent() {
-    return (_globalAgent ??= new Agent());
+    return globalAgent;
   }
 
   static get defaultMaxSockets() {
@@ -671,7 +670,6 @@ export class IncomingMessage extends Readable {
       });
 
       const isBodySizeKnown = remaining > 0 && Number.isSafeInteger(remaining);
-
       if (isBodySizeKnown) {
         this.#bodyStream.on("data", chunk => {
           debug("body size known", remaining);
@@ -1180,7 +1178,7 @@ export class ClientRequest extends OutgoingMessage {
   #useDefaultPort;
   #joinDuplicateHeaders;
   #maxHeaderSize;
-  #agent = _globalAgent;
+  #agent = globalAgent;
   #path;
   #socketPath;
 
@@ -1818,7 +1816,7 @@ export function get(url, options, cb) {
   req.end();
   return req;
 }
-_globalAgent ??= new Agent();
+export var globalAgent = new Agent();
 var defaultObject = {
   Agent,
   Server,
@@ -1835,13 +1833,8 @@ var defaultObject = {
   setMaxIdleHTTPParsers(max) {
     debug(`${NODE_HTTP_WARNING}\n`, "setMaxIdleHTTPParsers() is a no-op");
   },
-  get globalAgent() {
-    return _globalAgent;
-  },
-  set globalAgent(agent) {},
+  globalAgent,
   [Symbol.for("CommonJS")]: 0,
 };
 
 export default defaultObject;
-
-export { _globalAgent as globalAgent };

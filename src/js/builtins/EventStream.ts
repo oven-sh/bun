@@ -10,9 +10,9 @@ export function getEventStream() {
     // This field is read by `new Response`
     $contentType = "text/event-stream";
 
-    constructor(opts: EventStreamOptions) {
-      if (!opts || !$isCallable(opts.start)) throw new TypeError("EventStream requires an object with `start`");
+    constructor(opts?: EventStreamOptions) {
       var queue: any[] = [];
+      var started = false;
       super({
         type: "direct",
         pull: controller => {
@@ -28,10 +28,13 @@ export function getEventStream() {
             }
             controller.flush();
           }
-          opts.start?.(this);
+          opts?.start?.(this);
+          started = true;
         },
         cancel: () => {
-          opts.cancel?.(this);
+          if (started) {
+            opts?.cancel?.(this);
+          }
           this.#ctrl = null;
         },
       });

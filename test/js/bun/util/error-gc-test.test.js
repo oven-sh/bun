@@ -1,5 +1,7 @@
 import { test, expect } from "bun:test";
 
+// This test checks that printing stack traces increments and decrements
+// reference-counted strings
 test("error gc test", () => {
   for (let i = 0; i < 100; i++) {
     var fn = function yo() {
@@ -22,5 +24,12 @@ test("error gc test", () => {
 
     fn();
     Bun.gc(true);
+  }
+});
+
+test("error gc test #2", () => {
+  for (let i = 0; i < 1000; i++) {
+    new Error().stack;
+    Bun.gc();
   }
 });

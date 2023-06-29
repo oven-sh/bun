@@ -676,7 +676,7 @@ export class IncomingMessage extends Readable {
 
       (async () => {
         while (true) {
-          var { done, value, size } = await reader.readMany();
+          var { done, value } = await reader.readMany();
           if (this.#aborted) return;
           if (done) {
             this.push(null);

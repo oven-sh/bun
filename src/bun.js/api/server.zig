@@ -1456,12 +1456,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         // the promise is pending
                         if (body.value.Locked.action != .none or body.value.Locked.promise != null) {
                             this.pending_promises_for_abort += 1;
-                            body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
                         } else if (body.value.Locked.readable != null) {
                             body.value.Locked.readable.?.abort(this.server.globalThis);
-                            body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
                             body.value.Locked.readable = null;
                         }
+                        body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
                     }
                 }
 

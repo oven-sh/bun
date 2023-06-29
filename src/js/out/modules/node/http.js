@@ -480,7 +480,7 @@ class IncomingMessage extends Readable {
       }
       (async () => {
         while (!0) {
-          var { done, value, size: size2 } = await reader.readMany();
+          var { done, value } = await reader.readMany();
           if (this.#aborted)
             return;
           if (done) {

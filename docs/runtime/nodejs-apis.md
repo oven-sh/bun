@@ -87,7 +87,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_fs" %} [`node:fs`](https://nodejs.org/api/fs.html) {% /anchor %}
 - 🟡
-- Missing `fs.fdatasync{Sync}` `fs.opendir{Sync}` `fs.readv{Sync}` `fs.{watch|watchFile|unwatchFile}` `fs.writev{Sync}`.
+- Missing `fs.fdatasync{Sync}` `fs.opendir{Sync}` `fs.readv{Sync}` `fs.{watchFile|unwatchFile}` `fs.{cp|cpSync}`.
 
 ---
 

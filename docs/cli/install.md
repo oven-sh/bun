@@ -124,6 +124,26 @@ To add a package as an optional dependency (`"optionalDependencies"`):
 $ bun add --optional lodash
 ```
 
+To add a package and pin to the resolved version, use `--exact`. This will resolve the version of the package and add it to your `package.json` with an exact version number instead of a version range.
+
+```bash
+$ bun add react --exact
+```
+
+This will add the following to your `package.json`:
+
+```jsonc
+{
+  "dependencies": {
+    // without --exact
+    "react": "^18.2.0", // this matches >= 18.2.0 < 19.0.0
+
+    // with --exact
+    "react": "18.2.0" // this matches only 18.2.0 exactly
+  }
+}
+```
+
 To install a package globally:
 
 ```bash

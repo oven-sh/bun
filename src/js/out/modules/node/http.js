@@ -168,19 +168,19 @@ var { URL } = globalThis, { newArrayWithSize, String, Object, Array } = globalTh
 };
 
 class Agent extends EventEmitter {
-  #defaultPort = 80;
-  #protocol = "http:";
-  #options;
-  #requests;
-  #sockets;
-  #freeSockets;
-  #keepAliveMsecs;
-  #keepAlive;
-  #maxSockets;
-  #maxFreeSockets;
-  #scheduling;
-  #maxTotalSockets;
-  #totalSocketCount;
+  defaultPort = 80;
+  protocol = "http:";
+  options;
+  requests;
+  sockets;
+  freeSockets;
+  keepAliveMsecs;
+  keepAlive;
+  maxSockets;
+  maxFreeSockets;
+  scheduling;
+  maxTotalSockets;
+  totalSocketCount;
   #fakeSocket;
   static get globalAgent() {
     return _globalAgent ??= new Agent;
@@ -190,48 +190,9 @@ class Agent extends EventEmitter {
   }
   constructor(options = kEmptyObject) {
     super();
-    if (this.#options = options = { ...options, path: null }, options.noDelay === void 0)
+    if (this.options = options = { ...options, path: null }, options.noDelay === void 0)
       options.noDelay = !0;
-    this.#requests = kEmptyObject, this.#sockets = kEmptyObject, this.#freeSockets = kEmptyObject, this.#keepAliveMsecs = options.keepAliveMsecs || 1000, this.#keepAlive = options.keepAlive || !1, this.#maxSockets = options.maxSockets || Agent.defaultMaxSockets, this.#maxFreeSockets = options.maxFreeSockets || 256, this.#scheduling = options.scheduling || "lifo", this.#maxTotalSockets = options.maxTotalSockets, this.#totalSocketCount = 0, this.#defaultPort = options.defaultPort || 80, this.#protocol = options.protocol || "http:";
-  }
-  get defaultPort() {
-    return this.#defaultPort;
-  }
-  get protocol() {
-    return this.#protocol;
-  }
-  get requests() {
-    return this.#requests;
-  }
-  get sockets() {
-    return this.#sockets;
-  }
-  get freeSockets() {
-    return this.#freeSockets;
-  }
-  get options() {
-    return this.#options;
-  }
-  get keepAliveMsecs() {
-    return this.#keepAliveMsecs;
-  }
-  get keepAlive() {
-    return this.#keepAlive;
-  }
-  get maxSockets() {
-    return this.#maxSockets;
-  }
-  get maxFreeSockets() {
-    return this.#maxFreeSockets;
-  }
-  get scheduling() {
-    return this.#scheduling;
-  }
-  get maxTotalSockets() {
-    return this.#maxTotalSockets;
-  }
-  get totalSocketCount() {
-    return this.#totalSocketCount;
+    this.requests = kEmptyObject, this.sockets = kEmptyObject, this.freeSockets = kEmptyObject, this.keepAliveMsecs = options.keepAliveMsecs || 1000, this.keepAlive = options.keepAlive || !1, this.maxSockets = options.maxSockets || Agent.defaultMaxSockets, this.maxFreeSockets = options.maxFreeSockets || 256, this.scheduling = options.scheduling || "lifo", this.maxTotalSockets = options.maxTotalSockets, this.totalSocketCount = 0, this.defaultPort = options.defaultPort || 80, this.protocol = options.protocol || "http:";
   }
   createConnection() {
     return debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.createConnection is a no-op, returns fake socket"), this.#fakeSocket ??= new FakeSocket;

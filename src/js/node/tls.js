@@ -17,7 +17,7 @@ function isValidTLSArray(obj) {
     return true;
   }
 }
-
+function checkServerIdentity(hostname, cert) {}
 var InternalSecureContext = class SecureContext {
   context;
 
@@ -351,6 +351,7 @@ export {
   getCurves,
   parseCertString,
   SecureContext,
+  checkServerIdentity,
   Server,
   TLSSocket,
   exports as default,

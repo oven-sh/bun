@@ -19,6 +19,14 @@ function generate(ssl) {
         fn: "write",
         length: 3,
       },
+      wrapTLS: {
+        fn: "wrapTLS",
+        length: 1,
+      },
+      open: {
+        fn: "open",
+        length: 0,
+      },
       end: {
         fn: "end",
         length: 3,

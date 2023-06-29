@@ -3303,7 +3303,11 @@ bool JSC__JSValue__stringIncludes(JSC__JSValue value, JSC__JSGlobalObject* globa
 
 static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame* stackFrame, ZigStackFrame* frame)
 {
-    frame->source_url = Bun::toString(stackFrame->sourceURL(vm));
+    String str = stackFrame->sourceURL(vm);
+    if (!str.isEmpty())
+        str.impl()->ref();
+
+    frame->source_url = Bun::toString(str);
 
     if (stackFrame->isWasmFrame()) {
         frame->code_type = ZigStackFrameCodeWasm;
@@ -3340,7 +3344,10 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame* stack
 
     JSC::JSObject* callee = JSC::jsCast<JSC::JSObject*>(calleeCell);
 
-    frame->function_name = Bun::toString(JSC::getCalculatedDisplayName(vm, callee));
+    String displayName = JSC::getCalculatedDisplayName(vm, callee);
+    if (!displayName.isEmpty())
+        displayName.impl()->ref();
+    frame->function_name = Bun::toString(displayName);
 }
 // Based on
 // https://github.com/mceSystems/node-jsc/blob/master/deps/jscshim/src/shim/JSCStackTrace.cpp#L298

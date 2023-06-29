@@ -1933,9 +1933,9 @@ pub const VirtualMachine = struct {
 
             while (i < stack.len) : (i += 1) {
                 const frame = stack[@intCast(usize, i)];
-                const file_slice = frame.source_url.toSlice(bun.default_allocator);
+                const file_slice = frame.source_url.toUTF8(bun.default_allocator);
                 defer file_slice.deinit();
-                const func_slice = frame.function_name.toSlice(bun.default_allocator);
+                const func_slice = frame.function_name.toUTF8(bun.default_allocator);
                 defer func_slice.deinit();
 
                 const file = file_slice.slice();

@@ -1433,7 +1433,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             // if have sink, call onAborted on sink
-            // this request was already finalized
             if (this.sink) |wrapper| {
                 wrapper.sink.abort();
                 this.finalize();

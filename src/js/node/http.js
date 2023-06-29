@@ -173,20 +173,20 @@ export function createServer(options, callback) {
 }
 
 export class Agent extends EventEmitter {
-  defaultPort = 80;
-  protocol = "http:";
-  options;
-  requests;
-  sockets;
-  freeSockets;
+  #defaultPort = 80;
+  #protocol = "http:";
+  #options;
+  #requests;
+  #sockets;
+  #freeSockets;
 
-  keepAliveMsecs;
-  keepAlive;
-  maxSockets;
-  maxFreeSockets;
-  scheduling;
-  maxTotalSockets;
-  totalSocketCount;
+  #keepAliveMsecs;
+  #keepAlive;
+  #maxSockets;
+  #maxFreeSockets;
+  #scheduling;
+  #maxTotalSockets;
+  #totalSocketCount;
 
   #fakeSocket;
 
@@ -200,75 +200,127 @@ export class Agent extends EventEmitter {
 
   constructor(options = kEmptyObject) {
     super();
-    this.options = options = { ...options, path: null };
+    this.#options = options = { ...options, path: null };
     if (options.noDelay === undefined) options.noDelay = true;
 
     // Don't confuse net and make it think that we're connecting to a pipe
-    this.requests = kEmptyObject;
-    this.sockets = kEmptyObject;
-    this.freeSockets = kEmptyObject;
+    this.#requests = kEmptyObject;
+    this.#sockets = kEmptyObject;
+    this.#freeSockets = kEmptyObject;
 
-    this.keepAliveMsecs = options.keepAliveMsecs || 1000;
-    this.keepAlive = options.keepAlive || false;
-    this.maxSockets = options.maxSockets || Agent.defaultMaxSockets;
-    this.maxFreeSockets = options.maxFreeSockets || 256;
-    this.scheduling = options.scheduling || "lifo";
-    this.maxTotalSockets = options.maxTotalSockets;
-    this.totalSocketCount = 0;
-    this.defaultPort = options.defaultPort || 80;
-    this.protocol = options.protocol || "http:";
+    this.#keepAliveMsecs = options.keepAliveMsecs || 1000;
+    this.#keepAlive = options.keepAlive || false;
+    this.#maxSockets = options.maxSockets || Agent.defaultMaxSockets;
+    this.#maxFreeSockets = options.maxFreeSockets || 256;
+    this.#scheduling = options.scheduling || "lifo";
+    this.#maxTotalSockets = options.maxTotalSockets;
+    this.#totalSocketCount = 0;
+    this.#defaultPort = options.defaultPort || 80;
+    this.#protocol = options.protocol || "http:";
   }
 
   get defaultPort() {
-    return this.defaultPort;
+    return this.#defaultPort;
   }
 
   get protocol() {
-    return this.protocol;
+    return this.#protocol;
   }
 
   get requests() {
-    return this.requests;
+    return this.#requests;
   }
 
   get sockets() {
-    return this.sockets;
+    return this.#sockets;
   }
 
   get freeSockets() {
-    return this.freeSockets;
+    return this.#freeSockets;
   }
 
   get options() {
-    return this.options;
+    return this.#options;
   }
 
   get keepAliveMsecs() {
-    return this.keepAliveMsecs;
+    return this.#keepAliveMsecs;
   }
 
   get keepAlive() {
-    return this.keepAlive;
+    return this.#keepAlive;
   }
 
   get maxSockets() {
-    return this.maxSockets;
+    return this.#maxSockets;
   }
 
   get maxFreeSockets() {
-    return this.maxFreeSockets;
+    return this.#maxFreeSockets;
   }
 
   get scheduling() {
-    return this.scheduling;
+    return this.#scheduling;
   }
 
   get maxTotalSockets() {
-    return this.maxTotalSockets;
+    return this.#maxTotalSockets;
   }
 
   get totalSocketCount() {
-    return this.totalSocketCount;
+    return this.#totalSocketCount;
+  }
+
+  set defaultPort(v) {
+    this.#defaultPort = v;
+  }
+
+  set protocol(v) {
+    this.#protocol = v;
+  }
+
+  set requests(v) {
+    this.#requests = v;
+  }
+
+  set sockets(v) {
+    this.#sockets = v;
+  }
+
+  set freeSockets(v) {
+    this.#freeSockets = v;
+  }
+
+  set options(v) {
+    this.#options = v;
+  }
+
+  set keepAliveMsecs(v) {
+    this.#keepAliveMsecs = v;
+  }
+
+  set keepAlive(v) {
+    this.#keepAlive = v;
+  }
+
+  set maxSockets(v) {
+    this.#maxSockets = v;
+  }
+
+  set maxFreeSockets(v) {
+    this.#maxFreeSockets = v;
+  }
+
+  set scheduling(v) {
+    this.#scheduling = v;
+  }
+
+  set maxTotalSockets(v) {
+    this.#maxTotalSockets = v;
+  }
+
+  set totalSocketCount(v) {
+    this.#totalSocketCount = v;
   }
 
   createConnection() {

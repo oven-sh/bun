@@ -208,9 +208,11 @@ In addition, the `--save` flag can be used to add `cool-pkg` to the `dependencie
 
 ## Trusted dependencies
 
-Unlike other npm clients, Bun does not execitrary ute lifecycle scripts for arbinstalled dependencies, such as `postinstall`. These scripts represent a potential security risk, as they can execute arbitrary code on your machine.
+Unlike other npm clients, Bun does not execute arbitrary lifecycle scripts for installed dependencies, such as `postinstall`. These scripts represent a potential security risk, as they can execute arbitrary code on your machine.
 
-Bun maintains an allow-list of popular packages containing `postinstall` scripts that are known to be safe. To run lifecycle scripts for packages that aren't on this list, add the package to `trustedDependencies` in your package.json.
+<!-- Bun maintains an allow-list of popular packages containing `postinstall` scripts that are known to be safe. To run lifecycle scripts for packages that aren't on this list, add the package to `trustedDependencies` in your package.json. -->
+
+To tell Bun to allow lifecycle scripts for a particular package, add the package to `trustedDependencies` in your package.json.
 
 ```json-diff
   {

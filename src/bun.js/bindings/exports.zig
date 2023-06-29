@@ -682,7 +682,7 @@ pub const ZigStackFrame = extern struct {
                     // try writer.writeAll("(esm)");
                 },
                 .Function => {
-                    if (name.isEmpty()) {
+                    if (!name.isEmpty()) {
                         if (this.enable_color) {
                             try std.fmt.format(writer, comptime Output.prettyFmt("<r><b><i>{}<r>", true), .{name});
                         } else {
@@ -691,7 +691,7 @@ pub const ZigStackFrame = extern struct {
                     }
                 },
                 .Global => {
-                    if (name.isEmpty()) {
+                    if (!name.isEmpty()) {
                         try std.fmt.format(writer, "globalThis {}", .{name});
                     } else {
                         try writer.writeAll("globalThis");

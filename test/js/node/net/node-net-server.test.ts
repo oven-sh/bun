@@ -187,20 +187,20 @@ describe("net.createServer listen", () => {
     const server: Server = createServer();
 
     let timeout: Timer;
-    const closeAndFail = () => {
+    const closeAndFail = (err: any) => {
       clearTimeout(timeout);
       server.close();
-      mustNotCall()();
+      mustNotCall(err ? err.toString() : "timeout")();
     };
     server.on("error", closeAndFail);
     timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
-      49027,
+      49028,
       mustCall(() => {
         const address = server.address() as AddressInfo;
         expect(address.address).toStrictEqual("::");
-        expect(address.port).toStrictEqual(49027);
+        expect(address.port).toStrictEqual(49028);
         expect(address.family).toStrictEqual("IPv6");
         server.close();
         done();

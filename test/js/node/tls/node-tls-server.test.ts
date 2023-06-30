@@ -201,10 +201,10 @@ describe("tls.createServer listen", () => {
     const server: Server = createServer(COMMON_CERT);
 
     let timeout: Timer;
-    const closeAndFail = () => {
+    const closeAndFail = (err: any) => {
       clearTimeout(timeout);
       server.close();
-      mustNotCall()();
+      mustNotCall(err ? err.toString() : "timeout")();
     };
     server.on("error", closeAndFail);
     timeout = setTimeout(closeAndFail, 100);

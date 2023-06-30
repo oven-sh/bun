@@ -15900,6 +15900,30 @@ fn NewParser_(
                     const is_call_target = std.meta.activeTag(p.call_target) == .e_index and expr.data.e_index == p.call_target.e_index;
                     const is_delete_target = std.meta.activeTag(p.delete_target) == .e_index and expr.data.e_index == p.delete_target.e_index;
 
+                    if (p.options.features.minify_syntax) {
+                        if (e_.index.data == .e_string and e_.index.data.e_string.isUTF8() and e_.index.data.e_string.isIdentifier(p.allocator)) {
+                            const dot = p.newExpr(
+                                E.Dot{
+                                    .name = e_.index.data.e_string.slice(p.allocator),
+                                    .name_loc = e_.index.loc,
+                                    .target = e_.target,
+                                    .optional_chain = e_.optional_chain,
+                                },
+                                expr.loc,
+                            );
+
+                            if (is_call_target) {
+                                p.call_target = dot.data;
+                            }
+
+                            if (is_delete_target) {
+                                p.delete_target = dot.data;
+                            }
+
+                            return p.visitExprInOut(dot, in);
+                        }
+                    }
+
                     const target = p.visitExprInOut(e_.target, ExprIn{
                         // this is awkward due to a zig compiler bug
                         .has_chain_parent = (e_.optional_chain orelse js_ast.OptionalChain.start) == js_ast.OptionalChain.ccontinue,

@@ -176,6 +176,10 @@ EncodedJSValue emitReadable_(JSGlobalObject* lexicalGlobalObject, JSObject* stre
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSValue errored = state->m_errored.get();
     if (!state->getBool(JSReadableState::destroyed) && !errored.toBoolean(lexicalGlobalObject) && (state->m_length || state->getBool(JSReadableState::ended))) {
+        if (state->getBool(JSReadableState::ended) && state->m_length == 0) {
+            state->setBool(JSReadableState::destroyed, true);
+        }
+
         // stream.emit('readable')
         auto clientData = WebCore::clientData(vm);
 
@@ -190,10 +194,6 @@ EncodedJSValue emitReadable_(JSGlobalObject* lexicalGlobalObject, JSObject* stre
         emitter->wrapped().emitForBindings(eventType, args);
 
         state->setBool(JSReadableState::emittedReadable, false);
-
-        if (state->getBool(JSReadableState::ended)) {
-            state->setBool(JSReadableState::destroyed, true);
-        }
     }
 
     state->setBool(JSReadableState::needReadable, state->m_flowing <= 0 && !state->getBool(JSReadableState::ended) && state->m_length <= state->m_highWaterMark);

@@ -190,6 +190,10 @@ EncodedJSValue emitReadable_(JSGlobalObject* lexicalGlobalObject, JSObject* stre
         emitter->wrapped().emitForBindings(eventType, args);
 
         state->setBool(JSReadableState::emittedReadable, false);
+
+        if (state->getBool(JSReadableState::ended)) {
+            state->setBool(JSReadableState::destroyed, true);
+        }
     }
 
     state->setBool(JSReadableState::needReadable, state->m_flowing <= 0 && !state->getBool(JSReadableState::ended) && state->m_length <= state->m_highWaterMark);

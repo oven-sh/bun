@@ -26,7 +26,7 @@ var isIPv4 = function(s) {
   self.emit("listening");
 }, createServer = function(options, connectionListener) {
   return new Server(options, connectionListener);
-}, v4Seg = "(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])", v4Str = `(${v4Seg}[.]){3}${v4Seg}`, IPv4Reg = new RegExp(`^${v4Str}$`), v6Seg = "(?:[0-9a-fA-F]{1,4})", IPv6Reg = new RegExp("^(" + `(?:${v6Seg}:){7}(?:${v6Seg}|:)|` + `(?:${v6Seg}:){6}(?:${v4Str}|:${v6Seg}|:)|` + `(?:${v6Seg}:){5}(?::${v4Str}|(:${v6Seg}){1,2}|:)|` + `(?:${v6Seg}:){4}(?:(:${v6Seg}){0,1}:${v4Str}|(:${v6Seg}){1,3}|:)|` + `(?:${v6Seg}:){3}(?:(:${v6Seg}){0,2}:${v4Str}|(:${v6Seg}){1,4}|:)|` + `(?:${v6Seg}:){2}(?:(:${v6Seg}){0,3}:${v4Str}|(:${v6Seg}){1,5}|:)|` + `(?:${v6Seg}:){1}(?:(:${v6Seg}){0,4}:${v4Str}|(:${v6Seg}){1,6}|:)|` + `(?::((?::${v6Seg}){0,5}:${v4Str}|(?::${v6Seg}){1,7}|:))` + ")(%[0-9a-zA-Z-.:]{1,})?$"), { Bun, createFIFO, Object } = globalThis[Symbol.for("Bun.lazy")]("primordials"), { connect: bunConnect } = Bun, { setTimeout } = globalThis, bunTlsSymbol = Symbol.for("::buntls::"), bunSocketServerHandlers = Symbol.for("::bunsocket_serverhandlers::"), bunSocketServerConnections = Symbol.for("::bunnetserverconnections::"), bunSocketServerOptions = Symbol.for("::bunnetserveroptions::"), SocketClass, Socket = function(InternalSocket) {
+}, v4Seg = "(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])", v4Str = `(${v4Seg}[.]){3}${v4Seg}`, IPv4Reg = new RegExp(`^${v4Str}$`), v6Seg = "(?:[0-9a-fA-F]{1,4})", IPv6Reg = new RegExp("^(" + `(?:${v6Seg}:){7}(?:${v6Seg}|:)|` + `(?:${v6Seg}:){6}(?:${v4Str}|:${v6Seg}|:)|` + `(?:${v6Seg}:){5}(?::${v4Str}|(:${v6Seg}){1,2}|:)|` + `(?:${v6Seg}:){4}(?:(:${v6Seg}){0,1}:${v4Str}|(:${v6Seg}){1,3}|:)|` + `(?:${v6Seg}:){3}(?:(:${v6Seg}){0,2}:${v4Str}|(:${v6Seg}){1,4}|:)|` + `(?:${v6Seg}:){2}(?:(:${v6Seg}){0,3}:${v4Str}|(:${v6Seg}){1,5}|:)|` + `(?:${v6Seg}:){1}(?:(:${v6Seg}){0,4}:${v4Str}|(:${v6Seg}){1,6}|:)|` + `(?::((?::${v6Seg}){0,5}:${v4Str}|(?::${v6Seg}){1,7}|:))` + ")(%[0-9a-zA-Z-.:]{1,})?$"), { Bun, createFIFO, Object } = globalThis[Symbol.for("Bun.lazy")]("primordials"), { connect: bunConnect } = Bun, { setTimeout } = globalThis, bunTlsSymbol = Symbol.for("::buntls::"), bunSocketServerHandlers = Symbol.for("::bunsocket_serverhandlers::"), bunSocketServerConnections = Symbol.for("::bunnetserverconnections::"), bunSocketServerOptions = Symbol.for("::bunnetserveroptions::"), bunSocketInternal = Symbol.for("::bunnetsocketinternal::"), SocketClass, Socket = function(InternalSocket) {
   return SocketClass = InternalSocket, Object.defineProperty(SocketClass.prototype, Symbol.toStringTag, {
     value: "Socket",
     enumerable: !1
@@ -62,7 +62,7 @@ var isIPv4 = function(s) {
     },
     open(socket) {
       const self = socket.data;
-      socket.timeout(self.timeout), socket.ref(), self.#socket = socket, self.connecting = !1, self.emit("connect", self), Socket2.#Drain(socket);
+      socket.timeout(self.timeout), socket.ref(), self[bunSocketInternal] = socket, self.connecting = !1, self.emit("connect", self), Socket2.#Drain(socket);
     },
     handshake(socket, success, verifyError) {
       const { data: self } = socket;
@@ -87,7 +87,7 @@ var isIPv4 = function(s) {
     const self = socket.data;
     if (self.#closed)
       return;
-    self.#closed = !0, self.#socket = null;
+    self.#closed = !0, self[bunSocketInternal] = null;
     const queue = self.#readQueue;
     if (queue.isEmpty()) {
       if (self.push(null))
@@ -163,12 +163,15 @@ var isIPv4 = function(s) {
   localAddress = "127.0.0.1";
   #readQueue = createFIFO();
   remotePort;
-  #socket;
+  [bunSocketInternal] = null;
   timeout = 0;
   #writeCallback;
   #writeChunk;
   #pendingRead;
   isServer = !1;
+  _handle;
+  _parent;
+  _parentWrap;
   constructor(options) {
     const { signal, write, read, allowHalfOpen = !1, ...opts } = options || {};
     super({
@@ -177,7 +180,7 @@ var isIPv4 = function(s) {
       readable: !0,
       writable: !0
     });
-    this.#pendingRead = void 0, signal?.once("abort", () => this.destroy()), this.once("connect", () => this.emit("ready"));
+    this._handle = this, this._parent = this, this._parentWrap = this, this.#pendingRead = void 0, signal?.once("abort", () => this.destroy()), this.once("connect", () => this.emit("ready"));
   }
   address() {
     return {
@@ -190,10 +193,10 @@ var isIPv4 = function(s) {
     return this.writableLength;
   }
   #attach(port, socket) {
-    this.remotePort = port, socket.data = this, socket.timeout(this.timeout), socket.ref(), this.#socket = socket, this.connecting = !1, this.emit("connect", this), Socket2.#Drain(socket);
+    this.remotePort = port, socket.data = this, socket.timeout(this.timeout), socket.ref(), this[bunSocketInternal] = socket, this.connecting = !1, this.emit("connect", this), Socket2.#Drain(socket);
   }
   connect(port, host, connectListener) {
-    var path;
+    var path, connection;
     if (typeof port === "string") {
       if (path = port, port = void 0, typeof host === "function")
         connectListener = host, host = void 0;
@@ -207,6 +210,7 @@ var isIPv4 = function(s) {
         port,
         host,
         path,
+        socket,
         localAddress,
         localPort,
         family,
@@ -220,7 +224,11 @@ var isIPv4 = function(s) {
         pauseOnConnect,
         servername
       } = port;
-      this.servername = servername;
+      if (this.servername = servername, socket) {
+        if (typeof socket !== "object" || !(socket instanceof Socket2) || typeof socket[bunTlsSymbol] === "function")
+          throw new TypeError("socket must be an instance of net.Socket");
+        connection = socket;
+      }
     }
     if (!pauseOnConnect)
       this.resume();
@@ -240,24 +248,57 @@ var isIPv4 = function(s) {
         this.on("secureConnect", connectListener);
     } else if (connectListener)
       this.on("connect", connectListener);
-    return bunConnect(path ? {
-      data: this,
-      unix: path,
-      socket: Socket2.#Handlers,
-      tls
-    } : {
-      data: this,
-      hostname: host || "localhost",
-      port,
-      socket: Socket2.#Handlers,
-      tls
-    }), this;
+    if (connection) {
+      const socket2 = connection[bunSocketInternal];
+      if (socket2) {
+        const result = socket2.wrapTLS({
+          data: this,
+          tls,
+          socket: Socket2.#Handlers
+        });
+        if (result) {
+          const [raw, tls2] = result;
+          connection[bunSocketInternal] = raw, raw.timeout(raw.timeout), raw.connecting = !1, this[bunSocketInternal] = tls2, tls2.timeout(tls2.timeout), tls2.connecting = !0, this[bunSocketInternal] = socket2, tls2.open();
+        } else
+          throw this[bunSocketInternal] = null, new Error("Invalid socket");
+      } else
+        connection.once("connect", () => {
+          const socket3 = connection[bunSocketInternal];
+          if (!socket3)
+            return;
+          const result = socket3.wrapTLS({
+            data: this,
+            tls,
+            socket: Socket2.#Handlers
+          });
+          if (result) {
+            const [raw, tls2] = result;
+            connection[bunSocketInternal] = raw, raw.timeout(raw.timeout), raw.connecting = !1, this[bunSocketInternal] = tls2, tls2.timeout(tls2.timeout), tls2.connecting = !0, this[bunSocketInternal] = socket3, tls2.open();
+          } else
+            throw this[bunSocketInternal] = null, new Error("Invalid socket");
+        });
+    } else if (path)
+      bunConnect({
+        data: this,
+        unix: path,
+        socket: Socket2.#Handlers,
+        tls
+      });
+    else
+      bunConnect({
+        data: this,
+        hostname: host || "localhost",
+        port,
+        socket: Socket2.#Handlers,
+        tls
+      });
+    return this;
   }
   _destroy(err, callback) {
-    this.#socket?.end(), callback(err);
+    this[bunSocketInternal]?.end(), callback(err);
   }
   _final(callback) {
-    this.#socket?.end(), callback();
+    this[bunSocketInternal]?.end(), callback();
   }
   get localAddress() {
     return "127.0.0.1";
@@ -266,7 +307,7 @@ var isIPv4 = function(s) {
     return "IPv4";
   }
   get localPort() {
-    return this.#socket?.localPort;
+    return this[bunSocketInternal]?.localPort;
   }
   get pending() {
     return this.connecting;
@@ -289,16 +330,16 @@ var isIPv4 = function(s) {
       return this.writable ? "writeOnly" : "closed";
   }
   ref() {
-    this.#socket?.ref();
+    this[bunSocketInternal]?.ref();
   }
   get remoteAddress() {
-    return this.#socket?.remoteAddress;
+    return this[bunSocketInternal]?.remoteAddress;
   }
   get remoteFamily() {
     return "IPv4";
   }
   resetAndDestroy() {
-    this.#socket?.end();
+    this[bunSocketInternal]?.end();
   }
   setKeepAlive(enable = !1, initialDelay = 0) {
     return this;
@@ -307,17 +348,17 @@ var isIPv4 = function(s) {
     return this;
   }
   setTimeout(timeout, callback) {
-    if (this.#socket?.timeout(timeout), this.timeout = timeout, callback)
+    if (this[bunSocketInternal]?.timeout(timeout), this.timeout = timeout, callback)
       this.once("timeout", callback);
     return this;
   }
   unref() {
-    this.#socket?.unref();
+    this[bunSocketInternal]?.unref();
   }
   _write(chunk, encoding, callback) {
     if (typeof chunk == "string" && encoding !== "utf8")
       chunk = Buffer.from(chunk, encoding);
-    var written = this.#socket?.write(chunk);
+    var written = this[bunSocketInternal]?.write(chunk);
     if (written == chunk.length)
       callback();
     else if (this.#writeCallback)

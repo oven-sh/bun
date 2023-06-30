@@ -11,6 +11,7 @@ var parseCertString = function() {
         return !1;
     return !0;
   }
+}, checkServerIdentity = function(hostname, cert) {
 }, SecureContext = function(options) {
   return new InternalSecureContext(options);
 }, createSecureContext = function(options) {
@@ -244,6 +245,7 @@ export {
   createConnection,
   convertALPNProtocols,
   connect,
+  checkServerIdentity,
   TLSSocket,
   Server,
   SecureContext,

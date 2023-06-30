@@ -16,7 +16,7 @@ pub const Os = struct {
     pub const code = @embedFile("../os.exports.js");
 
     pub fn create(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        const module = JSC.JSValue.createEmptyObject(globalObject, 20);
+        const module = JSC.JSValue.createEmptyObject(globalObject, 22);
 
         module.put(globalObject, JSC.ZigString.static("arch"), JSC.NewFunction(globalObject, JSC.ZigString.static("arch"), 0, arch, true));
         module.put(globalObject, JSC.ZigString.static("cpus"), JSC.NewFunction(globalObject, JSC.ZigString.static("cpus"), 0, cpus, true));
@@ -31,7 +31,6 @@ pub const Os = struct {
         module.put(globalObject, JSC.ZigString.static("platform"), JSC.NewFunction(globalObject, JSC.ZigString.static("platform"), 0, platform, true));
         module.put(globalObject, JSC.ZigString.static("release"), JSC.NewFunction(globalObject, JSC.ZigString.static("release"), 0, release, true));
         module.put(globalObject, JSC.ZigString.static("setPriority"), JSC.NewFunction(globalObject, JSC.ZigString.static("setPriority"), 2, setPriority, true));
-        module.put(globalObject, JSC.ZigString.static("tmpdir"), JSC.NewFunction(globalObject, JSC.ZigString.static("tmpdir"), 0, tmpdir, true));
         module.put(globalObject, JSC.ZigString.static("totalmem"), JSC.NewFunction(globalObject, JSC.ZigString.static("totalmem"), 0, totalmem, true));
         module.put(globalObject, JSC.ZigString.static("type"), JSC.NewFunction(globalObject, JSC.ZigString.static("type"), 0, Os.type, true));
         module.put(globalObject, JSC.ZigString.static("uptime"), JSC.NewFunction(globalObject, JSC.ZigString.static("uptime"), 0, uptime, true));
@@ -485,7 +484,7 @@ pub const Os = struct {
                 std.os.AF.INET => JSC.ZigString.static("IPv4"),
                 std.os.AF.INET6 => JSC.ZigString.static("IPv6"),
                 else => JSC.ZigString.static("unknown"),
-            }).toValue(globalThis));
+            }).toValueGC(globalThis));
 
             // mac <string> The MAC address of the network interface
             {
@@ -618,29 +617,6 @@ pub const Os = struct {
         }
 
         return JSC.JSValue.jsUndefined();
-    }
-
-    pub fn tmpdir(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        JSC.markBinding(@src());
-
-        const dir: []const u8 = brk: {
-            if (comptime Environment.isWindows) {
-                if (bun.getenvZ("TEMP") orelse bun.getenvZ("TMP")) |tmpdir_| {
-                    break :brk tmpdir_;
-                }
-
-                if (bun.getenvZ("SYSTEMROOT") orelse bun.getenvZ("WINDIR")) |systemdir_| {
-                    break :brk systemdir_ ++ "\\temp";
-                }
-            } else {
-                const dir = bun.asByteSlice(bun.getenvZ("TMPDIR") orelse bun.getenvZ("TMP") orelse bun.getenvZ("TEMP") orelse "/tmp");
-                break :brk strings.withoutTrailingSlash(dir);
-            }
-
-            break :brk "unknown";
-        };
-
-        return JSC.ZigString.init(dir).withEncoding().toValueGC(globalThis);
     }
 
     pub fn totalmem(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {

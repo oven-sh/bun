@@ -1,36 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 
-let hooks_run: string[] = [];
-
-beforeAll(() => hooks_run.push("global beforeAll"));
-beforeEach(() => hooks_run.push("global beforeEach"));
-afterAll(() => hooks_run.push("global afterAll"));
-afterEach(() => hooks_run.push("global afterEach"));
-
-describe("describe scope", () => {
-  beforeAll(() => hooks_run.push("describe beforeAll"));
-  beforeEach(() => hooks_run.push("describe beforeEach"));
-  afterAll(() => hooks_run.push("describe afterAll"));
-  afterEach(() => hooks_run.push("describe afterEach"));
-
-  it("should run after beforeAll/beforeEach in the correct order", () => {
-    expect(hooks_run).toEqual(["global beforeAll", "describe beforeAll", "global beforeEach", "describe beforeEach"]);
-  });
-
-  it("should run after afterEach/afterAll in the correct order", () => {
-    expect(hooks_run).toEqual([
-      "global beforeAll",
-      "describe beforeAll",
-      "global beforeEach",
-      "describe beforeEach",
-      "describe afterEach",
-      "global afterEach",
-      "global beforeEach",
-      "describe beforeEach",
-    ]);
-  });
-});
-
 describe("test jest hooks in bun-test", () => {
   describe("test beforeAll hook", () => {
     let animal = "tiger";

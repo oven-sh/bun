@@ -29,6 +29,7 @@ const Backtrace = @import("../../crash_reporter.zig");
 const JSPrinter = bun.js_printer;
 const JSLexer = bun.js_lexer;
 const typeBaseName = @import("../../meta.zig").typeBaseName;
+const String = bun.String;
 
 pub const ZigGlobalObject = extern struct {
     pub const shim = Shimmer("Zig", "GlobalObject", @This());
@@ -438,7 +439,7 @@ pub const Process = extern struct {
 };
 
 pub const ZigStackTrace = extern struct {
-    source_lines_ptr: [*c]ZigString,
+    source_lines_ptr: [*c]bun.String,
     source_lines_numbers: [*c]i32,
     source_lines_len: u8,
     source_lines_to_collect: u8,
@@ -456,23 +457,24 @@ pub const ZigStackTrace = extern struct {
         {
             var source_lines_iter = this.sourceLineIterator();
 
-            var source_line_len: usize = 0;
-            var count: usize = 0;
-            while (source_lines_iter.next()) |source| {
-                count += 1;
-                source_line_len += source.text.len;
-            }
+            var source_line_len = source_lines_iter.getLength();
 
-            if (count > 0 and source_line_len > 0) {
-                var source_lines = try allocator.alloc(Api.SourceLine, count);
+            if (source_line_len > 0) {
+                var source_lines = try allocator.alloc(Api.SourceLine, @intCast(usize, @max(source_lines_iter.i, 0)));
                 var source_line_buf = try allocator.alloc(u8, source_line_len);
                 source_lines_iter = this.sourceLineIterator();
                 var remain_buf = source_line_buf[0..];
                 var i: usize = 0;
                 while (source_lines_iter.next()) |source| {
-                    bun.copy(u8, remain_buf, source.text);
-                    const copied_line = remain_buf[0..source.text.len];
-                    remain_buf = remain_buf[source.text.len..];
+                    const text = source.text.slice();
+                    defer source.text.deinit();
+                    defer bun.copy(
+                        u8,
+                        remain_buf,
+                        text,
+                    );
+                    const copied_line = remain_buf[0..text.len];
+                    remain_buf = remain_buf[text.len..];
                     source_lines[i] = .{ .text = copied_line, .line = source.line };
                     i += 1;
                 }
@@ -508,8 +510,17 @@ pub const ZigStackTrace = extern struct {
 
         pub const SourceLine = struct {
             line: i32,
-            text: string,
+            text: ZigString.Slice,
         };
+
+        pub fn getLength(this: *SourceLineIterator) usize {
+            var count: usize = 0;
+            for (this.trace.source_lines_ptr[0..@intCast(usize, this.i)]) |*line| {
+                count += line.length();
+            }
+
+            return count;
+        }
 
         pub fn untilLast(this: *SourceLineIterator) ?SourceLine {
             if (this.i < 1) return null;
@@ -522,7 +533,7 @@ pub const ZigStackTrace = extern struct {
             const source_line = this.trace.source_lines_ptr[@intCast(usize, this.i)];
             const result = SourceLine{
                 .line = this.trace.source_lines_numbers[@intCast(usize, this.i)],
-                .text = source_line.slice(),
+                .text = source_line.toUTF8(bun.default_allocator),
             };
             this.i -= 1;
             return result;
@@ -541,21 +552,28 @@ pub const ZigStackTrace = extern struct {
 };
 
 pub const ZigStackFrame = extern struct {
-    function_name: ZigString,
-    source_url: ZigString,
+    function_name: String,
+    source_url: String,
     position: ZigStackFramePosition,
     code_type: ZigStackFrameCode,
 
     /// This informs formatters whether to display as a blob URL or not
     remapped: bool = false,
 
+    pub fn deinit(this: *ZigStackFrame) void {
+        this.function_name.deref();
+        this.source_url.deref();
+    }
+
     pub fn toAPI(this: *const ZigStackFrame, root_path: string, origin: ?*const ZigURL, allocator: std.mem.Allocator) !Api.StackFrame {
         var frame: Api.StackFrame = comptime std.mem.zeroes(Api.StackFrame);
-        if (this.function_name.len > 0) {
-            frame.function_name = try allocator.dupe(u8, this.function_name.slice());
+        if (!this.function_name.isEmpty()) {
+            var slicer = this.function_name.toUTF8(allocator);
+            defer slicer.deinit();
+            frame.function_name = (try slicer.clone(allocator)).slice();
         }
 
-        if (this.source_url.len > 0) {
+        if (!this.source_url.isEmpty()) {
             frame.file = try std.fmt.allocPrint(allocator, "{any}", .{this.sourceURLFormatter(root_path, origin, true, false)});
         }
 
@@ -576,7 +594,7 @@ pub const ZigStackFrame = extern struct {
     }
 
     pub const SourceURLFormatter = struct {
-        source_url: ZigString,
+        source_url: bun.String,
         position: ZigStackFramePosition,
         enable_color: bool,
         origin: ?*const ZigURL,
@@ -588,7 +606,9 @@ pub const ZigStackFrame = extern struct {
                 try writer.writeAll(Output.prettyFmt("<r><cyan>", true));
             }
 
-            var source_slice = this.source_url.slice();
+            var source_slice_ = this.source_url.toUTF8(bun.default_allocator);
+            var source_slice = source_slice_.slice();
+            defer source_slice_.deinit();
 
             if (!this.remapped) {
                 if (this.origin) |origin| {
@@ -647,12 +667,12 @@ pub const ZigStackFrame = extern struct {
     };
 
     pub const NameFormatter = struct {
-        function_name: ZigString,
+        function_name: String,
         code_type: ZigStackFrameCode,
         enable_color: bool,
 
         pub fn format(this: NameFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            const name = this.function_name.slice();
+            const name = this.function_name;
 
             switch (this.code_type) {
                 .Eval => {
@@ -662,26 +682,26 @@ pub const ZigStackFrame = extern struct {
                     // try writer.writeAll("(esm)");
                 },
                 .Function => {
-                    if (name.len > 0) {
+                    if (!name.isEmpty()) {
                         if (this.enable_color) {
-                            try std.fmt.format(writer, comptime Output.prettyFmt("<r><b><i>{s}<r>", true), .{name});
+                            try std.fmt.format(writer, comptime Output.prettyFmt("<r><b><i>{}<r>", true), .{name});
                         } else {
-                            try std.fmt.format(writer, "{s}", .{name});
+                            try std.fmt.format(writer, "{}", .{name});
                         }
                     }
                 },
                 .Global => {
-                    if (name.len > 0) {
-                        try std.fmt.format(writer, "globalThis {s}", .{name});
+                    if (!name.isEmpty()) {
+                        try std.fmt.format(writer, "globalThis {}", .{name});
                     } else {
                         try writer.writeAll("globalThis");
                     }
                 },
                 .Wasm => {
-                    try std.fmt.format(writer, "WASM {s}", .{name});
+                    try std.fmt.format(writer, "WASM {}", .{name});
                 },
                 .Constructor => {
-                    try std.fmt.format(writer, "new {s}", .{name});
+                    try std.fmt.format(writer, "new {}", .{name});
                 },
                 else => {},
             }
@@ -689,9 +709,9 @@ pub const ZigStackFrame = extern struct {
     };
 
     pub const Zero: ZigStackFrame = ZigStackFrame{
-        .function_name = ZigString{ ._unsafe_ptr_do_not_use = "", .len = 0 },
+        .function_name = String.empty,
         .code_type = ZigStackFrameCode.None,
-        .source_url = ZigString{ ._unsafe_ptr_do_not_use = "", .len = 0 },
+        .source_url = String.empty,
         .position = ZigStackFramePosition.Invalid,
     };
 
@@ -744,14 +764,14 @@ pub const ZigException = extern struct {
     /// SystemError only
     errno: c_int = 0,
     /// SystemError only
-    syscall: ZigString = ZigString.Empty,
+    syscall: String = String.empty,
     /// SystemError only
-    system_code: ZigString = ZigString.Empty,
+    system_code: String = String.empty,
     /// SystemError only
-    path: ZigString = ZigString.Empty,
+    path: String = String.empty,
 
-    name: ZigString,
-    message: ZigString,
+    name: String,
+    message: String,
     stack: ZigStackTrace,
 
     exception: ?*anyopaque,
@@ -759,6 +779,19 @@ pub const ZigException = extern struct {
     remapped: bool = false,
 
     fd: i32 = -1,
+
+    pub fn deinit(this: *ZigException) void {
+        this.syscall.deref();
+        this.system_code.deref();
+        this.path.deref();
+
+        this.name.deref();
+        this.message.deref();
+
+        for (this.stack.frames_ptr[0..this.stack.frames_len]) |*frame| {
+            frame.deinit();
+        }
+    }
 
     pub const shim = Shimmer("Zig", "Exception", @This());
     pub const name = "ZigException";
@@ -768,7 +801,7 @@ pub const ZigException = extern struct {
         const frame_count = 32;
         pub const source_lines_count = 6;
         source_line_numbers: [source_lines_count]i32,
-        source_lines: [source_lines_count]ZigString,
+        source_lines: [source_lines_count]String,
         frames: [frame_count]ZigStackFrame,
         loaded: bool,
         zig_exception: ZigException,
@@ -786,8 +819,8 @@ pub const ZigException = extern struct {
             },
 
             .source_lines = brk: {
-                var lines: [source_lines_count]ZigString = undefined;
-                @memset(&lines, ZigString.Empty);
+                var lines: [source_lines_count]String = undefined;
+                @memset(&lines, String.empty);
                 break :brk lines;
             },
             .zig_exception = undefined,
@@ -798,13 +831,17 @@ pub const ZigException = extern struct {
             return Holder.Zero;
         }
 
+        pub fn deinit(this: *Holder) void {
+            this.zigException().deinit();
+        }
+
         pub fn zigException(this: *Holder) *ZigException {
             if (!this.loaded) {
                 this.zig_exception = ZigException{
                     .code = @enumFromInt(JSErrorCode, 255),
                     .runtime_type = JSRuntimeType.Nothing,
-                    .name = ZigString.Empty,
-                    .message = ZigString.Empty,
+                    .name = String.empty,
+                    .message = String.empty,
                     .exception = null,
                     .stack = ZigStackTrace{
                         .source_lines_ptr = &this.source_lines,
@@ -832,8 +869,13 @@ pub const ZigException = extern struct {
         root_path: string,
         origin: ?*const ZigURL,
     ) !void {
-        const _name: string = @field(this, "name").slice();
-        const message: string = @field(this, "message").slice();
+        const name_slice = @field(this, "name").toUTF8(bun.default_allocator);
+        const message_slice = @field(this, "message").toUTF8(bun.default_allocator);
+
+        const _name = name_slice.slice();
+        defer name_slice.deinit();
+        const message = message_slice.slice();
+        defer message_slice.deinit();
 
         var is_empty = true;
         var api_exception = Api.JsException{

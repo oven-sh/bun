@@ -3102,70 +3102,28 @@ pub const Parser = struct {
                 var export_refs = p.commonjs_named_exports.values();
                 var export_names = p.commonjs_named_exports.keys();
 
-                if (!p.commonjs_named_exports_deoptimized) {
-
-                    // This is a workaround for packages which have broken ESM checks
-                    // If they never actually assign to exports.foo, only check for it
-                    // and the package specifies type "module"
-                    // and the package uses ESM syntax
-                    // We should just say
-                    // You're ESM and lying about it.
-                    if (p.options.module_type == .esm and p.has_es_module_syntax) {
+                break_optimize: {
+                    if (!p.commonjs_named_exports_deoptimized) {
                         var needs_decl_count: usize = 0;
                         for (export_refs) |*export_ref| {
                             needs_decl_count += @as(usize, @intFromBool(export_ref.needs_decl));
                         }
-
-                        if (needs_decl_count == export_names.len) {
-                            force_esm = true;
-                        }
-                    }
-
-                    if (!force_esm) {
-                        // We make this safe by doing toCommonJS() at runtime
-                        for (export_refs, export_names) |*export_ref, alias| {
-                            if (export_ref.needs_decl) {
-                                var this_stmts = p.allocator.alloc(Stmt, 2) catch unreachable;
-                                var decls = p.allocator.alloc(Decl, 1) catch unreachable;
-                                const ref = export_ref.loc_ref.ref.?;
-                                decls[0] = .{
-                                    .binding = p.b(B.Identifier{ .ref = ref }, export_ref.loc_ref.loc),
-                                    .value = null,
-                                };
-                                var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, 1) catch unreachable;
-                                declared_symbols.appendAssumeCapacity(.{ .ref = ref, .is_top_level = true });
-                                this_stmts[0] = p.s(
-                                    S.Local{
-                                        .kind = .k_var,
-                                        .is_export = false,
-                                        .was_commonjs_export = true,
-                                        .decls = Decl.List.init(decls),
-                                    },
-                                    export_ref.loc_ref.loc,
-                                );
-                                p.module_scope.generated.push(p.allocator, ref) catch unreachable;
-                                var clause_items = p.allocator.alloc(js_ast.ClauseItem, 1) catch unreachable;
-                                clause_items[0] = js_ast.ClauseItem{
-                                    .alias = alias,
-                                    .alias_loc = export_ref.loc_ref.loc,
-                                    .name = export_ref.loc_ref,
-                                };
-
-                                this_stmts[1] = p.s(
-                                    S.ExportClause{
-                                        .items = clause_items,
-                                        .is_single_line = true,
-                                    },
-                                    export_ref.loc_ref.loc,
-                                );
-                                export_ref.needs_decl = false;
-                                before.append(.{
-                                    .stmts = this_stmts,
-                                    .declared_symbols = declared_symbols,
-                                    .tag = .commonjs_named_export,
-                                    .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(this_stmts),
-                                }) catch unreachable;
+                        // This is a workaround for packages which have broken ESM checks
+                        // If they never actually assign to exports.foo, only check for it
+                        // and the package specifies type "module"
+                        // and the package uses ESM syntax
+                        // We should just say
+                        // You're ESM and lying about it.
+                        if (p.options.module_type == .esm or p.has_es_module_syntax) {
+                            if (needs_decl_count == export_names.len) {
+                                force_esm = true;
+                                break :break_optimize;
                             }
+                        }
+
+                        if (needs_decl_count > 0) {
+                            p.symbols.items[p.exports_ref.innerIndex()].use_count_estimate += @truncate(u32, export_refs.len);
+                            p.deoptimizeCommonJSNamedExports();
                         }
                     }
                 }

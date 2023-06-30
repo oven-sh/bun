@@ -4608,7 +4608,7 @@ pub const JSValue = enum(JSValueReprInt) {
             return 0;
         }
 
-        return @intFromFloat(u64, @max(len, 0));
+        return @intFromFloat(u64, @max(@min(len, std.math.maxInt(i52)), 0));
     }
 
     /// This function supports:
@@ -4629,7 +4629,7 @@ pub const JSValue = enum(JSValueReprInt) {
             return null;
         }
 
-        return @intFromFloat(u64, @max(len, 0));
+        return @intFromFloat(u64, @max(@min(len, std.math.maxInt(i52)), 0));
     }
 
     /// Do not use this directly!

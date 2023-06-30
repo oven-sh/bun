@@ -97,9 +97,9 @@ it("Module._cache", () => {
   expect(!!expected).toBe(true);
 });
 
-it("Module._resolveFileName()", () => {
+it("Module._resolveFilename()", () => {
   const expected = Bun.resolveSync(import.meta.path, "/");
-  const result = Module._resolveFileName(import.meta.path, "/", true);
+  const result = Module._resolveFilename(import.meta.path, "/", true);
   expect(result).toBe(expected);
 });
 

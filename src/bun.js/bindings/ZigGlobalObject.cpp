@@ -390,7 +390,11 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
             frame.computeLineAndColumn(thisLine, thisColumn);
             remappedFrames[i].position.line = thisLine;
             remappedFrames[i].position.column_start = thisColumn;
-            remappedFrames[i].source_url = Zig::toZigString(frame.sourceURL(vm));
+            String sourceURLForFrame = frame.sourceURL(vm);
+
+            if (!sourceURLForFrame.isEmpty()) {
+                remappedFrames[i].source_url = Bun::toString(sourceURLForFrame);
+            }
 
             // This ensures the lifetime of the sourceURL is accounted for correctly
             Bun__remapStackFramePositions(globalObject, remappedFrames + i, 1);
@@ -409,7 +413,7 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
                 }
             }
 
-            sb.append(frame.sourceURL(vm));
+            sb.append(sourceURLForFrame);
             sb.append(":"_s);
             sb.append(remappedFrames[i].position.line);
             sb.append(":"_s);
@@ -2779,7 +2783,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     size_t framesCount = stackTrace.size();
     ZigStackFrame remappedFrames[framesCount];
     for (int i = 0; i < framesCount; i++) {
-        remappedFrames[i].source_url = Zig::toZigString(stackTrace.at(i).sourceURL(), lexicalGlobalObject);
+        remappedFrames[i].source_url = Bun::toString(lexicalGlobalObject, stackTrace.at(i).sourceURL());
         if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
             remappedFrames[i].position.line = sourcePositions->line.zeroBasedInt();
             remappedFrames[i].position.column_start = sourcePositions->startColumn.zeroBasedInt() + 1;

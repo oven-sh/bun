@@ -360,6 +360,8 @@ pub const BundleV2 = struct {
             redirect_map: PathToSourceIndexMap,
             dynamic_import_entry_points: *std.AutoArrayHashMap(Index.Int, void),
 
+            const MAX_REDIRECTS: usize = 20;
+
             // Find all files reachable from all entry points. This order should be
             // deterministic given that the entry point order is deterministic, since the
             // returned order is the postorder of the graph traversal and import record
@@ -382,13 +384,20 @@ pub const BundleV2 = struct {
                 if (import_record_list_id.get() < v.all_import_records.len) {
                     var import_records = v.all_import_records[import_record_list_id.get()].slice();
                     for (import_records) |*import_record| {
-                        const other_source = import_record.source_index;
+                        var other_source = import_record.source_index;
                         if (other_source.isValid()) {
-                            if (getRedirectId(v.redirects[other_source.get()])) |redirect_id| {
+                            var redirect_count: usize = 0;
+                            while (getRedirectId(v.redirects[other_source.get()])) |redirect_id| : (redirect_count += 1) {
                                 var other_import_records = v.all_import_records[other_source.get()].slice();
                                 const other_import_record = &other_import_records[redirect_id];
                                 import_record.source_index = other_import_record.source_index;
                                 import_record.path = other_import_record.path;
+                                other_source = other_import_record.source_index;
+                                if (redirect_count == MAX_REDIRECTS) {
+                                    import_record.path.is_disabled = true;
+                                    import_record.source_index = Index.invalid;
+                                    break;
+                                }
                             }
 
                             v.visit(import_record.source_index, check_dynamic_imports and import_record.kind == .dynamic, check_dynamic_imports);

@@ -1804,6 +1804,8 @@ var defaultObject = {
     debug(`${NODE_HTTP_WARNING}\n`, "setMaxIdleHTTPParsers() is a no-op");
   },
   globalAgent,
+  ClientRequest,
+  OutgoingMessage,
   [Symbol.for("CommonJS")]: 0,
 };
 

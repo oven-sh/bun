@@ -14,6 +14,7 @@ jobs:
   test:
     name: ${{ matrix.tag }}
     runs-on: ${{ matrix.os }}
+    if: github.repository_owner == 'oven-sh'
     timeout-minutes: 10
     strategy:
       fail-fast: false

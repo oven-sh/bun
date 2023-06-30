@@ -48,10 +48,10 @@ pub const PackageManagerCommand = struct {
     pub fn printHash(ctx: Command.Context, lockfile_: []const u8) !void {
         @setCold(true);
         var lockfile_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
-        @memcpy(&lockfile_buffer, lockfile_.ptr, lockfile_.len);
+        @memcpy(lockfile_buffer[0..lockfile_.len], lockfile_);
         lockfile_buffer[lockfile_.len] = 0;
         var lockfile = lockfile_buffer[0..lockfile_.len :0];
-        var pm = try PackageManager.init(ctx, null, &PackageManager.install_params);
+        var pm = try PackageManager.init(ctx, null, PackageManager.Subcommand.pm);
 
         const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, lockfile);
         handleLoadLockfileErrors(load_lockfile, pm);
@@ -87,11 +87,11 @@ pub const PackageManagerCommand = struct {
         var args = try std.process.argsAlloc(ctx.allocator);
         args = args[1..];
 
-        var pm = PackageManager.init(ctx, null, &PackageManager.install_params) catch |err| {
+        var pm = PackageManager.init(ctx, null, PackageManager.Subcommand.pm) catch |err| {
             // TODO: error messages here
             // if (err == error.MissingPackageJSON) {
             //     // TODO: error messages
-            //     // var cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, &PackageManager.install_params, &_ctx);
+            //     // var cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, PackageManager.Subcommand.pm, &_ctx);
             // }
 
             return err;
@@ -224,7 +224,7 @@ pub const PackageManagerCommand = struct {
                 for (sorted_dependencies, 0..) |*dep, i| {
                     dep.* = @truncate(DependencyID, root_deps.off + i);
                 }
-                std.sort.sort(DependencyID, sorted_dependencies, ByName{
+                std.sort.block(DependencyID, sorted_dependencies, ByName{
                     .dependencies = dependencies,
                     .buf = string_bytes,
                 }, ByName.isLessThan);
@@ -336,7 +336,7 @@ fn printNodeModulesFolderStructure(
     const sorted_dependencies = try allocator.alloc(DependencyID, directory.dependencies.len);
     defer allocator.free(sorted_dependencies);
     bun.copy(DependencyID, sorted_dependencies, directory.dependencies);
-    std.sort.sort(DependencyID, sorted_dependencies, ByName{
+    std.sort.block(DependencyID, sorted_dependencies, ByName{
         .dependencies = dependencies,
         .buf = string_bytes,
     }, ByName.isLessThan);

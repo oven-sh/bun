@@ -33,7 +33,7 @@ As you can see, the source code of the `random` function occurs nowhere in the b
 
 ## When to use macros
 
-If you have several build scripts for For small things where you would otherwise have a one-off build script, bundle-time code execution can be easier to maintain. It lives with the rest of your code, it runs with the rest of the build, it is automatically paralellized, and if it fails, the build fails too.
+If you have several build scripts for small things where you would otherwise have a one-off build script, bundle-time code execution can be easier to maintain. It lives with the rest of your code, it runs with the rest of the build, it is automatically paralellized, and if it fails, the build fails too.
 
 If you find yourself running a lot of code at bundle-time though, consider running a server instead.
 
@@ -43,6 +43,63 @@ Bun Macros are import statements annotated using either:
 
 - `with { type: 'macro' }` — an [import attribute](https://github.com/tc39/proposal-import-attributes), a Stage 3 ECMA Scrd
 - `assert { type: 'macro' }` — an import assertion, an earlier incarnation of import attributes that has now been abandoned (but is [already supported](https://caniuse.com/mdn-javascript_statements_import_import_assertions) by a number of browsers and runtimes)
+
+## Security considerations
+
+Macros must explicitly be imported with `{ type: "macro" }` in order to be executed at bundle-time. These imports have no effect if they are not called, unlike regular JavaScript imports which may have side effects.
+
+You can disable macros entirely by passing the `--no-macros` flag to Bun. It produces a build error like this:
+
+```js
+error: Macros are disabled
+
+foo();
+^
+./hello.js:3:1 53
+```
+
+To reduce the potential attack surface for malicious packages, macros cannot be _invoked_ from inside `node_modules/**/*`. If a package attempts to invoke a macro, you'll see an error like this:
+
+```js
+error: For security reasons, macros cannot be run from node_modules.
+
+beEvil();
+^
+node_modules/evil/index.js:3:1 50
+```
+
+Your application code can still import macros from `node_modules` and invoke them.
+
+```ts
+import {macro} from "some-package" with { type: "macro" };
+
+macro();
+```
+
+## Export condition `"macro"`
+
+When shipping a library containing a macro to `npm` or another package registry, use the `"macro"` [export condition](https://nodejs.org/api/packages.html#conditional-exports) to provide a special version of your package exclusively for the macro environment.
+
+```jsonc#package.json
+{
+  "name": "my-package",
+  "exports": {
+    "import": "./index.js",
+    "require": "./index.js",
+    "default": "./index.js",
+    "macro": "./index.macro.js"
+  }
+}
+```
+
+With this configuration, users can consume your package at runtime or at bundle-time using the same import specifier:
+
+```ts
+import pkg from "my-package";                            // runtime import
+import {macro} from "my-package" with { type: "macro" }; // macro import
+```
+
+The first import will resolve to `./node_modules/my-package/index.js`, while the second will be resolved by Bun's bundler to `./node_modules/my-package/index.macro.js`.
 
 ## Execution
 
@@ -94,7 +151,7 @@ export async function getText() {
 }
 ```
 
-The transpiler implements specicial logic for serializing common data formats like `Response`, `Blob`, `TypedArray`.
+The transpiler implements special logic for serializing common data formats like `Response`, `Blob`, `TypedArray`.
 
 - `TypedArray`: Resolves to a base64-encoded string.
 - `Response`: Bun will read the `Content-Type` and serialize accordingly; for instance, a `Response` with type `application/json` will be automatically parsed into an object and `text/plain` will be inlined as a string. Responses with an unrecognized or `undefined` `type` will be base-64 encoded.

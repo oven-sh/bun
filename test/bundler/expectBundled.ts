@@ -22,42 +22,7 @@ export function testForFile(file: string): BunTestExports {
 
   var testFile = testFiles.get(file);
   if (!testFile) {
-    const native = (Bun as any).jest(file);
-    const notImplemented: BundlerTestRef[] = [];
-    testFile = {
-      it: native.it,
-      test: native.test,
-      expect: native.expect,
-      addNotImplemented: (ref: BundlerTestRef) => notImplemented.push(ref),
-    };
-    testFile.describe = function (name: string, fn: () => void) {
-      native.describe(name, function () {
-        if (currentFile) {
-          throw new Error("please don't nest describe blocks in the bundler tests.");
-        }
-        currentFile = file;
-        fn();
-        currentFile = undefined;
-        if (!FILTER && !process.env.BUN_BUNDLER_TEST_NO_CHECK_SKIPPED) {
-          native.test(`"${path.basename(file)}" has proper notImplemented markers`, async () => {
-            console.log(`\n  Checking if any of the ${notImplemented.length} not implemented tests work...`);
-            const implemented = [];
-            for (const ref of notImplemented) {
-              try {
-                await expectBundled(ref.id, { ...ref.options, notImplemented: false }, false, true);
-                implemented.push({ id: ref.id, success: true });
-              } catch (e) {}
-            }
-            if (implemented.length) {
-              throw (
-                '"notImplemented" can only be used on failing tests. the following tests pass:\n' +
-                implemented.map(x => "  - " + x.id).join("\n")
-              );
-            }
-          });
-        }
-      });
-    };
+    testFile = Bun.jest(file);
     testFiles.set(file, testFile);
   }
   return testFile;
@@ -88,7 +53,7 @@ export const ESBUILD_PATH = import.meta.resolveSync("esbuild/bin/esbuild");
 
 export interface BundlerTestInput {
   /** Temporary flag to mark failing tests as skipped. */
-  notImplemented?: boolean;
+  todo?: boolean;
 
   // file options
   files: Record<string, string>;
@@ -346,7 +311,7 @@ function expectBundled(
     minifyIdentifiers,
     minifySyntax,
     minifyWhitespace,
-    notImplemented,
+    todo: notImplemented,
     onAfterBundle,
     root: outbase,
     outdir,
@@ -1327,7 +1292,7 @@ export function itBundled(
     opts._referenceFn = fn;
   }
   const ref = testRef(id, opts);
-  const { it, addNotImplemented } = testForFile(currentFile ?? callerSourceOrigin()) as any;
+  const { it } = testForFile(currentFile ?? callerSourceOrigin()) as any;
 
   if (FILTER && !filterMatches(id)) {
     return ref;
@@ -1335,14 +1300,23 @@ export function itBundled(
     try {
       expectBundled(id, opts, true);
     } catch (error) {
-      if (!HIDE_SKIP) it.skip(id, () => {});
+      // it.todo(id, () => {
+      //   throw error;
+      // });
       return ref;
     }
   }
 
-  if (opts.notImplemented && !FILTER) {
-    if (!HIDE_SKIP) it.skip(id, () => {});
-    addNotImplemented({ id, options: opts });
+  if (opts.todo && !FILTER) {
+    it.todo(id, () => expectBundled(id, opts as any));
+    // it(id, async () => {
+    //   try {
+    //     await expectBundled(id, opts as any);
+    //   } catch (error) {
+    //     return;
+    //   }
+    //   throw new Error(`Expected test to fail but it passed.`);
+    // });
   } else {
     it(id, () => expectBundled(id, opts as any));
   }

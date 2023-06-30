@@ -2,6 +2,34 @@ Configuring a development environment for Bun can take 10-30 minutes depending o
 
 If you are using Windows, you must use a WSL environment as Bun does not yet compile on Windows natively.
 
+Before starting, you will need to already have a release build of Bun installed, as we use our bundler to transpile and minify our code.
+
+{% codetabs %}
+
+```bash#Native
+$ curl -fsSL https://bun.sh/install | bash # for macOS, Linux, and WSL
+```
+
+```bash#npm
+$ npm install -g bun # the last `npm` command you'll ever need
+```
+
+```bash#Homebrew
+$ brew tap oven-sh/bun # for macOS and Linux
+$ brew install bun
+```
+
+```bash#Docker
+$ docker pull oven/bun
+$ docker run --rm --init --ulimit memlock=-1:-1 oven/bun
+```
+
+```bash#proto
+$ proto install bun
+```
+
+{% /codetabs %}
+
 ## Install LLVM
 
 Bun requires LLVM 15 and Clang 15 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
@@ -14,7 +42,7 @@ $ brew install llvm@15
 
 ```bash#Ubuntu/Debian
 # On Ubuntu 22.04 and newer, LLVM 15 is available in the default repositories
-$ sudo apt install llvm-15 lld-15
+$ sudo apt install llvm-15 lld-15 clang-15
 # On older versions,
 $ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 15 all
 ```
@@ -74,7 +102,7 @@ Zig can be installed either with our npm package [`@oven/zig`](https://www.npmjs
 
 ```bash
 $ bun install -g @oven/zig
-$ zigup master
+$ zigup 0.11.0-dev.3737+9eb008717
 ```
 
 ## Building
@@ -104,13 +132,13 @@ VSCode is the recommended IDE for working on Bun, as it has been configured. Onc
 
 ## JavaScript builtins
 
-When you change anything in `src/bun.js/builtins/js/*` or switch branches, run this:
+When you change anything in `src/js/builtins/*` or switch branches, run this:
 
 ```bash
 $ make regenerate-bindings
 ```
 
-That inlines the JavaScript code into C++ headers using the same builtins generator script that Safari uses.
+That inlines the TypeScript code into C++ headers.
 
 {% callout %}
 Make sure you have `ccache` installed, otherwise regeneration will take much longer than it should.
@@ -148,11 +176,17 @@ $ make generate-sink
 
 You probably won't need to run that one much.
 
-## Modifying ESM core modules
+## Modifying ESM modules
 
-Certain modules like `node:fs`, `node:path`, `node:stream`, and `bun:sqlite` are implemented in JavaScript. These live in `src/bun.js/*.exports.js` files.
+Certain modules like `node:fs`, `node:stream`, `bun:sqlite`, and `ws` are implemented in JavaScript. These live in `src/js/{node,bun,thirdparty}` files and are pre-bundled using Bun. The bundled code is committed so CI builds can run without needing a copy of Bun.
 
-While Bun is in beta, you can modify them at runtime in release builds via the environment variable `BUN_OVERRIDE_MODULE_PATH`. When set, Bun will look in the override directory for `<name>.exports.js` before checking the files from `src/bun.js` (which are now baked in to the binary). This lets you test changes to the ESM modules without needing to re-compile Bun.
+When these are changed, run:
+
+```
+$ make esm
+```
+
+In debug builds, Bun automatically loads these from the filesystem, wherever it was compiled, so no need to re-run `make dev`. In release builds, this same behavior can be done via the environment variable `BUN_OVERRIDE_MODULE_PATH`. When set to the repository root, Bun will read from the bundled modules in the repository instead of the ones baked into the binary.
 
 ## Release build
 

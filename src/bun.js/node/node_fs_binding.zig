@@ -44,12 +44,16 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 
             const args = if (comptime Arguments != void)
                 (Arguments.fromJS(globalObject, &slice, &exceptionref) orelse {
-                    std.debug.assert(exceptionref != null);
-                    globalObject.throwValue(JSC.JSValue.c(exceptionref));
+                    // we might've already thrown
+                    if (exceptionref != null)
+                        globalObject.throwValue(JSC.JSValue.c(exceptionref));
                     return .zero;
                 })
             else
                 Arguments{};
+            defer {
+                if (comptime Arguments != void and @hasDecl(Arguments, "deinit")) args.deinit();
+            }
 
             const exception1 = JSC.JSValue.c(exceptionref);
 
@@ -225,6 +229,10 @@ pub const NodeJSFS = struct {
     pub const lutimesSync = callSync(.lutimes);
     pub const rmSync = callSync(.rm);
     pub const rmdirSync = callSync(.rmdir);
+    pub const writev = call(.writev);
+    pub const writevSync = callSync(.writev);
+    pub const readv = call(.readv);
+    pub const readvSync = callSync(.readv);
 
     pub const fdatasyncSync = callSync(.fdatasync);
     pub const fdatasync = call(.fdatasync);
@@ -237,12 +245,10 @@ pub const NodeJSFS = struct {
         return JSC.Node.Stats.getConstructor(globalThis);
     }
 
+    pub const watch = callSync(.watch);
+
     // Not implemented yet:
     const notimpl = fdatasync;
     pub const opendir = notimpl;
     pub const opendirSync = notimpl;
-    pub const readv = notimpl;
-    pub const readvSync = notimpl;
-    pub const writev = notimpl;
-    pub const writevSync = notimpl;
 };

@@ -99,6 +99,9 @@ for (let specifier of specifiers) {
           }
         }
       }
+    } else {
+      // TODO: uncomment this after node:module can be default imported
+      // throw new Error(`Module ${specifier} has no default export`);
     }
   });
 }

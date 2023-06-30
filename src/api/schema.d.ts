@@ -709,6 +709,8 @@ export interface BunInstall {
   disable_manifest_cache?: boolean;
   global_dir?: string;
   global_bin_dir?: string;
+  frozen_lockfile?: boolean;
+  exact?: boolean;
 }
 
 export interface ClientServerModule {

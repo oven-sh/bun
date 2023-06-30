@@ -40,6 +40,30 @@ JSC::Structure* JSExpectAnyStructure() { return m_JSExpectAny.getInitializedOnMa
   JSC::LazyClassStructure m_JSExpectAny;
   bool hasJSExpectAnySetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSExpectAnySetterValue;
+JSC::Structure* JSExpectAnythingStructure() { return m_JSExpectAnything.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSExpectAnythingConstructor() { return m_JSExpectAnything.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSExpectAnythingPrototype() { return m_JSExpectAnything.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSExpectAnything;
+  bool hasJSExpectAnythingSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSExpectAnythingSetterValue;
+JSC::Structure* JSExpectStringContainingStructure() { return m_JSExpectStringContaining.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSExpectStringContainingConstructor() { return m_JSExpectStringContaining.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSExpectStringContainingPrototype() { return m_JSExpectStringContaining.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSExpectStringContaining;
+  bool hasJSExpectStringContainingSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSExpectStringContainingSetterValue;
+JSC::Structure* JSExpectStringMatchingStructure() { return m_JSExpectStringMatching.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSExpectStringMatchingConstructor() { return m_JSExpectStringMatching.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSExpectStringMatchingPrototype() { return m_JSExpectStringMatching.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSExpectStringMatching;
+  bool hasJSExpectStringMatchingSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSExpectStringMatchingSetterValue;
+JSC::Structure* JSFSWatcherStructure() { return m_JSFSWatcher.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSFSWatcherConstructor() { return m_JSFSWatcher.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSFSWatcherPrototype() { return m_JSFSWatcher.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSFSWatcher;
+  bool hasJSFSWatcherSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSFSWatcherSetterValue;
 JSC::Structure* JSFileSystemRouterStructure() { return m_JSFileSystemRouter.getInitializedOnMainThread(this); }
         JSC::JSObject* JSFileSystemRouterConstructor() { return m_JSFileSystemRouter.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSFileSystemRouterPrototype() { return m_JSFileSystemRouter.prototypeInitializedOnMainThread(this); }

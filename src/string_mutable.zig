@@ -180,7 +180,7 @@ pub const MutableString = struct {
         try self.list.ensureTotalCapacityPrecise(self.allocator, self.list.items.len + slice.len);
         var end = self.list.items.ptr + self.list.items.len;
         self.list.items.len += slice.len;
-        @memcpy(end, slice.ptr, slice.len);
+        @memcpy(end[0..slice.len], slice);
     }
 
     pub inline fn reset(
@@ -233,6 +233,13 @@ pub const MutableString = struct {
 
     pub fn toOwnedSliceLeaky(self: *MutableString) []u8 {
         return self.list.items;
+    }
+
+    /// Clear the existing value without freeing the memory or shrinking the capacity.
+    pub fn move(self: *MutableString) []u8 {
+        const out = self.list.items;
+        self.list = .{};
+        return out;
     }
 
     pub fn toOwnedSentinelLeaky(self: *MutableString) [:0]u8 {
@@ -322,7 +329,7 @@ pub const MutableString = struct {
                 if (pending.len + this.pos > max) {
                     try this.flush();
                 }
-                @memcpy(this.remain().ptr, pending.ptr, pending.len);
+                @memcpy(this.remain()[0..pending.len], pending);
                 this.pos += pending.len;
             }
 

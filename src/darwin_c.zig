@@ -294,7 +294,7 @@ pub const SystemErrno = enum(u8) {
         }
 
         if (code >= max) return null;
-        return @intToEnum(SystemErrno, code);
+        return @enumFromInt(SystemErrno, code);
     }
 
     pub fn label(this: SystemErrno) ?[]const u8 {
@@ -543,11 +543,11 @@ pub fn get_system_loadavg() [3]f64 {
     };
 
     const loadavg = loadavg_[0];
-    const scale = @intToFloat(f64, loadavg.fscale);
+    const scale = @floatFromInt(f64, loadavg.fscale);
     return [3]f64{
-        @intToFloat(f64, loadavg.ldavg[0]) / scale,
-        @intToFloat(f64, loadavg.ldavg[1]) / scale,
-        @intToFloat(f64, loadavg.ldavg[2]) / scale,
+        @floatFromInt(f64, loadavg.ldavg[0]) / scale,
+        @floatFromInt(f64, loadavg.ldavg[1]) / scale,
+        @floatFromInt(f64, loadavg.ldavg[2]) / scale,
     };
 }
 
@@ -573,7 +573,7 @@ pub extern fn get_process_priority(pid: c_uint) i32;
 pub extern fn set_process_priority(pid: c_uint, priority: c_int) i32;
 
 pub fn get_version(buf: []u8) []const u8 {
-    @memset(buf.ptr, 0, buf.len);
+    @memset(buf, 0);
 
     var size: usize = buf.len;
 
@@ -589,7 +589,7 @@ pub fn get_version(buf: []u8) []const u8 {
 }
 
 pub fn get_release(buf: []u8) []const u8 {
-    @memset(buf.ptr, 0, buf.len);
+    @memset(buf, 0);
 
     var size: usize = buf.len;
 

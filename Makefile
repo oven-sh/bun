@@ -293,14 +293,14 @@ SRC_WEBCORE_FILES := $(wildcard $(SRC_DIR)/webcore/*.cpp)
 SRC_SQLITE_FILES := $(wildcard $(SRC_DIR)/sqlite/*.cpp)
 SRC_NODE_OS_FILES := $(wildcard $(SRC_DIR)/node_os/*.cpp)
 SRC_IO_FILES := $(wildcard src/io/*.cpp)
-SRC_BUILTINS_FILES := $(wildcard  src/bun.js/builtins/*.cpp)
+SRC_BUILTINS_FILES := $(wildcard  src/js/out/*.cpp)
 SRC_WEBCRYPTO_FILES := $(wildcard $(SRC_DIR)/webcrypto/*.cpp)
 
 OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
 WEBCORE_OBJ_FILES := $(patsubst $(SRC_DIR)/webcore/%.cpp,$(OBJ_DIR)/%.o,$(SRC_WEBCORE_FILES))
 SQLITE_OBJ_FILES := $(patsubst $(SRC_DIR)/sqlite/%.cpp,$(OBJ_DIR)/%.o,$(SRC_SQLITE_FILES))
 NODE_OS_OBJ_FILES := $(patsubst $(SRC_DIR)/node_os/%.cpp,$(OBJ_DIR)/%.o,$(SRC_NODE_OS_FILES))
-BUILTINS_OBJ_FILES := $(patsubst src/bun.js/builtins/%.cpp,$(OBJ_DIR)/%.o,$(SRC_BUILTINS_FILES))
+BUILTINS_OBJ_FILES := $(patsubst src/js/out/%.cpp,$(OBJ_DIR)/%.o,$(SRC_BUILTINS_FILES))
 IO_FILES := $(patsubst src/io/%.cpp,$(OBJ_DIR)/%.o,$(SRC_IO_FILES))
 MODULES_OBJ_FILES := $(patsubst $(MODULES_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(MODULES_FILES))
 WEBCRYPTO_OBJ_FILES := $(patsubst $(SRC_DIR)/webcrypto/%.cpp,$(OBJ_DIR)/%.o,$(SRC_WEBCRYPTO_FILES))
@@ -309,7 +309,7 @@ DEBUG_OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(DEBUG_OBJ_DIR)/%.o,$(SRC_FILES)
 DEBUG_WEBCORE_OBJ_FILES := $(patsubst $(SRC_DIR)/webcore/%.cpp,$(DEBUG_OBJ_DIR)/%.o,$(SRC_WEBCORE_FILES))
 DEBUG_SQLITE_OBJ_FILES := $(patsubst $(SRC_DIR)/sqlite/%.cpp,$(DEBUG_OBJ_DIR)/%.o,$(SRC_SQLITE_FILES))
 DEBUG_NODE_OS_OBJ_FILES := $(patsubst $(SRC_DIR)/node_os/%.cpp,$(DEBUG_OBJ_DIR)/%.o,$(SRC_NODE_OS_FILES))
-DEBUG_BUILTINS_OBJ_FILES := $(patsubst src/bun.js/builtins/%.cpp,$(DEBUG_OBJ_DIR)/%.o,$(SRC_BUILTINS_FILES))
+DEBUG_BUILTINS_OBJ_FILES := $(patsubst src/js/out/%.cpp,$(DEBUG_OBJ_DIR)/%.o,$(SRC_BUILTINS_FILES))
 DEBUG_IO_FILES := $(patsubst src/io/%.cpp,$(DEBUG_OBJ_DIR)/%.o,$(SRC_IO_FILES))
 DEBUG_MODULES_OBJ_FILES := $(patsubst $(MODULES_DIR)/%.cpp,$(DEBUG_OBJ_DIR)/%.o,$(MODULES_FILES))
 DEBUG_WEBCRYPTO_OBJ_FILES := $(patsubst $(SRC_DIR)/webcrypto/%.cpp, $(DEBUG_OBJ_DIR)/%.o, $(SRC_WEBCRYPTO_FILES))
@@ -330,12 +330,12 @@ ALL_JSC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/WTF/Headers \
 		-I$(WEBKIT_RELEASE_DIR)/WTF/PrivateHeaders
 
 SHARED_INCLUDE_DIR = -I$(realpath src/bun.js/bindings)/ \
-		-I$(realpath src/bun.js/builtins/) \
+		-I$(realpath src/js/builtins/) \
+		-I$(realpath src/js/out/) \
 		-I$(realpath src/bun.js/bindings) \
 		-I$(realpath src/bun.js/bindings/webcore) \
 		-I$(realpath src/bun.js/bindings/webcrypto) \
 		-I$(realpath src/bun.js/bindings/sqlite) \
-		-I$(realpath src/bun.js/builtins/cpp) \
 		-I$(realpath src/bun.js/bindings/node_os) \
 		-I$(realpath src/bun.js/modules) \
 		-I$(JSC_INCLUDE_DIR)
@@ -555,7 +555,14 @@ PYTHON=$(shell which python 2>/dev/null || which python3 2>/dev/null || which py
 
 .PHONY: builtins
 builtins:
-	bun src/bun.js/builtins/codegen/index.ts --minify
+	NODE_ENV=production bun src/js/builtins/codegen/index.ts --minify
+
+.PHONY: esm
+esm:
+	NODE_ENV=production bun src/js/build-esm.ts
+
+esm-debug:
+	BUN_DEBUG_QUIET_LOGS=1 NODE_ENV=production bun-debug src/js/build-esm.ts
 
 .PHONY: generate-builtins
 generate-builtins: builtins
@@ -1081,7 +1088,7 @@ dev-obj-linux:
 	$(ZIG) build obj -Dtarget=x86_64-linux-gnu -Dcpu="$(CPU_TARGET)"
 
 .PHONY: dev
-dev: mkdir-dev dev-obj bun-link-lld-debug
+dev: mkdir-dev esm dev-obj link
 
 mkdir-dev:
 	mkdir -p $(DEBUG_PACKAGE_DIR)
@@ -1352,15 +1359,21 @@ mimalloc-wasm:
 	cd $(BUN_DEPS_DIR)/mimalloc; emcmake cmake -DMI_BUILD_SHARED=OFF -DMI_BUILD_STATIC=ON -DMI_BUILD_TESTS=OFF -DMI_BUILD_OBJECT=ON ${MIMALLOC_OVERRIDE_FLAG} -DMI_USE_CXX=ON .; emmake make;
 	cp $(BUN_DEPS_DIR)/mimalloc/$(MIMALLOC_INPUT_PATH) $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE).wasm
 
-bun-link-lld-debug:
+# alias for link, incase anyone still types that
+.PHONY: bun-link-lld-debug
+bun-link-lld-debug: link
+
+# link a debug build of bun
+.PHONY: link
+link:
 	$(CXX) $(BUN_LLD_FLAGS_DEBUG) $(DEBUG_FLAGS) $(SYMBOLS) \
 		-g \
 		$(DEBUG_BIN)/bun-debug.o \
 		-W \
 		-o $(DEBUG_BIN)/bun-debug
-	@rm -f $(DEBUG_BIN)/bun-debug.o.o 2> /dev/null # workaround for https://github.com/ziglang/zig/issues/14080
+		@rm -f $(DEBUG_BIN)/bun-debug.o.o 2> /dev/null # workaround for https://github.com/ziglang/zig/issues/14080
 
-bun-link-lld-debug-no-jsc:
+link-no-jsc:
 	$(CXX) $(BUN_LLD_FLAGS_WITHOUT_JSC) $(SYMBOLS) \
 		-g \
 		$(DEBUG_BIN)/bun-debug.o \
@@ -1532,7 +1545,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/node_os/%.cpp
 		$(EMIT_LLVM) \
 		-c -o $@ $<
 
-$(OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
+$(OBJ_DIR)/%.o: src/js/out/%.cpp
 	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
@@ -1631,8 +1644,8 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/node_os/%.cpp
 
 # $(DEBUG_OBJ_DIR) is not included here because it breaks
 # detecting if a file needs to be rebuilt
-.PHONY: src/bun.js/builtins/%.cpp
-$(DEBUG_OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
+.PHONY: src/js/out/builtins/%.cpp
+$(DEBUG_OBJ_DIR)/%.o: src/js/out/%.cpp
 	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
@@ -1681,7 +1694,7 @@ sizegen:
 # Linux uses bundled SQLite3
 ifeq ($(OS_NAME),linux)
 sqlite:
-	$(CC) $(EMIT_LLVM_FOR_RELEASE) $(CFLAGS) $(INCLUDE_DIRS) -DSQLITE_ENABLE_COLUMN_METADATA= -DSQLITE_MAX_VARIABLE_NUMBER=250000 -DSQLITE_ENABLE_RTREE=1 -DSQLITE_ENABLE_FTS3=1 -DSQLITE_ENABLE_FTS3_PARENTHESIS=1 -DSQLITE_ENABLE_JSON1=1 $(SRC_DIR)/sqlite/sqlite3.c -c -o $(SQLITE_OBJECT)
+	$(CC) $(EMIT_LLVM_FOR_RELEASE) $(CFLAGS) $(INCLUDE_DIRS) -DSQLITE_ENABLE_COLUMN_METADATA= -DSQLITE_MAX_VARIABLE_NUMBER=250000 -DSQLITE_ENABLE_RTREE=1 -DSQLITE_ENABLE_FTS3=1 -DSQLITE_ENABLE_FTS3_PARENTHESIS=1 -DSQLITE_ENABLE_FTS5=1 -DSQLITE_ENABLE_JSON1=1 $(SRC_DIR)/sqlite/sqlite3.c -c -o $(SQLITE_OBJECT)
 endif
 
 picohttp:
@@ -1875,7 +1888,7 @@ regenerate-bindings:
 	@make bindings -j$(CPU_COUNT)
 
 .PHONY: setup
-setup: vendor-dev builtins identifier-cache clean-bindings
+setup: vendor-dev identifier-cache clean-bindings
 	make jsc-check
 	make bindings -j$(CPU_COUNT)
 	@echo ""

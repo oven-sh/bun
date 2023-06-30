@@ -29,11 +29,16 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableState;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPendingVirtualModuleResult;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCallSite;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForImportMeta;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiExternal;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRequireResolveFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBundlerPlugin;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMScript;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCommonJSModuleRecord;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMockImplementation;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMockFunction;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMockWithImplementationCleanupData;
+
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
 

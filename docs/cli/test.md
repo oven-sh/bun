@@ -1,8 +1,9 @@
 Bun ships with a fast built-in test runner. Tests are executed with the Bun runtime, and support the following features.
 
 - TypeScript and JSX
-- Snapshot testing
 - Lifecycle hooks
+- Snapshot testing
+- UI & DOM testing
 - Watch mode with `--watch`
 - Script pre-loading with `--preload`
 
@@ -67,6 +68,16 @@ See [Test > Lifecycle](/docs/test/lifecycle) for complete documentation.
 ## Snapshot testing
 
 Snapshots are supported by `bun test`. See [Test > Snapshots](/docs/test/snapshots) for complete documentation.
+
+## UI & DOM testing
+
+Bun is compatible with popular UI testing libraries:
+
+- [HappyDOM](https://github.com/capricorn86/happy-dom)
+- [DOM Testing Library](https://testing-library.com/docs/dom-testing-library/intro/)
+- [React Testing Library](https://testing-library.com/docs/react-testing-library/intro)
+
+See [Test > DOM Testing](/docs/test/dom) for complete documentation.
 
 ## Performance
 

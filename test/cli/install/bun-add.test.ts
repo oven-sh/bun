@@ -303,6 +303,61 @@ it("should add dependency with capital letters", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should add exact version", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "--exact", "BaR"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " installed BaR@0.0.2",
+    "",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/BaR`, `${root_url}/BaR-0.0.2.tgz`]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "BaR"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "BaR"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "BaR", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(
+    JSON.stringify(
+      {
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          BaR: "0.0.2",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  await access(join(package_dir, "bun.lockb"));
+});
+
 it("should add dependency with specified semver", async () => {
   const urls: string[] = [];
   setHandler(
@@ -1416,3 +1471,48 @@ it("should add dependencies to workspaces directly", async () => {
   expect(await readdirSorted(join(package_dir, "node_modules", "foo"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "foo", "package.json")).text()).toEqual(foo_package);
 });
+
+it("should redirect 'install --save X' to 'add'", async () => {
+  await installRedirectsToAdd(true);
+});
+
+it("should redirect 'install X --save' to 'add'", async () => {
+  await installRedirectsToAdd(false);
+});
+
+async function installRedirectsToAdd(saveFlagFirst) {
+  await writeFile(
+    join(add_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  const add_path = relative(package_dir, add_dir);
+
+  const args = [`file:${add_path}`, "--save"];
+  if (saveFlagFirst) args.reverse();
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", ...args],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun add", " Saved lockfile", ""]);
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    ` installed foo@${add_path}`,
+    "",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect((await file(join(package_dir, "package.json")).text()).includes("bun-add.test"));
+}

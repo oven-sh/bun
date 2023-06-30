@@ -10,6 +10,7 @@
 #include "ImportMetaObject.h"
 #include <sys/stat.h>
 #include "ZigConsoleClient.h"
+#include <JavaScriptCore/GetterSetter.h>
 #pragma mark - Node.js Process
 
 namespace Zig {
@@ -559,26 +560,28 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
 
     auto* process = jsCast<Process*>(globalObject->processObject());
 
-    auto getError = [&]() -> JSValue {
+    JSObject* errorInstance = ([&]() -> JSObject* {
         JSValue arg0 = callFrame->uncheckedArgument(0);
         if (!arg0.isEmpty() && arg0.isCell() && arg0.asCell()->type() == ErrorInstanceType) {
-            return arg0;
+            return arg0.getObject();
         }
 
         WTF::String str = arg0.toWTFString(globalObject);
         return createError(globalObject, str);
-    };
+    })();
+
+    errorInstance->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, String("warn"_s)), JSC::PropertyAttribute::DontEnum | 0);
 
     auto ident = Identifier::fromString(vm, "warning"_s);
     if (process->wrapped().hasEventListeners(ident)) {
         JSC::MarkedArgumentBuffer args;
-        args.append(getError());
+        args.append(errorInstance);
 
         process->wrapped().emit(ident, args);
         return JSValue::encode(jsUndefined());
     }
 
-    auto jsArgs = JSValue::encode(getError());
+    auto jsArgs = JSValue::encode(errorInstance);
     Zig__ConsoleClient__messageWithTypeAndLevel(reinterpret_cast<Zig::ConsoleClient*>(globalObject->consoleClient().get())->m_client, static_cast<uint32_t>(MessageType::Log),
         static_cast<uint32_t>(MessageLevel::Warning), globalObject, &jsArgs, 1);
     return JSValue::encode(jsUndefined());
@@ -787,6 +790,17 @@ void Process::finishCreation(JSC::VM& vm)
 
     this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "emitWarning"_s),
         1, Process_emitWarning, ImplementationVisibility::Public, NoIntrinsic, 0);
+
+    JSC::JSFunction* requireDotMainFunction = JSFunction::create(
+        vm,
+        moduleMainCodeGenerator(vm),
+        globalObject->globalScope());
+    // https://nodejs.org/api/process.html#processmainmodule
+    this->putDirect(
+        vm,
+        JSC::Identifier::fromString(vm, "mainModule"_s),
+        JSC::GetterSetter::create(vm, globalObject, requireDotMainFunction, JSValue()),
+        PropertyAttribute::Builtin | PropertyAttribute::Accessor | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
 }
 
 const JSC::ClassInfo Process::s_info = { "Process"_s, &Base::s_info, nullptr, nullptr,
@@ -825,16 +839,12 @@ JSC_DEFINE_CUSTOM_GETTER(Process_getArgv, (JSC::JSGlobalObject * globalObject, J
     if (!thisObject) {
         return JSValue::encode(JSC::jsUndefined());
     }
-    auto clientData = WebCore::clientData(vm);
-
-    if (JSC::JSValue argv = thisObject->getIfPropertyExists(
-            globalObject, clientData->builtinNames().argvPrivateName())) {
-        return JSValue::encode(argv);
-    }
 
     JSC::EncodedJSValue argv_ = Bun__Process__getArgv(globalObject);
-    thisObject->putDirect(vm, clientData->builtinNames().argvPrivateName(),
-        JSC::JSValue::decode(argv_));
+    auto clientData = WebCore::clientData(vm);
+
+    thisObject->putDirect(vm, clientData->builtinNames().argvPublicName(),
+        JSC::JSValue::decode(argv_), 0);
 
     return argv_;
 }
@@ -852,7 +862,7 @@ JSC_DEFINE_CUSTOM_SETTER(Process_setArgv,
 
     auto clientData = WebCore::clientData(vm);
 
-    return thisObject->putDirect(vm, clientData->builtinNames().argvPrivateName(),
+    return thisObject->putDirect(vm, clientData->builtinNames().argvPublicName(),
         JSC::JSValue::decode(value));
 }
 

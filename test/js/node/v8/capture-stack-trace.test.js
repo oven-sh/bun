@@ -1,4 +1,21 @@
-import { test, expect } from "bun:test";
+import { test, expect, afterEach } from "bun:test";
+
+const origPrepareStackTrace = Error.prepareStackTrace;
+afterEach(() => {
+  Error.prepareStackTrace = origPrepareStackTrace;
+});
+
+test("Regular .stack", () => {
+  var err;
+  class Foo {
+    constructor() {
+      err = new Error("wat");
+    }
+  }
+
+  new Foo();
+  expect(err.stack).toMatch(/at new Foo/);
+});
 
 test("capture stack trace", () => {
   function f1() {
@@ -300,4 +317,157 @@ test("prepare stack trace call sites", () => {
   }
 
   f1();
+});
+
+test("sanity check", () => {
+  function f1() {
+    f2();
+  }
+
+  function f2() {
+    f3();
+  }
+
+  function f3() {
+    let e = new Error("bad error!");
+    let prevPrepareStackTrace = Error.prepareStackTrace;
+    Error.prepareStackTrace = (e, s) => {
+      // getThis returns undefined in strict mode
+      expect(s[0].getThis()).toBe(undefined);
+      expect(s[0].getTypeName()).toBe("undefined");
+      // getFunction returns undefined in strict mode
+      expect(s[0].getFunction()).toBe(undefined);
+      expect(s[0].getFunctionName()).toBe("f3");
+      expect(s[0].getMethodName()).toBe("f3");
+      expect(typeof s[0].getLineNumber()).toBe("number");
+      expect(typeof s[0].getColumnNumber()).toBe("number");
+      expect(s[0].getFileName().includes("capture-stack-trace.test.js")).toBe(true);
+
+      expect(s[0].getEvalOrigin()).toBe(undefined);
+      expect(s[0].isToplevel()).toBe(true);
+      expect(s[0].isEval()).toBe(false);
+      expect(s[0].isNative()).toBe(false);
+      expect(s[0].isConstructor()).toBe(false);
+      expect(s[0].isAsync()).toBe(false);
+      expect(s[0].isPromiseAll()).toBe(false);
+      expect(s[0].getPromiseIndex()).toBe(null);
+    };
+    Error.captureStackTrace(e);
+    expect(e.stack === undefined).toBe(true);
+    Error.prepareStackTrace = prevPrepareStackTrace;
+  }
+
+  f1();
+});
+
+test("CallFrame.p.getThisgetFunction: works in sloppy mode", () => {
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+  const sloppyFn = new Function("let e=new Error();Error.captureStackTrace(e);return e.stack");
+  sloppyFn.displayName = "sloppyFnWow";
+  const that = {};
+
+  Error.prepareStackTrace = (e, s) => {
+    expect(s[0].getThis()).toBe(that);
+    expect(s[0].getFunction()).toBe(sloppyFn);
+    expect(s[0].getFunctionName()).toBe(sloppyFn.displayName);
+    expect(s[0].isToplevel()).toBe(false);
+    // TODO: This should be true.
+    expect(s[0].isEval()).toBe(false);
+
+    // Strict-mode functions shouldn't have getThis or getFunction
+    // available.
+    expect(s[1].getThis()).toBe(undefined);
+    expect(s[1].getFunction()).toBe(undefined);
+  };
+
+  sloppyFn.call(that);
+
+  Error.prepareStackTrace = prevPrepareStackTrace;
+});
+
+test("CallFrame.p.getThisgetFunction: strict/sloppy mode interaction", () => {
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+
+  const strictFn = new Function('"use strict";let e=new Error();Error.captureStackTrace(e);return e.stack');
+  const sloppyFn = new Function("x", "x()");
+  const that = {};
+
+  Error.prepareStackTrace = (e, s) => {
+    // The first strict mode function encounted during stack unwinding
+    // stops subsequent frames from having getThis\getFunction.
+    for (const t of s) {
+      expect(t.getThis()).toBe(undefined);
+      expect(t.getFunction()).toBe(undefined);
+    }
+  };
+
+  sloppyFn.call(that, strictFn);
+
+  Error.prepareStackTrace = prevPrepareStackTrace;
+});
+
+test("CallFrame.p.isConstructor", () => {
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+
+  class C {
+    constructor() {
+      Error.captureStackTrace(new Error(""));
+    }
+  }
+
+  Error.prepareStackTrace = (e, s) => {
+    expect(s[0].isConstructor()).toBe(true);
+    // TODO: should be false: this is an instance of C
+    expect(s[0].isToplevel()).toBe(true);
+    // TODO: should return the class name
+    // expect(s[0].getTypeName()).toBe('C');
+
+    expect(s[1].isConstructor()).toBe(false);
+    expect(s[1].isToplevel()).toBe(true);
+  };
+  new C();
+  Error.prepareStackTrace = prevPrepareStackTrace;
+});
+
+test("CallFrame.p.isNative", () => {
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+  Error.prepareStackTrace = (e, s) => {
+    expect(s[0].isNative()).toBe(false);
+    expect(s[1].isNative()).toBe(true);
+  };
+  [1, 2].sort(() => {
+    Error.captureStackTrace(new Error(""));
+    return 0;
+  });
+  Error.prepareStackTrace = prevPrepareStackTrace;
+});
+
+test("return non-strings from Error.prepareStackTrace", () => {
+  // This behavior is allowed by V8 and used by the node-depd npm package.
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+  Error.prepareStackTrace = (e, s) => s;
+  const e = new Error();
+  Error.captureStackTrace(e);
+  expect(Array.isArray(e.stack)).toBe(true);
+  Error.prepareStackTrace = prevPrepareStackTrace;
+});
+
+test("CallFrame.p.toString", () => {
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+  Error.prepareStackTrace = (e, s) => s;
+  const e = new Error();
+  Error.captureStackTrace(e);
+  expect(e.stack[0].toString().includes("<anonymous>")).toBe(true);
+});
+
+test.todo("err.stack should invoke prepareStackTrace", () => {
+  // This is V8's behavior.
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+  let wasCalled = false;
+  Error.prepareStackTrace = (e, s) => {
+    wasCalled = true;
+  };
+  const e = new Error();
+  e.stack;
+  expect(wasCalled).toBe(true);
 });

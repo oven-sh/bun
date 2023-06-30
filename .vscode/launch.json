@@ -1,171 +1,202 @@
 {
+  // The usage of BUN_GARBAGE_COLLECTOR_LEVEL=2 is important for debugging
+  // It will force the garbage collector to run after every test and every call to expect()
+  // it makes our tests very slow
+  // But it helps catch memory bugs
+
+  // SIGHUP must be ignored or the debugger will pause when a spawned subprocess exits:
+  // { "initCommands": ["process handle -p false -s false -n false SIGHUP"] }
   "version": "0.2.0",
   "configurations": [
     {
       "type": "lldb",
       "request": "launch",
-      "name": "bun test",
+      "name": "bun test [file]",
       "program": "bun-debug",
       "args": ["test", "${file}"],
-      "cwd": "${file}/../",
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
+      "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
-      // SIGHUP must be ignored or the debugger will pause when a spawned subprocess exits.
       "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
     },
     {
       "type": "lldb",
       "request": "launch",
-      "name": "bun test (fast)",
+      "name": "bun test [file] (fast)",
       "program": "bun-debug",
       "args": ["test", "${file}"],
-      "cwd": "${file}/../",
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
+      "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1"
       },
-      // SIGHUP must be ignored or the debugger will pause when a spawned subprocess exits.
+      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
+      "console": "internalConsole"
+    },
+
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun test [file] (verbose)",
+      "program": "bun-debug",
+      "args": ["test", "${file}"],
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
+      "cwd": "${workspaceFolder}/test",
+      "env": {
+        "FORCE_COLOR": "1"
+      },
       "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
     },
     {
       "type": "lldb",
       "request": "launch",
-      "name": "bun test --watch",
+      "name": "bun test [file] --watch",
       "program": "bun-debug",
-      "args": ["--watch", "test", "${file}"],
-      "cwd": "${workspaceFolder}",
+      "args": ["test", "--watch", "${file}"],
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
+      "cwd": "${workspaceFolder}/test",
       "env": {
-        "FORCE_COLOR": "1"
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1"
       },
-      "console": "internalConsole",
-      // SIGHUP must be ignored or the debugger will pause when a spawned subprocess exits.
-      "initCommands": ["process handle -p false -s false -n false SIGHUP"]
+      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
+      "console": "internalConsole"
     },
     {
       "type": "lldb",
       "request": "launch",
-      "name": "bun test (all)",
+      "name": "bun test [file] --only",
       "program": "bun-debug",
-      "cwd": "${workspaceFolder}",
+      "args": ["test", "--only", "${file}"],
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
+      "cwd": "${workspaceFolder}/test",
       "env": {
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1"
       },
-      "console": "internalConsole",
-      // SIGHUP must be ignored or the debugger will pause when a spawned subprocess exits.
-      "initCommands": ["process handle -p false -s false -n false SIGHUP"]
+      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
+      "console": "internalConsole"
     },
     {
       "type": "lldb",
       "request": "launch",
-      "name": "bun test (all, fast)",
+      "name": "bun test [*]",
       "program": "bun-debug",
       "args": ["test"],
-      "cwd": "${workspaceFolder}",
+      "cwd": "${workspaceFolder}/test",
       "env": {
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
+      },
+      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun test [*] (fast)",
+      "program": "bun-debug",
+      "args": ["test"],
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
+      "cwd": "${workspaceFolder}/test",
+      "env": {
+        "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1"
       },
-      "console": "internalConsole",
-      // SIGHUP must be ignored or the debugger will pause when a spawned subprocess exits.
-      "initCommands": ["process handle -p false -s false -n false SIGHUP"]
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun run current file",
-      "program": "bun-debug",
-      "args": ["${file}"],
-      "cwd": "${file}/../../",
-      "env": {
-        "FORCE_COLOR": "1"
-      },
-      "console": "internalConsole",
-      // SIGHUP must be ignored or the debugger will pause when a spawned subprocess exits.
-      "initCommands": ["process handle -p false -s false -n false SIGHUP"]
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun run (watch)",
-      "program": "bun-debug",
-      "args": ["--watch", "${file}"],
-      "cwd": "${file}/../../",
-      "env": {
-        "FORCE_COLOR": "1"
-      },
+      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
     },
     {
       "type": "lldb",
       "request": "launch",
-      "name": "bun run (hot)",
+      "name": "bun test [*] --only",
       "program": "bun-debug",
-      "args": ["--hot", "${file}"],
-      "cwd": "${file}/../../",
+      "args": ["test", "--only"],
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
+      "cwd": "${workspaceFolder}/test",
       "env": {
-        "FORCE_COLOR": "1"
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1"
       },
-      "console": "internalConsole",
-      // SIGHUP must be ignored or the debugger will pause when a spawned subprocess exits.
-      "initCommands": ["process handle -p false -s false -n false SIGHUP"]
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun run",
-      "program": "bun-debug",
-      "args": ["check.tsx", "-c"],
-      "cwd": "${env:HOME}/Build/react-ssr",
-      "env": {
-        "FORCE_COLOR": "1"
-      },
-      "console": "internalConsole"
-    },
-
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun http example",
-      "program": "bun-debug",
-      "args": ["run", "examples/http.ts"],
-      "cwd": "${workspaceFolder}",
-      "env": {
-        "FORCE_COLOR": "1"
-      },
-      "console": "internalConsole",
-      // SIGHUP must be ignored or the debugger will pause when a spawned subprocess exits.
-      "initCommands": ["process handle -p false -s false -n false SIGHUP"]
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun http file example",
-      "program": "bun-debug",
-      "args": ["run", "examples/bun/http-file.ts"],
-      "cwd": "${workspaceFolder}",
-      "env": {
-        "FORCE_COLOR": "1"
-      },
+      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
     },
     {
       "type": "lldb",
       "request": "launch",
-      "name": "bun html-rewriter example",
+      "name": "bun run [file]",
       "program": "bun-debug",
-      "args": ["run", "examples/bun/html-rewriter.ts"],
-      "cwd": "${workspaceFolder}",
+      "args": ["run", "${file}"],
+      "cwd": "${fileDirname}",
+      "env": {
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1"
+      },
+      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun run [file] (gc)",
+      "program": "bun-debug",
+      "args": ["run", "${file}"],
+      "cwd": "${fileDirname}",
+      "env": {
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
+      },
+      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun run [file] (verbose)",
+      "program": "bun-debug",
+      "args": ["run", "${file}"],
+      "cwd": "${fileDirname}",
       "env": {
         "FORCE_COLOR": "1"
       },
+      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"
     },
-
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun run [file] --watch",
+      "program": "bun-debug",
+      "args": ["run", "--watch", "${file}"],
+      "cwd": "${fileDirname}",
+      "env": {
+        "FORCE_COLOR": "1"
+      },
+      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun run [file] --hot",
+      "program": "bun-debug",
+      "args": ["run", "--hot", "${file}"],
+      "cwd": "${fileDirname}",
+      "env": {
+        "FORCE_COLOR": "1"
+      },
+      "initCommands": ["process handle -p false -s false -n false SIGHUP"],
+      "console": "internalConsole"
+    },
     {
       "type": "lldb",
       "request": "launch",
@@ -294,7 +325,7 @@
       "name": "bun install",
       "program": "bun-debug",
       "args": ["install"],
-      "cwd": "${workspaceFolder}",
+      "cwd": "${fileDirname}",
       "console": "internalConsole",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1"

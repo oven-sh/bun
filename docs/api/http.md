@@ -125,8 +125,7 @@ Bun.serve({
   // string
   key: fs.readFileSync("./key.pem", "utf8"),
   // array of above
-  key: [Bun.file('./key1.pem'), Bun.file('./key2.pem']
-
+  key: [Bun.file('./key1.pem'), Bun.file('./key2.pem')],
 });
 ```
 

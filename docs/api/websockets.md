@@ -12,41 +12,7 @@
 Internally Bun's WebSocket implementation is built on [uWebSockets](https://github.com/uNetworking/uWebSockets).
 {% /callout %}
 
-## Connect to a WebSocket server
-
-To connect to an external socket server, create an instance of `WebSocket` with the constructor.
-
-```ts
-const socket = new WebSocket("ws://localhost:3000");
-```
-
-Bun supports setting custom headers. This is a Bun-specific extension of the `WebSocket` standard.
-
-```ts
-const socket = new WebSocket("ws://localhost:3000", {
-  headers: {
-    // custom headers
-  },
-});
-```
-
-To add event listeners to the socket:
-
-```ts
-// message is received
-socket.addEventListener("message", event => {});
-
-// socket opened
-socket.addEventListener("open", event => {});
-
-// socket closed
-socket.addEventListener("close", event => {});
-
-// error handler
-socket.addEventListener("error", event => {});
-```
-
-## Create a WebSocket server
+## Start a WebSocket server
 
 Below is a simple WebSocket server built with `Bun.serve`, in which all incoming requests are [upgraded](https://developer.mozilla.org/en-US/docs/Web/HTTP/Protocol_upgrade_mechanism) to WebSocket connections in the `fetch` handler. The socket handlers are declared in the `websocket` parameter.
 
@@ -109,7 +75,7 @@ Bun.serve({
 });
 ```
 
-## Sending messages
+### Sending messages
 
 Each `ServerWebSocket` instance has a `.send()` method for sending messages to the client. It supports a range of input types.
 
@@ -119,7 +85,7 @@ ws.send(response.arrayBuffer()); // ArrayBuffer
 ws.send(new Uint8Array([1, 2, 3])); // TypedArray | DataView
 ```
 
-## Headers
+### Headers
 
 Once the upgrade succeeds, Bun will send a `101 Switching Protocols` response per the [spec](https://developer.mozilla.org/en-US/docs/Web/HTTP/Protocol_upgrade_mechanism). Additional `headers` can be attched to this `Response` in the call to `server.upgrade()`.
 
@@ -137,7 +103,7 @@ Bun.serve({
 });
 ```
 
-## Contextual data
+### Contextual data
 
 Contextual `data` can be attached to a new WebSocket in the `.upgrade()` call. This data is made available on the `ws.data` property inside the WebSocket handlers.
 
@@ -145,16 +111,20 @@ Contextual `data` can be attached to a new WebSocket in the `.upgrade()` call. T
 type WebSocketData = {
   createdAt: number;
   channelId: string;
+  authToken: string;
 };
 
 // TypeScript: specify the type of `data`
 Bun.serve<WebSocketData>({
   fetch(req, server) {
+    // use a library to parse cookies
+    const cookies = parseCookies(req.headers.get("Cookie"));
     server.upgrade(req, {
-      // TS: this object must conform to WebSocketData
+      // this object must conform to WebSocketData
       data: {
         createdAt: Date.now(),
         channelId: new URL(req.url).searchParams.get("channelId"),
+        authToken: cookies["X-Token"],
       },
     });
 
@@ -163,53 +133,76 @@ Bun.serve<WebSocketData>({
   websocket: {
     // handler called when a message is received
     async message(ws, message) {
-      ws.data; // WebSocketData
+      const user = getUserFromToken(ws.data.authToken);
+
       await saveMessageToDatabase({
         channel: ws.data.channelId,
         message: String(message),
+        userId: user.id,
       });
     },
   },
 });
 ```
 
-## Pub/Sub
+To connect to this server from the browser, create a new `WebSocket`.
+
+```ts#browser.js
+const socket = new WebSocket("ws://localhost:3000/chat");
+
+socket.addEventListener("message", event => {
+  console.log(event.data);
+})
+```
+
+{% callout %}
+**Identifying users** — The cookies that are currently set on the page will be sent with the WebSocket upgrade request and available on `req.headers` in the `fetch` handler. Parse these cookies to determine the identity of the connecting user and set the value of `data` accordingly.
+{% /callout %}
+
+### Pub/Sub
 
 Bun's `ServerWebSocket` implementation implements a native publish-subscribe API for topic-based broadcasting. Individual sockets can `.subscribe()` to a topic (specified with a string identifier) and `.publish()` messages to all other subscribers to that topic. This topic-based broadcast API is similar to [MQTT](https://en.wikipedia.org/wiki/MQTT) and [Redis Pub/Sub](https://redis.io/topics/pubsub).
 
 ```ts
-const pubsubserver = Bun.serve<{username: string}>({
+const server = Bun.serve<{ username: string }>({
   fetch(req, server) {
-    if (req.url === '/chat') {
-      const cookies = getCookieFromRequest(req);
-      const success = server.upgrade(req, {
-        data: {username: cookies.username},
-      });
+    const url = new URL(req.url);
+    if (url.pathname === "/chat") {
+      console.log(`upgrade!`);
+      const username = getUsernameFromReq(req);
+      const success = server.upgrade(req, { data: { username } });
       return success
         ? undefined
-        : new Response('WebSocket upgrade error', {status: 400});
+        : new Response("WebSocket upgrade error", { status: 400 });
     }
 
-    return new Response('Hello world');
+    return new Response("Hello world");
   },
   websocket: {
     open(ws) {
-      ws.subscribe('the-group-chat');
-      ws.publish('the-group-chat', `${ws.data.username} has entered the chat`);
+      const msg = `${ws.data.username} has entered the chat`;
+      ws.subscribe("the-group-chat");
+      ws.publish("the-group-chat", msg);
     },
     message(ws, message) {
       // this is a group chat
       // so the server re-broadcasts incoming message to everyone
-      ws.publish('the-group-chat', `${ws.data.username}: ${message}`);
+      ws.publish("the-group-chat", `${ws.data.username}: ${message}`);
     },
     close(ws) {
-      ws.unsubscribe('the-group-chat');
-      ws.publish('the-group-chat', `${ws.data.username} has left the chat`);
+      const msg = `${ws.data.username} has left the chat`;
+      ws.unsubscribe("the-group-chat");
+      ws.publish("the-group-chat", msg);
     },
+  },
 });
+
+console.log(`Listening on ${server.hostname}:${server.port}`);
 ```
 
-## Compression
+Calling `.publish(data)` will send the message to all subscribers of a topic _except_ the socket that called `.publish()`.
+
+### Compression
 
 Per-message [compression](https://websockets.readthedocs.io/en/stable/topics/compression.html) can be enabled with the `perMessageDeflate` parameter.
 
@@ -231,7 +224,7 @@ ws.send("Hello world", true);
 
 For fine-grained control over compression characteristics, refer to the [Reference](#reference).
 
-## Backpressure
+### Backpressure
 
 The `.send(message)` method of `ServerWebSocket` returns a `number` indicating the result of the operation.
 
@@ -241,6 +234,42 @@ The `.send(message)` method of `ServerWebSocket` returns a `number` indicating t
 
 This gives you better control over backpressure in your server.
 
+## Connect to a `Websocket` server
+
+To connect to an external socket server, either from a browser or from Bun, create an instance of `WebSocket` with the constructor.
+
+```ts
+const socket = new WebSocket("ws://localhost:3000");
+```
+
+In browsers, the cookies that are currently set on the page will be sent with the WebSocket upgrade request. This is a standard feature of the `WebSocket` API.
+
+For convenience, Bun lets you setting custom headers directly in the constructor. This is a Bun-specific extension of the `WebSocket` standard. _This will not work in browsers._
+
+```ts
+const socket = new WebSocket("ws://localhost:3000", {
+  headers: {
+    // custom headers
+  },
+});
+```
+
+To add event listeners to the socket:
+
+```ts
+// message is received
+socket.addEventListener("message", event => {});
+
+// socket opened
+socket.addEventListener("open", event => {});
+
+// socket closed
+socket.addEventListener("close", event => {});
+
+// error handler
+socket.addEventListener("error", event => {});
+```
+
 ## Reference
 
 ```ts
@@ -248,7 +277,10 @@ namespace Bun {
   export function serve(params: {
     fetch: (req: Request, server: Server) => Response | Promise<Response>;
     websocket?: {
-      message: (ws: ServerWebSocket, message: string | ArrayBuffer | Uint8Array) => void;
+      message: (
+        ws: ServerWebSocket,
+        message: string | ArrayBuffer | Uint8Array,
+      ) => void;
       open?: (ws: ServerWebSocket) => void;
       close?: (ws: ServerWebSocket) => void;
       error?: (ws: ServerWebSocket, error: Error) => void;
@@ -278,7 +310,11 @@ type Compressor =
 
 interface Server {
   pendingWebsockets: number;
-  publish(topic: string, data: string | ArrayBufferView | ArrayBuffer, compress?: boolean): number;
+  publish(
+    topic: string,
+    data: string | ArrayBufferView | ArrayBuffer,
+    compress?: boolean,
+  ): number;
   upgrade(
     req: Request,
     options?: {

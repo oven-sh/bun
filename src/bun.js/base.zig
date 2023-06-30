@@ -207,6 +207,15 @@ pub const To = struct {
 
                     return array;
                 },
+                []const bun.String => {
+                    defer {
+                        for (value) |out| {
+                            out.deref();
+                        }
+                        bun.default_allocator.free(value);
+                    }
+                    return bun.String.toJSArray(context, value).asObjectRef();
+                },
                 []const PathString, []const []const u8, []const []u8, [][]const u8, [][:0]const u8, [][:0]u8 => {
                     if (value.len == 0)
                         return JSC.C.JSObjectMakeArray(context, 0, null, exception);
@@ -1282,23 +1291,27 @@ pub fn NewClassWithInstanceType(
 
         const static_properties: [property_names.len + 1]js.JSStaticValue = brk: {
             var props: [property_names.len + 1]js.JSStaticValue = undefined;
-            std.mem.set(
-                js.JSStaticValue,
+            @memset(
                 &props,
                 js.JSStaticValue{
-                    .name = @intToPtr([*c]const u8, 0),
+                    .name = @ptrFromInt([*c]const u8, 0),
                     .getProperty = null,
                     .setProperty = null,
                     .attributes = js.JSPropertyAttributes.kJSPropertyAttributeNone,
                 },
             );
+            if (property_name_literals.len > 0 and @TypeOf(property_name_literals[0]) == [:0]const u8) {
+                @compileError("@typeInfo() struct field names are null-terminated");
+            }
             for (property_name_literals, 0..) |lit, i| {
                 props[i] = brk2: {
                     var static_prop = JSC.C.JSStaticValue{
-                        .name = lit.ptr[0..lit.len :0],
+                        // TODO: update when @typeInfo struct field names are sentinel terminated
+                        // https://github.com/ziglang/zig/issues/16072
+                        .name = lit ++ .{0},
                         .getProperty = null,
                         .setProperty = null,
-                        .attributes = @intToEnum(js.JSPropertyAttributes, 0),
+                        .attributes = @enumFromInt(js.JSPropertyAttributes, 0),
                     };
                     static_prop.getProperty = StaticProperty(i).getter;
 
@@ -1387,14 +1400,14 @@ pub fn NewClassWithInstanceType(
                             const ctxfn = CtxField.rfn;
                             const Func: std.builtin.Type.Fn = @typeInfo(@TypeOf(if (@typeInfo(@TypeOf(ctxfn)) == .Pointer) ctxfn.* else ctxfn)).Fn;
 
-                            var attributes: c_uint = @enumToInt(js.JSPropertyAttributes.kJSPropertyAttributeNone);
+                            var attributes: c_uint = @intFromEnum(js.JSPropertyAttributes.kJSPropertyAttributeNone);
 
                             if (comptime is_read_only or hasReadOnly(@TypeOf(CtxField))) {
-                                attributes |= @enumToInt(js.JSPropertyAttributes.kJSPropertyAttributeReadOnly);
+                                attributes |= @intFromEnum(js.JSPropertyAttributes.kJSPropertyAttributeReadOnly);
                             }
 
                             if (comptime hasEnumerable(@TypeOf(CtxField)) and !CtxField.enumerable) {
-                                attributes |= @enumToInt(js.JSPropertyAttributes.kJSPropertyAttributeDontEnum);
+                                attributes |= @intFromEnum(js.JSPropertyAttributes.kJSPropertyAttributeDontEnum);
                             }
 
                             const PointerType = comptime brk: {
@@ -1410,7 +1423,7 @@ pub fn NewClassWithInstanceType(
                                     PointerType,
                                     if (@typeInfo(@TypeOf(ctxfn)) == .Pointer) ctxfn.* else ctxfn,
                                 ).rfn,
-                                .attributes = @intToEnum(js.JSPropertyAttributes, attributes),
+                                .attributes = @enumFromInt(js.JSPropertyAttributes, attributes),
                             };
 
                             count += 1;
@@ -1429,12 +1442,12 @@ pub fn NewClassWithInstanceType(
                             def.hasInstance = &staticFunctions.hasInstance;
                         } else {
                             const attributes: js.JSPropertyAttributes = brk: {
-                                var base = @enumToInt(js.JSPropertyAttributes.kJSPropertyAttributeNone);
+                                var base = @intFromEnum(js.JSPropertyAttributes.kJSPropertyAttributeNone);
 
                                 if (is_read_only)
-                                    base |= @enumToInt(js.JSPropertyAttributes.kJSPropertyAttributeReadOnly);
+                                    base |= @intFromEnum(js.JSPropertyAttributes.kJSPropertyAttributeReadOnly);
 
-                                break :brk @intToEnum(js.JSPropertyAttributes, base);
+                                break :brk @enumFromInt(js.JSPropertyAttributes, base);
                             };
 
                             __static_functions[count] = js.JSStaticFunction{
@@ -1825,7 +1838,7 @@ pub const ArrayBuffer = extern struct {
                 this.ptr,
                 this.byte_len,
                 MarkedArrayBuffer_deallocator,
-                @intToPtr(*anyopaque, @ptrToInt(&bun.default_allocator)),
+                @ptrFromInt(*anyopaque, @intFromPtr(&bun.default_allocator)),
                 exception,
             ));
         }
@@ -1836,7 +1849,7 @@ pub const ArrayBuffer = extern struct {
             this.ptr,
             this.byte_len,
             MarkedArrayBuffer_deallocator,
-            @intToPtr(*anyopaque, @ptrToInt(&bun.default_allocator)),
+            @ptrFromInt(*anyopaque, @intFromPtr(&bun.default_allocator)),
             exception,
         ));
     }
@@ -2042,8 +2055,8 @@ pub const RefString = struct {
     ptr: [*]const u8 = undefined,
     len: usize = 0,
     hash: Hash = 0,
+    impl: bun.WTF.StringImpl,
 
-    count: u32 = 0,
     allocator: std.mem.Allocator,
 
     ctx: ?*anyopaque = null,
@@ -2053,17 +2066,13 @@ pub const RefString = struct {
     pub const Map = std.HashMap(Hash, *JSC.RefString, IdentityContext(Hash), 80);
 
     pub fn toJS(this: *RefString, global: *JSC.JSGlobalObject) JSValue {
-        return JSC.ZigString.init(this.slice()).external(global, this, RefString__external);
+        return bun.String.init(this.impl).toJS(global);
     }
 
     pub const Callback = fn (ctx: *anyopaque, str: *RefString) void;
 
     pub fn computeHash(input: []const u8) u32 {
-        return @truncate(u32, std.hash.Wyhash.hash(0, input));
-    }
-
-    pub fn ref(this: *RefString) void {
-        this.count += 1;
+        return std.hash.XxHash32.hash(0, input);
     }
 
     pub fn slice(this: *RefString) []const u8 {
@@ -2072,25 +2081,21 @@ pub const RefString = struct {
         return this.leak();
     }
 
+    pub fn ref(this: *RefString) void {
+        this.impl.ref();
+    }
+
     pub fn leak(this: RefString) []const u8 {
         @setRuntimeSafety(false);
         return this.ptr[0..this.len];
     }
 
     pub fn deref(this: *RefString) void {
-        this.count -|= 1;
-
-        if (this.count == 0) {
-            this.deinit();
-        }
+        this.impl.deref();
     }
 
-    pub export fn RefString__free(this: *RefString, _: [*]const u8, _: usize) void {
-        this.deref();
-    }
-
-    pub export fn RefString__external(this: ?*anyopaque, _: ?*anyopaque, _: usize) void {
-        bun.cast(*RefString, this.?).deref();
+    pub export fn RefString__free(this: *anyopaque, _: *anyopaque, _: u32) void {
+        bun.cast(*RefString, this).deinit();
     }
 
     pub fn deinit(this: *RefString) void {
@@ -3125,6 +3130,29 @@ pub fn wrapStaticMethod(
                             args[i] = null;
                         }
                     },
+                    JSC.Node.SliceOrBuffer => {
+                        const arg = iter.nextEat() orelse {
+                            globalThis.throwInvalidArguments("expected string or buffer", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        };
+                        args[i] = JSC.Node.SliceOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
+                            globalThis.throwInvalidArguments("expected string or buffer", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        };
+                    },
+                    ?JSC.Node.SliceOrBuffer => {
+                        if (iter.nextEat()) |arg| {
+                            args[i] = JSC.Node.SliceOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
+                                globalThis.throwInvalidArguments("expected string or buffer", .{});
+                                iter.deinit();
+                                return JSC.JSValue.zero;
+                            };
+                        } else {
+                            args[i] = null;
+                        }
+                    },
                     JSC.ArrayBuffer => {
                         if (iter.nextEat()) |arg| {
                             args[i] = arg.asArrayBuffer(globalThis.ptr()) orelse {
@@ -3331,7 +3359,7 @@ pub const FilePoll = struct {
     const DNSResolver = JSC.DNS.DNSResolver;
     const GetAddrInfoRequest = JSC.DNS.GetAddrInfoRequest;
     const Deactivated = opaque {
-        pub var owner: Owner = Owner.init(@intToPtr(*Deactivated, @as(usize, 0xDEADBEEF)));
+        pub var owner: Owner = Owner.init(@ptrFromInt(*Deactivated, @as(usize, 0xDEADBEEF)));
     };
 
     pub const Owner = bun.TaggedPointerUnion(.{
@@ -3586,7 +3614,7 @@ pub const FilePoll = struct {
             return;
         this.flags.insert(.disable);
 
-        vm.uws_event_loop.?.active -= @as(u32, @boolToInt(this.flags.contains(.has_incremented_poll_count)));
+        vm.uws_event_loop.?.active -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
     }
 
     pub fn enableKeepingProcessAlive(this: *FilePoll, vm: *JSC.VirtualMachine) void {
@@ -3594,7 +3622,7 @@ pub const FilePoll = struct {
             return;
         this.flags.remove(.disable);
 
-        vm.uws_event_loop.?.active += @as(u32, @boolToInt(this.flags.contains(.has_incremented_poll_count)));
+        vm.uws_event_loop.?.active += @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
     }
 
     pub fn canActivate(this: *const FilePoll) bool {
@@ -3604,16 +3632,16 @@ pub const FilePoll = struct {
     /// Only intended to be used from EventLoop.Pollable
     pub fn deactivate(this: *FilePoll, loop: *uws.Loop) void {
         std.debug.assert(this.flags.contains(.has_incremented_poll_count));
-        loop.num_polls -= @as(i32, @boolToInt(this.flags.contains(.has_incremented_poll_count)));
-        loop.active -|= @as(u32, @boolToInt(!this.flags.contains(.disable) and this.flags.contains(.has_incremented_poll_count)));
+        loop.num_polls -= @as(i32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
+        loop.active -|= @as(u32, @intFromBool(!this.flags.contains(.disable) and this.flags.contains(.has_incremented_poll_count)));
 
         this.flags.remove(.has_incremented_poll_count);
     }
 
     /// Only intended to be used from EventLoop.Pollable
     pub fn activate(this: *FilePoll, loop: *uws.Loop) void {
-        loop.num_polls += @as(i32, @boolToInt(!this.flags.contains(.has_incremented_poll_count)));
-        loop.active += @as(u32, @boolToInt(!this.flags.contains(.disable) and !this.flags.contains(.has_incremented_poll_count)));
+        loop.num_polls += @as(i32, @intFromBool(!this.flags.contains(.has_incremented_poll_count)));
+        loop.active += @as(u32, @intFromBool(!this.flags.contains(.disable) and !this.flags.contains(.has_incremented_poll_count)));
 
         this.flags.insert(.has_incremented_poll_count);
     }
@@ -3714,7 +3742,7 @@ pub const FilePoll = struct {
                 else => unreachable,
             };
 
-            var event = linux.epoll_event{ .events = flags, .data = .{ .u64 = @ptrToInt(Pollable.init(this).ptr()) } };
+            var event = linux.epoll_event{ .events = flags, .data = .{ .u64 = @intFromPtr(Pollable.init(this).ptr()) } };
 
             const ctl = linux.epoll_ctl(
                 watcher_fd,
@@ -3735,7 +3763,7 @@ pub const FilePoll = struct {
                     .filter = std.os.system.EVFILT_READ,
                     .data = 0,
                     .fflags = 0,
-                    .udata = @ptrToInt(Pollable.init(this).ptr()),
+                    .udata = @intFromPtr(Pollable.init(this).ptr()),
                     .flags = std.c.EV_ADD | one_shot_flag,
                     .ext = .{ this.generation_number, 0 },
                 },
@@ -3744,7 +3772,7 @@ pub const FilePoll = struct {
                     .filter = std.os.system.EVFILT_WRITE,
                     .data = 0,
                     .fflags = 0,
-                    .udata = @ptrToInt(Pollable.init(this).ptr()),
+                    .udata = @intFromPtr(Pollable.init(this).ptr()),
                     .flags = std.c.EV_ADD | one_shot_flag,
                     .ext = .{ this.generation_number, 0 },
                 },
@@ -3753,7 +3781,7 @@ pub const FilePoll = struct {
                     .filter = std.os.system.EVFILT_PROC,
                     .data = 0,
                     .fflags = std.c.NOTE_EXIT,
-                    .udata = @ptrToInt(Pollable.init(this).ptr()),
+                    .udata = @intFromPtr(Pollable.init(this).ptr()),
                     .flags = std.c.EV_ADD | one_shot_flag,
                     .ext = .{ this.generation_number, 0 },
                 },
@@ -3762,7 +3790,7 @@ pub const FilePoll = struct {
                     .filter = std.os.system.EVFILT_MACHPORT,
                     .data = 0,
                     .fflags = 0,
-                    .udata = @ptrToInt(Pollable.init(this).ptr()),
+                    .udata = @intFromPtr(Pollable.init(this).ptr()),
                     .flags = std.c.EV_ADD | one_shot_flag,
                     .ext = .{ this.generation_number, 0 },
                 },
@@ -3887,7 +3915,7 @@ pub const FilePoll = struct {
                     .filter = std.os.system.EVFILT_READ,
                     .data = 0,
                     .fflags = 0,
-                    .udata = @ptrToInt(Pollable.init(this).ptr()),
+                    .udata = @intFromPtr(Pollable.init(this).ptr()),
                     .flags = std.c.EV_DELETE,
                     .ext = .{ 0, 0 },
                 },
@@ -3896,7 +3924,7 @@ pub const FilePoll = struct {
                     .filter = std.os.system.EVFILT_MACHPORT,
                     .data = 0,
                     .fflags = 0,
-                    .udata = @ptrToInt(Pollable.init(this).ptr()),
+                    .udata = @intFromPtr(Pollable.init(this).ptr()),
                     .flags = std.c.EV_DELETE,
                     .ext = .{ 0, 0 },
                 },
@@ -3905,7 +3933,7 @@ pub const FilePoll = struct {
                     .filter = std.os.system.EVFILT_WRITE,
                     .data = 0,
                     .fflags = 0,
-                    .udata = @ptrToInt(Pollable.init(this).ptr()),
+                    .udata = @intFromPtr(Pollable.init(this).ptr()),
                     .flags = std.c.EV_DELETE,
                     .ext = .{ 0, 0 },
                 },
@@ -3914,7 +3942,7 @@ pub const FilePoll = struct {
                     .filter = std.os.system.EVFILT_PROC,
                     .data = 0,
                     .fflags = std.c.NOTE_EXIT,
-                    .udata = @ptrToInt(Pollable.init(this).ptr()),
+                    .udata = @intFromPtr(Pollable.init(this).ptr()),
                     .flags = std.c.EV_DELETE,
                     .ext = .{ 0, 0 },
                 },
@@ -3949,7 +3977,7 @@ pub const FilePoll = struct {
 
             const errno = std.c.getErrno(rc);
             switch (rc) {
-                std.math.minInt(@TypeOf(rc))...-1 => return JSC.Maybe(void).errnoSys(@enumToInt(errno), .kevent).?,
+                std.math.minInt(@TypeOf(rc))...-1 => return JSC.Maybe(void).errnoSys(@intFromEnum(errno), .kevent).?,
                 else => {},
             }
         } else {

@@ -8,12 +8,39 @@ it("crypto.randomBytes should return a Buffer", () => {
   expect(Buffer.isBuffer(crypto.randomBytes(1))).toBe(true);
 });
 
+it("crypto.randomInt should return a number", () => {
+  const result = crypto.randomInt(0, 10);
+  expect(typeof result).toBe("number");
+  expect(result).toBeGreaterThanOrEqual(0);
+  expect(result).toBeLessThanOrEqual(10);
+});
+
+it("crypto.randomInt with no arguments", () => {
+  const result = crypto.randomInt();
+  expect(typeof result).toBe("number");
+  expect(result).toBeGreaterThanOrEqual(0);
+  expect(result).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER);
+});
+
+it("crypto.randomInt with one argument", () => {
+  const result = crypto.randomInt(100);
+  expect(typeof result).toBe("number");
+  expect(result).toBeGreaterThanOrEqual(0);
+  expect(result).toBeLessThanOrEqual(100);
+});
+
 // https://github.com/oven-sh/bun/issues/1839
 describe("createHash", () => {
   it("update & digest", () => {
     const hash = crypto.createHash("sha256");
     hash.update("some data to hash");
     expect(hash.digest("hex")).toBe("6a2da20943931e9834fc12cfe5bb47bbd9ae43489a30726962b576f4e3993e50");
+  });
+
+  it("returns Buffer", () => {
+    const hash = crypto.createHash("sha256");
+    hash.update("some data to hash");
+    expect(Buffer.isBuffer(hash.digest())).toBeTrue();
   });
 
   it("stream (sync)", () => {

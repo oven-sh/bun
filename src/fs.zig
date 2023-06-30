@@ -157,10 +157,10 @@ pub const FileSystem = struct {
 
         pub fn addEntry(dir: *DirEntry, prev_map: ?*EntryMap, entry: std.fs.IterableDir.Entry, allocator: std.mem.Allocator, comptime Iterator: type, iterator: Iterator) !void {
             const _kind: Entry.Kind = switch (entry.kind) {
-                .Directory => .dir,
+                .directory => .dir,
                 // This might be wrong!
-                .SymLink => .file,
-                .File => .file,
+                .sym_link => .file,
+                .file => .file,
                 else => return,
             };
 
@@ -207,7 +207,7 @@ pub const FileSystem = struct {
                     // Call "stat" lazily for performance. The "@material-ui/icons" package
                     // contains a directory with over 11,000 entries in it and running "stat"
                     // for each entry was a big performance issue for that package.
-                    .need_stat = entry.kind == .SymLink,
+                    .need_stat = entry.kind == .sym_link,
                     .cache = .{
                         .symlink = PathString.empty,
                         .kind = _kind,
@@ -768,7 +768,7 @@ pub const FileSystem = struct {
                 hash_bytes_remain = hash_bytes_remain[@sizeOf(@TypeOf(this.mtime))..];
                 std.debug.assert(hash_bytes_remain.len == 8);
                 hash_bytes_remain[0..8].* = @bitCast([8]u8, @as(u64, 0));
-                return std.hash.Wyhash.hash(0, &hash_bytes);
+                return bun.hash(&hash_bytes);
             }
 
             pub fn generate(_: *RealFS, _: string, file: std.fs.File) anyerror!ModKey {
@@ -1109,24 +1109,15 @@ pub const FileSystem = struct {
             return File{ .path = Path.init(path), .contents = file_contents };
         }
 
-        pub fn kind(
+        pub fn kindFromAbsolute(
             fs: *RealFS,
-            _dir: string,
-            base: string,
+            absolute_path: [:0]const u8,
             existing_fd: StoredFileDescriptorType,
             store_fd: bool,
         ) !Entry.Cache {
-            var dir = _dir;
-            var combo = [2]string{ dir, base };
             var outpath: [bun.MAX_PATH_BYTES]u8 = undefined;
-            var entry_path = path_handler.joinAbsStringBuf(fs.cwd, &outpath, &combo, .auto);
 
-            outpath[entry_path.len + 1] = 0;
-            outpath[entry_path.len] = 0;
-
-            const absolute_path_c: [:0]const u8 = outpath[0..entry_path.len :0];
-
-            var stat = try C.lstat_absolute(absolute_path_c);
+            var stat = try C.lstat_absolute(absolute_path);
             const is_symlink = stat.kind == std.fs.File.Kind.SymLink;
             var _kind = stat.kind;
             var cache = Entry.Cache{
@@ -1139,9 +1130,9 @@ pub const FileSystem = struct {
                 var file = try if (existing_fd != 0)
                     std.fs.File{ .handle = existing_fd }
                 else if (store_fd)
-                    std.fs.openFileAbsoluteZ(absolute_path_c, .{ .mode = .read_only })
+                    std.fs.openFileAbsoluteZ(absolute_path, .{ .mode = .read_only })
                 else
-                    bun.openFileForPath(absolute_path_c);
+                    bun.openFileForPath(absolute_path);
                 setMaxFd(file.handle);
 
                 defer {
@@ -1172,6 +1163,69 @@ pub const FileSystem = struct {
             return cache;
         }
 
+        pub fn kind(
+            fs: *RealFS,
+            _dir: string,
+            base: string,
+            existing_fd: StoredFileDescriptorType,
+            store_fd: bool,
+        ) !Entry.Cache {
+            var dir = _dir;
+            var combo = [2]string{ dir, base };
+            var outpath: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var entry_path = path_handler.joinAbsStringBuf(fs.cwd, &outpath, &combo, .auto);
+
+            outpath[entry_path.len + 1] = 0;
+            outpath[entry_path.len] = 0;
+
+            const absolute_path_c: [:0]const u8 = outpath[0..entry_path.len :0];
+
+            var stat = try C.lstat_absolute(absolute_path_c);
+            const is_symlink = stat.kind == std.fs.File.Kind.sym_link;
+            var _kind = stat.kind;
+            var cache = Entry.Cache{
+                .kind = Entry.Kind.file,
+                .symlink = PathString.empty,
+            };
+            var symlink: []const u8 = "";
+
+            if (is_symlink) {
+                var file = try if (existing_fd != 0)
+                    std.fs.File{ .handle = existing_fd }
+                else if (store_fd)
+                    std.fs.openFileAbsoluteZ(absolute_path_c, .{ .mode = .read_only })
+                else
+                    bun.openFileForPath(absolute_path_c);
+                setMaxFd(file.handle);
+
+                defer {
+                    if ((!store_fd or fs.needToCloseFiles()) and existing_fd == 0) {
+                        file.close();
+                    } else if (comptime FeatureFlags.store_file_descriptors) {
+                        cache.fd = file.handle;
+                    }
+                }
+                const _stat = try file.stat();
+
+                symlink = try bun.getFdPath(file.handle, &outpath);
+
+                _kind = _stat.kind;
+            }
+
+            std.debug.assert(_kind != .sym_link);
+
+            if (_kind == .directory) {
+                cache.kind = .dir;
+            } else {
+                cache.kind = .file;
+            }
+            if (symlink.len > 0) {
+                cache.symlink = PathString.init(try FilenameStore.instance.append([]const u8, symlink));
+            }
+
+            return cache;
+        }
+
         //     	// Stores the file entries for directories we've listed before
         // entries_mutex: std.Mutex
         // entries      map[string]entriesOrErr
@@ -1189,6 +1243,79 @@ pub const FileSystem = struct {
 
 pub const Directory = struct { path: Path, contents: []string };
 pub const File = struct { path: Path, contents: string };
+
+pub const NodeJSPathName = struct {
+    base: string,
+    dir: string,
+    /// includes the leading .
+    ext: string,
+    filename: string,
+
+    pub fn init(_path: string, sep: u8) NodeJSPathName {
+        var path = _path;
+        var base = path;
+        // ext must be empty if not detected
+        var ext: string = "";
+        var dir = path;
+        var is_absolute = true;
+        var _i = strings.lastIndexOfChar(path, sep);
+        var first = true;
+        while (_i) |i| {
+
+            // Stop if we found a non-trailing slash
+            if (i + 1 != path.len and path.len >= i + 1) {
+                base = path[i + 1 ..];
+                dir = path[0..i];
+                is_absolute = false;
+                break;
+            }
+
+            // If the path starts with a slash and it's the only slash, it's absolute
+            if (i == 0 and first) {
+                base = path[1..];
+                dir = &([_]u8{});
+                break;
+            }
+
+            first = false;
+            // Ignore trailing slashes
+
+            path = path[0..i];
+
+            _i = strings.lastIndexOfChar(path, sep);
+        }
+
+        // clean trailing slashs
+        if (base.len > 1 and base[base.len - 1] == sep) {
+            base = base[0 .. base.len - 1];
+        }
+
+        // filename is base without extension
+        var filename = base;
+
+        // if only one character ext = "" even if filename it's "."
+        if (filename.len > 1) {
+            // Strip off the extension
+            var _dot = strings.lastIndexOfChar(filename, '.');
+            if (_dot) |dot| {
+                ext = filename[dot..];
+                if (dot > 0)
+                    filename = filename[0..dot];
+            }
+        }
+
+        if (is_absolute) {
+            dir = &([_]u8{});
+        }
+
+        return NodeJSPathName{
+            .dir = dir,
+            .base = base,
+            .ext = ext,
+            .filename = filename,
+        };
+    }
+};
 
 pub const PathName = struct {
     base: string,
@@ -1245,8 +1372,8 @@ pub const PathName = struct {
         // so we extend the original slice's length by one
         return if (this.dir.len == 0) "./" else this.dir.ptr[0 .. this.dir.len + @intCast(
             usize,
-            @boolToInt(
-                this.dir[this.dir.len - 1] != std.fs.path.sep_posix and (@ptrToInt(this.dir.ptr) + this.dir.len + 1) == @ptrToInt(this.base.ptr),
+            @intFromBool(
+                this.dir[this.dir.len - 1] != std.fs.path.sep_posix and (@intFromPtr(this.dir.ptr) + this.dir.len + 1) == @intFromPtr(this.base.ptr),
             ),
         )];
     }
@@ -1254,64 +1381,46 @@ pub const PathName = struct {
     pub fn init(_path: string) PathName {
         var path = _path;
         var base = path;
-        // ext must be empty if not detected
-        var ext: string = "";
+        var ext = path;
         var dir = path;
         var is_absolute = true;
-        var _i = strings.lastIndexOfChar(path, '/');
-        var first = true;
-        while (_i) |i| {
 
+        var _i = strings.lastIndexOfChar(path, '/');
+        while (_i) |i| {
             // Stop if we found a non-trailing slash
-            if (i + 1 != path.len) {
+            if (i + 1 != path.len and path.len > i + 1) {
                 base = path[i + 1 ..];
                 dir = path[0..i];
                 is_absolute = false;
                 break;
             }
 
-            // If the path starts with a slash and it's the only slash, it's absolute
-            if (i == 0 and first) {
-                base = path[1..];
-                dir = &([_]u8{});
-                break;
-            }
-
-            first = false;
             // Ignore trailing slashes
-
             path = path[0..i];
 
             _i = strings.lastIndexOfChar(path, '/');
         }
 
-        // clean trailing slashs
-        if (base.len > 1 and base[base.len - 1] == '/') {
-            base = base[0 .. base.len - 1];
-        }
-
-        // filename is base with extension
-        var filename = base;
-
-        // if only one character ext = "" even if base it's "."
-        if (base.len > 1) {
-            // Strip off the extension
-            var _dot = strings.lastIndexOfChar(base, '.');
-            if (_dot) |dot| {
-                ext = base[dot..];
-                base = base[0..dot];
-            }
+        // Strip off the extension
+        var _dot = strings.lastIndexOfChar(base, '.');
+        if (_dot) |dot| {
+            ext = base[dot..];
+            base = base[0..dot];
         }
 
         if (is_absolute) {
             dir = &([_]u8{});
         }
 
+        if (base.len > 1 and base[base.len - 1] == '/') {
+            base = base[0 .. base.len - 1];
+        }
+
         return PathName{
             .dir = dir,
             .base = base,
             .ext = ext,
-            .filename = filename,
+            .filename = if (dir.len > 0) _path[dir.len + 1 ..] else _path,
         };
     }
 };

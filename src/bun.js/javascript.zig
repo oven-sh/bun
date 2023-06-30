@@ -11,6 +11,7 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const ErrorableString = bun.JSC.ErrorableString;
 const Arena = @import("../mimalloc_arena.zig").Arena;
 const C = bun.C;
 const NetworkThread = @import("root").bun.HTTP.NetworkThread;
@@ -47,6 +48,7 @@ const WebCore = @import("root").bun.JSC.WebCore;
 const Request = WebCore.Request;
 const Response = WebCore.Response;
 const Headers = WebCore.Headers;
+const String = bun.String;
 const Fetch = WebCore.Fetch;
 const FetchEvent = WebCore.FetchEvent;
 const js = @import("root").bun.JSC.C;
@@ -194,7 +196,7 @@ pub const SavedSourceMap = struct {
     pub const SourceMapHandler = js_printer.SourceMapHandler.For(SavedSourceMap, onSourceMapChunk);
 
     pub fn putMappings(this: *SavedSourceMap, source: logger.Source, mappings: MutableString) !void {
-        var entry = try this.map.getOrPut(std.hash.Wyhash.hash(0, source.path.text));
+        var entry = try this.map.getOrPut(bun.hash(source.path.text));
         if (entry.found_existing) {
             var value = Value.from(entry.value_ptr.*);
             if (value.get(MappingList)) |source_map_| {
@@ -211,7 +213,7 @@ pub const SavedSourceMap = struct {
     }
 
     pub fn get(this: *SavedSourceMap, path: string) ?MappingList {
-        var mapping = this.map.getEntry(std.hash.Wyhash.hash(0, path)) orelse return null;
+        var mapping = this.map.getEntry(bun.hash(path)) orelse return null;
         switch (Value.from(mapping.value_ptr.*).tag()) {
             (@field(Value.Tag, @typeName(MappingList))) => {
                 return Value.from(mapping.value_ptr.*).as(MappingList).*;
@@ -262,7 +264,7 @@ export fn Bun__readOriginTimer(vm: *JSC.VirtualMachine) u64 {
 
 export fn Bun__readOriginTimerStart(vm: *JSC.VirtualMachine) f64 {
     // timespce to milliseconds
-    return @floatCast(f64, (@intToFloat(f64, vm.origin_timestamp) + JSC.VirtualMachine.origin_relative_epoch) / 1_000_000.0);
+    return @floatCast(f64, (@floatFromInt(f64, vm.origin_timestamp) + JSC.VirtualMachine.origin_relative_epoch) / 1_000_000.0);
 }
 
 // comptime {
@@ -442,12 +444,26 @@ pub const VirtualMachine = struct {
     onUnhandledRejectionCtx: ?*anyopaque = null,
     unhandled_error_counter: usize = 0,
 
+    on_exception: ?*const OnException = null,
+
     modules: ModuleLoader.AsyncModule.Queue = .{},
     aggressive_garbage_collection: GCLevel = GCLevel.none,
+
+    parser_arena: ?@import("root").bun.ArenaAllocator = null,
 
     gc_controller: JSC.GarbageCollectionController = .{},
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    pub const OnException = fn (*ZigException) void;
+
+    pub fn setOnException(this: *VirtualMachine, callback: *const OnException) void {
+        this.on_exception = callback;
+    }
+
+    pub fn clearOnException(this: *VirtualMachine) void {
+        this.on_exception = null;
+    }
 
     const VMHolder = struct {
         pub threadlocal var vm: ?*VirtualMachine = null;
@@ -577,7 +593,10 @@ pub const VirtualMachine = struct {
     pub inline fn nodeFS(this: *VirtualMachine) *Node.NodeFS {
         return this.node_fs orelse brk: {
             this.node_fs = bun.default_allocator.create(Node.NodeFS) catch unreachable;
-            this.node_fs.?.* = Node.NodeFS{};
+            this.node_fs.?.* = Node.NodeFS{
+                // only used when standalone module graph is enabled
+                .vm = if (this.standalone_module_graph != null) this else null,
+            };
             break :brk this.node_fs.?;
         };
     }
@@ -635,6 +654,10 @@ pub const VirtualMachine = struct {
 
     pub fn waitForPromise(this: *VirtualMachine, promise: JSC.AnyPromise) void {
         this.eventLoop().waitForPromise(promise);
+    }
+
+    pub fn waitForPromiseWithTimeout(this: *VirtualMachine, promise: JSC.AnyPromise, timeout: u32) bool {
+        return this.eventLoop().waitForPromiseWithTimeout(promise, timeout);
     }
 
     pub fn waitForTasks(this: *VirtualMachine) void {
@@ -766,6 +789,7 @@ pub const VirtualMachine = struct {
             .ref_strings = JSC.RefString.Map.init(allocator),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .standalone_module_graph = graph,
+            .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -777,6 +801,7 @@ pub const VirtualMachine = struct {
 
         vm.bundler.macro_context = null;
         vm.bundler.resolver.store_fd = false;
+        vm.bundler.resolver.prefer_module_field = false;
 
         vm.bundler.resolver.onWakePackageManager = .{
             .context = &vm.modules,
@@ -862,6 +887,7 @@ pub const VirtualMachine = struct {
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
+            .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
@@ -873,6 +899,7 @@ pub const VirtualMachine = struct {
 
         vm.bundler.macro_context = null;
         vm.bundler.resolver.store_fd = store_fd;
+        vm.bundler.resolver.prefer_module_field = false;
 
         vm.bundler.resolver.onWakePackageManager = .{
             .context = &vm.modules,
@@ -922,12 +949,16 @@ pub const VirtualMachine = struct {
         _ = VirtualMachine.get().ref_strings.remove(ref_string.hash);
     }
 
-    pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifier: []const u8, source_url: []const u8, hash_: ?u32) ResolvedSource {
-        var source = this.refCountedString(code, hash_, true);
+    pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifier: bun.String, source_url: []const u8, hash_: ?u32, comptime add_double_ref: bool) ResolvedSource {
+        var source = this.refCountedString(code, hash_, !add_double_ref);
+        if (add_double_ref) {
+            source.ref();
+            source.ref();
+        }
 
         return ResolvedSource{
-            .source_code = ZigString.init(source.slice()),
-            .specifier = ZigString.init(specifier),
+            .source_code = bun.String.init(source.impl),
+            .specifier = specifier,
             .source_url = ZigString.init(source_url),
             .hash = source.hash,
             .allocator = source,
@@ -935,6 +966,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
+        JSC.markBinding(@src());
         const hash = hash_ orelse JSC.RefString.computeHash(input_);
 
         var entry = this.ref_strings.getOrPut(hash) catch unreachable;
@@ -949,6 +981,7 @@ pub const VirtualMachine = struct {
                 .allocator = this.allocator,
                 .ptr = input.ptr,
                 .len = input.len,
+                .impl = bun.String.createExternal(input, true, ref, &JSC.RefString.RefString__free).value.WTFStringImpl,
                 .hash = hash,
                 .ctx = this,
                 .onBeforeDeinit = VirtualMachine.clearRefString,
@@ -982,20 +1015,26 @@ pub const VirtualMachine = struct {
     pub fn fetchWithoutOnLoadPlugins(
         jsc_vm: *VirtualMachine,
         globalObject: *JSC.JSGlobalObject,
-        _specifier: string,
-        referrer: string,
+        _specifier: String,
+        referrer: String,
         log: *logger.Log,
         ret: *ErrorableResolvedSource,
         comptime flags: FetchFlags,
-    ) !ResolvedSource {
+    ) anyerror!ResolvedSource {
         std.debug.assert(VirtualMachine.isLoaded());
 
         if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier, log, comptime flags.disableTranspiling())) |builtin| {
             return builtin;
         }
-        var display_specifier = _specifier;
-        var specifier = ModuleLoader.normalizeSpecifier(jsc_vm, _specifier, &display_specifier);
-        var path = Fs.Path.init(specifier);
+        var display_specifier = _specifier.toUTF8(bun.default_allocator);
+        defer display_specifier.deinit();
+        var specifier_clone = _specifier.toUTF8(bun.default_allocator);
+        defer specifier_clone.deinit();
+        var display_slice = display_specifier.slice();
+        var specifier = ModuleLoader.normalizeSpecifier(jsc_vm, specifier_clone.slice(), &display_slice);
+        const referrer_clone = referrer.toUTF8(bun.default_allocator);
+        defer referrer_clone.deinit();
+        var path = Fs.Path.init(specifier_clone.slice());
         const loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
             if (strings.eqlLong(specifier, jsc_vm.main, true)) {
                 break :brk options.Loader.js;
@@ -1006,9 +1045,10 @@ pub const VirtualMachine = struct {
 
         return try ModuleLoader.transpileSourceCode(
             jsc_vm,
-            specifier,
-            display_specifier,
-            referrer,
+            specifier_clone.slice(),
+            display_slice,
+            referrer_clone.slice(),
+            _specifier,
             path,
             loader,
             log,
@@ -1202,10 +1242,10 @@ pub const VirtualMachine = struct {
     }
 
     pub fn resolveForAPI(
-        res: *ErrorableZigString,
+        res: *ErrorableString,
         global: *JSGlobalObject,
-        specifier: ZigString,
-        source: ZigString,
+        specifier: bun.String,
+        source: bun.String,
         query_string: *ZigString,
         is_esm: bool,
     ) void {
@@ -1213,10 +1253,10 @@ pub const VirtualMachine = struct {
     }
 
     pub fn resolveFilePathForAPI(
-        res: *ErrorableZigString,
+        res: *ErrorableString,
         global: *JSGlobalObject,
-        specifier: ZigString,
-        source: ZigString,
+        specifier: bun.String,
+        source: bun.String,
         query_string: *ZigString,
         is_esm: bool,
     ) void {
@@ -1224,10 +1264,10 @@ pub const VirtualMachine = struct {
     }
 
     pub fn resolve(
-        res: *ErrorableZigString,
+        res: *ErrorableString,
         global: *JSGlobalObject,
-        specifier: ZigString,
-        source: ZigString,
+        specifier: bun.String,
+        source: bun.String,
         query_string: *ZigString,
         is_esm: bool,
     ) void {
@@ -1243,10 +1283,10 @@ pub const VirtualMachine = struct {
     }
 
     fn resolveMaybeNeedsTrailingSlash(
-        res: *ErrorableZigString,
+        res: *ErrorableString,
         global: *JSGlobalObject,
-        specifier: ZigString,
-        source: ZigString,
+        specifier: bun.String,
+        source: bun.String,
         query_string: ?*ZigString,
         is_esm: bool,
         comptime is_a_file_path: bool,
@@ -1254,27 +1294,32 @@ pub const VirtualMachine = struct {
     ) void {
         var result = ResolveFunctionResult{ .path = "", .result = null };
         var jsc_vm = VirtualMachine.get();
-        if (jsc_vm.plugin_runner) |plugin_runner| {
-            if (PluginRunner.couldBePlugin(specifier.slice())) {
-                const namespace = PluginRunner.extractNamespace(specifier.slice());
-                const after_namespace = if (namespace.len == 0)
-                    specifier
-                else
-                    specifier.substring(namespace.len + 1, specifier.len);
+        const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
+        defer specifier_utf8.deinit();
 
-                if (plugin_runner.onResolveJSC(ZigString.init(namespace), after_namespace, source, .bun)) |resolved_path| {
+        const source_utf8 = source.toUTF8(bun.default_allocator);
+        defer source_utf8.deinit();
+        if (jsc_vm.plugin_runner) |plugin_runner| {
+            if (PluginRunner.couldBePlugin(specifier_utf8.slice())) {
+                const namespace = PluginRunner.extractNamespace(specifier_utf8.slice());
+                const after_namespace = if (namespace.len == 0)
+                    specifier_utf8.slice()
+                else
+                    specifier_utf8.slice()[namespace.len + 1 .. specifier_utf8.len];
+
+                if (plugin_runner.onResolveJSC(bun.String.init(namespace), bun.String.fromUTF8(after_namespace), source, .bun)) |resolved_path| {
                     res.* = resolved_path;
                     return;
                 }
             }
         }
 
-        if (JSC.HardcodedModule.Aliases.getWithEql(specifier, ZigString.eqlComptime)) |hardcoded| {
+        if (JSC.HardcodedModule.Aliases.getWithEql(specifier, bun.String.eqlComptime)) |hardcoded| {
             if (hardcoded.tag == .none) {
                 resolveMaybeNeedsTrailingSlash(
                     res,
                     global,
-                    ZigString.init(hardcoded.path),
+                    bun.String.init(hardcoded.path),
                     source,
                     query_string,
                     is_esm,
@@ -1284,7 +1329,7 @@ pub const VirtualMachine = struct {
                 return;
             }
 
-            res.* = ErrorableZigString.ok(ZigString.init(hardcoded.path));
+            res.* = ErrorableString.ok(bun.String.init(hardcoded.path));
             return;
         }
 
@@ -1299,7 +1344,7 @@ pub const VirtualMachine = struct {
             jsc_vm.bundler.linker.log = old_log;
             jsc_vm.bundler.resolver.log = old_log;
         }
-        _resolve(&result, global, specifier.slice(), normalizeSource(source.slice()), is_esm, is_a_file_path, realpath) catch |err_| {
+        _resolve(&result, global, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path, realpath) catch |err_| {
             var err = err_;
             const msg: logger.Msg = brk: {
                 var msgs: []logger.Msg = log.msgs.items;
@@ -1313,8 +1358,8 @@ pub const VirtualMachine = struct {
 
                 const printed = ResolveMessage.fmt(
                     jsc_vm.allocator,
-                    specifier.slice(),
-                    source.slice(),
+                    specifier_utf8.slice(),
+                    source_utf8.slice(),
                     err,
                 ) catch unreachable;
                 break :brk logger.Msg{
@@ -1325,13 +1370,13 @@ pub const VirtualMachine = struct {
                     ),
                     .metadata = .{
                         // import_kind is wrong probably
-                        .resolve = .{ .specifier = logger.BabyString.in(printed, specifier.slice()), .import_kind = .stmt },
+                        .resolve = .{ .specifier = logger.BabyString.in(printed, specifier_utf8.slice()), .import_kind = .stmt },
                     },
                 };
             };
 
             {
-                res.* = ErrorableZigString.err(err, ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source.slice()).asVoid());
+                res.* = ErrorableString.err(err, ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice()).asVoid());
             }
 
             return;
@@ -1341,13 +1386,13 @@ pub const VirtualMachine = struct {
             query.* = ZigString.init(result.query_string);
         }
 
-        res.* = ErrorableZigString.ok(ZigString.init(result.path));
+        res.* = ErrorableString.ok(bun.String.init(result.path));
     }
 
     // // This double prints
     // pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, _: JSPromiseRejectionOperation) callconv(.C) JSValue {
     //     const result = promise.result(global.vm());
-    //     if (@enumToInt(VirtualMachine.get().last_error_jsvalue) != @enumToInt(result)) {
+    //     if (@intFromEnum(VirtualMachine.get().last_error_jsvalue) != @intFromEnum(result)) {
     //         VirtualMachine.get().runErrorHandler(result, null);
     //     }
 
@@ -1356,28 +1401,20 @@ pub const VirtualMachine = struct {
 
     pub const main_file_name: string = "bun:main";
 
-    pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) void {
+    pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: bun.String, source: bun.String) callconv(.C) void {
         var jsc_vm: *VirtualMachine = if (comptime Environment.isLinux)
             VirtualMachine.get()
         else
             global.bunVM();
 
         var log = logger.Log.init(jsc_vm.bundler.allocator);
-        var spec = specifier.toSlice(jsc_vm.allocator);
-        defer spec.deinit();
-        var refer = source.toSlice(jsc_vm.allocator);
-        defer refer.deinit();
 
-        const result = if (!jsc_vm.bundler.options.disable_transpilation)
-            @call(.always_inline, fetchWithoutOnLoadPlugins, .{ jsc_vm, global, spec.slice(), refer.slice(), &log, ret, .transpile }) catch |err| {
+        const result = switch (!jsc_vm.bundler.options.disable_transpilation) {
+            inline else => |is_disabled| fetchWithoutOnLoadPlugins(jsc_vm, global, specifier, source, &log, ret, if (comptime is_disabled) .print_source_and_clone else .transpile) catch |err| {
                 processFetchLog(global, specifier, source, &log, ret, err);
                 return;
-            }
-        else
-            fetchWithoutOnLoadPlugins(jsc_vm, global, spec.slice(), refer.slice(), &log, ret, .print_source_and_clone) catch |err| {
-                processFetchLog(global, specifier, source, &log, ret, err);
-                return;
-            };
+            },
+        };
 
         if (log.errors > 0) {
             processFetchLog(global, specifier, source, &log, ret, error.LinkError);
@@ -1405,6 +1442,7 @@ pub const VirtualMachine = struct {
         var vm = get();
 
         if (vm.blobs) |blobs| {
+            const spec = specifier.toUTF8(bun.default_allocator);
             const specifier_blob = brk: {
                 if (strings.hasPrefix(spec.slice(), VirtualMachine.get().bundler.fs.top_level_dir)) {
                     break :brk spec.slice()[VirtualMachine.get().bundler.fs.top_level_dir.len..];
@@ -1413,16 +1451,16 @@ pub const VirtualMachine = struct {
             };
 
             if (vm.has_loaded) {
-                blobs.temporary.put(specifier_blob, .{ .ptr = result.source_code.ptr, .len = result.source_code.len }) catch {};
+                blobs.temporary.put(specifier_blob, .{ .ptr = result.source_code.byteSlice().ptr, .len = result.source_code.length() }) catch {};
             } else {
-                blobs.persistent.put(specifier_blob, .{ .ptr = result.source_code.ptr, .len = result.source_code.len }) catch {};
+                blobs.persistent.put(specifier_blob, .{ .ptr = result.source_code.byteSlice().ptr, .len = result.source_code.length() }) catch {};
             }
         }
 
         ret.success = true;
     }
 
-    pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: ZigString, referrer: ZigString, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
+    pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, referrer: bun.String, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
         switch (log.msgs.items.len) {
             0 => {
                 const msg: logger.Msg = brk: {
@@ -1431,13 +1469,13 @@ pub const VirtualMachine = struct {
                             .data = logger.rangeData(
                                 null,
                                 logger.Range.None,
-                                std.fmt.allocPrint(globalThis.allocator(), "Unexpected pending import in \"{s}\". To automatically install npm packages with Bun, please use an import statement instead of require() or dynamic import().\nThis error can also happen if dependencies import packages which are not referenced anywhere. Worst case, run `bun install` and opt-out of the node_modules folder until we come up with a better way to handle this error.", .{specifier.slice()}) catch unreachable,
+                                std.fmt.allocPrint(globalThis.allocator(), "Unexpected pending import in \"{}\". To automatically install npm packages with Bun, please use an import statement instead of require() or dynamic import().\nThis error can also happen if dependencies import packages which are not referenced anywhere. Worst case, run `bun install` and opt-out of the node_modules folder until we come up with a better way to handle this error.", .{specifier}) catch unreachable,
                             ),
                         };
                     }
 
                     break :brk logger.Msg{
-                        .data = logger.rangeData(null, logger.Range.None, std.fmt.allocPrint(globalThis.allocator(), "{s} while building {s}", .{ @errorName(err), specifier.slice() }) catch unreachable),
+                        .data = logger.rangeData(null, logger.Range.None, std.fmt.allocPrint(globalThis.allocator(), "{s} while building {}", .{ @errorName(err), specifier }) catch unreachable),
                     };
                 };
                 {
@@ -1454,7 +1492,7 @@ pub const VirtualMachine = struct {
                         globalThis,
                         globalThis.allocator(),
                         msg,
-                        referrer.slice(),
+                        referrer.toUTF8(bun.default_allocator).slice(),
                     ).asVoid(),
                 });
                 return;
@@ -1464,14 +1502,14 @@ pub const VirtualMachine = struct {
 
                 var errors = errors_stack[0..@min(log.msgs.items.len, errors_stack.len)];
 
-                for (log.msgs.items, 0..) |msg, i| {
-                    errors[i] = switch (msg.metadata) {
+                for (log.msgs.items, errors) |msg, *current| {
+                    current.* = switch (msg.metadata) {
                         .build => BuildMessage.create(globalThis, globalThis.allocator(), msg).asVoid(),
                         .resolve => ResolveMessage.create(
                             globalThis,
                             globalThis.allocator(),
                             msg,
-                            referrer.slice(),
+                            referrer.toUTF8(bun.default_allocator).slice(),
                         ).asVoid(),
                     };
                 }
@@ -1482,9 +1520,9 @@ pub const VirtualMachine = struct {
                         errors.ptr,
                         @intCast(u16, errors.len),
                         &ZigString.init(
-                            std.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{s}\"", .{
+                            std.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{}\"", .{
                                 errors.len,
-                                specifier.slice(),
+                                referrer,
                             }) catch unreachable,
                         ),
                     ).asVoid(),
@@ -1504,11 +1542,12 @@ pub const VirtualMachine = struct {
         exception_list: ?*ExceptionList,
         comptime Writer: type,
         writer: Writer,
+        comptime allow_side_effects: bool,
     ) void {
         if (Output.enable_ansi_colors) {
-            this.printErrorlikeObject(exception.value(), exception, exception_list, Writer, writer, true);
+            this.printErrorlikeObject(exception.value(), exception, exception_list, Writer, writer, true, allow_side_effects);
         } else {
-            this.printErrorlikeObject(exception.value(), exception, exception_list, Writer, writer, false);
+            this.printErrorlikeObject(exception.value(), exception, exception_list, Writer, writer, false, allow_side_effects);
         }
     }
 
@@ -1531,11 +1570,12 @@ pub const VirtualMachine = struct {
                 exception_list,
                 @TypeOf(Output.errorWriter()),
                 Output.errorWriter(),
+                true,
             );
         } else if (Output.enable_ansi_colors) {
-            this.printErrorlikeObject(result, null, exception_list, @TypeOf(Output.errorWriter()), Output.errorWriter(), true);
+            this.printErrorlikeObject(result, null, exception_list, @TypeOf(Output.errorWriter()), Output.errorWriter(), true, true);
         } else {
-            this.printErrorlikeObject(result, null, exception_list, @TypeOf(Output.errorWriter()), Output.errorWriter(), false);
+            this.printErrorlikeObject(result, null, exception_list, @TypeOf(Output.errorWriter()), Output.errorWriter(), false, true);
         }
     }
 
@@ -1568,7 +1608,7 @@ pub const VirtualMachine = struct {
             // The contents of the node_modules bundle are lazy, so hopefully this should be pretty quick.
             if (this.node_modules != null and !this.has_loaded_node_modules) {
                 this.has_loaded_node_modules = true;
-                promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.static(bun_file_import_path));
+                promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.static(bun_file_import_path));
                 this.waitForPromise(JSC.AnyPromise{
                     .Internal = promise,
                 });
@@ -1613,7 +1653,7 @@ pub const VirtualMachine = struct {
                             return error.ModuleNotFound;
                         },
                     };
-                    promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(result.path().?.text));
+                    promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.fromBytes(result.path().?.text));
 
                     this.pending_internal_promise = promise;
                     JSValue.fromCell(promise).protect();
@@ -1649,11 +1689,11 @@ pub const VirtualMachine = struct {
             // only load preloads once
             this.preload.len = 0;
 
-            promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.static(main_file_name));
+            promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(main_file_name));
             this.pending_internal_promise = promise;
             JSC.JSValue.fromCell(promise).ensureStillAlive();
         } else {
-            promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(this.main));
+            promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(this.main));
             this.pending_internal_promise = promise;
             JSC.JSValue.fromCell(promise).ensureStillAlive();
         }
@@ -1729,7 +1769,7 @@ pub const VirtualMachine = struct {
     pub inline fn _loadMacroEntryPoint(this: *VirtualMachine, entry_path: string) *JSInternalPromise {
         var promise: *JSInternalPromise = undefined;
 
-        promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(entry_path));
+        promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(entry_path));
         this.waitForPromise(JSC.AnyPromise{
             .Internal = promise,
         });
@@ -1752,6 +1792,7 @@ pub const VirtualMachine = struct {
         comptime Writer: type,
         writer: Writer,
         comptime allow_ansi_color: bool,
+        comptime allow_side_effects: bool,
     ) void {
         if (comptime JSC.is_bindgen) {
             return;
@@ -1764,6 +1805,7 @@ pub const VirtualMachine = struct {
                 if (exception) |exception_| {
                     var holder = ZigException.Holder.init();
                     var zig_exception: *ZigException = holder.zigException();
+                    defer zig_exception.deinit();
                     exception_.getStackTrace(&zig_exception.stack);
                     if (zig_exception.stack.frames_len > 0) {
                         if (allow_ansi_color) {
@@ -1792,8 +1834,8 @@ pub const VirtualMachine = struct {
                     iterator(_vm, globalObject, nextValue, ctx.?, false);
                 }
                 inline fn iterator(_: [*c]VM, _: [*c]JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
-                    var this_ = @intToPtr(*@This(), @ptrToInt(ctx));
-                    VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, Writer, this_.writer, color);
+                    var this_ = @ptrFromInt(*@This(), @intFromPtr(ctx));
+                    VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, Writer, this_.writer, color, allow_side_effects);
                 }
             };
             var iter = AggregateErrorIterator{ .writer = writer, .current_exception_list = exception_list };
@@ -1811,6 +1853,7 @@ pub const VirtualMachine = struct {
             Writer,
             writer,
             allow_ansi_color,
+            allow_side_effects,
         );
     }
 
@@ -1821,6 +1864,7 @@ pub const VirtualMachine = struct {
         comptime Writer: type,
         writer: Writer,
         comptime allow_ansi_color: bool,
+        comptime allow_side_effects: bool,
     ) bool {
         if (value.jsType() == .DOMWrapper) {
             if (value.as(JSC.BuildMessage)) |build_error| {
@@ -1861,6 +1905,7 @@ pub const VirtualMachine = struct {
             Writer,
             writer,
             allow_ansi_color,
+            allow_side_effects,
         ) catch |err| {
             if (comptime Environment.isDebug) {
                 // yo dawg
@@ -1888,8 +1933,14 @@ pub const VirtualMachine = struct {
 
             while (i < stack.len) : (i += 1) {
                 const frame = stack[@intCast(usize, i)];
-                const file = frame.source_url.slice();
-                const func = frame.function_name.slice();
+                const file_slice = frame.source_url.toUTF8(bun.default_allocator);
+                defer file_slice.deinit();
+                const func_slice = frame.function_name.toUTF8(bun.default_allocator);
+                defer func_slice.deinit();
+
+                const file = file_slice.slice();
+                const func = func_slice.slice();
+
                 if (file.len == 0 and func.len == 0) continue;
 
                 const has_name = std.fmt.count("{any}", .{frame.nameFormatter(
@@ -1939,16 +1990,21 @@ pub const VirtualMachine = struct {
     }
 
     pub fn remapStackFramePositions(this: *VirtualMachine, frames: [*]JSC.ZigStackFrame, frames_count: usize) void {
-        var i: usize = 0;
-        while (i < frames_count) : (i += 1) {
-            if (frames[i].position.isInvalid()) continue;
+        for (frames[0..frames_count]) |*frame| {
+            if (frame.position.isInvalid() or frame.remapped) continue;
+            var sourceURL = frame.source_url.toUTF8(bun.default_allocator);
+            defer sourceURL.deinit();
+
             if (this.source_mappings.resolveMapping(
-                frames[i].source_url.slice(),
-                @max(frames[i].position.line, 0),
-                @max(frames[i].position.column_start, 0),
+                sourceURL.slice(),
+                @max(frame.position.line, 0),
+                @max(frame.position.column_start, 0),
             )) |mapping| {
-                frames[i].position.line = mapping.original.lines;
-                frames[i].position.column_start = mapping.original.columns;
+                frame.position.line = mapping.original.lines;
+                frame.position.column_start = mapping.original.columns;
+                frame.remapped = true;
+            } else {
+                frame.remapped = true;
             }
         }
     }
@@ -2000,15 +2056,19 @@ pub const VirtualMachine = struct {
         if (frames.len == 0) return;
 
         var top = &frames[0];
+        var top_source_url = top.source_url.toUTF8(bun.default_allocator);
+        defer top_source_url.deinit();
         if (this.source_mappings.resolveMapping(
-            top.source_url.slice(),
+            top_source_url.slice(),
             @max(top.position.line, 0),
             @max(top.position.column_start, 0),
         )) |mapping| {
             var log = logger.Log.init(default_allocator);
             var errorable: ErrorableResolvedSource = undefined;
-            var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url.slice(), "", &log, &errorable, .print_source) catch return;
-            const code = original_source.source_code.slice();
+            var original_source = fetchWithoutOnLoadPlugins(this, this.global, bun.String.init(top.source_url), bun.String.empty, &log, &errorable, .print_source) catch return;
+            const code = original_source.source_code.toUTF8(bun.default_allocator);
+            defer code.deinit();
+
             top.position.line = mapping.original.lines;
             top.position.line_start = mapping.original.lines;
             top.position.line_stop = mapping.original.lines + 1;
@@ -2021,24 +2081,24 @@ pub const VirtualMachine = struct {
             top.position.expression_stop = mapping.original.columns + 1;
 
             if (strings.getLinesInText(
-                code,
+                code.slice(),
                 @intCast(u32, top.position.line),
                 JSC.ZigException.Holder.source_lines_count,
             )) |lines| {
                 var source_lines = exception.stack.source_lines_ptr[0..JSC.ZigException.Holder.source_lines_count];
                 var source_line_numbers = exception.stack.source_lines_numbers[0..JSC.ZigException.Holder.source_lines_count];
-                std.mem.set(ZigString, source_lines, ZigString.Empty);
-                std.mem.set(i32, source_line_numbers, 0);
+                @memset(source_lines, String.empty);
+                @memset(source_line_numbers, 0);
 
                 var lines_ = lines[0..@min(lines.len, source_lines.len)];
                 for (lines_, 0..) |line, j| {
-                    source_lines[(lines_.len - 1) - j] = ZigString.init(line);
+                    source_lines[(lines_.len - 1) - j] = String.init(line);
                     source_line_numbers[j] = top.position.line - @intCast(i32, j) + 1;
                 }
 
                 exception.stack.source_lines_len = @intCast(u8, lines_.len);
 
-                top.position.column_stop = @intCast(i32, source_lines[lines_.len - 1].len);
+                top.position.column_stop = @intCast(i32, source_lines[lines_.len - 1].length());
                 top.position.line_stop = top.position.column_stop;
 
                 // This expression range is no longer accurate
@@ -2050,8 +2110,10 @@ pub const VirtualMachine = struct {
         if (frames.len > 1) {
             for (frames[1..]) |*frame| {
                 if (frame.position.isInvalid()) continue;
+                const source_url = frame.source_url.toUTF8(bun.default_allocator);
+                defer source_url.deinit();
                 if (this.source_mappings.resolveMapping(
-                    frame.source_url.slice(),
+                    source_url.slice(),
                     @max(frame.position.line, 0),
                     @max(frame.position.column_start, 0),
                 )) |mapping| {
@@ -2063,11 +2125,18 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool) !void {
+    pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool, comptime allow_side_effects: bool) !void {
         var exception_holder = ZigException.Holder.init();
         var exception = exception_holder.zigException();
+        defer exception_holder.deinit();
         this.remapZigException(exception, error_instance, exception_list);
         this.had_errors = true;
+
+        if (allow_side_effects) {
+            defer if (this.on_exception) |cb| {
+                cb(exception);
+            };
+        }
 
         var line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];
         var max_line: i32 = -1;
@@ -2077,15 +2146,18 @@ pub const VirtualMachine = struct {
         var source_lines = exception.stack.sourceLineIterator();
         var last_pad: u64 = 0;
         while (source_lines.untilLast()) |source| {
+            defer source.text.deinit();
+
             const int_size = std.fmt.count("{d}", .{source.line});
             const pad = max_line_number_pad - int_size;
             last_pad = pad;
             try writer.writeByteNTimes(' ', pad);
+
             try writer.print(
                 comptime Output.prettyFmt("<r><d>{d} | <r>{s}\n", allow_ansi_color),
                 .{
                     source.line,
-                    std.mem.trim(u8, source.text, "\n"),
+                    std.mem.trim(u8, source.text.slice(), "\n"),
                 },
             );
         }
@@ -2093,6 +2165,7 @@ pub const VirtualMachine = struct {
         var name = exception.name;
 
         const message = exception.message;
+
         var did_print_name = false;
         if (source_lines.next()) |source| brk: {
             if (source.text.len == 0) break :brk;
@@ -2100,7 +2173,8 @@ pub const VirtualMachine = struct {
             const top_frame = if (exception.stack.frames_len > 0) exception.stack.frames()[0] else null;
             if (top_frame == null or top_frame.?.position.isInvalid()) {
                 defer did_print_name = true;
-                var text = std.mem.trim(u8, source.text, "\n");
+                defer source.text.deinit();
+                var text = std.mem.trim(u8, source.text.slice(), "\n");
 
                 try writer.print(
                     comptime Output.prettyFmt(
@@ -2118,7 +2192,9 @@ pub const VirtualMachine = struct {
                 const int_size = std.fmt.count("{d}", .{source.line});
                 const pad = max_line_number_pad - int_size;
                 try writer.writeByteNTimes(' ', pad);
-                var remainder = std.mem.trim(u8, source.text, "\n");
+                defer source.text.deinit();
+                const text = source.text.slice();
+                var remainder = std.mem.trim(u8, text, "\n");
 
                 try writer.print(
                     comptime Output.prettyFmt(
@@ -2130,7 +2206,7 @@ pub const VirtualMachine = struct {
 
                 if (!top.position.isInvalid()) {
                     var first_non_whitespace = @intCast(u32, top.position.column_start);
-                    while (first_non_whitespace < source.text.len and source.text[first_non_whitespace] == ' ') {
+                    while (first_non_whitespace < text.len and text[first_non_whitespace] == ' ') {
                         first_non_whitespace += 1;
                     }
                     const indent = @intCast(usize, pad) + " | ".len + first_non_whitespace;
@@ -2161,10 +2237,10 @@ pub const VirtualMachine = struct {
         };
 
         var show = Show{
-            .system_code = exception.system_code.len > 0 and !strings.eql(exception.system_code.slice(), name.slice()),
-            .syscall = exception.syscall.len > 0,
+            .system_code = !exception.system_code.eql(name) and !exception.system_code.isEmpty(),
+            .syscall = !exception.syscall.isEmpty(),
             .errno = exception.errno < 0,
-            .path = exception.path.len > 0,
+            .path = !exception.path.isEmpty(),
             .fd = exception.fd != -1,
         };
 
@@ -2204,7 +2280,7 @@ pub const VirtualMachine = struct {
             } else if (show.errno) {
                 try writer.writeAll(" ");
             }
-            try writer.print(comptime Output.prettyFmt(" path<d>: <r><cyan>\"{s}\"<r>\n", allow_ansi_color), .{exception.path});
+            try writer.print(comptime Output.prettyFmt(" path<d>: <r><cyan>\"{}\"<r>\n", allow_ansi_color), .{exception.path});
         }
 
         if (show.fd) {
@@ -2223,12 +2299,12 @@ pub const VirtualMachine = struct {
             } else if (show.errno) {
                 try writer.writeAll(" ");
             }
-            try writer.print(comptime Output.prettyFmt(" code<d>: <r><cyan>\"{s}\"<r>\n", allow_ansi_color), .{exception.system_code});
+            try writer.print(comptime Output.prettyFmt(" code<d>: <r><cyan>\"{}\"<r>\n", allow_ansi_color), .{exception.system_code});
             add_extra_line = true;
         }
 
         if (show.syscall) {
-            try writer.print(comptime Output.prettyFmt("syscall<d>: <r><cyan>\"{s}\"<r>\n", allow_ansi_color), .{exception.syscall});
+            try writer.print(comptime Output.prettyFmt(" syscall<d>: <r><cyan>\"{}\"<r>\n", allow_ansi_color), .{exception.syscall});
             add_extra_line = true;
         }
 
@@ -2236,7 +2312,7 @@ pub const VirtualMachine = struct {
             if (show.syscall) {
                 try writer.writeAll("  ");
             }
-            try writer.print(comptime Output.prettyFmt("errno<d>: <r><yellow>{d}<r>\n", allow_ansi_color), .{exception.errno});
+            try writer.print(comptime Output.prettyFmt(" errno<d>: <r><yellow>{d}<r>\n", allow_ansi_color), .{exception.errno});
             add_extra_line = true;
         }
 
@@ -2245,22 +2321,22 @@ pub const VirtualMachine = struct {
         try printStackTrace(@TypeOf(writer), writer, exception.stack, allow_ansi_color);
     }
 
-    fn printErrorNameAndMessage(_: *VirtualMachine, name: ZigString, message: ZigString, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool) !void {
-        if (name.len > 0 and message.len > 0) {
-            const display_name: ZigString = if (!name.is16Bit() and strings.eqlComptime(name.slice(), "Error")) ZigString.init("error") else name;
+    fn printErrorNameAndMessage(_: *VirtualMachine, name: String, message: String, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool) !void {
+        if (!name.isEmpty() and !message.isEmpty()) {
+            const display_name: String = if (name.eqlComptime("Error")) String.init("error") else name;
 
             try writer.print(comptime Output.prettyFmt("<r><red>{any}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{
                 display_name,
                 message,
             });
-        } else if (name.len > 0) {
-            if (name.is16Bit() or !strings.hasPrefixComptime(name.slice(), "error")) {
-                try writer.print(comptime Output.prettyFmt("<r><red>error<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{name});
+        } else if (!name.isEmpty()) {
+            if (!name.hasPrefixComptime("error")) {
+                try writer.print(comptime Output.prettyFmt("<r><red>error<r><d>:<r> <b>{}<r>\n", allow_ansi_color), .{name});
             } else {
-                try writer.print(comptime Output.prettyFmt("<r><red>{s}<r>\n", allow_ansi_color), .{name});
+                try writer.print(comptime Output.prettyFmt("<r><red>{}<r>\n", allow_ansi_color), .{name});
             }
-        } else if (message.len > 0) {
-            try writer.print(comptime Output.prettyFmt("<r><red>error<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{message});
+        } else if (!message.isEmpty()) {
+            try writer.print(comptime Output.prettyFmt("<r><red>error<r><d>:<r> <b>{}<r>\n", allow_ansi_color), .{message});
         } else {
             try writer.print(comptime Output.prettyFmt("<r><red>error<r>\n", allow_ansi_color), .{});
         }
@@ -2328,7 +2404,7 @@ pub const EventListenerMixin = struct {
         const FetchEventRejectionHandler = struct {
             pub fn onRejection(_ctx: *anyopaque, err: anyerror, fetch_event: *FetchEvent, value: JSValue) void {
                 onError(
-                    @intToPtr(*CtxType, @ptrToInt(_ctx)),
+                    @ptrFromInt(*CtxType, @intFromPtr(_ctx)),
                     err,
                     value,
                     fetch_event.request_context.?,
@@ -2558,6 +2634,13 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             return this.tombstones.get(key);
         }
 
+        pub fn onError(
+            _: *@This(),
+            err: anyerror,
+        ) void {
+            Output.prettyErrorln("<r>Watcher crashed: <red><b>{s}<r>", .{@errorName(err)});
+        }
+
         pub fn onFileUpdate(
             this: *@This(),
             events: []watcher.WatchEvent,
@@ -2717,10 +2800,10 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                             break :brk path_string.slice();
                                         } else {
                                             var file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
-                                            @memcpy(&_on_file_update_path_buf, file_path_without_trailing_slash.ptr, file_path_without_trailing_slash.len);
+                                            @memcpy(_on_file_update_path_buf[0..file_path_without_trailing_slash.len], file_path_without_trailing_slash);
                                             _on_file_update_path_buf[file_path_without_trailing_slash.len] = std.fs.path.sep;
 
-                                            @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len + 1 ..].ptr, changed_name.ptr, changed_name.len);
+                                            @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len..][0..changed_name.len], changed_name);
                                             const path_slice = _on_file_update_path_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
                                             file_hash = @This().Watcher.getHash(path_slice);
                                             break :brk path_slice;

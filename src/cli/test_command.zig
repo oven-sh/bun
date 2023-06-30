@@ -41,19 +41,28 @@ const HTTPThread = @import("root").bun.HTTP.HTTPThread;
 const JSC = @import("root").bun.JSC;
 const jest = JSC.Jest;
 const TestRunner = JSC.Jest.TestRunner;
-const Snapshots = JSC.Jest.Snapshots;
+const Snapshots = JSC.Snapshot.Snapshots;
 const Test = TestRunner.Test;
 const NetworkThread = @import("root").bun.HTTP.NetworkThread;
 const uws = @import("root").bun.uws;
 
 fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji: bool) []const u8 {
     comptime {
-        return switch (status) {
-            .pass => Output.prettyFmt("<r><green>✓<r>", emoji),
-            .fail => Output.prettyFmt("<r><red>✗<r>", emoji),
-            .skip => Output.prettyFmt("<r><yellow>-<d>", emoji),
-            .todo => Output.prettyFmt("<r><magenta>✎<r>", emoji),
-            else => @compileError("Invalid status " ++ @tagName(status)),
+        return switch (emoji) {
+            true => switch (status) {
+                .pass => Output.prettyFmt("<r><green>✓<r>", true),
+                .fail => Output.prettyFmt("<r><red>✗<r>", true),
+                .skip => Output.prettyFmt("<r><yellow>»<d>", true),
+                .todo => Output.prettyFmt("<r><magenta>✎<r>", true),
+                else => @compileError("Invalid status " ++ @tagName(status)),
+            },
+            else => switch (status) {
+                .pass => Output.prettyFmt("<r><green>(pass)<r>", true),
+                .fail => Output.prettyFmt("<r><red>(fail)<r>", true),
+                .skip => Output.prettyFmt("<r><yellow>(skip)<d>", true),
+                .todo => Output.prettyFmt("<r><magenta>(todo)<r>", true),
+                else => @compileError("Invalid status " ++ @tagName(status)),
+            },
         };
     }
 }
@@ -94,13 +103,9 @@ pub const CommandLineReporter = struct {
         break :brk map;
     };
 
-    pub fn handleUpdateCount(cb: *TestRunner.Callback, _: u32, _: u32) void {
-        _ = cb;
-    }
+    pub fn handleUpdateCount(_: *TestRunner.Callback, _: u32, _: u32) void {}
 
-    pub fn handleTestStart(_: *TestRunner.Callback, _: Test.ID) void {
-        // var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
-    }
+    pub fn handleTestStart(_: *TestRunner.Callback, _: Test.ID) void {}
 
     fn printTestLine(label: string, elapsed_ns: u64, parent: ?*jest.DescribeScope, comptime skip: bool, writer: anytype) void {
         var scopes_stack = std.BoundedArray(*jest.DescribeScope, 64).init(0) catch unreachable;
@@ -329,6 +334,16 @@ const Scanner = struct {
         if (this.filter_names.len == 0) return true;
 
         for (this.filter_names) |filter_name| {
+            if (strings.startsWith(name, filter_name)) return true;
+        }
+
+        return false;
+    }
+
+    pub fn doesPathMatchFilter(this: *Scanner, name: string) bool {
+        if (this.filter_names.len == 0) return true;
+
+        for (this.filter_names) |filter_name| {
             if (strings.contains(name, filter_name)) return true;
         }
 
@@ -336,7 +351,7 @@ const Scanner = struct {
     }
 
     pub fn isTestFile(this: *Scanner, name: string) bool {
-        return this.couldBeTestFile(name) and this.doesAbsolutePathMatchFilter(name);
+        return this.couldBeTestFile(name) and this.doesPathMatchFilter(name);
     }
 
     pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: bun.StoredFileDescriptorType) void {
@@ -370,7 +385,10 @@ const Scanner = struct {
                 var parts = &[_]string{ entry.dir, entry.base() };
                 const path = this.fs.absBuf(parts, &this.open_dir_buf);
 
-                if (!this.doesAbsolutePathMatchFilter(path)) return;
+                if (!this.doesAbsolutePathMatchFilter(path)) {
+                    const rel_path = bun.path.relative(this.fs.top_level_dir, path);
+                    if (!this.doesPathMatchFilter(rel_path)) return;
+                }
 
                 entry.abs_path = bun.PathString.init(this.fs.filename_store.append(@TypeOf(path), path) catch unreachable);
                 this.results.append(entry.abs_path) catch unreachable;
@@ -385,6 +403,9 @@ pub const TestCommand = struct {
 
     pub fn exec(ctx: Command.Context) !void {
         if (comptime is_bindgen) unreachable;
+
+        Output.is_github_action = Output.isGithubAction();
+
         // print the version so you know its doing stuff if it takes a sec
         if (strings.eqlComptime(ctx.positionals[0], old_name)) {
             Output.prettyErrorln("<r><b>bun wiptest <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
@@ -415,6 +436,8 @@ pub const TestCommand = struct {
                 .log = ctx.log,
                 .callback = undefined,
                 .default_timeout_ms = ctx.test_options.default_timeout_ms,
+                .run_todo = ctx.test_options.run_todo,
+                .only = ctx.test_options.only,
                 .snapshots = Snapshots{
                     .allocator = ctx.allocator,
                     .update_snapshots = ctx.test_options.update_snapshots,
@@ -717,14 +740,26 @@ pub const TestCommand = struct {
         var resolution = try vm.bundler.resolveEntryPoint(file_name);
         vm.clearEntryPoint();
 
-        Output.prettyErrorln("<r>\n{s}:\n", .{resolution.path_pair.primary.name.filename});
-        Output.flush();
+        const file_path = resolution.path_pair.primary.text;
+        const file_title = bun.path.relative(FileSystem.instance.top_level_dir, file_path);
 
-        vm.main_hash = @truncate(u32, bun.hash(resolution.path_pair.primary.text));
+        // In Github Actions, append a special prefix that will group
+        // subsequent log lines into a collapsable group.
+        // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#grouping-log-lines
+        const file_prefix = if (Output.is_github_action) "::group::" else "";
+
+        vm.main_hash = @truncate(u32, bun.hash(file_path));
         var repeat_count = reporter.repeat_count;
         var repeat_index: u32 = 0;
         while (repeat_index < repeat_count) : (repeat_index += 1) {
-            var promise = try vm.loadEntryPoint(resolution.path_pair.primary.text);
+            if (repeat_count > 1) {
+                Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ file_prefix, file_title, repeat_index + 1 });
+            } else {
+                Output.prettyErrorln("<r>\n{s}{s}:\n", .{ file_prefix, file_title });
+            }
+            Output.flush();
+
+            var promise = try vm.loadEntryPoint(file_path);
 
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
@@ -789,9 +824,12 @@ pub const TestCommand = struct {
             vm.global.handleRejectedPromises();
             if (repeat_index > 0) {
                 vm.clearEntryPoint();
-                var entry = JSC.ZigString.init(resolution.path_pair.primary.text);
+                var entry = JSC.ZigString.init(file_path);
                 vm.global.deleteModuleRegistryEntry(&entry);
-                Output.prettyErrorln("<r>{s} <d>[RUN {d:0>4}]:<r>\n", .{ resolution.path_pair.primary.name.filename, repeat_index + 1 });
+            }
+
+            if (Output.is_github_action) {
+                Output.prettyErrorln("<r>\n::endgroup::\n", .{});
                 Output.flush();
             }
         }

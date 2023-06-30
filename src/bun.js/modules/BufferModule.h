@@ -29,10 +29,13 @@ inline void generateBufferSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
   JSC::JSObject *defaultObject = JSC::constructEmptyObject(
       globalObject, globalObject->objectPrototype(), 12);
 
-  defaultObject->putDirect(vm,
-                           PropertyName(Identifier::fromUid(
-                               vm.symbolRegistry().symbolForKey("CommonJS"_s))),
-                           jsNumber(0), 0);
+  auto CommonJS =
+      Identifier::fromUid(vm.symbolRegistry().symbolForKey("CommonJS"_s));
+
+  defaultObject->putDirect(vm, PropertyName(CommonJS), jsNumber(0), 0);
+
+  exportNames.append(CommonJS);
+  exportValues.append(jsNumber(0));
 
   auto exportProperty = [&](JSC::Identifier name, JSC::JSValue value) {
     exportNames.append(name);

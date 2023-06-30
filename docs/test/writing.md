@@ -167,12 +167,12 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- 🔴
+- 🟢
 - [`.anything()`](https://jestjs.io/docs/expect#expectanything)
 
 ---
 
-- 🔴
+- 🟢
 - [`.any()`](https://jestjs.io/docs/expect#expectanyconstructor)
 
 ---
@@ -202,12 +202,12 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- 🔴
+- 🟢
 - [`.stringContaining()`](https://jestjs.io/docs/expect#expectstringcontainingstring)
 
 ---
 
-- 🔴
+- 🟢
 - [`.stringMatching()`](https://jestjs.io/docs/expect#expectstringmatchingstring--regexp)
 
 ---
@@ -227,12 +227,12 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- 🔴
+- 🟢
 - [`.toHaveBeenCalled()`](https://jestjs.io/docs/expect#tohavebeencalled)
 
 ---
 
-- 🔴
+- 🟢
 - [`.toHaveBeenCalledTimes()`](https://jestjs.io/docs/expect#tohavebeencalledtimesnumber)
 
 ---
@@ -312,12 +312,12 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- 🔴
+- 🟢
 - [`.toMatch()`](https://jestjs.io/docs/expect#tomatchregexp--string)
 
 ---
 
-- 🔴
+- 🟢
 - [`.toMatchObject()`](https://jestjs.io/docs/expect#tomatchobjectobject)
 
 ---

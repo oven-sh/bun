@@ -1011,7 +1011,7 @@ pub const Subprocess = struct {
             if (signal.name()) |name|
                 return JSC.ZigString.init(name).toValueGC(global)
             else
-                return JSC.JSValue.jsNumber(@enumToInt(signal));
+                return JSC.JSValue.jsNumber(@intFromEnum(signal));
         }
 
         return JSC.JSValue.jsNull();
@@ -1031,7 +1031,7 @@ pub const Subprocess = struct {
         secondaryArgsValue: ?JSValue,
         comptime is_sync: bool,
     ) JSValue {
-        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        var arena = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var allocator = arena.allocator();
 
@@ -1114,7 +1114,14 @@ pub const Subprocess = struct {
                 }
 
                 while (cmds_array.next()) |value| {
-                    argv.appendAssumeCapacity(value.getZigString(globalThis).toOwnedSliceZ(allocator) catch {
+                    const arg = value.getZigString(globalThis);
+
+                    // if the string is empty, ignore it, don't add it to the argv
+                    if (arg.len == 0) {
+                        continue;
+                    }
+
+                    argv.appendAssumeCapacity(arg.toOwnedSliceZ(allocator) catch {
                         globalThis.throw("out of memory", .{});
                         return .zero;
                     });
@@ -1128,11 +1135,15 @@ pub const Subprocess = struct {
 
             if (args != .zero and args.isObject()) {
                 if (args.get(globalThis, "cwd")) |cwd_| {
+                    // ignore definitely invalid cwd
                     if (!cwd_.isEmptyOrUndefinedOrNull()) {
-                        cwd = cwd_.getZigString(globalThis).toOwnedSliceZ(allocator) catch {
-                            globalThis.throw("out of memory", .{});
-                            return .zero;
-                        };
+                        const cwd_str = cwd_.getZigString(globalThis);
+                        if (cwd_str.len > 0) {
+                            cwd = cwd_str.toOwnedSliceZ(allocator) catch {
+                                globalThis.throw("out of memory", .{});
+                                return .zero;
+                            };
+                        }
                     }
                 }
 
@@ -1524,9 +1535,9 @@ pub const Subprocess = struct {
                 }
 
                 if (std.os.W.IFSIGNALED(result.status)) {
-                    this.signal_code = @intToEnum(SignalCode, @truncate(u8, std.os.W.TERMSIG(result.status)));
+                    this.signal_code = @enumFromInt(SignalCode, @truncate(u8, std.os.W.TERMSIG(result.status)));
                 } else if (std.os.W.IFSTOPPED(result.status)) {
-                    this.signal_code = @intToEnum(SignalCode, @truncate(u8, std.os.W.STOPSIG(result.status)));
+                    this.signal_code = @enumFromInt(SignalCode, @truncate(u8, std.os.W.STOPSIG(result.status)));
                 }
 
                 if (!this.hasExited()) {

@@ -329,7 +329,7 @@ pub const Runtime = struct {
         commonjs_at_runtime: bool = false,
 
         pub fn shouldUnwrapRequire(this: *const Features, package_name: string) bool {
-            return package_name.len > 0 and strings.indexAny(this.unwrap_commonjs_packages, package_name) != null;
+            return package_name.len > 0 and strings.indexEqualAny(this.unwrap_commonjs_packages, package_name) != null;
         }
 
         pub const ReplaceableExport = union(enum) {
@@ -406,7 +406,7 @@ pub const Runtime = struct {
                     return std.mem.order(u8, a, b) == .lt;
                 }
             };
-            std.sort.sort(string, &list, {}, Sorter.compare);
+            std.sort.block(string, &list, {}, Sorter.compare);
             break :brk list;
         };
 

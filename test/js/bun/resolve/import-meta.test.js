@@ -9,7 +9,7 @@ import sync from "./require-json.json";
 const { path, dir } = import.meta;
 
 it("primordials are not here!", () => {
-  expect(import.meta.primordials === undefined).toBe(true);
+  expect(globalThis[Symbol.for("Bun.lazy")]("primordials") === undefined).toBe(true);
 });
 
 it("import.meta.main", () => {
@@ -25,9 +25,14 @@ it("import.meta.main", () => {
 
 it("import.meta.resolveSync", () => {
   expect(import.meta.resolveSync("./" + import.meta.file, import.meta.path)).toBe(path);
+});
+
+it("Module.createRequire", () => {
   const require = Module.createRequire(import.meta.path);
   expect(require.resolve(import.meta.path)).toBe(path);
   expect(require.resolve("./" + import.meta.file)).toBe(path);
+  const { resolve } = require;
+  expect(resolve("./" + import.meta.file)).toBe(path);
 
   // check it works with URL objects
   expect(Module.createRequire(new URL(import.meta.url)).resolve(import.meta.path)).toBe(import.meta.path);
@@ -68,8 +73,11 @@ it("import.meta.require (json)", () => {
 });
 
 it("const f = require;require(json)", () => {
+  function capture(f) {
+    return f.length;
+  }
   const f = require;
-  console.log(f);
+  capture(f);
   expect(f("./require-json.json").hello).toBe(sync.hello);
 });
 
@@ -82,12 +90,6 @@ it("Module.createRequire().resolve", () => {
   expect(result).toBe(expected);
 });
 
-// this is stubbed out
-it("Module._nodeModulePaths()", () => {
-  const expected = Module._nodeModulePaths();
-  expect(!!expected).toBe(true);
-});
-
 // this isn't used in bun but exists anyway
 // we just want it to not be undefined
 it("Module._cache", () => {
@@ -95,9 +97,9 @@ it("Module._cache", () => {
   expect(!!expected).toBe(true);
 });
 
-it("Module._resolveFileName()", () => {
+it("Module._resolveFilename()", () => {
   const expected = Bun.resolveSync(import.meta.path, "/");
-  const result = Module._resolveFileName(import.meta.path, "/", true);
+  const result = Module._resolveFilename(import.meta.path, "/", true);
   expect(result).toBe(expected);
 });
 
@@ -107,7 +109,6 @@ it("Module.createRequire(file://url).resolve(file://url)", () => {
   const createdRequire = Module.createRequire(import.meta.url);
   const result1 = createdRequire.resolve("./require-json.json");
   const result2 = createdRequire.resolve("file://./require-json.json");
-
   expect(result1).toBe(expected);
   expect(result2).toBe(expected);
 });

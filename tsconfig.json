@@ -18,10 +18,8 @@
     "test",
     "src/deps",
     "bun-webkit",
-    // JavaScriptCore builtins use a non-standard "@" symbol to indicate a private identifier which no other tool supports
-    "src/bun.js/builtins",
     "src/bun.js/WebKit",
     "src/api/demo",
-    "node_modules",
+    "node_modules"
   ]
 }

@@ -15,7 +15,7 @@ pub const Header = struct {
     value: []const u8,
 
     pub fn isMultiline(self: Header) bool {
-        return @ptrToInt(self.name.ptr) == 0;
+        return @intFromPtr(self.name.ptr) == 0;
     }
 
     pub fn format(self: Header, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
@@ -101,7 +101,7 @@ pub const Request = struct {
         );
 
         // Leave a sentinel value, for JavaScriptCore support.
-        if (rc > -1) @intToPtr([*]u8, @ptrToInt(path.ptr))[path.len] = 0;
+        if (rc > -1) @ptrFromInt([*]u8, @intFromPtr(path.ptr))[path.len] = 0;
 
         return switch (rc) {
             -1 => error.BadRequest,

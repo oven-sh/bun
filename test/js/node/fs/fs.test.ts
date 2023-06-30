@@ -26,6 +26,11 @@ import fs, {
   constants,
   Dirent,
   Stats,
+  realpathSync,
+  readlinkSync,
+  symlinkSync,
+  writevSync,
+  readvSync,
 } from "node:fs";
 
 import _promises from "node:fs/promises";
@@ -125,6 +130,18 @@ describe("mkdirSync", () => {
     expect(existsSync(tempdir)).toBe(false);
     expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
     expect(existsSync(tempdir)).toBe(true);
+  });
+
+  it("throws for invalid options", () => {
+    const path = `${tmpdir()}/${Date.now()}.rm.dir2/foo/bar`;
+
+    expect(() =>
+      mkdirSync(
+        path,
+        // @ts-expect-error
+        { recursive: "lalala" },
+      ),
+    ).toThrow("recursive must be a boolean");
   });
 });
 
@@ -286,6 +303,69 @@ describe("readSync", () => {
   });
 });
 
+it("writevSync", () => {
+  var fd = openSync(`${tmpdir()}/writevSync.txt`, "w");
+  fs.ftruncateSync(fd, 0);
+  const buffers = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6]), new Uint8Array([7, 8, 9])];
+  const result = writevSync(fd, buffers);
+  expect(result).toBe(9);
+  closeSync(fd);
+
+  fd = openSync(`${tmpdir()}/writevSync.txt`, "r");
+  const buf = new Uint8Array(9);
+  readSync(fd, buf, 0, 9, 0);
+  expect(buf).toEqual(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9]));
+});
+
+it("pwritevSync", () => {
+  var fd = openSync(`${tmpdir()}/pwritevSync.txt`, "w");
+  fs.ftruncateSync(fd, 0);
+  writeSync(fd, "lalalala", 0);
+  const buffers = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6]), new Uint8Array([7, 8, 9])];
+  const result = writevSync(fd, buffers, "lalalala".length);
+  expect(result).toBe(9);
+  closeSync(fd);
+
+  const out = readFileSync(`${tmpdir()}/pwritevSync.txt`);
+  expect(out.slice(0, "lalalala".length).toString()).toBe("lalalala");
+  expect(out.slice("lalalala".length)).toEqual(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9]));
+});
+
+it("readvSync", () => {
+  var fd = openSync(`${tmpdir()}/readv.txt`, "w");
+  fs.ftruncateSync(fd, 0);
+
+  const buf = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  writeSync(fd, buf, 0, 9, 0);
+  closeSync(fd);
+
+  var fd = openSync(`${tmpdir()}/readv.txt`, "r");
+  const buffers = [new Uint8Array(3), new Uint8Array(3), new Uint8Array(3)];
+  const result = readvSync(fd, buffers);
+  expect(result).toBe(9);
+  expect(buffers[0]).toEqual(new Uint8Array([1, 2, 3]));
+  expect(buffers[1]).toEqual(new Uint8Array([4, 5, 6]));
+  expect(buffers[2]).toEqual(new Uint8Array([7, 8, 9]));
+  closeSync(fd);
+});
+
+it("preadv", () => {
+  var fd = openSync(`${tmpdir()}/preadv.txt`, "w");
+  fs.ftruncateSync(fd, 0);
+
+  const buf = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  writeSync(fd, buf, 0, buf.byteLength, 0);
+  closeSync(fd);
+
+  var fd = openSync(`${tmpdir()}/preadv.txt`, "r");
+  const buffers = [new Uint8Array(3), new Uint8Array(3), new Uint8Array(3)];
+  const result = readvSync(fd, buffers, 3);
+  expect(result).toBe(9);
+  expect(buffers[0]).toEqual(new Uint8Array([4, 5, 6]));
+  expect(buffers[1]).toEqual(new Uint8Array([7, 8, 9]));
+  expect(buffers[2]).toEqual(new Uint8Array([10, 11, 12]));
+});
+
 describe("writeSync", () => {
   it("works with a position set to 0", () => {
     const fd = openSync(import.meta.dir + "/writeFileSync.txt", "w+");
@@ -319,7 +399,25 @@ describe("readFileSync", () => {
 
   it("works with a file url", () => {
     gc();
-    const text = readFileSync(new URL("file://" + import.meta.dir + "/readFileSync.txt"), "utf8");
+    const text = readFileSync(new URL("./readFileSync.txt", import.meta.url), "utf8");
+    gc();
+    expect(text).toBe("File read successfully");
+  });
+
+  it("works with a file path which contains spaces", async () => {
+    gc();
+    const outpath = join(tmpdir(), "read file sync with space characters " + Math.random().toString(32) + " .txt");
+    await Bun.write(outpath, Bun.file(Bun.fileURLToPath(new URL("./readFileSync.txt", import.meta.url))));
+    const text = readFileSync(outpath, "utf8");
+    gc();
+    expect(text).toBe("File read successfully");
+  });
+
+  it("works with a file URL which contains spaces", async () => {
+    gc();
+    const outpath = join(tmpdir(), "read file sync with space characters " + Math.random().toString(32) + " .txt");
+    await Bun.write(outpath, Bun.file(Bun.fileURLToPath(new URL("./readFileSync.txt", import.meta.url))));
+    const text = readFileSync(new URL(outpath, import.meta.url), "utf8");
     gc();
     expect(text).toBe("File read successfully");
   });
@@ -456,6 +554,28 @@ describe("lstat", () => {
     triggerDOMJIT(linkStats, linkStats.isDirectory, false);
     triggerDOMJIT(linkStats, linkStats.isSymbolicLink, true);
   });
+});
+
+it("symlink", () => {
+  const actual = join(tmpdir(), Math.random().toString(32) + "-fs-symlink.txt");
+  try {
+    unlinkSync(actual);
+  } catch (e) {}
+
+  symlinkSync(import.meta.path, actual);
+
+  expect(realpathSync(actual)).toBe(realpathSync(import.meta.path));
+});
+
+it("readlink", () => {
+  const actual = join(tmpdir(), Math.random().toString(32) + "-fs-readlink.txt");
+  try {
+    unlinkSync(actual);
+  } catch (e) {}
+
+  symlinkSync(import.meta.path, actual);
+
+  expect(readlinkSync(actual)).toBe(realpathSync(import.meta.path));
 });
 
 describe("stat", () => {
@@ -1013,6 +1133,44 @@ describe("createWriteStream", () => {
       expect(exception.code).toBe("ERR_INVALID_ARG_TYPE");
     }
   });
+
+  it("writing in append mode should not truncate the file", async () => {
+    const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStreamAppend.txt`;
+    const stream = createWriteStream(path, {
+      // @ts-ignore-next-line
+      flags: "a",
+    });
+    stream.write("first line\n");
+    stream.end();
+
+    await new Promise((resolve, reject) => {
+      stream.on("error", e => {
+        reject(e);
+      });
+
+      stream.on("finish", () => {
+        resolve(true);
+      });
+    });
+
+    const stream2 = createWriteStream(path, {
+      // @ts-ignore-next-line
+      flags: "a",
+    });
+    stream2.write("second line\n");
+    stream2.end();
+
+    return await new Promise((resolve, reject) => {
+      stream2.on("error", e => {
+        reject(e);
+      });
+
+      stream2.on("finish", () => {
+        expect(readFileSync(path, "utf8")).toBe("first line\nsecond line\n");
+        resolve(true);
+      });
+    });
+  });
 });
 
 describe("fs/promises", () => {
@@ -1158,4 +1316,83 @@ it("repro 1516: can use undefined/null to specify default flag", () => {
   // @ts-ignore-next-line
   expect(readFileSync(path, { encoding: "utf8", flag: null })).toBe("b");
   rmSync(path);
+});
+
+it("existsSync with invalid path doesn't throw", () => {
+  expect(existsSync(null as any)).toBe(false);
+  expect(existsSync(123 as any)).toBe(false);
+  expect(existsSync(undefined as any)).toBe(false);
+  expect(existsSync({ invalid: 1 } as any)).toBe(false);
+});
+
+describe("utimesSync", () => {
+  it("works", () => {
+    const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
+    writeFileSync(tmp, "test");
+    const prevStats = fs.statSync(tmp);
+    const prevModifiedTime = prevStats.mtime;
+    const prevAccessTime = prevStats.atime;
+
+    prevModifiedTime.setMilliseconds(0);
+    prevAccessTime.setMilliseconds(0);
+
+    prevModifiedTime.setFullYear(1996);
+    prevAccessTime.setFullYear(1996);
+
+    // Get the current time to change the timestamps
+    const newModifiedTime = new Date();
+    const newAccessTime = new Date();
+
+    newModifiedTime.setMilliseconds(0);
+    newAccessTime.setMilliseconds(0);
+
+    fs.utimesSync(tmp, newAccessTime, newModifiedTime);
+
+    const newStats = fs.statSync(tmp);
+
+    expect(newStats.mtime).toEqual(newModifiedTime);
+    expect(newStats.atime).toEqual(newAccessTime);
+
+    fs.utimesSync(tmp, prevAccessTime, prevModifiedTime);
+
+    const finalStats = fs.statSync(tmp);
+
+    expect(finalStats.mtime).toEqual(prevModifiedTime);
+    expect(finalStats.atime).toEqual(prevAccessTime);
+  });
+
+  it("accepts a Number(value).toString()", () => {
+    const tmp = join(tmpdir(), "utimesSync-test-file2-" + Math.random().toString(36).slice(2));
+    writeFileSync(tmp, "test");
+    const prevStats = fs.statSync(tmp);
+    const prevModifiedTime = prevStats.mtime;
+    const prevAccessTime = prevStats.atime;
+
+    prevModifiedTime.setMilliseconds(0);
+    prevAccessTime.setMilliseconds(0);
+
+    prevModifiedTime.setFullYear(1996);
+    prevAccessTime.setFullYear(1996);
+
+    // Get the current time to change the timestamps
+    const newModifiedTime = new Date();
+    const newAccessTime = new Date();
+
+    newModifiedTime.setMilliseconds(0);
+    newAccessTime.setMilliseconds(0);
+
+    fs.utimesSync(tmp, newAccessTime.getTime() / 1000 + "", newModifiedTime.getTime() / 1000 + "");
+
+    const newStats = fs.statSync(tmp);
+
+    expect(newStats.mtime).toEqual(newModifiedTime);
+    expect(newStats.atime).toEqual(newAccessTime);
+
+    fs.utimesSync(tmp, prevAccessTime.getTime() / 1000 + "", prevModifiedTime.getTime() / 1000 + "");
+
+    const finalStats = fs.statSync(tmp);
+
+    expect(finalStats.mtime).toEqual(prevModifiedTime);
+    expect(finalStats.atime).toEqual(prevAccessTime);
+  });
 });

@@ -15,6 +15,7 @@ const JSPrinter = bun.js_printer;
 const JSPrivateDataPtr = JSC.JSPrivateDataPtr;
 const JS = @import("../javascript.zig");
 const JSPromise = JSC.JSPromise;
+const expect = @import("./expect.zig");
 
 pub const EventType = enum(u8) {
     Event,
@@ -362,7 +363,7 @@ pub const JestPrettyFormat = struct {
             };
 
             pub fn get(value: JSValue, globalThis: *JSGlobalObject) Result {
-                switch (@enumToInt(value)) {
+                switch (@intFromEnum(value)) {
                     0, 0xa => return Result{
                         .tag = .Undefined,
                     },
@@ -921,7 +922,7 @@ pub const JestPrettyFormat = struct {
                     this.map = this.map_node.?.data;
                 }
 
-                var entry = this.map.getOrPut(@enumToInt(value)) catch unreachable;
+                var entry = this.map.getOrPut(@intFromEnum(value)) catch unreachable;
                 if (entry.found_existing) {
                     writer.writeAll(comptime Output.prettyFmt("<r><cyan>[Circular]<r>", enable_ansi_colors));
                     return;
@@ -930,7 +931,7 @@ pub const JestPrettyFormat = struct {
 
             defer {
                 if (comptime Format.canHaveCircularReferences()) {
-                    _ = this.map.remove(@enumToInt(value));
+                    _ = this.map.remove(@intFromEnum(value));
                 }
             }
 
@@ -983,38 +984,35 @@ pub const JestPrettyFormat = struct {
                         defer if (comptime enable_ansi_colors)
                             writer.writeAll(Output.prettyFmt("<r>", true));
 
-                        if (str.is16Bit()) {
-                            this.printAs(.JSON, Writer, writer_, value, .StringObject, enable_ansi_colors);
-                            return;
-                        }
-
                         var has_newline = false;
-                        if (strings.indexOfAny(str.slice(), "\n\r")) |_| {
+
+                        if (str.indexOfAny("\n\r")) |_| {
                             has_newline = true;
                             writer.writeAll("\n");
                         }
 
                         writer.writeAll("\"");
-                        var remaining = str.slice();
-                        while (strings.indexOfAny(remaining, "\\\r")) |i| {
-                            switch (remaining[i]) {
+                        var remaining = str;
+                        while (remaining.indexOfAny("\\\r")) |i| {
+                            switch (remaining.charAt(i)) {
                                 '\\' => {
-                                    writer.print("{s}\\", .{remaining[0 .. i + 1]});
-                                    remaining = remaining[i + 1 ..];
+                                    writer.print("{}\\", .{remaining.substringWithLen(0, i)});
+                                    remaining = remaining.substring(i + 1, 0);
                                 },
                                 '\r' => {
-                                    if (i + 1 < remaining.len and remaining[i + 1] == '\n') {
-                                        writer.print("{s}", .{remaining[0..i]});
+                                    if (i + 1 < remaining.len and remaining.charAt(i + 1) == '\n') {
+                                        writer.print("{}", .{remaining.substringWithLen(0, i)});
                                     } else {
-                                        writer.print("{s}\n", .{remaining[0..i]});
+                                        writer.print("{}\n", .{remaining.substringWithLen(0, i)});
                                     }
-                                    remaining = remaining[i + 1 ..];
+
+                                    remaining = remaining.substring(i + 1, 0);
                                 },
                                 else => unreachable,
                             }
                         }
 
-                        writer.writeAll(remaining);
+                        writer.writeString(remaining);
                         writer.writeAll("\"");
                         if (has_newline) writer.writeAll("\n");
                         return;
@@ -1026,7 +1024,7 @@ pub const JestPrettyFormat = struct {
 
                     if (str.is16Bit()) {
                         // streaming print
-                        writer.print("{s}", .{str});
+                        writer.print("{}", .{str});
                     } else if (strings.isAllASCII(str.slice())) {
                         // fast path
                         writer.writeAll(str.slice());
@@ -1052,7 +1050,7 @@ pub const JestPrettyFormat = struct {
                             i = -i;
                         }
                         const digits = if (i != 0)
-                            bun.fmt.fastDigitCount(@intCast(usize, i)) + @as(usize, @boolToInt(is_negative))
+                            bun.fmt.fastDigitCount(@intCast(usize, i)) + @as(usize, @intFromBool(is_negative))
                         else
                             1;
                         this.addForNewLine(digits);
@@ -1266,6 +1264,43 @@ pub const JestPrettyFormat = struct {
                         return;
                     } else if (value.as(JSC.ResolveMessage)) |resolve_log| {
                         resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
+                        return;
+                    } else if (value.as(expect.ExpectAnything) != null) {
+                        this.addForNewLine("Anything".len);
+                        writer.writeAll("Anything");
+                        return;
+                    } else if (value.as(expect.ExpectAny) != null) {
+                        const constructor_value = expect.ExpectAny.constructorValueGetCached(value) orelse return;
+
+                        this.addForNewLine("Any<".len);
+                        writer.writeAll("Any<");
+
+                        var class_name = ZigString.init(&name_buf);
+                        constructor_value.getClassName(this.globalThis, &class_name);
+                        this.addForNewLine(class_name.len);
+                        writer.print(comptime Output.prettyFmt("<cyan>{}<r>", enable_ansi_colors), .{class_name});
+                        writer.writeAll(">");
+
+                        return;
+                    } else if (value.as(expect.ExpectStringContaining) != null) {
+                        const substring_value = expect.ExpectStringContaining.stringValueGetCached(value) orelse return;
+
+                        this.addForNewLine("StringContaining ".len);
+                        writer.writeAll("StringContaining ");
+                        this.printAs(.String, Writer, writer_, substring_value, .String, enable_ansi_colors);
+
+                        return;
+                    } else if (value.as(expect.ExpectStringMatching) != null) {
+                        const test_value = expect.ExpectStringMatching.testValueGetCached(value) orelse return;
+
+                        this.addForNewLine("StringMatching ".len);
+                        writer.writeAll("StringMatching ");
+
+                        const original_quote_strings = this.quote_strings;
+                        if (test_value.isRegExp()) this.quote_strings = false;
+                        this.printAs(.String, Writer, writer_, test_value, .String, enable_ansi_colors);
+                        this.quote_strings = original_quote_strings;
+
                         return;
                     } else if (jsType != .DOMWrapper) {
                         if (value.isCallable(this.globalThis.vm())) {
@@ -1519,7 +1554,7 @@ pub const JestPrettyFormat = struct {
                             {
                                 this.indent += 1;
                                 defer this.indent -|= 1;
-                                const count_without_children = props_iter.len - @as(usize, @boolToInt(children_prop != null));
+                                const count_without_children = props_iter.len - @as(usize, @intFromBool(children_prop != null));
 
                                 while (props_iter.next()) |prop| {
                                     if (prop.eqlComptime("children"))
@@ -1704,14 +1739,7 @@ pub const JestPrettyFormat = struct {
                         value.getClassName(this.globalThis, &object_name);
 
                         if (!strings.eqlComptime(object_name.slice(), "Object")) {
-                            if (value.as(JSC.Jest.ExpectAny)) |_| {
-                                var constructor = JSC.Jest.ExpectAny.constructorValueGetCached(value) orelse unreachable;
-                                var constructor_name = ZigString.Empty;
-                                constructor.getNameProperty(this.globalThis, &constructor_name);
-                                writer.print("Any<{s}>", .{constructor_name});
-                            } else {
-                                writer.print("{s} {{}}", .{object_name});
-                            }
+                            writer.print("{s} {{}}", .{object_name});
                         } else {
                             // don't write "Object"
                             writer.writeAll("{}");

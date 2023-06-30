@@ -6,6 +6,7 @@ import os from "os";
 
 export const bunEnv: any = {
   ...process.env,
+  GITHUB_ACTIONS: "false",
   BUN_DEBUG_QUIET_LOGS: "1",
   NO_COLOR: "1",
   FORCE_COLOR: undefined,
@@ -80,7 +81,7 @@ export function hideFromStackTrace(block: CallableFunction) {
 }
 
 export function tempDirWithFiles(basename: string, files: Record<string, string>) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), basename + "_"));
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), basename + "_"));
   for (const [name, contents] of Object.entries(files)) {
     fs.writeFileSync(path.join(dir, name), contents);
   }

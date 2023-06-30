@@ -135,7 +135,7 @@ pub const RunCommand = struct {
                                 }
 
                                 // implicit yarn commands
-                                if (std.mem.indexOfScalar(u64, yarn_commands, std.hash.Wyhash.hash(0, yarn_cmd)) == null) {
+                                if (std.mem.indexOfScalar(u64, yarn_commands, bun.hash(yarn_cmd)) == null) {
                                     try copy_script.appendSlice(BUN_RUN);
                                     try copy_script.append(' ');
                                     try copy_script.appendSlice(yarn_cmd);
@@ -191,6 +191,24 @@ pub const RunCommand = struct {
                     }
 
                     delimiter = 0;
+                },
+                // TODO: handle escape sequences properly
+                // https://github.com/oven-sh/bun/issues/53
+                '\\' => {
+                    delimiter = 0;
+
+                    if (entry_i + 1 < script.len) {
+                        switch (script[entry_i + 1]) {
+                            '"', '\'' => {
+                                entry_i += 1;
+                                continue;
+                            },
+                            '\\' => {
+                                entry_i += 1;
+                            },
+                            else => {},
+                        }
+                    }
                 },
                 else => {
                     delimiter = 0;

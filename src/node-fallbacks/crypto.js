@@ -1,4 +1,5 @@
 export * from "crypto-browserify";
+import * as cryptoBrowserify from "crypto-browserify";
 
 export var DEFAULT_ENCODING = "buffer";
 
@@ -79,3 +80,13 @@ if (timingSafeEqual) {
 }
 
 export const webcrypto = crypto;
+
+export default {
+  ...cryptoBrowserify,
+  getRandomValues,
+  randomUUID,
+  timingSafeEqual,
+  scryptSync,
+  scrypt,
+  webcrypto,
+};

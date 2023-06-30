@@ -228,7 +228,7 @@ describe("bundler", () => {
   itBundled("ts/ConstEnumComments", {
     // When it comes time to implement this inlining, we may decide we do NOT
     // want to insert helper comments.
-    notImplemented: true,
+    todo: true,
     files: {
       "/bar.ts": /* ts */ `
         export const enum Foo {
@@ -306,6 +306,7 @@ describe("bundler", () => {
     // goal for this test is there is no error. we dont really care about the output
   });
   itBundled("ts/ExportMissingES6", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -382,7 +383,7 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/MinifyEnum", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/a.ts": `enum Foo { A, B, C = Foo }\ncapture(Foo)`,
       // "/b.ts": `export enum Foo { X, Y, Z = Foo }`,
@@ -426,7 +427,7 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/MinifyEnumExported", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/b.ts": `export enum Foo { X, Y, Z = Foo }`,
     },
@@ -717,7 +718,7 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/ImportEqualsEliminationTest", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import a = foo.a
@@ -763,6 +764,7 @@ describe("bundler", () => {
     external: ["pkg"],
   });
   itBundled("ts/ImportEqualsTreeShakingTrue", {
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import { foo } from 'pkg'
@@ -777,7 +779,7 @@ describe("bundler", () => {
     bundling: false,
   });
   itBundled("ts/ImportEqualsBundle", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import { foo } from 'pkg'
@@ -1539,6 +1541,7 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/ComputedClassFieldUseDefineFalse", {
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         class Foo {
@@ -1586,6 +1589,7 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/ComputedClassFieldUseDefineTrue", {
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         class Foo {
@@ -1681,6 +1685,7 @@ describe("bundler", () => {
     unsupportedJSFeatures: ["class-field"],
   });
   itBundled("ts/AbstractClassFieldUseAssign", {
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         const keepThis = Symbol('keepThis')
@@ -1717,6 +1722,7 @@ describe("bundler", () => {
     useDefineForClassFields: true,
   });
   itBundled("ts/ImportMTS", {
+    todo: true,
     files: {
       "/entry.ts": `import './imported.mjs'`,
       "/imported.mts": `console.log('works')`,
@@ -1759,7 +1765,7 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/SiblingNamespaceLet", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/let.ts": /* ts */ `
         export namespace x { export let y = 123 }
@@ -1777,7 +1783,7 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/SiblingNamespaceFunction", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/function.ts": /* ts */ `
         export namespace x { export function y() {} }
@@ -1795,7 +1801,7 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/SiblingNamespaceClass", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/let.ts": /* ts */ `
         export namespace x { export class y {} }
@@ -1813,7 +1819,7 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/SiblingNamespaceNamespace", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/namespace.ts": /* ts */ `
         export namespace x { export namespace y { 0 } }
@@ -1831,7 +1837,7 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/SiblingNamespaceEnum", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/enum.ts": /* ts */ `
         export namespace x { export enum y {} }
@@ -1849,6 +1855,7 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/SiblingEnum", {
+    todo: true,
     // GENERATED
     files: {
       "/number.ts": /* ts */ `
@@ -1943,6 +1950,7 @@ describe("bundler", () => {
     ],
   });
   itBundled("ts/EnumTreeShaking", {
+    todo: true,
     files: {
       "/simple-member.ts": /* ts */ `
         enum x_DROP { y_DROP = 123 }
@@ -2010,7 +2018,7 @@ describe("bundler", () => {
     ],
   });
   itBundled("ts/EnumJSX", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/element.tsx": /* tsx */ `
         import { create } from 'not-react'
@@ -2057,7 +2065,7 @@ describe("bundler", () => {
     ],
   });
   itBundled("ts/EnumDefine", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.ts": `
         enum a { b = 123, c = d }
@@ -2070,7 +2078,7 @@ describe("bundler", () => {
     run: { stdout: "123 123" },
   });
   itBundled("ts/EnumSameModuleInliningAccess", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         enum a_drop { x = 123 }
@@ -2091,7 +2099,7 @@ describe("bundler", () => {
     run: { stdout: '[123,123,123,123,{"123":"x","x":123}]' },
   });
   itBundled("ts/EnumCrossModuleInliningAccess", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import { drop_a, drop_b, c, d, e } from './enums'
@@ -2114,7 +2122,7 @@ describe("bundler", () => {
     dce: true,
   });
   itBundled("ts/EnumCrossModuleInliningDefinitions", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import { a } from './enums'
@@ -2142,7 +2150,7 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/EnumCrossModuleInliningReExport", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import { a } from './re-export'
@@ -2167,7 +2175,7 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/EnumCrossModuleTreeShaking", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import {
@@ -2218,7 +2226,7 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/EnumExportClause", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import {
@@ -2466,7 +2474,7 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/EnumUseBeforeDeclare", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         before();

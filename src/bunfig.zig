@@ -259,6 +259,14 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (json.get("exact")) |exact_install_expr| {
+                        try this.expect(exact_install_expr, .e_boolean);
+
+                        if (exact_install_expr.asBool().?) {
+                            install.exact = true;
+                        }
+                    }
+
                     if (json.get("prefer")) |prefer_expr| {
                         try this.expect(prefer_expr, .e_string);
 
@@ -319,6 +327,12 @@ pub const Bunfig = struct {
                     if (_bun.get("production")) |production| {
                         if (production.asBool()) |value| {
                             install.production = value;
+                        }
+                    }
+
+                    if (_bun.get("frozenLockfile")) |frozen_lockfile| {
+                        if (frozen_lockfile.asBool()) |value| {
+                            install.frozen_lockfile = value;
                         }
                     }
 

@@ -178,7 +178,7 @@ fn diffInternal(
 }
 
 fn diffCommonPrefix(before: []const u8, after: []const u8) usize {
-    const n = std.math.min(before.len, after.len);
+    const n = @min(before.len, after.len);
     var i: usize = 0;
 
     while (i < n) : (i += 1) {
@@ -191,7 +191,7 @@ fn diffCommonPrefix(before: []const u8, after: []const u8) usize {
 }
 
 fn diffCommonSuffix(before: []const u8, after: []const u8) usize {
-    const n = std.math.min(before.len, after.len);
+    const n = @min(before.len, after.len);
     var i: usize = 1;
 
     while (i <= n) : (i += 1) {
@@ -996,8 +996,8 @@ fn diffCleanupSemantic(allocator: std.mem.Allocator, diffs: *DiffList) DiffError
             // Eliminate an equality that is smaller or equal to the edits on both
             // sides of it.
             if (last_equality != null and
-                (last_equality.?.len <= std.math.max(length_insertions1, length_deletions1)) and
-                (last_equality.?.len <= std.math.max(length_insertions2, length_deletions2)))
+                (last_equality.?.len <= @max(length_insertions1, length_deletions1)) and
+                (last_equality.?.len <= @max(length_insertions2, length_deletions2)))
             {
                 // Duplicate record.
                 try diffs.insert(
@@ -1046,8 +1046,8 @@ fn diffCleanupSemantic(allocator: std.mem.Allocator, diffs: *DiffList) DiffError
             var overlap_length1: usize = diffCommonOverlap(deletion, insertion);
             var overlap_length2: usize = diffCommonOverlap(insertion, deletion);
             if (overlap_length1 >= overlap_length2) {
-                if (@intToFloat(f32, overlap_length1) >= @intToFloat(f32, deletion.len) / 2.0 or
-                    @intToFloat(f32, overlap_length1) >= @intToFloat(f32, insertion.len) / 2.0)
+                if (@floatFromInt(f32, overlap_length1) >= @floatFromInt(f32, deletion.len) / 2.0 or
+                    @floatFromInt(f32, overlap_length1) >= @floatFromInt(f32, insertion.len) / 2.0)
                 {
                     // Overlap found.
                     // Insert an equality and trim the surrounding edits.
@@ -1063,8 +1063,8 @@ fn diffCleanupSemantic(allocator: std.mem.Allocator, diffs: *DiffList) DiffError
                     pointer += 1;
                 }
             } else {
-                if (@intToFloat(f32, overlap_length2) >= @intToFloat(f32, deletion.len) / 2.0 or
-                    @intToFloat(f32, overlap_length2) >= @intToFloat(f32, insertion.len) / 2.0)
+                if (@floatFromInt(f32, overlap_length2) >= @floatFromInt(f32, deletion.len) / 2.0 or
+                    @floatFromInt(f32, overlap_length2) >= @floatFromInt(f32, insertion.len) / 2.0)
                 {
                     // Reverse overlap found.
                     // Insert an equality and swap and trim the surrounding edits.
@@ -1398,7 +1398,7 @@ fn diffCommonOverlap(text1_in: []const u8, text2_in: []const u8) usize {
 }
 
 // pub fn main() void {
-//     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+//     var arena = @import("root").bun.ArenaAllocator.init(std.heap.page_allocator);
 //     defer arena.deinit();
 
 //     var bruh = default.diff(arena.allocator(), "Hello World.", "Goodbye World.", true);
@@ -1406,7 +1406,7 @@ fn diffCommonOverlap(text1_in: []const u8, text2_in: []const u8) usize {
 // }
 
 // test {
-//     var arena = std.heap.ArenaAllocator.init(testing.allocator);
+//     var arena = @import("root").bun.ArenaAllocator.init(testing.allocator);
 //     defer arena.deinit();
 
 //     var bruh = try default.diff(arena.allocator(), "Hello World.", "Goodbye World.", true);
@@ -1455,7 +1455,7 @@ test diffCommonOverlap {
 }
 
 test diffHalfMatch {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    var arena = @import("root").bun.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
     var one_timeout = DiffMatchPatch{};
@@ -1549,7 +1549,7 @@ test diffHalfMatch {
 }
 
 test diffLinesToChars {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    var arena = @import("root").bun.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
     // Convert lines down to characters.
@@ -1611,7 +1611,7 @@ test diffLinesToChars {
 }
 
 test diffCharsToLines {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    var arena = @import("root").bun.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
     try testing.expect((Diff.init(.equal, "a")).eql(Diff.init(.equal, "a")));
@@ -1640,7 +1640,7 @@ test diffCharsToLines {
 }
 
 test diffCleanupMerge {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    var arena = @import("root").bun.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
     // Cleanup a messy diff.
@@ -1828,7 +1828,7 @@ test diffCleanupMerge {
 }
 
 test diffCleanupSemanticLossless {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    var arena = @import("root").bun.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
     var diffs = DiffList{};
@@ -1953,7 +1953,7 @@ fn rebuildtexts(allocator: std.mem.Allocator, diffs: DiffList) ![2][]const u8 {
 }
 
 test diffBisect {
-    var arena = std.heap.ArenaAllocator.init(talloc);
+    var arena = @import("root").bun.ArenaAllocator.init(talloc);
     defer arena.deinit();
 
     // Normal.
@@ -1987,7 +1987,7 @@ test diffBisect {
 
 const talloc = testing.allocator;
 test diff {
-    var arena = std.heap.ArenaAllocator.init(talloc);
+    var arena = @import("root").bun.ArenaAllocator.init(talloc);
     defer arena.deinit();
 
     // Perform a trivial diff.
@@ -2094,7 +2094,7 @@ test diff {
 }
 
 test diffCleanupSemantic {
-    var arena = std.heap.ArenaAllocator.init(talloc);
+    var arena = @import("root").bun.ArenaAllocator.init(talloc);
     defer arena.deinit();
 
     // Cleanup semantically trivial equalities.

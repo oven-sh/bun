@@ -215,6 +215,8 @@ pub const Arguments = struct {
         clap.parseParam("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
         clap.parseParam("--update-snapshots               Update snapshot files") catch unreachable,
         clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
+        clap.parseParam("--only                           Only run tests that are marked with \"test.only()\"") catch unreachable,
+        clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
     };
 
     const build_params_public = public_params ++ build_only_params;
@@ -303,7 +305,7 @@ pub const Arguments = struct {
         defer ctx.debug.loaded_bunfig = true;
         var config_path: [:0]u8 = undefined;
         if (config_path_[0] == '/') {
-            @memcpy(&config_buf, config_path_.ptr, config_path_.len);
+            @memcpy(config_buf[0..config_path.len], config_path);
             config_buf[config_path_.len] = 0;
             config_path = config_buf[0..config_path_.len :0];
         } else {
@@ -390,6 +392,8 @@ pub const Arguments = struct {
                     };
                 }
             }
+            ctx.test_options.run_todo = args.flag("--todo");
+            ctx.test_options.only = args.flag("--only");
         }
 
         ctx.args.absolute_working_dir = cwd;
@@ -923,6 +927,8 @@ pub const Command = struct {
         default_timeout_ms: u32 = 5 * std.time.ms_per_s,
         update_snapshots: bool = false,
         repeat_count: u32 = 0,
+        run_todo: bool = false,
+        only: bool = false,
     };
 
     pub const Context = struct {
@@ -1491,11 +1497,11 @@ pub const Command = struct {
                 const file_pathZ = brk2: {
                     if (!strings.hasPrefix(file_path, "./")) {
                         script_name_buf[0..2].* = "./".*;
-                        @memcpy(script_name_buf[2..], file_path.ptr, file_path.len);
+                        @memcpy(script_name_buf[2..][0..file_path.len], file_path);
                         script_name_buf[file_path.len + 2] = 0;
                         break :brk2 script_name_buf[0 .. file_path.len + 2 :0];
                     } else {
-                        @memcpy(&script_name_buf, file_path.ptr, file_path.len);
+                        @memcpy(script_name_buf[0..file_path.len], file_path);
                         script_name_buf[file_path.len] = 0;
                         break :brk2 script_name_buf[0..file_path.len :0];
                     }

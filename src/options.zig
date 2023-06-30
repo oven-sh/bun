@@ -616,6 +616,7 @@ pub const Target = enum {
         array.set(
             Target.bun_macro,
             &[_]string{
+                "macro",
                 "bun",
                 "worker",
                 "module",
@@ -624,13 +625,6 @@ pub const Target = enum {
                 "browser",
             },
         );
-        // array.set(Target.bun_macro, [_]string{ "bun_macro", "browser", "default", },);
-
-        // Original comment:
-        // The neutral target is for people that don't want esbuild to try to
-        // pick good defaults for their platform. In that case, the list of main
-        // fields is empty by default. You must explicitly configure it yourself.
-        // array.set(Target.neutral, &listc);
 
         break :brk array;
     };
@@ -1054,8 +1048,8 @@ pub const JSX = struct {
         }
 
         pub const Defaults = struct {
-            pub const Factory = &[_]string{"React.createElement"};
-            pub const Fragment = &[_]string{"React.Fragment"};
+            pub const Factory = &[_]string{ "React", "createElement" };
+            pub const Fragment = &[_]string{ "React", "Fragment" };
             pub const ImportSourceDev = "react/jsx-dev-runtime";
             pub const ImportSource = "react/jsx-runtime";
             pub const JSXFunction = "jsx";
@@ -1705,7 +1699,7 @@ pub const BundleOptions = struct {
                                 opts.node_modules_bundle_pretty_path = try allocator.dupe(u8, pretty_path);
                             }
 
-                            const elapsed = @intToFloat(f64, (std.time.nanoTimestamp() - time_start)) / std.time.ns_per_ms;
+                            const elapsed = @floatFromInt(f64, (std.time.nanoTimestamp() - time_start)) / std.time.ns_per_ms;
                             Output.printElapsed(elapsed);
                             Output.prettyErrorln(
                                 " <b><d>\"{s}\"<r><d> - {d} modules, {d} packages<r>",
@@ -2785,7 +2779,7 @@ pub const PathTemplate = struct {
                 };
 
                 if (count == 0) {
-                    end_len = @ptrToInt(c) - @ptrToInt(remain.ptr);
+                    end_len = @intFromPtr(c) - @intFromPtr(remain.ptr);
                     std.debug.assert(end_len <= remain.len);
                     break;
                 }

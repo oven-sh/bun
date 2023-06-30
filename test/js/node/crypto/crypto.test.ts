@@ -1,6 +1,5 @@
 import { sha, MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256, gc, CryptoHasher } from "bun";
 import { it, expect, describe } from "bun:test";
-import { readFileSync } from "fs";
 
 const HashClasses = [MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256];
 
@@ -87,6 +86,15 @@ describe("CryptoHasher", () => {
 
       orig.update("world");
       expect(copy.digest("hex")).not.toBe(orig.digest("hex"));
+    });
+
+    it(`CryptoHasher ${alg} copy can be used after digest()`, () => {
+      const orig = new CryptoHasher(alg);
+      orig.update("hello");
+      orig.digest("hex");
+      const copy = orig.copy();
+
+      expect(() => copy.digest("hex")).not.toThrow();
     });
 
     it(`CryptoHasher ${alg} copy updates the same`, () => {

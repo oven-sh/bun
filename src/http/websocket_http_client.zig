@@ -77,9 +77,9 @@ fn buildRequestBody(
     };
 
     if (client_protocol.len > 0)
-        client_protocol_hash.* = std.hash.Wyhash.hash(0, static_headers[1].value);
+        client_protocol_hash.* = bun.hash(static_headers[1].value);
 
-    const headers_ = static_headers[0 .. 1 + @as(usize, @boolToInt(client_protocol.len > 0))];
+    const headers_ = static_headers[0 .. 1 + @as(usize, @intFromBool(client_protocol.len > 0))];
 
     const pathname_ = pathname.slice();
     const host_ = host.slice();
@@ -289,7 +289,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.clearData();
 
             if (!this.tcp.isEstablished()) {
-                _ = uws.us_socket_close_connecting(comptime @as(c_int, @boolToInt(ssl)), this.tcp.socket);
+                _ = uws.us_socket_close_connecting(comptime @as(c_int, @intFromBool(ssl)), this.tcp.socket);
             } else {
                 this.tcp.close(0, null);
             }
@@ -387,7 +387,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             const to_write = remain[0..@min(remain.len, data.len)];
             if (data.len > 0 and to_write.len > 0) {
-                @memcpy(remain.ptr, data.ptr, to_write.len);
+                @memcpy(remain[0..to_write.len], data[0..to_write.len]);
                 this.body_written += to_write.len;
             }
 
@@ -465,7 +465,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     },
                     "Sec-WebSocket-Protocol".len => {
                         if (strings.eqlCaseInsensitiveASCII(header.name, "Sec-WebSocket-Protocol", false)) {
-                            if (this.websocket_protocol == 0 or std.hash.Wyhash.hash(0, header.value) != this.websocket_protocol) {
+                            if (this.websocket_protocol == 0 or bun.hash(header.value) != this.websocket_protocol) {
                                 this.terminate(ErrorCode.mismatch_client_protocol);
                                 return;
                             }
@@ -524,7 +524,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     this.terminate(ErrorCode.invalid_response);
                     return;
                 };
-                if (remain_buf.len > 0) @memcpy(overflow.ptr, remain_buf.ptr, remain_buf.len);
+                if (remain_buf.len > 0) @memcpy(overflow[0..remain_buf.len], remain_buf);
             }
 
             this.clearData();
@@ -757,7 +757,7 @@ const Copy = union(enum) {
                 return WebsocketHeader.frameSizeIncludingMask(byte_len.*);
             },
             .latin1 => {
-                byte_len.* = this.latin1.len;
+                byte_len.* = strings.elementLengthLatin1IntoUTF8([]const u8, this.latin1);
                 return WebsocketHeader.frameSizeIncludingMask(byte_len.*);
             },
             .bytes => {
@@ -775,7 +775,7 @@ const Copy = union(enum) {
         if (this == .raw) {
             std.debug.assert(buf.len >= this.raw.len);
             std.debug.assert(buf.ptr != this.raw.ptr);
-            @memcpy(buf.ptr, this.raw.ptr, this.raw.len);
+            @memcpy(buf[0..this.raw.len], this.raw);
             return;
         }
 
@@ -821,7 +821,10 @@ const Copy = union(enum) {
             .latin1 => |latin1| {
                 const encode_into_result = strings.copyLatin1IntoUTF8(to_mask, []const u8, latin1);
                 std.debug.assert(@as(usize, encode_into_result.written) == content_byte_len);
+
+                // latin1 can contain non-ascii
                 std.debug.assert(@as(usize, encode_into_result.read) == latin1.len);
+
                 header.len = WebsocketHeader.packLength(encode_into_result.written);
                 header.opcode = Opcode.Text;
                 var fib = std.io.fixedBufferStream(buf);
@@ -914,7 +917,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 return;
 
             if (!this.tcp.isEstablished()) {
-                _ = uws.us_socket_close_connecting(comptime @as(c_int, @boolToInt(ssl)), this.tcp.socket);
+                _ = uws.us_socket_close_connecting(comptime @as(c_int, @intFromBool(ssl)), this.tcp.socket);
             } else {
                 this.tcp.close(0, null);
             }
@@ -933,6 +936,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         pub fn handleHandshake(this: *WebSocket, socket: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
             _ = socket;
             _ = ssl_error;
+            JSC.markBinding(@src());
             log("WebSocket.onHandshake({d})", .{success});
             JSC.markBinding(@src());
             if (success == 0) {
@@ -1026,7 +1030,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             std.debug.assert(data_.len > 0);
 
             var writable = this.receive_buffer.writableWithSize(data_.len) catch unreachable;
-            @memcpy(writable.ptr, data_.ptr, data_.len);
+            @memcpy(writable[0..data_.len], data_);
             this.receive_buffer.update(data_.len);
 
             if (left_in_fragment >= data_.len and left_in_fragment - data_.len - this.receive_pending_chunk_len == 0) {
@@ -1176,10 +1180,10 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
                     .ping => {
                         const ping_len = @min(data.len, @min(receive_body_remain, 125));
-                        this.ping_len = @truncate(u8, ping_len);
+                        this.ping_len = ping_len;
 
                         if (ping_len > 0) {
-                            @memcpy(this.ping_frame_bytes[6..], data.ptr, ping_len);
+                            @memcpy(this.ping_frame_bytes[6..][0..ping_len], data[0..ping_len]);
                             data = data[ping_len..];
                         }
 
@@ -1378,7 +1382,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             std.mem.writeIntSliceBig(u16, final_body_bytes[6..8], code);
 
             if (body) |data| {
-                if (body_len > 0) @memcpy(final_body_bytes[8..], data, body_len);
+                if (body_len > 0) @memcpy(final_body_bytes[8..][0..body_len], data[0..body_len]);
             }
 
             // we must mask the code
@@ -1466,9 +1470,10 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 // fast path: small frame, no backpressure, attempt to send without allocating
                 if (!str.is16Bit() and str.len < stack_frame_size) {
                     const bytes = Copy{ .latin1 = str.slice() };
-                    const frame_size = WebsocketHeader.frameSizeIncludingMask(str.len);
+                    var byte_len: usize = 0;
+                    const frame_size = bytes.len(&byte_len);
                     if (!this.hasBackpressure() and frame_size < stack_frame_size) {
-                        bytes.copy(this.globalThis, inline_buf[0..frame_size], str.len);
+                        bytes.copy(this.globalThis, inline_buf[0..frame_size], byte_len);
                         _ = this.enqueueEncodedBytes(this.tcp, inline_buf[0..frame_size]);
                         return;
                     }
@@ -1564,7 +1569,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
                         this.adopted.receive_buffer.ensureUnusedCapacity(this.slice.len) catch return;
                         var writable = this.adopted.receive_buffer.writableSlice(0);
-                        @memcpy(writable.ptr, this.slice.ptr, this.slice.len);
+                        @memcpy(writable[0..this.slice.len], this.slice);
 
                         this.adopted.handleData(this.adopted.tcp, writable);
                     }

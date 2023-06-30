@@ -351,6 +351,6 @@ pub const Run = struct {
         vm.onExit();
 
         if (!JSC.is_bindgen) JSC.napi.fixDeadCodeElimination();
-        Global.exit(@boolToInt(this.any_unhandled));
+        Global.exit(@intFromBool(this.any_unhandled));
     }
 };

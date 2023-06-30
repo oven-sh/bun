@@ -108,6 +108,8 @@ pub const JSBlob = struct {
 
         if (@TypeOf(Blob.getArrayBuffer) != CallbackType)
             @compileLog("Expected Blob.getArrayBuffer to be a callback but received " ++ @typeName(@TypeOf(Blob.getArrayBuffer)));
+        if (@TypeOf(Blob.getExists) != CallbackType)
+            @compileLog("Expected Blob.getExists to be a callback but received " ++ @typeName(@TypeOf(Blob.getExists)));
         if (@TypeOf(Blob.getFormData) != CallbackType)
             @compileLog("Expected Blob.getFormData to be a callback but received " ++ @typeName(@TypeOf(Blob.getFormData)));
         if (@TypeOf(Blob.getJSON) != CallbackType)
@@ -136,6 +138,7 @@ pub const JSBlob = struct {
             @export(Blob.constructor, .{ .name = "BlobClass__construct" });
             @export(Blob.finalize, .{ .name = "BlobClass__finalize" });
             @export(Blob.getArrayBuffer, .{ .name = "BlobPrototype__getArrayBuffer" });
+            @export(Blob.getExists, .{ .name = "BlobPrototype__getExists" });
             @export(Blob.getFormData, .{ .name = "BlobPrototype__getFormData" });
             @export(Blob.getJSON, .{ .name = "BlobPrototype__getJSON" });
             @export(Blob.getLastModified, .{ .name = "BlobPrototype__getLastModified" });
@@ -878,42 +881,80 @@ pub const JSExpect = struct {
             @compileLog("Expected Expect.getResolves to be a getter with thisValue");
         if (@TypeOf(Expect.toBe) != CallbackType)
             @compileLog("Expected Expect.toBe to be a callback but received " ++ @typeName(@TypeOf(Expect.toBe)));
+        if (@TypeOf(Expect.toBeArray) != CallbackType)
+            @compileLog("Expected Expect.toBeArray to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeArray)));
+        if (@TypeOf(Expect.toBeArrayOfSize) != CallbackType)
+            @compileLog("Expected Expect.toBeArrayOfSize to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeArrayOfSize)));
+        if (@TypeOf(Expect.toBeBoolean) != CallbackType)
+            @compileLog("Expected Expect.toBeBoolean to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeBoolean)));
         if (@TypeOf(Expect.toBeCloseTo) != CallbackType)
             @compileLog("Expected Expect.toBeCloseTo to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeCloseTo)));
+        if (@TypeOf(Expect.toBeDate) != CallbackType)
+            @compileLog("Expected Expect.toBeDate to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeDate)));
         if (@TypeOf(Expect.toBeDefined) != CallbackType)
             @compileLog("Expected Expect.toBeDefined to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeDefined)));
         if (@TypeOf(Expect.toBeEmpty) != CallbackType)
             @compileLog("Expected Expect.toBeEmpty to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeEmpty)));
         if (@TypeOf(Expect.toBeEven) != CallbackType)
             @compileLog("Expected Expect.toBeEven to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeEven)));
+        if (@TypeOf(Expect.toBeFalse) != CallbackType)
+            @compileLog("Expected Expect.toBeFalse to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeFalse)));
         if (@TypeOf(Expect.toBeFalsy) != CallbackType)
             @compileLog("Expected Expect.toBeFalsy to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeFalsy)));
+        if (@TypeOf(Expect.toBeFinite) != CallbackType)
+            @compileLog("Expected Expect.toBeFinite to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeFinite)));
+        if (@TypeOf(Expect.toBeFunction) != CallbackType)
+            @compileLog("Expected Expect.toBeFunction to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeFunction)));
         if (@TypeOf(Expect.toBeGreaterThan) != CallbackType)
             @compileLog("Expected Expect.toBeGreaterThan to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeGreaterThan)));
         if (@TypeOf(Expect.toBeGreaterThanOrEqual) != CallbackType)
             @compileLog("Expected Expect.toBeGreaterThanOrEqual to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeGreaterThanOrEqual)));
         if (@TypeOf(Expect.toBeInstanceOf) != CallbackType)
             @compileLog("Expected Expect.toBeInstanceOf to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeInstanceOf)));
+        if (@TypeOf(Expect.toBeInteger) != CallbackType)
+            @compileLog("Expected Expect.toBeInteger to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeInteger)));
         if (@TypeOf(Expect.toBeLessThan) != CallbackType)
             @compileLog("Expected Expect.toBeLessThan to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeLessThan)));
         if (@TypeOf(Expect.toBeLessThanOrEqual) != CallbackType)
             @compileLog("Expected Expect.toBeLessThanOrEqual to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeLessThanOrEqual)));
         if (@TypeOf(Expect.toBeNaN) != CallbackType)
             @compileLog("Expected Expect.toBeNaN to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeNaN)));
+        if (@TypeOf(Expect.toBeNegative) != CallbackType)
+            @compileLog("Expected Expect.toBeNegative to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeNegative)));
+        if (@TypeOf(Expect.toBeNil) != CallbackType)
+            @compileLog("Expected Expect.toBeNil to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeNil)));
         if (@TypeOf(Expect.toBeNull) != CallbackType)
             @compileLog("Expected Expect.toBeNull to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeNull)));
+        if (@TypeOf(Expect.toBeNumber) != CallbackType)
+            @compileLog("Expected Expect.toBeNumber to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeNumber)));
         if (@TypeOf(Expect.toBeOdd) != CallbackType)
             @compileLog("Expected Expect.toBeOdd to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeOdd)));
+        if (@TypeOf(Expect.toBePositive) != CallbackType)
+            @compileLog("Expected Expect.toBePositive to be a callback but received " ++ @typeName(@TypeOf(Expect.toBePositive)));
+        if (@TypeOf(Expect.toBeString) != CallbackType)
+            @compileLog("Expected Expect.toBeString to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeString)));
+        if (@TypeOf(Expect.toBeSymbol) != CallbackType)
+            @compileLog("Expected Expect.toBeSymbol to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeSymbol)));
+        if (@TypeOf(Expect.toBeTrue) != CallbackType)
+            @compileLog("Expected Expect.toBeTrue to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeTrue)));
         if (@TypeOf(Expect.toBeTruthy) != CallbackType)
             @compileLog("Expected Expect.toBeTruthy to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeTruthy)));
+        if (@TypeOf(Expect.toBeTypeOf) != CallbackType)
+            @compileLog("Expected Expect.toBeTypeOf to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeTypeOf)));
         if (@TypeOf(Expect.toBeUndefined) != CallbackType)
             @compileLog("Expected Expect.toBeUndefined to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeUndefined)));
+        if (@TypeOf(Expect.toBeWithin) != CallbackType)
+            @compileLog("Expected Expect.toBeWithin to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeWithin)));
         if (@TypeOf(Expect.toContain) != CallbackType)
             @compileLog("Expected Expect.toContain to be a callback but received " ++ @typeName(@TypeOf(Expect.toContain)));
         if (@TypeOf(Expect.toContainEqual) != CallbackType)
             @compileLog("Expected Expect.toContainEqual to be a callback but received " ++ @typeName(@TypeOf(Expect.toContainEqual)));
+        if (@TypeOf(Expect.toEndWith) != CallbackType)
+            @compileLog("Expected Expect.toEndWith to be a callback but received " ++ @typeName(@TypeOf(Expect.toEndWith)));
         if (@TypeOf(Expect.toEqual) != CallbackType)
             @compileLog("Expected Expect.toEqual to be a callback but received " ++ @typeName(@TypeOf(Expect.toEqual)));
+        if (@TypeOf(Expect.toHaveBeenCalled) != CallbackType)
+            @compileLog("Expected Expect.toHaveBeenCalled to be a callback but received " ++ @typeName(@TypeOf(Expect.toHaveBeenCalled)));
         if (@TypeOf(Expect.toHaveBeenCalledTimes) != CallbackType)
             @compileLog("Expected Expect.toHaveBeenCalledTimes to be a callback but received " ++ @typeName(@TypeOf(Expect.toHaveBeenCalledTimes)));
         if (@TypeOf(Expect.toHaveBeenCalledWith) != CallbackType)
@@ -934,6 +975,8 @@ pub const JSExpect = struct {
             @compileLog("Expected Expect.toHaveReturnedTimes to be a callback but received " ++ @typeName(@TypeOf(Expect.toHaveReturnedTimes)));
         if (@TypeOf(Expect.toHaveReturnedWith) != CallbackType)
             @compileLog("Expected Expect.toHaveReturnedWith to be a callback but received " ++ @typeName(@TypeOf(Expect.toHaveReturnedWith)));
+        if (@TypeOf(Expect.toInclude) != CallbackType)
+            @compileLog("Expected Expect.toInclude to be a callback but received " ++ @typeName(@TypeOf(Expect.toInclude)));
         if (@TypeOf(Expect.toMatch) != CallbackType)
             @compileLog("Expected Expect.toMatch to be a callback but received " ++ @typeName(@TypeOf(Expect.toMatch)));
         if (@TypeOf(Expect.toMatchInlineSnapshot) != CallbackType)
@@ -942,6 +985,8 @@ pub const JSExpect = struct {
             @compileLog("Expected Expect.toMatchObject to be a callback but received " ++ @typeName(@TypeOf(Expect.toMatchObject)));
         if (@TypeOf(Expect.toMatchSnapshot) != CallbackType)
             @compileLog("Expected Expect.toMatchSnapshot to be a callback but received " ++ @typeName(@TypeOf(Expect.toMatchSnapshot)));
+        if (@TypeOf(Expect.toStartWith) != CallbackType)
+            @compileLog("Expected Expect.toStartWith to be a callback but received " ++ @typeName(@TypeOf(Expect.toStartWith)));
         if (@TypeOf(Expect.toStrictEqual) != CallbackType)
             @compileLog("Expected Expect.toStrictEqual to be a callback but received " ++ @typeName(@TypeOf(Expect.toStrictEqual)));
         if (@TypeOf(Expect.toThrow) != CallbackType)
@@ -1002,24 +1047,43 @@ pub const JSExpect = struct {
             @export(Expect.stringContaining, .{ .name = "ExpectClass__stringContaining" });
             @export(Expect.stringMatching, .{ .name = "ExpectClass__stringMatching" });
             @export(Expect.toBe, .{ .name = "ExpectPrototype__toBe" });
+            @export(Expect.toBeArray, .{ .name = "ExpectPrototype__toBeArray" });
+            @export(Expect.toBeArrayOfSize, .{ .name = "ExpectPrototype__toBeArrayOfSize" });
+            @export(Expect.toBeBoolean, .{ .name = "ExpectPrototype__toBeBoolean" });
             @export(Expect.toBeCloseTo, .{ .name = "ExpectPrototype__toBeCloseTo" });
+            @export(Expect.toBeDate, .{ .name = "ExpectPrototype__toBeDate" });
             @export(Expect.toBeDefined, .{ .name = "ExpectPrototype__toBeDefined" });
             @export(Expect.toBeEmpty, .{ .name = "ExpectPrototype__toBeEmpty" });
             @export(Expect.toBeEven, .{ .name = "ExpectPrototype__toBeEven" });
+            @export(Expect.toBeFalse, .{ .name = "ExpectPrototype__toBeFalse" });
             @export(Expect.toBeFalsy, .{ .name = "ExpectPrototype__toBeFalsy" });
+            @export(Expect.toBeFinite, .{ .name = "ExpectPrototype__toBeFinite" });
+            @export(Expect.toBeFunction, .{ .name = "ExpectPrototype__toBeFunction" });
             @export(Expect.toBeGreaterThan, .{ .name = "ExpectPrototype__toBeGreaterThan" });
             @export(Expect.toBeGreaterThanOrEqual, .{ .name = "ExpectPrototype__toBeGreaterThanOrEqual" });
             @export(Expect.toBeInstanceOf, .{ .name = "ExpectPrototype__toBeInstanceOf" });
+            @export(Expect.toBeInteger, .{ .name = "ExpectPrototype__toBeInteger" });
             @export(Expect.toBeLessThan, .{ .name = "ExpectPrototype__toBeLessThan" });
             @export(Expect.toBeLessThanOrEqual, .{ .name = "ExpectPrototype__toBeLessThanOrEqual" });
             @export(Expect.toBeNaN, .{ .name = "ExpectPrototype__toBeNaN" });
+            @export(Expect.toBeNegative, .{ .name = "ExpectPrototype__toBeNegative" });
+            @export(Expect.toBeNil, .{ .name = "ExpectPrototype__toBeNil" });
             @export(Expect.toBeNull, .{ .name = "ExpectPrototype__toBeNull" });
+            @export(Expect.toBeNumber, .{ .name = "ExpectPrototype__toBeNumber" });
             @export(Expect.toBeOdd, .{ .name = "ExpectPrototype__toBeOdd" });
+            @export(Expect.toBePositive, .{ .name = "ExpectPrototype__toBePositive" });
+            @export(Expect.toBeString, .{ .name = "ExpectPrototype__toBeString" });
+            @export(Expect.toBeSymbol, .{ .name = "ExpectPrototype__toBeSymbol" });
+            @export(Expect.toBeTrue, .{ .name = "ExpectPrototype__toBeTrue" });
             @export(Expect.toBeTruthy, .{ .name = "ExpectPrototype__toBeTruthy" });
+            @export(Expect.toBeTypeOf, .{ .name = "ExpectPrototype__toBeTypeOf" });
             @export(Expect.toBeUndefined, .{ .name = "ExpectPrototype__toBeUndefined" });
+            @export(Expect.toBeWithin, .{ .name = "ExpectPrototype__toBeWithin" });
             @export(Expect.toContain, .{ .name = "ExpectPrototype__toContain" });
             @export(Expect.toContainEqual, .{ .name = "ExpectPrototype__toContainEqual" });
+            @export(Expect.toEndWith, .{ .name = "ExpectPrototype__toEndWith" });
             @export(Expect.toEqual, .{ .name = "ExpectPrototype__toEqual" });
+            @export(Expect.toHaveBeenCalled, .{ .name = "ExpectPrototype__toHaveBeenCalled" });
             @export(Expect.toHaveBeenCalledTimes, .{ .name = "ExpectPrototype__toHaveBeenCalledTimes" });
             @export(Expect.toHaveBeenCalledWith, .{ .name = "ExpectPrototype__toHaveBeenCalledWith" });
             @export(Expect.toHaveBeenLastCalledWith, .{ .name = "ExpectPrototype__toHaveBeenLastCalledWith" });
@@ -1030,10 +1094,12 @@ pub const JSExpect = struct {
             @export(Expect.toHaveProperty, .{ .name = "ExpectPrototype__toHaveProperty" });
             @export(Expect.toHaveReturnedTimes, .{ .name = "ExpectPrototype__toHaveReturnedTimes" });
             @export(Expect.toHaveReturnedWith, .{ .name = "ExpectPrototype__toHaveReturnedWith" });
+            @export(Expect.toInclude, .{ .name = "ExpectPrototype__toInclude" });
             @export(Expect.toMatch, .{ .name = "ExpectPrototype__toMatch" });
             @export(Expect.toMatchInlineSnapshot, .{ .name = "ExpectPrototype__toMatchInlineSnapshot" });
             @export(Expect.toMatchObject, .{ .name = "ExpectPrototype__toMatchObject" });
             @export(Expect.toMatchSnapshot, .{ .name = "ExpectPrototype__toMatchSnapshot" });
+            @export(Expect.toStartWith, .{ .name = "ExpectPrototype__toStartWith" });
             @export(Expect.toStrictEqual, .{ .name = "ExpectPrototype__toStrictEqual" });
             @export(Expect.toThrow, .{ .name = "ExpectPrototype__toThrow" });
             @export(Expect.toThrowErrorMatchingInlineSnapshot, .{ .name = "ExpectPrototype__toThrowErrorMatchingInlineSnapshot" });
@@ -1119,6 +1185,318 @@ pub const JSExpectAny = struct {
         if (!JSC.is_bindgen) {
             @export(ExpectAny.call, .{ .name = "ExpectAnyClass__call" });
             @export(ExpectAny.finalize, .{ .name = "ExpectAnyClass__finalize" });
+        }
+    }
+};
+pub const JSExpectAnything = struct {
+    const ExpectAnything = Classes.ExpectAnything;
+    const GetterType = fn (*ExpectAnything, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*ExpectAnything, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*ExpectAnything, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*ExpectAnything, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*ExpectAnything, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*ExpectAnything {
+        JSC.markBinding(@src());
+        return ExpectAnything__fromJS(value);
+    }
+
+    /// Create a new instance of ExpectAnything
+    pub fn toJS(this: *ExpectAnything, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = ExpectAnything__create(globalObject, this);
+            std.debug.assert(value__.as(ExpectAnything).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return ExpectAnything__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of ExpectAnything.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*ExpectAnything) bool {
+        JSC.markBinding(@src());
+        return ExpectAnything__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *ExpectAnything, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(ExpectAnything__dangerouslySetPtr(value, null));
+    }
+
+    extern fn ExpectAnything__fromJS(JSC.JSValue) ?*ExpectAnything;
+    extern fn ExpectAnything__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn ExpectAnything__create(globalObject: *JSC.JSGlobalObject, ptr: ?*ExpectAnything) JSC.JSValue;
+
+    extern fn ExpectAnything__dangerouslySetPtr(JSC.JSValue, ?*ExpectAnything) bool;
+
+    comptime {
+        if (@TypeOf(ExpectAnything.finalize) != (fn (*ExpectAnything) callconv(.C) void)) {
+            @compileLog("ExpectAnything.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(ExpectAnything.call) != StaticCallbackType)
+            @compileLog("Expected ExpectAnything.call to be a static callback");
+        if (!JSC.is_bindgen) {
+            @export(ExpectAnything.call, .{ .name = "ExpectAnythingClass__call" });
+            @export(ExpectAnything.finalize, .{ .name = "ExpectAnythingClass__finalize" });
+        }
+    }
+};
+pub const JSExpectStringContaining = struct {
+    const ExpectStringContaining = Classes.ExpectStringContaining;
+    const GetterType = fn (*ExpectStringContaining, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*ExpectStringContaining, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*ExpectStringContaining, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*ExpectStringContaining, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*ExpectStringContaining, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*ExpectStringContaining {
+        JSC.markBinding(@src());
+        return ExpectStringContaining__fromJS(value);
+    }
+
+    extern fn ExpectStringContainingPrototype__stringValueSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn ExpectStringContainingPrototype__stringValueGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `ExpectStringContaining.stringValue` setter
+    /// This value will be visited by the garbage collector.
+    pub fn stringValueSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ExpectStringContainingPrototype__stringValueSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `ExpectStringContaining.stringValue` getter
+    /// This value will be visited by the garbage collector.
+    pub fn stringValueGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ExpectStringContainingPrototype__stringValueGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of ExpectStringContaining
+    pub fn toJS(this: *ExpectStringContaining, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = ExpectStringContaining__create(globalObject, this);
+            std.debug.assert(value__.as(ExpectStringContaining).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return ExpectStringContaining__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of ExpectStringContaining.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*ExpectStringContaining) bool {
+        JSC.markBinding(@src());
+        return ExpectStringContaining__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *ExpectStringContaining, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(ExpectStringContaining__dangerouslySetPtr(value, null));
+    }
+
+    extern fn ExpectStringContaining__fromJS(JSC.JSValue) ?*ExpectStringContaining;
+    extern fn ExpectStringContaining__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn ExpectStringContaining__create(globalObject: *JSC.JSGlobalObject, ptr: ?*ExpectStringContaining) JSC.JSValue;
+
+    extern fn ExpectStringContaining__dangerouslySetPtr(JSC.JSValue, ?*ExpectStringContaining) bool;
+
+    comptime {
+        if (@TypeOf(ExpectStringContaining.finalize) != (fn (*ExpectStringContaining) callconv(.C) void)) {
+            @compileLog("ExpectStringContaining.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(ExpectStringContaining.call) != StaticCallbackType)
+            @compileLog("Expected ExpectStringContaining.call to be a static callback");
+        if (!JSC.is_bindgen) {
+            @export(ExpectStringContaining.call, .{ .name = "ExpectStringContainingClass__call" });
+            @export(ExpectStringContaining.finalize, .{ .name = "ExpectStringContainingClass__finalize" });
+        }
+    }
+};
+pub const JSExpectStringMatching = struct {
+    const ExpectStringMatching = Classes.ExpectStringMatching;
+    const GetterType = fn (*ExpectStringMatching, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*ExpectStringMatching, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*ExpectStringMatching, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*ExpectStringMatching, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*ExpectStringMatching, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*ExpectStringMatching {
+        JSC.markBinding(@src());
+        return ExpectStringMatching__fromJS(value);
+    }
+
+    extern fn ExpectStringMatchingPrototype__testValueSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn ExpectStringMatchingPrototype__testValueGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `ExpectStringMatching.testValue` setter
+    /// This value will be visited by the garbage collector.
+    pub fn testValueSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ExpectStringMatchingPrototype__testValueSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `ExpectStringMatching.testValue` getter
+    /// This value will be visited by the garbage collector.
+    pub fn testValueGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ExpectStringMatchingPrototype__testValueGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of ExpectStringMatching
+    pub fn toJS(this: *ExpectStringMatching, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = ExpectStringMatching__create(globalObject, this);
+            std.debug.assert(value__.as(ExpectStringMatching).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return ExpectStringMatching__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of ExpectStringMatching.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*ExpectStringMatching) bool {
+        JSC.markBinding(@src());
+        return ExpectStringMatching__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *ExpectStringMatching, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(ExpectStringMatching__dangerouslySetPtr(value, null));
+    }
+
+    extern fn ExpectStringMatching__fromJS(JSC.JSValue) ?*ExpectStringMatching;
+    extern fn ExpectStringMatching__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn ExpectStringMatching__create(globalObject: *JSC.JSGlobalObject, ptr: ?*ExpectStringMatching) JSC.JSValue;
+
+    extern fn ExpectStringMatching__dangerouslySetPtr(JSC.JSValue, ?*ExpectStringMatching) bool;
+
+    comptime {
+        if (@TypeOf(ExpectStringMatching.finalize) != (fn (*ExpectStringMatching) callconv(.C) void)) {
+            @compileLog("ExpectStringMatching.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(ExpectStringMatching.call) != StaticCallbackType)
+            @compileLog("Expected ExpectStringMatching.call to be a static callback");
+        if (!JSC.is_bindgen) {
+            @export(ExpectStringMatching.call, .{ .name = "ExpectStringMatchingClass__call" });
+            @export(ExpectStringMatching.finalize, .{ .name = "ExpectStringMatchingClass__finalize" });
+        }
+    }
+};
+pub const JSFSWatcher = struct {
+    const FSWatcher = Classes.FSWatcher;
+    const GetterType = fn (*FSWatcher, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*FSWatcher, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*FSWatcher, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*FSWatcher, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*FSWatcher, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*FSWatcher {
+        JSC.markBinding(@src());
+        return FSWatcher__fromJS(value);
+    }
+
+    extern fn FSWatcherPrototype__listenerSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn FSWatcherPrototype__listenerGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `FSWatcher.listener` setter
+    /// This value will be visited by the garbage collector.
+    pub fn listenerSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        FSWatcherPrototype__listenerSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `FSWatcher.listener` getter
+    /// This value will be visited by the garbage collector.
+    pub fn listenerGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = FSWatcherPrototype__listenerGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of FSWatcher
+    pub fn toJS(this: *FSWatcher, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = FSWatcher__create(globalObject, this);
+            std.debug.assert(value__.as(FSWatcher).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return FSWatcher__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of FSWatcher.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*FSWatcher) bool {
+        JSC.markBinding(@src());
+        return FSWatcher__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *FSWatcher, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(FSWatcher__dangerouslySetPtr(value, null));
+    }
+
+    extern fn FSWatcher__fromJS(JSC.JSValue) ?*FSWatcher;
+    extern fn FSWatcher__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn FSWatcher__create(globalObject: *JSC.JSGlobalObject, ptr: ?*FSWatcher) JSC.JSValue;
+
+    extern fn FSWatcher__dangerouslySetPtr(JSC.JSValue, ?*FSWatcher) bool;
+
+    comptime {
+        if (@TypeOf(FSWatcher.finalize) != (fn (*FSWatcher) callconv(.C) void)) {
+            @compileLog("FSWatcher.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(FSWatcher.doClose) != CallbackType)
+            @compileLog("Expected FSWatcher.doClose to be a callback but received " ++ @typeName(@TypeOf(FSWatcher.doClose)));
+        if (@TypeOf(FSWatcher.hasRef) != CallbackType)
+            @compileLog("Expected FSWatcher.hasRef to be a callback but received " ++ @typeName(@TypeOf(FSWatcher.hasRef)));
+        if (@TypeOf(FSWatcher.doRef) != CallbackType)
+            @compileLog("Expected FSWatcher.doRef to be a callback but received " ++ @typeName(@TypeOf(FSWatcher.doRef)));
+        if (@TypeOf(FSWatcher.doUnref) != CallbackType)
+            @compileLog("Expected FSWatcher.doUnref to be a callback but received " ++ @typeName(@TypeOf(FSWatcher.doUnref)));
+        if (!JSC.is_bindgen) {
+            @export(FSWatcher.doClose, .{ .name = "FSWatcherPrototype__doClose" });
+            @export(FSWatcher.doRef, .{ .name = "FSWatcherPrototype__doRef" });
+            @export(FSWatcher.doUnref, .{ .name = "FSWatcherPrototype__doUnref" });
+            @export(FSWatcher.finalize, .{ .name = "FSWatcherClass__finalize" });
+            @export(FSWatcher.hasPendingActivity, .{ .name = "FSWatcher__hasPendingActivity" });
+            @export(FSWatcher.hasRef, .{ .name = "FSWatcherPrototype__hasRef" });
         }
     }
 };
@@ -2028,6 +2406,8 @@ pub const JSNodeJSFS = struct {
             @compileLog("Expected NodeJSFS.utimes to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.utimes)));
         if (@TypeOf(NodeJSFS.utimesSync) != CallbackType)
             @compileLog("Expected NodeJSFS.utimesSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.utimesSync)));
+        if (@TypeOf(NodeJSFS.watch) != CallbackType)
+            @compileLog("Expected NodeJSFS.watch to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.watch)));
         if (@TypeOf(NodeJSFS.write) != CallbackType)
             @compileLog("Expected NodeJSFS.write to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.write)));
         if (@TypeOf(NodeJSFS.writeFile) != CallbackType)
@@ -2118,6 +2498,7 @@ pub const JSNodeJSFS = struct {
             @export(NodeJSFS.unlinkSync, .{ .name = "NodeJSFSPrototype__unlinkSync" });
             @export(NodeJSFS.utimes, .{ .name = "NodeJSFSPrototype__utimes" });
             @export(NodeJSFS.utimesSync, .{ .name = "NodeJSFSPrototype__utimesSync" });
+            @export(NodeJSFS.watch, .{ .name = "NodeJSFSPrototype__watch" });
             @export(NodeJSFS.write, .{ .name = "NodeJSFSPrototype__write" });
             @export(NodeJSFS.writeFile, .{ .name = "NodeJSFSPrototype__writeFile" });
             @export(NodeJSFS.writeFileSync, .{ .name = "NodeJSFSPrototype__writeFileSync" });
@@ -4568,6 +4949,10 @@ comptime {
     _ = JSDirent;
     _ = JSExpect;
     _ = JSExpectAny;
+    _ = JSExpectAnything;
+    _ = JSExpectStringContaining;
+    _ = JSExpectStringMatching;
+    _ = JSFSWatcher;
     _ = JSFileSystemRouter;
     _ = JSListener;
     _ = JSMD4;

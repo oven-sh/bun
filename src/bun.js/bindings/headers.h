@@ -56,8 +56,9 @@ typedef void* JSClassRef;
 #ifndef __cplusplus
  typedef bJSC__CatchScope JSC__CatchScope; // JSC::CatchScope
   typedef ErrorableResolvedSource ErrorableResolvedSource;
+  typedef BunString BunString;
+  typedef ErrorableString ErrorableString;
  typedef bJSC__ThrowScope JSC__ThrowScope; // JSC::ThrowScope
-  typedef ErrorableZigString ErrorableZigString;
  typedef bJSC__JSObject JSC__JSObject; // JSC::JSObject
   typedef WebSocketClient WebSocketClient;
  typedef struct WebCore__AbortSignal WebCore__AbortSignal; // WebCore::AbortSignal
@@ -109,7 +110,8 @@ typedef void* JSClassRef;
   }
 
   typedef ErrorableResolvedSource ErrorableResolvedSource;
-  typedef ErrorableZigString ErrorableZigString;
+  typedef BunString BunString;
+  typedef ErrorableString ErrorableString;
   typedef WebSocketClient WebSocketClient;
   typedef WebSocketHTTPSClient WebSocketHTTPSClient;
   typedef JSClassRef JSClassRef;
@@ -161,6 +163,7 @@ CPP_DECL JSC__JSValue ZigString__toTypeErrorInstance(const ZigString* arg0, JSC_
 CPP_DECL JSC__JSValue ZigString__toValue(const ZigString* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL JSC__JSValue ZigString__toValueGC(const ZigString* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL WebCore__DOMURL* WebCore__DOMURL__cast_(JSC__JSValue JSValue0, JSC__VM* arg1);
+CPP_DECL BunString WebCore__DOMURL__fileSystemPath(WebCore__DOMURL* arg0);
 CPP_DECL void WebCore__DOMURL__href_(WebCore__DOMURL* arg0, ZigString* arg1);
 CPP_DECL void WebCore__DOMURL__pathname_(WebCore__DOMURL* arg0, ZigString* arg1);
 
@@ -216,7 +219,7 @@ CPP_DECL void JSC__JSString__toZigString(JSC__JSString* arg0, JSC__JSGlobalObjec
 #pragma mark - JSC::JSModuleLoader
 
 CPP_DECL JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* arg0, const unsigned char* arg1, size_t arg2, const unsigned char* arg3, size_t arg4, const unsigned char* arg5, size_t arg6, JSC__JSValue JSValue7, JSC__JSValue* arg8);
-CPP_DECL JSC__JSInternalPromise* JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* arg0, const ZigString* arg1);
+CPP_DECL JSC__JSInternalPromise* JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* arg0, const BunString* arg1);
 
 #pragma mark - WebCore::AbortSignal
 
@@ -250,6 +253,7 @@ CPP_DECL JSC__JSPromise* JSC__JSPromise__resolvedPromise(JSC__JSGlobalObject* ar
 CPP_DECL JSC__JSValue JSC__JSPromise__resolvedPromiseValue(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL void JSC__JSPromise__resolveOnNextTick(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL JSC__JSValue JSC__JSPromise__result(JSC__JSPromise* arg0, JSC__VM* arg1);
+CPP_DECL void JSC__JSPromise__setHandled(JSC__JSPromise* arg0, JSC__VM* arg1);
 CPP_DECL uint32_t JSC__JSPromise__status(const JSC__JSPromise* arg0, JSC__VM* arg1);
 
 #pragma mark - JSC::JSInternalPromise
@@ -264,6 +268,7 @@ CPP_DECL void JSC__JSInternalPromise__rejectWithCaughtException(JSC__JSInternalP
 CPP_DECL void JSC__JSInternalPromise__resolve(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL JSC__JSInternalPromise* JSC__JSInternalPromise__resolvedPromise(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL JSC__JSValue JSC__JSInternalPromise__result(const JSC__JSInternalPromise* arg0, JSC__VM* arg1);
+CPP_DECL void JSC__JSInternalPromise__setHandled(JSC__JSInternalPromise* arg0, JSC__VM* arg1);
 CPP_DECL uint32_t JSC__JSInternalPromise__status(const JSC__JSInternalPromise* arg0, JSC__VM* arg1);
 
 #pragma mark - JSC::JSFunction
@@ -304,6 +309,7 @@ CPP_DECL double JSC__JSValue__asNumber(JSC__JSValue JSValue0);
 CPP_DECL bJSC__JSObject JSC__JSValue__asObject(JSC__JSValue JSValue0);
 CPP_DECL JSC__JSPromise* JSC__JSValue__asPromise(JSC__JSValue JSValue0);
 CPP_DECL JSC__JSString* JSC__JSValue__asString(JSC__JSValue JSValue0);
+CPP_DECL double JSC__JSValue__coerceToDouble(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL int32_t JSC__JSValue__coerceToInt32(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL int64_t JSC__JSValue__coerceToInt64(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL JSC__JSValue JSC__JSValue__createEmptyArray(JSC__JSGlobalObject* arg0, size_t arg1);
@@ -316,6 +322,7 @@ CPP_DECL JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject* arg0,
 CPP_DECL JSC__JSValue JSC__JSValue__createTypeError(const ZigString* arg0, const ZigString* arg1, JSC__JSGlobalObject* arg2);
 CPP_DECL JSC__JSValue JSC__JSValue__createUninitializedUint8Array(JSC__JSGlobalObject* arg0, size_t arg1);
 CPP_DECL bool JSC__JSValue__deepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2);
+CPP_DECL bool JSC__JSValue__deepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2, bool arg3);
 CPP_DECL bool JSC__JSValue__eqlCell(JSC__JSValue JSValue0, JSC__JSCell* arg1);
 CPP_DECL bool JSC__JSValue__eqlValue(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
 CPP_DECL JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, unsigned char arg2);
@@ -334,6 +341,7 @@ CPP_DECL double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC__JSValue JSV
 CPP_DECL void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2);
 CPP_DECL JSC__JSValue JSC__JSValue__getPrototype(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL void JSC__JSValue__getSymbolDescription(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2);
+CPP_DECL double JSC__JSValue__getUnixTimestamp(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isAggregateError(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL bool JSC__JSValue__isAnyError(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isAnyInt(JSC__JSValue JSValue0);
@@ -359,6 +367,9 @@ CPP_DECL bool JSC__JSValue__isSameValue(JSC__JSValue JSValue0, JSC__JSValue JSVa
 CPP_DECL bool JSC__JSValue__isSymbol(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isTerminationException(JSC__JSValue JSValue0, JSC__VM* arg1);
 CPP_DECL bool JSC__JSValue__isUInt32AsAnyInt(JSC__JSValue JSValue0);
+CPP_DECL bool JSC__JSValue__jestDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2);
+CPP_DECL bool JSC__JSValue__jestDeepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2, bool arg3);
+CPP_DECL bool JSC__JSValue__jestStrictDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2);
 CPP_DECL JSC__JSValue JSC__JSValue__jsBoolean(bool arg0);
 CPP_DECL JSC__JSValue JSC__JSValue__jsDoubleNumber(double arg0);
 CPP_DECL JSC__JSValue JSC__JSValue__jsNull();
@@ -573,12 +584,12 @@ CPP_DECL bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* arg
 
 #ifdef __cplusplus
 
-ZIG_DECL void Zig__GlobalObject__fetch(ErrorableResolvedSource* arg0, JSC__JSGlobalObject* arg1, ZigString* arg2, ZigString* arg3);
-ZIG_DECL ErrorableZigString Zig__GlobalObject__import(JSC__JSGlobalObject* arg0, ZigString* arg1, ZigString* arg2);
+ZIG_DECL void Zig__GlobalObject__fetch(ErrorableResolvedSource* arg0, JSC__JSGlobalObject* arg1, BunString* arg2, BunString* arg3);
+ZIG_DECL ErrorableString Zig__GlobalObject__import(JSC__JSGlobalObject* arg0, BunString* arg1, BunString* arg2);
 ZIG_DECL void Zig__GlobalObject__onCrash();
 ZIG_DECL JSC__JSValue Zig__GlobalObject__promiseRejectionTracker(JSC__JSGlobalObject* arg0, JSC__JSPromise* arg1, uint32_t JSPromiseRejectionOperation2);
 ZIG_DECL JSC__JSValue Zig__GlobalObject__reportUncaughtException(JSC__JSGlobalObject* arg0, JSC__Exception* arg1);
-ZIG_DECL void Zig__GlobalObject__resolve(ErrorableZigString* arg0, JSC__JSGlobalObject* arg1, ZigString* arg2, ZigString* arg3, ZigString* arg4);
+ZIG_DECL void Zig__GlobalObject__resolve(ErrorableString* arg0, JSC__JSGlobalObject* arg1, BunString* arg2, BunString* arg3, ZigString* arg4);
 
 #endif
 

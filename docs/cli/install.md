@@ -49,6 +49,12 @@ To install in production mode (i.e. without `devDependencies`):
 $ bun install --production
 ```
 
+To install dependencies without allowing changes to lockfile (useful on CI):
+
+```bash
+$ bun install --frozen-lockfile
+```
+
 To perform a dry run (i.e. don't actually install anything):
 
 ```bash
@@ -79,6 +85,9 @@ peer = false
 
 # equivalent to `--production` flag
 production = false
+
+# equivalent to `--frozen-lockfile` flag
+frozenLockfile = false
 
 # equivalent to `--dry-run` flag
 dryRun = false
@@ -185,7 +194,7 @@ $ cd /path/to/my-app
 $ bun link cool-pkg
 ```
 
-This will add `cool-pkg` to the `dependencies` field of your app's package.json with a special version specifier that tells Bun to load from the registered local directory instead of installing from `npm`.
+In addition, the `--save` flag can be used to add `cool-pkg` to the `dependencies` field of your app's package.json with a special version specifier that tells Bun to load from the registered local directory instead of installing from `npm`:
 
 ```json-diff
   {

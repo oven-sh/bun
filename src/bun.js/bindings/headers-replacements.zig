@@ -69,3 +69,4 @@ pub const WebSocketHTTPClient = bindings.WebSocketHTTPClient;
 pub const WebSocketHTTPSClient = bindings.WebSocketHTTPSClient;
 pub const WebSocketClient = bindings.WebSocketClient;
 pub const WebSocketClientTLS = bindings.WebSocketClientTLS;
+pub const BunString = @import("root").bun.String;

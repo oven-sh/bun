@@ -60,7 +60,7 @@ Bun is designed as a faster, leaner, more modern replacement for Node.js. Node.j
 
 ## Design goals
 
-Bun is designed from the ground-up with the today's JavaScript ecosystem in mind.
+Bun is designed from the ground-up with today's JavaScript ecosystem in mind.
 
 - **Speed**. Bun processes start [4x faster than Node.js](https://twitter.com/jarredsumner/status/1499225725492076544) currently (try it yourself!)
 - **TypeScript & JSX support**. You can directly execute `.jsx`, `.ts`, and `.tsx` files; Bun's transpiler converts these to vanilla JavaScript before execution.

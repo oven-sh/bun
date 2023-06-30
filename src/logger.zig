@@ -180,7 +180,7 @@ pub const Location = struct {
             var data = source.initErrorPosition(r.loc);
             var full_line = source.contents[data.line_start..data.line_end];
             if (full_line.len > 80 + data.column_count) {
-                full_line = full_line[std.math.max(data.column_count, 40) - 40 .. std.math.min(data.column_count + 40, full_line.len - 40) + 40];
+                full_line = full_line[@max(data.column_count, 40) - 40 .. @min(data.column_count + 40, full_line.len - 40) + 40];
             }
 
             bun.assertDefined(source.path.text);
@@ -194,7 +194,7 @@ pub const Location = struct {
                 .column = usize2Loc(data.column_count).start,
                 .length = full_line.len,
                 .line_text = full_line,
-                .offset = @intCast(usize, std.math.max(r.loc.start, 0)),
+                .offset = @intCast(usize, @max(r.loc.start, 0)),
             };
         } else {
             return null;
@@ -293,7 +293,7 @@ pub const Data = struct {
             if (location.line_text) |line_text_| {
                 const line_text = std.mem.trimRight(u8, line_text_, "\r\n\t");
 
-                const location_in_line_text = @intCast(u32, std.math.max(location.column, 1) - 1);
+                const location_in_line_text = @intCast(u32, @max(location.column, 1) - 1);
                 const has_position = location.column > -1 and line_text.len > 0 and location_in_line_text < line_text.len;
 
                 if (has_position) {
@@ -421,12 +421,12 @@ pub const Msg = struct {
         if (err.toError()) |value| {
             value.toZigException(globalObject, zig_exception_holder.zigException());
         } else {
-            zig_exception_holder.zig_exception.message = JSC.ZigString.fromUTF8(err.toSlice(globalObject, allocator).slice());
+            zig_exception_holder.zig_exception.message = err.toBunString(globalObject);
         }
 
         return Msg{
             .data = .{
-                .text = zig_exception_holder.zigException().message.toSliceClone(allocator).slice(),
+                .text = try zig_exception_holder.zigException().message.toOwnedSlice(allocator),
                 .location = Location{
                     .file = file,
                 },
@@ -650,8 +650,8 @@ pub const Log = struct {
         var warnings: u32 = 0;
         var errors: u32 = 0;
         for (this.msgs.items) |msg| {
-            errors += @intCast(u32, @boolToInt(msg.kind == .err));
-            warnings += @intCast(u32, @boolToInt(msg.kind == .warn));
+            errors += @intCast(u32, @intFromBool(msg.kind == .err));
+            warnings += @intCast(u32, @intFromBool(msg.kind == .warn));
         }
 
         return Api.Log{
@@ -669,7 +669,7 @@ pub const Log = struct {
         err,
 
         pub fn atLeast(this: Level, other: Level) bool {
-            return @enumToInt(this) <= @enumToInt(other);
+            return @intFromEnum(this) <= @intFromEnum(other);
         }
 
         pub const label: std.EnumArray(Level, string) = brk: {
@@ -760,7 +760,7 @@ pub const Log = struct {
             const msg: Msg = msg_;
             if (msg.notes) |notes| {
                 for (notes) |note| {
-                    notes_count += @intCast(usize, @boolToInt(note.text.len > 0));
+                    notes_count += @intCast(usize, @intFromBool(note.text.len > 0));
                 }
             }
         }
@@ -860,10 +860,9 @@ pub const Log = struct {
     }
 
     inline fn allocPrint(allocator: std.mem.Allocator, comptime fmt: string, args: anytype) !string {
-        return if (Output.enable_ansi_colors)
-            try std.fmt.allocPrint(allocator, Output.prettyFmt(fmt, true), args)
-        else
-            try std.fmt.allocPrint(allocator, Output.prettyFmt(fmt, false), args);
+        return try switch (Output.enable_ansi_colors) {
+            inline else => |enable_ansi_colors| std.fmt.allocPrint(allocator, Output.prettyFmt(fmt, enable_ansi_colors), args),
+        };
     }
 
     inline fn _addResolveErrorWithLevel(
@@ -1174,11 +1173,9 @@ pub const Log = struct {
     }
 
     pub fn printForLogLevel(self: *Log, to: anytype) !void {
-        if (Output.enable_ansi_colors) {
-            return self.printForLogLevelWithEnableAnsiColors(to, true);
-        } else {
-            return self.printForLogLevelWithEnableAnsiColors(to, false);
-        }
+        return switch (Output.enable_ansi_colors) {
+            inline else => |enable_ansi_colors| self.printForLogLevelWithEnableAnsiColors(to, enable_ansi_colors),
+        };
     }
 
     pub fn printForLogLevelWithEnableAnsiColors(self: *Log, to: anytype, comptime enable_ansi_colors: bool) !void {
@@ -1372,7 +1369,7 @@ pub const Source = struct {
 
     pub fn initErrorPosition(self: *const Source, _offset: Loc) ErrorPosition {
         var prev_code_point: i32 = 0;
-        var offset: usize = std.math.min(if (_offset.start < 0) 0 else @intCast(usize, _offset.start), @max(self.contents.len, 1) - 1);
+        var offset: usize = @min(if (_offset.start < 0) 0 else @intCast(usize, _offset.start), @max(self.contents.len, 1) - 1);
 
         const contents = self.contents;
 

@@ -24,7 +24,7 @@ pub fn main() void {
     // The memory allocator makes a massive difference.
     // std.heap.raw_c_allocator and default_allocator perform similarly.
     // std.heap.GeneralPurposeAllocator makes this about 3x _slower_ than esbuild.
-    // var root_alloc = std.heap.ArenaAllocator.init(std.heap.raw_c_allocator);
+    // var root_alloc = @import("root").bun.ArenaAllocator.init(std.heap.raw_c_allocator);
     // var root_alloc_ = &root_alloc.allocator;
 
     var stdout = std.io.getStdOut();

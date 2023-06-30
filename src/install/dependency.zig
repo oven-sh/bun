@@ -147,7 +147,7 @@ pub fn toDependency(
     return Dependency{
         .name = name,
         .name_hash = @bitCast(u64, this[8..16].*),
-        .behavior = @intToEnum(Dependency.Behavior, this[16]),
+        .behavior = @enumFromInt(Dependency.Behavior, this[16]),
         .version = Dependency.Version.toVersion(name, this[17..this.len].*, ctx),
     };
 }
@@ -156,7 +156,7 @@ pub fn toExternal(this: Dependency) External {
     var bytes: External = undefined;
     bytes[0..this.name.bytes.len].* = this.name.bytes;
     bytes[8..16].* = @bitCast([8]u8, this.name_hash);
-    bytes[16] = @enumToInt(this.behavior);
+    bytes[16] = @intFromEnum(this.behavior);
     bytes[17..bytes.len].* = this.version.toExternal();
     return bytes;
 }
@@ -265,7 +265,7 @@ pub const Version = struct {
         ctx: Dependency.Context,
     ) Dependency.Version {
         const slice = String{ .bytes = bytes[1..9].* };
-        const tag = @intToEnum(Dependency.Version.Tag, bytes[0]);
+        const tag = @enumFromInt(Dependency.Version.Tag, bytes[0]);
         const sliced = &slice.sliced(ctx.buffer);
         return Dependency.parseWithTag(
             ctx.allocator,
@@ -279,7 +279,7 @@ pub const Version = struct {
 
     pub inline fn toExternal(this: Version) Version.External {
         var bytes: Version.External = undefined;
-        bytes[0] = @enumToInt(this.tag);
+        bytes[0] = @intFromEnum(this.tag);
         bytes[1..9].* = this.literal.bytes;
         return bytes;
     }
@@ -339,7 +339,7 @@ pub const Version = struct {
         github = 8,
 
         pub inline fn isNPM(this: Tag) bool {
-            return @enumToInt(this) < 3;
+            return @intFromEnum(this) < 3;
         }
 
         pub fn infer(dependency: string) Tag {
@@ -493,7 +493,7 @@ pub const Version = struct {
                 // npm:package@1.2.3
                 'n' => {
                     if (strings.hasPrefixComptime(dependency, "npm:") and dependency.len > "npm:".len) {
-                        const remain = dependency["npm:".len + @boolToInt(dependency["npm:".len] == '@') ..];
+                        const remain = dependency["npm:".len + @intFromBool(dependency["npm:".len] == '@') ..];
                         for (remain, 0..) |c, i| {
                             if (c == '@') {
                                 return infer(remain[i + 1 ..]);
@@ -645,7 +645,7 @@ pub fn parseWithTag(
             var input = dependency;
             const name = if (strings.hasPrefixComptime(input, "npm:")) sliced.sub(brk: {
                 var str = input["npm:".len..];
-                var i: usize = @boolToInt(str.len > 0 and str[0] == '@');
+                var i: usize = @intFromBool(str.len > 0 and str[0] == '@');
 
                 while (i < str.len) : (i += 1) {
                     if (str[i] == '@') {
@@ -694,7 +694,7 @@ pub fn parseWithTag(
 
                     // npm:@foo/bar@latest
                     //     ^
-                    i += @boolToInt(dependency[i] == '@');
+                    i += @intFromBool(dependency[i] == '@');
 
                     while (i < dependency.len) : (i += 1) {
                         // npm:@foo/bar@latest
@@ -899,67 +899,67 @@ pub const Behavior = enum(u8) {
     pub const workspace: u8 = 1 << 5;
 
     pub inline fn isNormal(this: Behavior) bool {
-        return (@enumToInt(this) & Behavior.normal) != 0;
+        return (@intFromEnum(this) & Behavior.normal) != 0;
     }
 
     pub inline fn isOptional(this: Behavior) bool {
-        return (@enumToInt(this) & Behavior.optional) != 0 and !this.isPeer();
+        return (@intFromEnum(this) & Behavior.optional) != 0 and !this.isPeer();
     }
 
     pub inline fn isDev(this: Behavior) bool {
-        return (@enumToInt(this) & Behavior.dev) != 0;
+        return (@intFromEnum(this) & Behavior.dev) != 0;
     }
 
     pub inline fn isPeer(this: Behavior) bool {
-        return (@enumToInt(this) & Behavior.peer) != 0;
+        return (@intFromEnum(this) & Behavior.peer) != 0;
     }
 
     pub inline fn isWorkspace(this: Behavior) bool {
-        return (@enumToInt(this) & Behavior.workspace) != 0;
+        return (@intFromEnum(this) & Behavior.workspace) != 0;
     }
 
     pub inline fn setNormal(this: Behavior, value: bool) Behavior {
         if (value) {
-            return @intToEnum(Behavior, @enumToInt(this) | Behavior.normal);
+            return @enumFromInt(Behavior, @intFromEnum(this) | Behavior.normal);
         } else {
-            return @intToEnum(Behavior, @enumToInt(this) & ~Behavior.normal);
+            return @enumFromInt(Behavior, @intFromEnum(this) & ~Behavior.normal);
         }
     }
 
     pub inline fn setOptional(this: Behavior, value: bool) Behavior {
         if (value) {
-            return @intToEnum(Behavior, @enumToInt(this) | Behavior.optional);
+            return @enumFromInt(Behavior, @intFromEnum(this) | Behavior.optional);
         } else {
-            return @intToEnum(Behavior, @enumToInt(this) & ~Behavior.optional);
+            return @enumFromInt(Behavior, @intFromEnum(this) & ~Behavior.optional);
         }
     }
 
     pub inline fn setDev(this: Behavior, value: bool) Behavior {
         if (value) {
-            return @intToEnum(Behavior, @enumToInt(this) | Behavior.dev);
+            return @enumFromInt(Behavior, @intFromEnum(this) | Behavior.dev);
         } else {
-            return @intToEnum(Behavior, @enumToInt(this) & ~Behavior.dev);
+            return @enumFromInt(Behavior, @intFromEnum(this) & ~Behavior.dev);
         }
     }
 
     pub inline fn setPeer(this: Behavior, value: bool) Behavior {
         if (value) {
-            return @intToEnum(Behavior, @enumToInt(this) | Behavior.peer);
+            return @enumFromInt(Behavior, @intFromEnum(this) | Behavior.peer);
         } else {
-            return @intToEnum(Behavior, @enumToInt(this) & ~Behavior.peer);
+            return @enumFromInt(Behavior, @intFromEnum(this) & ~Behavior.peer);
         }
     }
 
     pub inline fn setWorkspace(this: Behavior, value: bool) Behavior {
         if (value) {
-            return @intToEnum(Behavior, @enumToInt(this) | Behavior.workspace);
+            return @enumFromInt(Behavior, @intFromEnum(this) | Behavior.workspace);
         } else {
-            return @intToEnum(Behavior, @enumToInt(this) & ~Behavior.workspace);
+            return @enumFromInt(Behavior, @intFromEnum(this) & ~Behavior.workspace);
         }
     }
 
     pub inline fn cmp(lhs: Behavior, rhs: Behavior) std.math.Order {
-        if (@enumToInt(lhs) == @enumToInt(rhs)) {
+        if (@intFromEnum(lhs) == @intFromEnum(rhs)) {
             return .eq;
         }
 

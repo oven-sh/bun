@@ -741,7 +741,7 @@ fn NewPrinter(
 
         pub fn writeByteNTimes(self: *Printer, byte: u8, n: usize) !void {
             var bytes: [256]u8 = undefined;
-            std.mem.set(u8, bytes[0..], byte);
+            @memset(bytes[0..], byte);
 
             var remaining: usize = n;
             while (remaining > 0) {
@@ -845,7 +845,14 @@ fn NewPrinter(
         fn printBunJestImportStatement(p: *Printer, import: S.Import) void {
             if (comptime !is_bun_platform) unreachable;
 
-            printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(import.meta.path)"), "globalThis.Bun.jest(import.meta.path)");
+            switch (p.options.module_type) {
+                .cjs => {
+                    printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(__filename)"), "globalThis.Bun.jest(__filename)");
+                },
+                else => {
+                    printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(import.meta.path)"), "globalThis.Bun.jest(import.meta.path)");
+                },
+            }
         }
 
         fn printGlobalBunImportStatement(p: *Printer, import: S.Import) void {
@@ -1333,7 +1340,7 @@ fn NewPrinter(
                 // In JavaScript, numbers are represented as 64 bit floats
                 // However, they could also be signed or unsigned int 32 (when doing bit shifts)
                 // In this case, it's always going to unsigned since that conversion has already happened.
-                const val = @floatToInt(u64, float);
+                const val = @intFromFloat(u64, float);
                 switch (val) {
                     0 => {
                         p.print("0");
@@ -2124,26 +2131,6 @@ fn NewPrinter(
 
                     const is_unbound_eval = !e.is_direct_eval and p.isUnboundEvalIdentifier(e.target);
 
-                    if (is_unbound_eval) {
-                        if (e.args.len == 1 and e.args.ptr[0].data == .e_string and is_bun_platform) {
-                            // prisma:
-                            //
-                            //   eval("__dirname")
-                            //
-                            // We don't have a __dirname variable defined in our ESM <> CJS compat mode
-                            // (Perhaps we should change that for cases like this?)
-                            //
-                            //
-                            if (e.args.ptr[0].data.e_string.eqlComptime("__dirname")) {
-                                p.print("import.meta.dir");
-                                return;
-                            } else if (e.args.ptr[0].data.e_string.eqlComptime("__filename")) {
-                                p.print("import.meta.file");
-                                return;
-                            }
-                        }
-                    }
-
                     if (wrap) {
                         p.print("(");
                     }
@@ -2155,9 +2142,10 @@ fn NewPrinter(
                             p.stmt_start = p.writer.written;
                         }
                     }
-                    // We don't ever want to accidentally generate a direct eval expression here
+                    // We only want to generate an unbound eval() in CommonJS
                     p.call_target = e.target.data;
-                    if (is_unbound_eval) {
+
+                    if (is_unbound_eval and p.options.module_type != .cjs) {
                         p.print("(0, ");
                         p.printExpr(e.target, .postfix, ExprFlag.None());
                         p.print(")");
@@ -2194,6 +2182,15 @@ fn NewPrinter(
                         p.print("require");
                     } else {
                         p.print("import.meta.require");
+                    }
+                },
+                .e_require_resolve_call_target => {
+                    p.addSourceMapping(expr.loc);
+
+                    if (p.options.module_type == .cjs or !is_bun_platform) {
+                        p.print("require.resolve");
+                    } else {
+                        p.print("import.meta.resolveSync");
                     }
                 },
                 .e_require_string => |e| {
@@ -2405,7 +2402,7 @@ fn NewPrinter(
 
                     // This is more efficient than creating a new Part just for the JSX auto imports when bundling
                     if (comptime rewrite_esm_to_cjs) {
-                        if (@ptrToInt(p.options.prepend_part_key) > 0 and @ptrToInt(e.body.stmts.ptr) == @ptrToInt(p.options.prepend_part_key)) {
+                        if (@intFromPtr(p.options.prepend_part_key) > 0 and @intFromPtr(e.body.stmts.ptr) == @intFromPtr(p.options.prepend_part_key)) {
                             p.printTwoBlocksInOne(e.body.loc, e.body.stmts, p.options.prepend_part_value.?.stmts);
                             wasPrinted = true;
                         }
@@ -2537,7 +2534,7 @@ fn NewPrinter(
                     p.print("{");
                     const props = expr.data.e_object.properties.slice();
                     if (props.len > 0) {
-                        p.options.indent += @as(usize, @boolToInt(!e.is_single_line));
+                        p.options.indent += @as(usize, @intFromBool(!e.is_single_line));
 
                         if (e.is_single_line) {
                             p.printSpace();
@@ -3068,20 +3065,6 @@ fn NewPrinter(
             while (i < len) {
                 switch (utf8[i]) {
                     '\\' => i += 2,
-                    // We must escape here for JSX string literals that contain unescaped newlines
-                    // Those will get transformed into a template string
-                    // which can potentially have unescaped $
-                    '$' => {
-                        if (comptime c == '`') {
-                            p.print(utf8[0..i]);
-                            p.print("\\$");
-
-                            utf8 = utf8[i + 1 ..];
-                            len = utf8.len;
-                            i = 0;
-                        }
-                        i += 1;
-                    },
                     c => {
                         p.print(utf8[0..i]);
                         p.print("\\" ++ &[_]u8{c});
@@ -3489,7 +3472,7 @@ fn NewPrinter(
                 .b_array => |b| {
                     p.print("[");
                     if (b.items.len > 0) {
-                        p.options.indent += @as(usize, @boolToInt(!b.is_single_line));
+                        p.options.indent += @as(usize, @intFromBool(!b.is_single_line));
 
                         for (b.items, 0..) |*item, i| {
                             if (i != 0) {
@@ -3532,7 +3515,7 @@ fn NewPrinter(
                     p.print("{");
                     if (b.properties.len > 0) {
                         p.options.indent +=
-                            @as(usize, @boolToInt(!b.is_single_line));
+                            @as(usize, @intFromBool(!b.is_single_line));
 
                         for (b.properties, 0..) |*property, i| {
                             if (i != 0) {
@@ -4396,10 +4379,10 @@ fn NewPrinter(
                                 p.printGlobalBunImportStatement(s.*);
                                 return;
                             },
-                            .hardcoded => {
-                                p.printHardcodedImportStatement(s.*);
-                                return;
-                            },
+                            // .hardcoded => {
+                            //     p.printHardcodedImportStatement(s.*);
+                            //     return;
+                            // },
                             else => {},
                         }
                     }
@@ -4408,71 +4391,6 @@ fn NewPrinter(
                         const require_ref = p.options.require_ref;
 
                         const module_id = record.module_id;
-
-                        if (comptime is_bun_platform) {
-                            if (!record.path.is_disabled) {
-                                if (record.contains_import_star) {
-                                    p.print("var ");
-                                    p.printSymbol(s.namespace_ref);
-                                    p.@"print = "();
-                                    p.print("import.meta.require(");
-                                    p.printImportRecordPath(record);
-                                    p.print(")");
-                                    p.printSemicolonAfterStatement();
-                                }
-
-                                if (s.items.len > 0 or s.default_name != null) {
-                                    p.printIndent();
-                                    p.printSpaceBeforeIdentifier();
-                                    p.printWhitespacer(ws("var {"));
-
-                                    if (s.default_name) |default_name| {
-                                        p.printSpace();
-                                        p.print("default:");
-                                        p.printSpace();
-                                        p.printSymbol(default_name.ref.?);
-
-                                        if (s.items.len > 0) {
-                                            p.printSpace();
-                                            p.print(",");
-                                            p.printSpace();
-                                            for (s.items, 0..) |item, i| {
-                                                p.printClauseItemAs(item, .@"var");
-
-                                                if (i < s.items.len - 1) {
-                                                    p.print(",");
-                                                    p.printSpace();
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        for (s.items, 0..) |item, i| {
-                                            p.printClauseItemAs(item, .@"var");
-
-                                            if (i < s.items.len - 1) {
-                                                p.print(",");
-                                                p.printSpace();
-                                            }
-                                        }
-                                    }
-
-                                    p.print("}");
-                                    p.@"print = "();
-
-                                    if (record.contains_import_star) {
-                                        p.printSymbol(s.namespace_ref);
-                                        p.printSemicolonAfterStatement();
-                                    } else {
-                                        p.print("import.meta.require(");
-                                        p.printImportRecordPath(record);
-                                        p.print(")");
-                                        p.printSemicolonAfterStatement();
-                                    }
-                                }
-
-                                return;
-                            }
-                        }
 
                         if (!record.path.is_disabled and std.mem.indexOfScalar(u32, p.imported_module_ids.items, module_id) == null) {
                             p.printWhitespacer(ws("import * as"));
@@ -4781,11 +4699,11 @@ fn NewPrinter(
                 p.print(quote);
                 p.print(import_record.path.namespace);
                 p.print(":");
-                p.print(import_record.path.text);
+                p.printIdentifier(import_record.path.text);
                 p.print(quote);
             } else {
                 p.print(quote);
-                p.print(import_record.path.text);
+                p.printIdentifier(import_record.path.text);
                 p.print(quote);
             }
         }
@@ -5585,13 +5503,13 @@ pub const BufferWriter = struct {
     }
     pub fn writeByte(ctx: *BufferWriter, byte: u8) anyerror!usize {
         try ctx.buffer.appendChar(byte);
-        ctx.approximate_newline_count += @boolToInt(byte == '\n');
+        ctx.approximate_newline_count += @intFromBool(byte == '\n');
         ctx.last_bytes = .{ ctx.last_bytes[1], byte };
         return 1;
     }
     pub fn writeAll(ctx: *BufferWriter, bytes: anytype) anyerror!usize {
         try ctx.buffer.append(bytes);
-        ctx.approximate_newline_count += @boolToInt(bytes.len > 0 and bytes[bytes.len - 1] == '\n');
+        ctx.approximate_newline_count += @intFromBool(bytes.len > 0 and bytes[bytes.len - 1] == '\n');
 
         if (bytes.len >= 2) {
             ctx.last_bytes = bytes[bytes.len - 2 ..][0..2].*;
@@ -5803,7 +5721,7 @@ pub fn printAst(
             }
         }
 
-        std.sort.sort(rename.StableSymbolCount, top_level_symbols.items, {}, rename.StableSymbolCount.lessThan);
+        std.sort.block(rename.StableSymbolCount, top_level_symbols.items, {}, rename.StableSymbolCount.lessThan);
 
         try minify_renamer.allocateTopLevelSymbolSlots(top_level_symbols);
         var minifier = tree.char_freq.?.compile(allocator);
@@ -5885,9 +5803,9 @@ pub fn printJSON(
     var stmt = Stmt{ .loc = logger.Loc.Empty, .data = .{
         .s_expr = &s_expr,
     } };
-    var stmts = &[_]js_ast.Stmt{stmt};
-    var parts = &[_]js_ast.Part{.{ .stmts = stmts }};
-    const ast = Ast.initTest(parts);
+    var stmts = [_]js_ast.Stmt{stmt};
+    var parts = [_]js_ast.Part{.{ .stmts = &stmts }};
+    const ast = Ast.initTest(&parts);
     var list = js_ast.Symbol.List.init(ast.symbols.slice());
     var nested_list = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{list});
     var renamer = rename.NoOpRenamer.init(js_ast.Symbol.Map.initList(nested_list), source);

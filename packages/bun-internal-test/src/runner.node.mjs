@@ -4,8 +4,16 @@ import { fsyncSync, rmSync, writeFileSync, writeSync } from "fs";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
+import { totalmem } from "os";
 import { relative } from "path";
 import { fileURLToPath } from "url";
+
+const nativeMemory = totalmem();
+const BUN_JSC_forceRAMSizeNumber = parseInt(process.env["BUN_JSC_forceRAMSize"] || "0", 10);
+let BUN_JSC_forceRAMSize = Number(BigInt(nativeMemory) >> BigInt(2)) + "";
+if (!(Number.isSafeInteger(BUN_JSC_forceRAMSizeNumber) && BUN_JSC_forceRAMSizeNumber > 0)) {
+  BUN_JSC_forceRAMSize = BUN_JSC_forceRAMSizeNumber + "";
+}
 
 const cwd = resolve(fileURLToPath(import.meta.url), "../../../../");
 process.chdir(cwd);
@@ -23,30 +31,6 @@ function* findTests(dir, query) {
   }
 }
 
-function dump(buf) {
-  var offset = 0,
-    length = buf.byteLength;
-  while (offset < length) {
-    try {
-      const wrote = writeSync(1, buf);
-      offset += wrote;
-      if (offset < length) {
-        try {
-          fsyncSync(1);
-        } catch (e) {}
-
-        buf = buf.slice(wrote);
-      }
-    } catch (e) {
-      if (e.code === "EAGAIN") {
-        continue;
-      }
-
-      throw e;
-    }
-  }
-}
-
 var failingTests = [];
 
 async function runTest(path) {
@@ -58,11 +42,13 @@ async function runTest(path) {
       status: exitCode,
       error: timedOut,
     } = spawnSync("bun", ["test", path], {
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: "inherit",
       timeout: 1000 * 60 * 3,
       env: {
         ...process.env,
         FORCE_COLOR: "1",
+        BUN_GARBAGE_COLLECTOR_LEVEL: "1",
+        BUN_JSC_forceRAMSize,
       },
     });
   } catch (e) {
@@ -75,64 +61,8 @@ async function runTest(path) {
     failingTests.push(name);
     if (timedOut) console.error(timedOut);
   }
-
-  if (isAction && !passed) {
-    findErrors(stdout);
-    findErrors(stderr);
-  }
-
-  if (isAction) {
-    const prefix = passed ? "PASS" : `FAIL`;
-    action.startGroup(`${prefix} - ${name}`);
-  }
-
-  stdout && stdout?.byteLength && dump(stdout);
-  stderr && stderr?.byteLength && dump(stderr);
-
-  if (isAction) {
-    action.endGroup();
-  }
 }
 
-function findErrors(data) {
-  const text = new StringDecoder().write(new Buffer(data.buffer)).replaceAll(/\u001b\[.*?m/g, "");
-  let index = 0;
-  do {
-    index = text.indexOf("error: ", index);
-    if (index === -1) {
-      break;
-    }
-
-    const messageEnd = text.indexOf("\n", index);
-    if (messageEnd === -1) {
-      break;
-    }
-    const message = text.slice(index + 7, messageEnd);
-    index = text.indexOf("at ", index);
-    if (index === -1) {
-      break;
-    }
-    const startAt = index;
-    index = text.indexOf("\n", index);
-    if (index === -1) {
-      break;
-    }
-    const at = text.slice(startAt + 3, index);
-    let file = at.slice(0, at.indexOf(":"));
-    if (file.length === 0) {
-      continue;
-    }
-
-    const startLine = at.slice(at.indexOf(":") + 1, at.indexOf(":") + 1 + at.slice(at.indexOf(":") + 1).indexOf(":"));
-    const startColumn = at.slice(at.indexOf(":") + 1 + at.slice(at.indexOf(":") + 1).indexOf(":") + 1);
-
-    if (file.startsWith("/")) {
-      file = relative(cwd, file);
-    }
-
-    action.error(message, { file, startLine, startColumn });
-  } while (index !== -1);
-}
 var tests = [];
 var testFileNames = [];
 for (const path of findTests(resolve(cwd, "test"))) {

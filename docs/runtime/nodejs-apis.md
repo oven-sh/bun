@@ -81,7 +81,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_events" %} [`node:events`](https://nodejs.org/api/events.html) {% /anchor %}
 - 🟡
-- Missing `EventEmitterAsyncResource`. `EventEmitter` is missing `{get}set}MaxListeners` `usingDomains` `init`.
+- Missing `EventEmitterAsyncResource` `events.on`.
 
 ---
 

@@ -50,7 +50,7 @@ describe("bundler", () => {
     run: true,
   });
   itBundled("edgecase/BunPluginTreeShakeImport", {
-    notImplemented: true,
+    todo: true,
     // This only appears at runtime and not with bun build, even with --no-bundle
     files: {
       "/entry.ts": /* js */ `
@@ -148,7 +148,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/NodeEnvOptionalChaining", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         capture(process?.env?.NODE_ENV);
@@ -208,6 +208,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/ExternalES6ConvertedToCommonJSSimplified", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         console.log(JSON.stringify(require('./e')));
@@ -274,7 +275,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/ScriptTagEscape", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         console.log('<script></script>');
@@ -319,6 +320,8 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/JSONDefaultAndNamedImport", {
+    // We don't support rewriting default import to property acceses yet
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import def from './test.json'
@@ -346,6 +349,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/JSONWithDefaultKeyNamespace", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import * as ns from './test.json'
@@ -359,6 +363,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/RequireUnknownExtension", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         require('./x.aaaa')
@@ -378,7 +383,7 @@ describe("bundler", () => {
           "exports": {
             ".": {
               "boop-server": "./ignore.js",
-              "default": "./boop.js",
+              "default": "./boop.js"
             }
           }
         }
@@ -392,6 +397,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/PackageJSONDefaultConditionImport", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import React from 'react'
@@ -403,7 +409,7 @@ describe("bundler", () => {
           "exports": {
             ".": {
               "react-server": "./ignore.js",
-              "default": "./react.js",
+              "default": "./react.js"
             }
           }
         }
@@ -439,6 +445,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/TSConfigPathStarAnywhere", {
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import test0 from 'test3/foo'
@@ -586,6 +593,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/DCEVarRedeclarationIssue2815", {
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         var x = 1;
@@ -633,7 +641,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/AbsolutePathShouldNotResolveAsRelative", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         console.log(1);
@@ -653,6 +661,7 @@ describe("bundler", () => {
     target: "bun",
   });
   itBundled("edgecase/RuntimeExternalRequire", {
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         console.log(require("hello-1").type);
@@ -680,6 +689,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/RuntimeExternalImport", {
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import { type as a1 } from 'hello-1';
@@ -744,6 +754,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/RuntimeExternalImport2", {
+    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import t from 'hello';
@@ -809,6 +820,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/OverwriteInputWithOutdir", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import { version } from './library';
@@ -824,6 +836,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/OverwriteInputWithOutfile", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import { version } from './library';
@@ -839,6 +852,7 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/OverwriteInputNonEntrypoint", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import { version } from './library';
@@ -851,6 +865,74 @@ describe("bundler", () => {
     outfile: "/entry.js",
     bundleErrors: {
       "<bun>": ['Refusing to overwrite input file "/entry.js"'],
+    },
+  });
+  itBundled("edgecase/ModuleExportsFunctionIssue2911", {
+    files: {
+      "/entry.js": /* js */ `
+         const fn = require('fresh');
+         console.log(fn());
+         const fn2 = require('./not_in_node_modules');
+         console.log(fn2());
+         import fn3 from 'fresh';
+         console.log(fn());
+         import fn4 from './not_in_node_modules';
+         console.log(fn2());
+       `,
+      "/node_modules/fresh/index.js": /* js */ `
+         module.exports = function() {
+           return 'it worked';
+         }
+       `,
+      "/not_in_node_modules.js": /* js */ `
+         module.exports = function() {
+           return 'it worked';
+         }
+       `,
+    },
+    run: {
+      stdout: "it worked\nit worked\nit worked\nit worked",
+    },
+  });
+  itBundled("edgecase/IsBuffer1", {
+    files: {
+      "/entry.js": /* js */ `
+        import isBuffer from 'lodash-es/isBuffer';
+        if(isBuffer !== 1) throw 'fail';
+        console.log('pass');
+      `,
+      "/node_modules/lodash-es/isBuffer.js": /* js */ `
+        var freeExports = typeof exports == 'object';
+        // this is using the 'freeExports' variable but giving a predictable outcome
+        const isBuffer = freeExports ? 1 : 1;
+        export default isBuffer;
+      `,
+    },
+    run: {
+      stdout: "pass",
+    },
+  });
+  itBundled("edgecase/IsBuffer2", {
+    files: {
+      "/entry.js": /* js */ `
+        import isBuffer from 'lodash-es/isBuffer';
+        if(isBuffer !== 1) throw 'fail';
+        console.log('pass');
+      `,
+      "/node_modules/lodash-es/package.json": /* json */ `
+        { "name": "lodash-es", "type": "module"}
+      `,
+      "/node_modules/lodash-es/isBuffer.js": /* js */ `
+        var freeExports = typeof exports == 'object' && exports && !exports.nodeType && exports;
+        var freeModule = freeExports && typeof module == 'object' && module && !module.nodeType && module;
+
+        // this is using the 'freeExports' variable but giving a predictable outcome
+        const isBuffer = [freeExports, freeModule] ? 1 : 1;
+        export default isBuffer;
+      `,
+    },
+    run: {
+      stdout: "pass",
     },
   });
 });

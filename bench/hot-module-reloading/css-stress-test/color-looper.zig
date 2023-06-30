@@ -115,27 +115,27 @@ pub fn main() anyerror!void {
         counters[counter].timestamp = @truncate(u64, @intCast(u128, std.time.nanoTimestamp()) / (std.time.ns_per_ms / 10));
         counters[counter].rotate = rotate % 360;
         counters[counter].percent = std.math.mod(f64, std.math.round(((progress_bar + 1.0) / destination_count) * 1000) / 1000, 100) catch 0;
-        counters[counter].color_values[0] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[0][0] + 1) % 256)) * 0.8));
-        counters[counter].color_values[1] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[0][1] + 1) % 256)) * 0.8));
-        counters[counter].color_values[2] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[0][2] + 1) % 256)) * 0.8));
+        counters[counter].color_values[0] = @intFromFloat(u32, std.math.round(@floatFromInt(f64, ((colors[0][0] + 1) % 256)) * 0.8));
+        counters[counter].color_values[1] = @intFromFloat(u32, std.math.round(@floatFromInt(f64, ((colors[0][1] + 1) % 256)) * 0.8));
+        counters[counter].color_values[2] = @intFromFloat(u32, std.math.round(@floatFromInt(f64, ((colors[0][2] + 1) % 256)) * 0.8));
         counters[counter].color_values[3] = (colors[0][0] + 1) % 256;
         counters[counter].color_values[4] = (colors[0][1] + 1) % 256;
         counters[counter].color_values[5] = (colors[0][2] + 1) % 256;
-        counters[counter].color_values[6] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[1][0] + 1) % 256)) * 0.8));
-        counters[counter].color_values[7] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[1][1] + 1) % 256)) * 0.8));
-        counters[counter].color_values[8] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[1][2] + 1) % 256)) * 0.8));
+        counters[counter].color_values[6] = @intFromFloat(u32, std.math.round(@floatFromInt(f64, ((colors[1][0] + 1) % 256)) * 0.8));
+        counters[counter].color_values[7] = @intFromFloat(u32, std.math.round(@floatFromInt(f64, ((colors[1][1] + 1) % 256)) * 0.8));
+        counters[counter].color_values[8] = @intFromFloat(u32, std.math.round(@floatFromInt(f64, ((colors[1][2] + 1) % 256)) * 0.8));
         counters[counter].color_values[9] = (colors[1][0] + 1) % 256;
         counters[counter].color_values[10] = (colors[1][1] + 1) % 256;
         counters[counter].color_values[11] = (colors[1][2] + 1) % 256;
-        counters[counter].color_values[12] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[2][0] + 1) % 256)) * 0.8));
-        counters[counter].color_values[13] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[2][1] + 1) % 256)) * 0.8));
-        counters[counter].color_values[14] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[2][2] + 1) % 256)) * 0.8));
+        counters[counter].color_values[12] = @intFromFloat(u32, std.math.round(@floatFromInt(f64, ((colors[2][0] + 1) % 256)) * 0.8));
+        counters[counter].color_values[13] = @intFromFloat(u32, std.math.round(@floatFromInt(f64, ((colors[2][1] + 1) % 256)) * 0.8));
+        counters[counter].color_values[14] = @intFromFloat(u32, std.math.round(@floatFromInt(f64, ((colors[2][2] + 1) % 256)) * 0.8));
         counters[counter].color_values[15] = (colors[2][0] + 1) % 256;
         counters[counter].color_values[16] = (colors[2][1] + 1) % 256;
         counters[counter].color_values[17] = (colors[2][2] + 1) % 256;
-        counters[counter].color_values[18] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[3][0] + 1) % 256)) * 0.8));
-        counters[counter].color_values[19] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[3][1] + 1) % 256)) * 0.8));
-        counters[counter].color_values[20] = @floatToInt(u32, std.math.round(@intToFloat(f64, ((colors[3][2] + 1) % 256)) * 0.8));
+        counters[counter].color_values[18] = @intFromFloat(u32, std.math.round(@floatFromInt(f64, ((colors[3][0] + 1) % 256)) * 0.8));
+        counters[counter].color_values[19] = @intFromFloat(u32, std.math.round(@floatFromInt(f64, ((colors[3][1] + 1) % 256)) * 0.8));
+        counters[counter].color_values[20] = @intFromFloat(u32, std.math.round(@floatFromInt(f64, ((colors[3][2] + 1) % 256)) * 0.8));
         counters[counter].color_values[21] = (colors[3][0] + 1) % 256;
         counters[counter].color_values[22] = (colors[3][1] + 1) % 256;
         counters[counter].color_values[23] = (colors[3][2] + 1) % 256;
@@ -190,7 +190,7 @@ pub fn main() anyerror!void {
     _ = try recorder.wait();
 
     all_timestamps[0] = wrote.len;
-    for (counters) |count, i| {
+    for (counters, 0..) |count, i| {
         all_timestamps[i + 1] = count.timestamp;
     }
 

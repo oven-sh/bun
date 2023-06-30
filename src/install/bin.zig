@@ -281,7 +281,7 @@ pub const Bin = extern struct {
             if (name[0] != '@') return name;
             var name_ = name;
             name_ = name[1..];
-            return name_[(std.mem.indexOfScalar(u8, name_, '/') orelse return name) + 1 ..];
+            return name_[(strings.indexOfChar(name_, '/') orelse return name) + 1 ..];
         }
 
         fn setPermissions(folder: std.os.fd_t, target: [:0]const u8) void {
@@ -382,7 +382,7 @@ pub const Bin = extern struct {
                     bun.copy(u8, remain, target);
                     remain = remain[target.len..];
                     remain[0] = 0;
-                    const target_len = @ptrToInt(remain.ptr) - @ptrToInt(&dest_buf);
+                    const target_len = @intFromPtr(remain.ptr) - @intFromPtr(&dest_buf);
                     remain = remain[1..];
 
                     var target_path: [:0]u8 = dest_buf[0..target_len :0];
@@ -392,7 +392,7 @@ pub const Bin = extern struct {
                     bun.copy(u8, from_remain, unscoped_name);
                     from_remain = from_remain[unscoped_name.len..];
                     from_remain[0] = 0;
-                    var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
+                    var dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
                     this.setSimlinkAndPermissions(target_path, dest_path);
                 },
@@ -404,7 +404,7 @@ pub const Bin = extern struct {
                     bun.copy(u8, remain, target);
                     remain = remain[target.len..];
                     remain[0] = 0;
-                    const target_len = @ptrToInt(remain.ptr) - @ptrToInt(&dest_buf);
+                    const target_len = @intFromPtr(remain.ptr) - @intFromPtr(&dest_buf);
                     remain = remain[1..];
 
                     var target_path: [:0]u8 = dest_buf[0..target_len :0];
@@ -412,7 +412,7 @@ pub const Bin = extern struct {
                     bun.copy(u8, from_remain, name_to_use);
                     from_remain = from_remain[name_to_use.len..];
                     from_remain[0] = 0;
-                    var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
+                    var dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
                     this.setSimlinkAndPermissions(target_path, dest_path);
                 },
@@ -434,7 +434,7 @@ pub const Bin = extern struct {
                         bun.copy(u8, remain, target);
                         remain = remain[target.len..];
                         remain[0] = 0;
-                        const target_len = @ptrToInt(remain.ptr) - @ptrToInt(&dest_buf);
+                        const target_len = @intFromPtr(remain.ptr) - @intFromPtr(&dest_buf);
                         remain = remain[1..];
 
                         var target_path: [:0]u8 = dest_buf[0..target_len :0];
@@ -442,7 +442,7 @@ pub const Bin = extern struct {
                         bun.copy(u8, from_remain, name_to_use);
                         from_remain = from_remain[name_to_use.len..];
                         from_remain[0] = 0;
-                        var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
+                        var dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
                         this.setSimlinkAndPermissions(target_path, dest_path);
                     }
@@ -461,7 +461,7 @@ pub const Bin = extern struct {
                     var dir = std.fs.Dir{ .fd = this.package_installed_node_modules };
 
                     var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
-                    @intToPtr([*]u8, @ptrToInt(joined.ptr))[joined.len] = 0;
+                    @ptrFromInt([*]u8, @intFromPtr(joined.ptr))[joined.len] = 0;
                     var joined_: [:0]const u8 = joined.ptr[0..joined.len :0];
                     var child_dir = bun.openDir(dir, joined_) catch |err| {
                         this.err = err;
@@ -482,12 +482,12 @@ pub const Bin = extern struct {
                     while (iter.next() catch null) |entry_| {
                         const entry: std.fs.IterableDir.Entry = entry_;
                         switch (entry.kind) {
-                            std.fs.IterableDir.Entry.Kind.SymLink, std.fs.IterableDir.Entry.Kind.File => {
+                            std.fs.IterableDir.Entry.Kind.sym_link, std.fs.IterableDir.Entry.Kind.file => {
                                 target_buf_remain = prev_target_buf_remain;
                                 bun.copy(u8, target_buf_remain, entry.name);
                                 target_buf_remain = target_buf_remain[entry.name.len..];
                                 target_buf_remain[0] = 0;
-                                var from_path: [:0]u8 = target_buf[0 .. @ptrToInt(target_buf_remain.ptr) - @ptrToInt(&target_buf) :0];
+                                var from_path: [:0]u8 = target_buf[0 .. @intFromPtr(target_buf_remain.ptr) - @intFromPtr(&target_buf) :0];
                                 var to_path = if (!link_global)
                                     std.fmt.bufPrintZ(&dest_buf, dot_bin ++ "{s}", .{entry.name}) catch continue
                                 else
@@ -519,7 +519,7 @@ pub const Bin = extern struct {
                     return;
                 }
 
-                @memcpy(&target_buf, this.global_bin_path.ptr, this.global_bin_path.len);
+                @memcpy(target_buf[0..this.global_bin_path.len], this.global_bin_path);
                 from_remain = target_buf[this.global_bin_path.len..];
                 from_remain[0] = std.fs.path.sep;
                 from_remain = from_remain[1..];
@@ -557,7 +557,7 @@ pub const Bin = extern struct {
                     bun.copy(u8, from_remain, unscoped_name);
                     from_remain = from_remain[unscoped_name.len..];
                     from_remain[0] = 0;
-                    var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
+                    var dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
                     std.os.unlinkatZ(this.root_node_modules_folder, dest_path, 0) catch {};
                 },
@@ -566,7 +566,7 @@ pub const Bin = extern struct {
                     bun.copy(u8, from_remain, name_to_use);
                     from_remain = from_remain[name_to_use.len..];
                     from_remain[0] = 0;
-                    var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
+                    var dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
                     std.os.unlinkatZ(this.root_node_modules_folder, dest_path, 0) catch {};
                 },
@@ -594,7 +594,7 @@ pub const Bin = extern struct {
                         bun.copy(u8, from_remain, name_to_use);
                         from_remain = from_remain[name_to_use.len..];
                         from_remain[0] = 0;
-                        var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
+                        var dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
                         std.os.unlinkatZ(this.root_node_modules_folder, dest_path, 0) catch {};
                     }
@@ -613,7 +613,7 @@ pub const Bin = extern struct {
                     var dir = std.fs.Dir{ .fd = this.package_installed_node_modules };
 
                     var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
-                    @intToPtr([*]u8, @ptrToInt(joined.ptr))[joined.len] = 0;
+                    @ptrFromInt([*]u8, @intFromPtr(joined.ptr))[joined.len] = 0;
                     var joined_: [:0]const u8 = joined.ptr[0..joined.len :0];
                     var child_dir = bun.openDir(dir, joined_) catch |err| {
                         this.err = err;
@@ -634,7 +634,7 @@ pub const Bin = extern struct {
                     while (iter.next() catch null) |entry_| {
                         const entry: std.fs.IterableDir.Entry = entry_;
                         switch (entry.kind) {
-                            std.fs.IterableDir.Entry.Kind.SymLink, std.fs.IterableDir.Entry.Kind.File => {
+                            std.fs.IterableDir.Entry.Kind.sym_link, std.fs.IterableDir.Entry.Kind.file => {
                                 target_buf_remain = prev_target_buf_remain;
                                 bun.copy(u8, target_buf_remain, entry.name);
                                 target_buf_remain = target_buf_remain[entry.name.len..];

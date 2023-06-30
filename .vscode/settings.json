@@ -37,8 +37,6 @@
   "[yaml]": {
     "editor.formatOnSave": true
   },
-  "zig.beforeDebugCmd": "make build-unit ${file} ${filter} ${bin}",
-  "zig.testCmd": "make test ${file} ${filter} ${bin}",
   "[markdown]": {
     "editor.unicodeHighlight.ambiguousCharacters": false,
     "editor.unicodeHighlight.invisibleCharacters": false,
@@ -78,7 +76,8 @@
     "src/deps/c-ares": true,
     "src/deps/tinycc": true,
     "src/deps/zstd": true,
-    "test/snippets/package-json-exports/_node_modules_copy": true
+    "test/snippets/package-json-exports/_node_modules_copy": true,
+    "src/js/out": true
   },
   "C_Cpp.files.exclude": {
     "**/.vscode": true,
@@ -108,11 +107,6 @@
     "editor.defaultFormatter": "xaver.clang-format"
   },
   "files.associations": {
-    "*.{setting,comp,fuse,fu}": "lua",
-    "*.ctk": "json",
-    "*.json5": "json5",
-    "*.json": "jsonc",
-    "*.scriptlib": "lua",
     "*.lock": "yarnlock",
     "*.idl": "cpp",
     "memory": "cpp",
@@ -221,14 +215,7 @@
     "regex": "cpp",
     "span": "cpp",
     "valarray": "cpp",
-    "codecvt": "cpp",
-    "hash_map": "cpp",
-    "source_location": "cpp",
-    "numbers": "cpp",
-    "semaphore": "cpp",
-    "stdfloat": "cpp",
-    "stop_token": "cpp",
-    "cfenv": "cpp"
+    "codecvt": "cpp"
   },
   "cmake.configureOnOpen": false,
   "C_Cpp.errorSquiggles": "enabled",

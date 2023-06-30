@@ -31,14 +31,14 @@ pub const Uint8Array = extern struct {
 
     pub fn fromSlice(slice: []const u8) u64 {
         return @bitCast(u64, [2]u32{
-            @ptrToInt(slice.ptr),
+            @intFromPtr(slice.ptr),
             slice.len,
         });
     }
 
     pub fn fromJS(data: u64) []u8 {
         const ptrs = @bitCast([2]u32, data);
-        return @intToPtr([*]u8, ptrs[0])[0..ptrs[1]];
+        return @ptrFromInt([*]u8, ptrs[0])[0..ptrs[1]];
     }
 };
 
@@ -167,7 +167,7 @@ var writer: JSPrinter.BufferPrinter = undefined;
 var define: *Define.Define = undefined;
 export fn bun_malloc(size: usize) u64 {
     return @bitCast(u64, [2]u32{
-        @ptrToInt((default_allocator.alloc(u8, size) catch unreachable).ptr),
+        @intFromPtr((default_allocator.alloc(u8, size) catch unreachable).ptr),
         size,
     });
 }
@@ -202,7 +202,7 @@ const Arena = @import("./mimalloc_arena.zig").Arena;
 var log: Logger.Log = undefined;
 
 export fn transform(opts_array: u64) u64 {
-    // var arena = std.heap.ArenaAllocator.init(default_allocator);
+    // var arena = @import("root").bun.ArenaAllocator.init(default_allocator);
     var arena = Arena.init() catch unreachable;
     var allocator = arena.allocator();
     defer arena.deinit();
@@ -270,11 +270,11 @@ export fn transform(opts_array: u64) u64 {
     const Encoder = ApiWriter(@TypeOf(output_writer));
     var encoder = Encoder.init(output_writer);
     transform_response.encode(&encoder) catch unreachable;
-    return @bitCast(u64, [2]u32{ @ptrToInt(output.items.ptr), output.items.len });
+    return @bitCast(u64, [2]u32{ @intFromPtr(output.items.ptr), output.items.len });
 }
 
 export fn scan(opts_array: u64) u64 {
-    // var arena = std.heap.ArenaAllocator.init(default_allocator);
+    // var arena = @import("root").bun.ArenaAllocator.init(default_allocator);
     var arena = Arena.init() catch unreachable;
     var allocator = arena.allocator();
     defer arena.deinit();
@@ -325,7 +325,7 @@ export fn scan(opts_array: u64) u64 {
 
     var encoder = Encoder.init(output_writer);
     scan_result.encode(&encoder) catch unreachable;
-    return @bitCast(u64, [2]u32{ @ptrToInt(output.items.ptr), output.items.len });
+    return @bitCast(u64, [2]u32{ @intFromPtr(output.items.ptr), output.items.len });
 }
 
 // pub fn main() anyerror!void {}

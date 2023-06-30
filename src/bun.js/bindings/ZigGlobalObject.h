@@ -41,6 +41,7 @@ class DOMWrapperWorld;
 
 #include "DOMConstructors.h"
 #include "BunPlugin.h"
+#include "JSMockFunction.h"
 
 namespace WebCore {
 class SubtleCrypto;
@@ -166,7 +167,7 @@ public:
     void clearDOMGuardedObjects();
 
     static void createCallSitesFromFrames(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ObjectInitializationScope& objectScope, JSCStackTrace& stackTrace, JSC::JSArray* callSites);
-    JSC::JSValue formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites, ZigStackFrame remappedStackFrames[]);
+    JSC::JSValue formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites);
 
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
@@ -247,8 +248,8 @@ public:
 
     JSC::JSFunction* emitReadableNextTickFunction() { return m_emitReadableNextTickFunction.getInitializedOnMainThread(this); }
 
-    Structure* requireResolveFunctionStructure() { return m_requireResolveFunctionStructure.getInitializedOnMainThread(this); }
-    JSObject* requireResolveFunctionPrototype() { return m_resolveFunctionPrototype.getInitializedOnMainThread(this); }
+    JSObject* importMetaRequireFunctionUnbound() { return m_importMetaRequireFunctionUnbound.getInitializedOnMainThread(this); }
+    JSObject* importMetaRequireResolveFunctionUnbound() { return m_importMetaRequireResolveFunctionUnbound.getInitializedOnMainThread(this); }
 
     JSObject* lazyRequireCacheObject() { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
 
@@ -261,8 +262,11 @@ public:
     JSObject* lazyTestModuleObject() { return m_lazyTestModuleObject.getInitializedOnMainThread(this); }
     JSObject* lazyPreloadTestModuleObject() { return m_lazyPreloadTestModuleObject.getInitializedOnMainThread(this); }
     Structure* CommonJSModuleObjectStructure() { return m_commonJSModuleObjectStructure.getInitializedOnMainThread(this); }
+    Structure* ImportMetaObjectStructure() { return m_importMetaObjectStructure.getInitializedOnMainThread(this); }
 
     Structure* commonJSFunctionArgumentsStructure() { return m_commonJSFunctionArgumentsStructure.getInitializedOnMainThread(this); }
+
+    JSObject* passwordObject() { return m_lazyPasswordObject.getInitializedOnMainThread(this); }
 
     JSWeakMap* vmModuleContextMap() { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
 
@@ -360,6 +364,7 @@ public:
     mutable WriteBarrier<Unknown> m_JSURLSearchParamsSetterValue;
     mutable WriteBarrier<Unknown> m_JSWebSocketSetterValue;
     mutable WriteBarrier<Unknown> m_JSDOMFormDataSetterValue;
+    mutable WriteBarrier<Unknown> m_BunCommonJSModuleValue;
 
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
 
@@ -385,6 +390,12 @@ public:
     BunPlugin::OnResolve onResolvePlugins[BunPluginTargetMax + 1] {};
     BunPluginTarget defaultBunPluginTarget = BunPluginTargetBun;
 
+    // This increases the cache hit rate for JSC::VM's SourceProvider cache
+    // It also avoids an extra allocation for the SourceProvider
+    // The key is a pointer to the source code
+    WTF::HashMap<uintptr_t, Ref<JSC::SourceProvider>> sourceProviderMap;
+    size_t reloadCount = 0;
+
     void reload();
 
     JSC::Structure* pendingVirtualModuleResultStructure() { return m_pendingVirtualModuleResultStructure.get(this); }
@@ -402,6 +413,8 @@ public:
     void* napiInstanceData = nullptr;
     void* napiInstanceDataFinalizer = nullptr;
     void* napiInstanceDataFinalizerHint = nullptr;
+
+    Bun::JSMockModule mockModule;
 
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
@@ -469,19 +482,22 @@ private:
     LazyProperty<JSGlobalObject, JSObject> m_subtleCryptoObject;
     LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;
     LazyProperty<JSGlobalObject, JSC::Structure> m_JSBufferSubclassStructure;
-    LazyProperty<JSGlobalObject, JSC::Structure> m_requireResolveFunctionStructure;
-    LazyProperty<JSGlobalObject, JSObject> m_resolveFunctionPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_dnsObject;
     LazyProperty<JSGlobalObject, JSWeakMap> m_vmModuleContextMap;
     LazyProperty<JSGlobalObject, JSObject> m_lazyRequireCacheObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyTestModuleObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyPreloadTestModuleObject;
+    LazyProperty<JSGlobalObject, JSObject> m_lazyPasswordObject;
 
     LazyProperty<JSGlobalObject, JSFunction> m_bunSleepThenCallback;
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalProxyStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSModuleObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSFunctionArgumentsStructure;
+
+    LazyProperty<JSGlobalObject, JSC::JSObject> m_importMetaRequireFunctionUnbound;
+    LazyProperty<JSGlobalObject, JSC::JSObject> m_importMetaRequireResolveFunctionUnbound;
+    LazyProperty<JSGlobalObject, JSC::Structure> m_importMetaObjectStructure;
 
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     void* m_bunVM;

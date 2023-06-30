@@ -106,7 +106,7 @@ describe("bundler", () => {
     ],
   });
   itBundled("naming/EntryNamingTemplate2", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/src/first.js": /* js */ `
         console.log(1);
@@ -193,7 +193,7 @@ describe("bundler", () => {
     ],
   });
   itBundled("naming/AssetNoOverwrite", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/src/entry.js": /* js */ `
         import asset1 from "./asset1.file";
@@ -254,7 +254,7 @@ describe("bundler", () => {
     },
   }));
   itBundled("naming/EntrypointOutsideOfRoot", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/src/hello/entry.js": /* js */ `
         console.log(1);

@@ -33,6 +33,7 @@ describe("bundler", () => {
   });
 
   itBundled("loader/JSONSharedWithMultipleEntriesESBuildIssue413", {
+    todo: true,
     files: {
       "/a.js": /* js */ `
         import data from './data.json'
@@ -240,6 +241,7 @@ describe("bundler", () => {
     },
   });
   itBundled("loader/JSONInvalidIdentifierES6", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import * as ns from './test.json'

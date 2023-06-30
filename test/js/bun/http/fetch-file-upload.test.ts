@@ -1,5 +1,7 @@
 import { expect, test, describe } from "bun:test";
 import { withoutAggressiveGC } from "harness";
+import { tmpdir } from "os";
+import { join } from "path";
 
 test("uploads roundtrip", async () => {
   const body = Bun.file(import.meta.dir + "/fetch.js.txt");
@@ -28,6 +30,35 @@ test("uploads roundtrip", async () => {
   expect(res.headers.get("Content-Type")).toBe("text/plain;charset=utf-8");
   const resText = await res.text();
   expect(resText).toBe(bodyText);
+
+  server.stop(true);
+});
+
+test("uploads roundtrip with sendfile()", async () => {
+  var hugeTxt = "huge".repeat(1024 * 1024 * 32);
+  const path = join(tmpdir(), "huge.txt");
+  require("fs").writeFileSync(path, hugeTxt);
+
+  const server = Bun.serve({
+    maxRequestBodySize: 1024 * 1024 * 1024 * 8,
+    async fetch(req) {
+      var count = 0;
+      for await (let chunk of req.body!) {
+        count += chunk.byteLength;
+      }
+      return new Response(count + "");
+    },
+  });
+
+  const resp = await fetch("http://" + server.hostname + ":" + server.port, {
+    body: Bun.file(path),
+    method: "PUT",
+  });
+
+  expect(resp.status).toBe(200);
+
+  const body = parseInt(await resp.text());
+  expect(body).toBe(hugeTxt.length);
 
   server.stop(true);
 });

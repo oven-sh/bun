@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "node",
+    "bun",
+    "thirdparty",
+    "build-*",
+    "shared.ts",
+    "private.d.ts",
+    "../../packages/bun-types/index.d.ts"
+  ]
+}

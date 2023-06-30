@@ -17,384 +17,6 @@ const Fs = @import("./fs.zig");
 const URL = @import("./url.zig").URL;
 const Api = @import("./api/schema.zig").Api;
 const which = @import("./which.zig").which;
-const Variable = struct {
-    key: string,
-    value: string,
-    has_nested_value: bool = false,
-};
-
-// i don't expect anyone to actually use the escape line feed character
-const escLineFeed = 0x0C;
-// arbitrary character that is invalid in a real text file
-const implicitQuoteCharacter = 8;
-
-// you get 4k. I hope you don't need more than that.
-threadlocal var temporary_nested_value_buffer: [4096]u8 = undefined;
-
-pub const Lexer = struct {
-    source: *const logger.Source,
-    iter: CodepointIterator,
-    cursor: CodepointIterator.Cursor = CodepointIterator.Cursor{},
-    _codepoint: CodePoint = 0,
-    current: usize = 0,
-    last_non_space: usize = 0,
-    prev_non_space: usize = 0,
-    start: usize = 0,
-    end: usize = 0,
-    has_nested_value: bool = false,
-    has_newline_before: bool = true,
-    was_quoted: bool = false,
-
-    pub inline fn codepoint(this: *const Lexer) CodePoint {
-        return this.cursor.c;
-    }
-
-    pub inline fn step(this: *Lexer) void {
-        const ended = !this.iter.next(&this.cursor);
-        if (ended) this.cursor.c = -1;
-        this.current = this.cursor.i + @as(usize, @boolToInt(ended));
-    }
-
-    pub fn eatNestedValue(
-        _: *Lexer,
-        comptime ContextType: type,
-        ctx: *ContextType,
-        comptime Writer: type,
-        writer: Writer,
-        variable: Variable,
-        comptime getter: fn (ctx: *const ContextType, key: string) ?string,
-    ) !void {
-        var i: usize = 0;
-        var last_flush: usize = 0;
-
-        top: while (i < variable.value.len) {
-            switch (variable.value[i]) {
-                '$' => {
-                    i += 1;
-                    const start = i;
-
-                    const curly_braces_offset = @as(usize, @boolToInt(variable.value[i] == '{'));
-                    i += curly_braces_offset;
-
-                    while (i < variable.value.len) {
-                        switch (variable.value[i]) {
-                            'a'...'z', 'A'...'Z', '0'...'9', '-', '_' => {
-                                i += 1;
-                            },
-                            '}' => {
-                                i += curly_braces_offset;
-                                break;
-                            },
-                            else => {
-                                break;
-                            },
-                        }
-                    }
-
-                    try writer.writeAll(variable.value[last_flush .. start - 1]);
-                    last_flush = i;
-                    const name = variable.value[start + curly_braces_offset .. i - curly_braces_offset];
-
-                    if (@call(.always_inline, getter, .{ ctx, name })) |new_value| {
-                        if (new_value.len > 0) {
-                            try writer.writeAll(new_value);
-                        }
-                    }
-
-                    continue :top;
-                },
-                '\\' => {
-                    i += 1;
-                    switch (variable.value[i]) {
-                        '$' => {
-                            i += 1;
-                            continue;
-                        },
-                        else => {},
-                    }
-                },
-                else => {},
-            }
-            i += 1;
-        }
-
-        try writer.writeAll(variable.value[last_flush..]);
-    }
-
-    pub fn eatValue(
-        lexer: *Lexer,
-        comptime quote: CodePoint,
-    ) string {
-        var was_quoted = false;
-        switch (comptime quote) {
-            '"', '\'' => {
-                lexer.step();
-                was_quoted = true;
-            },
-
-            else => {},
-        }
-
-        var start = lexer.current;
-        var last_non_space: usize = start;
-        var any_spaces = false;
-
-        while (true) {
-            switch (lexer.codepoint()) {
-                '\\' => {
-                    lexer.step();
-                    // Handle Windows CRLF
-
-                    switch (lexer.codepoint()) {
-                        '\r' => {
-                            lexer.step();
-                            if (lexer.codepoint() == '\n') {
-                                lexer.step();
-                            }
-                            continue;
-                        },
-                        '$' => {
-                            lexer.step();
-                            continue;
-                        },
-                        else => {
-                            continue;
-                        },
-                    }
-                },
-                -1 => {
-                    lexer.end = lexer.current;
-
-                    return lexer.source.contents[start..if (any_spaces) @min(last_non_space, lexer.source.contents.len) else lexer.source.contents.len];
-                },
-                '$' => {
-                    lexer.has_nested_value = true;
-                },
-
-                '#' => {
-                    lexer.step();
-                    lexer.eatComment();
-
-                    return lexer.source.contents[start .. last_non_space + 1];
-                },
-
-                '\n', '\r', escLineFeed => {
-                    switch (comptime quote) {
-                        '\'' => {
-                            lexer.end = lexer.current;
-                            lexer.step();
-                            return lexer.source.contents[start..@min(lexer.end, lexer.source.contents.len)];
-                        },
-                        implicitQuoteCharacter => {
-                            lexer.end = lexer.current;
-                            lexer.step();
-
-                            return lexer.source.contents[start..@min(if (any_spaces) last_non_space + 1 else lexer.end, lexer.end)];
-                        },
-                        '"' => {
-                            // We keep going
-                        },
-                        else => {},
-                    }
-                },
-                quote => {
-                    lexer.end = lexer.current;
-                    lexer.step();
-
-                    lexer.was_quoted = was_quoted;
-                    return lexer.source.contents[start..@min(
-                        lexer.end,
-                        lexer.source.contents.len,
-                    )];
-                },
-                ' ' => {
-                    any_spaces = true;
-                    while (lexer.codepoint() == ' ') lexer.step();
-                    continue;
-                },
-                else => {},
-            }
-            if (lexer.codepoint() != ' ') last_non_space = lexer.current;
-            lexer.step();
-        }
-        unreachable;
-    }
-
-    pub fn eatComment(this: *Lexer) void {
-        while (true) {
-            switch (this.codepoint()) {
-                '\r' => {
-                    this.step();
-                    if (this.codepoint() == '\n') {
-                        return;
-                    }
-                },
-                '\n' => {
-                    this.step();
-                    return;
-                },
-                -1 => {
-                    return;
-                },
-                else => {
-                    this.step();
-                },
-            }
-        }
-    }
-
-    // const NEWLINE = '\n'
-    // const RE_INI_KEY_VAL = /^\s*([\w.-]+)\s*=\s*(.*)?\s*$/
-    // const RE_NEWLINES = /\\n/g
-    // const NEWLINES_MATCH = /\r\n|\n|\r/
-    pub fn next(this: *Lexer, comptime is_process_env: bool) ?Variable {
-        if (this.end == 0) this.step();
-
-        const start = this.start;
-
-        this.has_newline_before = this.end == 0;
-
-        var last_non_space = start;
-        restart: while (true) {
-            last_non_space = switch (this.codepoint()) {
-                ' ', '\r', '\n' => last_non_space,
-                else => this.current,
-            };
-
-            switch (this.codepoint()) {
-                0, -1 => {
-                    return null;
-                },
-                '#' => {
-                    this.step();
-
-                    this.eatComment();
-                    continue :restart;
-                },
-                '\r', '\n', 0x2028, 0x2029 => {
-                    this.step();
-                    this.has_newline_before = true;
-                    continue;
-                },
-
-                // Valid keys:
-                'a'...'z', 'A'...'Z', '0'...'9', '_', '-', '.' => {
-                    this.start = this.current;
-                    this.step();
-                    var key_end: usize = 0;
-                    while (true) {
-                        switch (this.codepoint()) {
-
-                            // to match npm's "dotenv" behavior, we ignore lines that don't have an equals
-                            '\r', '\n', escLineFeed => {
-                                this.end = this.current;
-                                this.step();
-                                continue :restart;
-                            },
-                            0, -1 => {
-                                this.end = this.current;
-                                return if (last_non_space > this.start)
-                                    Variable{ .key = this.source.contents[this.start..@min(last_non_space + 1, this.source.contents.len)], .value = "" }
-                                else
-                                    null;
-                            },
-                            'a'...'z', 'A'...'Z', '0'...'9', '_', '-', '.' => {},
-                            '=' => {
-                                this.end = this.current;
-                                if (key_end > 0) {
-                                    this.end = key_end;
-                                }
-                                const key = this.source.contents[this.start..this.end];
-                                if (key.len == 0) return null;
-                                this.step();
-
-                                // we don't need to do special parsing on process-level environment variable values
-                                // if they're quoted, we should keep them quoted.
-                                // https://github.com/oven-sh/bun/issues/40
-                                if (comptime is_process_env) {
-                                    const current = this.current;
-                                    // TODO: remove this loop
-                                    // it's not as simple as just setting to the end of the string
-                                    while (this.codepoint() != -1) : (this.step()) {}
-                                    return Variable{
-                                        .key = key,
-                                        .value = this.source.contents[current..],
-                                        // nested values are unsupported in process environment variables
-                                        .has_nested_value = false,
-                                    };
-                                }
-
-                                this.has_nested_value = false;
-                                inner: while (true) {
-                                    switch (this.codepoint()) {
-                                        '"' => {
-                                            const value = this.eatValue('"');
-                                            return Variable{
-                                                .key = key,
-                                                .value = value,
-                                                .has_nested_value = this.has_nested_value,
-                                            };
-                                        },
-                                        '\'' => {
-                                            const value = this.eatValue('\'');
-                                            return Variable{
-                                                .key = key,
-                                                .value = value,
-                                                .has_nested_value = this.has_nested_value,
-                                            };
-                                        },
-                                        0, -1 => {
-                                            return Variable{ .key = key, .value = "" };
-                                        },
-                                        '\r', '\n', escLineFeed => {
-                                            this.step();
-                                            return Variable{ .key = key, .value = "" };
-                                        },
-                                        // consume unquoted leading spaces
-                                        ' ' => {
-                                            this.step();
-                                            while (this.codepoint() == ' ') this.step();
-                                            continue :inner;
-                                        },
-                                        // we treat everything else the same as if it were wrapped in single quotes
-                                        // except we don't terminate on that character
-                                        else => {
-                                            const value = this.eatValue(implicitQuoteCharacter);
-                                            return Variable{
-                                                .key = key,
-                                                .value = value,
-                                                .has_nested_value = this.has_nested_value,
-                                            };
-                                        },
-                                    }
-                                }
-                            },
-                            ' ' => {
-                                // Set key end to the last non space character
-                                key_end = this.current;
-                                this.step();
-                                while (this.codepoint() == ' ') this.step();
-                                continue;
-                            },
-                            else => {},
-                        }
-                        this.step();
-                    }
-                },
-                else => {},
-            }
-
-            this.step();
-        }
-    }
-
-    pub fn init(source: *const logger.Source) Lexer {
-        return Lexer{
-            .source = source,
-            .iter = CodepointIterator.init(source.contents),
-        };
-    }
-};
 
 pub const Loader = struct {
     map: *Map,
@@ -422,7 +44,7 @@ pub const Loader = struct {
 
     pub fn getNodePath(this: *Loader, fs: *Fs.FileSystem, buf: *Fs.PathBuffer) ?[:0]const u8 {
         if (this.get("NODE") orelse this.get("npm_node_execpath")) |node| {
-            @memcpy(buf, node.ptr, node.len);
+            @memcpy(buf[0..node.len], node);
             buf[node.len] = 0;
             return buf[0..node.len :0];
         }
@@ -556,7 +178,7 @@ pub const Loader = struct {
         var string_map_hashes = try allocator.alloc(u64, framework_defaults.keys.len);
         defer allocator.free(string_map_hashes);
         const invalid_hash = std.math.maxInt(u64) - 1;
-        std.mem.set(u64, string_map_hashes, invalid_hash);
+        @memset(string_map_hashes, invalid_hash);
 
         var key_buf: []u8 = "";
         // Frameworks determine an allowlist of values
@@ -564,7 +186,7 @@ pub const Loader = struct {
         for (framework_defaults.keys, 0..) |key, i| {
             if (key.len > "process.env.".len and strings.eqlComptime(key[0.."process.env.".len], "process.env.")) {
                 const hashable_segment = key["process.env.".len..];
-                string_map_hashes[i] = std.hash.Wyhash.hash(0, hashable_segment);
+                string_map_hashes[i] = bun.hash(hashable_segment);
             }
         }
 
@@ -616,7 +238,7 @@ pub const Loader = struct {
 
                             e_strings[0] = js_ast.E.String{
                                 .data = if (value.len > 0)
-                                    @intToPtr([*]u8, @ptrToInt(value.ptr))[0..value.len]
+                                    @ptrFromInt([*]u8, @intFromPtr(value.ptr))[0..value.len]
                                 else
                                     &[_]u8{},
                             };
@@ -632,14 +254,14 @@ pub const Loader = struct {
                             );
                             e_strings = e_strings[1..];
                         } else {
-                            const hash = std.hash.Wyhash.hash(0, entry.key_ptr.*);
+                            const hash = bun.hash(entry.key_ptr.*);
 
                             std.debug.assert(hash != invalid_hash);
 
                             if (std.mem.indexOfScalar(u64, string_map_hashes, hash)) |key_i| {
                                 e_strings[0] = js_ast.E.String{
                                     .data = if (value.len > 0)
-                                        @intToPtr([*]u8, @ptrToInt(value.ptr))[0..value.len]
+                                        @ptrFromInt([*]u8, @intFromPtr(value.ptr))[0..value.len]
                                     else
                                         &[_]u8{},
                                 };
@@ -665,7 +287,7 @@ pub const Loader = struct {
 
                         e_strings[0] = js_ast.E.String{
                             .data = if (entry.value_ptr.*.len > 0)
-                                @intToPtr([*]u8, @ptrToInt(entry.value_ptr.*.ptr))[0..value.len]
+                                @ptrFromInt([*]u8, @intFromPtr(entry.value_ptr.*.ptr))[0..value.len]
                             else
                                 &[_]u8{},
                         };
@@ -803,17 +425,17 @@ pub const Loader = struct {
 
     pub fn printLoaded(this: *Loader, start: i128) void {
         const count =
-            @intCast(u8, @boolToInt(this.@".env.development.local" != null)) +
-            @intCast(u8, @boolToInt(this.@".env.production.local" != null)) +
-            @intCast(u8, @boolToInt(this.@".env.test.local" != null)) +
-            @intCast(u8, @boolToInt(this.@".env.local" != null)) +
-            @intCast(u8, @boolToInt(this.@".env.development" != null)) +
-            @intCast(u8, @boolToInt(this.@".env.production" != null)) +
-            @intCast(u8, @boolToInt(this.@".env.test" != null)) +
-            @intCast(u8, @boolToInt(this.@".env" != null));
+            @intCast(u8, @intFromBool(this.@".env.development.local" != null)) +
+            @intCast(u8, @intFromBool(this.@".env.production.local" != null)) +
+            @intCast(u8, @intFromBool(this.@".env.test.local" != null)) +
+            @intCast(u8, @intFromBool(this.@".env.local" != null)) +
+            @intCast(u8, @intFromBool(this.@".env.development" != null)) +
+            @intCast(u8, @intFromBool(this.@".env.production" != null)) +
+            @intCast(u8, @intFromBool(this.@".env.test" != null)) +
+            @intCast(u8, @intFromBool(this.@".env" != null));
 
         if (count == 0) return;
-        const elapsed = @intToFloat(f64, (std.time.nanoTimestamp() - start)) / std.time.ns_per_ms;
+        const elapsed = @floatFromInt(f64, (std.time.nanoTimestamp() - start)) / std.time.ns_per_ms;
 
         const all = [_]string{
             ".env.development.local",
@@ -884,18 +506,21 @@ pub const Loader = struct {
         defer file.close();
 
         const stat = try file.stat();
-        if (stat.size == 0) {
+        const end = stat.size;
+
+        if (end == 0) {
             @field(this, base) = logger.Source.initPathString(base, "");
             return;
         }
 
-        var buf = try this.allocator.allocSentinel(u8, stat.size, 0);
+        var buf = try this.allocator.alloc(u8, end + 1);
         errdefer this.allocator.free(buf);
-        var contents = try file.readAll(buf);
+        const amount_read = try file.readAll(buf[0..end]);
 
-        // always sentinel
-        buf.ptr[contents + 1] = 0;
-        const source = logger.Source.initPathString(base, buf.ptr[0..contents :0]);
+        // The null byte here is mostly for debugging purposes.
+        buf[end] = 0;
+
+        const source = logger.Source.initPathString(base, buf[0..amount_read]);
 
         Parser.parse(
             &source,
@@ -909,7 +534,254 @@ pub const Loader = struct {
     }
 };
 
-pub const Parser = struct {
+const Parser = struct {
+    pos: usize = 0,
+    src: string,
+
+    const whitespace_chars = "\t\x0B\x0C \xA0\n\r";
+    // You get 4k. I hope you don't need more than that.
+    threadlocal var value_buffer: [4096]u8 = undefined;
+
+    fn skipLine(this: *Parser) void {
+        if (strings.indexOfAny(this.src[this.pos..], "\n\r")) |i| {
+            this.pos += i + 1;
+        } else {
+            this.pos = this.src.len;
+        }
+    }
+
+    fn skipWhitespaces(this: *Parser) void {
+        var i = this.pos;
+        while (i < this.src.len) : (i += 1) {
+            if (strings.indexOfChar(whitespace_chars, this.src[i]) == null) break;
+        }
+        this.pos = i;
+    }
+
+    fn parseKey(this: *Parser, comptime check_export: bool) ?string {
+        if (comptime check_export) this.skipWhitespaces();
+        const start = this.pos;
+        var end = start;
+        while (end < this.src.len) : (end += 1) {
+            switch (this.src[end]) {
+                'a'...'z', 'A'...'Z', '0'...'9', '_', '-', '.' => continue,
+                else => break,
+            }
+        }
+        if (end < this.src.len and start < end) {
+            this.pos = end;
+            this.skipWhitespaces();
+            if (this.pos < this.src.len) {
+                if (comptime check_export) {
+                    if (end < this.pos and strings.eqlComptime(this.src[start..end], "export")) {
+                        if (this.parseKey(false)) |key| return key;
+                    }
+                }
+                switch (this.src[this.pos]) {
+                    '=' => {
+                        this.pos += 1;
+                        return this.src[start..end];
+                    },
+                    ':' => {
+                        const next = this.pos + 1;
+                        if (next < this.src.len and strings.indexOfChar(whitespace_chars, this.src[next]) != null) {
+                            this.pos += 2;
+                            return this.src[start..end];
+                        }
+                    },
+                    else => {},
+                }
+            }
+        }
+        this.pos = start;
+        return null;
+    }
+
+    fn parseQuoted(this: *Parser, comptime quote: u8) ?string {
+        if (comptime Environment.allow_assert) std.debug.assert(this.src[this.pos] == quote);
+        const start = this.pos;
+        var end = start + 1;
+        while (end < this.src.len) : (end += 1) {
+            switch (this.src[end]) {
+                '\\' => end += 1,
+                quote => {
+                    end += 1;
+                    this.pos = end;
+                    this.skipWhitespaces();
+                    if (this.pos >= this.src.len or
+                        this.src[this.pos] == '#' or
+                        strings.indexOfChar(this.src[end..this.pos], '\n') != null or
+                        strings.indexOfChar(this.src[end..this.pos], '\r') != null)
+                    {
+                        var ptr: usize = 0;
+                        var i = start;
+                        while (i < end) {
+                            switch (this.src[i]) {
+                                '\\' => if (comptime quote == '"') {
+                                    if (comptime Environment.allow_assert) std.debug.assert(i + 1 < end);
+                                    switch (this.src[i + 1]) {
+                                        'n' => {
+                                            value_buffer[ptr] = '\n';
+                                            ptr += 1;
+                                            i += 1;
+                                        },
+                                        'r' => {
+                                            value_buffer[ptr] = '\r';
+                                            ptr += 1;
+                                            i += 1;
+                                        },
+                                        else => {
+                                            value_buffer[ptr] = this.src[i];
+                                            value_buffer[ptr + 1] = this.src[i + 1];
+                                            ptr += 2;
+                                            i += 2;
+                                        },
+                                    }
+                                } else {
+                                    value_buffer[ptr] = '\\';
+                                    ptr += 1;
+                                    i += 1;
+                                },
+                                '\r' => {
+                                    i += 1;
+                                    if (i >= end or this.src[i] != '\n') {
+                                        value_buffer[ptr] = '\n';
+                                        ptr += 1;
+                                    }
+                                },
+                                else => |c| {
+                                    value_buffer[ptr] = c;
+                                    ptr += 1;
+                                    i += 1;
+                                },
+                            }
+                        }
+                        return value_buffer[0..ptr];
+                    }
+                    this.pos = start;
+                },
+                else => {},
+            }
+        }
+        return null;
+    }
+
+    fn parseValue(this: *Parser, comptime is_process: bool) string {
+        const start = this.pos;
+        this.skipWhitespaces();
+        var end = this.pos;
+        if (end >= this.src.len) return this.src[this.src.len..];
+        switch (this.src[end]) {
+            inline '`', '"', '\'' => |quote| {
+                if (this.parseQuoted(quote)) |value| {
+                    return if (comptime is_process) value else value[1 .. value.len - 1];
+                }
+            },
+            else => {},
+        }
+        end = start;
+        while (end < this.src.len) : (end += 1) {
+            switch (this.src[end]) {
+                '#', '\r', '\n' => break,
+                else => {},
+            }
+        }
+        this.pos = end;
+        return strings.trim(this.src[start..end], whitespace_chars);
+    }
+
+    inline fn writeBackwards(ptr: usize, bytes: []const u8) usize {
+        const end = ptr;
+        const start = end - bytes.len;
+        bun.copy(u8, value_buffer[start..end], bytes);
+        return start;
+    }
+
+    fn expandValue(map: *Map, value: string) ?string {
+        if (value.len < 2) return null;
+        var ptr = value_buffer.len;
+        var pos = value.len - 2;
+        var last = value.len;
+        while (true) : (pos -= 1) {
+            if (value[pos] == '$') {
+                if (pos > 0 and value[pos - 1] == '\\') {
+                    ptr = writeBackwards(ptr, value[pos..last]);
+                    pos -= 1;
+                } else {
+                    var end = if (value[pos + 1] == '{') pos + 2 else pos + 1;
+                    const key_start = end;
+                    while (end < value.len) : (end += 1) {
+                        switch (value[end]) {
+                            'a'...'z', 'A'...'Z', '0'...'9', '_' => continue,
+                            else => break,
+                        }
+                    }
+                    const lookup_value = map.get(value[key_start..end]);
+                    const default_value = if (strings.hasPrefixComptime(value[end..], ":-")) brk: {
+                        end += ":-".len;
+                        const value_start = end;
+                        while (end < value.len) : (end += 1) {
+                            switch (value[end]) {
+                                '}', '\\' => break,
+                                else => continue,
+                            }
+                        }
+                        break :brk value[value_start..end];
+                    } else "";
+                    if (end < value.len and value[end] == '}') end += 1;
+                    ptr = writeBackwards(ptr, value[end..last]);
+                    ptr = writeBackwards(ptr, lookup_value orelse default_value);
+                }
+                last = pos;
+            }
+            if (pos == 0) {
+                if (last == value.len) return null;
+                break;
+            }
+        }
+        if (last > 0) ptr = writeBackwards(ptr, value[0..last]);
+        return value_buffer[ptr..];
+    }
+
+    fn _parse(
+        this: *Parser,
+        allocator: std.mem.Allocator,
+        map: *Map,
+        comptime override: bool,
+        comptime is_process: bool,
+    ) void {
+        var count = map.map.count();
+        while (this.pos < this.src.len) {
+            const key = this.parseKey(true) orelse {
+                this.skipLine();
+                continue;
+            };
+            const value = this.parseValue(is_process);
+            var entry = map.map.getOrPut(key) catch unreachable;
+            if (entry.found_existing) {
+                if (entry.index < count) {
+                    // Allow keys defined later in the same file to override keys defined earlier
+                    // https://github.com/oven-sh/bun/issues/1262
+                    if (comptime !override) continue;
+                } else {
+                    allocator.free(entry.value_ptr.*);
+                }
+            }
+            entry.value_ptr.* = allocator.dupe(u8, value) catch unreachable;
+        }
+        if (comptime !is_process) {
+            var it = map.iter();
+            while (it.next()) |entry| {
+                if (count > 0) {
+                    count -= 1;
+                } else if (expandValue(map, entry.value_ptr.*)) |value| {
+                    allocator.free(entry.value_ptr.*);
+                    entry.value_ptr.* = allocator.dupe(u8, value) catch unreachable;
+                }
+            }
+        }
+    }
+
     pub fn parse(
         source: *const logger.Source,
         allocator: std.mem.Allocator,
@@ -917,50 +789,8 @@ pub const Parser = struct {
         comptime override: bool,
         comptime is_process: bool,
     ) void {
-        var lexer = Lexer.init(source);
-        var fbs = std.io.fixedBufferStream(&temporary_nested_value_buffer);
-        var writer = fbs.writer();
-        const start_count = map.map.count();
-
-        while (lexer.next(is_process)) |variable| {
-            if (variable.has_nested_value) {
-                writer.context.reset();
-
-                lexer.eatNestedValue(Map, map, @TypeOf(writer), writer, variable, Map.get_) catch unreachable;
-                const new_value = fbs.buffer[0..fbs.pos];
-                if (new_value.len > 0) {
-                    if (comptime override) {
-                        map.put(variable.key, allocator.dupe(u8, new_value) catch unreachable) catch unreachable;
-                    } else {
-                        var putter = map.map.getOrPut(variable.key) catch unreachable;
-                        // Allow keys defined later in the same file to override keys defined earlier
-                        // https://github.com/oven-sh/bun/issues/1262
-                        if (!putter.found_existing or putter.index >= start_count) {
-                            if (putter.found_existing and putter.value_ptr.len > 0) {
-                                allocator.free(putter.value_ptr.*);
-                            }
-
-                            putter.value_ptr.* = allocator.dupe(u8, new_value) catch unreachable;
-                        }
-                    }
-                }
-            } else {
-                if (comptime override) {
-                    map.put(variable.key, variable.value) catch unreachable;
-                } else {
-                    // Allow keys defined later in the same file to override keys defined earlier
-                    // https://github.com/oven-sh/bun/issues/1262
-                    var putter = map.map.getOrPut(variable.key) catch unreachable;
-                    if (!putter.found_existing or putter.index >= start_count) {
-                        if (putter.found_existing and putter.value_ptr.len > 0) {
-                            allocator.free(putter.value_ptr.*);
-                        }
-
-                        putter.value_ptr.* = allocator.dupe(u8, variable.value) catch unreachable;
-                    }
-                }
-            }
-        }
+        var parser = Parser{ .src = source.contents };
+        parser._parse(allocator, map, override, is_process);
     }
 };
 

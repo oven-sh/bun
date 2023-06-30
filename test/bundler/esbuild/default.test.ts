@@ -1,8 +1,8 @@
 import assert from "assert";
 import dedent from "dedent";
+
 import { ESBUILD_PATH, RUN_UNCHECKED_TESTS, itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
-
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_default_test.go
 
@@ -375,7 +375,10 @@ describe("bundler", () => {
 
       // assert bundles weird as of writing
       "/test.js": /* js */ `
-        globalThis.assert = import.meta.require('assert');
+        globalThis.assert = require('assert');
+        if (typeof assert.deepEqual !== 'function') {
+          throw new Error('assert.deepEqual is not a function');
+        }
         require('./out.js');
       `,
     },
@@ -418,7 +421,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ExportInfiniteCycle2", {
-    notImplemented: true, // TODO: low priority, missing a couple errors.
+    todo: true, // TODO: low priority, missing a couple errors.
     files: {
       "/entry.js": /* js */ `
         export {a as b} from './foo'
@@ -700,7 +703,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ImportMissingNeitherES6NorCommonJS", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/named.js": /* js */ `
         import fn, {x as a, y as b} from './foo'
@@ -1008,6 +1011,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/RequireBadExtension", {
+    todo: true,
     files: {
       "/entry.js": `console.log(require('./test.bad'))`,
       "/test.bad": `This is a test.`,
@@ -1026,6 +1030,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/RequireWithCallInsideTry", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         try {
@@ -1142,6 +1147,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/SourceMap", {
+    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {bar} from './bar'
@@ -1332,8 +1338,8 @@ describe("bundler", () => {
         import fs from "fs";
         import assert from "assert";
         import * as module from './out.js';
-        assert(module.fs === fs, 'export * as fs from "fs"; works')
-        assert(module.readFileSync === fs.readFileSync, 'export {readFileSync} from "fs"; works')
+        assert(module.fs.default === fs, 'export * as fs from "fs"; works')
+        assert(module.fs.default.readFileSync === fs.readFileSync, 'export {readFileSync} from "fs"; works')
       `,
     },
     target: "node",
@@ -1353,10 +1359,10 @@ describe("bundler", () => {
       `,
 
       "/test.js": /* js */ `
-        import fs from "fs";
+        import * as fs from "fs";
         import assert from "assert";
         import * as module from './out.js';
-        assert(module.f === fs, 'export {fs as f} works')
+        assert(module.f.default === fs.default, 'export {fs as f} works')
         assert(module.rfs === fs.readFileSync, 'export {rfs} works')
       `,
     },
@@ -1376,7 +1382,7 @@ describe("bundler", () => {
       `,
 
       "/test.js": /* js */ `
-        import fs from "fs";
+        import * as fs from "fs";
         import assert from "assert";
         import * as mod from './out.js';
         assert(mod.fs === fs, 'exports.fs')
@@ -1500,7 +1506,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/TopLevelReturnForbiddenImport", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         console.log('A');
@@ -1518,7 +1524,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/TopLevelReturnForbiddenImportAndModuleExports", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         module.exports.foo = 123
@@ -1660,7 +1666,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ThisWithES6Syntax", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import './cjs'
@@ -2030,7 +2036,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ImportReExportES6ESBuildIssue149", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/app.jsx": /* jsx */ `
         import { p as Part, h, render } from './import';
@@ -2120,7 +2126,7 @@ describe("bundler", () => {
     external: ["@scope/foo"],
   });
   itBundled("default/ExternalModuleExclusionRelativePath", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/Users/user/project/src/index.js": `import './nested/folder/test'`,
       "/Users/user/project/src/nested/folder/test.js": /* js */ `
@@ -2164,7 +2170,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ImportWithHashParameter", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         // Each of these should have a separate identity (i.e. end up in the output file twice)
@@ -2179,7 +2185,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ImportWithQueryParameter", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         // Each of these should have a separate identity (i.e. end up in the output file twice)
@@ -2194,7 +2200,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ImportAbsPathWithQueryParameter", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/Users/user/project/entry.js": /* js */ `
         // Each of these should have a separate identity (i.e. end up in the output file twice)
@@ -2266,6 +2272,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/AutoExternalNode", {
+    todo: true,
     // notImplemented: true,
     files: {
       "/entry.js": /* js */ `
@@ -2294,7 +2301,7 @@ describe("bundler", () => {
   });
   itBundled("default/AutoExternalBun", {
     skipOnEsbuild: true,
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         // These URLs should be external automatically
@@ -2464,13 +2471,13 @@ describe("bundler", () => {
   `;
   // these tests are flaky. at least if i run it just on its own, i get a crash. in a row its fine
   itBundled.skip("default/NestedLabelsBundle", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": crazyNestedLabelFile,
     },
   });
   itBundled.skip("default/MinifyNestedLabelsBundle", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": crazyNestedLabelFile,
     },
@@ -2624,7 +2631,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/MultipleEntryPointsSameNameCollision", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/a/entry.js": `import {foo} from '../common.js'; console.log(1, foo)`,
       "/b/entry.js": `import {foo} from '../common.js'; console.log(2, 1foo)`,
@@ -3447,7 +3454,7 @@ describe("bundler", () => {
     bundling: false,
   });
   itBundled("default/TopLevelAwaitForbiddenRequire", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         require('./a')
@@ -3470,6 +3477,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/TopLevelAwaitAllowedImportWithoutSplitting", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import('./a')
@@ -3510,7 +3518,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/AssignToImport", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import "./bad0.js"
@@ -3581,7 +3589,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/AssignToImportNoBundle", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/bad0.js": `import x from "foo"; x = 1`,
       "/bad1.js": `import x from "foo"; x++`,
@@ -3686,7 +3694,7 @@ describe("bundler", () => {
     "/delete-super.js": `class Foo extends Bar { foo() { delete super.foo } }`,
   };
   itBundled("default/WarningsInsideNodeModules", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": Object.keys(WarningsInsideNodeModules)
         .map(file => `import "./${file}"; import "./node_modules/${file}"; import "@plugin/${file}"`)
@@ -4176,7 +4184,7 @@ describe("bundler", () => {
   //   },
   // });
   itBundled("default/DefineThis", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         ok(
@@ -4254,7 +4262,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/DefineOptionalChain", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         log([
@@ -4334,7 +4342,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/DefineInfiniteLoopESBuildIssue2407", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         a.b()
@@ -4484,7 +4492,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/CharFreqIgnoreComments", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/a.js": /* js */ `
         export default function(one, two, three, four) {
@@ -4562,7 +4570,7 @@ describe("bundler", () => {
   });
   // TODO: this fails on esbuild ???
   itBundled("default/ConstWithLetNoBundle", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         const a = 1; console.log(a)
@@ -4596,6 +4604,7 @@ describe("bundler", () => {
   //   platform: "node",
   // });
   itBundled("default/ExternalES6ConvertedToCommonJS", {
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         console.log(JSON.stringify(require('./a')));
@@ -4925,7 +4934,7 @@ describe("bundler", () => {
   // });
   0;
   itBundled("default/BundlingFilesOutsideOfOutbase", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/src/entry.js": `console.log('test')`,
     },
@@ -5051,7 +5060,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/QuotedProperty", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import * as ns from 'ext'
@@ -5081,7 +5090,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/DuplicatePropertyWarning", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         import './outside-node-modules'
@@ -5099,7 +5108,7 @@ describe("bundler", () => {
     },
   });
   const RequireShimSubstitutionBrowser = itBundled("default/RequireShimSubstitutionBrowser", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         Promise.all([
@@ -5210,7 +5219,7 @@ describe("bundler", () => {
     minifySyntax: true,
   });
   itBundled("default/BuiltInNodeModulePrecedence", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         console.log([
@@ -5600,7 +5609,7 @@ describe("bundler", () => {
   });
   itBundled("default/ManglePropsJSXTransform", {
     // GENERATED
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.jsx": /* jsx */ `
         let Foo = {
@@ -5622,7 +5631,7 @@ describe("bundler", () => {
   });
   itBundled("default/ManglePropsJSXPreserve", {
     // GENERATED
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.jsx": /* jsx */ `
         let Foo = {
@@ -5639,7 +5648,7 @@ describe("bundler", () => {
   });
   itBundled("default/ManglePropsJSXTransformNamespace", {
     // GENERATED
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.jsx": /* jsx */ `
         export default [
@@ -6263,7 +6272,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/CommentPreservation", {
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.js": /* js */ `
         console.log(
@@ -6442,7 +6451,7 @@ describe("bundler", () => {
   });
   itBundled.skip("default/CommentPreservationImportAssertions", {
     // GENERATED
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.jsx": /* jsx */ `
         import 'foo' /* a */ assert { type: 'json' }
@@ -6456,7 +6465,7 @@ describe("bundler", () => {
   });
   itBundled.skip("default/CommentPreservationTransformJSX", {
     // GENERATED
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.jsx": /* jsx */ `
         console.log(
@@ -6486,7 +6495,7 @@ describe("bundler", () => {
   });
   itBundled.skip("default/CommentPreservationPreserveJSX", {
     // GENERATED
-    notImplemented: true,
+    todo: true,
     files: {
       "/entry.jsx": /* jsx */ `
         console.log(
@@ -6512,6 +6521,319 @@ describe("bundler", () => {
           }after</>,
         )
       `,
+    },
+  });
+  itBundled("default/ConstDeclNotRemovedIfReferencedBeforeDecl", {
+    files: {
+      "/entry.js": `
+        {
+          const foo = () => {
+            return data;
+          }
+          const data = 123;
+
+          console.log(foo());
+        }
+      `,
+    },
+    minifySyntax: true,
+    run: {
+      stdout: "123",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("data = 123");
+    },
+  });
+  itBundled("default/ConstDeclRemovedIfReferencedBeforeAllUses", {
+    files: {
+      "/entry.js": `
+        {
+          const data = 123;
+          const foo = () => {
+            return data;
+          }
+
+          console.log(foo());
+        }
+      `,
+    },
+    minifySyntax: true,
+    run: {
+      stdout: "123",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("data = 123");
+    },
+  });
+  itBundled("default/BundlerUsesModuleFieldForEsm", {
+    files: {
+      "/entry.js": `
+        import { foo } from 'foo';
+        console.log(foo);
+      `,
+      "/node_modules/foo/package.json": `
+        {
+          "name": "foo",
+          "version": "2.0.0",
+          "module": "index.esm.js",
+          "main": "index.cjs.js"
+        }
+      `,
+      "/node_modules/foo/index.cjs.js": `
+        module.exports.foo = "hello index.cjs.js";
+      `,
+      "/node_modules/foo/index.esm.js": `
+        export const foo = "hello index.esm.js";
+      `,
+    },
+    run: {
+      stdout: "hello index.esm.js",
+    },
+  });
+  itBundled("default/BundlerUsesMainFieldForCjs", {
+    files: {
+      "/entry.js": `
+        const { foo } = require('foo');
+        console.log(foo);
+      `,
+      "/node_modules/foo/package.json": `
+        {
+          "name": "foo",
+          "version": "2.0.0",
+          "module": "index.esm.js",
+          "main": "index.cjs.js"
+        }
+      `,
+      "/node_modules/foo/index.cjs.js": `
+        module.exports.foo = "hello index.cjs.js";
+      `,
+      "/node_modules/foo/index.esm.js": `
+        export const foo = "hello index.esm.js";
+      `,
+    },
+    run: {
+      stdout: "hello index.cjs.js",
+    },
+  });
+  itBundled("default/RuntimeUsesMainFieldForCjs", {
+    files: {
+      "/entry.js": `
+        const { foo } = require('foo');
+        console.log(foo);
+      `,
+      "/node_modules/foo/package.json": `
+        {
+          "name": "foo",
+          "version": "2.0.0",
+          "module": "index.esm.js",
+          "main": "index.cjs.js"
+        }
+      `,
+      "/node_modules/foo/index.cjs.js": `
+        module.exports.foo = "hello index.cjs.js";
+      `,
+      "/node_modules/foo/index.esm.js": `
+        export const foo = "hello index.esm.js";
+      `,
+    },
+    bundling: false,
+    run: {
+      stdout: "hello index.cjs.js",
+    },
+  });
+  itBundled("default/RuntimeUsesMainFieldForEsm", {
+    files: {
+      "/entry.js": `
+        import { foo } from 'foo';
+        console.log(foo);
+      `,
+      "/node_modules/foo/package.json": `
+        {
+          "name": "foo",
+          "version": "2.0.0",
+          "module": "index.esm.js",
+          "main": "index.cjs.js"
+        }
+      `,
+      "/node_modules/foo/index.cjs.js": `
+        module.exports.foo = "hello index.cjs.js";
+      `,
+      "/node_modules/foo/index.esm.js": `
+        export const foo = "hello index.esm.js";
+      `,
+    },
+    bundling: false,
+    run: {
+      stdout: "hello index.cjs.js",
+    },
+  });
+  itBundled("default/BundlerUsesModuleFieldIfMainDoesNotExistCjs", {
+    files: {
+      "/entry.js": `
+        const { foo } = require('foo');
+        console.log(foo);
+      `,
+      "/node_modules/foo/package.json": `
+        {
+          "name": "foo",
+          "version": "2.0.0",
+          "module": "index.esm.js"
+        }
+      `,
+      "/node_modules/foo/index.cjs.js": `
+        module.exports.foo = "hello index.cjs.js";
+      `,
+      "/node_modules/foo/index.esm.js": `
+        export const foo = "hello index.esm.js";
+      `,
+    },
+    run: {
+      stdout: "hello index.esm.js",
+    },
+  });
+  itBundled("default/BundlerUsesModuleFieldIfMainDoesNotExistEsm", {
+    files: {
+      "/entry.js": `
+        import { foo } from 'foo';
+        console.log(foo);
+      `,
+      "/node_modules/foo/package.json": `
+        {
+          "name": "foo",
+          "version": "2.0.0",
+          "module": "index.esm.js"
+        }
+      `,
+      "/node_modules/foo/index.cjs.js": `
+        module.exports.foo = "hello index.cjs.js";
+      `,
+      "/node_modules/foo/index.esm.js": `
+        export const foo = "hello index.esm.js";
+      `,
+    },
+    run: {
+      stdout: "hello index.esm.js",
+    },
+  });
+  itBundled("default/RuntimeUsesModuleFieldIfMainDoesNotExistCjs", {
+    files: {
+      "/entry.js": `
+        const { foo } = require('foo');
+        console.log(foo);
+      `,
+      "/node_modules/foo/package.json": `
+        {
+          "name": "foo",
+          "version": "2.0.0",
+          "module": "index.esm.js"
+        }
+      `,
+      "/node_modules/foo/index.cjs.js": `
+        module.exports.foo = "hello index.cjs.js";
+      `,
+      "/node_modules/foo/index.esm.js": `
+        export const foo = "hello index.esm.js";
+      `,
+    },
+    bundling: false,
+    run: {
+      stdout: "hello index.esm.js",
+    },
+  });
+  itBundled("default/RuntimeUsesModuleFieldIfMainDoesNotExistEsm", {
+    files: {
+      "/entry.js": `
+        import { foo } from 'foo';
+        console.log(foo);
+      `,
+      "/node_modules/foo/package.json": `
+        {
+          "name": "foo",
+          "version": "2.0.0",
+          "module": "index.esm.js"
+        }
+      `,
+      "/node_modules/foo/index.cjs.js": `
+        module.exports.foo = "hello index.cjs.js";
+      `,
+      "/node_modules/foo/index.esm.js": `
+        export const foo = "hello index.esm.js";
+      `,
+    },
+    bundling: false,
+    run: {
+      stdout: "hello index.esm.js",
+    },
+  });
+  itBundled("default/RequireProperlyHandlesNamedExportDeclsInCjsModule", {
+    files: {
+      "/entry.js": `
+        const { a, b, c, d } = require('foo');
+        console.log(a, b, c, d);
+      `,
+      "/node_modules/foo/package.json": `
+        {
+          "name": "foo",
+          "version": "2.0.0"
+        }
+      `,
+      "/node_modules/foo/index.js": `
+        if (!exports.d) {
+          exports.d = 7;
+        }
+        if (exports.hasOwnProperty("d")) {
+          exports.a = 5;
+        }
+        
+        exports.b;
+        exports.b = 8;
+        exports.b = 9;
+        
+        var c;
+        c = 2;
+        exports.c = c;
+      `,
+    },
+    run: {
+      stdout: "5 9 2 7",
+    },
+    onAfterBundle(api) {
+      const contents = api.readFile("out.js");
+      expect(contents).not.toContain("undefined");
+      expect(contents).not.toContain("$");
+    },
+  });
+  itBundled("default/EsmImportProperlyHandlesNamedExportDeclsInUnwrappedCjsModule", {
+    files: {
+      "/entry.js": `
+        import { a, b, c, d } from 'foo';
+        console.log(a, b, c, d);
+      `,
+      "/node_modules/foo/package.json": `
+        {
+          "name": "foo",
+          "version": "2.0.0"
+        }
+      `,
+      "/node_modules/foo/index.js": `
+        if (!exports.d) {
+          exports.d = 7;
+        }
+        if (exports.hasOwnProperty("d")) {
+          exports.a = 5;
+        }
+        
+        exports.b;
+        exports.b = 8;
+        exports.b = 9;
+        
+        var c;
+        c = 2;
+        exports.c = c;
+      `,
+    },
+    run: {
+      stdout: "5 9 2 7",
     },
   });
 });

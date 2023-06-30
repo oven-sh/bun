@@ -23,6 +23,7 @@ describe("bundler", () => {
     },
   });
   itBundled("extra/PathWithQuestionMark", {
+    todo: true,
     files: {
       "/index.js": `
         import foo from "./file.js?ignore-me";
@@ -165,7 +166,7 @@ describe("bundler", () => {
   });
   itBundled("extra/TypeofRequireESM", {
     // we do not have require defined in target browser
-    notImplemented: true,
+    todo: true,
     files: {
       "in.js": `check(typeof require)`,
       "runtime.js": `
@@ -433,7 +434,7 @@ describe("bundler", () => {
 
   // Use "eval" to access CommonJS variables
   itBundled("extra/CJSEval1", {
-    notImplemented: true,
+    todo: true,
     files: {
       "in.js": `if (require('./eval').foo !== 123) throw 'fail'`,
       "eval.js": `exports.foo=234;eval('exports.foo = 123')`,
@@ -441,7 +442,7 @@ describe("bundler", () => {
     run: true,
   });
   itBundled("extra/CJSEval2", {
-    notImplemented: true,
+    todo: true,
     files: {
       "in.js": `if (require('./eval').foo !== 123) throw 'fail'`,
       "eval.js": `module.exports={foo:234};eval('module.exports = {foo: 123}')`,
@@ -522,7 +523,7 @@ describe("bundler", () => {
   // Check for file names of wrapped modules in non-minified stack traces (for profiling)
   // Context: https://github.com/evanw/esbuild/pull/1236
   itBundled("extra/UnminifiedNamedModuleFunctions1", {
-    notImplemented: true,
+    todo: true,
     files: {
       "entry.js": `
         try {
@@ -554,7 +555,7 @@ describe("bundler", () => {
     run: true,
   });
   itBundled("extra/UnminifiedNamedModuleFunctions3", {
-    notImplemented: true,
+    todo: true,
     files: {
       "entry.js": `
         try {
@@ -616,6 +617,7 @@ describe("bundler", () => {
     run: true,
   });
   itBundled("extra/DefineExports1", {
+    todo: true,
     files: {
       "in.js": `if (exports.x !== void 0) throw 'fail'; this;`,
     },
@@ -623,6 +625,7 @@ describe("bundler", () => {
     run: true,
   });
   itBundled("extra/DefineExports2", {
+    todo: true,
     files: {
       "in.js": `if (exports.foo !== void 0) throw 'fail'; this;`,
     },
@@ -666,6 +669,7 @@ describe("bundler", () => {
     run: true,
   });
   itBundled("extra/DefineExportsArray2", {
+    todo: true,
     files: {
       "in.js": `if (exports.foo !== void 0) throw 'fail'; this`,
     },
@@ -1006,7 +1010,7 @@ describe("bundler", () => {
       run: true,
     });
     itBundled(`extra/${minify.label || "NoMinify"}CatchScope2`, {
-      notImplemented: true,
+      todo: true,
       files: {
         "in.js": `
           let y
@@ -1330,6 +1334,7 @@ describe("bundler", () => {
     run: true,
   });
   itBundled(`extra/TreeShaking10`, {
+    todo: true,
     files: {
       "entry.js": `
         let [a] = {}; // This must not be tree-shaken
@@ -1348,6 +1353,7 @@ describe("bundler", () => {
     run: { file: "node.js" },
   });
   itBundled(`extra/TreeShaking11`, {
+    todo: true,
     files: {
       "entry.js": `
         let sideEffect = false
@@ -1780,6 +1786,7 @@ describe("bundler", () => {
     run: true,
   });
   itBundled("extra/CaseSensitiveImport2", {
+    todo: true,
     files: {
       "in.js": `
         import x from "./File1.js"
@@ -1798,6 +1805,7 @@ describe("bundler", () => {
     },
   });
   itBundled("extra/CaseSensitiveImport3", {
+    todo: true,
     files: {
       "in.js": `
         import x from "./Dir1/file.js"

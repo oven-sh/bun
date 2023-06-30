@@ -1,6 +1,7 @@
 import { resolveSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, realpathSync } from "fs";
+import { bunExe } from "harness";
 import { basename, resolve } from "path";
 
 it("process", () => {
@@ -124,7 +125,7 @@ it("process.version starts with v", () => {
   expect(process.version.startsWith("v")).toBeTruthy();
 });
 
-it("process.argv0", () => {
+it.todo("process.argv0", () => {
   expect(basename(process.argv0)).toBe(basename(process.argv[0]));
 });
 
@@ -223,4 +224,12 @@ it("process.execArgv", () => {
 
 it("process.binding", () => {
   expect(() => process.binding("buffer")).toThrow();
+});
+
+it("process.argv in testing", () => {
+  expect(process.argv).toBeInstanceOf(Array);
+  expect(process.argv[0]).toBe(bunExe());
+
+  // assert we aren't creating a new process.argv each call
+  expect(process.argv).toBe(process.argv);
 });

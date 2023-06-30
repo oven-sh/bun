@@ -112,13 +112,12 @@ function itBundledDevAndProd(
   opts: BundlerTestInput & {
     devStdout?: string;
     prodStdout?: string;
-    devNotImplemented?: boolean;
-    prodNotImplemented?: boolean;
+    devTodo?: boolean;
+    prodTodo?: boolean;
   },
 ) {
   const { devStdout, prodStdout, ...rest } = opts;
   itBundled(id + "Dev", {
-    notImplemented: opts.devNotImplemented,
     ...rest,
     env: {
       NODE_ENV: "development",
@@ -131,7 +130,6 @@ function itBundledDevAndProd(
       : rest.run,
   });
   itBundled(id + "Prod", {
-    notImplemented: opts.prodNotImplemented,
     ...rest,
     env: {
       NODE_ENV: "production",
@@ -168,7 +166,7 @@ describe("bundler", () => {
   });
   // bun does not do the production transform for fragments as good as it could be right now.
   itBundledDevAndProd("jsx/AutomaticFragment", {
-    notImplemented: true,
+    todo: true,
     files: {
       "index.jsx": /* js*/ `
         import { print } from 'bun-test-helpers'
@@ -188,6 +186,7 @@ describe("bundler", () => {
     `,
   });
   itBundledDevAndProd("jsx/ImportSource", {
+    prodTodo: true,
     files: {
       "/index.jsx": /* js*/ `
         import { print } from 'bun-test-helpers'
@@ -207,6 +206,7 @@ describe("bundler", () => {
     `,
   });
   itBundledDevAndProd("jsx/Classic", {
+    todo: true,
     files: {
       "/index.jsx": /* js*/ `
         import { print } from 'bun-test-helpers'
@@ -228,6 +228,7 @@ describe("bundler", () => {
     },
   });
   itBundledDevAndProd("jsx/ClassicPragma", {
+    todo: true,
     files: {
       "/index.jsx": /* js*/ `
         // @jsx fn
@@ -250,6 +251,7 @@ describe("bundler", () => {
     },
   });
   itBundledDevAndProd("jsx/PragmaMultiple", {
+    todo: true,
     files: {
       "/index.jsx": /* js*/ `
         import './classic.jsx'
@@ -298,6 +300,7 @@ describe("bundler", () => {
     `,
   });
   itBundledDevAndProd("jsx/Factory", {
+    todo: true,
     files: {
       "/index.jsx": /* js*/ `
         const h = () => 'hello'
@@ -318,6 +321,82 @@ describe("bundler", () => {
       stdout: `
         [\"hello\",\"hello\"]
       `,
+    },
+  });
+  itBundledDevAndProd("jsx/FactoryImport", {
+    todo: false,
+    files: {
+      "/index.jsx": /* js*/ `
+      import { h, fragment } from './jsx.ts';
+      const Fragment = 123;
+      
+      import { print } from 'bun-test-helpers'
+      print([<div props={123}>Hello World</div>, <>Fragment</>])
+      `,
+      "/jsx.ts": /* ts */ `
+        export const h = () => 'hello factory';
+        export const fragment = () => 'hello fragment';
+      `,
+      ...helpers,
+    },
+    target: "bun",
+    jsx: {
+      runtime: "classic",
+      factory: "h",
+      fragment: "fragment",
+    },
+    run: {
+      stdout: `
+        [\"hello factory\",\"hello factory\"]
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("out.js")).toContain("h(fragment");
+    },
+  });
+  itBundledDevAndProd("jsx/FactoryImportExplicitReactDefault", {
+    todo: false,
+    files: {
+      "/index.jsx": /* js*/ `
+      import { print } from 'bun-test-helpers'
+      import * as React from 'react';
+      print([<div props={123}>Hello World</div>, <>Fragment</>])
+      `,
+      ...helpers,
+    },
+    target: "bun",
+    jsx: {
+      runtime: "classic",
+      factory: "React.createElement",
+      fragment: "React.Fragment",
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("out.js")).toContain(" createElement");
+      expect(api.readFile("out.js")).toContain("(Fragment");
+    },
+  });
+  itBundledDevAndProd("jsx/FactoryImportExplicitReactDefaultExternal", {
+    todo: false,
+    files: {
+      "/index.jsx": /* js*/ `
+      import { print } from 'bun-test-helpers'
+      import * as React from 'react';
+      print([<div props={123}>Hello World</div>, <>Fragment</>])
+      `,
+      ...helpers,
+    },
+    target: "bun",
+    jsx: {
+      runtime: "classic",
+      factory: "React.createElement",
+      fragment: "React.Fragment",
+    },
+    external: ["react"],
+    onAfterBundle(api) {
+      const file = api.readFile("out.js");
+      expect(file).toContain("React.createElement");
+      expect(file).toContain("React.Fragment");
+      expect(file).toContain('import * as React from "react"');
     },
   });
 });

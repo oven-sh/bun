@@ -1,7 +1,0 @@
-{
-  "extends": "../../../tsconfig.base.json",
-  "compilerOptions": {
-    "noEmit": true
-  },
-  "include": [".", "builtins.d.ts", "WebCoreJSBuiltins.d.ts", "../../../packages/bun-types/index.d.ts"]
-}

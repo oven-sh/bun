@@ -5,6 +5,7 @@
 #include "ZigSourceProvider.h"
 
 #include "JavaScriptCore/BytecodeCacheError.h"
+#include "ZigGlobalObject.h"
 
 #include "JavaScriptCore/Completion.h"
 #include "wtf/Scope.h"
@@ -26,67 +27,68 @@ using SourceOrigin = JSC::SourceOrigin;
 using String = WTF::String;
 using SourceProviderSourceType = JSC::SourceProviderSourceType;
 
-Ref<SourceProvider> SourceProvider::create(ResolvedSource resolvedSource)
+static uintptr_t getSourceProviderMapKey(ResolvedSource& resolvedSource)
 {
-    void* allocator = resolvedSource.allocator;
-
-    JSC::SourceProviderSourceType sourceType = JSC::SourceProviderSourceType::Module;
-
-    // // JSC owns the memory
-    // if (resolvedSource.hash == 1) {
-    //     return adoptRef(*new SourceProvider(
-    //         resolvedSource, WTF::StringImpl::create(resolvedSource.source_code.ptr, resolvedSource.source_code.len),
-    //         JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(toString(resolvedSource.source_url))),
-    //         toStringNotConst(resolvedSource.source_url).isolatedCopy(), TextPosition(),
-    //         sourceType));
-    // }
-
-    if (allocator) {
-        Ref<WTF::ExternalStringImpl> stringImpl_ = WTF::ExternalStringImpl::create(
-            resolvedSource.source_code.ptr, resolvedSource.source_code.len,
-            allocator,
-            RefString__free);
-        return adoptRef(*new SourceProvider(
-            resolvedSource, stringImpl_,
-            JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(toString(resolvedSource.source_url))),
-            toStringNotConst(resolvedSource.source_url), TextPosition(),
-            sourceType));
-    } else {
-        Ref<WTF::ExternalStringImpl> stringImpl_ = WTF::ExternalStringImpl::createStatic(
-            resolvedSource.source_code.ptr, resolvedSource.source_code.len);
-        return adoptRef(*new SourceProvider(
-            resolvedSource, stringImpl_,
-            JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(toString(resolvedSource.source_url))),
-            toStringNotConst(resolvedSource.source_url), TextPosition(),
-            sourceType));
+    switch (resolvedSource.source_code.tag) {
+    case BunStringTag::WTFStringImpl: {
+        return (uintptr_t)resolvedSource.source_code.impl.wtf->characters8();
+    }
+    case BunStringTag::StaticZigString:
+    case BunStringTag::ZigString: {
+        return (uintptr_t)Zig::untag(resolvedSource.source_code.impl.zig.ptr);
+    }
+    default: {
+        return 0;
+    }
     }
 }
 
-unsigned SourceProvider::getHash()
+static SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
+{
+    if (isBuiltin) {
+        if (sourceURL.startsWith("node:"_s)) {
+            return SourceOrigin(WTF::URL(makeString("builtin://node/", sourceURL.substring(5))));
+        } else if (sourceURL.startsWith("bun:"_s)) {
+            return SourceOrigin(WTF::URL(makeString("builtin://bun/", sourceURL.substring(4))));
+        } else {
+            return SourceOrigin(WTF::URL(makeString("builtin://", sourceURL)));
+        }
+    }
+
+    return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
+}
+
+Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, ResolvedSource resolvedSource, JSC::SourceProviderSourceType sourceType, bool isBuiltin)
+{
+
+    auto stringImpl = Bun::toWTFString(resolvedSource.source_code);
+    auto sourceURLString = toStringCopy(resolvedSource.source_url);
+
+    if (stringImpl.impl()->refCount() > 1)
+        // Deref because we don't call a destructor for BunString
+        stringImpl.impl()->deref();
+
+    auto provider = adoptRef(*new SourceProvider(
+        globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
+        resolvedSource, stringImpl.releaseImpl().releaseNonNull(),
+        toSourceOrigin(sourceURLString, isBuiltin),
+        sourceURLString.impl(), TextPosition(),
+        sourceType));
+
+    return provider;
+}
+
+unsigned SourceProvider::hash() const
 {
     if (m_hash) {
         return m_hash;
     }
 
-    m_hash = WTF::StringHash::hash(m_source.get());
-    return m_hash;
+    return m_source->hash();
 }
 
 void SourceProvider::freeSourceCode()
 {
-    if (did_free_source_code) {
-        return;
-    }
-    did_free_source_code = true;
-    if (m_resolvedSource.allocator != 0) { // // WTF::ExternalStringImpl::destroy(m_source.ptr());
-        this->m_source = WTF::StringImpl::empty()->isolatedCopy();
-        this->m_hash = 0;
-        m_resolvedSource.allocator = 0;
-    }
-    // if (m_resolvedSource.allocator != 0) {
-    //   ZigString__free(m_resolvedSource.source_code.ptr, m_resolvedSource.source_code.len,
-    //                   m_resolvedSource.allocator);
-    // }
 }
 
 void SourceProvider::updateCache(const UnlinkedFunctionExecutable* executable, const SourceCode&,

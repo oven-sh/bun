@@ -1,4 +1,4 @@
-name: bun-release-canary
+name: bun-release-types-canary
 concurrency: release-canary
 on:
   push:
@@ -11,6 +11,7 @@ jobs:
   npm-types:
     name: Release types to NPM
     runs-on: ubuntu-latest
+    if: github.repository_owner == 'oven-sh'
     defaults:
       run:
         working-directory: packages/bun-types

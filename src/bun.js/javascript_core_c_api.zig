@@ -9,7 +9,7 @@ const std = @import("std");
 const cpp = @import("./bindings/bindings.zig");
 const generic = opaque {
     pub fn value(this: *const @This()) cpp.JSValue {
-        return @intToEnum(cpp.JSValue, @bitCast(cpp.JSValue.Type, @ptrToInt(this)));
+        return @enumFromInt(cpp.JSValue, @bitCast(cpp.JSValue.Type, @intFromPtr(this)));
     }
 
     pub inline fn bunVM(this: *@This()) *@import("root").bun.JSC.VirtualMachine {
@@ -120,13 +120,13 @@ pub const JSType = enum(c_uint) {
     kJSTypeObject,
     kJSTypeSymbol,
 };
-pub const kJSTypeUndefined = @enumToInt(JSType.kJSTypeUndefined);
-pub const kJSTypeNull = @enumToInt(JSType.kJSTypeNull);
-pub const kJSTypeBoolean = @enumToInt(JSType.kJSTypeBoolean);
-pub const kJSTypeNumber = @enumToInt(JSType.kJSTypeNumber);
-pub const kJSTypeString = @enumToInt(JSType.kJSTypeString);
-pub const kJSTypeObject = @enumToInt(JSType.kJSTypeObject);
-pub const kJSTypeSymbol = @enumToInt(JSType.kJSTypeSymbol);
+pub const kJSTypeUndefined = @intFromEnum(JSType.kJSTypeUndefined);
+pub const kJSTypeNull = @intFromEnum(JSType.kJSTypeNull);
+pub const kJSTypeBoolean = @intFromEnum(JSType.kJSTypeBoolean);
+pub const kJSTypeNumber = @intFromEnum(JSType.kJSTypeNumber);
+pub const kJSTypeString = @intFromEnum(JSType.kJSTypeString);
+pub const kJSTypeObject = @intFromEnum(JSType.kJSTypeObject);
+pub const kJSTypeSymbol = @intFromEnum(JSType.kJSTypeSymbol);
 pub const JSTypedArrayType = enum(c_uint) {
     kJSTypedArrayTypeInt8Array,
     kJSTypedArrayTypeInt16Array,
@@ -141,17 +141,17 @@ pub const JSTypedArrayType = enum(c_uint) {
     kJSTypedArrayTypeNone,
     _,
 };
-pub const kJSTypedArrayTypeInt8Array = @enumToInt(JSTypedArrayType.kJSTypedArrayTypeInt8Array);
-pub const kJSTypedArrayTypeInt16Array = @enumToInt(JSTypedArrayType.kJSTypedArrayTypeInt16Array);
-pub const kJSTypedArrayTypeInt32Array = @enumToInt(JSTypedArrayType.kJSTypedArrayTypeInt32Array);
-pub const kJSTypedArrayTypeUint8Array = @enumToInt(JSTypedArrayType.kJSTypedArrayTypeUint8Array);
-pub const kJSTypedArrayTypeUint8ClampedArray = @enumToInt(JSTypedArrayType.kJSTypedArrayTypeUint8ClampedArray);
-pub const kJSTypedArrayTypeUint16Array = @enumToInt(JSTypedArrayType.kJSTypedArrayTypeUint16Array);
-pub const kJSTypedArrayTypeUint32Array = @enumToInt(JSTypedArrayType.kJSTypedArrayTypeUint32Array);
-pub const kJSTypedArrayTypeFloat32Array = @enumToInt(JSTypedArrayType.kJSTypedArrayTypeFloat32Array);
-pub const kJSTypedArrayTypeFloat64Array = @enumToInt(JSTypedArrayType.kJSTypedArrayTypeFloat64Array);
-pub const kJSTypedArrayTypeArrayBuffer = @enumToInt(JSTypedArrayType.kJSTypedArrayTypeArrayBuffer);
-pub const kJSTypedArrayTypeNone = @enumToInt(JSTypedArrayType.kJSTypedArrayTypeNone);
+pub const kJSTypedArrayTypeInt8Array = @intFromEnum(JSTypedArrayType.kJSTypedArrayTypeInt8Array);
+pub const kJSTypedArrayTypeInt16Array = @intFromEnum(JSTypedArrayType.kJSTypedArrayTypeInt16Array);
+pub const kJSTypedArrayTypeInt32Array = @intFromEnum(JSTypedArrayType.kJSTypedArrayTypeInt32Array);
+pub const kJSTypedArrayTypeUint8Array = @intFromEnum(JSTypedArrayType.kJSTypedArrayTypeUint8Array);
+pub const kJSTypedArrayTypeUint8ClampedArray = @intFromEnum(JSTypedArrayType.kJSTypedArrayTypeUint8ClampedArray);
+pub const kJSTypedArrayTypeUint16Array = @intFromEnum(JSTypedArrayType.kJSTypedArrayTypeUint16Array);
+pub const kJSTypedArrayTypeUint32Array = @intFromEnum(JSTypedArrayType.kJSTypedArrayTypeUint32Array);
+pub const kJSTypedArrayTypeFloat32Array = @intFromEnum(JSTypedArrayType.kJSTypedArrayTypeFloat32Array);
+pub const kJSTypedArrayTypeFloat64Array = @intFromEnum(JSTypedArrayType.kJSTypedArrayTypeFloat64Array);
+pub const kJSTypedArrayTypeArrayBuffer = @intFromEnum(JSTypedArrayType.kJSTypedArrayTypeArrayBuffer);
+pub const kJSTypedArrayTypeNone = @intFromEnum(JSTypedArrayType.kJSTypedArrayTypeNone);
 pub extern fn JSValueGetType(ctx: JSContextRef, value: JSValueRef) JSType;
 pub extern fn JSValueIsUndefined(ctx: JSContextRef, value: JSValueRef) bool;
 pub extern fn JSValueIsNull(ctx: JSContextRef, value: JSValueRef) bool;
@@ -187,7 +187,7 @@ pub inline fn JSValueUnprotect(ctx: JSContextRef, value: JSValueRef) void {
     };
     if (comptime log_protection) {
         const Output = @import("root").bun.Output;
-        Output.debug("[unprotect] {d}\n", .{@ptrToInt(value)});
+        Output.debug("[unprotect] {d}\n", .{@intFromPtr(value)});
     }
     // wrapper exists to make it easier to set a breakpoint
     Wrapped.JSValueUnprotect(ctx, value);
@@ -199,7 +199,7 @@ pub inline fn JSValueProtect(ctx: JSContextRef, value: JSValueRef) void {
     };
     if (comptime log_protection) {
         const Output = @import("root").bun.Output;
-        Output.debug("[protect] {d}\n", .{@ptrToInt(value)});
+        Output.debug("[protect] {d}\n", .{@intFromPtr(value)});
     }
     // wrapper exists to make it easier to set a breakpoint
     Wrapped.JSValueProtect(ctx, value);
@@ -212,18 +212,18 @@ pub const JSPropertyAttributes = enum(c_uint) {
     kJSPropertyAttributeDontDelete = 8,
     _,
 };
-pub const kJSPropertyAttributeNone = @enumToInt(JSPropertyAttributes.kJSPropertyAttributeNone);
-pub const kJSPropertyAttributeReadOnly = @enumToInt(JSPropertyAttributes.kJSPropertyAttributeReadOnly);
-pub const kJSPropertyAttributeDontEnum = @enumToInt(JSPropertyAttributes.kJSPropertyAttributeDontEnum);
-pub const kJSPropertyAttributeDontDelete = @enumToInt(JSPropertyAttributes.kJSPropertyAttributeDontDelete);
+pub const kJSPropertyAttributeNone = @intFromEnum(JSPropertyAttributes.kJSPropertyAttributeNone);
+pub const kJSPropertyAttributeReadOnly = @intFromEnum(JSPropertyAttributes.kJSPropertyAttributeReadOnly);
+pub const kJSPropertyAttributeDontEnum = @intFromEnum(JSPropertyAttributes.kJSPropertyAttributeDontEnum);
+pub const kJSPropertyAttributeDontDelete = @intFromEnum(JSPropertyAttributes.kJSPropertyAttributeDontDelete);
 pub const JSClassAttributes = enum(c_uint) {
     kJSClassAttributeNone = 0,
     kJSClassAttributeNoAutomaticPrototype = 2,
     _,
 };
 
-pub const kJSClassAttributeNone = @enumToInt(JSClassAttributes.kJSClassAttributeNone);
-pub const kJSClassAttributeNoAutomaticPrototype = @enumToInt(JSClassAttributes.kJSClassAttributeNoAutomaticPrototype);
+pub const kJSClassAttributeNone = @intFromEnum(JSClassAttributes.kJSClassAttributeNone);
+pub const kJSClassAttributeNoAutomaticPrototype = @intFromEnum(JSClassAttributes.kJSClassAttributeNoAutomaticPrototype);
 pub const JSObjectInitializeCallback = *const fn (JSContextRef, JSObjectRef) callconv(.C) void;
 pub const JSObjectFinalizeCallback = *const fn (JSObjectRef) callconv(.C) void;
 pub const JSObjectHasPropertyCallback = *const fn (JSContextRef, JSObjectRef, JSStringRef) callconv(.C) bool;

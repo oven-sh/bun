@@ -238,7 +238,7 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
         buf: [buffer_size]u8,
         zlib: zStream_struct,
         allocator: std.mem.Allocator,
-        arena: std.heap.ArenaAllocator,
+        arena: @import("root").bun.ArenaAllocator,
         state: State = State.Uninitialized,
 
         pub fn alloc(ctx: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
@@ -272,7 +272,7 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
                 .buf = std.mem.zeroes([buffer_size]u8),
                 .allocator = allocator,
                 .zlib = undefined,
-                .arena = std.heap.ArenaAllocator.init(allocator),
+                .arena = @import("root").bun.ArenaAllocator.init(allocator),
             };
 
             zlib_reader.zlib = zStream_struct{
@@ -422,7 +422,7 @@ pub const ZlibReaderArrayList = struct {
     list_ptr: *std.ArrayListUnmanaged(u8),
     zlib: zStream_struct,
     allocator: std.mem.Allocator,
-    arena: std.heap.ArenaAllocator,
+    arena: @import("root").bun.ArenaAllocator,
     state: State = State.Uninitialized,
 
     pub fn alloc(ctx: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
@@ -473,7 +473,7 @@ pub const ZlibReaderArrayList = struct {
             .list_ptr = list,
             .allocator = allocator,
             .zlib = undefined,
-            .arena = std.heap.ArenaAllocator.init(allocator),
+            .arena = @import("root").bun.ArenaAllocator.init(allocator),
         };
 
         zlib_reader.zlib = zStream_struct{
@@ -829,7 +829,7 @@ pub const ZlibCompressorArrayList = struct {
     list_ptr: *std.ArrayListUnmanaged(u8),
     zlib: zStream_struct,
     allocator: std.mem.Allocator,
-    arena: std.heap.ArenaAllocator,
+    arena: @import("root").bun.ArenaAllocator,
     state: State = State.Uninitialized,
 
     pub fn alloc(ctx: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
@@ -868,7 +868,7 @@ pub const ZlibCompressorArrayList = struct {
             .list_allocator = list_allocator,
             .allocator = allocator,
             .zlib = undefined,
-            .arena = std.heap.ArenaAllocator.init(allocator),
+            .arena = @import("root").bun.ArenaAllocator.init(allocator),
         };
 
         zlib_reader.zlib = zStream_struct{

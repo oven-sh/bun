@@ -463,12 +463,14 @@ const usingDomains = false;
 Object.assign(EventEmitter, { once, on, getEventListeners, setMaxListeners, listenerCount, EventEmitterAsyncResource });
 export {
   EventEmitter,
-  once,
-  on,
-  getEventListeners,
-  setMaxListeners,
-  listenerCount,
-  usingDomains,
   captureRejectionSymbol,
+  kErrorMonitor as errorMonitor,
+  getEventListeners,
+  listenerCount,
+  on,
+  once,
+  setMaxListeners,
+  usingDomains,
+  EventEmitterAsyncResource,
 };
 export default EventEmitter;

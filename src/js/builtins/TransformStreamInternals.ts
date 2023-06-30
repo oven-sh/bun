@@ -258,7 +258,7 @@ export function transformStreamDefaultControllerTerminate(controller) {
   // FIXME: Update readableStreamDefaultControllerClose to make this check.
   if ($readableStreamDefaultControllerCanCloseOrEnqueue(readableController))
     $readableStreamDefaultControllerClose(readableController);
-  const error = $makeTypeError("the stream has been terminated");
+  const error = new TypeError("the stream has been terminated");
   $transformStreamErrorWritableAndUnblockWrite(stream, error);
 }
 

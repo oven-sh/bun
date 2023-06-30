@@ -39,7 +39,7 @@ export function cancel(this, reason) {
     return Promise.$reject($makeThisTypeError("ReadableStreamBYOBReader", "cancel"));
 
   if (!$getByIdDirectPrivate(this, "ownerReadableStream"))
-    return Promise.$reject($makeTypeError("cancel() called on a reader owned by no readable stream"));
+    return Promise.$reject(new TypeError("cancel() called on a reader owned by no readable stream"));
 
   return $readableStreamReaderGenericCancel(this, reason);
 }
@@ -49,13 +49,13 @@ export function read(this, view: DataView) {
     return Promise.$reject($makeThisTypeError("ReadableStreamBYOBReader", "read"));
 
   if (!$getByIdDirectPrivate(this, "ownerReadableStream"))
-    return Promise.$reject($makeTypeError("read() called on a reader owned by no readable stream"));
+    return Promise.$reject(new TypeError("read() called on a reader owned by no readable stream"));
 
-  if (!$isObject(view)) return Promise.$reject($makeTypeError("Provided view is not an object"));
+  if (!$isObject(view)) return Promise.$reject(new TypeError("Provided view is not an object"));
 
-  if (!ArrayBuffer.$isView(view)) return Promise.$reject($makeTypeError("Provided view is not an ArrayBufferView"));
+  if (!ArrayBuffer.$isView(view)) return Promise.$reject(new TypeError("Provided view is not an ArrayBufferView"));
 
-  if (view.byteLength === 0) return Promise.$reject($makeTypeError("Provided view cannot have a 0 byteLength"));
+  if (view.byteLength === 0) return Promise.$reject(new TypeError("Provided view cannot have a 0 byteLength"));
 
   return $readableStreamBYOBReaderRead(this, view);
 }

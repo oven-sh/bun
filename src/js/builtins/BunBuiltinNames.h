@@ -71,6 +71,7 @@ using namespace JSC;
     macro(consumeReadableStream) \
     macro(controlledReadableStream) \
     macro(controller) \
+    macro(contentType) \
     macro(cork) \
     macro(createCommonJSModule) \
     macro(createEmptyReadableStream) \

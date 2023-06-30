@@ -1432,57 +1432,57 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 _ = signal.unref();
             }
 
-            //if have sink, call onAborted on sink
+            // if have sink, call onAborted on sink
             if (this.sink) |wrapper| {
                 wrapper.sink.abort();
+                this.finalize();
                 return;
             }
 
             // if we can, free the request now.
             if (this.isDeadRequest()) {
-                this.finalizeWithoutDeinit();
-                this.markComplete();
-                this.deinit();
-            } else {
-                this.pending_promises_for_abort = 0;
+                this.finalize();
+                return;
+            }
 
-                // if we cannot, we have to reject pending promises
-                // first, we reject the request body promise
-                if (this.request_body) |body| {
-                    // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
-                    // but we received nothing or the connection was aborted
+            this.pending_promises_for_abort = 0;
 
-                    if (body.value == .Locked) {
-                        // the promise is pending
-                        if (body.value.Locked.action != .none or body.value.Locked.promise != null) {
-                            this.pending_promises_for_abort += 1;
-                        } else if (body.value.Locked.readable != null) {
-                            body.value.Locked.readable.?.abort(this.server.globalThis);
-                            body.value.Locked.readable = null;
-                        }
-                        body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
+            // if we cannot, we have to reject pending promises
+            // first, we reject the request body promise
+            if (this.request_body) |body| {
+                // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
+                // but we received nothing or the connection was aborted
+
+                if (body.value == .Locked) {
+                    // the promise is pending
+                    if (body.value.Locked.action != .none or body.value.Locked.promise != null) {
+                        this.pending_promises_for_abort += 1;
+                    } else if (body.value.Locked.readable != null) {
+                        body.value.Locked.readable.?.abort(this.server.globalThis);
+                        body.value.Locked.readable = null;
+                    }
+                    body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
+                }
+            }
+
+            if (this.response_ptr) |response| {
+                if (response.body.value == .Locked) {
+                    if (response.body.value.Locked.readable) |*readable| {
+                        response.body.value.Locked.readable = null;
+                        readable.abort(this.server.globalThis);
                     }
                 }
+            }
 
-                if (this.response_ptr) |response| {
-                    if (response.body.value == .Locked) {
-                        if (response.body.value.Locked.readable) |*readable| {
-                            response.body.value.Locked.readable = null;
-                            readable.abort(this.server.globalThis);
-                        }
-                    }
-                }
+            // then, we reject the response promise
+            if (this.promise) |promise| {
+                this.pending_promises_for_abort += 1;
+                this.promise = null;
+                promise.asAnyPromise().?.reject(this.server.globalThis, JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis));
+            }
 
-                // then, we reject the response promise
-                if (this.promise) |promise| {
-                    this.pending_promises_for_abort += 1;
-                    this.promise = null;
-                    promise.asAnyPromise().?.reject(this.server.globalThis, JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis));
-                }
-
-                if (this.pending_promises_for_abort > 0) {
-                    this.server.vm.tick();
-                }
+            if (this.pending_promises_for_abort > 0) {
+                this.server.vm.tick();
             }
         }
 
@@ -1963,7 +1963,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (!(this.response_ptr.?.statusCode() == 200 and this.response_ptr.?.body.init.headers == null)) {
                 this.renderMetadata();
             }
-
             stream.value.ensureStillAlive();
 
             var response_stream = this.allocator.create(ResponseStream.JSSink) catch unreachable;
@@ -2062,7 +2061,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 onRejectStream,
                             );
                             // the response_stream should be GC'd
-
                         },
                         .Fulfilled => {
                             streamLog("promise Fulfilled", .{});
@@ -2090,22 +2088,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             stream.value.ensureStillAlive();
 
-            const is_in_progress = response_stream.sink.has_backpressure or !(response_stream.sink.wrote == 0 and
-                response_stream.sink.buffer.len == 0);
-
-            if (!stream.isLocked(this.server.globalThis) and !is_in_progress) {
-                if (JSC.WebCore.ReadableStream.fromJS(stream.value, this.server.globalThis)) |comparator| {
-                    if (std.meta.activeTag(comparator.ptr) == std.meta.activeTag(stream.ptr)) {
-                        streamLog("is not locked", .{});
-                        this.renderMissing();
-                        return;
-                    }
-                }
-            }
-
             this.setAbortHandler();
-            streamLog("is in progress, but did not return a Promise. Finalizing request context", .{});
-            this.finalize();
+            streamLog("is in progress, but did not return a Promise", .{});
             stream.value.unprotect();
         }
 

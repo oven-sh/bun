@@ -1717,9 +1717,6 @@ fn NewSocket(comptime ssl: bool) type {
                     if (result.wrote == result.total) {
                         this.socket.flush();
                         this.detached = true;
-                        if (!this.socket.isClosed()) {
-                            this.socket.close(0, null);
-                        }
                         this.markInactive();
                     }
                     break :brk JSValue.jsNumber(result.wrote);
@@ -1876,17 +1873,13 @@ fn NewSocket(comptime ssl: bool) type {
 
             const options = ssl_opts.?.asUSockets();
 
-            const ext_size = @sizeOf(*TLSSocket);
+            const ext_size = @sizeOf(WrappedSocket);
 
             var tls = handlers.vm.allocator.create(TLSSocket) catch @panic("OOM");
             var handlers_ptr = handlers.vm.allocator.create(Handlers) catch @panic("OOM");
             handlers_ptr.* = handlers;
             handlers_ptr.is_server = this.handlers.is_server;
             handlers_ptr.protect();
-
-            var promise = JSC.JSPromise.create(globalObject);
-            var promise_value = promise.asValue(globalObject);
-            handlers_ptr.promise.set(globalObject, promise_value);
 
             tls.* = .{ .handlers = handlers_ptr, .this_value = .zero, .socket = undefined, .connection = if (this.connection) |c| c.clone() else null, .wrapped = .tls };
 
@@ -1908,7 +1901,6 @@ fn NewSocket(comptime ssl: bool) type {
             ) orelse {
                 handlers_ptr.unprotect();
                 handlers.vm.allocator.destroy(handlers_ptr);
-                handlers.promise.deinit();
                 bun.default_allocator.destroy(tls);
                 return JSValue.jsUndefined();
             };
@@ -1916,6 +1908,8 @@ fn NewSocket(comptime ssl: bool) type {
 
             var raw = handlers.vm.allocator.create(TLSSocket) catch @panic("OOM");
             var raw_handlers_ptr = handlers.vm.allocator.create(Handlers) catch @panic("OOM");
+            this.handlers.unprotect();
+
             var cloned_handlers: Handlers = .{
                 .vm = globalObject.bunVM(),
                 .globalObject = globalObject,
@@ -1934,28 +1928,34 @@ fn NewSocket(comptime ssl: bool) type {
             raw_handlers_ptr.* = cloned_handlers;
             raw_handlers_ptr.is_server = this.handlers.is_server;
             raw_handlers_ptr.protect();
-            raw.* = .{ .handlers = raw_handlers_ptr, .this_value = .zero, .socket = undefined, .connection = if (this.connection) |c| c.clone() else null, .wrapped = .tcp };
-            raw.socket = new_socket;
+            raw.* = .{ .handlers = raw_handlers_ptr, .this_value = .zero, .socket = new_socket, .connection = if (this.connection) |c| c.clone() else null, .wrapped = .tcp };
 
             var raw_js_value = raw.getThisValue(globalObject);
             if (JSSocketType(ssl).dataGetCached(this.getThisValue(globalObject))) |raw_default_data| {
                 raw_default_data.ensureStillAlive();
                 TLSSocket.dataSetCached(raw_js_value, globalObject, raw_default_data);
             }
-            //this is important because open will not be called again for TCP
+            // marks both as active
             raw.markActive();
+            // this will keep tls alive until socket.open() is called to start TLS certificate and the handshake process
+            // open is not immediately called because we need to set bunSocketInternal
+            tls.markActive();
 
+            // mark both instances on socket data
             new_socket.ext(WrappedSocket).?.* = .{ .tcp = raw, .tls = tls };
 
-            //detach and invalidate this
+            //detach and invalidate the old instance
             this.detached = true;
-            var vm = globalObject.bunVM();
-            this.reffer.unref(vm);
-            this.handlers.markInactive(ssl, old_context, this.wrapped);
-            this.poll_ref.unref(vm);
-            this.has_pending_activity.store(false, .Release);
-
-            const array = JSC.JSValue.createEmptyArray(globalObject, 1);
+            if (this.reffer.has) {
+                var vm = this.handlers.vm;
+                this.reffer.unref(vm);
+                old_context.deinit(ssl);
+                bun.default_allocator.destroy(this.handlers);
+                this.poll_ref.unref(vm);
+                this.has_pending_activity.store(false, .Release);
+            }
+            
+            const array = JSC.JSValue.createEmptyArray(globalObject, 2);
             array.putIndex(globalObject, 0, raw_js_value);
             array.putIndex(globalObject, 1, tls_js_value);
             return array;
@@ -1968,8 +1968,8 @@ pub const TLSSocket = NewSocket(true);
 
 pub const WrappedSocket = extern struct {
     // both shares the same socket but one behaves as TLS and the other as TCP
-    tcp: *TLSSocket,
     tls: *TLSSocket,
+    tcp: *TLSSocket,
 };
 
 pub fn NewWrappedHandler(comptime tls: bool) type {

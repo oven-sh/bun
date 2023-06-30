@@ -439,12 +439,10 @@ const Socket = (function (InternalSocket) {
             const [raw, tls] = result;
             // replace socket
             connection[bunSocketInternal] = raw;
-            raw.ref();
             raw.timeout(raw.timeout);
             raw.connecting = false;
             // set new socket
             this[bunSocketInternal] = tls;
-            tls.ref();
             tls.timeout(tls.timeout);
             tls.connecting = true;
             this[bunSocketInternal] = socket;
@@ -470,12 +468,10 @@ const Socket = (function (InternalSocket) {
               const [raw, tls] = result;
               // replace socket
               connection[bunSocketInternal] = raw;
-              raw.ref();
               raw.timeout(raw.timeout);
               raw.connecting = false;
               // set new socket
               this[bunSocketInternal] = tls;
-              tls.ref();
               tls.timeout(tls.timeout);
               tls.connecting = true;
               this[bunSocketInternal] = socket;

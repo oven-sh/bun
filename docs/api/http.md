@@ -95,7 +95,7 @@ server.stop();
 
 ## TLS
 
-Bun supports TLS out of the box, powered by [OpenSSL](https://www.openssl.org/). Enable TLS by passing in a value for `key` and `cert`; both are required to enable TLS.
+Bun supports TLS out of the box, powered by [BoringSSL](https://boringssl.googlesource.com/boringssl). Enable TLS by passing in a value for `key` and `cert`; both are required to enable TLS.
 
 ```ts-diff
   Bun.serve({

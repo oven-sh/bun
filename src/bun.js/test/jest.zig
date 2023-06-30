@@ -752,8 +752,10 @@ pub const DescribeScope = struct {
     pub fn push(new: *DescribeScope) void {
         if (comptime is_bindgen) return;
         if (new.parent) |scope| {
-            std.debug.assert(DescribeScope.active != new);
-            std.debug.assert(scope == DescribeScope.active);
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(DescribeScope.active != new);
+                std.debug.assert(scope == DescribeScope.active);
+            }
         } else if (DescribeScope.active) |scope| {
             // calling Bun.jest() within (already active) module
             if (scope.parent != null) return;
@@ -763,7 +765,7 @@ pub const DescribeScope = struct {
 
     pub fn pop(this: *DescribeScope) void {
         if (comptime is_bindgen) return;
-        std.debug.assert(DescribeScope.active == this);
+        if (comptime Environment.allow_assert) std.debug.assert(DescribeScope.active == this);
         DescribeScope.active = this.parent;
     }
 
@@ -843,8 +845,10 @@ pub const DescribeScope = struct {
         }
 
         for (hooks.items) |cb| {
-            std.debug.assert(cb.isObject());
-            std.debug.assert(cb.isCallable(globalObject.vm()));
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(cb.isObject());
+                std.debug.assert(cb.isCallable(globalObject.vm()));
+            }
             defer {
                 if (comptime hook == .beforeAll or hook == .afterAll) {
                     cb.unprotect();
@@ -904,8 +908,10 @@ pub const DescribeScope = struct {
         }
 
         for (hooks.items) |cb| {
-            std.debug.assert(cb.isObject());
-            std.debug.assert(cb.isCallable(globalThis.vm()));
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(cb.isObject());
+                std.debug.assert(cb.isCallable(globalThis.vm()));
+            }
             defer {
                 if (comptime hook == .beforeAll or hook == .afterAll) {
                     cb.unprotect();
@@ -1241,7 +1247,7 @@ pub const TestRunnerTask = struct {
     }
 
     pub fn timeout(this: *TestRunnerTask) void {
-        std.debug.assert(!this.reported);
+        if (comptime Environment.allow_assert) std.debug.assert(!this.reported);
 
         this.ref.unref(this.globalThis.bunVM());
         this.globalThis.throwTerminationException();
@@ -1254,7 +1260,7 @@ pub const TestRunnerTask = struct {
 
         switch (comptime from) {
             .promise => {
-                std.debug.assert(this.promise_state == .pending);
+                if (comptime Environment.allow_assert) std.debug.assert(this.promise_state == .pending);
                 this.promise_state = .fulfilled;
 
                 if (this.done_callback_state == .pending and result == .pass) {
@@ -1262,7 +1268,7 @@ pub const TestRunnerTask = struct {
                 }
             },
             .callback => {
-                std.debug.assert(this.done_callback_state == .pending);
+                if (comptime Environment.allow_assert) std.debug.assert(this.done_callback_state == .pending);
                 this.done_callback_state = .fulfilled;
 
                 if (this.promise_state == .pending and result == .pass) {
@@ -1270,7 +1276,7 @@ pub const TestRunnerTask = struct {
                 }
             },
             .sync => {
-                std.debug.assert(this.sync_state == .pending);
+                if (comptime Environment.allow_assert) std.debug.assert(this.sync_state == .pending);
                 this.sync_state = .fulfilled;
             },
             .timeout, .unhandledRejection => {},

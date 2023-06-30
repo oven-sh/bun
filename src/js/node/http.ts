@@ -3,6 +3,35 @@ import { EventEmitter } from "node:events";
 import { Readable, Writable, Duplex } from "node:stream";
 import { isTypedArray } from "util/types";
 
+const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
+/**
+ * True if val contains an invalid field-vchar
+ *  field-value    = *( field-content / obs-fold )
+ *  field-content  = field-vchar [ 1*( SP / HTAB ) field-vchar ]
+ *  field-vchar    = VCHAR / obs-text
+ */
+function checkInvalidHeaderChar(val: string) {
+  return RegExpPrototypeExec.call(headerCharRegex, val) !== null;
+}
+
+export const validateHeaderName = (name, label) => {
+  if (typeof name !== "string" || !name || !checkIsHttpToken(name)) {
+    // throw new ERR_INVALID_HTTP_TOKEN(label || "Header name", name);
+    throw new Error("ERR_INVALID_HTTP_TOKEN");
+  }
+};
+
+export const validateHeaderValue = (name, value) => {
+  if (value === undefined) {
+    // throw new ERR_HTTP_INVALID_HEADER_VALUE(value, name);
+    throw new Error("ERR_HTTP_INVALID_HEADER_VALUE");
+  }
+  if (checkInvalidHeaderChar(value)) {
+    // throw new ERR_INVALID_CHAR("header content", name);
+    throw new Error("ERR_INVALID_CHAR");
+  }
+};
+
 // Cheaper to duplicate this than to import it from node:net
 function isIPv6(input) {
   const v4Seg = "(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])";
@@ -63,7 +92,6 @@ const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
 const NODE_HTTP_WARNING =
   "WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.";
 
-var _globalAgent;
 var _defaultHTTPSAgent;
 var kInternalRequest = Symbol("kInternalRequest");
 var kInternalSocketData = Symbol.for("::bunternal::");
@@ -87,12 +115,12 @@ function getHeader(headers, name) {
   return result == null ? undefined : result;
 }
 
+type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
   bytesRead = 0;
   bytesWritten = 0;
   connecting = false;
-  remoteAddress = null;
-  localAddress = "127.0.0.1";
+  remoteAddress: string | null = null;
   remotePort;
   timeout = 0;
 
@@ -191,7 +219,7 @@ export class Agent extends EventEmitter {
   #fakeSocket;
 
   static get globalAgent() {
-    return (_globalAgent ??= new Agent());
+    return globalAgent;
   }
 
   static get defaultMaxSockets() {
@@ -287,6 +315,7 @@ export class Server extends EventEmitter {
   #tls;
   #is_tls = false;
   listening = false;
+  serverName;
 
   constructor(options, callback) {
     super();
@@ -375,7 +404,7 @@ export class Server extends EventEmitter {
     // not actually implemented
   }
 
-  close(optionalCallback) {
+  close(optionalCallback?) {
     const server = this.#server;
     if (!server) {
       if (typeof optionalCallback === "function")
@@ -431,7 +460,7 @@ export class Server extends EventEmitter {
       if (tls) {
         this.serverName = tls.serverName || host || "localhost";
       }
-      this.#server = Bun.serve({
+      this.#server = Bun.serve<any>({
         tls,
         port,
         hostname: host,
@@ -527,6 +556,9 @@ function getDefaultHTTPSAgent() {
 }
 
 export class IncomingMessage extends Readable {
+  method: string;
+  complete: boolean;
+
   constructor(req, defaultIncomingOpts) {
     const method = req.method;
 
@@ -551,7 +583,7 @@ export class IncomingMessage extends Readable {
     this.#type = type;
     this.complete = !!this.#noBody;
 
-    this.#bodyStream = null;
+    this.#bodyStream = undefined;
     const socket = new FakeSocket();
     socket.remoteAddress = url.hostname;
     socket.remotePort = url.port;
@@ -566,8 +598,8 @@ export class IncomingMessage extends Readable {
   rawHeaders;
   _consuming = false;
   _dumped = false;
-  #bodyStream = null;
-  #fakeSocket = undefined;
+  #bodyStream: ReadableStreamDefaultReader | undefined;
+  #fakeSocket: FakeSocket | undefined;
   #noBody = false;
   #aborted = false;
   #req;
@@ -597,14 +629,19 @@ export class IncomingMessage extends Readable {
     callback();
   }
 
-  #closeBodyStream() {
-    debug("closeBodyStream()");
-    var bodyStream = this.#bodyStream;
-    if (bodyStream == null) return;
-    this.complete = true;
-    this.#bodyStream = undefined;
-    this.push(null);
-    // process.nextTick(destroyBodyStreamNT, bodyStream);
+  async #consumeStream(reader: ReadableStreamDefaultReader) {
+    while (true) {
+      var { done, value } = await reader.readMany();
+      if (this.#aborted) return;
+      if (done) {
+        this.push(null);
+        this.destroy();
+        break;
+      }
+      for (var v of value) {
+        this.push(v);
+      }
+    }
   }
 
   _read(size) {
@@ -612,37 +649,13 @@ export class IncomingMessage extends Readable {
       this.push(null);
       this.complete = true;
     } else if (this.#bodyStream == null) {
-      const contentLength = this.#req.headers.get("content-length");
-      let remaining = contentLength ? parseInt(contentLength, 10) : 0;
-      this.#bodyStream = Readable.fromWeb(this.#req.body, {
-        highWaterMark: Number.isFinite(remaining) ? Math.min(remaining, 16384) : 16384,
-      });
-
-      const isBodySizeKnown = remaining > 0 && Number.isSafeInteger(remaining);
-
-      if (isBodySizeKnown) {
-        this.#bodyStream.on("data", chunk => {
-          debug("body size known", remaining);
-          this.push(chunk);
-          // when we are streaming a known body size, automatically close the stream when we have read enough
-          remaining -= chunk?.byteLength ?? 0;
-          if (remaining <= 0) {
-            this.#closeBodyStream();
-          }
-        });
-      } else {
-        this.#bodyStream.on("data", chunk => {
-          this.push(chunk);
-        });
+      const reader = this.#req.body?.getReader() as ReadableStreamDefaultReader;
+      if (!reader) {
+        this.push(null);
+        return;
       }
-
-      // this can be closed by the time we get here if enough data was synchronously available
-      this.#bodyStream &&
-        this.#bodyStream.on("end", () => {
-          this.#closeBodyStream();
-        });
-    } else {
-      // this.#bodyStream.read(size);
+      this.#bodyStream = reader;
+      this.#consumeStream(reader);
     }
   }
 
@@ -650,11 +663,15 @@ export class IncomingMessage extends Readable {
     return this.#aborted;
   }
 
-  abort() {
+  #abort() {
     if (this.#aborted) return;
     this.#aborted = true;
-
-    this.#closeBodyStream();
+    var bodyStream = this.#bodyStream;
+    if (!bodyStream) return;
+    bodyStream.cancel();
+    this.complete = true;
+    this.#bodyStream = undefined;
+    this.push(null);
   }
 
   get connection() {
@@ -780,8 +797,8 @@ export class OutgoingMessage extends Writable {
   [kEndCalled] = false;
 
   #fakeSocket;
-  #timeoutTimer = null;
-  [kAbortController] = null;
+  #timeoutTimer: Timer | null = null;
+  [kAbortController]: AbortController | null = null;
 
   // Express "compress" package uses this
   _implicitHeader() {}
@@ -898,6 +915,8 @@ export class OutgoingMessage extends Writable {
 }
 
 export class ServerResponse extends Writable {
+  declare _writableState: any;
+
   constructor({ req, reply }) {
     super();
     this.req = req;
@@ -925,7 +944,7 @@ export class ServerResponse extends Writable {
   _defaultKeepAlive = false;
   _removedConnection = false;
   _removedContLen = false;
-  #deferred = undefined;
+  #deferred: (() => void) | undefined = undefined;
   #finished = false;
 
   // Express "compress" package uses this
@@ -1116,7 +1135,7 @@ export class ServerResponse extends Writable {
 
 export class ClientRequest extends OutgoingMessage {
   #timeout;
-  #res = null;
+  #res: IncomingMessage | null = null;
   #upgradeOrConnect = false;
   #parser = null;
   #maxHeadersCount = null;
@@ -1128,15 +1147,15 @@ export class ClientRequest extends OutgoingMessage {
   #useDefaultPort;
   #joinDuplicateHeaders;
   #maxHeaderSize;
-  #agent = _globalAgent;
+  #agent = globalAgent;
   #path;
   #socketPath;
 
-  #body = null;
+  #body: string | null = null;
   #fetchRequest;
-  #signal = null;
-  [kAbortController] = null;
-  #timeoutTimer = null;
+  #signal: AbortSignal | null = null;
+  [kAbortController]: AbortController | null = null;
+  #timeoutTimer: Timer | null = null;
   #options;
   #finished;
 
@@ -1236,7 +1255,7 @@ export class ClientRequest extends OutgoingMessage {
 
   abort() {
     if (this.aborted) return;
-    this[kAbortController].abort();
+    this[kAbortController]!.abort();
     // TODO: Close stream if body streaming
   }
 
@@ -1276,8 +1295,8 @@ export class ClientRequest extends OutgoingMessage {
       } else {
         protocol = defaultAgent.protocol || "http:";
       }
-      this.#protocol = protocol;
     }
+    this.#protocol = protocol;
 
     switch (this.#agent?.protocol) {
       case undefined: {
@@ -1490,7 +1509,7 @@ export class ClientRequest extends OutgoingMessage {
     }
   }
 
-  setTimeout(msecs, callback) {
+  setTimeout(msecs, callback?) {
     if (this.#timeoutTimer) return this;
     if (callback) {
       this.on("timeout", callback);
@@ -1680,7 +1699,7 @@ function _normalizeArgs(args) {
   }
 
   const arg0 = args[0];
-  let options = {};
+  let options: any = {};
   if (typeof arg0 === "object" && arg0 !== null) {
     // (options[...][, cb])
     options = arg0;
@@ -1766,7 +1785,8 @@ export function get(url, options, cb) {
   req.end();
   return req;
 }
-_globalAgent ??= new Agent();
+
+export var globalAgent = new Agent();
 var defaultObject = {
   Agent,
   Server,
@@ -1778,18 +1798,13 @@ var defaultObject = {
   request,
   get,
   maxHeaderSize: 16384,
-  // validateHeaderName,
-  // validateHeaderValue,
+  validateHeaderName,
+  validateHeaderValue,
   setMaxIdleHTTPParsers(max) {
     debug(`${NODE_HTTP_WARNING}\n`, "setMaxIdleHTTPParsers() is a no-op");
   },
-  get globalAgent() {
-    return _globalAgent;
-  },
-  set globalAgent(agent) {},
+  globalAgent,
   [Symbol.for("CommonJS")]: 0,
 };
 
 export default defaultObject;
-
-export { _globalAgent as globalAgent };

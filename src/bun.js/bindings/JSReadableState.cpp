@@ -29,7 +29,7 @@ int64_t getHighWaterMark(JSC::VM& vm, JSC::JSGlobalObject* globalObject, bool is
             highWaterMarkVal = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "readableObjectMode"_s));
         }
 
-        if (highWaterMarkVal && !highWaterMarkVal.isUndefinedOrNull()) {
+        if (highWaterMarkVal && highWaterMarkVal.isNumber()) {
             return highWaterMarkVal.toInt32(globalObject);
         }
     }
@@ -72,6 +72,9 @@ void JSReadableState::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObj
         JSC::JSValue autoDestroyVal = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "autoDestroy"_s));
         if (!autoDestroyVal || autoDestroyVal.toBoolean(globalObject))
             setBool(JSReadableState::Mask::autoDestroy, true);
+    } else {
+        setBool(JSReadableState::Mask::emitClose, true);
+        setBool(JSReadableState::Mask::autoDestroy, true);
     }
 
     // Indicates whether the stream has finished destroying.

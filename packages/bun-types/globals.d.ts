@@ -888,6 +888,12 @@ type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
 type ReadableStreamDefaultReadResult<T> =
   | ReadableStreamDefaultReadValueResult<T>
   | ReadableStreamDefaultReadDoneResult;
+interface ReadableStreamDefaultReadManyResult<T> {
+  done: boolean;
+  /** Number of bytes */
+  size: number;
+  value: T[];
+}
 type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
 
 interface RequestInit {
@@ -2261,7 +2267,8 @@ declare var ReadableStreamDefaultController: {
 interface ReadableStreamDefaultReader<R = any>
   extends ReadableStreamGenericReader {
   read(): Promise<ReadableStreamDefaultReadResult<R>>;
-  readMany(): Promise<ReadableStreamDefaultReadValueResult<R>>;
+  /** Only available in Bun. If there are multiple chunks in the queue, this will return all of them at the same time. */
+  readMany(): Promise<ReadableStreamDefaultReadManyResult<R>>;
   releaseLock(): void;
 }
 

@@ -1912,7 +1912,9 @@ declare module "bun" {
 
   export interface TLSWebSocketServeOptions<WebSocketDataType = undefined>
     extends WebSocketServeOptions<WebSocketDataType>,
-      TLSOptions {}
+      TLSOptions {
+    tls?: TLSOptions;
+  }
   export interface Errorlike extends Error {
     code?: string;
     errno?: number;
@@ -2023,6 +2025,8 @@ declare module "bun" {
      *  The values are SSL options objects.
      */
     serverNames?: Record<string, TLSOptions>;
+
+    tls?: TLSOptions;
   }
 
   /**

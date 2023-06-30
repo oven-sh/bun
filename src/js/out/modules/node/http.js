@@ -1,7 +1,9 @@
 import {EventEmitter} from "node:events";
 import {Readable, Writable, Duplex} from "node:stream";
 import {isTypedArray} from "node:util/types";
-var isIPv6 = function(input) {
+var checkInvalidHeaderChar = function(val) {
+  return RegExpPrototypeExec.call(headerCharRegex, val) !== null;
+}, isIPv6 = function(input) {
   return new RegExp("^((?:(?:[0-9a-fA-F]{1,4}):){7}(?:(?:[0-9a-fA-F]{1,4})|:)|(?:(?:[0-9a-fA-F]{1,4}):){6}(?:((?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])[.]){3}(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])|:(?:[0-9a-fA-F]{1,4})|:)|(?:(?:[0-9a-fA-F]{1,4}):){5}(?::((?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])[.]){3}(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])|(:(?:[0-9a-fA-F]{1,4})){1,2}|:)|(?:(?:[0-9a-fA-F]{1,4}):){4}(?:(:(?:[0-9a-fA-F]{1,4})){0,1}:((?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])[.]){3}(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])|(:(?:[0-9a-fA-F]{1,4})){1,3}|:)|(?:(?:[0-9a-fA-F]{1,4}):){3}(?:(:(?:[0-9a-fA-F]{1,4})){0,2}:((?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])[.]){3}(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])|(:(?:[0-9a-fA-F]{1,4})){1,4}|:)|(?:(?:[0-9a-fA-F]{1,4}):){2}(?:(:(?:[0-9a-fA-F]{1,4})){0,3}:((?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])[.]){3}(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])|(:(?:[0-9a-fA-F]{1,4})){1,5}|:)|(?:(?:[0-9a-fA-F]{1,4}):){1}(?:(:(?:[0-9a-fA-F]{1,4})){0,4}:((?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])[.]){3}(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])|(:(?:[0-9a-fA-F]{1,4})){1,6}|:)|(?::((?::(?:[0-9a-fA-F]{1,4})){0,5}:((?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])[.]){3}(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])|(?::(?:[0-9a-fA-F]{1,4})){1,7}|:)))(%[0-9a-zA-Z-.:]{1,})?$").test(input);
 }, isValidTLSArray = function(obj) {
   if (typeof obj === "string" || isTypedArray(obj) || obj instanceof ArrayBuffer || obj instanceof Blob)
@@ -97,13 +99,20 @@ function get(url, options, cb) {
   const req = request(url, options, cb);
   return req.end(), req;
 }
-var { URL } = globalThis, { newArrayWithSize, String, Object, Array } = globalThis[Symbol.for("Bun.lazy")]("primordials"), globalReportError = globalThis.reportError, setTimeout = globalThis.setTimeout, fetch = Bun.fetch, nop = () => {
-}, __DEBUG__ = process.env.__DEBUG__, debug = __DEBUG__ ? (...args) => console.log("node:http", ...args) : nop, kEmptyObject = Object.freeze(Object.create(null)), kOutHeaders = Symbol.for("kOutHeaders"), kEndCalled = Symbol.for("kEndCalled"), kAbortController = Symbol.for("kAbortController"), kClearTimeout = Symbol("kClearTimeout"), kCorked = Symbol.for("kCorked"), searchParamsSymbol = Symbol.for("query"), StringPrototypeSlice = String.prototype.slice, StringPrototypeStartsWith = String.prototype.startsWith, StringPrototypeToUpperCase = String.prototype.toUpperCase, StringPrototypeIncludes = String.prototype.includes, StringPrototypeCharCodeAt = String.prototype.charCodeAt, StringPrototypeIndexOf = String.prototype.indexOf, ArrayIsArray = Array.isArray, RegExpPrototypeExec = RegExp.prototype.exec, ObjectAssign = Object.assign, ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty, INVALID_PATH_REGEX = /[^\u0021-\u00ff]/, NODE_HTTP_WARNING = "WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.", _globalAgent, _defaultHTTPSAgent, kInternalRequest = Symbol("kInternalRequest"), kInternalSocketData = Symbol.for("::bunternal::"), kEmptyBuffer = Buffer.alloc(0), FakeSocket = class Socket extends Duplex {
+var headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/, validateHeaderName = (name, label) => {
+  if (typeof name !== "string" || !name || !checkIsHttpToken(name))
+    throw new Error("ERR_INVALID_HTTP_TOKEN");
+}, validateHeaderValue = (name, value) => {
+  if (value === void 0)
+    throw new Error("ERR_HTTP_INVALID_HEADER_VALUE");
+  if (checkInvalidHeaderChar(value))
+    throw new Error("ERR_INVALID_CHAR");
+}, { URL } = globalThis, { newArrayWithSize, String, Object, Array } = globalThis[Symbol.for("Bun.lazy")]("primordials"), globalReportError = globalThis.reportError, setTimeout = globalThis.setTimeout, fetch = Bun.fetch, nop = () => {
+}, __DEBUG__ = process.env.__DEBUG__, debug = __DEBUG__ ? (...args) => console.log("node:http", ...args) : nop, kEmptyObject = Object.freeze(Object.create(null)), kOutHeaders = Symbol.for("kOutHeaders"), kEndCalled = Symbol.for("kEndCalled"), kAbortController = Symbol.for("kAbortController"), kClearTimeout = Symbol("kClearTimeout"), kCorked = Symbol.for("kCorked"), searchParamsSymbol = Symbol.for("query"), StringPrototypeSlice = String.prototype.slice, StringPrototypeStartsWith = String.prototype.startsWith, StringPrototypeToUpperCase = String.prototype.toUpperCase, StringPrototypeIncludes = String.prototype.includes, StringPrototypeCharCodeAt = String.prototype.charCodeAt, StringPrototypeIndexOf = String.prototype.indexOf, ArrayIsArray = Array.isArray, RegExpPrototypeExec = RegExp.prototype.exec, ObjectAssign = Object.assign, ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty, INVALID_PATH_REGEX = /[^\u0021-\u00ff]/, NODE_HTTP_WARNING = "WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.", _defaultHTTPSAgent, kInternalRequest = Symbol("kInternalRequest"), kInternalSocketData = Symbol.for("::bunternal::"), kEmptyBuffer = Buffer.alloc(0), FakeSocket = class Socket extends Duplex {
   bytesRead = 0;
   bytesWritten = 0;
   connecting = !1;
   remoteAddress = null;
-  localAddress = "127.0.0.1";
   remotePort;
   timeout = 0;
   isServer = !1;
@@ -183,7 +192,7 @@ class Agent extends EventEmitter {
   totalSocketCount;
   #fakeSocket;
   static get globalAgent() {
-    return _globalAgent ??= new Agent;
+    return globalAgent;
   }
   static get defaultMaxSockets() {
     return Infinity;
@@ -235,6 +244,7 @@ class Server extends EventEmitter {
   #tls;
   #is_tls = !1;
   listening = !1;
+  serverName;
   constructor(options, callback) {
     super();
     if (typeof options === "function")
@@ -386,12 +396,14 @@ class Server extends EventEmitter {
   }
 }
 class IncomingMessage extends Readable {
+  method;
+  complete;
   constructor(req, defaultIncomingOpts) {
     const method = req.method;
     super();
     const url = new URL(req.url);
     var { type = "request", [kInternalRequest]: nodeReq } = defaultIncomingOpts || {};
-    this.#noBody = type === "request" ? method === "GET" || method === "HEAD" || method === "TRACE" || method === "CONNECT" || method === "OPTIONS" || (parseInt(req.headers.get("Content-Length") || "") || 0) === 0 : !1, this.#req = req, this.method = method, this.#type = type, this.complete = !!this.#noBody, this.#bodyStream = null;
+    this.#noBody = type === "request" ? method === "GET" || method === "HEAD" || method === "TRACE" || method === "CONNECT" || method === "OPTIONS" || (parseInt(req.headers.get("Content-Length") || "") || 0) === 0 : !1, this.#req = req, this.method = method, this.#type = type, this.complete = !!this.#noBody, this.#bodyStream = void 0;
     const socket = new FakeSocket;
     socket.remoteAddress = url.hostname, socket.remotePort = url.port, this.#fakeSocket = socket, this.url = url.pathname + url.search, this.#nodeReq = nodeReq, assignHeaders(this, req);
   }
@@ -399,8 +411,8 @@ class IncomingMessage extends Readable {
   rawHeaders;
   _consuming = !1;
   _dumped = !1;
-  #bodyStream = null;
-  #fakeSocket = void 0;
+  #bodyStream;
+  #fakeSocket;
   #noBody = !1;
   #aborted = !1;
   #req;
@@ -422,42 +434,42 @@ class IncomingMessage extends Readable {
     }
     callback();
   }
-  #closeBodyStream() {
-    debug("closeBodyStream()");
-    var bodyStream = this.#bodyStream;
-    if (bodyStream == null)
-      return;
-    this.complete = !0, this.#bodyStream = void 0, this.push(null);
+  async#consumeStream(reader) {
+    while (!0) {
+      var { done, value } = await reader.readMany();
+      if (this.#aborted)
+        return;
+      if (done) {
+        this.push(null), this.destroy();
+        break;
+      }
+      for (var v of value)
+        this.push(v);
+    }
   }
   _read(size) {
     if (this.#noBody)
       this.push(null), this.complete = !0;
     else if (this.#bodyStream == null) {
-      const contentLength = this.#req.headers.get("content-length");
-      let remaining = contentLength ? parseInt(contentLength, 10) : 0;
-      if (this.#bodyStream = Readable.fromWeb(this.#req.body, {
-        highWaterMark: Number.isFinite(remaining) ? Math.min(remaining, 16384) : 16384
-      }), remaining > 0 && Number.isSafeInteger(remaining))
-        this.#bodyStream.on("data", (chunk) => {
-          if (debug("body size known", remaining), this.push(chunk), remaining -= chunk?.byteLength ?? 0, remaining <= 0)
-            this.#closeBodyStream();
-        });
-      else
-        this.#bodyStream.on("data", (chunk) => {
-          this.push(chunk);
-        });
-      this.#bodyStream && this.#bodyStream.on("end", () => {
-        this.#closeBodyStream();
-      });
+      const reader = this.#req.body?.getReader();
+      if (!reader) {
+        this.push(null);
+        return;
+      }
+      this.#bodyStream = reader, this.#consumeStream(reader);
     }
   }
   get aborted() {
     return this.#aborted;
   }
-  abort() {
+  #abort() {
     if (this.#aborted)
       return;
-    this.#aborted = !0, this.#closeBodyStream();
+    this.#aborted = !0;
+    var bodyStream = this.#bodyStream;
+    if (!bodyStream)
+      return;
+    bodyStream.cancel(), this.complete = !0, this.#bodyStream = void 0, this.push(null);
   }
   get connection() {
     return this.#fakeSocket;
@@ -495,6 +507,9 @@ class IncomingMessage extends Readable {
 }
 
 class OutgoingMessage extends Writable {
+  constructor() {
+    super(...arguments);
+  }
   #headers;
   headersSent = !1;
   sendDate = !0;
@@ -758,7 +773,7 @@ class ClientRequest extends OutgoingMessage {
   #useDefaultPort;
   #joinDuplicateHeaders;
   #maxHeaderSize;
-  #agent = _globalAgent;
+  #agent = globalAgent;
   #path;
   #socketPath;
   #body = null;
@@ -862,14 +877,12 @@ class ClientRequest extends OutgoingMessage {
       options = ObjectAssign(input || {}, options);
     var defaultAgent = options._defaultAgent || Agent.globalAgent;
     let protocol = options.protocol;
-    if (!protocol) {
+    if (!protocol)
       if (options.port === 443)
         protocol = "https:";
       else
         protocol = defaultAgent.protocol || "http:";
-      this.#protocol = protocol;
-    }
-    switch (this.#agent?.protocol) {
+    switch (this.#protocol = protocol, this.#agent?.protocol) {
       case void 0:
         break;
       case "http:":
@@ -1055,9 +1068,7 @@ var tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/, METHODS = [
   509: "Bandwidth Limit Exceeded",
   510: "Not Extended",
   511: "Network Authentication Required"
-};
-_globalAgent ??= new Agent;
-var defaultObject = {
+}, globalAgent = new Agent, defaultObject = {
   Agent,
   Server,
   METHODS,
@@ -1068,19 +1079,19 @@ var defaultObject = {
   request,
   get,
   maxHeaderSize: 16384,
+  validateHeaderName,
+  validateHeaderValue,
   setMaxIdleHTTPParsers(max) {
     debug(`${NODE_HTTP_WARNING}\n`, "setMaxIdleHTTPParsers() is a no-op");
   },
-  get globalAgent() {
-    return _globalAgent;
-  },
-  set globalAgent(agent) {
-  },
+  globalAgent,
   [Symbol.for("CommonJS")]: 0
 }, http_default = defaultObject;
 export {
+  validateHeaderValue,
+  validateHeaderName,
   request,
-  _globalAgent as globalAgent,
+  globalAgent,
   get,
   http_default as default,
   createServer,

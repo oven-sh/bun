@@ -1452,50 +1452,39 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
     if (argsCount == 0)
         return jsBufferToString(vm, lexicalGlobalObject, castedThis, offset, length, encoding);
 
-    switch (arg1.isString()) {
-        case true: {
+    if (arg1.isString()) {
             encoding = parseEncoding(lexicalGlobalObject, scope, arg1);
             RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
-            if (argsCount == 1)
-                break;
-
-            int32_t ioffset = arg2.toInt32(lexicalGlobalObject);
-            if (ioffset < 0) {
-                throwTypeError(lexicalGlobalObject, scope, "Offset must be a positive integer"_s);
-                return JSC::JSValue::encode(jsUndefined());
-            }
-            offset = static_cast<uint32_t>(ioffset);
-            if (argsCount == 2)
-                break;
-
-            if (!arg3.isUndefined())
-                length = std::min(byteLength, static_cast<uint32_t>(arg3.toInt32(lexicalGlobalObject)));
-            break;
-        }
-        case false: {
-            int32_t ioffset = arg1.toInt32(lexicalGlobalObject);
-            if (ioffset < 0) {
-                throwTypeError(lexicalGlobalObject, scope, "Offset must be a positive integer"_s);
-                return JSC::JSValue::encode(jsUndefined());
-            }
-            offset = static_cast<uint32_t>(ioffset);
-            if (argsCount == 1)
-                break;
-
-            if (!arg2.isUndefined())
-                length = std::min(byteLength, static_cast<uint32_t>(arg2.toInt32(lexicalGlobalObject)));
-
-            if (argsCount == 2)
-                break;
 
             if (!arg3.isUndefined()) {
-                encoding = parseEncoding(lexicalGlobalObject, scope, arg3);
-                RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+                // length is end
+                length = std::min(byteLength, static_cast<uint32_t>(arg3.toInt32(lexicalGlobalObject)));
             }
-        }
-    }
 
-    length -= std::min(offset, length);
+            int32_t istart = arg2.toInt32(lexicalGlobalObject);
+            if (istart < 0) {
+                throwTypeError(lexicalGlobalObject, scope, "Start must be a positive integer"_s);
+                return JSC::JSValue::encode(jsUndefined());
+            }
+            offset = static_cast<uint32_t>(istart);
+            length = (length > offset) ? (length - offset) : 0;
+    } else {
+        int32_t ioffset = arg1.toInt32(lexicalGlobalObject);
+        if (ioffset < 0) {
+            throwTypeError(lexicalGlobalObject, scope, "Offset must be a positive integer"_s);
+            return JSC::JSValue::encode(jsUndefined());
+        }
+        offset = static_cast<uint32_t>(ioffset);
+        length = (length > offset) ? (length - offset) : 0;
+
+        if (!arg3.isUndefined()) {
+            encoding = parseEncoding(lexicalGlobalObject, scope, arg3);
+            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+        }
+
+        if (!arg2.isUndefined())
+            length = std::min(length, static_cast<uint32_t>(arg2.toInt32(lexicalGlobalObject)));
+    }
 
     return jsBufferToString(vm, lexicalGlobalObject, castedThis, offset, length, encoding);
 }

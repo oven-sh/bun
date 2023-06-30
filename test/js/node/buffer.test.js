@@ -2353,13 +2353,27 @@ it("Buffer.byteLength()", () => {
   }
 });
 
-it("Buffer.toString()", () => {
+it("Buffer.toString(encoding, start, end)", () => {
   const buf = Buffer.from("0123456789", "utf8");
 
   expect(buf.toString()).toStrictEqual("0123456789");
   expect(buf.toString("utf8")).toStrictEqual("0123456789");
   expect(buf.toString("utf8", 3)).toStrictEqual("3456789");
   expect(buf.toString("utf8", 3, 4)).toStrictEqual("3");
+
+  expect(buf.toString("utf8", 3, 100)).toStrictEqual("3456789");
+  expect(buf.toString("utf8", 3, 1)).toStrictEqual("");
+  expect(buf.toString("utf8", 100, 200)).toStrictEqual("");
+  expect(buf.toString("utf8", 100, 1)).toStrictEqual("");
+});
+
+it("Buffer.toString(offset, length, encoding)", () => {
+  const buf = Buffer.from("0123456789", "utf8");
+
+  expect(buf.toString(3, 6, "utf8")).toStrictEqual("345678");
+  expect(buf.toString(3, 100, "utf8")).toStrictEqual("3456789");
+  expect(buf.toString(100, 200, "utf8")).toStrictEqual("");
+  expect(buf.toString(100, 50, "utf8")).toStrictEqual("");
 });
 
 it("Buffer.asciiSlice())", () => {
@@ -2410,7 +2424,7 @@ it("Buffer.base64Slice()", () => {
   expect(buf.base64Slice(3, 4)).toStrictEqual("Mw==");
 });
 
-it("Buffer.base64urlSlice())", () => {
+it("Buffer.base64urlSlice()", () => {
   const buf = Buffer.from("0123456789", "utf8");
 
   expect(buf.base64urlSlice()).toStrictEqual("MDEyMzQ1Njc4OQ");

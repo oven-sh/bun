@@ -3931,7 +3931,6 @@ enum class BuiltinNamesMap : uint8_t {
     data,
     toString,
     redirect,
-    contentType
 };
 
 static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
@@ -3962,9 +3961,6 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     }
     case BuiltinNamesMap::redirect: {
         return clientData->builtinNames().redirectPublicName();
-    }
-    case BuiltinNamesMap::contentType: {
-        return clientData->builtinNames().contentTypePrivateName();
     }
     }
 }

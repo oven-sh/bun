@@ -1364,9 +1364,6 @@ pub const Class = NewClass(
         .FileSystemRouter = .{
             .get = getFileSystemRouter,
         },
-        .EventStream = .{
-            .get = getEventStream,
-        },
     },
 );
 
@@ -3379,26 +3376,6 @@ pub fn getUnsafe(
         return ctx.ptr().putCachedObject(
             &ZigString.init("Unsafe"),
             JSValue.fromRef(js.JSObjectMake(ctx, Unsafe.Class.get().?[0], null)),
-        ).asObjectRef();
-    }
-
-    return existing.asObjectRef();
-}
-
-extern fn ZigGlobalObject__createEventStream(*JSGlobalObject) JSValue;
-
-pub fn getEventStream(
-    _: void,
-    ctx: js.JSContextRef,
-    _: js.JSValueRef,
-    _: js.JSStringRef,
-    _: js.ExceptionRef,
-) js.JSValueRef {
-    var existing = ctx.ptr().getCachedObject(ZigString.static("EventStream"));
-    if (existing.isEmpty()) {
-        return ctx.ptr().putCachedObject(
-            &ZigString.init("EventStream"),
-            ZigGlobalObject__createEventStream(ctx.ptr()),
         ).asObjectRef();
     }
 

@@ -1990,17 +1990,6 @@ extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalO
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
 }
 
-extern "C" JSC__JSValue ZigGlobalObject__createEventStream(Zig::GlobalObject* globalObject)
-{
-    auto& vm = globalObject->vm();
-
-    JSC::JSFunction* getClass = JSC::JSFunction::create(vm, eventStreamGetEventStreamCodeGenerator(vm), globalObject);
-    JSC::MarkedArgumentBuffer args;
-    JSC::CallData callData = JSC::getCallData(getClass);
-    auto result = JSC::call(globalObject, getClass, callData, globalObject->globalThis(), args);
-    return JSC::JSValue::encode(result);
-}
-
 static inline EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalObject* lexicalGlobalObject, JSValue arrayValue)
 {
     auto& vm = lexicalGlobalObject->vm();

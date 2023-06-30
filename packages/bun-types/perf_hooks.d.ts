@@ -452,19 +452,19 @@ declare module "perf_hooks" {
   //         },
   //   ): void;
   // }
-  // namespace constants {
-  //   const NODE_PERFORMANCE_GC_MAJOR: number;
-  //   const NODE_PERFORMANCE_GC_MINOR: number;
-  //   const NODE_PERFORMANCE_GC_INCREMENTAL: number;
-  //   const NODE_PERFORMANCE_GC_WEAKCB: number;
-  //   const NODE_PERFORMANCE_GC_FLAGS_NO: number;
-  //   const NODE_PERFORMANCE_GC_FLAGS_CONSTRUCT_RETAINED: number;
-  //   const NODE_PERFORMANCE_GC_FLAGS_FORCED: number;
-  //   const NODE_PERFORMANCE_GC_FLAGS_SYNCHRONOUS_PHANTOM_PROCESSING: number;
-  //   const NODE_PERFORMANCE_GC_FLAGS_ALL_AVAILABLE_GARBAGE: number;
-  //   const NODE_PERFORMANCE_GC_FLAGS_ALL_EXTERNAL_MEMORY: number;
-  //   const NODE_PERFORMANCE_GC_FLAGS_SCHEDULE_IDLE: number;
-  // }
+  namespace constants {
+    const NODE_PERFORMANCE_GC_MAJOR: number;
+    const NODE_PERFORMANCE_GC_MINOR: number;
+    const NODE_PERFORMANCE_GC_INCREMENTAL: number;
+    const NODE_PERFORMANCE_GC_WEAKCB: number;
+    const NODE_PERFORMANCE_GC_FLAGS_NO: number;
+    const NODE_PERFORMANCE_GC_FLAGS_CONSTRUCT_RETAINED: number;
+    const NODE_PERFORMANCE_GC_FLAGS_FORCED: number;
+    const NODE_PERFORMANCE_GC_FLAGS_SYNCHRONOUS_PHANTOM_PROCESSING: number;
+    const NODE_PERFORMANCE_GC_FLAGS_ALL_AVAILABLE_GARBAGE: number;
+    const NODE_PERFORMANCE_GC_FLAGS_ALL_EXTERNAL_MEMORY: number;
+    const NODE_PERFORMANCE_GC_FLAGS_SCHEDULE_IDLE: number;
+  }
   const performance: Performance;
   // interface EventLoopMonitorOptions {
   //   /**

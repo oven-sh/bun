@@ -135,12 +135,12 @@ export default {
       description:
         "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
     }),
-    page("install/workspaces", "Workspaces", {
-      description: "Bun's package manager supports workspaces and mono-repo development workflows.",
-    }),
     page("install/cache", "Global cache", {
       description:
         "Bun's package manager installs all packages into a shared global cache to avoid redundant re-downloads.",
+    }),
+    page("install/workspaces", "Workspaces", {
+      description: "Bun's package manager supports workspaces and mono-repo development workflows.",
     }),
     page("install/lockfile", "Lockfile", {
       description:

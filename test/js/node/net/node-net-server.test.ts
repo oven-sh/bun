@@ -223,12 +223,12 @@ describe("net.createServer listen", () => {
     timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
-      49026,
+      49029,
       "0.0.0.0",
       mustCall(() => {
         const address = server.address() as AddressInfo;
         expect(address.address).toStrictEqual("0.0.0.0");
-        expect(address.port).toStrictEqual(49026);
+        expect(address.port).toStrictEqual(49029);
         expect(address.family).toStrictEqual("IPv4");
         server.close();
         done();

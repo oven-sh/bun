@@ -129,7 +129,7 @@ const Handlers = struct {
     }
 
     pub fn markInactive(this: *Handlers, ssl: bool, ctx: *uws.SocketContext, wrapped: WrappedType) void {
-        Listener.log("markInactive", .{});
+        Listener.log("markInactive {} {}", .{ wrapped, this.active_connections });
         this.active_connections -= 1;
         if (this.active_connections == 0) {
             if (this.is_server) {
@@ -1106,7 +1106,10 @@ fn NewSocket(comptime ssl: bool) type {
                 this.handlers.markInactive(ssl, this.socket.context(), this.wrapped);
                 this.poll_ref.unref(vm);
                 this.has_pending_activity.store(false, .Release);
+                log("markInactive ok! {}", .{this.wrapped});
+                return;
             }
+            log("markInactive not yet {}", .{this.wrapped});
         }
 
         pub fn onOpen(this: *This, socket: Socket) void {
@@ -1954,7 +1957,7 @@ fn NewSocket(comptime ssl: bool) type {
                 this.poll_ref.unref(vm);
                 this.has_pending_activity.store(false, .Release);
             }
-            
+
             const array = JSC.JSValue.createEmptyArray(globalObject, 2);
             array.putIndex(globalObject, 0, raw_js_value);
             array.putIndex(globalObject, 1, tls_js_value);

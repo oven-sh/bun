@@ -605,6 +605,10 @@ const Socket = (function (InternalSocket) {
         this.#writeChunk = chunk;
       }
     }
+
+    prependoncelistener(){
+      console.log("hey!", arguments);
+    }
   },
 );
 

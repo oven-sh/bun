@@ -63,6 +63,19 @@ test("2 * 2", done => {
 });
 ```
 
+## Timeouts
+
+Optionally specify a per-test timeout in milliseconds by passing a number as the third argument to `test`.
+
+```ts
+import { test } from "bun:test";
+
+test.skip("wat", async () => {
+  const data = await slowOperation();
+  expect(data).toBe(42);
+}, 500); // test must run in <500ms
+```
+
 ## `test.skip`
 
 Skip individual tests with `test.skip`. These tests will not be run.

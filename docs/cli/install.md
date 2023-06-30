@@ -49,7 +49,7 @@ To install in production mode (i.e. without `devDependencies`):
 $ bun install --production
 ```
 
-To install dependencies without allowing changes to lockfile (useful on CI):
+To install with reproducible dependencies, use `--frozen-lockfile`. If your `package.json` disagrees with `bun.lockb`, Bun will exit with an error. This is useful for production builds and CI environments.
 
 ```bash
 $ bun install --frozen-lockfile

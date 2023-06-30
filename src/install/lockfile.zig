@@ -3103,9 +3103,10 @@ pub const Package = extern struct {
                             string_builder.count(key);
                             string_builder.count(value);
 
-                            // If it's a folder, pessimistically assume we will need a maximum path
-                            if (Dependency.Version.Tag.infer(value) == .folder) {
-                                string_builder.cap += bun.MAX_PATH_BYTES;
+                            // If it's a folder or workspace, pessimistically assume we will need a maximum path
+                            switch (Dependency.Version.Tag.infer(value)) {
+                                .folder, .workspace => string_builder.cap += bun.MAX_PATH_BYTES,
+                                else => {},
                             }
                         }
                         total_dependencies_count += @truncate(u32, obj.properties.len);

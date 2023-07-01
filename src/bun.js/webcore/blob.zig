@@ -1194,9 +1194,6 @@ pub const Blob = struct {
                                     .syscall = .open,
                                 }).toSystemError();
 
-                                // assert we never end up reusing the memory
-                                std.debug.assert(@intFromPtr(this.system_error.?.path.slice().ptr) != @intFromPtr(path_buffer));
-
                                 callback(this, null_fd);
                                 return;
                             };

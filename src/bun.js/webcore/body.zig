@@ -332,7 +332,7 @@ pub const Body = struct {
         Locked: PendingValue,
         Used: void,
         Empty: void,
-        Error: JSValue,
+        Error: JSC.Strong,
         Null: void,
 
         pub fn toBlobIfPossible(this: *Value) void {
@@ -624,7 +624,12 @@ pub const Body = struct {
 
         pub fn fromReadableStream(readable: JSC.WebCore.ReadableStream, globalThis: *JSGlobalObject) Value {
             if (readable.isLocked(globalThis)) {
-                return .{ .Error = ZigString.init("Cannot use a locked ReadableStream").toErrorInstance(globalThis) };
+                return .{
+                    .Error = JSC.Strong.create(
+                        ZigString.init("Cannot use a locked ReadableStream").toErrorInstance(globalThis),
+                        globalThis,
+                    ),
+                };
             }
 
             readable.value.protect();
@@ -851,35 +856,38 @@ pub const Body = struct {
         pub fn toErrorInstance(this: *Value, error_instance: JSC.JSValue, global: *JSGlobalObject) void {
             if (this.* == .Locked) {
                 var locked = this.Locked;
-                locked.deinit = true;
-                if (locked.promise) |promise| {
+                const onReceiveValue_ = locked.onReceiveValue;
+                var task = locked.task;
+                var readable_ = locked.readable;
+                var promise_ = locked.promise;
+                error_instance.ensureStillAlive();
+                this.* = .{ .Error = JSC.Strong.create(error_instance, global) };
+
+                if (promise_) |promise| {
+                    defer promise.unprotect();
                     if (promise.asAnyPromise()) |internal| {
                         internal.reject(global, error_instance);
                     }
-                    JSC.C.JSValueUnprotect(global, promise.asObjectRef());
-                    locked.promise = null;
                 }
 
-                if (locked.readable) |readable| {
-                    readable.done();
-                    locked.readable = null;
+                if (readable_) |readable| {
+                    readable.abort(global);
                 }
 
-                this.* = .{ .Error = error_instance };
-                if (locked.onReceiveValue) |onReceiveValue| {
-                    locked.onReceiveValue = null;
-                    onReceiveValue(locked.task.?, this);
+                if (onReceiveValue_) |onReceiveValue| {
+                    onReceiveValue(task.?, this);
                 }
                 return;
             }
 
-            this.* = .{ .Error = error_instance };
-        }
+            switch (this.*) {
+                .InternalBlob => this.InternalBlob.clearAndFree(),
+                .Blob => this.Blob.deinit(),
+                .WTFStringImpl => this.WTFStringImpl.deref(),
+                else => {},
+            }
 
-        pub fn toErrorString(this: *Value, comptime err: string, global: *JSGlobalObject) void {
-            var error_str = ZigString.init(err);
-            var error_instance = error_str.toErrorInstance(global);
-            return this.toErrorInstance(error_instance, global);
+            this.* = .{ .Error = JSC.Strong.create(error_instance, global) };
         }
 
         pub fn toError(this: *Value, err: anyerror, global: *JSGlobalObject) void {
@@ -923,7 +931,7 @@ pub const Body = struct {
             }
 
             if (tag == .Error) {
-                JSC.C.JSValueUnprotect(VirtualMachine.get().global, this.Error.asObjectRef());
+                this.Error.deinit();
             }
         }
         pub fn clone(this: *Value, globalThis: *JSC.JSGlobalObject) Value {

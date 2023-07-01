@@ -436,11 +436,11 @@ pub const Blob = struct {
             var globalThis = this.globalThis;
             var file_blob = this.file_blob;
             switch (value.*) {
-                .Error => |err| {
+                .Error => |*err| {
                     file_blob.detach();
                     _ = value.use();
                     bun.default_allocator.destroy(this);
-                    promise.reject(globalThis, err);
+                    promise.reject(globalThis, err.swap());
                 },
                 .Used => {
                     file_blob.detach();
@@ -701,8 +701,7 @@ pub const Blob = struct {
                     },
                     .Error => {
                         destination_blob.detach();
-                        const err = response.body.value.Error;
-                        JSC.C.JSValueUnprotect(ctx, err.asObjectRef());
+                        const err = response.body.value.Error.swap();
                         _ = response.body.value.use();
                         return JSC.JSPromise.rejectedPromiseValue(ctx.ptr(), err).asObjectRef();
                     },
@@ -736,8 +735,7 @@ pub const Blob = struct {
                     },
                     .Error => {
                         destination_blob.detach();
-                        const err = request.body.value.Error;
-                        JSC.C.JSValueUnprotect(ctx, err.asObjectRef());
+                        const err = request.body.value.Error.swap();
                         _ = request.body.value.use();
                         return JSC.JSPromise.rejectedPromiseValue(ctx.ptr(), err).asObjectRef();
                     },

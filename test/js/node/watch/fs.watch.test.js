@@ -1,4 +1,4 @@
-import fs from "fs";
+import fs, { link } from "fs";
 import path from "path";
 import { tempDirWithFiles, bunRun, bunRunAsScript } from "harness";
 import { pathToFileURL } from "bun";
@@ -181,6 +181,35 @@ describe("fs.watch", () => {
     });
 
     watcher.once("close", () => {
+      done(err);
+    });
+
+    const interval = repeat(() => {
+      fs.writeFileSync(filepath, "world");
+    });
+  });
+
+  test("should emit 'change' event when symlink is modified", done => {
+    const filepath = path.join(testDir, "watch.txt");
+    const linkpath = path.join(testDir, "watch.txt.link");
+    fs.symlinkSync(filepath, linkpath);
+
+    const watcher = fs.watch(linkpath);
+    let err = undefined;
+    watcher.on("change", function (event, filename) {
+      try {
+        expect(event).toBe("change");
+        expect(filename).toBe("watch.txt.link");
+      } catch (e) {
+        err = e;
+      } finally {
+        clearInterval(interval);
+        watcher.close();
+      }
+    });
+
+    watcher.once("close", () => {
+      fs.unlinkSync(linkpath);
       done(err);
     });
 

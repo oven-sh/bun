@@ -1359,12 +1359,13 @@ pub const Blob = struct {
                     return;
                 } else if (this.store == null) {
                     bun.default_allocator.destroy(this);
-                    cb(cb_ctx, ResultType{ .err = SystemError{
-                        .code = ZigString.init("INTERNAL_ERROR"),
-                        .path = ZigString.Empty,
-                        .message = ZigString.init("assertion failure - store should not be null"),
-                        .syscall = ZigString.init("read"),
-                    } });
+                    cb(cb_ctx, ResultType{
+                        .err = SystemError{
+                            .code = bun.String.static("INTERNAL_ERROR"),
+                            .message = bun.String.static("assertion failure - store should not be null"),
+                            .syscall = bun.String.static("read"),
+                        },
+                    });
                     return;
                 }
 
@@ -1396,12 +1397,12 @@ pub const Blob = struct {
                         }).toSystemError();
                     } else {
                         this.system_error = JSC.SystemError{
-                            .code = ZigString.init(bun.asByteSlice(@errorName(err))),
+                            .code = bun.String.static(bun.asByteSlice(@errorName(err))),
                             .path = if (this.file_store.pathlike == .path)
-                                ZigString.init(this.file_store.pathlike.path.slice())
+                                bun.String.create(this.file_store.pathlike.path.slice())
                             else
-                                ZigString.Empty,
-                            .syscall = ZigString.init("read"),
+                                bun.String.empty,
+                            .syscall = bun.String.static("read"),
                         };
 
                         this.errno = err;
@@ -1458,13 +1459,13 @@ pub const Blob = struct {
                 if (std.os.S.ISDIR(stat.mode)) {
                     this.errno = error.EISDIR;
                     this.system_error = JSC.SystemError{
-                        .code = ZigString.init("EISDIR"),
+                        .code = bun.String.static("EISDIR"),
                         .path = if (this.file_store.pathlike == .path)
-                            ZigString.init(this.file_store.pathlike.path.slice())
+                            bun.String.create(this.file_store.pathlike.path.slice())
                         else
-                            ZigString.Empty,
-                        .message = ZigString.init("Directories cannot be read like files"),
-                        .syscall = ZigString.init("read"),
+                            bun.String.empty,
+                        .message = bun.String.static("Directories cannot be read like files"),
+                        .syscall = bun.String.static("read"),
                     };
                     return;
                 }
@@ -1643,8 +1644,8 @@ pub const Blob = struct {
                 this.wrote += @truncate(SizeType, result catch |errno| {
                     this.errno = errno;
                     this.system_error = this.system_error orelse JSC.SystemError{
-                        .code = ZigString.init(bun.asByteSlice(@errorName(errno))),
-                        .syscall = ZigString.init("write"),
+                        .code = bun.String.static(bun.asByteSlice(@errorName(errno))),
+                        .syscall = bun.String.static("write"),
                     };
 
                     this.wrote = 0;
@@ -1703,13 +1704,13 @@ pub const Blob = struct {
 
         const unsupported_directory_error = SystemError{
             .errno = @intCast(c_int, @intFromEnum(bun.C.SystemErrno.EISDIR)),
-            .message = ZigString.init("That doesn't work on folders"),
-            .syscall = ZigString.init("fstat"),
+            .message = bun.String.static("That doesn't work on folders"),
+            .syscall = bun.String.static("fstat"),
         };
         const unsupported_non_regular_file_error = SystemError{
             .errno = @intCast(c_int, @intFromEnum(bun.C.SystemErrno.ENOTSUP)),
-            .message = ZigString.init("Non-regular files aren't supported yet"),
-            .syscall = ZigString.init("fstat"),
+            .message = bun.String.static("Non-regular files aren't supported yet"),
+            .syscall = bun.String.static("fstat"),
         };
 
         // blocking, but off the main thread
@@ -1777,13 +1778,12 @@ pub const Blob = struct {
             pub fn reject(this: *CopyFile, promise: *JSC.JSPromise) void {
                 var globalThis = this.globalThis;
                 var system_error: SystemError = this.system_error orelse SystemError{};
-                if (this.source_file_store.pathlike == .path and system_error.path.len == 0) {
-                    system_error.path = ZigString.init(this.source_file_store.pathlike.path.slice());
-                    system_error.path.mark();
+                if (this.source_file_store.pathlike == .path and system_error.path.isEmpty()) {
+                    system_error.path = bun.String.create(this.source_file_store.pathlike.path.slice());
                 }
 
-                if (system_error.message.len == 0) {
-                    system_error.message = ZigString.init("Failed to copy file");
+                if (system_error.message.isEmpty()) {
+                    system_error.message = bun.String.static("Failed to copy file");
                 }
 
                 var instance = system_error.toErrorInstance(this.globalThis);

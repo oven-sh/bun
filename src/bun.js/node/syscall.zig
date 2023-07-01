@@ -873,20 +873,20 @@ pub const Error = struct {
     pub fn toSystemError(this: Error) SystemError {
         var err = SystemError{
             .errno = @as(c_int, this.errno) * -1,
-            .syscall = JSC.ZigString.init(@tagName(this.syscall)),
+            .syscall = bun.String.static(@tagName(this.syscall)),
         };
 
         // errno label
         if (this.errno > 0 and this.errno < C.SystemErrno.max) {
             const system_errno = @enumFromInt(C.SystemErrno, this.errno);
-            err.code = JSC.ZigString.init(@tagName(system_errno));
+            err.code = bun.String.static(@tagName(system_errno));
             if (C.SystemErrno.labels.get(system_errno)) |label| {
-                err.message = JSC.ZigString.init(label);
+                err.message = bun.String.static(label);
             }
         }
 
         if (this.path.len > 0) {
-            err.path = JSC.ZigString.init(this.path);
+            err.path = bun.String.create(this.path);
         }
 
         if (this.fd != -1) {

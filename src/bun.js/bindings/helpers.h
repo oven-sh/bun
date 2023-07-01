@@ -342,10 +342,10 @@ static const WTF::String toStringStatic(ZigString str)
     }
 
     if (isTaggedUTF16Ptr(str.ptr)) {
-        return WTF::String(WTF::ExternalStringImpl::createStatic(reinterpret_cast<const UChar*>(untag(str.ptr)), str.len));
+        return WTF::String(AtomStringImpl::add(reinterpret_cast<const UChar*>(untag(str.ptr)), str.len));
     }
 
-    return WTF::String(WTF::ExternalStringImpl::createStatic(
+    return WTF::String(AtomStringImpl::add(
         reinterpret_cast<const LChar*>(untag(str.ptr)), str.len));
 }
 

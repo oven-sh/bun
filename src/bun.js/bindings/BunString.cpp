@@ -86,31 +86,69 @@ BunString toString(JSC::JSGlobalObject* globalObject, JSValue value)
     return fromJS(globalObject, value);
 }
 
+BunString toStringRef(JSC::JSGlobalObject* globalObject, JSValue value)
+{
+    auto str = value.toWTFString(globalObject);
+    if (str.isEmpty()) {
+        return { BunStringTag::Empty };
+    }
+
+    str.impl()->ref();
+
+    return { BunStringTag::WTFStringImpl, { .wtf = str.impl() } };
+}
+
 BunString toString(WTF::String& wtfString)
 {
-    if (wtfString.length() == 0)
+    if (wtfString.isEmpty())
         return { BunStringTag::Empty };
 
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString.impl() } };
 }
 BunString toString(const WTF::String& wtfString)
 {
-    if (wtfString.length() == 0)
+    if (wtfString.isEmpty())
         return { BunStringTag::Empty };
 
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString.impl() } };
 }
 BunString toString(WTF::StringImpl* wtfString)
 {
-    if (wtfString->length() == 0)
+    if (wtfString->isEmpty())
         return { BunStringTag::Empty };
+
+    return { BunStringTag::WTFStringImpl, { .wtf = wtfString } };
+}
+
+BunString toStringRef(WTF::String& wtfString)
+{
+    if (wtfString.isEmpty())
+        return { BunStringTag::Empty };
+
+    wtfString.impl()->ref();
+    return { BunStringTag::WTFStringImpl, { .wtf = wtfString.impl() } };
+}
+BunString toStringRef(const WTF::String& wtfString)
+{
+    if (wtfString.isEmpty())
+        return { BunStringTag::Empty };
+
+    wtfString.impl()->ref();
+    return { BunStringTag::WTFStringImpl, { .wtf = wtfString.impl() } };
+}
+BunString toStringRef(WTF::StringImpl* wtfString)
+{
+    if (wtfString->isEmpty())
+        return { BunStringTag::Empty };
+
+    wtfString->ref();
 
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString } };
 }
 
 BunString fromString(WTF::String& wtfString)
 {
-    if (wtfString.length() == 0)
+    if (wtfString.isEmpty())
         return { BunStringTag::Empty };
 
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString.impl() } };
@@ -118,7 +156,7 @@ BunString fromString(WTF::String& wtfString)
 
 BunString fromString(WTF::StringImpl* wtfString)
 {
-    if (wtfString->length() == 0)
+    if (wtfString->isEmpty())
         return { BunStringTag::Empty };
 
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString } };

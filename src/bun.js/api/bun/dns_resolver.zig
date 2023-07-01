@@ -1925,8 +1925,8 @@ pub const DNSResolver = struct {
             .err => |err| {
                 const system_error = JSC.SystemError{
                     .errno = -1,
-                    .code = JSC.ZigString.init(err.code()),
-                    .message = JSC.ZigString.init(err.label()),
+                    .code = bun.String.static(err.code()),
+                    .message = bun.String.static(err.label()),
                 };
 
                 globalThis.throwValue(system_error.toErrorInstance(globalThis));
@@ -1972,8 +1972,8 @@ pub const DNSResolver = struct {
             .err => |err| {
                 const system_error = JSC.SystemError{
                     .errno = -1,
-                    .code = JSC.ZigString.init(err.code()),
-                    .message = JSC.ZigString.init(err.label()),
+                    .code = bun.String.static(err.code()),
+                    .message = bun.String.static(err.label()),
                 };
 
                 globalThis.throwValue(system_error.toErrorInstance(globalThis));

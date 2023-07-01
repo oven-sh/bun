@@ -684,8 +684,9 @@ pub const RequestContext = struct {
                     if (erro == error.EBADF or erro == error.ECONNABORTED or erro == error.ECONNREFUSED) {
                         return error.SocketClosed;
                     }
-
-                    Output.prettyErrorln("send() error: {s}", .{err.toSystemError().message.slice()});
+                    const msg = err.toSystemError().message.toUTF8(bun.default_allocator);
+                    defer msg.deinit();
+                    Output.prettyErrorln("send() error: {s}", .{msg.slice()});
 
                     return erro;
                 },

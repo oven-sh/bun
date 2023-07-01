@@ -78,8 +78,8 @@ pub const Os = struct {
         return if (comptime Environment.isLinux)
             cpusImplLinux(globalThis) catch {
                 const err = JSC.SystemError{
-                    .message = JSC.ZigString.init("Failed to get cpu information"),
-                    .code = JSC.ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                    .message = bun.String.static("Failed to get cpu information"),
+                    .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
                 };
 
                 globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
@@ -88,8 +88,8 @@ pub const Os = struct {
         else if (comptime Environment.isMac)
             cpusImplDarwin(globalThis) catch {
                 const err = JSC.SystemError{
-                    .message = JSC.ZigString.init("Failed to get cpu information"),
-                    .code = JSC.ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                    .message = bun.String.static("Failed to get cpu information"),
+                    .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
                 };
 
                 globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
@@ -318,11 +318,11 @@ pub const Os = struct {
             //info.put(globalThis, JSC.ZigString.static("syscall"), JSC.ZigString.init("uv_os_getpriority").withEncoding().toValueGC(globalThis));
 
             const err = JSC.SystemError{
-                .message = JSC.ZigString.init("A system error occurred: uv_os_getpriority returned ESRCH (no such process)"),
-                .code = JSC.ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                .message = bun.String.static("A system error occurred: uv_os_getpriority returned ESRCH (no such process)"),
+                .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
                 //.info = info,
                 .errno = -3,
-                .syscall = JSC.ZigString.init("uv_os_getpriority"),
+                .syscall = bun.String.static("uv_os_getpriority"),
             };
 
             globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
@@ -377,10 +377,10 @@ pub const Os = struct {
         const rc = C.getifaddrs(&interface_start);
         if (rc != 0) {
             const err = JSC.SystemError{
-                .message = JSC.ZigString.init("A system error occurred: getifaddrs returned an error"),
-                .code = JSC.ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                .message = bun.String.static("A system error occurred: getifaddrs returned an error"),
+                .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
                 .errno = @intFromEnum(std.os.errno(rc)),
-                .syscall = JSC.ZigString.init("getifaddrs"),
+                .syscall = bun.String.static("getifaddrs"),
             };
 
             globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
@@ -591,11 +591,11 @@ pub const Os = struct {
         switch (errcode) {
             .SRCH => {
                 const err = JSC.SystemError{
-                    .message = JSC.ZigString.init("A system error occurred: uv_os_setpriority returned ESRCH (no such process)"),
-                    .code = JSC.ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                    .message = bun.String.static("A system error occurred: uv_os_setpriority returned ESRCH (no such process)"),
+                    .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
                     //.info = info,
                     .errno = -3,
-                    .syscall = JSC.ZigString.init("uv_os_setpriority"),
+                    .syscall = bun.String.static("uv_os_setpriority"),
                 };
 
                 globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
@@ -603,11 +603,11 @@ pub const Os = struct {
             },
             .ACCES => {
                 const err = JSC.SystemError{
-                    .message = JSC.ZigString.init("A system error occurred: uv_os_setpriority returned EACCESS (permission denied)"),
-                    .code = JSC.ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                    .message = bun.String.static("A system error occurred: uv_os_setpriority returned EACCESS (permission denied)"),
+                    .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
                     //.info = info,
                     .errno = -13,
-                    .syscall = JSC.ZigString.init("uv_os_setpriority"),
+                    .syscall = bun.String.static("uv_os_setpriority"),
                 };
 
                 globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));

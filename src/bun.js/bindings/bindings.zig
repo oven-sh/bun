@@ -1561,10 +1561,10 @@ pub const FetchHeaders = opaque {
 pub const SystemError = extern struct {
     errno: c_int = 0,
     /// label for errno
-    code: ZigString = ZigString.init(""),
-    message: ZigString = ZigString.init(""),
-    path: ZigString = ZigString.init(""),
-    syscall: ZigString = ZigString.init(""),
+    code: String = String.empty,
+    message: String = String.empty,
+    path: String = String.empty,
+    syscall: String = String.empty,
     fd: i32 = -1,
 
     pub fn Maybe(comptime Result: type) type {

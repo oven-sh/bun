@@ -311,9 +311,9 @@ pub const FFI = struct {
                 break :brk std.DynLib.open(backup_name) catch {
                     // Then, if that fails, report an error.
                     const system_error = JSC.SystemError{
-                        .code = ZigString.init(@tagName(JSC.Node.ErrorCode.ERR_DLOPEN_FAILED)),
-                        .message = ZigString.init("Failed to open library. This is usually caused by a missing library or an invalid library path."),
-                        .syscall = ZigString.init("dlopen"),
+                        .code = bun.String.create(@tagName(JSC.Node.ErrorCode.ERR_DLOPEN_FAILED)),
+                        .message = bun.String.create("Failed to open library. This is usually caused by a missing library or an invalid library path."),
+                        .syscall = bun.String.create("dlopen"),
                     };
                     return system_error.toErrorInstance(global);
                 };

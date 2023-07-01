@@ -33,3 +33,12 @@ test("error gc test #2", () => {
     Bun.gc();
   }
 });
+
+test("error gc test #2", () => {
+  for (let i = 0; i < 1000; i++) {
+    var err = new Error();
+    Error.captureStackTrace(err);
+    Bun.inspect(err);
+    Bun.gc();
+  }
+});

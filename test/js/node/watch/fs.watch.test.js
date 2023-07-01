@@ -1,4 +1,4 @@
-import fs, { link } from "fs";
+import fs from "fs";
 import path from "path";
 import { tempDirWithFiles, bunRun, bunRunAsScript } from "harness";
 import { pathToFileURL } from "bun";

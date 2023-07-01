@@ -540,18 +540,18 @@ beforeEach: #2
 beforeEach: TEST-FILE
 beforeEach: one describe scope
 -- inside one describe scope --
+afterEach: one describe scope
+afterEach: TEST-FILE
 afterEach: #1
 afterEach: #2
-afterEach: TEST-FILE
-afterEach: one describe scope
 afterAll: one describe scope
 beforeEach: #1
 beforeEach: #2
 beforeEach: TEST-FILE
 -- the top-level test --
+afterEach: TEST-FILE
 afterEach: #1
 afterEach: #2
-afterEach: TEST-FILE
 afterAll: TEST-FILE
 afterAll: #1
 afterAll: #2

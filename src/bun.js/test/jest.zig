@@ -493,8 +493,7 @@ pub const Jest = struct {
         var filepath = Fs.FileSystem.instance.filename_store.append([]const u8, slice) catch unreachable;
 
         var scope = runner_.getOrPutFile(filepath);
-        DescribeScope.active = scope;
-        DescribeScope.module = scope;
+        scope.push();
 
         return Bun__Jest__testModuleObject(ctx).asObjectRef();
     }
@@ -751,17 +750,23 @@ pub const DescribeScope = struct {
     }
 
     pub fn push(new: *DescribeScope) void {
-        if (comptime is_bindgen) return undefined;
-        if (new == DescribeScope.active) return;
-
-        new.parent = DescribeScope.active;
+        if (comptime is_bindgen) return;
+        if (new.parent) |scope| {
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(DescribeScope.active != new);
+                std.debug.assert(scope == DescribeScope.active);
+            }
+        } else if (DescribeScope.active) |scope| {
+            // calling Bun.jest() within (already active) module
+            if (scope.parent != null) return;
+        }
         DescribeScope.active = new;
     }
 
     pub fn pop(this: *DescribeScope) void {
-        if (comptime is_bindgen) return undefined;
-        if (DescribeScope.active == this)
-            DescribeScope.active = this.parent orelse DescribeScope.active;
+        if (comptime is_bindgen) return;
+        if (comptime Environment.allow_assert) std.debug.assert(DescribeScope.active == this);
+        DescribeScope.active = this.parent;
     }
 
     pub const LifecycleHook = enum {
@@ -771,8 +776,7 @@ pub const DescribeScope = struct {
         afterAll,
     };
 
-    pub threadlocal var active: *DescribeScope = undefined;
-    pub threadlocal var module: *DescribeScope = undefined;
+    pub threadlocal var active: ?*DescribeScope = null;
 
     const CallbackFn = *const fn (
         *JSC.JSGlobalObject,
@@ -781,21 +785,24 @@ pub const DescribeScope = struct {
 
     fn createCallback(comptime hook: LifecycleHook) CallbackFn {
         return struct {
-            const this_hook = hook;
             pub fn run(
                 globalThis: *JSC.JSGlobalObject,
                 callframe: *JSC.CallFrame,
             ) callconv(.C) JSC.JSValue {
-                const arguments_ = callframe.arguments(2);
-                const arguments = arguments_.ptr[0..arguments_.len];
-                if (arguments.len == 0 or !arguments[0].isObject() or !arguments[0].isCallable(globalThis.vm())) {
-                    globalThis.throwInvalidArgumentType(@tagName(this_hook), "callback", "function");
+                const arguments = callframe.arguments(2);
+                if (arguments.len < 1) {
+                    globalThis.throwNotEnoughArguments("callback", 1, arguments.len);
                     return .zero;
                 }
 
-                arguments[0].protect();
-                const name = comptime @as(string, @tagName(this_hook));
-                @field(DescribeScope.active, name).append(getAllocator(globalThis), arguments[0]) catch unreachable;
+                const cb = arguments.ptr[0];
+                if (!cb.isObject() or !cb.isCallable(globalThis.vm())) {
+                    globalThis.throwInvalidArgumentType(@tagName(hook), "callback", "function");
+                    return .zero;
+                }
+
+                cb.protect();
+                @field(DescribeScope.active.?, @tagName(hook)).append(getAllocator(globalThis), cb) catch unreachable;
                 return JSC.JSValue.jsBoolean(true);
             }
         }.run;
@@ -829,11 +836,24 @@ pub const DescribeScope = struct {
     pub const beforeAll = createCallback(.beforeAll);
     pub const beforeEach = createCallback(.beforeEach);
 
-    pub fn execCallback(this: *DescribeScope, globalObject: *JSC.JSGlobalObject, comptime hook: LifecycleHook) JSValue {
-        const name = comptime @as(string, @tagName(hook));
-        var hooks: []JSC.JSValue = @field(this, name).items;
-        for (hooks, 0..) |cb, i| {
-            if (cb.isEmpty()) continue;
+    pub fn execCallback(this: *DescribeScope, globalObject: *JSC.JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
+        var hooks = &@field(this, @tagName(hook));
+        defer {
+            if (comptime hook == .beforeAll or hook == .afterAll) {
+                hooks.clearAndFree(getAllocator(globalObject));
+            }
+        }
+
+        for (hooks.items) |cb| {
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(cb.isObject());
+                std.debug.assert(cb.isCallable(globalObject.vm()));
+            }
+            defer {
+                if (comptime hook == .beforeAll or hook == .afterAll) {
+                    cb.unprotect();
+                }
+            }
 
             const pending_test = Jest.runner.?.pending_test;
             // forbid `expect()` within hooks
@@ -843,20 +863,23 @@ pub const DescribeScope = struct {
             Jest.runner.?.did_pending_test_fail = false;
 
             const vm = VirtualMachine.get();
-            var result: JSC.JSValue = if (cb.getLength(globalObject) > 0) brk: {
-                this.done = false;
-                const done_func = JSC.NewFunctionWithData(
-                    globalObject,
-                    ZigString.static("done"),
-                    0,
-                    DescribeScope.onDone,
-                    false,
-                    this,
-                );
-                var result = cb.call(globalObject, &.{done_func});
-                vm.waitFor(&this.done);
-                break :brk result;
-            } else cb.call(globalObject, &.{});
+            var result: JSC.JSValue = switch (cb.getLength(globalObject)) {
+                0 => cb.call(globalObject, &.{}),
+                else => brk: {
+                    this.done = false;
+                    const done_func = JSC.NewFunctionWithData(
+                        globalObject,
+                        ZigString.static("done"),
+                        0,
+                        DescribeScope.onDone,
+                        false,
+                        this,
+                    );
+                    var result = cb.call(globalObject, &.{done_func});
+                    vm.waitFor(&this.done);
+                    break :brk result;
+                },
+            };
             if (result.asAnyPromise()) |promise| {
                 if (promise.status(globalObject.vm()) == .Pending) {
                     result.protect();
@@ -870,19 +893,30 @@ pub const DescribeScope = struct {
             Jest.runner.?.pending_test = pending_test;
             Jest.runner.?.did_pending_test_fail = orig_did_pending_test_fail;
             if (result.isAnyError()) return result;
-
-            if (comptime hook == .beforeAll or hook == .afterAll) {
-                hooks[i] = JSC.JSValue.zero;
-            }
         }
 
-        return JSValue.zero;
+        return null;
     }
 
     pub fn runGlobalCallbacks(globalThis: *JSC.JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
         // global callbacks
-        for (@field(Jest.runner.?.global_callbacks, @tagName(hook)).items) |cb| {
-            if (cb.isEmpty()) continue;
+        var hooks = &@field(Jest.runner.?.global_callbacks, @tagName(hook));
+        defer {
+            if (comptime hook == .beforeAll or hook == .afterAll) {
+                hooks.clearAndFree(getAllocator(globalThis));
+            }
+        }
+
+        for (hooks.items) |cb| {
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(cb.isObject());
+                std.debug.assert(cb.isCallable(globalThis.vm()));
+            }
+            defer {
+                if (comptime hook == .beforeAll or hook == .afterAll) {
+                    cb.unprotect();
+                }
+            }
 
             const pending_test = Jest.runner.?.pending_test;
             // forbid `expect()` within hooks
@@ -909,28 +943,40 @@ pub const DescribeScope = struct {
             if (result.isAnyError()) return result;
         }
 
-        if (comptime hook == .beforeAll or hook == .afterAll) {
-            @field(Jest.runner.?.global_callbacks, @tagName(hook)).items.len = 0;
-        }
-
         return null;
     }
 
-    pub fn runCallback(this: *DescribeScope, globalObject: *JSC.JSGlobalObject, comptime hook: LifecycleHook) JSValue {
+    fn runBeforeCallbacks(this: *DescribeScope, globalObject: *JSC.JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
+        if (this.parent) |scope| {
+            if (scope.runBeforeCallbacks(globalObject, hook)) |err| {
+                return err;
+            }
+        }
+        return this.execCallback(globalObject, hook);
+    }
+
+    pub fn runCallback(this: *DescribeScope, globalObject: *JSC.JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
+        if (comptime hook == .afterAll or hook == .afterEach) {
+            var parent: ?*DescribeScope = this;
+            while (parent) |scope| {
+                if (scope.execCallback(globalObject, hook)) |err| {
+                    return err;
+                }
+                parent = scope.parent;
+            }
+        }
+
         if (runGlobalCallbacks(globalObject, hook)) |err| {
             return err;
         }
 
-        var parent = this.parent;
-        while (parent) |scope| {
-            const ret = scope.execCallback(globalObject, hook);
-            if (!ret.isEmpty()) {
-                return ret;
+        if (comptime hook == .beforeAll or hook == .beforeEach) {
+            if (this.runBeforeCallbacks(globalObject, hook)) |err| {
+                return err;
             }
-            parent = scope.parent;
         }
 
-        return this.execCallback(globalObject, hook);
+        return null;
     }
 
     pub fn call(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
@@ -961,11 +1007,8 @@ pub const DescribeScope = struct {
         if (comptime is_bindgen) return undefined;
         callback.protect();
         defer callback.unprotect();
-        var original_active = active;
-        defer active = original_active;
-        if (this != module)
-            this.parent = this.parent orelse active;
-        active = this;
+        this.push();
+        defer this.pop();
 
         if (callback == .zero) {
             this.runTests(globalObject);
@@ -1019,8 +1062,7 @@ pub const DescribeScope = struct {
         var i: TestRunner.Test.ID = 0;
 
         if (!this.isAllSkipped()) {
-            const beforeAllCallback = this.runCallback(globalObject, .beforeAll);
-            if (!beforeAllCallback.isEmpty()) {
+            if (this.runCallback(globalObject, .beforeAll)) |_| {
                 while (i < end) {
                     Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
                     i += 1;
@@ -1051,9 +1093,8 @@ pub const DescribeScope = struct {
         this.pending_tests.unset(test_id);
 
         if (!skipped) {
-            const afterEach_result = this.runCallback(globalThis, .afterEach);
-            if (!afterEach_result.isEmpty()) {
-                globalThis.bunVM().runErrorHandler(afterEach_result, null);
+            if (this.runCallback(globalThis, .afterEach)) |err| {
+                globalThis.bunVM().runErrorHandler(err, null);
             }
         }
 
@@ -1064,9 +1105,8 @@ pub const DescribeScope = struct {
         if (!this.isAllSkipped()) {
             // Run the afterAll callbacks, in reverse order
             // unless there were no tests for this scope
-            const afterAll_result = this.execCallback(globalThis, .afterAll);
-            if (!afterAll_result.isEmpty()) {
-                globalThis.bunVM().runErrorHandler(afterAll_result, null);
+            if (this.execCallback(globalThis, .afterAll)) |err| {
+                globalThis.bunVM().runErrorHandler(err, null);
             }
         }
 
@@ -1146,7 +1186,6 @@ pub const TestRunnerTask = struct {
 
         // reset the global state for each test
         // prior to the run
-        DescribeScope.active = describe;
         expect.active_test_expectation_counter = .{};
         jsc_vm.last_reported_error_for_dedupe = .zero;
 
@@ -1178,11 +1217,9 @@ pub const TestRunnerTask = struct {
             this.needs_before_each = false;
             const label = test_.label;
 
-            const beforeEach = this.describe.runCallback(globalThis, .beforeEach);
-
-            if (!beforeEach.isEmpty()) {
+            if (this.describe.runCallback(globalThis, .beforeEach)) |err| {
                 Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, 0, this.describe);
-                jsc_vm.runErrorHandler(beforeEach, null);
+                jsc_vm.runErrorHandler(err, null);
                 return false;
             }
         }
@@ -1210,7 +1247,7 @@ pub const TestRunnerTask = struct {
     }
 
     pub fn timeout(this: *TestRunnerTask) void {
-        std.debug.assert(!this.reported);
+        if (comptime Environment.allow_assert) std.debug.assert(!this.reported);
 
         this.ref.unref(this.globalThis.bunVM());
         this.globalThis.throwTerminationException();
@@ -1223,7 +1260,7 @@ pub const TestRunnerTask = struct {
 
         switch (comptime from) {
             .promise => {
-                std.debug.assert(this.promise_state == .pending);
+                if (comptime Environment.allow_assert) std.debug.assert(this.promise_state == .pending);
                 this.promise_state = .fulfilled;
 
                 if (this.done_callback_state == .pending and result == .pass) {
@@ -1231,7 +1268,7 @@ pub const TestRunnerTask = struct {
                 }
             },
             .callback => {
-                std.debug.assert(this.done_callback_state == .pending);
+                if (comptime Environment.allow_assert) std.debug.assert(this.done_callback_state == .pending);
                 this.done_callback_state = .fulfilled;
 
                 if (this.promise_state == .pending and result == .pass) {
@@ -1239,7 +1276,7 @@ pub const TestRunnerTask = struct {
                 }
             },
             .sync => {
-                std.debug.assert(this.sync_state == .pending);
+                if (comptime Environment.allow_assert) std.debug.assert(this.sync_state == .pending);
                 this.sync_state = .fulfilled;
             },
             .timeout, .unhandledRejection => {},
@@ -1417,7 +1454,7 @@ inline fn createScope(
         return .zero;
     }
 
-    const parent = DescribeScope.active;
+    const parent = DescribeScope.active.?;
     const allocator = getAllocator(globalThis);
     const label = if (description == .zero)
         ""
@@ -1502,8 +1539,8 @@ inline fn createIfScope(
 // In Github Actions, emit an annotation that renders the error and location.
 // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-error-message
 pub fn printGithubAnnotation(exception: *JSC.ZigException) void {
-    const name = @field(exception, "name");
-    const message = @field(exception, "message");
+    const name = exception.name;
+    const message = exception.message;
     const frames = exception.stack.frames();
     const top_frame = if (frames.len > 0) frames[0] else null;
     const dir = bun.getenvZ("GITHUB_WORKSPACE") orelse bun.fs.FileSystem.instance.top_level_dir;

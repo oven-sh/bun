@@ -149,7 +149,7 @@ static const HashTableValue JSEventEmitterPrototypeTableValues[] = {
     { "on"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_addListener, 2 } },
     { "once"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_addOnceListener, 2 } },
     { "prependListener"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_prependListener, 2 } },
-    { "prependOnce"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_prependOnceListener, 2 } },
+    { "prependOnceListener"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_prependOnceListener, 2 } },
     { "removeListener"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_removeListener, 2 } },
     { "off"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_removeListener, 2 } },
     { "removeAllListeners"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_removeAllListeners, 1 } },

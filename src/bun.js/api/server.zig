@@ -2388,8 +2388,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             switch (value.*) {
                 .Error => {
-                    const err = value.Error.swap();
-                    value.Error.deinit();
+                    const err = value.Error;
                     _ = value.use();
                     if (this.flags.aborted) {
                         this.finalizeForAbort();

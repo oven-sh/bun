@@ -679,8 +679,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        JSC::PropertyNameArray a1(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Include);
-        JSC::PropertyNameArray a2(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Include);
+        JSC::PropertyNameArray a1(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
+        JSC::PropertyNameArray a2(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
         JSObject::getOwnPropertyNames(o1, globalObject, a1, DontEnumPropertiesMode::Exclude);
         JSObject::getOwnPropertyNames(o2, globalObject, a2, DontEnumPropertiesMode::Exclude);
 
@@ -753,7 +753,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             }
 
             o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-                if (entry.attributes() & PropertyAttribute::DontEnum) {
+                if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                     return true;
                 }
                 count1++;
@@ -787,7 +787,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             if (result && o2Structure->id() != o1Structure->id()) {
                 size_t remain = count1;
                 o2Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-                    if (entry.attributes() & PropertyAttribute::DontEnum) {
+                    if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                         return true;
                     }
 
@@ -815,8 +815,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
     }
 
-    JSC::PropertyNameArray a1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
-    JSC::PropertyNameArray a2(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+    JSC::PropertyNameArray a1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    JSC::PropertyNameArray a2(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     o1->getPropertyNames(globalObject, a1, DontEnumPropertiesMode::Exclude);
     o2->getPropertyNames(globalObject, a2, DontEnumPropertiesMode::Exclude);
 

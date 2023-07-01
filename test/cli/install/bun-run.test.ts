@@ -19,9 +19,9 @@ it("should download dependency to run local file", async () => {
   await writeFile(
     join(run_dir, "test.js"),
     `
-  const { minify } = require("uglify-js@3.17.4");
+const { minify } = require("uglify-js@3.17.4");
 
-  console.log(minify("print(6 * 7)").code);
+console.log(minify("print(6 * 7)").code);
   `,
   );
   const { stdout, stderr, exited } = spawn({
@@ -49,13 +49,13 @@ it("should download dependencies to run local file", async () => {
   await writeFile(
     join(run_dir, "test.js"),
     `
-  import { file } from "bun";
-  import decompress from "decompress@4.2.1";
+import { file } from "bun";
+import decompress from "decompress@4.2.1";
 
-  const buffer = await file("${join(import.meta.dir, "baz-0.0.3.tgz")}").arrayBuffer();
-  for (const entry of await decompress(Buffer.from(buffer))) {
-    console.log(\`\${entry.type}: \${entry.path}\`);
-  }
+const buffer = await file("${join(import.meta.dir, "baz-0.0.3.tgz")}").arrayBuffer();
+for (const entry of await decompress(Buffer.from(buffer))) {
+  console.log(\`\${entry.type}: \${entry.path}\`);
+}
   `,
   );
   const { stdout, stderr, exited } = spawn({

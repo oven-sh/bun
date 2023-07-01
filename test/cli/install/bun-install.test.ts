@@ -292,6 +292,50 @@ it("should handle workspaces", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should handle `workspace:` specifier", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {
+        Bar: "workspace:path/to/bar",
+      },
+    }),
+  );
+  await mkdir(join(package_dir, "path", "to", "bar"), { recursive: true });
+  await writeFile(
+    join(package_dir, "path", "to", "bar", "package.json"),
+    JSON.stringify({
+      name: "Bar",
+      version: "0.0.2",
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + Bar@workspace:path/to/bar",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
+  expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(join("..", "path", "to", "bar"));
+  await access(join(package_dir, "bun.lockb"));
+});
+
 it("should handle workspaces with packages array", async () => {
   await writeFile(
     join(package_dir, "package.json"),

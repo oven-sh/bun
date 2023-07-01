@@ -343,7 +343,9 @@ export {
   on,
   listenerCount,
   getEventListeners,
+  kErrorMonitor as errorMonitor,
   events_default as default,
   captureRejectionSymbol,
+  EventEmitterAsyncResource,
   EventEmitter
 };

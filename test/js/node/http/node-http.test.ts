@@ -1,5 +1,14 @@
 // @ts-nocheck
-import { createServer, request, get, Agent, globalAgent, Server } from "node:http";
+import {
+  createServer,
+  request,
+  get,
+  Agent,
+  globalAgent,
+  Server,
+  validateHeaderName,
+  validateHeaderValue,
+} from "node:http";
 import { createTest } from "node-harness";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
 
@@ -623,5 +632,17 @@ describe("node:http", () => {
         });
       });
     });
+  });
+
+  test("validateHeaderName", () => {
+    validateHeaderName("Foo");
+    expect(() => validateHeaderName("foo:")).toThrow();
+    expect(() => validateHeaderName("foo:bar")).toThrow();
+  });
+
+  test("validateHeaderValue", () => {
+    validateHeaderValue("Foo", "Bar");
+    expect(() => validateHeaderValue("Foo", undefined as any)).toThrow();
+    expect(() => validateHeaderValue("Foo", "Bar\r")).toThrow();
   });
 });

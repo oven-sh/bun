@@ -29,7 +29,7 @@ var bound = function(obj) {
 }, tmpdir = function() {
   var lazy = Symbol.for("Bun.lazy"), primordials = globalThis[lazy]("primordials"), { Bun: Bun2 } = primordials, env = Bun2.env;
   return tmpdir = function() {
-    var path = env["TMPDIR"] || env["TMP"] || env["TEMP"] || "/tmp";
+    var path = env.TMPDIR || env.TMP || env.TEMP || "/tmp";
     const length = path.length;
     if (length > 1 && path[length - 1] === "/")
       path = path.slice(0, -1);

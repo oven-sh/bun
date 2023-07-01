@@ -100,6 +100,7 @@ declare module "bun" {
   var main: string;
   var tty: Array<{ hasColors: boolean }>;
   var FFI: any;
+  var fetch: typeof globalThis.fetch;
 }
 
 declare var Loader: {

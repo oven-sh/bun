@@ -496,8 +496,10 @@ pub const Body = struct {
                     locked.readable.?.value.protect();
                     return locked.readable.?.value;
                 },
-
-                else => unreachable,
+                .Error => {
+                    // TODO: handle error properly
+                    return JSC.WebCore.ReadableStream.empty(globalThis);
+                },
             }
         }
 

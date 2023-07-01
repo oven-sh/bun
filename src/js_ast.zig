@@ -2140,6 +2140,14 @@ pub const E = struct {
         rope_len: u32 = 0,
         is_utf16: bool = false,
 
+        pub fn isIdentifier(this: *String, allocator: std.mem.Allocator) bool {
+            if (!this.isUTF8()) {
+                return bun.js_lexer.isIdentifierUTF16(this.slice16());
+            }
+
+            return bun.js_lexer.isIdentifier(this.slice(allocator));
+        }
+
         pub var class = E.String{ .data = "class" };
         pub fn push(this: *String, other: *String) void {
             std.debug.assert(this.isUTF8());

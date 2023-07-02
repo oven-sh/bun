@@ -1562,7 +1562,7 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         fn writeMaybeCorked(this: *This, buffer: []const u8, is_end: bool) i32 {
-            if (this.socket.isShutdown() or this.socket.isClosed()) {
+            if (this.detached or this.socket.isShutdown() or this.socket.isClosed()) {
                 return -1;
             }
             // we don't cork yet but we might later
@@ -1583,7 +1583,6 @@ fn NewSocket(comptime ssl: bool) type {
 
         fn writeOrEnd(this: *This, globalObject: *JSC.JSGlobalObject, args: []const JSC.JSValue, is_end: bool) WriteResult {
             if (args.len == 0) return .{ .success = .{} };
-
             if (args.ptr[0].asArrayBuffer(globalObject)) |array_buffer| {
                 var slice = array_buffer.slice();
 

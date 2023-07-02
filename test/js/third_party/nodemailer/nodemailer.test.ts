@@ -4,10 +4,12 @@ import path from "path";
 
 describe("nodemailer", () => {
   test("basic smtp", async () => {
-    expect(() => {
+    try {
       const info = bunRun(path.join(import.meta.dir, "process-nodemailer-fixture.js"));
       expect(info.stdout).toBe("true");
       expect(info.stderr || "").toBe("");
-    }).not.toThrow();
+    } catch (err: any) {
+      expect(err?.message || err).toBe("");
+    }
   }, 10000);
 });

@@ -2065,7 +2065,7 @@ pub const VirtualMachine = struct {
         )) |mapping| {
             var log = logger.Log.init(default_allocator);
             var errorable: ErrorableResolvedSource = undefined;
-            var original_source = fetchWithoutOnLoadPlugins(this, this.global, bun.String.init(top.source_url), bun.String.empty, &log, &errorable, .print_source) catch return;
+            var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, &errorable, .print_source) catch return;
             const code = original_source.source_code.toUTF8(bun.default_allocator);
             defer code.deinit();
 

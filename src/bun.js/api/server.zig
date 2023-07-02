@@ -3564,11 +3564,6 @@ pub const ServerWebSocket = struct {
         if (message_value.asArrayBuffer(globalThis)) |array_buffer| {
             const buffer = array_buffer.slice();
 
-            if (buffer.len == 0) {
-                globalThis.throw("publish requires a non-empty message", .{});
-                return .zero;
-            }
-
             const result = if (!publish_to_self)
                 this.websocket.publish(topic_slice.slice(), buffer, .binary, compress)
             else
@@ -3584,9 +3579,6 @@ pub const ServerWebSocket = struct {
         {
             var string_slice = message_value.toSlice(globalThis, bun.default_allocator);
             defer string_slice.deinit();
-            if (string_slice.len == 0) {
-                return JSValue.jsNumber(0);
-            }
 
             const buffer = string_slice.slice();
 
@@ -3638,10 +3630,6 @@ pub const ServerWebSocket = struct {
 
         var topic_slice = topic_value.toSlice(globalThis, bun.default_allocator);
         defer topic_slice.deinit();
-        if (topic_slice.len == 0) {
-            globalThis.throw("publishText requires a non-empty topic", .{});
-            return .zero;
-        }
 
         const compress = args.len > 1 and compress_value.toBoolean();
 
@@ -3652,9 +3640,6 @@ pub const ServerWebSocket = struct {
 
         var string_slice = message_value.toSlice(globalThis, bun.default_allocator);
         defer string_slice.deinit();
-        if (string_slice.len == 0) {
-            return JSValue.jsNumber(0);
-        }
 
         const buffer = string_slice.slice();
 
@@ -3718,10 +3703,6 @@ pub const ServerWebSocket = struct {
             return .zero;
         };
         const buffer = array_buffer.slice();
-
-        if (buffer.len == 0) {
-            return JSC.JSValue.jsNumber(0);
-        }
 
         const result = if (!publish_to_self)
             this.websocket.publish(topic_slice.slice(), buffer, .binary, compress)
@@ -3887,10 +3868,6 @@ pub const ServerWebSocket = struct {
         }
 
         if (message_value.asArrayBuffer(globalThis)) |buffer| {
-            if (buffer.len == 0) {
-                return JSValue.jsNumber(0);
-            }
-
             switch (this.websocket.send(buffer.slice(), .binary, compress, true)) {
                 .backpressure => {
                     log("send() backpressure ({d} bytes)", .{buffer.len});
@@ -3910,9 +3887,6 @@ pub const ServerWebSocket = struct {
         {
             var string_slice = message_value.toSlice(globalThis, bun.default_allocator);
             defer string_slice.deinit();
-            if (string_slice.len == 0) {
-                return JSValue.jsNumber(0);
-            }
 
             const buffer = string_slice.slice();
             switch (this.websocket.send(buffer, .text, compress, true)) {
@@ -3964,9 +3938,6 @@ pub const ServerWebSocket = struct {
 
         var string_slice = message_value.toSlice(globalThis, bun.default_allocator);
         defer string_slice.deinit();
-        if (string_slice.len == 0) {
-            return JSValue.jsNumber(0);
-        }
 
         const buffer = string_slice.slice();
         switch (this.websocket.send(buffer, .text, compress, true)) {
@@ -3998,9 +3969,6 @@ pub const ServerWebSocket = struct {
 
         var string_slice = message_str.toSlice(globalThis, bun.default_allocator);
         defer string_slice.deinit();
-        if (string_slice.len == 0) {
-            return JSValue.jsNumber(0);
-        }
 
         const buffer = string_slice.slice();
         switch (this.websocket.send(buffer, .text, compress, true)) {
@@ -4047,10 +4015,6 @@ pub const ServerWebSocket = struct {
             return .zero;
         };
 
-        if (buffer.len == 0) {
-            return JSValue.jsNumber(0);
-        }
-
         switch (this.websocket.send(buffer.slice(), .binary, compress, true)) {
             .backpressure => {
                 log("sendBinary() backpressure ({d} bytes)", .{buffer.len});
@@ -4079,10 +4043,6 @@ pub const ServerWebSocket = struct {
         }
 
         const buffer = array_buffer.slice();
-
-        if (buffer.len == 0) {
-            return JSValue.jsNumber(0);
-        }
 
         switch (this.websocket.send(buffer, .binary, compress, true)) {
             .backpressure => {
@@ -4420,17 +4380,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
             const compress = (compress_value orelse JSValue.jsBoolean(true)).toBoolean();
 
-            if (message_value.isEmptyOrUndefinedOrNull()) {
-                JSC.JSError(this.vm.allocator, "publish requires a non-empty message", .{}, globalThis, exception);
-                return .zero;
-            }
-
             if (message_value.asArrayBuffer(globalThis)) |buffer| {
-                if (buffer.len == 0) {
-                    JSC.JSError(this.vm.allocator, "publish requires a non-empty message", .{}, globalThis, exception);
-                    return .zero;
-                }
-
                 return JSValue.jsNumber(
                     // if 0, return 0
                     // else return number of bytes sent
@@ -4441,9 +4391,6 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             {
                 var string_slice = message_value.toSlice(globalThis, bun.default_allocator);
                 defer string_slice.deinit();
-                if (string_slice.len == 0) {
-                    return JSValue.jsNumber(0);
-                }
 
                 const buffer = string_slice.slice();
                 return JSValue.jsNumber(

@@ -927,6 +927,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             JSC.markBinding(@src());
             if (this.outgoing_websocket) |ws| {
                 this.outgoing_websocket = null;
+                log("fail ({s})", .{@tagName(code)});
+
                 ws.didCloseWithErrorCode(code);
             }
 
@@ -937,7 +939,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             _ = socket;
             _ = ssl_error;
             JSC.markBinding(@src());
-            log("WebSocket.onHandshake({d})", .{success});
+            log("onHandshake({d})", .{success});
             JSC.markBinding(@src());
             if (success == 0) {
                 if (this.outgoing_websocket) |ws| {
@@ -1201,17 +1203,16 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                         if (data.len == 0) break;
                     },
                     .need_body => {
-                        if (receive_body_remain == 0 and data.len > 0) {
-                            this.terminate(ErrorCode.expected_control_frame);
-                            terminated = true;
-                            break;
-                        }
-                        if (data.len == 0) return;
-
+                        // Empty messages are valid.
+                        //
                         const to_consume = @min(receive_body_remain, data.len);
-
-                        const consumed = this.consume(data[0..to_consume], receive_body_remain, last_receive_data_type, is_final);
-                        if (consumed == 0 and last_receive_data_type == .Text) {
+                        const consumed = this.consume(
+                            data[0..to_consume],
+                            receive_body_remain,
+                            last_receive_data_type,
+                            is_final,
+                        );
+                        if (receive_body_remain > 0 and data.len > 0 and consumed == 0 and last_receive_data_type == .Text) {
                             this.terminate(ErrorCode.invalid_utf8);
                             terminated = true;
                             break;
@@ -1434,9 +1435,6 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 return;
             }
 
-            if (len == 0)
-                return;
-
             const slice = ptr[0..len];
             const bytes = Copy{ .bytes = slice };
             // fast path: small frame, no backpressure, attempt to send without allocating
@@ -1460,9 +1458,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 return;
             }
 
-            if (str.len == 0) {
-                return;
-            }
+            // Note: 0 is valid
 
             {
                 var inline_buf: [stack_frame_size]u8 = undefined;

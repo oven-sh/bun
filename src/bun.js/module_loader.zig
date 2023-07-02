@@ -982,7 +982,14 @@ pub const ModuleLoader = struct {
                     jsc_vm.bundler.options.macro_remap;
 
                 var fallback_source: logger.Source = undefined;
-                var should_close_input_file_fd = true;
+
+                // Usually, we want to close the input file automatically.
+                //
+                // If we're re-using the file descriptor from the fs watcher
+                // Do not close it because that will break the kqueue-based watcher
+                //
+                var should_close_input_file_fd = fd == null;
+
                 var input_file_fd: StoredFileDescriptorType = 0;
                 var parse_options = Bundler.ParseOptions{
                     .allocator = allocator,

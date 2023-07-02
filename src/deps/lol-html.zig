@@ -1,6 +1,6 @@
 pub const Error = error{Fail};
 const std = @import("std");
-
+const bun = @import("root").bun;
 pub const MemorySettings = extern struct {
     preallocated_parsing_buffer_size: usize,
     max_allowed_memory_usage: usize,
@@ -562,6 +562,26 @@ pub const HTMLString = extern struct {
         auto_disable();
         @setRuntimeSafety(false);
         return this.ptr[0..this.len];
+    }
+
+    fn deinit_external(ctx: *anyopaque, ptr: *anyopaque, len: u32) callconv(.C) void {
+        _ = ctx;
+        auto_disable();
+        lol_html_str_free(.{ .ptr = @ptrCast([*]const u8, ptr), .len = len });
+    }
+
+    pub fn toJS(this: HTMLString, globalThis: *bun.JSC.JSGlobalObject) bun.JSC.JSValue {
+        const bytes = this.slice();
+        if (bun.strings.isAllASCII(bytes)) {
+            var external = bun.String.createExternal(bytes, true, @constCast(bytes.ptr), &deinit_external);
+            defer external.deref();
+            return external.toJS(globalThis);
+        }
+        defer this.deinit();
+
+        var str = bun.String.create(bytes);
+        defer str.deref();
+        return str.toJS(globalThis);
     }
 };
 

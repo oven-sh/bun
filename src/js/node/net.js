@@ -490,6 +490,8 @@ const Socket = (function (InternalSocket) {
           unix: path,
           socket: Socket.#Handlers,
           tls,
+        }).catch((error) => {
+          this.emit("error", error);
         });
       } else {
         // default start
@@ -499,6 +501,8 @@ const Socket = (function (InternalSocket) {
           port: port,
           socket: Socket.#Handlers,
           tls,
+        }).catch((error) => {
+          this.emit("error", error);
         });
       }
       return this;

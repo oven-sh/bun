@@ -982,6 +982,14 @@ pub const ModuleLoader = struct {
                     jsc_vm.bundler.options.macro_remap;
 
                 var fallback_source: logger.Source = undefined;
+
+                // Usually, we want to close the input file automatically.
+                //
+                // If we're re-using the file descriptor from the fs watcher
+                // Do not close it because that will break the kqueue-based watcher
+                //
+                var should_close_input_file_fd = fd == null;
+
                 var input_file_fd: StoredFileDescriptorType = 0;
                 var parse_options = Bundler.ParseOptions{
                     .allocator = allocator,
@@ -1002,6 +1010,13 @@ pub const ModuleLoader = struct {
                         jsc_vm.main_hash == hash and
                         strings.eqlLong(jsc_vm.main, path.text, false),
                 };
+                defer {
+                    if (should_close_input_file_fd and input_file_fd != 0) {
+                        _ = bun.JSC.Node.Syscall.close(input_file_fd);
+                        input_file_fd = 0;
+                    }
+                }
+
                 if (is_node_override) {
                     if (NodeFallbackModules.contentsFromPath(specifier)) |code| {
                         const fallback_path = Fs.Path.initWithNamespace(specifier, "node");
@@ -1019,6 +1034,7 @@ pub const ModuleLoader = struct {
                         if (jsc_vm.isWatcherEnabled()) {
                             if (input_file_fd != 0) {
                                 if (jsc_vm.bun_watcher != null and !is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
+                                    should_close_input_file_fd = false;
                                     jsc_vm.bun_watcher.?.addFile(
                                         input_file_fd,
                                         path.text,
@@ -1059,6 +1075,7 @@ pub const ModuleLoader = struct {
                     if (jsc_vm.isWatcherEnabled()) {
                         if (input_file_fd != 0) {
                             if (jsc_vm.bun_watcher != null and !is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
+                                should_close_input_file_fd = false;
                                 jsc_vm.bun_watcher.?.addFile(
                                     input_file_fd,
                                     path.text,

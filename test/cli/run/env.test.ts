@@ -308,3 +308,13 @@ test(".env Windows-style newline (issue #3042)", () => {
   const { stdout } = bunRun(`${dir}/index.ts`);
   expect(stdout).toBe("|bar\n\nbaz|moo");
 });
+
+test(".env with zero length strings", () => {
+  const dir = tempDirWithFiles("dotenv-issue-zerolength", {
+    ".env": "FOO=''\n",
+    "index.ts":
+      "function i(a){return a}\nconsole.log([process.env.FOO,i(process.env).FOO,process.env.FOO.length,i(process.env).FOO.length].join('|'));",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(stdout).toBe("||0|0");
+});

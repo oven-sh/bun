@@ -69,3 +69,9 @@ fetchRecurseSubmodules = false
 	path = src/deps/zstd
 	url = https://github.com/facebook/zstd.git
 	ignore = dirty
+[submodule "src/deps/base64"]
+	path = src/deps/base64
+	url = https://github.com/aklomp/base64.git
+	ignore = dirty
+	depth = 1
+	shallow = true

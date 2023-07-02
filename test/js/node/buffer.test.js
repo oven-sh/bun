@@ -1,4 +1,4 @@
-import { Buffer, SlowBuffer } from "buffer";
+import { Buffer, SlowBuffer, isAscii, isUtf8 } from "buffer";
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { gc } from "harness";
 
@@ -6,6 +6,28 @@ const BufferModule = await import("buffer");
 
 beforeEach(() => gc());
 afterEach(() => gc());
+
+it("isAscii", () => {
+  expect(isAscii(new Buffer("abc"))).toBeTrue();
+  expect(isAscii(new Buffer(""))).toBeTrue();
+  expect(isAscii(new Buffer([32, 32, 128]))).toBeFalse();
+  expect(isAscii(new Buffer("What did the 🦊 say?"))).toBeFalse();
+
+  expect(isAscii(new Buffer("").buffer)).toBeTrue();
+  expect(isAscii(new Buffer([32, 32, 128]).buffer)).toBeFalse();
+});
+
+it("isUtf8", () => {
+  expect(isUtf8(new Buffer("abc"))).toBeTrue();
+  expect(isAscii(new Buffer(""))).toBeTrue();
+  expect(isUtf8(new Buffer("What did the 🦊 say?"))).toBeTrue();
+  expect(isUtf8(new Buffer([129, 129, 129]))).toBeFalse();
+
+  expect(isUtf8(new Buffer("abc").buffer)).toBeTrue();
+  expect(isAscii(new Buffer("").buffer)).toBeTrue();
+  expect(isUtf8(new Buffer("What did the 🦊 say?").buffer)).toBeTrue();
+  expect(isUtf8(new Buffer([129, 129, 129]).buffer)).toBeFalse();
+});
 
 // https://github.com/oven-sh/bun/issues/2052
 it("Buffer global is settable", () => {

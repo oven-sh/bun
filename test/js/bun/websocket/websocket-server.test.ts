@@ -3,6 +3,77 @@ import { gcTick } from "harness";
 import { serve, ServerWebSocket } from "bun";
 
 describe("websocket server", () => {
+  it("send & receive empty messages", done => {
+    const serverReceived: any[] = [];
+    const clientReceived: any[] = [];
+    var clientDone = false;
+    var serverDone = false;
+
+    let server = Bun.serve({
+      websocket: {
+        open(ws) {
+          ws.send("");
+          ws.send(new ArrayBuffer(0));
+        },
+        message(ws, data) {
+          serverReceived.push(data);
+
+          if (serverReceived.length === 2) {
+            if (serverReceived.find(d => d === "") === undefined) {
+              done(new Error("expected empty string"));
+            }
+
+            if (!serverReceived.find(d => d.byteLength === 0)) {
+              done(new Error("expected empty Buffer"));
+            }
+
+            serverDone = true;
+
+            if (clientDone && serverDone) {
+              z.close();
+              server.stop(true);
+              done();
+            }
+          }
+        },
+        close() {},
+      },
+      fetch(req, server) {
+        if (!server.upgrade(req)) {
+          return new Response(null, { status: 404 });
+        }
+      },
+      port: 0,
+    });
+
+    let z = new WebSocket(`ws://${server.hostname}:${server.port}`);
+    z.onmessage = e => {
+      clientReceived.push(e.data);
+
+      if (clientReceived.length === 2) {
+        if (clientReceived.find(d => d === "") === undefined) {
+          done(new Error("expected empty string"));
+        }
+
+        if (!clientReceived.find(d => d.byteLength === 0)) {
+          done(new Error("expected empty Buffer"));
+        }
+
+        clientDone = true;
+        if (clientDone && serverDone) {
+          server.stop(true);
+          z.close();
+
+          done();
+        }
+      }
+    };
+    z.addEventListener("open", () => {
+      z.send("");
+      z.send(new Buffer(0));
+    });
+  });
+
   it("remoteAddress works", done => {
     let server = Bun.serve({
       websocket: {

@@ -185,8 +185,11 @@ var createServer = function(options, connectionListener) {
   ALPNProtocols;
   constructor(options) {
     super(options);
-    if (options?.ALPNProtocols)
-      convertALPNProtocols(options.ALPNProtocols, this);
+    if (options) {
+      const { ALPNProtocols } = options;
+      if (ALPNProtocols)
+        convertALPNProtocols(ALPNProtocols, this);
+    }
     this.#secureContext = options.secureContext || createSecureContext(options), this.authorized = !1, this.secureConnecting = !0, this._secureEstablished = !1, this._securePending = !0;
   }
   _secureEstablished = !1;
@@ -267,8 +270,9 @@ class Server extends NetServer {
     if (options instanceof InternalSecureContext)
       options = options.context;
     if (options) {
-      if (options.ALPNProtocols)
-        convertALPNProtocols(options.ALPNProtocols, this);
+      const { ALPNProtocols } = options;
+      if (ALPNProtocols)
+        convertALPNProtocols(ALPNProtocols, this);
       let key = options.key;
       if (key) {
         if (!isValidTLSArray(key))
@@ -337,8 +341,10 @@ class Server extends NetServer {
 }
 var CLIENT_RENEG_LIMIT = 3, CLIENT_RENEG_WINDOW = 600, DEFAULT_ECDH_CURVE = "auto", DEFAULT_CIPHERS = "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256", DEFAULT_MIN_VERSION = "TLSv1.2", DEFAULT_MAX_VERSION = "TLSv1.3", createConnection = (port, host2, connectListener) => {
   if (typeof port === "object") {
-    if (port.checkServerIdentity, port.ALPNProtocols)
-      convertALPNProtocols(port.ALPNProtocols, port);
+    port.checkServerIdentity;
+    const { ALPNProtocols } = port;
+    if (ALPNProtocols)
+      convertALPNProtocols(ALPNProtocols, port);
     return new TLSSocket(port).connect(port, host2, connectListener);
   }
   return new TLSSocket().connect(port, host2, connectListener);

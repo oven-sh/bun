@@ -320,8 +320,11 @@ const TLSSocket = (function (InternalTLSSocket) {
 
     constructor(options) {
       super(options);
-      if (options?.ALPNProtocols) {
-        convertALPNProtocols(options.ALPNProtocols, this);
+      if (options) {
+        const { ALPNProtocols } = options;
+        if (ALPNProtocols) {
+          convertALPNProtocols(ALPNProtocols, this);
+        }
       }
       this.#secureContext = options.secureContext || createSecureContext(options);
       this.authorized = false;
@@ -438,8 +441,10 @@ class Server extends NetServer {
       options = options.context;
     }
     if (options) {
-      if (options.ALPNProtocols) {
-        convertALPNProtocols(options.ALPNProtocols, this);
+      const { ALPNProtocols } = options;
+
+      if (ALPNProtocols) {
+        convertALPNProtocols(ALPNProtocols, this);
       }
 
       let key = options.key;
@@ -544,8 +549,9 @@ const CLIENT_RENEG_LIMIT = 3,
   createConnection = (port, host, connectListener) => {
     if (typeof port === "object") {
       port.checkServerIdentity || checkServerIdentity;
-      if (port.ALPNProtocols) {
-        convertALPNProtocols(port.ALPNProtocols, port);
+      const { ALPNProtocols } = port;
+      if (ALPNProtocols) {
+        convertALPNProtocols(ALPNProtocols, port);
       }
       // port is option pass Socket options and let connect handle connection options
       return new TLSSocket(port).connect(port, host, connectListener);

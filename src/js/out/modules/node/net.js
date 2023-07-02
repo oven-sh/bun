@@ -283,6 +283,8 @@ var isIPv4 = function(s) {
         unix: path,
         socket: Socket2.#Handlers,
         tls
+      }).catch((error) => {
+        this.emit("error", error);
       });
     else
       bunConnect({
@@ -291,6 +293,8 @@ var isIPv4 = function(s) {
         port,
         socket: Socket2.#Handlers,
         tls
+      }).catch((error) => {
+        this.emit("error", error);
       });
     return this;
   }
@@ -356,7 +360,7 @@ var isIPv4 = function(s) {
     this[bunSocketInternal]?.unref();
   }
   _write(chunk, encoding, callback) {
-    if (typeof chunk == "string" && encoding !== "utf8")
+    if (typeof chunk == "string" && encoding !== "ascii")
       chunk = Buffer.from(chunk, encoding);
     var written = this[bunSocketInternal]?.write(chunk);
     if (written == chunk.length)

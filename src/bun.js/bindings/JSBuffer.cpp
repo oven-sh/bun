@@ -1476,13 +1476,19 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
         offset = static_cast<uint32_t>(istart);
         length = (length > offset) ? (length - offset) : 0;
     } else {
-        int32_t ioffset = arg1.toInt32(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+
+        int32_t ioffset = 0;
+
+        if (!arg1.isUndefined()) {
+            ioffset = arg1.toInt32(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+        }
 
         if (ioffset < 0) {
             throwTypeError(lexicalGlobalObject, scope, "Offset must be a positive integer"_s);
             return JSC::JSValue::encode(jsUndefined());
         }
+
         offset = static_cast<uint32_t>(ioffset);
         length = (length > offset) ? (length - offset) : 0;
 

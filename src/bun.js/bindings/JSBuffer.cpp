@@ -1453,23 +1453,32 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
         return jsBufferToString(vm, lexicalGlobalObject, castedThis, offset, length, encoding);
 
     if (arg1.isString()) {
-            encoding = parseEncoding(lexicalGlobalObject, scope, arg1);
+        encoding = parseEncoding(lexicalGlobalObject, scope, arg1);
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+
+        if (!arg3.isUndefined()) {
+            // length is end
+            length = std::min(byteLength, static_cast<uint32_t>(arg3.toInt32(lexicalGlobalObject)));
             RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+        }
 
-            if (!arg3.isUndefined()) {
-                // length is end
-                length = std::min(byteLength, static_cast<uint32_t>(arg3.toInt32(lexicalGlobalObject)));
-            }
+        int32_t istart = 0;
 
-            int32_t istart = arg2.toInt32(lexicalGlobalObject);
-            if (istart < 0) {
-                throwTypeError(lexicalGlobalObject, scope, "Start must be a positive integer"_s);
-                return JSC::JSValue::encode(jsUndefined());
-            }
-            offset = static_cast<uint32_t>(istart);
-            length = (length > offset) ? (length - offset) : 0;
+        if (!arg2.isUndefined()) {
+            istart = arg2.toInt32(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+        }
+
+        if (istart < 0) {
+            throwTypeError(lexicalGlobalObject, scope, "Start must be a positive integer"_s);
+            return JSC::JSValue::encode(jsUndefined());
+        }
+        offset = static_cast<uint32_t>(istart);
+        length = (length > offset) ? (length - offset) : 0;
     } else {
         int32_t ioffset = arg1.toInt32(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+
         if (ioffset < 0) {
             throwTypeError(lexicalGlobalObject, scope, "Offset must be a positive integer"_s);
             return JSC::JSValue::encode(jsUndefined());

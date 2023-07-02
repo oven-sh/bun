@@ -524,8 +524,8 @@ pub const Encoding = enum(u8) {
         switch (encoding) {
             .base64 => {
                 var base64: [std.base64.standard.Encoder.calcSize(size)]u8 = undefined;
-                const result = JSC.ZigString.init(std.base64.standard.Encoder.encode(&base64, input)).toValueGC(globalThis);
-                return result;
+                const len = bun.base64.encode(&base64, input);
+                return JSC.ZigString.init(base64[0..len]).toValueGC(globalThis);
             },
             .base64url => {
                 var buf: [std.base64.url_safe.Encoder.calcSize(size) + "data:;base64,".len]u8 = undefined;

@@ -3,11 +3,11 @@
   "module": "index.ts",
   "type": "module",
   "devDependencies": {
-    "bun-types": "^0.6.0",
+    "bun-types": "0.6.12",
     "prisma": "4.15.0"
   },
   "peerDependencies": {
-    "typescript": "^5.0.0"
+    "typescript": "5.0.0"
   },
   "dependencies": {
     "@prisma/client": "4.15.0"

@@ -337,3 +337,31 @@ it("#3334 regression", async () => {
   }
   Bun.gc(true);
 });
+
+it("#3489", async () => {
+  var el;
+  await new HTMLRewriter()
+    .on("p", {
+      element(element) {
+        el = element.getAttribute("id");
+      },
+    })
+    .transform(new Response('<p id="Šžõäöü"></p>'))
+    .text();
+  expect(el).toEqual("Šžõäöü");
+});
+
+it("get attribute - ascii", async () => {
+  for (let i = 0; i < 10; i++) {
+    var el;
+    await new HTMLRewriter()
+      .on("p", {
+        element(element) {
+          el = element.getAttribute("id");
+        },
+      })
+      .transform(new Response(`<p id="asciii"></p>`))
+      .text();
+    expect(el).toEqual("asciii");
+  }
+});

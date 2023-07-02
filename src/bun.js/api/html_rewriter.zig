@@ -996,26 +996,14 @@ const getterWrap = JSC.getterWrap;
 const setterWrap = JSC.setterWrap;
 const wrap = JSC.wrapSync;
 
-pub fn free_html_writer_string(_: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.C) void {
-    var str = LOLHTML.HTMLString{ .ptr = bun.cast([*]const u8, ptr.?), .len = len };
-    str.deinit();
-}
-
 fn throwLOLHTMLError(global: *JSGlobalObject) JSValue {
-    var err = LOLHTML.HTMLString.lastError();
-    return ZigString.init(err.slice()).toErrorInstance(global);
+    const err = LOLHTML.HTMLString.lastError();
+    defer err.deinit();
+    return ZigString.fromUTF8(err.slice()).toErrorInstance(global);
 }
 
 fn htmlStringValue(input: LOLHTML.HTMLString, globalObject: *JSGlobalObject) JSValue {
-    var str = ZigString.init(
-        input.slice(),
-    );
-    str.detectEncoding();
-
-    return str.toExternalValueWithCallback(
-        globalObject,
-        free_html_writer_string,
-    );
+    return input.toJS(globalObject);
 }
 
 pub const TextChunk = struct {
@@ -1328,7 +1316,7 @@ pub const Comment = struct {
     pub fn getText(this: *Comment, global: *JSGlobalObject) JSValue {
         if (this.comment == null)
             return JSValue.jsNull();
-        return ZigString.init(this.comment.?.getText().slice()).withEncoding().toValueGC(global);
+        return this.comment.?.getText().toJS(global);
     }
 
     pub fn setText(
@@ -1458,7 +1446,7 @@ pub const EndTag = struct {
         if (this.end_tag == null)
             return JSC.JSValue.jsUndefined();
 
-        return ZigString.init(this.end_tag.?.getName().slice()).withEncoding().toValueGC(global);
+        return this.end_tag.?.getName().toJS(global);
     }
 
     pub fn setName(
@@ -1696,19 +1684,12 @@ pub const Element = struct {
 
         var slice = name.toSlice(bun.default_allocator);
         defer slice.deinit();
-        var attr = this.element.?.getAttribute(slice.slice()).slice();
+        var attr = this.element.?.getAttribute(slice.slice());
 
         if (attr.len == 0)
             return JSC.JSValue.jsNull();
 
-        var str = ZigString.init(
-            attr,
-        );
-
-        return str.toExternalValueWithCallback(
-            globalObject,
-            free_html_writer_string,
-        );
+        return attr.toJS(globalObject);
     }
 
     /// Returns a boolean indicating whether an attribute exists on the element.

@@ -374,6 +374,7 @@ pub const Listener = struct {
     connection: UnixOrHost,
     socket_context: ?*uws.SocketContext = null,
     ssl: bool = false,
+    protos: ?[]const u8 = null,
 
     strong_data: JSC.Strong = .{},
     strong_self: JSC.Strong = .{},
@@ -478,10 +479,12 @@ pub const Listener = struct {
         var socket_config = SocketConfig.fromJS(opts, globalObject, exception) orelse {
             return .zero;
         };
+
         var hostname_or_unix = socket_config.hostname_or_unix;
         var port = socket_config.port;
         var ssl = socket_config.ssl;
         var handlers = socket_config.handlers;
+        var protos: ?[]const u8 = null;
         const exclusive = socket_config.exclusive;
         handlers.is_server = true;
 
@@ -519,6 +522,10 @@ pub const Listener = struct {
         };
 
         if (ssl_enabled) {
+            if (ssl.?.protos) |p| {
+                protos = p[0..ssl.?.protos_len];
+            }
+
             uws.NewSocketHandler(true).configure(
                 socket_context,
                 true,
@@ -616,6 +623,7 @@ pub const Listener = struct {
             .ssl = ssl_enabled,
             .socket_context = socket_context,
             .listener = listen_socket,
+            .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch unreachable) else null,
         };
 
         socket.handlers.protect();
@@ -672,6 +680,8 @@ pub const Listener = struct {
             .handlers = &listener.handlers,
             .this_value = .zero,
             .socket = socket,
+            .protos = listener.protos,
+            .owned_protos = false,
         };
         if (listener.strong_data.get()) |default_data| {
             const globalObject = listener.handlers.globalObject;
@@ -738,6 +748,10 @@ pub const Listener = struct {
 
         this.handlers.unprotect();
         this.connection.deinit();
+        if (this.protos) |protos| {
+            this.protos = null;
+            bun.default_allocator.destroy(protos);
+        }
         bun.default_allocator.destroy(this);
     }
 
@@ -798,13 +812,16 @@ pub const Listener = struct {
         const socket_config = SocketConfig.fromJS(opts, globalObject, exception) orelse {
             return .zero;
         };
+
         var hostname_or_unix = socket_config.hostname_or_unix;
         var port = socket_config.port;
         var ssl = socket_config.ssl;
         var handlers = socket_config.handlers;
         var default_data = socket_config.default_data;
 
+        var protos: ?[]const u8 = null;
         const ssl_enabled = ssl != null;
+        defer if (ssl != null) ssl.?.deinit();
 
         handlers.protect();
 
@@ -820,6 +837,9 @@ pub const Listener = struct {
         };
 
         if (ssl_enabled) {
+            if (ssl.?.protos) |p| {
+                protos = p[0..ssl.?.protos_len];
+            }
             uws.NewSocketHandler(true).configure(
                 socket_context,
                 true,
@@ -871,6 +891,7 @@ pub const Listener = struct {
                 .this_value = .zero,
                 .socket = undefined,
                 .connection = connection,
+                .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch unreachable) else null,
             };
 
             TLSSocket.dataSetCached(tls.getThisValue(globalObject), globalObject, default_data);
@@ -894,6 +915,7 @@ pub const Listener = struct {
                 .this_value = .zero,
                 .socket = undefined,
                 .connection = null,
+                .protos = null,
             };
 
             TCPSocket.dataSetCached(tcp.getThisValue(globalObject), globalObject, default_data);
@@ -921,6 +943,35 @@ fn JSSocketType(comptime ssl: bool) type {
     }
 }
 
+fn selectALPNCallback(
+    _: ?*BoringSSL.SSL,
+    out: [*c][*c]const u8,
+    outlen: [*c]u8,
+    in: [*c]const u8,
+    inlen: c_uint,
+    arg: ?*anyopaque,
+) callconv(.C) c_int {
+    const this = bun.cast(*TLSSocket, arg);
+    if (this.protos) |protos| {
+        if (protos.len == 0) {
+            return BoringSSL.SSL_TLSEXT_ERR_NOACK;
+        }
+
+        const status = BoringSSL.SSL_select_next_proto(bun.cast([*c][*c]u8, out), outlen, protos.ptr, @intCast(c_uint, protos.len), in, inlen);
+
+        // Previous versions of Node.js returned SSL_TLSEXT_ERR_NOACK if no protocol
+        // match was found. This would neither cause a fatal alert nor would it result
+        // in a useful ALPN response as part of the Server Hello message.
+        // We now return SSL_TLSEXT_ERR_ALERT_FATAL in that case as per Section 3.2
+        // of RFC 7301, which causes a fatal no_application_protocol alert.
+        const expected = if (comptime BoringSSL.OPENSSL_NPN_NEGOTIATED == 1) BoringSSL.SSL_TLSEXT_ERR_OK else BoringSSL.SSL_TLSEXT_ERR_ALERT_FATAL;
+
+        return if (status == expected) 1 else 0;
+    } else {
+        return BoringSSL.SSL_TLSEXT_ERR_NOACK;
+    }
+}
+
 fn NewSocket(comptime ssl: bool) type {
     return struct {
         pub const Socket = uws.NewSocketHandler(ssl);
@@ -934,6 +985,8 @@ fn NewSocket(comptime ssl: bool) type {
         last_4: [4]u8 = .{ 0, 0, 0, 0 },
         authorized: bool = false,
         connection: ?Listener.UnixOrHost = null,
+        protos: ?[]const u8,
+        owned_protos: bool = true,
 
         // TODO: switch to something that uses `visitAggregate` and have the
         // `Listener` keep a list of all the sockets JSValue in there
@@ -1115,16 +1168,23 @@ fn NewSocket(comptime ssl: bool) type {
 
             // Add SNI support for TLS (mongodb and others requires this)
             if (comptime ssl) {
-                if (this.connection) |connection| {
-                    if (connection == .host) {
-                        const host = normalizeHost(connection.host.host);
-                        if (host.len > 0) {
-                            var ssl_ptr: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, socket.getNativeHandle());
-                            if (!ssl_ptr.isInitFinished()) {
+                var ssl_ptr: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, socket.getNativeHandle());
+                if (!ssl_ptr.isInitFinished()) {
+                    if (this.connection) |connection| {
+                        if (connection == .host) {
+                            const host = normalizeHost(connection.host.host);
+                            if (host.len > 0) {
                                 var host__ = default_allocator.dupeZ(u8, host) catch unreachable;
                                 defer default_allocator.free(host__);
                                 ssl_ptr.setHostname(host__);
                             }
+                        }
+                    }
+                    if (this.protos) |protos| {
+                        if (this.handlers.is_server) {
+                            BoringSSL.SSL_CTX_set_alpn_select_cb(BoringSSL.SSL_get_SSL_CTX(ssl_ptr), selectALPNCallback, bun.cast(*anyopaque, this));
+                        } else {
+                            _ = BoringSSL.SSL_set_alpn_protos(ssl_ptr, protos.ptr, @intCast(c_uint, protos.len));
                         }
                     }
                 }
@@ -1748,9 +1808,16 @@ fn NewSocket(comptime ssl: bool) type {
                 this.poll_ref.unref(JSC.VirtualMachine.get());
             }
             // need to deinit event without being attached
+            if (this.owned_protos) {
+                if (this.protos) |protos| {
+                    this.protos = null;
+                    default_allocator.free(protos);
+                }
+            }
+
             if (this.connection) |connection| {
-                connection.deinit();
                 this.connection = null;
+                connection.deinit();
             }
         }
 
@@ -1788,6 +1855,84 @@ fn NewSocket(comptime ssl: bool) type {
             prev_handlers.unprotect();
             this.handlers.* = handlers; // TODO: this is a memory leak
             this.handlers.protect();
+
+            return JSValue.jsUndefined();
+        }
+
+        pub fn getALPNProtocol(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+        ) callconv(.C) JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsBoolean(false);
+            }
+
+            if (this.detached) {
+                return JSValue.jsBoolean(false);
+            }
+
+            var alpn_proto: [*c]const u8 = null;
+            var alpn_proto_len: u32 = 0;
+
+            var ssl_ptr: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+            BoringSSL.SSL_get0_alpn_selected(ssl_ptr, &alpn_proto, &alpn_proto_len);
+            if (alpn_proto == null or alpn_proto_len == 0) {
+                return JSValue.jsBoolean(false);
+            }
+
+            const slice = alpn_proto[0..alpn_proto_len];
+            if (strings.eql(slice, "h2")) {
+                return ZigString.static("h2").toValue(globalObject);
+            }
+            if (strings.eql(slice, "http/1.1")) {
+                return ZigString.static("http/1.1").toValue(globalObject);
+            }
+            return ZigString.fromUTF8(slice).toValueGC(globalObject);
+        }
+
+        pub fn setServername(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+            if (this.detached) {
+                return JSValue.jsUndefined();
+            }
+
+            if (this.handlers.is_server) {
+                globalObject.throw("Cannot issue SNI from a TLS server-side socket", .{});
+                return .zero;
+            }
+
+            const args = callframe.arguments(1);
+            if (args.len < 1) {
+                globalObject.throw("Expected 1 argument", .{});
+                return .zero;
+            }
+
+            const server_name = args.ptr[0];
+            if (!server_name.isString()) {
+                globalObject.throw("Expected \"serverName\" to be a string", .{});
+                return .zero;
+            }
+
+            const slice = server_name.getZigString(globalObject).toSlice(bun.default_allocator);
+            defer slice.deinit();
+            const host = normalizeHost(slice.slice());
+            if (host.len > 0) {
+                var ssl_ptr: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+                if (ssl_ptr.isInitFinished()) {
+                    // match node.js exceptions
+                    globalObject.throw("Already started.", .{});
+                    return .zero;
+                }
+                var host__ = default_allocator.dupeZ(u8, host) catch unreachable;
+                defer default_allocator.free(host__);
+                ssl_ptr.setHostname(host__);
+            }
 
             return JSValue.jsUndefined();
         }
@@ -1871,7 +2016,12 @@ fn NewSocket(comptime ssl: bool) type {
                 default_data.ensureStillAlive();
             }
 
-            const options = ssl_opts.?.asUSockets();
+            var socket_config = ssl_opts.?;
+            defer socket_config.deinit();
+            const options = socket_config.asUSockets();
+
+            const protos = socket_config.protos;
+            const protos_len = socket_config.protos_len;
 
             const ext_size = @sizeOf(WrappedSocket);
 
@@ -1881,7 +2031,14 @@ fn NewSocket(comptime ssl: bool) type {
             handlers_ptr.is_server = this.handlers.is_server;
             handlers_ptr.protect();
 
-            tls.* = .{ .handlers = handlers_ptr, .this_value = .zero, .socket = undefined, .connection = if (this.connection) |c| c.clone() else null, .wrapped = .tls };
+            tls.* = .{
+                .handlers = handlers_ptr,
+                .this_value = .zero,
+                .socket = undefined,
+                .connection = if (this.connection) |c| c.clone() else null,
+                .wrapped = .tls,
+                .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p[0..protos_len]) catch unreachable) else null,
+            };
 
             var tls_js_value = tls.getThisValue(globalObject);
             TLSSocket.dataSetCached(tls_js_value, globalObject, default_data);
@@ -1928,7 +2085,14 @@ fn NewSocket(comptime ssl: bool) type {
             raw_handlers_ptr.* = cloned_handlers;
             raw_handlers_ptr.is_server = this.handlers.is_server;
             raw_handlers_ptr.protect();
-            raw.* = .{ .handlers = raw_handlers_ptr, .this_value = .zero, .socket = new_socket, .connection = if (this.connection) |c| c.clone() else null, .wrapped = .tcp };
+            raw.* = .{
+                .handlers = raw_handlers_ptr,
+                .this_value = .zero,
+                .socket = new_socket,
+                .connection = if (this.connection) |c| c.clone() else null,
+                .wrapped = .tcp,
+                .protos = null,
+            };
 
             var raw_js_value = raw.getThisValue(globalObject);
             if (JSSocketType(ssl).dataGetCached(this.getThisValue(globalObject))) |raw_default_data| {

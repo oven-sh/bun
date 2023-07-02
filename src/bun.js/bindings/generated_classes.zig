@@ -4426,6 +4426,9 @@ pub const JSTCPSocket = struct {
             @compileLog("TCPSocket.finalize is not a finalizer");
         }
 
+        if (@TypeOf(TCPSocket.getALPNProtocol) != GetterType)
+            @compileLog("Expected TCPSocket.getALPNProtocol to be a getter");
+
         if (@TypeOf(TCPSocket.getAuthorized) != GetterType)
             @compileLog("Expected TCPSocket.getAuthorized to be a getter");
 
@@ -4458,6 +4461,8 @@ pub const JSTCPSocket = struct {
         if (@TypeOf(TCPSocket.getRemoteAddress) != GetterType)
             @compileLog("Expected TCPSocket.getRemoteAddress to be a getter");
 
+        if (@TypeOf(TCPSocket.setServername) != CallbackType)
+            @compileLog("Expected TCPSocket.setServername to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.setServername)));
         if (@TypeOf(TCPSocket.shutdown) != CallbackType)
             @compileLog("Expected TCPSocket.shutdown to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.shutdown)));
         if (@TypeOf(TCPSocket.timeout) != CallbackType)
@@ -4472,6 +4477,7 @@ pub const JSTCPSocket = struct {
             @export(TCPSocket.end, .{ .name = "TCPSocketPrototype__end" });
             @export(TCPSocket.finalize, .{ .name = "TCPSocketClass__finalize" });
             @export(TCPSocket.flush, .{ .name = "TCPSocketPrototype__flush" });
+            @export(TCPSocket.getALPNProtocol, .{ .name = "TCPSocketPrototype__getALPNProtocol" });
             @export(TCPSocket.getAuthorizationError, .{ .name = "TCPSocketPrototype__getAuthorizationError" });
             @export(TCPSocket.getAuthorized, .{ .name = "TCPSocketPrototype__getAuthorized" });
             @export(TCPSocket.getData, .{ .name = "TCPSocketPrototype__getData" });
@@ -4484,6 +4490,7 @@ pub const JSTCPSocket = struct {
             @export(TCPSocket.ref, .{ .name = "TCPSocketPrototype__ref" });
             @export(TCPSocket.reload, .{ .name = "TCPSocketPrototype__reload" });
             @export(TCPSocket.setData, .{ .name = "TCPSocketPrototype__setData" });
+            @export(TCPSocket.setServername, .{ .name = "TCPSocketPrototype__setServername" });
             @export(TCPSocket.shutdown, .{ .name = "TCPSocketPrototype__shutdown" });
             @export(TCPSocket.timeout, .{ .name = "TCPSocketPrototype__timeout" });
             @export(TCPSocket.unref, .{ .name = "TCPSocketPrototype__unref" });
@@ -4587,6 +4594,9 @@ pub const JSTLSSocket = struct {
             @compileLog("TLSSocket.finalize is not a finalizer");
         }
 
+        if (@TypeOf(TLSSocket.getALPNProtocol) != GetterType)
+            @compileLog("Expected TLSSocket.getALPNProtocol to be a getter");
+
         if (@TypeOf(TLSSocket.getAuthorized) != GetterType)
             @compileLog("Expected TLSSocket.getAuthorized to be a getter");
 
@@ -4619,6 +4629,8 @@ pub const JSTLSSocket = struct {
         if (@TypeOf(TLSSocket.getRemoteAddress) != GetterType)
             @compileLog("Expected TLSSocket.getRemoteAddress to be a getter");
 
+        if (@TypeOf(TLSSocket.setServername) != CallbackType)
+            @compileLog("Expected TLSSocket.setServername to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.setServername)));
         if (@TypeOf(TLSSocket.shutdown) != CallbackType)
             @compileLog("Expected TLSSocket.shutdown to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.shutdown)));
         if (@TypeOf(TLSSocket.timeout) != CallbackType)
@@ -4633,6 +4645,7 @@ pub const JSTLSSocket = struct {
             @export(TLSSocket.end, .{ .name = "TLSSocketPrototype__end" });
             @export(TLSSocket.finalize, .{ .name = "TLSSocketClass__finalize" });
             @export(TLSSocket.flush, .{ .name = "TLSSocketPrototype__flush" });
+            @export(TLSSocket.getALPNProtocol, .{ .name = "TLSSocketPrototype__getALPNProtocol" });
             @export(TLSSocket.getAuthorizationError, .{ .name = "TLSSocketPrototype__getAuthorizationError" });
             @export(TLSSocket.getAuthorized, .{ .name = "TLSSocketPrototype__getAuthorized" });
             @export(TLSSocket.getData, .{ .name = "TLSSocketPrototype__getData" });
@@ -4645,6 +4658,7 @@ pub const JSTLSSocket = struct {
             @export(TLSSocket.ref, .{ .name = "TLSSocketPrototype__ref" });
             @export(TLSSocket.reload, .{ .name = "TLSSocketPrototype__reload" });
             @export(TLSSocket.setData, .{ .name = "TLSSocketPrototype__setData" });
+            @export(TLSSocket.setServername, .{ .name = "TLSSocketPrototype__setServername" });
             @export(TLSSocket.shutdown, .{ .name = "TLSSocketPrototype__shutdown" });
             @export(TLSSocket.timeout, .{ .name = "TLSSocketPrototype__timeout" });
             @export(TLSSocket.unref, .{ .name = "TLSSocketPrototype__unref" });

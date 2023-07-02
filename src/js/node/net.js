@@ -380,6 +380,7 @@ const Socket = (function (InternalSocket) {
           pauseOnConnect,
           servername,
         } = port;
+
         this.servername = servername;
         if (socket) {
           if (typeof socket !== "object" || !(socket instanceof Socket) || typeof socket[bunTlsSymbol] === "function") {
@@ -423,7 +424,6 @@ const Socket = (function (InternalSocket) {
         this._securePending = true;
         if (connectListener) this.on("secureConnect", connectListener);
       } else if (connectListener) this.on("connect", connectListener);
-
       // start using existing connection
 
       if (connection) {

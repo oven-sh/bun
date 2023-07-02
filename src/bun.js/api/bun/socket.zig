@@ -1022,8 +1022,8 @@ fn NewSocket(comptime ssl: bool) type {
             var globalObject = handlers.globalObject;
             const err = JSC.SystemError{
                 .errno = errno,
-                .message = ZigString.init("Failed to connect"),
-                .syscall = ZigString.init("connect"),
+                .message = bun.String.static("Failed to connect"),
+                .syscall = bun.String.static("connect"),
             };
 
             if (callback == .zero) {
@@ -1232,8 +1232,8 @@ fn NewSocket(comptime ssl: bool) type {
                     const reason = if (ssl_error.reason == null) "" else ssl_error.reason[0..bun.len(ssl_error.reason)];
 
                     const fallback = JSC.SystemError{
-                        .code = ZigString.init(code),
-                        .message = ZigString.init(reason),
+                        .code = bun.String.create(code),
+                        .message = bun.String.create(reason),
                     };
 
                     authorization_error = fallback.toErrorInstance(globalObject);
@@ -1409,8 +1409,8 @@ fn NewSocket(comptime ssl: bool) type {
             const reason = if (ssl_error.reason == null) "" else ssl_error.reason[0..bun.len(ssl_error.reason)];
 
             const fallback = JSC.SystemError{
-                .code = ZigString.init(code),
-                .message = ZigString.init(reason),
+                .code = bun.String.create(code),
+                .message = bun.String.create(reason),
             };
 
             return fallback.toErrorInstance(globalObject);

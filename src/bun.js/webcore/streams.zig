@@ -1964,10 +1964,10 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                     pub const message = std.fmt.comptimePrint("{s} is not constructable", .{SinkType.name});
                 };
                 const err = JSC.SystemError{
-                    .message = ZigString.init(Static.message),
-                    .code = ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_ILLEGAL_CONSTRUCTOR))),
+                    .message = bun.String.static(Static.message),
+                    .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_ILLEGAL_CONSTRUCTOR))),
                 };
-                globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
+                globalThis.throwValue(err.toErrorInstance(globalThis));
                 return JSC.JSValue.jsUndefined();
             }
 

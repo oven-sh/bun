@@ -9174,8 +9174,10 @@ const LinkerContext = struct {
                         },
                     )) {
                         .err => |err| {
+                            var message = err.toSystemError().message.toUTF8(bun.default_allocator);
+                            defer message.deinit();
                             c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing sourcemap for chunk {}", .{
-                                bun.fmt.quote(err.toSystemError().message.slice()),
+                                bun.fmt.quote(message.slice()),
                                 bun.fmt.quote(chunk.final_rel_path),
                             }) catch unreachable;
                             return error.WriteFailed;
@@ -9242,8 +9244,10 @@ const LinkerContext = struct {
                 },
             )) {
                 .err => |err| {
+                    var message = err.toSystemError().message.toUTF8(bun.default_allocator);
+                    defer message.deinit();
                     c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing chunk {}", .{
-                        bun.fmt.quote(err.toSystemError().message.slice()),
+                        bun.fmt.quote(message.slice()),
                         bun.fmt.quote(chunk.final_rel_path),
                     }) catch unreachable;
                     return error.WriteFailed;
@@ -9309,8 +9313,10 @@ const LinkerContext = struct {
                 },
             )) {
                 .err => |err| {
+                    const utf8 = err.toSystemError().message.toUTF8(bun.default_allocator);
+                    defer utf8.deinit();
                     c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing chunk {}", .{
-                        bun.fmt.quote(err.toSystemError().message.slice()),
+                        bun.fmt.quote(utf8.slice()),
                         bun.fmt.quote(components_manifest_path),
                     }) catch unreachable;
                     return error.WriteFailed;
@@ -9383,8 +9389,10 @@ const LinkerContext = struct {
                     },
                 )) {
                     .err => |err| {
+                        const utf8 = err.toSystemError().message.toUTF8(bun.default_allocator);
+                        defer utf8.deinit();
                         c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing file {}", .{
-                            bun.fmt.quote(err.toSystemError().message.slice()),
+                            bun.fmt.quote(utf8.slice()),
                             bun.fmt.quote(src.src_path.text),
                         }) catch unreachable;
                         return error.WriteFailed;

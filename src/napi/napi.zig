@@ -303,16 +303,7 @@ pub export fn napi_create_string_utf16(env: napi_env, str: [*]const char16_t, le
     return .ok;
 }
 pub extern fn napi_create_symbol(env: napi_env, description: napi_value, result: *napi_value) napi_status;
-pub export fn napi_create_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status {
-    log("napi_create_error: \"{any}\"", .{msg.getZigString(env)});
-    const system_error = JSC.SystemError{
-        .code = if (!code.isEmptyOrUndefinedOrNull()) code.getZigString(env) else ZigString.Empty,
-        .message = msg.getZigString(env),
-    };
-    result.* = system_error.toErrorInstance(env);
-    return .ok;
-}
-
+pub extern fn napi_create_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_create_type_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_create_range_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_typeof(env: napi_env, value: napi_value, result: *napi_valuetype) napi_status;

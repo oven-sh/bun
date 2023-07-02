@@ -554,7 +554,6 @@ extern "C" napi_status napi_wrap(napi_env env,
 
     auto* globalObject = toJS(env);
     auto& vm = globalObject->vm();
-    
 
     auto* val = jsDynamicCast<NapiPrototype*>(value);
 
@@ -572,7 +571,7 @@ extern "C" napi_status napi_wrap(napi_env env,
     auto clientData = WebCore::clientData(vm);
 
     auto* ref = new NapiRef(globalObject, 1);
-    ref->strongRef.set(globalObject->vm(), value.getObject());    
+    ref->strongRef.set(globalObject->vm(), value.getObject());
 
     if (finalize_cb) {
         ref->finalizer.finalize_cb = finalize_cb;
@@ -816,7 +815,7 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
         }
     }
 
-    if(object) {
+    if (object) {
         object->napiRef = ref;
     }
 
@@ -1029,7 +1028,26 @@ extern "C" napi_status napi_create_type_error(napi_env env, napi_value code,
 
     auto error = JSC::createTypeError(globalObject, messageValue.toWTFString(globalObject));
     if (codeValue) {
-        error->putDirect(vm, Identifier::fromString(vm, "code"_s), codeValue, 0);
+        error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), codeValue, 0);
+    }
+
+    *result = reinterpret_cast<napi_value>(JSC::JSValue::encode(error));
+    return napi_ok;
+}
+
+extern "C" napi_status napi_create_error(napi_env env, napi_value code,
+    napi_value msg,
+    napi_value* result)
+{
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = globalObject->vm();
+
+    JSC::JSValue codeValue = JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(code));
+    JSC::JSValue messageValue = JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(msg));
+
+    auto error = JSC::createError(globalObject, messageValue.toWTFString(globalObject));
+    if (codeValue) {
+        error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), codeValue, 0);
     }
 
     *result = reinterpret_cast<napi_value>(JSC::JSValue::encode(error));
@@ -1474,7 +1492,8 @@ extern "C" napi_status napi_get_property_names(napi_env env, napi_value object,
     return napi_ok;
 }
 
-extern "C" napi_status napi_create_object(napi_env env, napi_value* result){
+extern "C" napi_status napi_create_object(napi_env env, napi_value* result)
+{
 
     if (UNLIKELY(result == nullptr)) {
         return napi_invalid_arg;

@@ -1796,7 +1796,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         .syscall = .sendfile,
                     };
                     var sys = err.withPathLike(file.pathlike).toSystemError();
-                    sys.message = ZigString.init("MacOS does not support sending non-regular files");
+                    sys.message = bun.String.static("MacOS does not support sending non-regular files");
                     this.runErrorHandler(sys.toErrorInstance(
                         this.server.globalThis,
                     ));
@@ -1815,7 +1815,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         .syscall = .sendfile,
                     };
                     var sys = err.withPathLike(file.pathlike).toSystemError();
-                    sys.message = ZigString.init("File must be regular or FIFO");
+                    sys.message = bun.String.static("File must be regular or FIFO");
                     this.runErrorHandler(sys.toErrorInstance(
                         this.server.globalThis,
                     ));
@@ -2375,8 +2375,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             const fallback = JSC.SystemError{
-                .code = ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_UNHANDLED_ERROR))),
-                .message = ZigString.init("Unhandled error in ReadableStream"),
+                .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_UNHANDLED_ERROR))),
+                .message = bun.String.static("Unhandled error in ReadableStream"),
             };
             req.handleReject(fallback.toErrorInstance(globalThis));
         }
@@ -2422,8 +2422,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         if (stream.isLocked(this.server.globalThis)) {
                             streamLog("was locked but it shouldn't be", .{});
                             var err = JSC.SystemError{
-                                .code = ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_STREAM_CANNOT_PIPE))),
-                                .message = ZigString.init("Stream already used, please create a new one"),
+                                .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_STREAM_CANNOT_PIPE))),
+                                .message = bun.String.static("Stream already used, please create a new one"),
                             };
                             stream.value.unprotect();
                             this.runErrorHandler(err.toErrorInstance(this.server.globalThis));

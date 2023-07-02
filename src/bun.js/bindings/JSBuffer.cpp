@@ -1436,42 +1436,55 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
     if (length == 0)
         return JSC::JSValue::encode(JSC::jsEmptyString(vm));
 
-    switch (callFrame->argumentCount()) {
-    case 0: {
-        break;
-    }
-    case 2:
-    case 3:
-    case 1: {
-        EnsureStillAliveScope arg1 = callFrame->uncheckedArgument(0);
-        if (!arg1.value().isUndefined()) {
-            encoding = parseEncoding(lexicalGlobalObject, scope, arg1.value());
+    size_t argsCount = callFrame->argumentCount();
+
+    JSC::JSValue arg1 = callFrame->argument(0);
+    JSC::JSValue arg2 = callFrame->argument(1);
+    JSC::JSValue arg3 = callFrame->argument(2);
+
+    // This method could be called in following forms:
+    // - toString()
+    // - toString(encoding)
+    // - toString(encoding, start)
+    // - toString(encoding, start, end)
+    // - toString(offset, length)
+    // - toString(offset, length, encoding)
+    if (argsCount == 0)
+        return jsBufferToString(vm, lexicalGlobalObject, castedThis, offset, length, encoding);
+
+    if (arg1.isString()) {
+            encoding = parseEncoding(lexicalGlobalObject, scope, arg1);
             RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
-        }
-        if (callFrame->argumentCount() == 1)
-            break;
-    }
-    // any
-    case 5: {
-        JSC::JSValue arg2 = callFrame->uncheckedArgument(1);
-        int32_t ioffset = arg2.toInt32(lexicalGlobalObject);
+
+            if (!arg3.isUndefined()) {
+                // length is end
+                length = std::min(byteLength, static_cast<uint32_t>(arg3.toInt32(lexicalGlobalObject)));
+            }
+
+            int32_t istart = arg2.toInt32(lexicalGlobalObject);
+            if (istart < 0) {
+                throwTypeError(lexicalGlobalObject, scope, "Start must be a positive integer"_s);
+                return JSC::JSValue::encode(jsUndefined());
+            }
+            offset = static_cast<uint32_t>(istart);
+            length = (length > offset) ? (length - offset) : 0;
+    } else {
+        int32_t ioffset = arg1.toInt32(lexicalGlobalObject);
         if (ioffset < 0) {
             throwTypeError(lexicalGlobalObject, scope, "Offset must be a positive integer"_s);
             return JSC::JSValue::encode(jsUndefined());
         }
         offset = static_cast<uint32_t>(ioffset);
+        length = (length > offset) ? (length - offset) : 0;
 
-        if (callFrame->argumentCount() == 2)
-            break;
-    }
+        if (!arg3.isUndefined()) {
+            encoding = parseEncoding(lexicalGlobalObject, scope, arg3);
+            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+        }
 
-    default: {
-        length = std::min(byteLength, static_cast<uint32_t>(callFrame->argument(2).toInt32(lexicalGlobalObject)));
-        break;
+        if (!arg2.isUndefined())
+            length = std::min(length, static_cast<uint32_t>(arg2.toInt32(lexicalGlobalObject)));
     }
-    }
-
-    length -= std::min(offset, length);
 
     return jsBufferToString(vm, lexicalGlobalObject, castedThis, offset, length, encoding);
 }

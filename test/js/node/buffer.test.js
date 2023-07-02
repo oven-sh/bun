@@ -2353,6 +2353,85 @@ it("Buffer.byteLength()", () => {
   }
 });
 
+it("Buffer.toString(encoding, start, end)", () => {
+  const buf = Buffer.from("0123456789", "utf8");
+
+  expect(buf.toString()).toStrictEqual("0123456789");
+  expect(buf.toString("utf8")).toStrictEqual("0123456789");
+  expect(buf.toString("utf8", 3)).toStrictEqual("3456789");
+  expect(buf.toString("utf8", 3, 4)).toStrictEqual("3");
+
+  expect(buf.toString("utf8", 3, 100)).toStrictEqual("3456789");
+  expect(buf.toString("utf8", 3, 1)).toStrictEqual("");
+  expect(buf.toString("utf8", 100, 200)).toStrictEqual("");
+  expect(buf.toString("utf8", 100, 1)).toStrictEqual("");
+});
+
+it("Buffer.toString(offset, length, encoding)", () => {
+  const buf = Buffer.from("0123456789", "utf8");
+
+  expect(buf.toString(3, 6, "utf8")).toStrictEqual("345678");
+  expect(buf.toString(3, 100, "utf8")).toStrictEqual("3456789");
+  expect(buf.toString(100, 200, "utf8")).toStrictEqual("");
+  expect(buf.toString(100, 50, "utf8")).toStrictEqual("");
+});
+
+it("Buffer.asciiSlice())", () => {
+  const buf = Buffer.from("0123456789", "ascii");
+
+  expect(buf.asciiSlice()).toStrictEqual("0123456789");
+  expect(buf.asciiSlice(3)).toStrictEqual("3456789");
+  expect(buf.asciiSlice(3, 4)).toStrictEqual("3");
+});
+
+it("Buffer.latin1Slice()", () => {
+  const buf = Buffer.from("âéö", "latin1");
+
+  expect(buf.latin1Slice()).toStrictEqual("âéö");
+  expect(buf.latin1Slice(1)).toStrictEqual("éö");
+  expect(buf.latin1Slice(1, 2)).toStrictEqual("é");
+});
+
+it("Buffer.utf8Slice()", () => {
+  const buf = Buffer.from("あいうえお", "utf8");
+
+  expect(buf.utf8Slice()).toStrictEqual("あいうえお");
+  expect(buf.utf8Slice(3)).toStrictEqual("いうえお");
+  expect(buf.utf8Slice(3, 6)).toStrictEqual("い");
+});
+
+it("Buffer.hexSlice()", () => {
+  const buf = Buffer.from("0123456789", "utf8");
+
+  expect(buf.hexSlice()).toStrictEqual("30313233343536373839");
+  expect(buf.hexSlice(3)).toStrictEqual("33343536373839");
+  expect(buf.hexSlice(3, 4)).toStrictEqual("33");
+});
+
+it("Buffer.ucs2Slice()", () => {
+  const buf = Buffer.from("あいうえお", "ucs2");
+
+  expect(buf.ucs2Slice()).toStrictEqual("あいうえお");
+  expect(buf.ucs2Slice(2)).toStrictEqual("いうえお");
+  expect(buf.ucs2Slice(2, 6)).toStrictEqual("いう");
+});
+
+it("Buffer.base64Slice()", () => {
+  const buf = Buffer.from("0123456789", "utf8");
+
+  expect(buf.base64Slice()).toStrictEqual("MDEyMzQ1Njc4OQ==");
+  expect(buf.base64Slice(3)).toStrictEqual("MzQ1Njc4OQ==");
+  expect(buf.base64Slice(3, 4)).toStrictEqual("Mw==");
+});
+
+it("Buffer.base64urlSlice()", () => {
+  const buf = Buffer.from("0123456789", "utf8");
+
+  expect(buf.base64urlSlice()).toStrictEqual("MDEyMzQ1Njc4OQ");
+  expect(buf.base64urlSlice(3)).toStrictEqual("MzQ1Njc4OQ");
+  expect(buf.base64urlSlice(3, 4)).toStrictEqual("Mw");
+});
+
 it("should not crash on invalid UTF-8 byte sequence", () => {
   const buf = Buffer.from([0xc0, 0xfd]);
   expect(buf.length).toBe(2);

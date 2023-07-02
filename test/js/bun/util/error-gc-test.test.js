@@ -48,20 +48,32 @@ test("error gc test #3", () => {
 // - The test failure message gets a non-sensical error
 test("error gc test #4", () => {
   for (let i = 0; i < 1000; i++) {
-    const path =
+    let path =
       // Use a long-enough string for it to be obvious if we leak memory
-      "i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/ii/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/ii/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i";
+      "/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/ii/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/ii/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i/don/t/exist/tmp/i";
     try {
       readFileSync(path);
+      throw new Error("unreachable");
     } catch (e) {
+      if (e.message === "unreachable") {
+        throw e;
+      }
+
       const inspected = Bun.inspect(e);
-      // Deliberately avoid using .toContain() because we want to rule out any
+      Bun.gc(true);
+
+      // Deliberately avoid using .toContain() directly to avoid
       // BunString shenanigins.
       //
       // Only JSC builtin functions to operate on the string after inspecting it.
       //
-      expect(inspected.includes(path)).toBeTrue();
-      expect(inspected.includes("ENOENT")).toBeTrue();
+      if (!inspected.includes(path)) {
+        expect(inspected).toContain(path);
+      }
+
+      if (!inspected.includes("ENOENT")) {
+        expect(inspected).toContain("ENOENT");
+      }
     } finally {
       Bun.gc(true);
     }

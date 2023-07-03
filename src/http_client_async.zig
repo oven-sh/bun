@@ -1629,7 +1629,6 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var override_accept_encoding = false;
     var override_accept_header = false;
     var override_host_header = false;
-
     var override_user_agent = false;
 
     for (header_names, 0..) |head, i| {
@@ -1710,7 +1709,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
         header_count += 1;
     }
 
-    if (body_len > 0) {
+    if (body_len > 0 or this.method.hasRequestBody()) {
         request_headers_buf[header_count] = .{
             .name = content_length_header_name,
             .value = std.fmt.bufPrint(&this.request_content_len_buf, "{d}", .{body_len}) catch "0",

@@ -34,6 +34,21 @@ test("just like in jest", () => {
   jest.useRealTimers();
   expect(new Date().getFullYear()).toBeGreaterThan(2020);
 });
+
+test("unlike in jest", () => {
+  const OriginalDate = Date;
+  jest.useFakeTimers();
+  if (typeof Bun === "undefined") {
+    // In Jest, the Date constructor changes
+    // That can cause all sorts of bugs because suddenly Date !== Date before the test.
+    expect(Date).not.toBe(OriginalDate);
+    expect(Date.now).not.toBe(OriginalDate.now);
+  } else {
+    // In bun:test, Date constructor does not change when you useFakeTimers
+    expect(Date).toBe(OriginalDate);
+    expect(Date.now).toBe(OriginalDate.now);
+  }
+});
 ```
 
 Note that we have not implemented builtin support for mocking timers yet, but this is on the roadmap.
@@ -73,6 +88,7 @@ test("Welcome to California!", () => {
 });
 
 test("Welcome to New York!", () => {
+  // Unlike in jest, you can set the timezone multiple times at runtime and it will work.
   process.env.TZ = "America/New_York";
   expect(new Date().getTimezoneOffset()).toBe(240);
   expect(new Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(

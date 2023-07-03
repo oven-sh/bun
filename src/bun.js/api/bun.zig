@@ -3794,6 +3794,8 @@ pub const Timer = struct {
                         result.then(globalThis, this, CallbackJob__onResolve, CallbackJob__onReject);
                     },
                 }
+            } else {
+                this.deinit();
             }
         }
     };

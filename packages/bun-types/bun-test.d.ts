@@ -29,6 +29,36 @@ declare module "bun:test" {
     <T extends AnyFunction>(Function: T): Mock<T>;
   };
 
+  /**
+   * Control the system time used by:
+   * - `Date.now()`
+   * - `new Date()`
+   * - `Intl.DateTimeFormat().format()`
+   *
+   * In the future, we may add support for more functions, but we haven't done that yet.
+   *
+   * @param now The time to set the system time to. If not provided, the system time will be reset.
+   * @returns `this`
+   * @since v0.6.13
+   *
+   * ## Set Date to a specific time
+   *
+   * ```js
+   * import { setSystemTime } from 'bun:test';
+   *
+   * setSystemTime(new Date('2020-01-01T00:00:00.000Z'));
+   * console.log(new Date().toISOString()); // 2020-01-01T00:00:00.000Z
+   * ```
+   * ## Reset Date to the current time
+   *
+   * ```js
+   * import { setSystemTime } from 'bun:test';
+   *
+   * setSystemTime();
+   * ```
+   */
+  export function setSystemTime(now?: Date | number): ThisType<void>;
+
   interface Jest {
     restoreAllMocks(): void;
     fn<T extends AnyFunction>(func?: T): Mock<T>;

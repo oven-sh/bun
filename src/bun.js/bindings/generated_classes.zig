@@ -4426,6 +4426,9 @@ pub const JSTCPSocket = struct {
             @compileLog("TCPSocket.finalize is not a finalizer");
         }
 
+        if (@TypeOf(TCPSocket.getALPNProtocol) != GetterType)
+            @compileLog("Expected TCPSocket.getALPNProtocol to be a getter");
+
         if (@TypeOf(TCPSocket.getAuthorized) != GetterType)
             @compileLog("Expected TCPSocket.getAuthorized to be a getter");
 
@@ -4446,6 +4449,8 @@ pub const JSTCPSocket = struct {
         if (@TypeOf(TCPSocket.getLocalPort) != GetterType)
             @compileLog("Expected TCPSocket.getLocalPort to be a getter");
 
+        if (@TypeOf(TCPSocket.open) != CallbackType)
+            @compileLog("Expected TCPSocket.open to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.open)));
         if (@TypeOf(TCPSocket.getReadyState) != GetterType)
             @compileLog("Expected TCPSocket.getReadyState to be a getter");
 
@@ -4456,18 +4461,23 @@ pub const JSTCPSocket = struct {
         if (@TypeOf(TCPSocket.getRemoteAddress) != GetterType)
             @compileLog("Expected TCPSocket.getRemoteAddress to be a getter");
 
+        if (@TypeOf(TCPSocket.setServername) != CallbackType)
+            @compileLog("Expected TCPSocket.setServername to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.setServername)));
         if (@TypeOf(TCPSocket.shutdown) != CallbackType)
             @compileLog("Expected TCPSocket.shutdown to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.shutdown)));
         if (@TypeOf(TCPSocket.timeout) != CallbackType)
             @compileLog("Expected TCPSocket.timeout to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.timeout)));
         if (@TypeOf(TCPSocket.unref) != CallbackType)
             @compileLog("Expected TCPSocket.unref to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.unref)));
+        if (@TypeOf(TCPSocket.wrapTLS) != CallbackType)
+            @compileLog("Expected TCPSocket.wrapTLS to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.wrapTLS)));
         if (@TypeOf(TCPSocket.write) != CallbackType)
             @compileLog("Expected TCPSocket.write to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.write)));
         if (!JSC.is_bindgen) {
             @export(TCPSocket.end, .{ .name = "TCPSocketPrototype__end" });
             @export(TCPSocket.finalize, .{ .name = "TCPSocketClass__finalize" });
             @export(TCPSocket.flush, .{ .name = "TCPSocketPrototype__flush" });
+            @export(TCPSocket.getALPNProtocol, .{ .name = "TCPSocketPrototype__getALPNProtocol" });
             @export(TCPSocket.getAuthorizationError, .{ .name = "TCPSocketPrototype__getAuthorizationError" });
             @export(TCPSocket.getAuthorized, .{ .name = "TCPSocketPrototype__getAuthorized" });
             @export(TCPSocket.getData, .{ .name = "TCPSocketPrototype__getData" });
@@ -4476,12 +4486,15 @@ pub const JSTCPSocket = struct {
             @export(TCPSocket.getReadyState, .{ .name = "TCPSocketPrototype__getReadyState" });
             @export(TCPSocket.getRemoteAddress, .{ .name = "TCPSocketPrototype__getRemoteAddress" });
             @export(TCPSocket.hasPendingActivity, .{ .name = "TCPSocket__hasPendingActivity" });
+            @export(TCPSocket.open, .{ .name = "TCPSocketPrototype__open" });
             @export(TCPSocket.ref, .{ .name = "TCPSocketPrototype__ref" });
             @export(TCPSocket.reload, .{ .name = "TCPSocketPrototype__reload" });
             @export(TCPSocket.setData, .{ .name = "TCPSocketPrototype__setData" });
+            @export(TCPSocket.setServername, .{ .name = "TCPSocketPrototype__setServername" });
             @export(TCPSocket.shutdown, .{ .name = "TCPSocketPrototype__shutdown" });
             @export(TCPSocket.timeout, .{ .name = "TCPSocketPrototype__timeout" });
             @export(TCPSocket.unref, .{ .name = "TCPSocketPrototype__unref" });
+            @export(TCPSocket.wrapTLS, .{ .name = "TCPSocketPrototype__wrapTLS" });
             @export(TCPSocket.write, .{ .name = "TCPSocketPrototype__write" });
         }
     }
@@ -4581,6 +4594,9 @@ pub const JSTLSSocket = struct {
             @compileLog("TLSSocket.finalize is not a finalizer");
         }
 
+        if (@TypeOf(TLSSocket.getALPNProtocol) != GetterType)
+            @compileLog("Expected TLSSocket.getALPNProtocol to be a getter");
+
         if (@TypeOf(TLSSocket.getAuthorized) != GetterType)
             @compileLog("Expected TLSSocket.getAuthorized to be a getter");
 
@@ -4601,6 +4617,8 @@ pub const JSTLSSocket = struct {
         if (@TypeOf(TLSSocket.getLocalPort) != GetterType)
             @compileLog("Expected TLSSocket.getLocalPort to be a getter");
 
+        if (@TypeOf(TLSSocket.open) != CallbackType)
+            @compileLog("Expected TLSSocket.open to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.open)));
         if (@TypeOf(TLSSocket.getReadyState) != GetterType)
             @compileLog("Expected TLSSocket.getReadyState to be a getter");
 
@@ -4611,18 +4629,23 @@ pub const JSTLSSocket = struct {
         if (@TypeOf(TLSSocket.getRemoteAddress) != GetterType)
             @compileLog("Expected TLSSocket.getRemoteAddress to be a getter");
 
+        if (@TypeOf(TLSSocket.setServername) != CallbackType)
+            @compileLog("Expected TLSSocket.setServername to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.setServername)));
         if (@TypeOf(TLSSocket.shutdown) != CallbackType)
             @compileLog("Expected TLSSocket.shutdown to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.shutdown)));
         if (@TypeOf(TLSSocket.timeout) != CallbackType)
             @compileLog("Expected TLSSocket.timeout to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.timeout)));
         if (@TypeOf(TLSSocket.unref) != CallbackType)
             @compileLog("Expected TLSSocket.unref to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.unref)));
+        if (@TypeOf(TLSSocket.wrapTLS) != CallbackType)
+            @compileLog("Expected TLSSocket.wrapTLS to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.wrapTLS)));
         if (@TypeOf(TLSSocket.write) != CallbackType)
             @compileLog("Expected TLSSocket.write to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.write)));
         if (!JSC.is_bindgen) {
             @export(TLSSocket.end, .{ .name = "TLSSocketPrototype__end" });
             @export(TLSSocket.finalize, .{ .name = "TLSSocketClass__finalize" });
             @export(TLSSocket.flush, .{ .name = "TLSSocketPrototype__flush" });
+            @export(TLSSocket.getALPNProtocol, .{ .name = "TLSSocketPrototype__getALPNProtocol" });
             @export(TLSSocket.getAuthorizationError, .{ .name = "TLSSocketPrototype__getAuthorizationError" });
             @export(TLSSocket.getAuthorized, .{ .name = "TLSSocketPrototype__getAuthorized" });
             @export(TLSSocket.getData, .{ .name = "TLSSocketPrototype__getData" });
@@ -4631,12 +4654,15 @@ pub const JSTLSSocket = struct {
             @export(TLSSocket.getReadyState, .{ .name = "TLSSocketPrototype__getReadyState" });
             @export(TLSSocket.getRemoteAddress, .{ .name = "TLSSocketPrototype__getRemoteAddress" });
             @export(TLSSocket.hasPendingActivity, .{ .name = "TLSSocket__hasPendingActivity" });
+            @export(TLSSocket.open, .{ .name = "TLSSocketPrototype__open" });
             @export(TLSSocket.ref, .{ .name = "TLSSocketPrototype__ref" });
             @export(TLSSocket.reload, .{ .name = "TLSSocketPrototype__reload" });
             @export(TLSSocket.setData, .{ .name = "TLSSocketPrototype__setData" });
+            @export(TLSSocket.setServername, .{ .name = "TLSSocketPrototype__setServername" });
             @export(TLSSocket.shutdown, .{ .name = "TLSSocketPrototype__shutdown" });
             @export(TLSSocket.timeout, .{ .name = "TLSSocketPrototype__timeout" });
             @export(TLSSocket.unref, .{ .name = "TLSSocketPrototype__unref" });
+            @export(TLSSocket.wrapTLS, .{ .name = "TLSSocketPrototype__wrapTLS" });
             @export(TLSSocket.write, .{ .name = "TLSSocketPrototype__write" });
         }
     }

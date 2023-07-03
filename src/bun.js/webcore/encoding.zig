@@ -985,6 +985,14 @@ pub const Encoder = struct {
         }
     }
 
+    pub fn encodeIntoFrom16(input: []const u16, to: []u8, comptime encoding: JSC.Node.Encoding, comptime allow_partial_write: bool) !usize {
+        return writeU16(input.ptr, input.len, to.ptr, to.len, encoding, allow_partial_write);
+    }
+
+    pub fn encodeIntoFrom8(input: []const u8, to: []u8, comptime encoding: JSC.Node.Encoding) !usize {
+        return writeU8(input.ptr, input.len, to.ptr, to.len, encoding);
+    }
+
     pub fn writeU16(input: [*]const u16, len: usize, to: [*]u8, to_len: usize, comptime encoding: JSC.Node.Encoding, comptime allow_partial_write: bool) !usize {
         if (len == 0)
             return 0;

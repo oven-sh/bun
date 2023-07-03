@@ -64,6 +64,7 @@ const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerHandlers = Symbol.for("::bunsocket_serverhandlers::");
 const bunSocketServerConnections = Symbol.for("::bunnetserverconnections::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
+const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
 
 var SocketClass;
 const Socket = (function (InternalSocket) {
@@ -117,7 +118,7 @@ const Socket = (function (InternalSocket) {
         const self = socket.data;
         socket.timeout(self.timeout);
         socket.ref();
-        self.#socket = socket;
+        self[bunSocketInternal] = socket;
         self.connecting = false;
         self.emit("connect", self);
         Socket.#Drain(socket);
@@ -164,7 +165,7 @@ const Socket = (function (InternalSocket) {
       if (self.#closed) return;
       self.#closed = true;
       //socket cannot be used after close
-      self.#socket = null;
+      self[bunSocketInternal] = null;
       const queue = self.#readQueue;
       if (queue.isEmpty()) {
         if (self.push(null)) return;
@@ -289,23 +290,33 @@ const Socket = (function (InternalSocket) {
     localAddress = "127.0.0.1";
     #readQueue = createFIFO();
     remotePort;
-    #socket;
+    [bunSocketInternal] = null;
     timeout = 0;
     #writeCallback;
     #writeChunk;
     #pendingRead;
 
     isServer = false;
+    _handle;
+    _parent;
+    _parentWrap;
+    #socket;
 
     constructor(options) {
-      const { signal, write, read, allowHalfOpen = false, ...opts } = options || {};
+      const { socket, signal, write, read, allowHalfOpen = false, ...opts } = options || {};
       super({
         ...opts,
         allowHalfOpen,
         readable: true,
         writable: true,
       });
+      this._handle = this;
+      this._parent = this;
+      this._parentWrap = this;
       this.#pendingRead = undefined;
+      if (socket instanceof Socket) {
+        this.#socket = socket;
+      }
       signal?.once("abort", () => this.destroy());
       this.once("connect", () => this.emit("ready"));
     }
@@ -327,7 +338,7 @@ const Socket = (function (InternalSocket) {
       socket.data = this;
       socket.timeout(this.timeout);
       socket.ref();
-      this.#socket = socket;
+      this[bunSocketInternal] = socket;
       this.connecting = false;
       this.emit("connect", this);
       Socket.#Drain(socket);
@@ -335,6 +346,7 @@ const Socket = (function (InternalSocket) {
 
     connect(port, host, connectListener) {
       var path;
+      var connection = this.#socket;
       if (typeof port === "string") {
         path = port;
         port = undefined;
@@ -357,6 +369,7 @@ const Socket = (function (InternalSocket) {
           port,
           host,
           path,
+          socket,
           // TODOs
           localAddress,
           localPort,
@@ -371,7 +384,11 @@ const Socket = (function (InternalSocket) {
           pauseOnConnect,
           servername,
         } = port;
+
         this.servername = servername;
+        if (socket) {
+          connection = socket;
+        }
       }
 
       if (!pauseOnConnect) {
@@ -399,41 +416,117 @@ const Socket = (function (InternalSocket) {
           } else {
             tls.rejectUnauthorized = rejectUnauthorized;
             tls.requestCert = true;
+            if (!connection && tls.socket) {
+              connection = tls.socket;
+            }
           }
         }
-
+        if (connection) {
+          if (
+            typeof connection !== "object" ||
+            !(connection instanceof Socket) ||
+            typeof connection[bunTlsSymbol] === "function"
+          ) {
+            throw new TypeError("socket must be an instance of net.Socket");
+          }
+        }
         this.authorized = false;
         this.secureConnecting = true;
         this._secureEstablished = false;
         this._securePending = true;
         if (connectListener) this.on("secureConnect", connectListener);
       } else if (connectListener) this.on("connect", connectListener);
-      bunConnect(
-        path
-          ? {
+      // start using existing connection
+
+      if (connection) {
+        const socket = connection[bunSocketInternal];
+
+        if (socket) {
+          const result = socket.wrapTLS({
+            data: this,
+            tls,
+            socket: Socket.#Handlers,
+          });
+          if (result) {
+            const [raw, tls] = result;
+            // replace socket
+            connection[bunSocketInternal] = raw;
+            raw.timeout(raw.timeout);
+            raw.connecting = false;
+            // set new socket
+            this[bunSocketInternal] = tls;
+            tls.timeout(tls.timeout);
+            tls.connecting = true;
+            this[bunSocketInternal] = socket;
+            // start tls
+            tls.open();
+          } else {
+            this[bunSocketInternal] = null;
+            throw new Error("Invalid socket");
+          }
+        } else {
+          // wait to be connected
+          connection.once("connect", () => {
+            const socket = connection[bunSocketInternal];
+            if (!socket) return;
+
+            const result = socket.wrapTLS({
               data: this,
-              unix: path,
-              socket: Socket.#Handlers,
               tls,
+              socket: Socket.#Handlers,
+            });
+
+            if (result) {
+              const [raw, tls] = result;
+              // replace socket
+              connection[bunSocketInternal] = raw;
+              raw.timeout(raw.timeout);
+              raw.connecting = false;
+              // set new socket
+              this[bunSocketInternal] = tls;
+              tls.timeout(tls.timeout);
+              tls.connecting = true;
+              this[bunSocketInternal] = socket;
+              // start tls
+              tls.open();
+            } else {
+              this[bunSocketInternal] = null;
+              throw new Error("Invalid socket");
             }
-          : {
-              data: this,
-              hostname: host || "localhost",
-              port: port,
-              socket: Socket.#Handlers,
-              tls,
-            },
-      );
+          });
+        }
+      } else if (path) {
+        // start using unix socket
+        bunConnect({
+          data: this,
+          unix: path,
+          socket: Socket.#Handlers,
+          tls,
+        }).catch(error => {
+          this.emit("error", error);
+        });
+      } else {
+        // default start
+        bunConnect({
+          data: this,
+          hostname: host || "localhost",
+          port: port,
+          socket: Socket.#Handlers,
+          tls,
+        }).catch(error => {
+          this.emit("error", error);
+        });
+      }
       return this;
     }
 
     _destroy(err, callback) {
-      this.#socket?.end();
+      this[bunSocketInternal]?.end();
       callback(err);
     }
 
     _final(callback) {
-      this.#socket?.end();
+      this[bunSocketInternal]?.end();
       callback();
     }
 
@@ -446,7 +539,7 @@ const Socket = (function (InternalSocket) {
     }
 
     get localPort() {
-      return this.#socket?.localPort;
+      return this[bunSocketInternal]?.localPort;
     }
 
     get pending() {
@@ -472,11 +565,11 @@ const Socket = (function (InternalSocket) {
     }
 
     ref() {
-      this.#socket?.ref();
+      this[bunSocketInternal]?.ref();
     }
 
     get remoteAddress() {
-      return this.#socket?.remoteAddress;
+      return this[bunSocketInternal]?.remoteAddress;
     }
 
     get remoteFamily() {
@@ -484,7 +577,7 @@ const Socket = (function (InternalSocket) {
     }
 
     resetAndDestroy() {
-      this.#socket?.end();
+      this[bunSocketInternal]?.end();
     }
 
     setKeepAlive(enable = false, initialDelay = 0) {
@@ -498,19 +591,19 @@ const Socket = (function (InternalSocket) {
     }
 
     setTimeout(timeout, callback) {
-      this.#socket?.timeout(timeout);
+      this[bunSocketInternal]?.timeout(timeout);
       this.timeout = timeout;
       if (callback) this.once("timeout", callback);
       return this;
     }
 
     unref() {
-      this.#socket?.unref();
+      this[bunSocketInternal]?.unref();
     }
 
     _write(chunk, encoding, callback) {
-      if (typeof chunk == "string" && encoding !== "utf8") chunk = Buffer.from(chunk, encoding);
-      var written = this.#socket?.write(chunk);
+      if (typeof chunk == "string" && encoding !== "ascii") chunk = Buffer.from(chunk, encoding);
+      var written = this[bunSocketInternal]?.write(chunk);
       if (written == chunk.length) {
         callback();
       } else if (this.#writeCallback) {

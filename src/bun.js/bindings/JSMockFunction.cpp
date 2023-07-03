@@ -19,6 +19,7 @@
 #include <JavaScriptCore/WeakMapImpl.h>
 #include <JavaScriptCore/WeakMapImplInlines.h>
 #include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/DateInstance.h>
 
 namespace Bun {
 
@@ -64,6 +65,41 @@ JSC_DECLARE_HOST_FUNCTION(jsMockFunctionMockRejectedValue);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionMockRejectedValueOnce);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionWithImplementationCleanup);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionWithImplementation);
+
+// This is a stub. Exists so that the same code can be run in Jest
+extern "C" EncodedJSValue JSMock__jsUseFakeTimers(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
+    return JSValue::encode(callFrame->thisValue());
+}
+
+extern "C" EncodedJSValue JSMock__jsUseRealTimers(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
+    globalObject->overridenDateNow = -1;
+    return JSValue::encode(callFrame->thisValue());
+}
+
+extern "C" EncodedJSValue JSMock__jsNow(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
+    return JSValue::encode(jsNumber(globalObject->jsDateNow()));
+}
+extern "C" EncodedJSValue JSMock__jsSetSystemTime(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
+    JSValue argument0 = callFrame->argument(0);
+
+    if (auto* dateInstance = jsDynamicCast<DateInstance*>(argument0)) {
+        if (std::isnormal(dateInstance->internalNumber())) {
+            globalObject->overridenDateNow = dateInstance->internalNumber();
+        }
+        return JSValue::encode(callFrame->thisValue());
+    }
+
+    if (argument0.isNumber() && argument0.asNumber() > 0) {
+        globalObject->overridenDateNow = argument0.asNumber();
+    }
+
+    globalObject->overridenDateNow = -1;
+    return JSValue::encode(callFrame->thisValue());
+}
 
 uint64_t JSMockModule::s_nextInvocationId = 0;
 

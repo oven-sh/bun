@@ -1539,8 +1539,10 @@ extern "C" napi_status napi_typeof(napi_env env, napi_value val,
 
     JSC::JSValue value = toJS(val);
 
-    if (UNLIKELY(value.isEmpty())) {
-        return napi_invalid_arg;
+    if (value.isEmpty()) {
+        // This can happen
+        *result = napi_undefined;
+        return napi_ok;
     }
 
     if (value.isCell()) {
@@ -1579,16 +1581,17 @@ extern "C" napi_status napi_typeof(napi_env env, napi_value val,
             *result = napi_object;
             return napi_ok;
 
-        default:
-            if (cell->isObject()) {
-                *result = napi_object;
-                return napi_ok;
-            }
-
+        default: {
             if (cell->isCallable() || cell->isConstructor()) {
                 *result = napi_function;
                 return napi_ok;
             }
+
+            if (cell->isObject()) {
+                *result = napi_object;
+                return napi_ok;
+            }
+        }
         }
     }
 

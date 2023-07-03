@@ -74,7 +74,7 @@ test("it was 2020, for a moment.", () => {
 
 ## Set the time zone
 
-To change the time zone, either pass the `$TZ` environment variable to your test runner, or set `process.env.TZ` at runtime:
+To change the time zone, either pass the `$TZ` environment variable to `bun test`, or set `process.env.TZ` at runtime:
 
 ```ts
 import { test, expect } from "bun:test";

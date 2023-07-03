@@ -181,7 +181,6 @@ describe("net.createServer listen", () => {
     );
   });
 
-
   it("should listen on unix domain socket", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 

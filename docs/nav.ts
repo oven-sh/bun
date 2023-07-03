@@ -180,6 +180,9 @@ export default {
     page("cli/test", "`bun test`", {
       description: "Bun's test runner uses Jest-compatible syntax but runs 100x faster.",
     }),
+    page("test/hot", "Watch mode", {
+      description: "Reload your tests automatically on change.",
+    }),
     page("test/writing", "Writing tests", {
       description:
         "Write your tests using Jest-like expect matchers, plus setup/teardown hooks, snapshot testing, and more",
@@ -190,11 +193,11 @@ export default {
     page("test/snapshots", "Snapshots", {
       description: "Add lifecycle hooks to your tests that run before/after each test or test run",
     }),
+    page("test/time", "Time", {
+      description: "Control the date & time in your tests for more reliable and deterministic tests",
+    }),
     page("test/dom", "DOM testing", {
       description: "Write headless tests for UI and React/Vue/Svelte/Lit components with happy-dom",
-    }),
-    page("test/hot", "Watch mode", {
-      description: "Reload your tests automatically on change.",
     }),
 
     divider("Package runner"),

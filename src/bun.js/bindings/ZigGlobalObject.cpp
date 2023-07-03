@@ -1204,6 +1204,10 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
+    // Reminder: btoa() is for Byte Strings
+    // Specifically: latin1 byte strings
+    // That means even though this looks like the wrong thing to do,
+    // we should be converting to latin1, not utf8.
     if (!encodedString.is8Bit()) {
         LChar* ptr;
         unsigned length = encodedString.length();

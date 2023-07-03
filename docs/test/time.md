@@ -24,6 +24,20 @@ test("it is 2020", () => {
 });
 ```
 
+To support existing tests that use Jest's `useFakeTimers` and `useRealTimers`, you can use `useFakeTimers` and `useRealTimers`:
+
+```ts
+test("just like in jest", () => {
+  jest.useFakeTimers();
+  jest.setSystemTime(new Date("2020-01-01T00:00:00.000Z"));
+  expect(new Date().getFullYear()).toBe(2020);
+  jest.useRealTimers();
+  expect(new Date().getFullYear()).toBeGreaterThan(2020);
+});
+```
+
+Note that we have not implemented builtin support for mocking timers yet, but this is on the roadmap.
+
 ### Reset the system time
 
 To reset the system time, pass no arguments to `setSystemTime`:
@@ -32,9 +46,13 @@ To reset the system time, pass no arguments to `setSystemTime`:
 import { setSystemTime, beforeAll } from "bun:test";
 
 test("it was 2020, for a moment.", () => {
+  // Set it to something!
   setSystemTime(new Date("2020-01-01T00:00:00.000Z"));
   expect(new Date().getFullYear()).toBe(2020);
+
+  // reset it!
   setSystemTime();
+
   expect(new Date().getFullYear()).toBeGreaterThan(2020);
 });
 ```

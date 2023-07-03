@@ -160,6 +160,17 @@ pub const WTFStringImplStruct = extern struct {
         }
     }
 
+    pub fn utf16ByteLength(this: WTFStringImpl) usize {
+        // All latin1 characters fit in a single UTF-16 code unit.
+        return this.length() * 2;
+    }
+
+    pub fn latin1ByteLength(this: WTFStringImpl) usize {
+        // Not all UTF-16 characters fit are representable in latin1.
+        // Those get truncated?
+        return this.length();
+    }
+
     pub fn refCountAllocator(self: WTFStringImpl) std.mem.Allocator {
         return std.mem.Allocator{ .ptr = self, .vtable = StringImplAllocator.VTablePtr };
     }
@@ -284,6 +295,31 @@ pub const String = extern struct {
     pub fn dupeRef(this: String) String {
         this.ref();
         return this;
+    }
+
+    pub fn utf8ByteLength(this: String) usize {
+        return switch (this.tag) {
+            .WTFStringImpl => this.value.WTFStringImpl.utf8ByteLength(),
+            .ZigString => this.value.ZigString.utf8ByteLength(),
+            .StaticZigString => this.value.StaticZigString.utf8ByteLength(),
+            .Dead, .Empty => 0,
+        };
+    }
+
+    pub fn utf16ByteLength(this: String) usize {
+        return switch (this.tag) {
+            .WTFStringImpl => this.value.WTFStringImpl.utf16ByteLength(),
+            .StaticZigString, .ZigString => this.value.ZigString.utf16ByteLength(),
+            .Dead, .Empty => 0,
+        };
+    }
+
+    pub fn latin1ByteLength(this: String) usize {
+        return switch (this.tag) {
+            .WTFStringImpl => this.value.WTFStringImpl.latin1ByteLength(),
+            .StaticZigString, .ZigString => this.value.ZigString.latin1ByteLength(),
+            .Dead, .Empty => 0,
+        };
     }
 
     pub fn initWithType(comptime Type: type, value: Type) String {
@@ -431,7 +467,7 @@ pub const String = extern struct {
     }
 
     pub fn isUTF8(self: String) bool {
-        if (!self.tag == .ZigString or self.tag == .StaticZigString)
+        if (!(self.tag == .ZigString or self.tag == .StaticZigString))
             return false;
 
         return self.value.ZigString.isUTF8();
@@ -466,9 +502,21 @@ pub const String = extern struct {
             return !self.value.WTFStringImpl.is8Bit();
 
         if (self.tag == .ZigString or self.tag == .StaticZigString)
-            return self.value.ZigString.isUTF16();
+            return self.value.ZigString.is16Bit();
 
         return false;
+    }
+
+    pub fn encodeInto(self: String, out: []u8, comptime enc: JSC.Node.Encoding) !usize {
+        if (self.isUTF16()) {
+            return JSC.WebCore.Encoder.encodeIntoFrom16(self.utf16(), out, enc, true);
+        }
+
+        if (self.isUTF8()) {
+            @panic("TODO");
+        }
+
+        return JSC.WebCore.Encoder.encodeIntoFrom8(self.latin1(), out, enc);
     }
 
     pub inline fn utf8(self: String) []const u8 {

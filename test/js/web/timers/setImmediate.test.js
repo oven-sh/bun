@@ -65,7 +65,7 @@ it("setImmediate should not keep the process alive forever", async () => {
   };
 
   const fail = async () => {
-    await Bun.sleep(3000);
+    await Bun.sleep(500);
     process?.kill();
     return false;
   };

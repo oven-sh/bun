@@ -351,6 +351,11 @@ const TLSSocket = (function (InternalTLSSocket) {
 
     encrypted = true;
 
+    _start() {
+      // some frameworks uses this _start internal implementation is suposed to start TLS handshake
+      // on Bun we auto start this after on_open callback and when wrapping we start it after the socket is attached to the net.Socket/tls.Socket
+    }
+
     exportKeyingMaterial(length, label, context) {
       //SSL_export_keying_material
       throw Error("Not implented in Bun yet");

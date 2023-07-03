@@ -205,6 +205,8 @@ var createServer = function(options, connectionListener) {
   authorized = !1;
   authorizationError;
   encrypted = !0;
+  _start() {
+  }
   exportKeyingMaterial(length, label, context) {
     throw Error("Not implented in Bun yet");
   }

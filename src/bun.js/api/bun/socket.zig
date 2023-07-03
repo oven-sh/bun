@@ -1804,8 +1804,9 @@ fn NewSocket(comptime ssl: bool) type {
                     this.socket.close(0, null);
                 }
                 this.markInactive();
-                this.poll_ref.unref(JSC.VirtualMachine.get());
             }
+
+            this.poll_ref.unref(JSC.VirtualMachine.get());
             // need to deinit event without being attached
             if (this.owned_protos) {
                 if (this.protos) |protos| {

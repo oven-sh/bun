@@ -395,16 +395,11 @@ const TLSSocket = (function (InternalTLSSocket) {
     }
 
     [buntls](port, host) {
-      var { servername } = this;
-      if (servername) {
-        return {
-          ALPNProtocols: this.ALPNProtocols,
-          serverName: typeof servername === "string" ? servername : host,
-          ...this.#secureContext,
-        };
-      }
-
-      return true;
+      return {
+        ALPNProtocols: this.ALPNProtocols,
+        serverName: this.servername || host || "localhost",
+        ...this.#secureContext,
+      };
     }
   },
 );

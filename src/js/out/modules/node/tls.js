@@ -234,14 +234,11 @@ var createServer = function(options, connectionListener) {
     return this[bunSocketInternal]?.alpnProtocol;
   }
   [buntls](port, host2) {
-    var { servername } = this;
-    if (servername)
-      return {
-        ALPNProtocols: this.ALPNProtocols,
-        serverName: typeof servername === "string" ? servername : host2,
-        ...this.#secureContext
-      };
-    return !0;
+    return {
+      ALPNProtocols: this.ALPNProtocols,
+      serverName: this.servername || host2 || "localhost",
+      ...this.#secureContext
+    };
   }
 });
 

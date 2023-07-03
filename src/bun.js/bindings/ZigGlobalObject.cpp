@@ -181,6 +181,8 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include "DOMWrapperWorld-class.h"
 #include "CommonJSModuleRecord.h"
 #include <wtf/RAMSize.h>
+#include <wtf/text/Base64.h>
+#include "simdutf.h"
 
 constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
@@ -193,6 +195,24 @@ constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
 // #include <iostream>
 static bool has_loaded_jsc = false;
+
+namespace WebCore {
+class Base64Utilities {
+public:
+    static ExceptionOr<String> atob(const String& encodedString)
+    {
+        if (encodedString.isNull())
+            return String();
+
+        auto decodedData = base64Decode(encodedString, Base64DecodeMode::DefaultValidatePaddingAndIgnoreWhitespace);
+        if (!decodedData)
+            return Exception { InvalidCharacterError };
+
+        return String(decodedData->data(), decodedData->size());
+    }
+};
+
+}
 
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length))
 {
@@ -1164,53 +1184,65 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     if (callFrame->argumentCount() == 0) {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        JSC::throwTypeError(globalObject, scope, "btoa requires 1 argument (a string)"_s);
+        JSC::throwTypeError(globalObject, throwScope, "btoa requires 1 argument (a string)"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    const String& stringToEncode = callFrame->argument(0).toWTFString(globalObject);
+    JSValue arg0 = callFrame->uncheckedArgument(0);
+    WTF::String encodedString = arg0.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
 
-    if (!stringToEncode || stringToEncode.isNull()) {
-        return JSC::JSValue::encode(JSC::jsString(vm, WTF::String()));
+    if (encodedString.isEmpty()) {
+        return JSC::JSValue::encode(JSC::jsEmptyString(vm));
     }
 
-    if (!stringToEncode.isAllLatin1()) {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        throwException(globalObject, scope, createDOMException(globalObject, ExceptionCode::InvalidCharacterError));
+    if (!encodedString.isAllLatin1()) {
+        throwException(globalObject, throwScope, createDOMException(globalObject, InvalidCharacterError));
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    return JSC::JSValue::encode(JSC::jsString(vm, WTF::base64EncodeToString(stringToEncode.latin1())));
+    if (!encodedString.is8Bit()) {
+        LChar* ptr;
+        unsigned length = encodedString.length();
+        auto dest = WTF::String::createUninitialized(length, ptr);
+        WTF::StringImpl::copyCharacters(ptr, encodedString.characters16(), length);
+        encodedString = WTFMove(dest);
+    }
+
+    unsigned length = encodedString.length();
+    RELEASE_AND_RETURN(
+        throwScope,
+        Bun__encoding__toString(
+            encodedString.characters8(),
+            length,
+            globalObject,
+            static_cast<uint8_t>(WebCore::BufferEncodingType::base64)));
 }
 
 static JSC_DEFINE_HOST_FUNCTION(functionATOB,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     if (callFrame->argumentCount() == 0) {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        JSC::throwTypeError(globalObject, scope, "atob requires 1 argument (a string)"_s);
+        JSC::throwTypeError(globalObject, throwScope, "atob requires 1 argument (a string)"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    const WTF::String& encodedString = callFrame->argument(0).toWTFString(globalObject);
+    WTF::String encodedString = callFrame->uncheckedArgument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
 
-    if (encodedString.isNull()) {
-        return JSC::JSValue::encode(JSC::jsEmptyString(vm));
-    }
-
-    auto decodedData = WTF::base64Decode(encodedString, Base64DecodeMode::DefaultValidatePaddingAndIgnoreWhitespace);
-    if (!decodedData) {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        throwException(globalObject, scope, createDOMException(globalObject, ExceptionCode::InvalidCharacterError));
+    auto result = WebCore::Base64Utilities::atob(encodedString);
+    if (result.hasException()) {
+        throwException(globalObject, throwScope, createDOMException(*globalObject, result.releaseException()));
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(decodedData->data(), decodedData->size())));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(jsString(vm, result.releaseReturnValue())));
 }
 
 static JSC_DEFINE_HOST_FUNCTION(functionHashCode,

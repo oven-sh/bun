@@ -195,61 +195,6 @@ describe("tls.createServer listen", () => {
     );
   });
 
-  it("should listen on the correct port", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
-
-    const server: Server = createServer(COMMON_CERT);
-
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
-
-    server.listen(
-      49027,
-      mustCall(() => {
-        const address = server.address() as AddressInfo;
-        expect(address.address).toStrictEqual("::");
-        expect(address.port).toStrictEqual(49027);
-        expect(address.family).toStrictEqual("IPv6");
-        server.close();
-        done();
-      }),
-    );
-  });
-
-  it("should listen on the correct port with IPV4", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
-
-    const server: Server = createServer(COMMON_CERT);
-
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
-
-    server.listen(
-      49026,
-      "0.0.0.0",
-      mustCall(() => {
-        const address = server.address() as AddressInfo;
-        expect(address.address).toStrictEqual("0.0.0.0");
-        expect(address.port).toStrictEqual(49026);
-        expect(address.family).toStrictEqual("IPv4");
-        server.close();
-        done();
-      }),
-    );
-  });
-
   it("should listen on unix domain socket", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 

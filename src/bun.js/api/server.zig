@@ -163,6 +163,8 @@ pub const ServerConfig = struct {
         request_cert: i32 = 0,
         reject_unauthorized: i32 = 0,
         ssl_ciphers: [*c]const u8 = null,
+        protos: [*c]const u8 = null,
+        protos_len: usize = 0,
 
         const log = Output.scoped(.SSLConfig, false);
 
@@ -215,6 +217,7 @@ pub const ServerConfig = struct {
                 "dh_params_file_name",
                 "passphrase",
                 "ssl_ciphers",
+                "protos",
             };
 
             inline for (fields) |field| {
@@ -270,6 +273,9 @@ pub const ServerConfig = struct {
 
         pub fn inJS(global: *JSC.JSGlobalObject, obj: JSC.JSValue, exception: JSC.C.ExceptionRef) ?SSLConfig {
             var result = zero;
+            var arena: @import("root").bun.ArenaAllocator = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
+            defer arena.deinit();
+
             if (!obj.isObject()) {
                 JSC.throwInvalidArguments("tls option expects an object", .{}, global, exception);
                 return null;
@@ -301,7 +307,6 @@ pub const ServerConfig = struct {
 
                         var i: u32 = 0;
                         var valid_count: u32 = 0;
-                        var arena: @import("root").bun.ArenaAllocator = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
                         while (i < count) : (i += 1) {
                             const item = js_obj.getIndex(global, i);
                             if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item, exception)) |sb| {
@@ -317,7 +322,6 @@ pub const ServerConfig = struct {
                                     valid_count += 1;
                                     any = true;
                                 } else {
-                                    arena.deinit();
                                     // mark and free all CA's
                                     result.cert = native_array;
                                     result.deinit();
@@ -325,15 +329,12 @@ pub const ServerConfig = struct {
                                 }
                             } else {
                                 global.throwInvalidArguments("key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile", .{});
-                                arena.deinit();
                                 // mark and free all keys
                                 result.key = native_array;
                                 result.deinit();
                                 return null;
                             }
                         }
-
-                        arena.deinit();
 
                         if (valid_count == 0) {
                             bun.default_allocator.free(native_array);
@@ -356,7 +357,6 @@ pub const ServerConfig = struct {
                     }
                 } else {
                     const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                    var arena: @import("root").bun.ArenaAllocator = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
                     if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj, exception)) |sb| {
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
@@ -369,14 +369,11 @@ pub const ServerConfig = struct {
                         }
                     } else {
                         global.throwInvalidArguments("key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile", .{});
-                        arena.deinit();
                         // mark and free all certs
                         result.key = native_array;
                         result.deinit();
                         return null;
                     }
-
-                    arena.deinit();
                 }
             }
 
@@ -394,6 +391,22 @@ pub const ServerConfig = struct {
                 }
             }
 
+            if (obj.getTruthy(global, "ALPNProtocols")) |protocols| {
+                if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), protocols, exception)) |sb| {
+                    const sliced = sb.slice();
+                    if (sliced.len > 0) {
+                        result.protos = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                        result.protos_len = sliced.len;
+                    }
+
+                    any = true;
+                } else {
+                    global.throwInvalidArguments("ALPNProtocols argument must be an string, Buffer or TypedArray", .{});
+                    result.deinit();
+                    return null;
+                }
+            }
+
             if (obj.getTruthy(global, "cert")) |js_obj| {
                 if (js_obj.jsType().isArray()) {
                     const count = js_obj.getLength(global);
@@ -403,7 +416,6 @@ pub const ServerConfig = struct {
                         var i: u32 = 0;
                         var valid_count: u32 = 0;
 
-                        var arena: @import("root").bun.ArenaAllocator = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
                         while (i < count) : (i += 1) {
                             const item = js_obj.getIndex(global, i);
                             if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item, exception)) |sb| {
@@ -419,7 +431,6 @@ pub const ServerConfig = struct {
                                     valid_count += 1;
                                     any = true;
                                 } else {
-                                    arena.deinit();
                                     // mark and free all CA's
                                     result.cert = native_array;
                                     result.deinit();
@@ -427,15 +438,12 @@ pub const ServerConfig = struct {
                                 }
                             } else {
                                 global.throwInvalidArguments("cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile", .{});
-                                arena.deinit();
                                 // mark and free all certs
                                 result.cert = native_array;
                                 result.deinit();
                                 return null;
                             }
                         }
-
-                        arena.deinit();
 
                         if (valid_count == 0) {
                             bun.default_allocator.free(native_array);
@@ -458,7 +466,6 @@ pub const ServerConfig = struct {
                     }
                 } else {
                     const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                    var arena: @import("root").bun.ArenaAllocator = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
                     if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj, exception)) |sb| {
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
@@ -471,14 +478,11 @@ pub const ServerConfig = struct {
                         }
                     } else {
                         global.throwInvalidArguments("cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile", .{});
-                        arena.deinit();
                         // mark and free all certs
                         result.cert = native_array;
                         result.deinit();
                         return null;
                     }
-
-                    arena.deinit();
                 }
             }
 
@@ -518,7 +522,6 @@ pub const ServerConfig = struct {
                         var i: u32 = 0;
                         var valid_count: u32 = 0;
 
-                        var arena: @import("root").bun.ArenaAllocator = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
                         while (i < count) : (i += 1) {
                             const item = js_obj.getIndex(global, i);
                             if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item, exception)) |sb| {
@@ -534,7 +537,6 @@ pub const ServerConfig = struct {
                                     valid_count += 1;
                                     any = true;
                                 } else {
-                                    arena.deinit();
                                     // mark and free all CA's
                                     result.cert = native_array;
                                     result.deinit();
@@ -542,15 +544,12 @@ pub const ServerConfig = struct {
                                 }
                             } else {
                                 global.throwInvalidArguments("ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile", .{});
-                                arena.deinit();
                                 // mark and free all CA's
                                 result.cert = native_array;
                                 result.deinit();
                                 return null;
                             }
                         }
-
-                        arena.deinit();
 
                         if (valid_count == 0) {
                             bun.default_allocator.free(native_array);
@@ -573,7 +572,6 @@ pub const ServerConfig = struct {
                     }
                 } else {
                     const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                    var arena: @import("root").bun.ArenaAllocator = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
                     if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj, exception)) |sb| {
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
@@ -586,13 +584,11 @@ pub const ServerConfig = struct {
                         }
                     } else {
                         JSC.throwInvalidArguments("ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile", .{}, global, exception);
-                        arena.deinit();
                         // mark and free all certs
                         result.ca = native_array;
                         result.deinit();
                         return null;
                     }
-                    arena.deinit();
                 }
             }
 

@@ -318,14 +318,19 @@ const TLSSocket = (function (InternalTLSSocket) {
     #secureContext;
     ALPNProtocols;
 
-    constructor(options) {
-      super(options);
+    constructor(socket, options) {
+      super(options || socket);
+      options = options || socket || {};
       if (options) {
         const { ALPNProtocols } = options;
         if (ALPNProtocols) {
           convertALPNProtocols(ALPNProtocols, this);
         }
+        if (socket instanceof InternalTCPSocket) {
+          options.socket = socket; 
+        }
       }
+
       this.#secureContext = options.secureContext || createSecureContext(options);
       this.authorized = false;
       this.secureConnecting = true;

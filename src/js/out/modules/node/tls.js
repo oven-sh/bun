@@ -183,12 +183,14 @@ var createServer = function(options, connectionListener) {
 }(class TLSSocket2 extends InternalTCPSocket {
   #secureContext;
   ALPNProtocols;
-  constructor(options) {
-    super(options);
-    if (options) {
+  constructor(socket, options) {
+    super(options || socket);
+    if (options = options || socket || {}, options) {
       const { ALPNProtocols } = options;
       if (ALPNProtocols)
         convertALPNProtocols(ALPNProtocols, this);
+      if (socket instanceof InternalTCPSocket)
+        options.socket = socket;
     }
     this.#secureContext = options.secureContext || createSecureContext(options), this.authorized = !1, this.secureConnecting = !0, this._secureEstablished = !1, this._securePending = !0;
   }

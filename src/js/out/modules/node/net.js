@@ -172,15 +172,18 @@ var isIPv4 = function(s) {
   _handle;
   _parent;
   _parentWrap;
+  #socket;
   constructor(options) {
-    const { signal, write, read, allowHalfOpen = !1, ...opts } = options || {};
+    const { socket, signal, write, read, allowHalfOpen = !1, ...opts } = options || {};
     super({
       ...opts,
       allowHalfOpen,
       readable: !0,
       writable: !0
     });
-    this._handle = this, this._parent = this, this._parentWrap = this, this.#pendingRead = void 0, signal?.once("abort", () => this.destroy()), this.once("connect", () => this.emit("ready"));
+    if (this._handle = this, this._parent = this, this._parentWrap = this, this.#pendingRead = void 0, socket instanceof Socket2)
+      this.#socket = socket;
+    signal?.once("abort", () => this.destroy()), this.once("connect", () => this.emit("ready"));
   }
   address() {
     return {
@@ -196,7 +199,7 @@ var isIPv4 = function(s) {
     this.remotePort = port, socket.data = this, socket.timeout(this.timeout), socket.ref(), this[bunSocketInternal] = socket, this.connecting = !1, this.emit("connect", this), Socket2.#Drain(socket);
   }
   connect(port, host, connectListener) {
-    var path, connection;
+    var path, connection = this.#socket;
     if (typeof port === "string") {
       if (path = port, port = void 0, typeof host === "function")
         connectListener = host, host = void 0;
@@ -224,11 +227,8 @@ var isIPv4 = function(s) {
         pauseOnConnect,
         servername
       } = port;
-      if (this.servername = servername, socket) {
-        if (typeof socket !== "object" || !(socket instanceof Socket2) || typeof socket[bunTlsSymbol] === "function")
-          throw new TypeError("socket must be an instance of net.Socket");
+      if (this.servername = servername, socket)
         connection = socket;
-      }
     }
     if (!pauseOnConnect)
       this.resume();
@@ -236,14 +236,19 @@ var isIPv4 = function(s) {
     const bunTLS = this[bunTlsSymbol];
     var tls = void 0;
     if (typeof bunTLS === "function") {
-      if (tls = bunTLS.call(this, port, host, !0), this._requestCert = !0, this._rejectUnauthorized = rejectUnauthorized, tls)
+      if (tls = bunTLS.call(this, port, host, !0), this._requestCert = !0, this._rejectUnauthorized = rejectUnauthorized, tls) {
         if (typeof tls !== "object")
           tls = {
             rejectUnauthorized,
             requestCert: !0
           };
-        else
-          tls.rejectUnauthorized = rejectUnauthorized, tls.requestCert = !0;
+        else if (tls.rejectUnauthorized = rejectUnauthorized, tls.requestCert = !0, !connection && tls.socket)
+          connection = tls.socket;
+      }
+      if (connection) {
+        if (typeof connection !== "object" || !(connection instanceof Socket2) || typeof connection[bunTlsSymbol] === "function")
+          throw new TypeError("socket must be an instance of net.Socket");
+      }
       if (this.authorized = !1, this.secureConnecting = !0, this._secureEstablished = !1, this._securePending = !0, connectListener)
         this.on("secureConnect", connectListener);
     } else if (connectListener)

@@ -300,9 +300,10 @@ const Socket = (function (InternalSocket) {
     _handle;
     _parent;
     _parentWrap;
+    #socket;
 
     constructor(options) {
-      const { signal, write, read, allowHalfOpen = false, ...opts } = options || {};
+      const { socket, signal, write, read, allowHalfOpen = false, ...opts } = options || {};
       super({
         ...opts,
         allowHalfOpen,
@@ -313,6 +314,9 @@ const Socket = (function (InternalSocket) {
       this._parent = this;
       this._parentWrap = this;
       this.#pendingRead = undefined;
+      if (socket instanceof Socket) {
+        this.#socket = socket;
+      }
       signal?.once("abort", () => this.destroy());
       this.once("connect", () => this.emit("ready"));
     }
@@ -342,7 +346,7 @@ const Socket = (function (InternalSocket) {
 
     connect(port, host, connectListener) {
       var path;
-      var connection;
+      var connection = this.#socket;
       if (typeof port === "string") {
         path = port;
         port = undefined;
@@ -383,9 +387,6 @@ const Socket = (function (InternalSocket) {
 
         this.servername = servername;
         if (socket) {
-          if (typeof socket !== "object" || !(socket instanceof Socket) || typeof socket[bunTlsSymbol] === "function") {
-            throw new TypeError("socket must be an instance of net.Socket");
-          }
           connection = socket;
         }
       }
@@ -415,9 +416,20 @@ const Socket = (function (InternalSocket) {
           } else {
             tls.rejectUnauthorized = rejectUnauthorized;
             tls.requestCert = true;
+            if (!connection && tls.socket) {
+              connection = tls.socket;
+            }
           }
         }
-
+        if (connection) {
+          if (
+            typeof connection !== "object" ||
+            !(connection instanceof Socket) ||
+            typeof connection[bunTlsSymbol] === "function"
+          ) {
+            throw new TypeError("socket must be an instance of net.Socket");
+          }
+        }
         this.authorized = false;
         this.secureConnecting = true;
         this._secureEstablished = false;

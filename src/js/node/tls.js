@@ -317,17 +317,18 @@ const TLSSocket = (function (InternalTLSSocket) {
   class TLSSocket extends InternalTCPSocket {
     #secureContext;
     ALPNProtocols;
+    #socket;
 
     constructor(socket, options) {
-      super(options || socket);
+      super(socket instanceof InternalTCPSocket ? options : options || socket);
       options = options || socket || {};
-      if (options) {
+      if (typeof options === "object") {
         const { ALPNProtocols } = options;
         if (ALPNProtocols) {
           convertALPNProtocols(ALPNProtocols, this);
         }
         if (socket instanceof InternalTCPSocket) {
-          options.socket = socket; 
+          this.#socket = socket;
         }
       }
 
@@ -401,6 +402,7 @@ const TLSSocket = (function (InternalTLSSocket) {
 
     [buntls](port, host) {
       return {
+        socket: this.#socket,
         ALPNProtocols: this.ALPNProtocols,
         serverName: this.servername || host || "localhost",
         ...this.#secureContext,

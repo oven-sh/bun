@@ -56,7 +56,7 @@ test("Welcome to California!", () => {
 
 test("Welcome to New York!", () => {
   process.env.TZ = "America/New_York";
-  expect(new Date().getTimezoneOffset()).toBe(300);
+  expect(new Date().getTimezoneOffset()).toBe(240);
   expect(new Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(
     "America/New_York",
   );

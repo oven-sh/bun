@@ -217,13 +217,13 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- 🔴
-- [`.resolves()`](https://jestjs.io/docs/expect#resolves)
+- 🟢
+- [`.resolves()`](https://jestjs.io/docs/expect#resolves) (since Bun v0.6.12+)
 
 ---
 
-- 🔴
-- [`.rejects()`](https://jestjs.io/docs/expect#rejects)
+- 🟢
+- [`.rejects()`](https://jestjs.io/docs/expect#rejects) (since Bun v0.6.12+)
 
 ---
 
@@ -277,7 +277,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- 🔴
+- 🟢
 - [`.toBeCloseTo()`](https://jestjs.io/docs/expect#tobeclosetonumber-numdigits)
 
 ---

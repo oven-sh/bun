@@ -1143,6 +1143,30 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                             terminated = true;
                             break;
                         }
+
+                        // Handle when the payload length is 0, but it is a message
+                        //
+                        // This should become
+                        //
+                        // - ArrayBuffer(0)
+                        // - ""
+                        // - Buffer(0) (etc)
+                        //
+                        if (receive_body_remain == 0 and receive_state == .need_body and is_final) {
+                            _ = this.consume(
+                                "",
+                                receive_body_remain,
+                                last_receive_data_type,
+                                is_final,
+                            );
+
+                            // Return to the header state to read the next frame
+                            receive_state = .need_header;
+                            is_fragmented = false;
+
+                            // Bail out if there's nothing left to read
+                            if (data.len == 0) break;
+                        }
                     },
                     .need_mask => {
                         this.terminate(.unexpected_mask_from_server);
@@ -1203,16 +1227,18 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                         if (data.len == 0) break;
                     },
                     .need_body => {
-                        // Empty messages are valid.
-                        //
+                        // Empty messages are valid, but we handle that earlier in the flow.
+                        if (receive_body_remain == 0 and data.len > 0) {
+                            this.terminate(ErrorCode.expected_control_frame);
+                            terminated = true;
+                            break;
+                        }
+                        if (data.len == 0) return;
+
                         const to_consume = @min(receive_body_remain, data.len);
-                        const consumed = this.consume(
-                            data[0..to_consume],
-                            receive_body_remain,
-                            last_receive_data_type,
-                            is_final,
-                        );
-                        if (receive_body_remain > 0 and data.len > 0 and consumed == 0 and last_receive_data_type == .Text) {
+
+                        const consumed = this.consume(data[0..to_consume], receive_body_remain, last_receive_data_type, is_final);
+                        if (consumed == 0 and last_receive_data_type == .Text) {
                             this.terminate(ErrorCode.invalid_utf8);
                             terminated = true;
                             break;

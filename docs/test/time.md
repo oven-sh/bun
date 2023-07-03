@@ -13,7 +13,7 @@ Timers are not impacted yet, but may be in a future release of Bun.
 To change the system time, use `setSystemTime`:
 
 ```ts
-import { setSystemTime, beforeAll } from "bun:test";
+import { setSystemTime, beforeAll, test, expect } from "bun:test";
 
 beforeAll(() => {
   setSystemTime(new Date("2020-01-01T00:00:00.000Z"));

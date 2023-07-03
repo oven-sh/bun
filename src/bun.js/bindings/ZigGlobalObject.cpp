@@ -1191,26 +1191,12 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    WTF::String encodedString = callFrame->uncheckedArgument(0).toWTFString(globalObject);
+    JSValue arg0 = callFrame->uncheckedArgument(0);
+    WTF::String encodedString = arg0.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
 
     if (encodedString.isEmpty()) {
         return JSC::JSValue::encode(JSC::jsEmptyString(vm));
-    }
-
-    // ascii fast path
-    if (encodedString.is8Bit()) {
-        auto* ptr = reinterpret_cast<const char*>(encodedString.characters8());
-        unsigned length = encodedString.length();
-        if (simdutf::validate_ascii(ptr, length)) {
-            RELEASE_AND_RETURN(
-                throwScope,
-                Bun__encoding__toString(
-                    reinterpret_cast<const uint8_t*>(ptr),
-                    length,
-                    globalObject,
-                    static_cast<uint8_t>(WebCore::BufferEncodingType::base64)));
-        }
     }
 
     if (!encodedString.isAllLatin1()) {
@@ -1218,8 +1204,22 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    String result = base64EncodeToString(encodedString.latin1());
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsString(vm, result)));
+    if (!encodedString.is8Bit()) {
+        LChar* ptr;
+        unsigned length = encodedString.length();
+        auto dest = WTF::String::createUninitialized(length, ptr);
+        WTF::StringImpl::copyCharacters(ptr, encodedString.characters16(), length);
+        encodedString = WTFMove(dest);
+    }
+
+    unsigned length = encodedString.length();
+    RELEASE_AND_RETURN(
+        throwScope,
+        Bun__encoding__toString(
+            encodedString.characters8(),
+            length,
+            globalObject,
+            static_cast<uint8_t>(WebCore::BufferEncodingType::base64)));
 }
 
 static JSC_DEFINE_HOST_FUNCTION(functionATOB,

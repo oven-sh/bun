@@ -802,7 +802,7 @@ pub const FSWatcher = struct {
                 result.fd = file.handle;
                 const _stat = try file.stat();
 
-                result.is_file = _stat.kind == .directory;
+                result.is_file = _stat.kind != .directory;
             },
             .directory => {
                 const dir = (try std.fs.openIterableDirAbsoluteZ(absolute_path_z, .{

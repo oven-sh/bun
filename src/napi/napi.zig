@@ -340,18 +340,22 @@ inline fn maybeAppendNull(ptr: anytype, doit: bool) void {
         ptr.* = 0;
     }
 }
-pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf_ptr: [*c]u8, bufsize: usize, result: *usize) napi_status {
+pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf_ptr: [*c]u8, bufsize: usize, result_ptr: ?*usize) napi_status {
     log("napi_get_value_string_latin1", .{});
     defer value.ensureStillAlive();
     const str = value.toBunString(env);
     var buf = buf_ptr orelse {
-        result.* = str.latin1ByteLength();
+        if (result_ptr) |result| {
+            result.* = str.latin1ByteLength();
+        }
 
         return .ok;
     };
 
     if (str.isEmpty()) {
-        result.* = 0;
+        if (result_ptr) |result| {
+            result.* = 0;
+        }
         buf[0] = 0;
 
         return .ok;
@@ -362,13 +366,21 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf
     if (bufsize == 0) {
         buf_ = bun.sliceTo(buf_ptr, 0);
         if (buf_.len == 0) {
-            result.* = 0;
+            if (result_ptr) |result| {
+                result.* = 0;
+            }
             return .ok;
         }
     }
-    const to_copy = str.encodeInto(buf_, .latin1) catch unreachable;
-    // if zero terminated, report the length of the string without the null
-    result.* = to_copy;
+    const written = str.encodeInto(buf_, .latin1) catch unreachable;
+    const max_buf_len = if (bufsize == 0) buf_.len else bufsize;
+
+    if (result_ptr) |result| {
+        result.* = written;
+    } else if (written < max_buf_len) {
+        buf[written] = 0;
+    }
+
     return .ok;
 }
 
@@ -417,9 +429,12 @@ pub export fn napi_get_value_string_utf8(env: napi_env, value: napi_value, buf_p
     }
 
     const written = str.encodeInto(buf_, .utf8) catch unreachable;
+    const max_buf_len = if (bufsize == 0) buf_.len else bufsize;
 
     if (result_ptr) |result| {
         result.* = written;
+    } else if (written < max_buf_len) {
+        buf[written] = 0;
     }
 
     log("napi_get_value_string_utf8: {s}", .{buf[0..written]});
@@ -458,11 +473,16 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf_
             return .ok;
         }
     }
-    const to_copy = (str.encodeInto(std.mem.sliceAsBytes(buf_), .utf16le) catch unreachable) >> 1;
-    buf[to_copy] = 0;
-    // if zero terminated, report the length of the string without the null
+
+    const max_buf_len = if (bufsize == 0) buf_.len else bufsize;
+    const written = (str.encodeInto(std.mem.sliceAsBytes(buf_), .utf16le) catch unreachable) >> 1;
+
     if (result_ptr) |result| {
-        result.* = to_copy;
+        result.* = written;
+        // We should only write to the buffer is no result pointer is provided.
+        // If we perform both operations,
+    } else if (written < max_buf_len) {
+        buf[written] = 0;
     }
 
     return .ok;

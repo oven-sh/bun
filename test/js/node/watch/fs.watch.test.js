@@ -19,6 +19,8 @@ const testDir = tempDirWithFiles("watch", {
   "url.txt": "hello",
   "close.txt": "hello",
   "close-close.txt": "hello",
+  "sym-sync.txt": "hello",
+  "sym.txt": "hello",
   [encodingFileName]: "hello",
 });
 
@@ -341,6 +343,36 @@ describe("fs.watch", () => {
       watcher.once("close", () => reject());
     });
   });
+
+  test("should work with symlink", async () => {
+    const filepath = path.join(testDir, "sym-symlink2.txt");
+    await fs.promises.symlink(path.join(testDir, "sym-sync.txt"), filepath);
+
+    const interval = repeat(() => {
+      fs.writeFileSync(filepath, "hello");
+    });
+
+    const promise = new Promise((resolve, reject) => {
+      let timeout = null;
+      const watcher = fs.watch(filepath, event => {
+        clearTimeout(timeout);
+        clearInterval(interval);
+        try {
+          resolve(event);
+        } catch (e) {
+          reject(e);
+        } finally {
+          watcher.close();
+        }
+      });
+      setTimeout(() => {
+        clearInterval(interval);
+        watcher?.close();
+        reject("timeout");
+      }, 3000);
+    });
+    expect(promise).resolves.toBe("change");
+  });
 });
 
 describe("fs.promises.watch", () => {
@@ -463,5 +495,28 @@ describe("fs.promises.watch", () => {
         expect(e.message).toBe("The operation was aborted.");
       }
     })();
+  });
+
+  test("should work with symlink", async () => {
+    const filepath = path.join(testDir, "sym-symlink.txt");
+    await fs.promises.symlink(path.join(testDir, "sym.txt"), filepath);
+
+    const watcher = fs.promises.watch(filepath);
+    const interval = repeat(() => {
+      fs.writeFileSync(filepath, "hello");
+    });
+
+    const promise = (async () => {
+      try {
+        for await (const event of watcher) {
+          return event.eventType;
+        }
+      } catch (e) {
+        expect("unreacheable").toBe(false);
+      } finally {
+        clearInterval(interval);
+      }
+    })();
+    expect(promise).resolves.toBe("change");
   });
 });

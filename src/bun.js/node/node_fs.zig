@@ -652,6 +652,7 @@ pub const Arguments = struct {
     pub const Stat = struct {
         path: PathLike,
         big_int: bool = false,
+        throw_if_no_entry: bool = true,
 
         pub fn deinit(this: Stat) void {
             this.path.deinit();
@@ -672,23 +673,32 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            const big_int = brk: {
+            var big_int = false;
+            var throw_if_no_entry = true;
+
+            brk: {
                 if (arguments.next()) |next_val| {
                     if (next_val.isObject()) {
-                        if (next_val.isCallable(ctx.ptr().vm())) break :brk false;
+                        if (next_val.isCallable(ctx.ptr().vm())) break :brk;
+
                         arguments.eat();
 
-                        if (next_val.getOptional(ctx.ptr(), "bigint", bool) catch false) |big_int| {
-                            break :brk big_int;
+                        if (next_val.getOptional(ctx.ptr(), "bigint", bool) catch null) |value| {
+                            big_int = value;
                         }
+
+                        if (next_val.getOptional(ctx.ptr(), "throwIfNoEntry", bool) catch null) |value| {
+                            throw_if_no_entry = value;
+                        }
+
+                        break :brk;
                     }
                 }
-                break :brk false;
-            };
+            }
 
             if (exception.* != null) return null;
 
-            return Stat{ .path = path, .big_int = big_int };
+            return Stat{ .path = path, .big_int = big_int, .throw_if_no_entry = throw_if_no_entry };
         }
     };
 

@@ -2861,15 +2861,13 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
 
     errorObject->putDirect(vm, vm.propertyNames->stack, formattedStackTrace, 0);
 
-    if (!(caller && caller.isObject())) {
-        if (auto* instance = jsDynamicCast<JSC::ErrorInstance*>(errorObject)) {
-            // we make a separate copy of the StackTrace unfortunately so that we
-            // can later console.log it without losing the info
-            //
-            // This is not good. We should remove this in the future as it strictly makes this function
-            // already slower than necessary.
-            instance->captureStackTrace(vm, globalObject, 1, false);
-        }
+    if (auto* instance = jsDynamicCast<JSC::ErrorInstance*>(errorObject)) {
+        // we make a separate copy of the StackTrace unfortunately so that we
+        // can later console.log it without losing the info
+        //
+        // This is not good. We should remove this in the future as it strictly makes this function
+        // already slower than necessary.
+        instance->captureStackTrace(vm, globalObject, 1, false);
     }
 
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSValue {}));

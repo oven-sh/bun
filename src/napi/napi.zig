@@ -289,7 +289,10 @@ pub export fn napi_create_string_utf8(env: napi_env, str: [*]const u8, length: u
 
     log("napi_create_string_utf8: {s}", .{slice});
 
-    setNapiValue(result, JSC.ZigString.fromUTF8(slice).toValueGC(env));
+    var string = bun.String.create(slice);
+    defer string.deref();
+
+    setNapiValue(result, string.toJS(env));
     return .ok;
 }
 pub export fn napi_create_string_utf16(env: napi_env, str: [*]const char16_t, length: usize, result: *napi_value) napi_status {
@@ -340,18 +343,14 @@ inline fn maybeAppendNull(ptr: anytype, doit: bool) void {
 pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf_ptr: [*c]u8, bufsize: usize, result: *usize) napi_status {
     log("napi_get_value_string_latin1", .{});
     defer value.ensureStillAlive();
-    const zig_str = value.getZigString(env);
+    const str = value.toBunString(env);
     var buf = buf_ptr orelse {
-        result.* = if (!zig_str.is16Bit())
-            zig_str.len
-        else
-            // should be same length if valid latin1
-            strings.elementLengthUTF16IntoUTF8([]const u16, zig_str.utf16SliceAligned());
+        result.* = str.latin1ByteLength();
 
         return .ok;
     };
 
-    if (zig_str.len == 0) {
+    if (str.isEmpty()) {
         result.* = 0;
         buf[0] = 0;
 
@@ -367,18 +366,7 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf
             return .ok;
         }
     }
-
-    if (zig_str.is16Bit()) {
-        const utf16 = zig_str.utf16SliceAligned();
-        const wrote = JSC.WebCore.Encoder.writeU16(utf16.ptr, utf16.len, buf, buf_.len, .latin1, false) catch return genericFailure();
-        maybeAppendNull(&buf[wrote], bufsize == 0);
-        // if zero terminated, report the length of the string without the null
-        result.* = @intCast(@TypeOf(result.*), wrote);
-        return .ok;
-    }
-    const to_copy = @min(zig_str.len, buf_.len);
-    @memcpy(buf[0..to_copy], zig_str.slice().ptr[0..to_copy]);
-    buf[to_copy] = 0;
+    const to_copy = str.encodeInto(buf_, .latin1) catch unreachable;
     // if zero terminated, report the length of the string without the null
     result.* = to_copy;
     return .ok;
@@ -399,24 +387,22 @@ pub export fn napi_get_value_string_utf8(env: napi_env, value: napi_value, buf_p
         return .string_expected;
     }
 
-    const zig_str = value.getZigString(env);
-    var buf = buf_ptr orelse {
-        if (result_ptr) |result| {
-            result.* = if (!zig_str.is16Bit())
-                zig_str.len
-            else
-                JSC.WebCore.Encoder.byteLengthU16(zig_str.utf16SliceAligned().ptr, zig_str.utf16SliceAligned().len, .utf8);
-        }
+    const str = value.toBunString(env);
 
-        return .ok;
-    };
-
-    if (zig_str.len == 0) {
+    if (str.isEmpty()) {
         if (result_ptr) |result| {
             result.* = 0;
         }
         return .ok;
     }
+
+    var buf = buf_ptr orelse {
+        if (result_ptr) |result| {
+            result.* = str.utf8ByteLength();
+        }
+
+        return .ok;
+    };
 
     var buf_ = buf[0..bufsize];
 
@@ -430,44 +416,29 @@ pub export fn napi_get_value_string_utf8(env: napi_env, value: napi_value, buf_p
         }
     }
 
-    if (zig_str.is16Bit()) {
-        const utf16 = zig_str.utf16SliceAligned();
-        const wrote = JSC.WebCore.Encoder.writeU16(utf16.ptr, utf16.len, buf, buf_.len, .utf8, false) catch return genericFailure();
-        buf[wrote] = 0;
-        if (result_ptr) |result| {
-            result.* = @intCast(@TypeOf(result.*), wrote);
-        }
+    const written = str.encodeInto(buf_, .utf8) catch unreachable;
 
-        return .ok;
-    }
-
-    const to_copy = @min(zig_str.len, buf_.len);
-    @memcpy(buf[0..to_copy], zig_str.slice().ptr[0..to_copy]);
-    buf[to_copy] = 0;
     if (result_ptr) |result| {
-        result.* = @intCast(@TypeOf(result.*), to_copy);
+        result.* = written;
     }
 
-    log("napi_get_value_string_utf8: {s}", .{buf[0..to_copy]});
+    log("napi_get_value_string_utf8: {s}", .{buf[0..written]});
 
     return .ok;
 }
 pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf_ptr: [*c]char16_t, bufsize: usize, result_ptr: ?*usize) napi_status {
     log("napi_get_value_string_utf16", .{});
     defer value.ensureStillAlive();
-    const zig_str = value.getZigString(env);
+    const str = value.toBunString(env);
     var buf = buf_ptr orelse {
         if (result_ptr) |result| {
-            result.* = if (zig_str.is16Bit())
-                zig_str.len
-            else
-                JSC.WebCore.Encoder.byteLengthU16(zig_str.utf16SliceAligned().ptr, zig_str.utf16SliceAligned().len, .latin1);
+            result.* = str.utf16ByteLength();
         }
 
         return .ok;
     };
 
-    if (zig_str.len == 0) {
+    if (str.isEmpty()) {
         if (result_ptr) |result| {
             result.* = 0;
         }
@@ -487,20 +458,7 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf_
             return .ok;
         }
     }
-
-    if (!zig_str.is16Bit()) {
-        const slice = zig_str.slice();
-        const encode_into_result = strings.copyLatin1IntoUTF16([]char16_t, buf_, []const u8, slice);
-        buf[@intCast(usize, encode_into_result.written)] = 0;
-
-        if (result_ptr) |result| {
-            result.* = encode_into_result.written;
-        }
-        return .ok;
-    }
-
-    const to_copy = @min(zig_str.len, buf_.len) * 2;
-    @memcpy(std.mem.sliceAsBytes(buf_)[0..to_copy], std.mem.sliceAsBytes(zig_str.utf16SliceAligned())[0..to_copy]);
+    const to_copy = (str.encodeInto(std.mem.sliceAsBytes(buf_), .utf16le) catch unreachable) >> 1;
     buf[to_copy] = 0;
     // if zero terminated, report the length of the string without the null
     if (result_ptr) |result| {
@@ -509,9 +467,9 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf_
 
     return .ok;
 }
-pub export fn napi_coerce_to_bool(_: napi_env, value: napi_value, result: *napi_value) napi_status {
+pub export fn napi_coerce_to_bool(env: napi_env, value: napi_value, result: *napi_value) napi_status {
     log("napi_coerce_to_bool", .{});
-    result.* = JSValue.jsBoolean(value.to(bool));
+    result.* = JSValue.jsBoolean(value.coerce(bool, env));
     return .ok;
 }
 pub export fn napi_coerce_to_number(env: napi_env, value: napi_value, result: *napi_value) napi_status {

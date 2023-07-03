@@ -291,7 +291,27 @@ pub const ZigString = extern struct {
         return this.len * 2;
     }
 
-    /// Count the number of code points in the string.
+    pub fn utf16ByteLength(this: ZigString) usize {
+        if (this.isUTF8()) {
+            return bun.simdutf.length.utf16.from.utf8.le(this.slice());
+        }
+
+        if (this.is16Bit()) {
+            return this.len * 2;
+        }
+
+        return JSC.WebCore.Encoder.byteLengthU8(this.slice().ptr, this.slice().len, .utf16le);
+    }
+
+    pub fn latin1ByteLength(this: ZigString) usize {
+        if (this.isUTF8()) {
+            @panic("TODO");
+        }
+
+        return this.len;
+    }
+
+    /// Count the number of bytes in the UTF-8 version of the string.
     /// This function is slow. Use maxUITF8ByteLength() to get a quick estimate
     pub fn utf8ByteLength(this: ZigString) usize {
         if (this.isUTF8()) {

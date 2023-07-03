@@ -10,7 +10,7 @@ The test runner supports the following lifecycle hooks. This is useful for loadi
 Perform per-test setup and teardown logic with `beforeEach` and `afterEach`.
 
 ```ts
-import { expect, test } from "bun:test";
+import { beforeEach, afterEach } from "bun:test";
 
 beforeEach(() => {
   console.log("running test.");

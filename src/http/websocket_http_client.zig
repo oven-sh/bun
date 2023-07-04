@@ -163,8 +163,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         to_send: []const u8 = "",
         read_length: usize = 0,
         headers_buf: [128]PicoHTTP.Header = undefined,
-        body_buf: ?*BodyBuf = null,
-        body_written: usize = 0,
+        body: std.ArrayListUnmanaged(u8) = .{},
         websocket_protocol: u64 = 0,
         hostname: [:0]const u8 = "",
         poll_ref: JSC.PollRef = .{},
@@ -280,10 +279,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.poll_ref.unrefOnNextTick(JSC.VirtualMachine.get());
 
             this.clearInput();
-            if (this.body_buf) |buf| {
-                this.body_buf = null;
-                buf.release();
-            }
+            this.body.clearAndFree(bun.default_allocator);
         }
         pub fn cancel(this: *HTTPClient) callconv(.C) void {
             this.clearData();
@@ -355,14 +351,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.to_send = this.input_body_buf[@intCast(usize, wrote)..];
         }
 
-        fn getBody(this: *HTTPClient) *BodyBufBytes {
-            if (this.body_buf == null) {
-                this.body_buf = BodyBufPool.get(bun.default_allocator);
-            }
-
-            return &this.body_buf.?.data;
-        }
-
         pub fn handleData(this: *HTTPClient, socket: Socket, data: []const u8) void {
             log("onData", .{});
             std.debug.assert(socket.socket == this.tcp.socket);
@@ -374,43 +362,37 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             if (comptime Environment.allow_assert)
                 std.debug.assert(!socket.isShutdown());
 
-            var body = this.getBody();
-            var remain = body[this.body_written..];
-            const is_first = this.body_written == 0;
+            var body = data;
+            if (this.body.items.len > 0) {
+                this.body.appendSlice(bun.default_allocator, data) catch @panic("out of memory");
+                body = this.body.items;
+            }
+
+            const is_first = this.body.items.len == 0;
             if (is_first) {
                 // fail early if we receive a non-101 status code
-                if (!strings.hasPrefixComptime(data, "HTTP/1.1 101 ")) {
+                if (!strings.hasPrefixComptime(body, "HTTP/1.1 101 ")) {
                     this.terminate(ErrorCode.expected_101_status_code);
                     return;
                 }
             }
 
-            const to_write = remain[0..@min(remain.len, data.len)];
-            if (data.len > 0 and to_write.len > 0) {
-                @memcpy(remain[0..to_write.len], data[0..to_write.len]);
-                this.body_written += to_write.len;
-            }
-
-            const overflow = data[to_write.len..];
-
-            const available_to_read = body[0..this.body_written];
-            const response = PicoHTTP.Response.parse(available_to_read, &this.headers_buf) catch |err| {
+            const response = PicoHTTP.Response.parse(body, &this.headers_buf) catch |err| {
                 switch (err) {
                     error.Malformed_HTTP_Response => {
                         this.terminate(ErrorCode.invalid_response);
                         return;
                     },
                     error.ShortRead => {
-                        if (overflow.len > 0) {
-                            this.terminate(ErrorCode.headers_too_large);
-                            return;
+                        if (this.body.items.len == 0) {
+                            this.body.appendSlice(bun.default_allocator, data) catch @panic("out of memory");
                         }
                         return;
                     },
                 }
             };
 
-            this.processResponse(response, available_to_read[@intCast(usize, response.bytes_read)..]);
+            this.processResponse(response, body[@intCast(usize, response.bytes_read)..]);
         }
 
         pub fn handleEnd(this: *HTTPClient, socket: Socket) void {
@@ -420,8 +402,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         }
 
         pub fn processResponse(this: *HTTPClient, response: PicoHTTP.Response, remain_buf: []const u8) void {
-            std.debug.assert(this.body_written > 0);
-
             var upgrade_header = PicoHTTP.Header{ .name = "", .value = "" };
             var connection_header = PicoHTTP.Header{ .name = "", .value = "" };
             var websocket_accept_header = PicoHTTP.Header{ .name = "", .value = "" };
@@ -524,7 +504,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     this.terminate(ErrorCode.invalid_response);
                     return;
                 };
-                if (remain_buf.len > 0) @memcpy(overflow[0..remain_buf.len], remain_buf);
+                @memcpy(overflow, remain_buf);
             }
 
             this.clearData();

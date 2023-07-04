@@ -1026,11 +1026,12 @@ using MicrotaskCallback = void (*)(void*);
 JSC_DEFINE_HOST_FUNCTION(functionNativeMicrotaskTrampoline,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSCell* cellPtr = callFrame->uncheckedArgument(0).asCell();
-    JSCell* callbackPtr = callFrame->uncheckedArgument(1).asCell();
+    // Do not use JSCell* here because the GC will try to visit it.
+    double cellPtr = callFrame->uncheckedArgument(0).asNumber();
+    double callbackPtr = callFrame->uncheckedArgument(1).asNumber();
 
-    void* cell = reinterpret_cast<void*>(cellPtr);
-    auto* callback = reinterpret_cast<MicrotaskCallback>(callbackPtr);
+    void* cell = reinterpret_cast<void*>(bitwise_cast<uintptr_t>(cellPtr));
+    auto* callback = reinterpret_cast<MicrotaskCallback>(bitwise_cast<uintptr_t>(callbackPtr));
     callback(cell);
     return JSValue::encode(jsUndefined());
 }
@@ -4410,7 +4411,9 @@ extern "C" void JSC__JSGlobalObject__reload(JSC__JSGlobalObject* arg0)
 extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* globalObject, void* ptr, MicrotaskCallback callback)
 {
     JSFunction* function = globalObject->nativeMicrotaskTrampoline();
-    globalObject->queueMicrotask(function, JSValue(reinterpret_cast<JSC::JSCell*>(ptr)), JSValue(reinterpret_cast<JSC::JSCell*>(callback)), jsUndefined(), jsUndefined());
+
+    // Do not use JSCell* here because the GC will try to visit it.
+    globalObject->queueMicrotask(function, JSValue(bitwise_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(bitwise_cast<double>(reinterpret_cast<uintptr_t>(callback))), jsUndefined(), jsUndefined());
 }
 
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject,

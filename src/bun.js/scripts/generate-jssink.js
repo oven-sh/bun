@@ -640,7 +640,7 @@ void JS${controllerName}::detach() {
         JSC::MarkedArgumentBuffer arguments;
         arguments.append(readableStream);
         arguments.append(jsUndefined());
-        JSC::call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
+        JSC::profiledCall(globalObject, JSC::ProfilingReason::Other, onClose, callData, JSC::jsUndefined(), arguments);
     }
     
     m_weakReadableStream.clear();
@@ -912,7 +912,7 @@ extern "C" void ${name}__onReady(JSC__JSValue controllerValue, JSC__JSValue amt,
     arguments.append(JSC::JSValue::decode(amt));
     arguments.append(JSC::JSValue::decode(offset));
 
-    JSC::call(globalObject, function, callData, JSC::jsUndefined(), arguments);
+    JSC::profiledCall(globalObject, JSC::ProfilingReason::Other, function, callData, JSC::jsUndefined(), arguments);
 }
 
 extern "C" void ${name}__onStart(JSC__JSValue controllerValue)
@@ -937,7 +937,7 @@ extern "C" void ${name}__onClose(JSC__JSValue controllerValue, JSC__JSValue reas
     arguments.append(readableStream ? readableStream : JSC::jsUndefined());
 
     arguments.append(JSC::JSValue::decode(reason));
-    JSC::call(globalObject, function, callData, JSC::jsUndefined(), arguments);
+    JSC::profiledCall(globalObject, JSC::ProfilingReason::Other, function, callData, JSC::jsUndefined(), arguments);
 }
 
 `;

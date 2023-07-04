@@ -250,7 +250,7 @@ static void handlePromise(PromiseType* promise, JSC__JSGlobalObject* globalObjec
         arguments.append(jsUndefined());
         arguments.append(JSValue::decode(ctx));
         ASSERT(!arguments.hasOverflowed());
-        JSC::call(globalThis, performPromiseThenFunction, callData, jsUndefined(), arguments);
+        JSC::profiledCall(globalThis, ProfilingReason::Other, performPromiseThenFunction, callData, jsUndefined(), arguments);
     } else {
         promise->then(globalThis, resolverFunction, rejecterFunction);
     }
@@ -1763,7 +1763,7 @@ JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSObjectRef obj
         return JSC::JSValue::encode(JSC::JSValue());
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::call(globalObject, jsObject, callData, jsThisObject, argList, returnedException);
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::Other, jsObject, callData, jsThisObject, argList, returnedException);
 
     if (returnedException.get()) {
         return JSC::JSValue::encode(JSC::JSValue(returnedException.get()));
@@ -1805,7 +1805,7 @@ JSC__JSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef ctx, J
         return JSC::JSValue::encode(JSC::JSValue());
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::call(globalObject, jsObject, callData, jsThisObject, argList, returnedException);
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::Other, jsObject, callData, jsThisObject, argList, returnedException);
 
     if (returnedException.get()) {
         return JSC::JSValue::encode(JSC::JSValue(returnedException.get()));

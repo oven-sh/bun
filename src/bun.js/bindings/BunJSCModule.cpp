@@ -1,4 +1,5 @@
 #include "root.h"
+#include "headers-handwritten.h"
 
 #include "JavaScriptCore/JavaScript.h"
 #include "wtf/FileSystem.h"
@@ -24,8 +25,11 @@
 #include "JavaScriptCore/DeferTermination.h"
 #include "JavaScriptCore/SamplingProfiler.h"
 #include "JavaScriptCore/VMTrapsInlines.h"
+#include "JavaScriptCore/JSPromise.h"
+#include "JavaScriptCore/InspectorProtocolObjects.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
+#include "JavaScriptCore/InspectorScriptProfilerAgent.h"
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
 
@@ -33,6 +37,70 @@
 
 using namespace JSC;
 using namespace WTF;
+using namespace Inspector;
+
+static Ref<Protocol::ScriptProfiler::Samples> buildSamples(JSC::JSGlobalObject* glboalObject, VM& vm, Vector<SamplingProfiler::StackTrace>&& samplingProfilerStackTraces)
+{
+    auto stackTraces = JSON::ArrayOf<Protocol::ScriptProfiler::StackTrace>::create();
+    for (SamplingProfiler::StackTrace& stackTrace : samplingProfilerStackTraces) {
+        auto frames = JSON::ArrayOf<Protocol::ScriptProfiler::StackFrame>::create();
+        for (SamplingProfiler::StackFrame& stackFrame : stackTrace.frames) {
+            if (!JSC::Options::showPrivateScriptsInStackTraces()) {
+                if (stackFrame.frameType == SamplingProfiler::FrameType::Executable) {
+                    if (stackFrame.executable->implementationVisibility() != ImplementationVisibility::Public) {
+                        // Skip internal frames.
+                        continue;
+                    }
+                }
+            }
+
+            ZigStackFrame remappedFrame[2];
+
+            remappedFrame[0].position.line = stackFrame.functionStartLine();
+            remappedFrame[0].position.column_start = stackFrame.functionStartColumn();
+
+            if (stackFrame.hasExpressionInfo()) {
+                remappedFrame[1].position.line = stackFrame.lineNumber();
+                remappedFrame[1].position.column_start = stackFrame.columnNumber();
+            }
+
+            if (!stackFrame.url().isEmpty()) {
+                remappedFrame[0].source_url = Bun::toString(stackFrame.url());
+                if (stackFrame.hasExpressionInfo())
+                    remappedFrame[1].source_url = Bun::toString(stackFrame.url());
+            }
+
+            Bun__remapStackFramePositions(glboalObject, remappedFrame, 1 + stackFrame.hasExpressionInfo());
+
+            auto frameObject = Protocol::ScriptProfiler::StackFrame::create()
+                                   .setSourceID(String::number(stackFrame.sourceID()))
+                                   .setName(stackFrame.displayName(vm))
+                                   .setLine(remappedFrame[0].position.line)
+                                   .setColumn(remappedFrame[0].position.column_start)
+                                   .setUrl(stackFrame.url())
+                                   .release();
+
+            if (stackFrame.hasExpressionInfo()) {
+                Ref<Protocol::ScriptProfiler::ExpressionLocation> expressionLocation = Protocol::ScriptProfiler::ExpressionLocation::create()
+                                                                                           .setLine(remappedFrame[1].position.line)
+                                                                                           .setColumn(remappedFrame[1].position.column_start)
+                                                                                           .release();
+                frameObject->setExpressionLocation(WTFMove(expressionLocation));
+            }
+
+            frames->addItem(WTFMove(frameObject));
+        }
+        Ref<Protocol::ScriptProfiler::StackTrace> inspectorStackTrace = Protocol::ScriptProfiler::StackTrace::create()
+                                                                            .setTimestamp(stackTrace.timestamp.seconds())
+                                                                            .setStackFrames(WTFMove(frames))
+                                                                            .release();
+        stackTraces->addItem(WTFMove(inspectorStackTrace));
+    }
+
+    return Protocol::ScriptProfiler::Samples::create()
+        .setStackTraces(WTFMove(stackTraces))
+        .release();
+}
 
 JSC_DECLARE_HOST_FUNCTION(functionStartRemoteDebugger);
 JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -452,6 +520,37 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject, Ca
     return JSValue::encode(jsString(vm, timeZoneString));
 }
 
+static EncodedJSValue createResultObject(JSGlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    JSC::SamplingProfiler& samplingProfiler = *vm.samplingProfiler();
+    StringPrintStream topFunctions;
+    samplingProfiler.reportTopFunctions(topFunctions);
+
+    StringPrintStream byteCodes;
+    samplingProfiler.reportTopBytecodes(byteCodes);
+
+    Locker locker { samplingProfiler.getLock() };
+    samplingProfiler.pause();
+    JSValue stackTraces = JSONParse(globalObject, buildSamples(globalObject, vm, samplingProfiler.releaseStackTraces())->toJSONString());
+    locker.unlockEarly();
+
+    samplingProfiler.shutdown();
+    samplingProfiler.clearData();
+
+    JSObject* result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
+    result->putDirect(vm, Identifier::fromString(vm, "functions"_s), jsString(vm, topFunctions.toString()));
+    result->putDirect(vm, Identifier::fromString(vm, "bytecodes"_s), jsString(vm, byteCodes.toString()));
+    result->putDirect(vm, Identifier::fromString(vm, "stackTraces"_s), stackTraces);
+
+    return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionFulfillProfilerRequest, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return createResultObject(globalObject);
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
@@ -477,31 +576,31 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
 
     samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
     samplingProfiler.start();
-    JSC::call(globalObject, function, callData, JSC::jsUndefined(), args);
-    samplingProfiler.pause();
+
+    JSValue result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, function, callData, JSC::jsUndefined(), args);
+
     if (throwScope.exception()) {
         samplingProfiler.shutdown();
         samplingProfiler.clearData();
         return JSValue::encode(JSValue {});
     }
 
-    StringPrintStream topFunctions;
-    samplingProfiler.reportTopFunctions(topFunctions);
+    if (auto* promise = jsDynamicCast<JSC::JSPromise*>(result)) {
+        auto* fulfill = JSC::JSFunction::create(vm, globalObject, 0, "fulfill"_s, functionFulfillProfilerRequest, ImplementationVisibility::Public);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        auto afterOngoingPromiseCapability = JSC::JSPromise::createNewPromiseCapability(globalObject, globalObject->promiseConstructor());
 
-    StringPrintStream byteCodes;
-    samplingProfiler.reportTopBytecodes(byteCodes);
+        auto data = JSC::JSPromise::convertCapabilityToDeferredData(globalObject, afterOngoingPromiseCapability);
+        RETURN_IF_EXCEPTION(throwScope, {});
 
-    JSValue stackTraces = JSONParse(globalObject, samplingProfiler.stackTracesAsJSON());
+        promise->performPromiseThen(globalObject, fulfill, fulfill, afterOngoingPromiseCapability);
 
-    samplingProfiler.shutdown();
-    samplingProfiler.clearData();
+        return JSValue::encode(data.promise);
+    }
 
-    JSObject* result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
-    result->putDirect(vm, Identifier::fromString(vm, "functions"_s), jsString(vm, topFunctions.toString()));
-    result->putDirect(vm, Identifier::fromString(vm, "bytecodes"_s), jsString(vm, byteCodes.toString()));
-    result->putDirect(vm, Identifier::fromString(vm, "stackTraces"_s), stackTraces);
+    samplingProfiler.pause();
 
-    return JSValue::encode(result);
+    return createResultObject(globalObject);
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionGenerateHeapSnapshotForDebugging);

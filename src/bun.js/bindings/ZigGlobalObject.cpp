@@ -239,9 +239,9 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::useJITCage() = false;
         JSC::Options::useShadowRealm() = true;
         JSC::Options::useResizableArrayBuffer() = true;
-#ifdef BUN_DEBUG
-        JSC::Options::showPrivateScriptsInStackTraces() = true;
-#endif
+        // #ifdef BUN_DEBUG
+        //         JSC::Options::showPrivateScriptsInStackTraces() = true;
+        // #endif
         JSC::Options::useSetMethods() = true;
 
         /*
@@ -2606,7 +2606,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObj
         break;
     }
 
-    JSC::call(globalObject, job, callData, jsUndefined(), arguments, exceptionPtr);
+    JSC::profiledCall(globalObject, ProfilingReason::Microtask, job, callData, jsUndefined(), arguments, exceptionPtr);
 
     if (auto* exception = exceptionPtr.get()) {
         Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
@@ -2657,7 +2657,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotaskVariadic, (JSGlobalObject * g
         thisValue = callframe->argument(2);
     }
 
-    JSC::call(globalObject, job, callData, thisValue, arguments, exceptionPtr);
+    JSC::profiledCall(globalObject, ProfilingReason::Microtask, job, callData, thisValue, arguments, exceptionPtr);
 
     if (auto* exception = exceptionPtr.get()) {
         Bun__reportUnhandledError(globalObject, JSValue::encode(exception));

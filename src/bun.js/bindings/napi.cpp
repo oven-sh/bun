@@ -1867,7 +1867,7 @@ extern "C" napi_status napi_call_function(napi_env env, napi_value recv_napi,
     if (thisValue.isEmpty()) {
         thisValue = JSC::jsUndefined();
     }
-    JSC::JSValue result = JSC::call(globalObject, funcValue, callData, thisValue, args);
+    JSC::JSValue result = JSC::profiledCall(globalObject, ProfilingReason::Other, funcValue, callData, thisValue, args);
 
     if (result_ptr) {
         *result_ptr = toNapi(result);

@@ -1569,11 +1569,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                             bun.default_allocator.destroy(this);
                         }
 
-                        this.adopted.receive_buffer.ensureUnusedCapacity(this.slice.len) catch return;
-                        var writable = this.adopted.receive_buffer.writableSlice(0);
-                        @memcpy(writable[0..this.slice.len], this.slice);
-
-                        this.adopted.handleData(this.adopted.tcp, writable);
+                        this.adopted.handleData(this.adopted.tcp, this.slice);
                     }
                 };
                 var initial_data = bun.default_allocator.create(InitialDataHandler) catch unreachable;

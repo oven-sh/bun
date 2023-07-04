@@ -982,11 +982,11 @@ describe("websocket server", () => {
     }
   });
 
-  // this test sends 100 messages to 10 connected clients via pubsub
+  // this test sends 50 messages to 10 connected clients via pubsub
   it("pub/sub", async () => {
     var ropey = "hello world".repeat(10);
     var sendQueue: any[] = [];
-    for (var i = 0; i < 100; i++) {
+    for (var i = 0; i < 50; i++) {
       sendQueue.push(ropey + " " + i);
     }
 

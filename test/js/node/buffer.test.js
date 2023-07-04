@@ -2493,3 +2493,48 @@ it("inspect() should exist", () => {
   expect(Buffer.prototype.inspect).toBeInstanceOf(Function);
   expect(new Buffer("123").inspect()).toBe(Bun.inspect(new Buffer("123")));
 });
+
+it("read alias", () => {
+  var buf = new Buffer(1024);
+  var data = new DataView(buf.buffer);
+
+  data.setUint8(0, 200, false);
+
+  expect(buf.readUint8(0)).toBe(buf.readUInt8(0));
+  expect(buf.readUintBE(0, 4)).toBe(buf.readUIntBE(0, 4));
+  expect(buf.readUintLE(0, 4)).toBe(buf.readUIntLE(0, 4));
+  expect(buf.readUint16BE(0)).toBe(buf.readUInt16BE(0));
+  expect(buf.readUint16LE(0)).toBe(buf.readUInt16LE(0));
+  expect(buf.readUint32BE(0)).toBe(buf.readUInt32BE(0));
+  expect(buf.readUint32LE(0)).toBe(buf.readUInt32LE(0));
+  expect(buf.readBigUint64BE(0)).toBe(buf.readBigUInt64BE(0));
+  expect(buf.readBigUint64LE(0)).toBe(buf.readBigUInt64LE(0));
+});
+
+it("write alias", () => {
+  var buf = new Buffer(1024);
+  var buf2 = new Buffer(1024);
+
+  function reset() {
+    new Uint8Array(buf.buffer).fill(0);
+    new Uint8Array(buf2.buffer).fill(0);
+  }
+
+  function shouldBeSame(name, name2, ...args) {
+    buf[name].call(buf, ...args);
+    buf2[name2].call(buf2, ...args);
+
+    expect(buf).toStrictEqual(buf2);
+    reset();
+  }
+
+  shouldBeSame("writeUint8", "writeUInt8", 10);
+  shouldBeSame("writeUintBE", "writeUIntBE", 10, 0, 4);
+  shouldBeSame("writeUintLE", "writeUIntLE", 10, 0, 4);
+  shouldBeSame("writeUint16BE", "writeUInt16BE", 1000);
+  shouldBeSame("writeUint16LE", "writeUInt16LE", 1000);
+  shouldBeSame("writeUint32BE", "writeUInt32BE", 1000);
+  shouldBeSame("writeUint32LE", "writeUInt32LE", 1000);
+  shouldBeSame("writeBigUint64BE", "writeBigUInt64BE", BigInt(1000));
+  shouldBeSame("writeBigUint64LE", "writeBigUInt64LE", BigInt(1000));
+});

@@ -145,6 +145,15 @@ const CppWebSocket = opaque {
     pub const didCloseWithErrorCode = WebSocket__didCloseWithErrorCode;
     pub const didReceiveText = WebSocket__didReceiveText;
     pub const didReceiveBytes = WebSocket__didReceiveBytes;
+    extern fn WebSocket__incrementPendingActivity(websocket_context: *CppWebSocket) void;
+    extern fn WebSocket__decrementPendingActivity(websocket_context: *CppWebSocket) void;
+    pub fn ref(this: *CppWebSocket) void {
+        WebSocket__incrementPendingActivity(this);
+    }
+
+    pub fn unref(this: *CppWebSocket) void {
+        WebSocket__decrementPendingActivity(this);
+    }
 };
 
 const body_buf_len = 16384 - 16;
@@ -846,6 +855,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         globalThis: *JSC.JSGlobalObject,
         poll_ref: JSC.PollRef = JSC.PollRef.init(),
 
+        initial_data_handler: ?*InitialDataHandler = null,
+
         pub const name = if (ssl) "WebSocketClientTLS" else "WebSocketClient";
 
         pub const shim = JSC.Shimmer("Bun", name, @This());
@@ -1026,6 +1037,24 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn handleData(this: *WebSocket, socket: Socket, data_: []const u8) void {
+            // Due to scheduling, it is possible for the websocket onData
+            // handler to run with additional data before the microtask queue is
+            // drained.
+            if (this.initial_data_handler) |initial_handler| {
+                // This calls `handleData`
+                // We deliberately do not set this.initial_data_handler to null here, that's done in handleWithoutDeinit.
+                // We do not free the memory here since the lifetime is managed by the microtask queue (it should free when called from there)
+                initial_handler.handleWithoutDeinit();
+
+                // handleWithoutDeinit is supposed to clear the handler from WebSocket*
+                // to prevent an infinite loop
+                std.debug.assert(this.initial_data_handler == null);
+
+                // If we disconnected for any reason in the re-entrant case, we should just ignore the data
+                if (this.outgoing_websocket == null or this.tcp.isShutdown() or this.tcp.isClosed())
+                    return;
+            }
+
             var data = data_;
             var receive_state = this.receive_state;
             var terminated = false;
@@ -1527,6 +1556,33 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.sendCloseWithBody(this.tcp, code, null, 0);
         }
 
+        const InitialDataHandler = struct {
+            adopted: ?*WebSocket,
+            ws: *CppWebSocket,
+            slice: []u8,
+
+            pub const Handle = JSC.AnyTask.New(@This(), handle);
+
+            pub fn handleWithoutDeinit(this: *@This()) void {
+                var this_socket = this.adopted orelse return;
+                this.adopted = null;
+                this_socket.initial_data_handler = null;
+                var ws = this.ws;
+                defer ws.unref();
+
+                if (this_socket.outgoing_websocket != null)
+                    this_socket.handleData(this_socket.tcp, this.slice);
+            }
+
+            pub fn handle(this: *@This()) void {
+                defer {
+                    bun.default_allocator.free(this.slice);
+                    bun.default_allocator.destroy(this);
+                }
+                this.handleWithoutDeinit();
+            }
+        };
+
         pub fn init(
             outgoing: *CppWebSocket,
             input_socket: *anyopaque,
@@ -1556,29 +1612,19 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             var buffered_slice: []u8 = buffered_data[0..buffered_data_len];
             if (buffered_slice.len > 0) {
-                const InitialDataHandler = struct {
-                    adopted: *WebSocket,
-                    slice: []u8,
-                    task: JSC.AnyTask = undefined,
-
-                    pub const Handle = JSC.AnyTask.New(@This(), handle);
-
-                    pub fn handle(this: *@This()) void {
-                        defer {
-                            bun.default_allocator.free(this.slice);
-                            bun.default_allocator.destroy(this);
-                        }
-
-                        this.adopted.handleData(this.adopted.tcp, this.slice);
-                    }
-                };
                 var initial_data = bun.default_allocator.create(InitialDataHandler) catch unreachable;
                 initial_data.* = .{
                     .adopted = adopted,
                     .slice = buffered_slice,
+                    .ws = outgoing,
                 };
-                initial_data.task = InitialDataHandler.Handle.init(initial_data);
-                globalThis.bunVM().eventLoop().enqueueTask(JSC.Task.init(&initial_data.task));
+
+                // Use a higher-priority callback for the initial onData handler
+                globalThis.queueMicrotaskCallback(initial_data, InitialDataHandler.handle);
+
+                // We need to ref the outgoing websocket so that it doesn't get finalized
+                // before the initial data handler is called
+                outgoing.ref();
             }
             return @ptrCast(
                 *anyopaque,

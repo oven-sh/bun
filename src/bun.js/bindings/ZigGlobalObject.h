@@ -369,6 +369,7 @@ public:
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
 
     JSObject* navigatorObject();
+    JSFunction* nativeMicrotaskTrampoline() { return m_nativeMicrotaskTrampoline.getInitializedOnMainThread(this); }
 
     void trackFFIFunction(JSC::JSFunction* function)
     {
@@ -466,6 +467,7 @@ private:
      */
     LazyProperty<JSGlobalObject, JSC::Structure> m_pendingVirtualModuleResultStructure;
     LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskFunction;
+    LazyProperty<JSGlobalObject, JSFunction> m_nativeMicrotaskTrampoline;
     LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskVariadicFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_emitReadableNextTickFunction;
     LazyProperty<JSGlobalObject, JSMap> m_lazyReadableStreamPrototypeMap;

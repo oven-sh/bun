@@ -933,7 +933,7 @@ describe("websocket server", () => {
         open(ws) {},
         message(ws, msg) {
           ws.send(sendQueue[serverCounter++] + " ");
-          gcTick();
+          serverCounter % 10 === 0 && gcTick();
         },
       },
       fetch(req, server) {
@@ -986,7 +986,7 @@ describe("websocket server", () => {
   it("pub/sub", async () => {
     var ropey = "hello world".repeat(10);
     var sendQueue: any[] = [];
-    for (var i = 0; i < 20; i++) {
+    for (var i = 0; i < 100; i++) {
       sendQueue.push(ropey + " " + i);
     }
 
@@ -997,7 +997,6 @@ describe("websocket server", () => {
       websocket: {
         open(ws) {
           ws.subscribe("test");
-          gcTick();
           if (!ws.isSubscribed("test")) {
             throw new Error("not subscribed");
           }
@@ -1044,7 +1043,6 @@ describe("websocket server", () => {
             resolve = res;
             reject = rej;
           });
-          gcTick();
           const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
           websocket.onerror = e => {
             reject(e);
@@ -1067,8 +1065,6 @@ describe("websocket server", () => {
           var hasSentThisTick = false;
 
           websocket.onmessage = e => {
-            gcTick();
-
             if (!hasOpened) {
               hasOpened = true;
               resolve(websocket);
@@ -1091,8 +1087,6 @@ describe("websocket server", () => {
                 });
               }
 
-              gcTick();
-
               if (clientCounter++ === sendQueue.length - 1) {
                 websocket.close();
                 resolveConnection();
@@ -1101,7 +1095,6 @@ describe("websocket server", () => {
               console.error(r);
               websocket.close();
               rejectConnection(r);
-              gcTick();
             }
           };
         }
@@ -1110,6 +1103,7 @@ describe("websocket server", () => {
       throw e;
     } finally {
       server.stop(true);
+      gcTick();
     }
 
     expect(serverCounter).toBe(sendQueue.length);

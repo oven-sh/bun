@@ -1239,3 +1239,12 @@ extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, uint8_
 {
     webSocket->didReceiveBinaryData({ bytes, len });
 }
+
+extern "C" void WebSocket__incrementPendingActivity(WebCore::WebSocket* webSocket)
+{
+    webSocket->incPendingActivityCount();
+}
+extern "C" void WebSocket__decrementPendingActivity(WebCore::WebSocket* webSocket)
+{
+    webSocket->decPendingActivityCount();
+}

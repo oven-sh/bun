@@ -20,7 +20,7 @@
     "prisma": "4.15.0",
     "socket.io": "4.7.1",
     "socket.io-client": "4.7.1",
-    "supertest": "6.1.6",
+    "supertest": "6.3.3",
     "svelte": "3.55.1",
     "typescript": "5.0.2",
     "undici": "5.20.0",

@@ -291,8 +291,8 @@ pub const MinifyRenamer = struct {
             try sorted.ensureUnusedCapacity(slots.items.len);
             sorted.items.len = slots.items.len;
 
-            for (sorted.items, 0..) |*slot, i| {
-                slot.* = SlotAndCount{
+            for (sorted.items, slots.items, 0..) |*elem, slot, i| {
+                elem.* = SlotAndCount{
                     .slot = @intCast(u32, i),
                     .count = slot.count,
                 };

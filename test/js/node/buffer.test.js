@@ -509,21 +509,21 @@ it("hex toString()", () => {
   const hexStr = hexb.toString("hex");
   expect(hexStr).toBe(
     "000102030405060708090a0b0c0d0e0f" +
-      "101112131415161718191a1b1c1d1e1f" +
-      "202122232425262728292a2b2c2d2e2f" +
-      "303132333435363738393a3b3c3d3e3f" +
-      "404142434445464748494a4b4c4d4e4f" +
-      "505152535455565758595a5b5c5d5e5f" +
-      "606162636465666768696a6b6c6d6e6f" +
-      "707172737475767778797a7b7c7d7e7f" +
-      "808182838485868788898a8b8c8d8e8f" +
-      "909192939495969798999a9b9c9d9e9f" +
-      "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf" +
-      "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf" +
-      "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf" +
-      "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf" +
-      "e0e1e2e3e4e5e6e7e8e9eaebecedeeef" +
-      "f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+    "101112131415161718191a1b1c1d1e1f" +
+    "202122232425262728292a2b2c2d2e2f" +
+    "303132333435363738393a3b3c3d3e3f" +
+    "404142434445464748494a4b4c4d4e4f" +
+    "505152535455565758595a5b5c5d5e5f" +
+    "606162636465666768696a6b6c6d6e6f" +
+    "707172737475767778797a7b7c7d7e7f" +
+    "808182838485868788898a8b8c8d8e8f" +
+    "909192939495969798999a9b9c9d9e9f" +
+    "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf" +
+    "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf" +
+    "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf" +
+    "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf" +
+    "e0e1e2e3e4e5e6e7e8e9eaebecedeeef" +
+    "f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
   );
 
   const hexb2 = Buffer.from(hexStr, "hex");
@@ -1703,7 +1703,7 @@ it("Buffer.toString(base64)", () => {
 
 it("Buffer can be mocked", () => {
   function MockBuffer() {
-    const noop = function () {};
+    const noop = function() { };
     const res = Buffer.alloc(0);
     for (const op in Buffer.prototype) {
       if (typeof res[op] === "function") {
@@ -1790,7 +1790,7 @@ it("Buffer.from (Node.js test/test-buffer-from.js)", () => {
     new MyBadPrimitive(),
     Symbol(),
     5n,
-    (one, two, three) => {},
+    (one, two, three) => { },
     undefined,
     null,
   ].forEach(input => {
@@ -2492,4 +2492,49 @@ it("repro #2063", () => {
 it("inspect() should exist", () => {
   expect(Buffer.prototype.inspect).toBeInstanceOf(Function);
   expect(new Buffer("123").inspect()).toBe(Bun.inspect(new Buffer("123")));
+});
+
+it("read alias", () => {
+  var buf = new Buffer(1024);
+  var data = new DataView(buf.buffer);
+
+  data.setUint8(0, 200, false);
+
+  expect(buf.readUint8(0)).toBe(buf.readUInt8(0));
+  expect(buf.readUintBE(0, 4)).toBe(buf.readUIntBE(0, 4));
+  expect(buf.readUintLE(0, 4)).toBe(buf.readUIntLE(0, 4));
+  expect(buf.readUint16BE(0)).toBe(buf.readUInt16BE(0));
+  expect(buf.readUint16LE(0)).toBe(buf.readUInt16LE(0));
+  expect(buf.readUint32BE(0)).toBe(buf.readUInt32BE(0));
+  expect(buf.readUint32LE(0)).toBe(buf.readUInt32LE(0));
+  expect(buf.readBigUint64BE(0)).toBe(buf.readBigUInt64BE(0));
+  expect(buf.readBigUint64LE(0)).toBe(buf.readBigUInt64LE(0));
+});
+
+it("write alias", () => {
+  var buf = new Buffer(1024);
+  var buf2 = new Buffer(1024);
+
+  function reset() {
+    new Uint8Array(buf.buffer).fill(0);
+    new Uint8Array(buf2.buffer).fill(0);
+  }
+
+  function shouldBeSame(name, name2, ...args) {
+    buf[name].call(buf, ...args);
+    buf2[name2].call(buf2, ...args);
+
+    expect(buf).toStrictEqual(buf2);
+    reset();
+  }
+
+  shouldBeSame("writeUint8", "writeUInt8", 10);
+  shouldBeSame("writeUintBE", "writeUIntBE", 10, 0, 4);
+  shouldBeSame("writeUintLE", "writeUIntLE", 10, 0, 4);
+  shouldBeSame("writeUint16BE", "writeUInt16BE", 1000);
+  shouldBeSame("writeUint16LE", "writeUInt16LE", 1000);
+  shouldBeSame("writeUint32BE", "writeUInt32BE", 1000);
+  shouldBeSame("writeUint32LE", "writeUInt32LE", 1000);
+  shouldBeSame("writeBigUint64BE", "writeBigUInt64BE", BigInt(1000));
+  shouldBeSame("writeBigUint64LE", "writeBigUInt64LE", BigInt(1000));
 });

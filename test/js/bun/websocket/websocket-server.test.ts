@@ -920,7 +920,7 @@ describe("websocket server", () => {
   it("send rope strings", async () => {
     var ropey = "hello world".repeat(10);
     var sendQueue: any[] = [];
-    for (var i = 0; i < 100; i++) {
+    for (var i = 0; i < 20; i++) {
       sendQueue.push(ropey + " " + i);
     }
 

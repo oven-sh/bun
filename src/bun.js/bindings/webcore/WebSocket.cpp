@@ -458,8 +458,8 @@ ExceptionOr<void> WebSocket::send(const String& message)
         return {};
     }
 
-    if (message.length() > 0)
-        this->sendWebSocketString(message);
+    // 0-length is allowed
+    this->sendWebSocketString(message);
 
     return {};
 }
@@ -477,8 +477,8 @@ ExceptionOr<void> WebSocket::send(ArrayBuffer& binaryData)
     }
     char* data = static_cast<char*>(binaryData.data());
     size_t length = binaryData.byteLength();
-    if (length > 0)
-        this->sendWebSocketData(data, length);
+    // 0-length is allowed
+    this->sendWebSocketData(data, length);
     return {};
 }
 
@@ -498,8 +498,8 @@ ExceptionOr<void> WebSocket::send(ArrayBufferView& arrayBufferView)
     auto buffer = arrayBufferView.unsharedBuffer().get();
     char* baseAddress = reinterpret_cast<char*>(buffer->data()) + arrayBufferView.byteOffset();
     size_t length = arrayBufferView.byteLength();
-    if (length > 0)
-        this->sendWebSocketData(baseAddress, length);
+    // 0-length is allowed
+    this->sendWebSocketData(baseAddress, length);
 
     return {};
 }
@@ -1232,14 +1232,19 @@ extern "C" void WebSocket__didCloseWithErrorCode(WebCore::WebSocket* webSocket, 
 
 extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, bool clone, const ZigString* str)
 {
-    WTF::String wtf_str = Zig::toString(*str);
-    if (clone) {
-        wtf_str = wtf_str.isolatedCopy();
-    }
-
+    WTF::String wtf_str = clone ? Zig::toStringCopy(*str) : Zig::toString(*str);
     webSocket->didReceiveMessage(WTFMove(wtf_str));
 }
 extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, uint8_t* bytes, size_t len)
 {
     webSocket->didReceiveBinaryData({ bytes, len });
+}
+
+extern "C" void WebSocket__incrementPendingActivity(WebCore::WebSocket* webSocket)
+{
+    webSocket->incPendingActivityCount();
+}
+extern "C" void WebSocket__decrementPendingActivity(WebCore::WebSocket* webSocket)
+{
+    webSocket->decPendingActivityCount();
 }

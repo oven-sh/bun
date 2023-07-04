@@ -111,6 +111,20 @@ public:
         return m_hasPendingActivity.load();
     }
 
+    void incPendingActivityCount()
+    {
+        m_pendingActivityCount++;
+        ref();
+        updateHasPendingActivity();
+    }
+
+    void decPendingActivityCount()
+    {
+        m_pendingActivityCount--;
+        deref();
+        updateHasPendingActivity();
+    }
+
 private:
     typedef union AnyWebSocket {
         WebSocketClient* client;
@@ -146,20 +160,6 @@ private:
 
     void sendWebSocketString(const String& message);
     void sendWebSocketData(const char* data, size_t length);
-
-    void incPendingActivityCount()
-    {
-        m_pendingActivityCount++;
-        ref();
-        updateHasPendingActivity();
-    }
-
-    void decPendingActivityCount()
-    {
-        m_pendingActivityCount--;
-        deref();
-        updateHasPendingActivity();
-    }
 
     void failAsynchronously();
 

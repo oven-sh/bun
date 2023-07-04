@@ -1021,6 +1021,20 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleepThenCallback,
     return JSC::JSValue::encode(promise);
 }
 
+using MicrotaskCallback = void (*)(void*);
+
+JSC_DEFINE_HOST_FUNCTION(functionNativeMicrotaskTrampoline,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSCell* cellPtr = callFrame->uncheckedArgument(0).asCell();
+    JSCell* callbackPtr = callFrame->uncheckedArgument(1).asCell();
+
+    void* cell = reinterpret_cast<void*>(cellPtr);
+    auto* callback = reinterpret_cast<MicrotaskCallback>(callbackPtr);
+    callback(cell);
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -3027,6 +3041,11 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(JSFunction::create(init.vm, init.owner, 4, "performMicrotaskVariadic"_s, jsFunctionPerformMicrotaskVariadic, ImplementationVisibility::Public));
         });
 
+    m_nativeMicrotaskTrampoline.initLater(
+        [](const Initializer<JSFunction>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, functionNativeMicrotaskTrampoline, ImplementationVisibility::Public));
+        });
+
     m_navigatorObject.initLater(
         [](const Initializer<JSObject>& init) {
             int cpuCount = 0;
@@ -4225,6 +4244,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSFileSinkControllerPrototype.visit(visitor);
     thisObject->m_JSHTTPSResponseControllerPrototype.visit(visitor);
     thisObject->m_navigatorObject.visit(visitor);
+    thisObject->m_nativeMicrotaskTrampoline.visit(visitor);
     thisObject->m_performanceObject.visit(visitor);
     thisObject->m_primordialsObject.visit(visitor);
     thisObject->m_processEnvObject.visit(visitor);
@@ -4385,6 +4405,12 @@ extern "C" void JSC__JSGlobalObject__reload(JSC__JSGlobalObject* arg0)
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
     globalObject->reload();
+}
+
+extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* globalObject, void* ptr, MicrotaskCallback callback)
+{
+    JSFunction* function = globalObject->nativeMicrotaskTrampoline();
+    globalObject->queueMicrotask(function, JSValue(reinterpret_cast<JSC::JSCell*>(ptr)), JSValue(reinterpret_cast<JSC::JSCell*>(callback)), jsUndefined(), jsUndefined());
 }
 
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject,

@@ -2732,6 +2732,23 @@ pub const JSGlobalObject = extern struct {
             this.vm().throwError(this, this.createErrorInstance(Output.prettyFmt(fmt, false), args));
         }
     }
+    extern fn JSC__JSGlobalObject__queueMicrotaskCallback(*JSGlobalObject, *anyopaque, Function: *const (fn (*anyopaque) callconv(.C) void)) void;
+    pub fn queueMicrotaskCallback(
+        this: *JSGlobalObject,
+        ctx_val: anytype,
+        comptime Function: fn (ctx: @TypeOf(ctx_val)) void,
+    ) void {
+        JSC.markBinding(@src());
+        const Fn = Function;
+        const ContextType = @TypeOf(ctx_val);
+        const Wrapper = struct {
+            pub fn call(p: *anyopaque) callconv(.C) void {
+                Fn(bun.cast(ContextType, p));
+            }
+        };
+
+        JSC__JSGlobalObject__queueMicrotaskCallback(this, ctx_val, &Wrapper.call);
+    }
 
     pub fn queueMicrotask(
         this: *JSGlobalObject,

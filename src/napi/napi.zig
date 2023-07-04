@@ -291,7 +291,6 @@ pub export fn napi_create_string_utf8(env: napi_env, str: [*]const u8, length: u
 
     var string = bun.String.create(slice);
     defer string.deref();
-
     setNapiValue(result, string.toJS(env));
     return .ok;
 }
@@ -392,56 +391,8 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf
 /// If buf is NULL, this method returns the length of the string (in bytes)
 /// via the result parameter.
 /// The result argument is optional unless buf is NULL.
-pub export fn napi_get_value_string_utf8(env: napi_env, value: napi_value, buf_ptr: [*c]u8, bufsize: usize, result_ptr: ?*usize) napi_status {
-    defer value.ensureStillAlive();
-
-    if (!value.isString()) {
-        return .string_expected;
-    }
-
-    const str = value.toBunString(env);
-
-    if (str.isEmpty()) {
-        if (result_ptr) |result| {
-            result.* = 0;
-        }
-        return .ok;
-    }
-
-    var buf = buf_ptr orelse {
-        if (result_ptr) |result| {
-            result.* = str.utf8ByteLength();
-        }
-
-        return .ok;
-    };
-
-    var buf_ = buf[0..bufsize];
-
-    if (bufsize == 0) {
-        buf_ = bun.sliceTo(buf_ptr, 0);
-        if (buf_.len == 0) {
-            if (result_ptr) |result| {
-                result.* = 0;
-            }
-            return .ok;
-        }
-    }
-
-    const written = str.encodeInto(buf_, .utf8) catch unreachable;
-    const max_buf_len = if (bufsize == 0) buf_.len else bufsize;
-
-    if (result_ptr) |result| {
-        result.* = written;
-    } else if (written < max_buf_len) {
-        buf[written] = 0;
-    }
-
-    log("napi_get_value_string_utf8: {s}", .{buf[0..written]});
-
-    return .ok;
-}
-pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf_ptr: [*c]char16_t, bufsize: usize, result_ptr: ?*usize) napi_status {
+pub extern fn napi_get_value_string_utf8(env: napi_env, value: napi_value, buf_ptr: [*c]u8, bufsize: usize, result_ptr: ?*usize) napi_status ;
+pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf_ptr: ?[*]char16_t, bufsize: usize, result_ptr: ?*usize) napi_status {
     log("napi_get_value_string_utf16", .{});
     defer value.ensureStillAlive();
     const str = value.toBunString(env);
@@ -539,15 +490,7 @@ pub export fn napi_has_element(env: napi_env, object: napi_value, index: c_uint,
     result.* = object.getLength(env) > index;
     return .ok;
 }
-pub export fn napi_get_element(env: napi_env, object: napi_value, index: u32, result: *napi_value) napi_status {
-    log("napi_get_element", .{});
-    if (!object.jsType().isIndexable()) {
-        return .array_expected;
-    }
-
-    result.* = JSC.JSObject.getIndex(object, env, index);
-    return .ok;
-}
+pub extern fn napi_get_element(env: napi_env, object: napi_value, index: u32, result: *napi_value) napi_status;
 pub extern fn napi_define_properties(env: napi_env, object: napi_value, property_count: usize, properties: [*c]const napi_property_descriptor) napi_status;
 pub export fn napi_is_array(_: napi_env, value: napi_value, result: *bool) napi_status {
     log("napi_is_array", .{});

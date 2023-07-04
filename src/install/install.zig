@@ -1742,55 +1742,51 @@ pub const PackageManager = struct {
     pub fn enqueueDependencyToRoot(
         this: *PackageManager,
         name: []const u8,
-        version_buf: []const u8,
         version: *const Dependency.Version,
+        version_buf: []const u8,
         behavior: Dependency.Behavior,
     ) DependencyToEnqueue {
-        const str_buf = this.lockfile.buffers.string_bytes.items;
-        for (this.lockfile.buffers.dependencies.items, 0..) |dependency, dependency_id| {
-            if (!strings.eqlLong(dependency.name.slice(str_buf), name, true)) continue;
-            if (!dependency.version.eql(version, str_buf, version_buf)) continue;
-            return switch (this.lockfile.buffers.resolutions.items[dependency_id]) {
-                invalid_package_id => .{
-                    .pending = @truncate(DependencyID, dependency_id),
-                },
-                else => |resolution_id| .{
-                    .resolution = .{
-                        .resolution = this.lockfile.packages.items(.resolution)[resolution_id],
-                        .package_id = resolution_id,
-                    },
-                },
+        const dep_id = @truncate(DependencyID, brk: {
+            const str_buf = this.lockfile.buffers.string_bytes.items;
+            for (this.lockfile.buffers.dependencies.items, 0..) |dep, id| {
+                if (!strings.eqlLong(dep.name.slice(str_buf), name, true)) continue;
+                if (!dep.version.eql(version, str_buf, version_buf)) continue;
+                break :brk id;
+            }
+
+            var builder = this.lockfile.stringBuilder();
+            const dummy = Dependency{
+                .name = String.init(name, name),
+                .name_hash = String.Builder.stringHash(name),
+                .version = version.*,
+                .behavior = behavior,
+            };
+            dummy.countWithDifferentBuffers(name, version_buf, @TypeOf(&builder), &builder);
+
+            builder.allocate() catch |err| return .{ .failure = err };
+
+            const dep = dummy.cloneWithDifferentBuffers(name, version_buf, @TypeOf(&builder), &builder) catch unreachable;
+            builder.clamp();
+            const index = this.lockfile.buffers.dependencies.items.len;
+            this.lockfile.buffers.dependencies.append(this.allocator, dep) catch unreachable;
+            this.lockfile.buffers.resolutions.append(this.allocator, invalid_package_id) catch unreachable;
+            if (comptime Environment.allow_assert) std.debug.assert(this.lockfile.buffers.dependencies.items.len == this.lockfile.buffers.resolutions.items.len);
+            break :brk index;
+        });
+
+        if (this.lockfile.buffers.resolutions.items[dep_id] == invalid_package_id) {
+            this.enqueueDependencyWithMainAndSuccessFn(
+                dep_id,
+                &this.lockfile.buffers.dependencies.items[dep_id],
+                invalid_package_id,
+                assignRootResolution,
+                failRootResolution,
+            ) catch |err| {
+                return .{ .failure = err };
             };
         }
 
-        var builder = this.lockfile.stringBuilder();
-        const dependency = Dependency{
-            .name = String.init(name, name),
-            .name_hash = String.Builder.stringHash(name),
-            .version = version.*,
-            .behavior = behavior,
-        };
-        dependency.countWithDifferentBuffers(name, version_buf, @TypeOf(&builder), &builder);
-
-        builder.allocate() catch |err| return .{ .failure = err };
-
-        const cloned_dependency = dependency.cloneWithDifferentBuffers(name, version_buf, @TypeOf(&builder), &builder) catch unreachable;
-        builder.clamp();
-        const index = @truncate(DependencyID, this.lockfile.buffers.dependencies.items.len);
-        this.lockfile.buffers.dependencies.append(this.allocator, cloned_dependency) catch unreachable;
-        this.lockfile.buffers.resolutions.append(this.allocator, invalid_package_id) catch unreachable;
-        if (comptime Environment.allow_assert) std.debug.assert(this.lockfile.buffers.dependencies.items.len == this.lockfile.buffers.resolutions.items.len);
-        this.enqueueDependencyWithMainAndSuccessFn(
-            index,
-            &cloned_dependency,
-            invalid_package_id,
-            assignRootResolution,
-            failRootResolution,
-        ) catch |err| {
-            return .{ .failure = err };
-        };
-
-        const resolution_id = switch (this.lockfile.buffers.resolutions.items[index]) {
+        const resolution_id = switch (this.lockfile.buffers.resolutions.items[dep_id]) {
             invalid_package_id => brk: {
                 this.drainDependencyList();
 
@@ -1815,7 +1811,7 @@ pub const PackageManager = struct {
                     },
                 }
 
-                break :brk this.lockfile.buffers.resolutions.items[index];
+                break :brk this.lockfile.buffers.resolutions.items[dep_id];
             },
             // we managed to synchronously resolve the dependency
             else => |pkg_id| pkg_id,

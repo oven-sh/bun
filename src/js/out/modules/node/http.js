@@ -1085,6 +1085,8 @@ var tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/, METHODS = [
     debug(`${NODE_HTTP_WARNING}\n`, "setMaxIdleHTTPParsers() is a no-op");
   },
   globalAgent,
+  ClientRequest,
+  OutgoingMessage,
   [Symbol.for("CommonJS")]: 0
 }, http_default = defaultObject;
 export {

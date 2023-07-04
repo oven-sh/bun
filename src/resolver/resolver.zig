@@ -1256,14 +1256,8 @@ pub const Resolver = struct {
 
         if (check_package) {
             if (r.opts.polyfill_node_globals) {
-                var import_path_without_node_prefix = import_path;
-                const had_node_prefix = import_path_without_node_prefix.len > "node:".len and
-                    strings.eqlComptime(import_path_without_node_prefix[0.."node:".len], "node:");
-
-                import_path_without_node_prefix = if (had_node_prefix)
-                    import_path_without_node_prefix["node:".len..]
-                else
-                    import_path_without_node_prefix;
+                const had_node_prefix = strings.hasPrefixComptime(import_path, "node:");
+                const import_path_without_node_prefix = if (had_node_prefix) import_path["node:".len..] else import_path;
 
                 if (NodeFallbackModules.Map.get(import_path_without_node_prefix)) |*fallback_module| {
                     result.path_pair.primary = fallback_module.path;
@@ -1278,7 +1272,7 @@ pub const Resolver = struct {
                 } else if (had_node_prefix or
                     (strings.hasPrefixComptime(import_path_without_node_prefix, "fs") and
                     (import_path_without_node_prefix.len == 2 or
-                    import_path_without_node_prefix[3] == '/')))
+                    import_path_without_node_prefix[2] == '/')))
                 {
                     result.path_pair.primary.namespace = "node";
                     result.path_pair.primary.text = import_path_without_node_prefix;
@@ -1698,8 +1692,9 @@ pub const Resolver = struct {
                 // If the source directory doesn't have a node_modules directory, we can
                 // check the global cache directory for a package.json file.
                 var manager = r.getPackageManager();
-                var dependency_version: Dependency.Version = .{};
+                var dependency_version = Dependency.Version{};
                 var dependency_behavior = @enumFromInt(Dependency.Behavior, Dependency.Behavior.normal);
+                var string_buf = esm.version;
 
                 // const initial_pending_tasks = manager.pending_tasks;
                 var resolved_package_id: Install.PackageID = brk: {
@@ -1707,7 +1702,6 @@ pub const Resolver = struct {
                     // and try to look up the dependency from there
                     if (dir_info.package_json_for_dependencies) |package_json| {
                         var dependencies_list: []const Dependency = &[_]Dependency{};
-                        var string_buf: []const u8 = "";
                         const resolve_from_lockfile = package_json.package_manager_package_id != Install.invalid_package_id;
 
                         if (resolve_from_lockfile) {
@@ -1723,24 +1717,21 @@ pub const Resolver = struct {
                         }
 
                         for (dependencies_list, 0..) |dependency, dependency_id| {
-                            const dep_name = dependency.name.slice(string_buf);
-                            if (dep_name.len == esm.name.len) {
-                                if (!strings.eqlLong(dep_name, esm.name, false)) {
-                                    continue;
-                                }
-
-                                dependency_version = dependency.version;
-                                dependency_behavior = dependency.behavior;
-
-                                if (resolve_from_lockfile) {
-                                    const resolutions = &manager.lockfile.packages.items(.resolutions)[package_json.package_manager_package_id];
-
-                                    // found it!
-                                    break :brk resolutions.get(manager.lockfile.buffers.resolutions.items)[dependency_id];
-                                }
-
-                                break;
+                            if (!strings.eqlLong(dependency.name.slice(string_buf), esm.name, true)) {
+                                continue;
                             }
+
+                            dependency_version = dependency.version;
+                            dependency_behavior = dependency.behavior;
+
+                            if (resolve_from_lockfile) {
+                                const resolutions = &manager.lockfile.packages.items(.resolutions)[package_json.package_manager_package_id];
+
+                                // found it!
+                                break :brk resolutions.get(manager.lockfile.buffers.resolutions.items)[dependency_id];
+                            }
+
+                            break;
                         }
                     }
 
@@ -1770,6 +1761,7 @@ pub const Resolver = struct {
                             if (esm_.?.version.len > 0 and dir_info.enclosing_package_json != null and global_cache.allowVersionSpecifier()) {
                                 return .{ .failure = error.VersionSpecifierNotAllowedHere };
                             }
+                            string_buf = esm.version;
                             dependency_version = Dependency.parse(
                                 r.allocator,
                                 Semver.String.init(esm.name, esm.name),
@@ -1795,6 +1787,7 @@ pub const Resolver = struct {
                         dependency_behavior,
                         &resolved_package_id,
                         dependency_version,
+                        string_buf,
                     )) {
                         .resolution => |res| break :brk res,
                         .pending => |pending| return .{ .pending = pending },
@@ -2073,6 +2066,7 @@ pub const Resolver = struct {
         behavior: Dependency.Behavior,
         input_package_id_: *Install.PackageID,
         version: Dependency.Version,
+        version_buf: []const u8,
     ) DependencyToResolve {
         if (r.debug_logs) |*debug| {
             debug.addNoteFmt("Enqueueing pending dependency \"{s}@{s}\"", .{ esm.name, esm.version });
@@ -2135,7 +2129,7 @@ pub const Resolver = struct {
 
             // All packages are enqueued to the root
             // because we download all the npm package dependencies
-            switch (pm.enqueueDependencyToRoot(esm.name, esm.version, &version, behavior)) {
+            switch (pm.enqueueDependencyToRoot(esm.name, &version, version_buf, behavior)) {
                 .resolution => |result| {
                     input_package_id_.* = result.package_id;
                     return .{ .resolution = result.resolution };

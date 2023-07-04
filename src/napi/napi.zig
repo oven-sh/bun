@@ -339,9 +339,11 @@ inline fn maybeAppendNull(ptr: anytype, doit: bool) void {
         ptr.* = 0;
     }
 }
-pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf_ptr: [*c]u8, bufsize: usize, result_ptr: ?*usize) napi_status {
+pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf_ptr_: ?[*:0]c_char, bufsize: usize, result_ptr: ?*usize) napi_status {
     log("napi_get_value_string_latin1", .{});
     defer value.ensureStillAlive();
+    var buf_ptr = @ptrCast(?[*:0]u8, buf_ptr_);
+
     const str = value.toBunString(env);
     var buf = buf_ptr orelse {
         if (result_ptr) |result| {
@@ -362,8 +364,8 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf
 
     var buf_ = buf[0..bufsize];
 
-    if (bufsize == 0) {
-        buf_ = bun.sliceTo(buf_ptr, 0);
+    if (bufsize == NAPI_AUTO_LENGTH) {
+        buf_ = bun.sliceTo(buf_ptr.?, 0);
         if (buf_.len == 0) {
             if (result_ptr) |result| {
                 result.* = 0;
@@ -372,7 +374,7 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf
         }
     }
     const written = str.encodeInto(buf_, .latin1) catch unreachable;
-    const max_buf_len = if (bufsize == 0) buf_.len else bufsize;
+    const max_buf_len = buf_.len;
 
     if (result_ptr) |result| {
         result.* = written;
@@ -391,7 +393,7 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf
 /// If buf is NULL, this method returns the length of the string (in bytes)
 /// via the result parameter.
 /// The result argument is optional unless buf is NULL.
-pub extern fn napi_get_value_string_utf8(env: napi_env, value: napi_value, buf_ptr: [*c]u8, bufsize: usize, result_ptr: ?*usize) napi_status ;
+pub extern fn napi_get_value_string_utf8(env: napi_env, value: napi_value, buf_ptr: [*c]u8, bufsize: usize, result_ptr: ?*usize) napi_status;
 pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf_ptr: ?[*]char16_t, bufsize: usize, result_ptr: ?*usize) napi_status {
     log("napi_get_value_string_utf16", .{});
     defer value.ensureStillAlive();
@@ -415,8 +417,8 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf_
 
     var buf_ = buf[0..bufsize];
 
-    if (bufsize == 0) {
-        buf_ = bun.sliceTo(buf_ptr, 0);
+    if (bufsize == NAPI_AUTO_LENGTH) {
+        buf_ = bun.sliceTo(@ptrCast([*:0]u16, buf_ptr.?), 0);
         if (buf_.len == 0) {
             if (result_ptr) |result| {
                 result.* = 0;
@@ -425,7 +427,7 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf_
         }
     }
 
-    const max_buf_len = if (bufsize == 0) buf_.len else bufsize;
+    const max_buf_len = buf_.len;
     const written = (str.encodeInto(std.mem.sliceAsBytes(buf_), .utf16le) catch unreachable) >> 1;
 
     if (result_ptr) |result| {

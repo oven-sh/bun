@@ -365,3 +365,26 @@ it("get attribute - ascii", async () => {
     expect(el).toEqual("asciii");
   }
 });
+
+it("#3520", async () => {
+  const pairs = [];
+
+  await new HTMLRewriter()
+    .on("p", {
+      element(element) {
+        for (const pair of element.attributes) {
+          pairs.push(pair);
+        }
+      },
+    })
+    .transform(new Response('<p šž="Õäöü" ab="Õäöü" šž="Õäöü" šž="dc" šž="🕵🏻"></p>'))
+    .text();
+
+  expect(pairs).toEqual([
+    ["šž", "Õäöü"],
+    ["ab", "Õäöü"],
+    ["šž", "Õäöü"],
+    ["šž", "dc"],
+    ["šž", "🕵🏻"],
+  ]);
+});

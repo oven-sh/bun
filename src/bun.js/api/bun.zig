@@ -3715,21 +3715,32 @@ pub const Timer = struct {
             const kind = this.kind;
             var map: *TimeoutMap = vm.timer.maps.get(kind);
 
-            // This doesn't deinit the timer
-            // Timers are deinit'd separately
-            // We do need to handle when the timer is cancelled after the job has been enqueued
-            if (kind != .setInterval) {
-                if (map.fetchSwapRemove(this.id) == null) {
-                    // if the timeout was cancelled, don't run the callback
-                    this.deinit();
-                    return;
+            const should_cancel_job = brk: {
+                // This doesn't deinit the timer
+                // Timers are deinit'd separately
+                // We do need to handle when the timer is cancelled after the job has been enqueued
+                if (kind != .setInterval) {
+                    if (map.get(this.id)) |tombstone_or_timer| {
+                        break :brk tombstone_or_timer != null;
+                    } else {
+                        // clearTimeout has been called
+                        break :brk true;
+                    }
+                } else {
+                    if (map.get(this.id)) |tombstone_or_timer| {
+                        // .refresh() was called after CallbackJob enqueued
+                        break :brk tombstone_or_timer == null;
+                    }
                 }
-            } else {
-                if (!map.contains(this.id)) {
-                    // if the interval was cancelled, don't run the callback
-                    this.deinit();
-                    return;
-                }
+
+                break :brk false;
+            };
+
+            if (should_cancel_job) {
+                this.deinit();
+                return;
+            } else if (kind != .setInterval) {
+                _ = map.swapRemove(this.id);
             }
 
             var args_buf: [8]JSC.JSValue = undefined;
@@ -3837,6 +3848,11 @@ pub const Timer = struct {
                     if (vm.timer.maps.get(this.kind).getPtr(this.id)) |val_| {
                         if (val_.*) |*val| {
                             val.poll_ref.ref(vm);
+
+                            if (val.did_unref_timer) {
+                                val.did_unref_timer = false;
+                                vm.uws_event_loop.?.num_polls += 1;
+                            }
                         }
                     }
                 },
@@ -3949,11 +3965,9 @@ pub const Timer = struct {
                         if (val_.*) |*val| {
                             val.poll_ref.unref(vm);
 
-                            // This is deliberately unbalanced
-                            // If we re-ref, it might produce incorrect results later
                             if (!val.did_unref_timer) {
                                 val.did_unref_timer = true;
-                                vm.uws_event_loop.?.unref();
+                                vm.uws_event_loop.?.num_polls -= 1;
                             }
                         }
                     }
@@ -4085,7 +4099,13 @@ pub const Timer = struct {
             var vm = this.globalThis.bunVM();
 
             this.poll_ref.unref(vm);
+
             this.timer.deinit();
+            if (this.did_unref_timer) {
+                // balance double-unrefing
+                vm.uws_event_loop.?.num_polls += 1;
+            }
+
             this.callback.deinit();
             this.arguments.deinit();
         }

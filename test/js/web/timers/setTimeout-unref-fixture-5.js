@@ -1,5 +1,5 @@
 setTimeout(() => {
   console.log("TEST FAILED!");
-}, 1)
+}, 100)
   .ref()
   .unref();

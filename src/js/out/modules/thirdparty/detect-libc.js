@@ -1,14 +1,14 @@
 function version() {
-  return libcVersion;
-}
-function versionAsync() {
   return Promise.resolve(libcVersion);
 }
-function family() {
-  return libcFamily;
+function versionSync() {
+  return libcVersion;
 }
-function familyAsync() {
+function family() {
   return Promise.resolve(libcFamily);
+}
+function familySync() {
+  return libcFamily;
 }
 function isNonGlibcLinux() {
   return Promise.resolve(libcFamily === "musl");
@@ -21,11 +21,11 @@ var {
   family: libcFamily
 } = globalThis[Symbol.for("Bun.lazy")]("detect-libc"), GLIBC = "glibc", MUSL = "musl";
 export {
-  versionAsync,
+  versionSync,
   version,
   isNonGlibcLinuxSync,
   isNonGlibcLinux,
-  familyAsync,
+  familySync,
   family,
   MUSL,
   GLIBC

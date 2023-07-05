@@ -9,19 +9,19 @@ export const GLIBC = "glibc";
 export const MUSL = "musl";
 
 export function version() {
-  return libcVersion;
-}
-
-export function versionAsync() {
   return Promise.resolve(libcVersion);
 }
 
-export function family() {
-  return libcFamily;
+export function versionSync() {
+  return libcVersion;
 }
 
-export function familyAsync() {
+export function family() {
   return Promise.resolve(libcFamily);
+}
+
+export function familySync() {
+  return libcFamily;
 }
 
 export function isNonGlibcLinux() {

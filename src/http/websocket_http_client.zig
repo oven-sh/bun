@@ -148,10 +148,12 @@ const CppWebSocket = opaque {
     extern fn WebSocket__incrementPendingActivity(websocket_context: *CppWebSocket) void;
     extern fn WebSocket__decrementPendingActivity(websocket_context: *CppWebSocket) void;
     pub fn ref(this: *CppWebSocket) void {
+        JSC.markBinding(@src());
         WebSocket__incrementPendingActivity(this);
     }
 
     pub fn unref(this: *CppWebSocket) void {
+        JSC.markBinding(@src());
         WebSocket__decrementPendingActivity(this);
     }
 };

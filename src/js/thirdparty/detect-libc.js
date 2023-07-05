@@ -1,9 +1,6 @@
 // https://www.npmjs.com/package/detect-libc
 
-const {
-  version: libcVersion,
-  family: libcFamily,
-} = globalThis[Symbol.for("Bun.lazy")]("detect-libc");
+const { version: libcVersion, family: libcFamily } = globalThis[Symbol.for("Bun.lazy")]("detect-libc");
 
 export const GLIBC = "glibc";
 export const MUSL = "musl";

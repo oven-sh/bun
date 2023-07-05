@@ -1,6 +1,15 @@
 import { test, expect } from "bun:test";
-// @ts-ignore: @types/detect-libc is not accurate
-import { GLIBC, MUSL, version, versionSync, family, familySync, isNonGlibcLinux, isNonGlibcLinuxSync } from "detect-libc";
+import {
+  GLIBC,
+  MUSL,
+  version,
+  versionSync,
+  family,
+  familySync,
+  isNonGlibcLinux,
+  isNonGlibcLinuxSync,
+  // @ts-ignore: @types/detect-libc is not accurate
+} from "detect-libc";
 
 test("detect-libc", () => {
   expect(GLIBC).toBe("glibc");

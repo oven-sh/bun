@@ -434,6 +434,11 @@ jobs:
           ./bun --version
       - id: test
         name: Test (node runner)
+        env:
+          SMTP_SENDGRID_SENDER: ${{ secrets.SMTP_SENDGRID_SENDER }}
+          TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
+          PRISMA_POSTGRES_DATABASE_URL: ${{ secrets.PRISMA_POSTGRES_DATABASE_URL }}
+          PRISMA_MONGODB_DATABASE_URL: ${{ secrets.PRISMA_MONGODB_DATABASE_URL }}
         # if: ${{github.event.inputs.use_bun == 'false'}}
         run: |
           bun install

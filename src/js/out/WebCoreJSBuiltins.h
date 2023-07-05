@@ -3527,14 +3527,25 @@ extern const JSC::ConstructAbility s_jsBufferConstructorFromCodeConstructAbility
 extern const JSC::ConstructorKind s_jsBufferConstructorFromCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_jsBufferConstructorFromCodeImplementationVisibility;
 
+// isBuffer
+#define WEBCORE_BUILTIN_JSBUFFERCONSTRUCTOR_ISBUFFER 1
+extern const char* const s_jsBufferConstructorIsBufferCode;
+extern const int s_jsBufferConstructorIsBufferCodeLength;
+extern const JSC::ConstructAbility s_jsBufferConstructorIsBufferCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferConstructorIsBufferCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_jsBufferConstructorIsBufferCodeImplementationVisibility;
+
 #define WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_DATA(macro) \
     macro(from, jsBufferConstructorFrom, 1) \
+    macro(isBuffer, jsBufferConstructorIsBuffer, 1) \
 
 #define WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_CODE(macro) \
     macro(jsBufferConstructorFromCode, from, ASCIILiteral(), s_jsBufferConstructorFromCodeLength) \
+    macro(jsBufferConstructorIsBufferCode, isBuffer, ASCIILiteral(), s_jsBufferConstructorIsBufferCodeLength) \
 
 #define WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_FUNCTION_NAME(macro) \
     macro(from) \
+    macro(isBuffer) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
     JSC::FunctionExecutable* codeName##Generator(JSC::VM&);

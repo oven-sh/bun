@@ -65,3 +65,7 @@ export function from(items) {
   // That means we cannot use $tailCallFowrardArguments here, sadly
   return new $Buffer(Uint8Array.from(arrayLike).buffer);
 }
+
+export function isBuffer(bufferlike) {
+  return bufferlike instanceof $Buffer;
+}

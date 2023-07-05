@@ -1853,8 +1853,9 @@ pub const Element = struct {
     pub fn getNamespaceURI(this: *Element, globalObject: *JSGlobalObject) JSValue {
         if (this.element == null)
             return JSValue.jsUndefined();
-
-        return bun.String.create(std.mem.span(this.element.?.namespaceURI())).toJS(globalObject);
+        var str = bun.String.create(std.mem.span(this.element.?.namespaceURI()));
+        defer str.deref();
+        return str.toJS(globalObject);
     }
 
     pub fn getAttributes(this: *Element, globalObject: *JSGlobalObject) JSValue {

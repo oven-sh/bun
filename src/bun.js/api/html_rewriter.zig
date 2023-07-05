@@ -1558,27 +1558,16 @@ pub const AttributeIterator = struct {
             return JSC.JSValue.jsNull();
         };
 
-        // TODO: don't clone here
         const value = attribute.value();
         const name = attribute.name();
-        defer name.deinit();
-        defer value.deinit();
 
-        var strs = [2]ZigString{
-            ZigString.init(name.slice()),
-            ZigString.init(value.slice()),
-        };
-
-        var valid_strs: []ZigString = strs[0..2];
-
-        var array = JSC.JSValue.createStringArray(
+        return bun.String.toJSArray(
             globalObject,
-            valid_strs.ptr,
-            valid_strs.len,
-            true,
+            &[_]bun.String{
+                name.toString(),
+                value.toString(),
+            },
         );
-
-        return array;
     }
 };
 pub const Element = struct {
@@ -1864,8 +1853,9 @@ pub const Element = struct {
     pub fn getNamespaceURI(this: *Element, globalObject: *JSGlobalObject) JSValue {
         if (this.element == null)
             return JSValue.jsUndefined();
-
-        return ZigString.init(std.mem.span(this.element.?.namespaceURI())).toValueGC(globalObject);
+        var str = bun.String.create(std.mem.span(this.element.?.namespaceURI()));
+        defer str.deref();
+        return str.toJS(globalObject);
     }
 
     pub fn getAttributes(this: *Element, globalObject: *JSGlobalObject) JSValue {

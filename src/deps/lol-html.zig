@@ -570,16 +570,17 @@ pub const HTMLString = extern struct {
         lol_html_str_free(.{ .ptr = @ptrCast([*]const u8, ptr), .len = len });
     }
 
-    pub fn toJS(this: HTMLString, globalThis: *bun.JSC.JSGlobalObject) bun.JSC.JSValue {
+    pub fn toString(this: HTMLString) bun.String {
         const bytes = this.slice();
         if (bun.strings.isAllASCII(bytes)) {
-            var external = bun.String.createExternal(bytes, true, @constCast(bytes.ptr), &deinit_external);
-            defer external.deref();
-            return external.toJS(globalThis);
+            return bun.String.createExternal(bytes, true, @constCast(bytes.ptr), &deinit_external);
         }
         defer this.deinit();
+        return bun.String.create(bytes);
+    }
 
-        var str = bun.String.create(bytes);
+    pub fn toJS(this: HTMLString, globalThis: *bun.JSC.JSGlobalObject) bun.JSC.JSValue {
+        var str = this.toString();
         defer str.deref();
         return str.toJS(globalThis);
     }

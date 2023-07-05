@@ -3759,6 +3759,60 @@ pub fn sk_X509_REVOKED_deep_copy(arg_sk: ?*const struct_stack_st_X509_REVOKED, a
     return @ptrCast(?*struct_stack_st_X509_REVOKED, sk_deep_copy(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), sk_X509_REVOKED_call_copy_func, @ptrCast(stack_copy_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) ?*anyopaque), copy_func)), sk_X509_REVOKED_call_free_func, @ptrCast(stack_free_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) void), free_func))));
 }
 pub const struct_stack_st_GENERAL_NAMES = opaque {};
+pub const struct_stack_st_GENERAL_NAME = opaque {};
+
+pub const GENERAL_NAME = extern struct {
+    name_type: enum(c_int) {
+        GEN_OTHERNAME = 0,
+        GEN_EMAIL = 1,
+        GEN_DNS = 2,
+        GEN_X400 = 3,
+        GEN_DIRNAME = 4,
+        GEN_EDIPARTY = 5,
+        GEN_URI = 6,
+        GEN_IPADD = 7,
+        GEN_RID = 8,
+    },
+    d: extern union {
+        ptr: *c_char,
+        otherName: ?*OTHERNAME,
+        rfc822Name: ?*ASN1_IA5STRING,
+        dNSName: ?*ASN1_IA5STRING,
+        x400Address: ?*ASN1_STRING,
+        directoryName: ?*X509_NAME,
+        ediPartyName: ?*EDIPARTYNAME,
+        uniformResourceIdentifier: ?*ASN1_IA5STRING,
+        iPAddress: ?*ASN1_OCTET_STRING,
+        registeredID: ?*ASN1_OBJECT,
+        ip: ?*ASN1_OCTET_STRING,
+        dirn: ?*X509_NAME,
+        ia5: ?*ASN1_IA5STRING,
+        rid: ?*ASN1_OBJECT,
+        other: ?*ASN1_TYPE,
+    },
+};
+
+pub fn sk_GENERAL_NAME_num(arg_sk: ?*const struct_stack_st_GENERAL_NAME) callconv(.C) usize {
+    var sk = arg_sk;
+    return sk_num(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)));
+}
+pub fn sk_GENERAL_NAME_free(arg_sk: ?*struct_stack_st_GENERAL_NAME) callconv(.C) void {
+    var sk = arg_sk;
+    sk_free(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)));
+}
+pub const stack_GENERAL_NAME_free_func = ?*const fn (?*struct_stack_st_GENERAL_NAME) callconv(.C) void;
+
+pub fn sk_GENERAL_NAME_pop_free(arg_sk: ?*struct_stack_st_GENERAL_NAME, arg_free_func: stack_GENERAL_NAME_free_func) callconv(.C) void {
+    var sk = arg_sk;
+    var free_func = arg_free_func;
+    sk_pop_free_ex(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), sk_GENERAL_NAME_call_free_func, @ptrCast(stack_free_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) void), free_func)));
+}
+pub fn sk_GENERAL_NAME_value(arg_sk: ?*const struct_stack_st_GENERAL_NAME, arg_i: usize) callconv(.C) GENERAL_NAME {
+    var sk = arg_sk;
+    var i = arg_i;
+    return @ptrCast(GENERAL_NAME, @alignCast(@import("std").meta.alignment(u8), sk_value(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), i)));
+}
+
 pub const stack_X509_CRL_free_func = ?*const fn (?*X509_CRL) callconv(.C) void;
 pub const stack_X509_CRL_copy_func = ?*const fn (?*X509_CRL) callconv(.C) ?*X509_CRL;
 pub const stack_X509_CRL_cmp_func = ?*const fn ([*c]?*const X509_CRL, [*c]?*const X509_CRL) callconv(.C) c_int;
@@ -4111,6 +4165,7 @@ pub extern fn i2d_DHparams_bio(bp: [*c]BIO, dh: [*c]const DH) c_int;
 pub extern fn X509_dup(x509: ?*X509) ?*X509;
 pub extern fn X509_ATTRIBUTE_dup(xa: ?*X509_ATTRIBUTE) ?*X509_ATTRIBUTE;
 pub extern fn X509_EXTENSION_dup(ex: ?*X509_EXTENSION) ?*X509_EXTENSION;
+pub extern fn X509V3_EXT_d2i(ex: ?*X509_EXTENSION) ?*anyopaque;
 pub extern fn X509_CRL_dup(crl: ?*X509_CRL) ?*X509_CRL;
 pub extern fn X509_REVOKED_dup(rev: [*c]X509_REVOKED) [*c]X509_REVOKED;
 pub extern fn X509_REQ_dup(req: ?*X509_REQ) ?*X509_REQ;
@@ -4355,6 +4410,7 @@ pub extern fn X509_get_ext_by_critical(x: ?*const X509, crit: c_int, lastpos: c_
 pub extern fn X509_get_ext(x: ?*const X509, loc: c_int) ?*X509_EXTENSION;
 pub extern fn X509_delete_ext(x: ?*X509, loc: c_int) ?*X509_EXTENSION;
 pub extern fn X509_add_ext(x: ?*X509, ex: ?*X509_EXTENSION, loc: c_int) c_int;
+pub extern fn X509_check_ca(x: ?*X509) c_int;
 pub extern fn X509_get_ext_d2i(x509: ?*const X509, nid: c_int, out_critical: [*c]c_int, out_idx: [*c]c_int) ?*anyopaque;
 pub extern fn X509_add1_ext_i2d(x: ?*X509, nid: c_int, value: ?*anyopaque, crit: c_int, flags: c_ulong) c_int;
 pub extern fn X509_CRL_get_ext_count(x: ?*const X509_CRL) c_int;

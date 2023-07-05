@@ -3715,21 +3715,32 @@ pub const Timer = struct {
             const kind = this.kind;
             var map: *TimeoutMap = vm.timer.maps.get(kind);
 
-            // This doesn't deinit the timer
-            // Timers are deinit'd separately
-            // We do need to handle when the timer is cancelled after the job has been enqueued
-            if (kind != .setInterval) {
-                if (map.fetchSwapRemove(this.id) == null) {
-                    // if the timeout was cancelled, don't run the callback
-                    this.deinit();
-                    return;
+            const should_cancel_job = brk: {
+                // This doesn't deinit the timer
+                // Timers are deinit'd separately
+                // We do need to handle when the timer is cancelled after the job has been enqueued
+                if (kind != .setInterval) {
+                    if (map.get(this.id)) |tombstone_or_timer| {
+                        break :brk tombstone_or_timer != null;
+                    } else {
+                        // clearTimeout has been called
+                        break :brk true;
+                    }
+                } else {
+                    if (map.get(this.id)) |tombstone_or_timer| {
+                        // .refresh() was called after CallbackJob enqueued
+                        break :brk tombstone_or_timer == null;
+                    }
                 }
-            } else {
-                if (!map.contains(this.id)) {
-                    // if the interval was cancelled, don't run the callback
-                    this.deinit();
-                    return;
-                }
+
+                break :brk false;
+            };
+
+            if (should_cancel_job) {
+                this.deinit();
+                return;
+            } else if (kind != .setInterval) {
+                _ = map.swapRemove(this.id);
             }
 
             var args_buf: [8]JSC.JSValue = undefined;
@@ -3825,10 +3836,29 @@ pub const Timer = struct {
             return timer_js;
         }
 
-        pub fn doRef(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+        pub fn doRef(this: *TimerObject, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            const this_value = callframe.this();
+            this_value.ensureStillAlive();
             if (this.ref_count > 0)
                 this.ref_count +|= 1;
-            return JSValue.jsUndefined();
+
+            var vm = globalObject.bunVM();
+            switch (this.kind) {
+                .setTimeout, .setImmediate, .setInterval => {
+                    if (vm.timer.maps.get(this.kind).getPtr(this.id)) |val_| {
+                        if (val_.*) |*val| {
+                            val.poll_ref.ref(vm);
+
+                            if (val.did_unref_timer) {
+                                val.did_unref_timer = false;
+                                vm.uws_event_loop.?.num_polls += 1;
+                            }
+                        }
+                    }
+                },
+            }
+
+            return this_value;
         }
 
         pub fn doRefresh(this: *TimerObject, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
@@ -3924,20 +3954,27 @@ pub const Timer = struct {
             return JSValue.jsUndefined();
         }
 
-        pub fn doUnref(this: *TimerObject, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+        pub fn doUnref(this: *TimerObject, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            const this_value = callframe.this();
+            this_value.ensureStillAlive();
             this.ref_count -|= 1;
-            if (this.ref_count == 0) {
-                switch (this.kind) {
-                    .setTimeout, .setImmediate => {
-                        _ = clearTimeout(globalObject, JSValue.jsNumber(this.id));
-                    },
-                    .setInterval => {
-                        _ = clearInterval(globalObject, JSValue.jsNumber(this.id));
-                    },
-                }
+            var vm = globalObject.bunVM();
+            switch (this.kind) {
+                .setTimeout, .setImmediate, .setInterval => {
+                    if (vm.timer.maps.get(this.kind).getPtr(this.id)) |val_| {
+                        if (val_.*) |*val| {
+                            val.poll_ref.unref(vm);
+
+                            if (!val.did_unref_timer) {
+                                val.did_unref_timer = true;
+                                vm.uws_event_loop.?.num_polls -= 1;
+                            }
+                        }
+                    }
+                },
             }
 
-            return JSValue.jsUndefined();
+            return this_value;
         }
         pub fn hasRef(this: *TimerObject, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
             return JSValue.jsBoolean(this.ref_count > 0 and globalObject.bunVM().timer.maps.get(this.kind).contains(this.id));
@@ -3959,6 +3996,7 @@ pub const Timer = struct {
         callback: JSC.Strong = .{},
         globalThis: *JSC.JSGlobalObject,
         timer: *uws.Timer,
+        did_unref_timer: bool = false,
         poll_ref: JSC.PollRef = JSC.PollRef.init(),
         arguments: JSC.Strong = .{},
 
@@ -4060,8 +4098,14 @@ pub const Timer = struct {
 
             var vm = this.globalThis.bunVM();
 
-            this.poll_ref.unrefOnNextTick(vm);
+            this.poll_ref.unref(vm);
+
             this.timer.deinit();
+            if (this.did_unref_timer) {
+                // balance double-unrefing
+                vm.uws_event_loop.?.num_polls += 1;
+            }
+
             this.callback.deinit();
             this.arguments.deinit();
         }

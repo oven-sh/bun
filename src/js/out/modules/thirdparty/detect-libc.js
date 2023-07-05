@@ -1,28 +1,31 @@
-function family() {
-  return Promise.resolve(familySync());
-}
-function familySync() {
-  return null;
+function version() {
+  return libcVersion;
 }
 function versionAsync() {
-  return Promise.resolve(version());
+  return Promise.resolve(libcVersion);
 }
-function version() {
-  return null;
+function family() {
+  return libcFamily;
 }
-function isNonGlibcLinuxSync() {
-  return !1;
+function familyAsync() {
+  return Promise.resolve(libcFamily);
 }
 function isNonGlibcLinux() {
-  return Promise.resolve(isNonGlibcLinuxSync());
+  return Promise.resolve(libcFamily === "musl");
 }
-var GLIBC = "glibc", MUSL = "musl";
+function isNonGlibcLinuxSync() {
+  return libcFamily === "musl";
+}
+var {
+  version: libcVersion,
+  family: libcFamily
+} = globalThis[Symbol.for("Bun.lazy")]("detect-libc"), GLIBC = "glibc", MUSL = "musl";
 export {
   versionAsync,
   version,
   isNonGlibcLinuxSync,
   isNonGlibcLinux,
-  familySync,
+  familyAsync,
   family,
   MUSL,
   GLIBC

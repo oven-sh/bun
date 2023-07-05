@@ -114,6 +114,8 @@
 #include "JSEnvironmentVariableMap.h"
 #include "DOMIsoSubspaces.h"
 
+#include "BunDetectLibcModule.h"
+
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
@@ -1585,6 +1587,10 @@ JSC:
 
             auto* obj = globalObject->primordialsObject();
             return JSValue::encode(obj);
+        }
+
+        if (string == "detect-libc"_s) {
+            return JSC::JSValue::encode(createDetectLibcModule(globalObject));
         }
 
         if (UNLIKELY(string == "noop"_s)) {

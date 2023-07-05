@@ -41,9 +41,7 @@ $ brew install llvm@15
 ```
 
 ```bash#Ubuntu/Debian
-# On Ubuntu 22.04 and newer, LLVM 15 is available in the default repositories
-$ sudo apt install llvm-15 lld-15 clang-15
-# On older versions,
+$ # LLVM has an automatic installation script that is compatible with all versions of Ubuntu
 $ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 15 all
 ```
 
@@ -85,7 +83,17 @@ $ brew install automake ccache cmake coreutils esbuild gnu-sed go libiconv libto
 ```
 
 ```bash#Ubuntu/Debian
-$ sudo apt install cargo ccache cmake esbuild git golang libtool ninja-build pkg-config rustc
+$ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config rustc
+$ # Install esbuild separately
+$ # Esbuild is hosted in the Ubuntu Universe repository, which is considered one of the default Ubuntu repositories.
+$ # The `apt install esbuild` command may fail with an `Unable to locate package` error because
+$ # you might be using a Ubuntu mirror that does not contain an exact copy of the original Ubuntu
+$ # server. Note that the same error may occur if you are not using any mirror but have the Ubuntu
+$ # Universe enabled in the `sources.list`. The simplest way to proceed is by using
+$ # the official command provided by Evan:
+$ curl -fsSL https://esbuild.github.io/dl/latest | sh
+$ chmod +x ./esbuild
+$ sudo mv ./esbuild /usr/local/bin
 ```
 
 ```bash#Arch

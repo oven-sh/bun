@@ -3825,10 +3825,24 @@ pub const Timer = struct {
             return timer_js;
         }
 
-        pub fn doRef(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+        pub fn doRef(this: *TimerObject, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            const this_value = callframe.this();
+            this_value.ensureStillAlive();
             if (this.ref_count > 0)
                 this.ref_count +|= 1;
-            return JSValue.jsUndefined();
+
+            var vm = globalObject.bunVM();
+            switch (this.kind) {
+                .setTimeout, .setImmediate, .setInterval => {
+                    if (vm.timer.maps.get(this.kind).getPtr(this.id)) |val_| {
+                        if (val_.*) |*val| {
+                            val.poll_ref.ref(vm);
+                        }
+                    }
+                },
+            }
+
+            return this_value;
         }
 
         pub fn doRefresh(this: *TimerObject, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
@@ -3924,20 +3938,29 @@ pub const Timer = struct {
             return JSValue.jsUndefined();
         }
 
-        pub fn doUnref(this: *TimerObject, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+        pub fn doUnref(this: *TimerObject, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            const this_value = callframe.this();
+            this_value.ensureStillAlive();
             this.ref_count -|= 1;
-            if (this.ref_count == 0) {
-                switch (this.kind) {
-                    .setTimeout, .setImmediate => {
-                        _ = clearTimeout(globalObject, JSValue.jsNumber(this.id));
-                    },
-                    .setInterval => {
-                        _ = clearInterval(globalObject, JSValue.jsNumber(this.id));
-                    },
-                }
+            var vm = globalObject.bunVM();
+            switch (this.kind) {
+                .setTimeout, .setImmediate, .setInterval => {
+                    if (vm.timer.maps.get(this.kind).getPtr(this.id)) |val_| {
+                        if (val_.*) |*val| {
+                            val.poll_ref.unref(vm);
+
+                            // This is deliberately unbalanced
+                            // If we re-ref, it might produce incorrect results later
+                            if (!val.did_unref_timer) {
+                                val.did_unref_timer = true;
+                                vm.uws_event_loop.?.unref();
+                            }
+                        }
+                    }
+                },
             }
 
-            return JSValue.jsUndefined();
+            return this_value;
         }
         pub fn hasRef(this: *TimerObject, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
             return JSValue.jsBoolean(this.ref_count > 0 and globalObject.bunVM().timer.maps.get(this.kind).contains(this.id));
@@ -3959,6 +3982,7 @@ pub const Timer = struct {
         callback: JSC.Strong = .{},
         globalThis: *JSC.JSGlobalObject,
         timer: *uws.Timer,
+        did_unref_timer: bool = false,
         poll_ref: JSC.PollRef = JSC.PollRef.init(),
         arguments: JSC.Strong = .{},
 
@@ -4060,7 +4084,7 @@ pub const Timer = struct {
 
             var vm = this.globalThis.bunVM();
 
-            this.poll_ref.unrefOnNextTick(vm);
+            this.poll_ref.unref(vm);
             this.timer.deinit();
             this.callback.deinit();
             this.arguments.deinit();

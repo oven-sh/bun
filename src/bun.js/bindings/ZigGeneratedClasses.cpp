@@ -16899,9 +16899,6 @@ JSC_DECLARE_CUSTOM_GETTER(TCPSocketPrototype__listenerGetterWrap);
 extern "C" JSC::EncodedJSValue TCPSocketPrototype__getLocalPort(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(TCPSocketPrototype__localPortGetterWrap);
 
-extern "C" EncodedJSValue TCPSocketPrototype__open(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__openCallback);
-
 extern "C" JSC::EncodedJSValue TCPSocketPrototype__getReadyState(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(TCPSocketPrototype__readyStateGetterWrap);
 
@@ -16926,8 +16923,8 @@ JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__timeoutCallback);
 extern "C" EncodedJSValue TCPSocketPrototype__unref(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__unrefCallback);
 
-extern "C" EncodedJSValue TCPSocketPrototype__wrapTLS(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__wrapTLSCallback);
+extern "C" EncodedJSValue TCPSocketPrototype__upgradeTLS(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__upgradeTLSCallback);
 
 extern "C" EncodedJSValue TCPSocketPrototype__write(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__writeCallback);
@@ -16943,7 +16940,6 @@ static const HashTableValue JSTCPSocketPrototypeTableValues[] = {
     { "getAuthorizationError"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__getAuthorizationErrorCallback, 0 } },
     { "listener"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TCPSocketPrototype__listenerGetterWrap, 0 } },
     { "localPort"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TCPSocketPrototype__localPortGetterWrap, 0 } },
-    { "open"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__openCallback, 0 } },
     { "readyState"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TCPSocketPrototype__readyStateGetterWrap, 0 } },
     { "ref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__refCallback, 0 } },
     { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__reloadCallback, 1 } },
@@ -16952,7 +16948,7 @@ static const HashTableValue JSTCPSocketPrototypeTableValues[] = {
     { "shutdown"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__shutdownCallback, 1 } },
     { "timeout"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__timeoutCallback, 1 } },
     { "unref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__unrefCallback, 0 } },
-    { "wrapTLS"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__wrapTLSCallback, 1 } },
+    { "upgradeTLS"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__upgradeTLSCallback, 1 } },
     { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__writeCallback, 3 } }
 };
 
@@ -17139,33 +17135,6 @@ JSC_DEFINE_CUSTOM_GETTER(TCPSocketPrototype__localPortGetterWrap, (JSGlobalObjec
     JSC::EncodedJSValue result = TCPSocketPrototype__getLocalPort(thisObject->wrapped(), globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, result);
-}
-
-JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__openCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    JSTCPSocket* thisObject = jsDynamicCast<JSTCPSocket*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-#ifdef BUN_DEBUG
-    /** View the file name of the JS file that called this function
-     * from a debugger */
-    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
-    const char* fileName = sourceOrigin.string().utf8().data();
-    static const char* lastFileName = nullptr;
-    if (lastFileName != fileName) {
-        lastFileName = fileName;
-    }
-#endif
-
-    return TCPSocketPrototype__open(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(TCPSocketPrototype__readyStateGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -17373,7 +17342,7 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__unrefCallback, (JSGlobalObject * le
     return TCPSocketPrototype__unref(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
-JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__wrapTLSCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__upgradeTLSCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
 
@@ -17397,7 +17366,7 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__wrapTLSCallback, (JSGlobalObject * 
     }
 #endif
 
-    return TCPSocketPrototype__wrapTLS(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+    return TCPSocketPrototype__upgradeTLS(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__writeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -17615,9 +17584,6 @@ JSC_DECLARE_CUSTOM_GETTER(TLSSocketPrototype__listenerGetterWrap);
 extern "C" JSC::EncodedJSValue TLSSocketPrototype__getLocalPort(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(TLSSocketPrototype__localPortGetterWrap);
 
-extern "C" EncodedJSValue TLSSocketPrototype__open(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__openCallback);
-
 extern "C" JSC::EncodedJSValue TLSSocketPrototype__getReadyState(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(TLSSocketPrototype__readyStateGetterWrap);
 
@@ -17642,8 +17608,8 @@ JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__timeoutCallback);
 extern "C" EncodedJSValue TLSSocketPrototype__unref(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__unrefCallback);
 
-extern "C" EncodedJSValue TLSSocketPrototype__wrapTLS(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__wrapTLSCallback);
+extern "C" EncodedJSValue TLSSocketPrototype__upgradeTLS(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__upgradeTLSCallback);
 
 extern "C" EncodedJSValue TLSSocketPrototype__write(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__writeCallback);
@@ -17659,7 +17625,6 @@ static const HashTableValue JSTLSSocketPrototypeTableValues[] = {
     { "getAuthorizationError"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__getAuthorizationErrorCallback, 0 } },
     { "listener"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TLSSocketPrototype__listenerGetterWrap, 0 } },
     { "localPort"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TLSSocketPrototype__localPortGetterWrap, 0 } },
-    { "open"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__openCallback, 0 } },
     { "readyState"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TLSSocketPrototype__readyStateGetterWrap, 0 } },
     { "ref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__refCallback, 0 } },
     { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__reloadCallback, 1 } },
@@ -17668,7 +17633,7 @@ static const HashTableValue JSTLSSocketPrototypeTableValues[] = {
     { "shutdown"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__shutdownCallback, 1 } },
     { "timeout"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__timeoutCallback, 1 } },
     { "unref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__unrefCallback, 0 } },
-    { "wrapTLS"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__wrapTLSCallback, 1 } },
+    { "upgradeTLS"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__upgradeTLSCallback, 1 } },
     { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__writeCallback, 3 } }
 };
 
@@ -17855,33 +17820,6 @@ JSC_DEFINE_CUSTOM_GETTER(TLSSocketPrototype__localPortGetterWrap, (JSGlobalObjec
     JSC::EncodedJSValue result = TLSSocketPrototype__getLocalPort(thisObject->wrapped(), globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, result);
-}
-
-JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__openCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    JSTLSSocket* thisObject = jsDynamicCast<JSTLSSocket*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-#ifdef BUN_DEBUG
-    /** View the file name of the JS file that called this function
-     * from a debugger */
-    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
-    const char* fileName = sourceOrigin.string().utf8().data();
-    static const char* lastFileName = nullptr;
-    if (lastFileName != fileName) {
-        lastFileName = fileName;
-    }
-#endif
-
-    return TLSSocketPrototype__open(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(TLSSocketPrototype__readyStateGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -18089,7 +18027,7 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__unrefCallback, (JSGlobalObject * le
     return TLSSocketPrototype__unref(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
-JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__wrapTLSCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__upgradeTLSCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
 
@@ -18113,7 +18051,7 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__wrapTLSCallback, (JSGlobalObject * 
     }
 #endif
 
-    return TLSSocketPrototype__wrapTLS(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+    return TLSSocketPrototype__upgradeTLS(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__writeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

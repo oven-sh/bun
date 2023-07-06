@@ -40,7 +40,7 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
             return us_socket_timeout(comptime ssl_int, this.socket, seconds);
         }
 
-        pub fn open(this: ThisSocket, is_client: bool) void {
+        pub fn startTLS(this: ThisSocket, is_client: bool) void {
             _ = us_socket_open(comptime ssl_int, this.socket, @intFromBool(is_client), null, 0);
         }
 

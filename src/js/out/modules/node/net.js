@@ -62,7 +62,9 @@ var isIPv4 = function(s) {
     },
     open(socket) {
       const self = socket.data;
-      socket.timeout(self.timeout), socket.ref(), self[bunSocketInternal] = socket, self.connecting = !1, self.emit("connect", self), Socket2.#Drain(socket);
+      if (socket.timeout(self.timeout), socket.ref(), self[bunSocketInternal] = socket, self.connecting = !1, !self.#upgraded)
+        self.emit("connect", self);
+      Socket2.#Drain(socket);
     },
     handshake(socket, success, verifyError) {
       const { data: self } = socket;
@@ -173,6 +175,7 @@ var isIPv4 = function(s) {
   _parent;
   _parentWrap;
   #socket;
+  #upgraded;
   constructor(options) {
     const { socket, signal, write, read, allowHalfOpen = !1, ...opts } = options || {};
     super({
@@ -181,7 +184,7 @@ var isIPv4 = function(s) {
       readable: !0,
       writable: !0
     });
-    if (this._handle = this, this._parent = this, this._parentWrap = this, this.#pendingRead = void 0, socket instanceof Socket2)
+    if (this._handle = this, this._parent = this, this._parentWrap = this, this.#pendingRead = void 0, this.#upgraded = !1, socket instanceof Socket2)
       this.#socket = socket;
     signal?.once("abort", () => this.destroy()), this.once("connect", () => this.emit("ready"));
   }
@@ -256,14 +259,15 @@ var isIPv4 = function(s) {
     if (connection) {
       const socket2 = connection[bunSocketInternal];
       if (socket2) {
-        const result = socket2.wrapTLS({
+        this.connecting = !0, this.#upgraded = !0;
+        const result = socket2.upgradeTLS({
           data: this,
           tls,
           socket: Socket2.#Handlers
         });
         if (result) {
           const [raw, tls2] = result;
-          connection[bunSocketInternal] = raw, raw.timeout(raw.timeout), raw.connecting = !1, this[bunSocketInternal] = tls2, tls2.timeout(tls2.timeout), tls2.connecting = !0, this[bunSocketInternal] = socket2, tls2.open();
+          connection[bunSocketInternal] = raw, raw.timeout(raw.timeout), raw.connecting = !1, this[bunSocketInternal] = tls2;
         } else
           throw this[bunSocketInternal] = null, new Error("Invalid socket");
       } else
@@ -271,14 +275,15 @@ var isIPv4 = function(s) {
           const socket3 = connection[bunSocketInternal];
           if (!socket3)
             return;
-          const result = socket3.wrapTLS({
+          this.connecting = !0, this.#upgraded = !0;
+          const result = socket3.upgradeTLS({
             data: this,
             tls,
             socket: Socket2.#Handlers
           });
           if (result) {
             const [raw, tls2] = result;
-            connection[bunSocketInternal] = raw, raw.timeout(raw.timeout), raw.connecting = !1, this[bunSocketInternal] = tls2, tls2.timeout(tls2.timeout), tls2.connecting = !0, this[bunSocketInternal] = socket3, tls2.open();
+            connection[bunSocketInternal] = raw, raw.timeout(raw.timeout), raw.connecting = !1, this[bunSocketInternal] = tls2;
           } else
             throw this[bunSocketInternal] = null, new Error("Invalid socket");
         });

@@ -120,11 +120,16 @@ const Socket = (function (InternalSocket) {
         socket.ref();
         self[bunSocketInternal] = socket;
         self.connecting = false;
-        self.emit("connect", self);
+        if (!self.#upgraded) {
+          // this is not actually emitted on nodejs when socket used on the connection
+          // this is already emmited on non-TLS socket and on TLS socket is emmited secureConnect on handshake
+          self.emit("connect", self);
+        }
         Socket.#Drain(socket);
       },
       handshake(socket, success, verifyError) {
         const { data: self } = socket;
+
         self._securePending = false;
         self.secureConnecting = false;
         self._secureEstablished = !!success;
@@ -301,6 +306,7 @@ const Socket = (function (InternalSocket) {
     _parent;
     _parentWrap;
     #socket;
+    #upgraded;
 
     constructor(options) {
       const { socket, signal, write, read, allowHalfOpen = false, ...opts } = options || {};
@@ -314,6 +320,7 @@ const Socket = (function (InternalSocket) {
       this._parent = this;
       this._parentWrap = this;
       this.#pendingRead = undefined;
+      this.#upgraded = false;
       if (socket instanceof Socket) {
         this.#socket = socket;
       }
@@ -442,7 +449,9 @@ const Socket = (function (InternalSocket) {
         const socket = connection[bunSocketInternal];
 
         if (socket) {
-          const result = socket.wrapTLS({
+          this.connecting = true;
+          this.#upgraded = true;
+          const result = socket.upgradeTLS({
             data: this,
             tls,
             socket: Socket.#Handlers,
@@ -453,13 +462,7 @@ const Socket = (function (InternalSocket) {
             connection[bunSocketInternal] = raw;
             raw.timeout(raw.timeout);
             raw.connecting = false;
-            // set new socket
             this[bunSocketInternal] = tls;
-            tls.timeout(tls.timeout);
-            tls.connecting = true;
-            this[bunSocketInternal] = socket;
-            // start tls
-            tls.open();
           } else {
             this[bunSocketInternal] = null;
             throw new Error("Invalid socket");
@@ -470,7 +473,9 @@ const Socket = (function (InternalSocket) {
             const socket = connection[bunSocketInternal];
             if (!socket) return;
 
-            const result = socket.wrapTLS({
+            this.connecting = true;
+            this.#upgraded = true;
+            const result = socket.upgradeTLS({
               data: this,
               tls,
               socket: Socket.#Handlers,
@@ -482,13 +487,7 @@ const Socket = (function (InternalSocket) {
               connection[bunSocketInternal] = raw;
               raw.timeout(raw.timeout);
               raw.connecting = false;
-              // set new socket
               this[bunSocketInternal] = tls;
-              tls.timeout(tls.timeout);
-              tls.connecting = true;
-              this[bunSocketInternal] = socket;
-              // start tls
-              tls.open();
             } else {
               this[bunSocketInternal] = null;
               throw new Error("Invalid socket");

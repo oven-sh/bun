@@ -3159,22 +3159,53 @@ pub const Parser = struct {
                             const left = bin.left;
                             const right = bin.right;
                             if (bin.op == .bin_assign and
-                                right.data == .e_require_string and
                                 left.data == .e_dot and
                                 strings.eqlComptime(left.data.e_dot.name, "exports") and
                                 left.data.e_dot.target.data == .e_identifier and
                                 left.data.e_dot.target.data.e_identifier.ref.eql(p.module_ref))
                             {
-                                part.symbol_uses = .{};
-                                return js_ast.Result{
-                                    .ast = js_ast.Ast{
-                                        .allocator = p.allocator,
-                                        .import_records = ImportRecord.List.init(p.import_records.items),
-                                        .redirect_import_record_index = right.data.e_require_string.import_record_index,
-                                        .named_imports = p.named_imports,
-                                        .named_exports = p.named_exports,
-                                    },
+                                const redirect_import_record_index: ?u32 = brk: {
+                                    // general case:
+                                    //
+                                    //      module.exports = require("foo");
+                                    //
+                                    if (right.data == .e_require_string) {
+                                        break :brk right.data.e_require_string.import_record_index;
+                                    }
+
+                                    // special case: a module for us to unwrap
+                                    //
+                                    //      module.exports = require("react/jsx-runtime")
+                                    //                       ^ was converted into:
+                                    //
+                                    //      import * as Foo from 'bar';
+                                    //      module.exports = Foo;
+                                    //
+                                    // This is what fixes #3537
+                                    if (right.data == .e_identifier and
+                                        p.import_records.items.len == 1 and
+                                        p.imports_to_convert_from_require.items.len == 1 and
+                                        p.imports_to_convert_from_require.items[0].namespace.ref.?.eql(right.data.e_identifier.ref))
+                                    {
+                                        // We know it's 0 because there is only one import in the whole file
+                                        // so that one import must be the one we're looking for
+                                        break :brk 0;
+                                    }
+
+                                    break :brk null;
                                 };
+                                if (redirect_import_record_index) |id| {
+                                    part.symbol_uses = .{};
+                                    return js_ast.Result{
+                                        .ast = js_ast.Ast{
+                                            .allocator = p.allocator,
+                                            .import_records = ImportRecord.List.init(p.import_records.items),
+                                            .redirect_import_record_index = id,
+                                            .named_imports = p.named_imports,
+                                            .named_exports = p.named_exports,
+                                        },
+                                    };
+                                }
                             }
                         }
                     }

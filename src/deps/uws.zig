@@ -54,7 +54,6 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
             comptime ContextType: type,
             comptime Fields: anytype,
         ) ?NewSocketHandler(true) {
-            const Type = comptime if (@TypeOf(Fields) != type) @TypeOf(Fields) else Fields;
             const TLSSocket = NewSocketHandler(true);
             const SocketHandler = struct {
                 const alignment = if (ContextType == anyopaque)
@@ -140,24 +139,16 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
                 }
             };
 
-            var events: us_socket_events_t = .{};
-
-            if (comptime @hasDecl(Type, "onOpen") and @typeInfo(@TypeOf(Type.onOpen)) != .Null)
-                events.on_open = SocketHandler.on_open;
-            if (comptime @hasDecl(Type, "onClose") and @typeInfo(@TypeOf(Type.onClose)) != .Null)
-                events.on_close = SocketHandler.on_close;
-            if (comptime @hasDecl(Type, "onData") and @typeInfo(@TypeOf(Type.onData)) != .Null)
-                events.on_data = SocketHandler.on_data;
-            if (comptime @hasDecl(Type, "onWritable") and @typeInfo(@TypeOf(Type.onWritable)) != .Null)
-                events.on_writable = SocketHandler.on_writable;
-            if (comptime @hasDecl(Type, "onTimeout") and @typeInfo(@TypeOf(Type.onTimeout)) != .Null)
-                events.on_timeout = SocketHandler.on_timeout;
-            if (comptime @hasDecl(Type, "onConnectError") and @typeInfo(@TypeOf(Type.onConnectError)) != .Null)
-                events.on_connect_error = SocketHandler.on_connect_error;
-            if (comptime @hasDecl(Type, "onEnd") and @typeInfo(@TypeOf(Type.onEnd)) != .Null)
-                events.on_end = SocketHandler.on_end;
-            if (comptime @hasDecl(Type, "onHandshake") and @typeInfo(@TypeOf(Type.onHandshake)) != .Null)
-                events.on_handshake = SocketHandler.on_handshake;
+            var events: us_socket_events_t = .{
+                .on_open = SocketHandler.on_open,
+                .on_close = SocketHandler.on_close,
+                .on_data = SocketHandler.on_data,
+                .on_writable = SocketHandler.on_writable,
+                .on_timeout = SocketHandler.on_timeout,
+                .on_connect_error = SocketHandler.on_connect_error,
+                .on_end = SocketHandler.on_end,
+                .on_handshake = SocketHandler.on_handshake,
+            };
 
             const socket = us_socket_wrap_with_tls(ssl_int, this.socket, options, events, socket_ext_size) orelse return null;
             return NewSocketHandler(true).from(socket);

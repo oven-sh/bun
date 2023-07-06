@@ -1972,7 +1972,11 @@ fn NewSocket(comptime ssl: bool) type {
             _: *JSC.CallFrame,
         ) callconv(.C) JSValue {
             JSC.markBinding(@src());
-            this.socket.open(!this.handlers.is_server);
+            if (comptime ssl) {
+                if (!this.detached) {
+                    this.socket.open(!this.handlers.is_server);
+                }
+            }
             return JSValue.jsUndefined();
         }
 
@@ -2067,11 +2071,8 @@ fn NewSocket(comptime ssl: bool) type {
                 .connection = if (this.connection) |c| c.clone() else null,
                 .wrapped = .tls,
                 .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p[0..protos_len]) catch unreachable) else null,
+                .server_name = if (socket_config.server_name) |server_name| (bun.default_allocator.dupe(u8, server_name[0..bun.len(server_name)]) catch unreachable) else null,
             };
-
-            if (socket_config.server_name) |server_name| {
-                tls.server_name = bun.default_allocator.dupe(u8, server_name[0..bun.len(server_name)]) catch unreachable;
-            }
 
             var tls_js_value = tls.getThisValue(globalObject);
             TLSSocket.dataSetCached(tls_js_value, globalObject, default_data);
@@ -2099,9 +2100,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             var raw = handlers.vm.allocator.create(TLSSocket) catch @panic("OOM");
             var raw_handlers_ptr = handlers.vm.allocator.create(Handlers) catch @panic("OOM");
-            this.handlers.unprotect();
-
-            var cloned_handlers: Handlers = .{
+            raw_handlers_ptr.* = .{
                 .vm = globalObject.bunVM(),
                 .globalObject = globalObject,
                 .onOpen = this.handlers.onOpen,
@@ -2114,11 +2113,17 @@ fn NewSocket(comptime ssl: bool) type {
                 .onError = this.handlers.onError,
                 .onHandshake = this.handlers.onHandshake,
                 .binary_type = this.handlers.binary_type,
+                .is_server = this.handlers.is_server,
             };
-
-            raw_handlers_ptr.* = cloned_handlers;
-            raw_handlers_ptr.is_server = this.handlers.is_server;
-            raw_handlers_ptr.protect();
+            this.handlers.onOpen = .zero;
+            this.handlers.onClose = .zero;
+            this.handlers.onData = .zero;
+            this.handlers.onWritable = .zero;
+            this.handlers.onTimeout = .zero;
+            this.handlers.onConnectError = .zero;
+            this.handlers.onEnd = .zero;
+            this.handlers.onError = .zero;
+            this.handlers.onHandshake = .zero;
             raw.* = .{
                 .handlers = raw_handlers_ptr,
                 .this_value = .zero,

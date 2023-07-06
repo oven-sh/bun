@@ -21,6 +21,7 @@ const minifyList = [
   "node/stream.consumers.js",
   "node/stream.web.js",
   "node/url.js",
+  "node/zlib.js",
 ];
 
 if (fs.existsSync(OUT_DIR + "/modules")) {

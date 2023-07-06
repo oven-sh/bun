@@ -1896,7 +1896,7 @@ regenerate-bindings:
 .PHONY: setup
 setup: vendor-dev identifier-cache clean-bindings
 	make jsc-check
-	make bindings
+	make bindings -j$(CPU_COUNT)
 	@echo ""
 	@echo "Development environment setup complete"
 	@echo "Run \`make dev\` to build \`bun-debug\`"

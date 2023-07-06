@@ -365,6 +365,12 @@ public:
     mutable WriteBarrier<Unknown> m_JSWebSocketSetterValue;
     mutable WriteBarrier<Unknown> m_JSDOMFormDataSetterValue;
     mutable WriteBarrier<Unknown> m_BunCommonJSModuleValue;
+    mutable WriteBarrier<Unknown> m_JSDOMException;
+    mutable WriteBarrier<Unknown> m_JSEvent;
+    mutable WriteBarrier<Unknown> m_JSEventTarget;
+    mutable WriteBarrier<Unknown> m_JSCustomEvent;
+    mutable WriteBarrier<Unknown> m_JSErrorEvent;
+    mutable WriteBarrier<Unknown> m_JSCloseEvent;
 
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
 

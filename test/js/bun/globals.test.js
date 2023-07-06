@@ -22,6 +22,8 @@ it("writable", () => {
     ["Response", Response],
     ["Headers", Headers],
     ["Buffer", Buffer],
+    ["DOMException", DOMException],
+    ["Event", Event],
     // ["HTMLRewriter", HTMLRewriter],
     // ["Transpiler", Bun.Transpiler],
   ];

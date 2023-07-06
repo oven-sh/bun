@@ -1175,6 +1175,10 @@ it("#2794", () => {
   expect(typeof Bun.fetch.bind).toBe("function");
 });
 
+it("#3545", () => {
+  expect(() => fetch("http://example.com?a=b")).not.toThrow();
+});
+
 it("invalid header doesnt crash", () => {
   expect(() =>
     fetch("http://example.com", {

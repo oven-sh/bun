@@ -462,6 +462,9 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
 		-lusockets \
 		-lcares \
 		-lzstd \
+		-lbrotlicommon \
+		-lbrotlienc \
+		-lbrotlidec \
 		$(BUN_DEPS_OUT_DIR)/libuwsockets.o
 
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO)
@@ -1366,6 +1369,20 @@ mimalloc:
 			&& ninja;
 	cp $(BUN_DEPS_DIR)/mimalloc/$(MIMALLOC_INPUT_PATH) $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE)
 
+.PHONY: brotli
+brotli:
+	rm -rf $(BUN_DEPS_DIR)/brotli/CMakeCache* $(BUN_DEPS_DIR)/brotli/CMakeFiles && (cd src/deps/brotli && make clean || echo "")
+	cd $(BUN_DEPS_DIR)/brotli; \
+		cmake $(CMAKE_FLAGS) \
+			-DCMAKE_BUILD_TYPE=Release \
+			-DBROTLI_DISABLE_TESTS=ON \
+			-DBROTLI_BUNDLED_MODE=ON \
+			-DBUILD_SHARED_LIBS=OFF \
+			-DCMAKE_C_FLAGS="$(CFLAGS)" \
+			-DCMAKE_CXX_FLAGS="$(CFLAGS)" \
+			-GNinja \
+			. \
+			&& ninja && cp libbrotli*.a $(BUN_DEPS_OUT_DIR);
 
 mimalloc-wasm:
 	cd $(BUN_DEPS_DIR)/mimalloc; emcmake cmake -DMI_BUILD_SHARED=OFF -DMI_BUILD_STATIC=ON -DMI_BUILD_TESTS=OFF -DMI_BUILD_OBJECT=ON ${MIMALLOC_OVERRIDE_FLAG} -DMI_USE_CXX=ON .; emmake make;
@@ -1879,8 +1896,7 @@ cold-jsc-start:
 		misctools/cold-jsc-start.cpp -o cold-jsc-start
 
 .PHONY: vendor-without-npm
-vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws tinycc c-ares zstd base64
-
+vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws tinycc c-ares zstd base64 brotli
 
 .PHONY: vendor-without-check
 vendor-without-check: npm-install vendor-without-npm

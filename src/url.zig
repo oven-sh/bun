@@ -348,8 +348,8 @@ pub const URL = struct {
                     url.username = str[0..i];
                     return i + 1;
                 },
-                // if we reach a slash, there's no username
-                '/' => {
+                // if we reach a slash or "?", there's no username
+                '?', '/' => {
                     return null;
                 },
                 else => {},
@@ -374,8 +374,8 @@ pub const URL = struct {
                     if (Environment.allow_assert) std.debug.assert(str[i..].len < 2 or std.mem.readIntNative(u16, str[i..][0..2]) != std.mem.readIntNative(u16, "//"));
                     return i + 1;
                 },
-                // if we reach a slash, there's no password
-                '/' => {
+                // if we reach a slash or "?", there's no password
+                '?', '/' => {
                     return null;
                 },
                 else => {},
@@ -402,8 +402,8 @@ pub const URL = struct {
                 ipv6_i = if (ipv6_i == null and str[i] == ']') i else ipv6_i;
                 colon_i = if (ipv6_i != null and colon_i == null and str[i] == ':') i else colon_i;
                 switch (str[i]) {
-                    // alright, we found the slash
-                    '/' => {
+                    // alright, we found the slash or "?"
+                    '?', '/' => {
                         break;
                     },
                     else => {},
@@ -421,8 +421,8 @@ pub const URL = struct {
             }
         } else {
 
-            // look for the first "/"
-            // if we have a slash, anything before that is the host
+            // look for the first "/" or "?"
+            // if we have a slash or "?", anything before that is the host
             // anything before the colon is the hostname
             // anything after the colon but before the slash is the port
             // the origin is the scheme before the slash
@@ -432,8 +432,8 @@ pub const URL = struct {
                 colon_i = if (colon_i == null and str[i] == ':') i else colon_i;
 
                 switch (str[i]) {
-                    // alright, we found the slash
-                    '/' => {
+                    // alright, we found the slash or "?"
+                    '?', '/' => {
                         break;
                     },
                     else => {},

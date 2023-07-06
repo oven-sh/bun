@@ -234,7 +234,7 @@ Unlike other npm clients, Bun does not execute arbitrary lifecycle scripts for i
 
 To tell Bun to allow lifecycle scripts for a particular package, add the package to `trustedDependencies` in your package.json.
 
-```json-diff
+<!-- ```json-diff
   {
     "name": "my-app",
     "version": "1.0.0",
@@ -242,7 +242,7 @@ To tell Bun to allow lifecycle scripts for a particular package, add the package
 +     "my-trusted-package": "*"
 +   }
   }
-```
+``` -->
 
 ```json-diff
   {

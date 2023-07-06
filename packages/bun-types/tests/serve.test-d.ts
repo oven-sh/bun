@@ -93,3 +93,13 @@ Bun.serve({
 });
 
 export {};
+
+Bun.serve({
+  port: 1234,
+  fetch(req, server) {
+    server.upgrade(req);
+    if (Math.random() > 0.5) return undefined;
+    return new Response();
+  },
+  websocket: { message() {} },
+});

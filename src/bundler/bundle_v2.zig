@@ -2279,7 +2279,7 @@ pub const ParseTask = struct {
     known_target: ?options.Target = null,
     module_type: options.ModuleType = .unknown,
     ctx: *BundleV2,
-    package_version: ?string = null,
+    package_version: string = "",
 
     /// Used by generated client components
     presolved_source_indices: []const Index.Int = &.{},
@@ -2300,7 +2300,7 @@ pub const ParseTask = struct {
             .jsx = resolve_result.jsx,
             .source_index = source_index orelse Index.invalid,
             .module_type = resolve_result.module_type,
-            .package_version = if (resolve_result.package_json) |package_json| package_json.version else null,
+            .package_version = if (resolve_result.package_json) |package_json| package_json.version else "",
         };
     }
 

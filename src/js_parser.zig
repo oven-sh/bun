@@ -2629,7 +2629,7 @@ pub const Parser = struct {
 
         tree_shaking: bool = false,
         bundle: bool = false,
-        package_version: ?string = null,
+        package_version: string = "",
 
         macro_context: *MacroContextType() = undefined,
 
@@ -21926,10 +21926,9 @@ fn NewParser_(
                     if (source.path.packageName()) |pkg| {
                         if (opts.features.shouldUnwrapRequire(pkg)) {
                             if (strings.eqlComptime(pkg, "react")) {
-                                if (opts.package_version) |version| {
-                                    if (version.len > 2 and (version[0] == '0' or (version[0] == '1' and version[1] < '8'))) {
-                                        break :brk false;
-                                    }
+                                const version = opts.package_version;
+                                if (version.len > 2 and (version[0] == '0' or (version[0] == '1' and version[1] < '8'))) {
+                                    break :brk false;
                                 }
                             }
 

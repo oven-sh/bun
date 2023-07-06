@@ -51,7 +51,9 @@ test("unlike in jest", () => {
 });
 ```
 
-Note that we have not implemented builtin support for mocking timers yet, but this is on the roadmap.
+{% callout %}
+**Timers** — Note that we have not implemented builtin support for mocking timers yet, but this is on the roadmap.
+{% /callout %}
 
 ### Reset the system time
 
@@ -74,7 +76,13 @@ test("it was 2020, for a moment.", () => {
 
 ## Set the time zone
 
-To change the time zone, either pass the `$TZ` environment variable to `bun test`, or set `process.env.TZ` at runtime:
+To change the time zone, either pass the `$TZ` environment variable to `bun test`.
+
+```sh
+TZ=America/Los_Angeles bun test
+```
+
+Or set `process.env.TZ` at runtime:
 
 ```ts
 import { test, expect } from "bun:test";
@@ -88,7 +96,7 @@ test("Welcome to California!", () => {
 });
 
 test("Welcome to New York!", () => {
-  // Unlike in jest, you can set the timezone multiple times at runtime and it will work.
+  // Unlike in Jest, you can set the timezone multiple times at runtime and it will work.
   process.env.TZ = "America/New_York";
   expect(new Date().getTimezoneOffset()).toBe(240);
   expect(new Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(

@@ -93,6 +93,17 @@ These are the recommended `compilerOptions` for a Bun project.
 }
 ```
 
+### Add DOM types
+
+Settings `"types": ["bun-types"]` means TypeScript will ignore other global type definitions, including `lib: ["dom"]`. To add DOM types into your project, add the following [triple-slash directives](https://www.typescriptlang.org/docs/handbook/triple-slash-directives.html) at the top of any TypeScript file in your project.
+
+```ts
+/// <reference lib="dom" />
+/// <reference lib="dom.iterable" />
+```
+
+The same applies to other global type definition _libs_ like `webworker`.
+
 ## Path mapping
 
 When resolving modules, Bun's runtime respects path mappings defined in [`compilerOptions.paths`](https://www.typescriptlang.org/tsconfig#paths) in your `tsconfig.json`. No other runtime does this.

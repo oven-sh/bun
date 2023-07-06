@@ -67,7 +67,7 @@ Bun.serve({
   fetch(req) {
     throw new Error("woops!");
   },
-  error(error: Error) {
+  error(error) {
     return new Response(`<pre>${error}\n${error.stack}</pre>`, {
       headers: {
         "Content-Type": "text/html",
@@ -95,37 +95,37 @@ server.stop();
 
 ## TLS
 
-Bun supports TLS out of the box, powered by [OpenSSL](https://www.openssl.org/). Enable TLS by passing in a value for `key` and `cert`; both are required to enable TLS. If needed, supply a `passphrase` to decrypt the `keyFile`.
+Bun supports TLS out of the box, powered by [BoringSSL](https://boringssl.googlesource.com/boringssl). Enable TLS by passing in a value for `key` and `cert`; both are required to enable TLS.
 
-```ts
-Bun.serve({
-  fetch(req) {
-    return new Response("Hello!!!");
-  },
+```ts-diff
+  Bun.serve({
+    fetch(req) {
+      return new Response("Hello!!!");
+    },
 
-  // can be string, BunFile, TypedArray, Buffer, or array thereof
-  key: Bun.file("./key.pem"),
-  cert: Bun.file("./cert.pem"),
-
-  // passphrase, only required if key is encrypted
-  passphrase: "super-secret",
-});
++   tls: {
++     key: Bun.file("./key.pem"),
++     cert: Bun.file("./cert.pem"),
++   }
+  });
 ```
 
-The `key` and `cert` fields expect the _contents_ of your TLS key and certificate. This can be a string, `BunFile`, `TypedArray`, or `Buffer`.
+The `key` and `cert` fields expect the _contents_ of your TLS key and certificate, _not a path to it_. This can be a string, `BunFile`, `TypedArray`, or `Buffer`.
 
 ```ts
 Bun.serve({
   fetch() {},
 
-  // BunFile
-  key: Bun.file("./key.pem"),
-  // Buffer
-  key: fs.readFileSync("./key.pem"),
-  // string
-  key: fs.readFileSync("./key.pem", "utf8"),
-  // array of above
-  key: [Bun.file('./key1.pem'), Bun.file('./key2.pem')],
+  tls: {
+    // BunFile
+    key: Bun.file("./key.pem"),
+    // Buffer
+    key: fs.readFileSync("./key.pem"),
+    // string
+    key: fs.readFileSync("./key.pem", "utf8"),
+    // array of above
+    key: [Bun.file("./key1.pem"), Bun.file("./key2.pem")],
+  },
 });
 ```
 
@@ -135,17 +135,35 @@ Bun.serve({
 
 {% /callout %}
 
+If your private key is encrypted with a passphrase, provide a value for `passphrase` to decrypt it.
+
+```ts-diff
+  Bun.serve({
+    fetch(req) {
+      return new Response("Hello!!!");
+    },
+
+    tls: {
+      key: Bun.file("./key.pem"),
+      cert: Bun.file("./cert.pem"),
++     passphrase: "my-secret-passphrase",
+    }
+  });
+```
+
 Optionally, you can override the trusted CA certificates by passing a value for `ca`. By default, the server will trust the list of well-known CAs curated by Mozilla. When `ca` is specified, the Mozilla list is overwritten.
 
-```ts
-Bun.serve({
-  fetch(req) {
-    return new Response("Hello!!!");
-  },
-  key: Bun.file("./key.pem"), // path to TLS key
-  cert: Bun.file("./cert.pem"), // path to TLS cert
-  ca: Bun.file("./ca.pem"), // path to root CA certificate
-});
+```ts-diff
+  Bun.serve({
+    fetch(req) {
+      return new Response("Hello!!!");
+    },
+    tls: {
+      key: Bun.file("./key.pem"), // path to TLS key
+      cert: Bun.file("./cert.pem"), // path to TLS cert
++     ca: Bun.file("./ca.pem"), // path to root CA certificate
+    }
+  });
 ```
 
 To override Diffie-Helman parameters:
@@ -153,7 +171,10 @@ To override Diffie-Helman parameters:
 ```ts
 Bun.serve({
   // ...
-  dhParamsFile: "./dhparams.pem", // path to Diffie Helman parameters
+  tls: {
+    // other config
+    dhParamsFile: "/path/to/dhparams.pem", // path to Diffie Helman parameters
+  },
 });
 ```
 
@@ -274,11 +295,21 @@ interface Bun {
     port?: number;
     development?: boolean;
     error?: (error: Error) => Response | Promise<Response>;
-    keyFile?: string;
-    certFile?: string;
-    caFile?: string;
-    dhParamsFile?: string;
-    passphrase?: string;
+    tls?: {
+      key?:
+        | string
+        | TypedArray
+        | BunFile
+        | Array<string | TypedArray | BunFile>;
+      cert?:
+        | string
+        | TypedArray
+        | BunFile
+        | Array<string | TypedArray | BunFile>;
+      ca?: string | TypedArray | BunFile | Array<string | TypedArray | BunFile>;
+      passphrase?: string;
+      dhParamsFile?: string;
+    };
     maxRequestBodySize?: number;
     lowMemoryMode?: boolean;
   }): Server;

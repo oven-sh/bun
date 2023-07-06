@@ -70,7 +70,7 @@ afterAll(() => {
 Then use `--preload` to run the setup script before any test files.
 
 ```ts
-bun test --preload ./setup.ts
+$ bun test --preload ./setup.ts
 ```
 
 To avoid typing `--preload` every time you run tests, it can be added to your `bunfig.toml`:

@@ -79,4 +79,17 @@ Bun.serve<User>({
   },
 });
 
+Bun.serve({
+  fetch(req) {
+    throw new Error("woops!");
+  },
+  error(error) {
+    return new Response(`<pre>${error}\n${error.stack}</pre>`, {
+      headers: {
+        "Content-Type": "text/html",
+      },
+    });
+  },
+});
+
 export {};

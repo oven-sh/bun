@@ -135,12 +135,12 @@ export default {
       description:
         "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
     }),
-    page("install/workspaces", "Workspaces", {
-      description: "Bun's package manager supports workspaces and mono-repo development workflows.",
-    }),
     page("install/cache", "Global cache", {
       description:
         "Bun's package manager installs all packages into a shared global cache to avoid redundant re-downloads.",
+    }),
+    page("install/workspaces", "Workspaces", {
+      description: "Bun's package manager supports workspaces and mono-repo development workflows.",
     }),
     page("install/lockfile", "Lockfile", {
       description:
@@ -190,10 +190,13 @@ export default {
     page("test/lifecycle", "Lifecycle hooks", {
       description: "Add lifecycle hooks to your tests that run before/after each test or test run",
     }),
+    page("test/mocks", "Mocks", {
+      description: "Mocks functions and track method calls",
+    }),
     page("test/snapshots", "Snapshots", {
       description: "Add lifecycle hooks to your tests that run before/after each test or test run",
     }),
-    page("test/time", "Time", {
+    page("test/time", "Dates and times", {
       description: "Control the date & time in your tests for more reliable and deterministic tests",
     }),
     page("test/dom", "DOM testing", {

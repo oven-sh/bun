@@ -51,7 +51,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_crypto" %} [`node:crypto`](https://nodejs.org/api/crypto.html) {% /anchor %}
 - 🟡
-- Missing `crypto.Certificate` `crypto.ECDH` `crypto.KeyObject` `crypto.X509Certificate` `crypto.checkPrime{Sync}` `crypto.createPrivateKey` `crypto.createPublicKey` `crypto.createSecretKey` `crypto.diffieHellman` `crypto.generateKey{Sync}` `crypto.generateKeyPair{Sync}` `crypto.generatePrime{Sync}` `crypto.getCipherInfo` `crypto.getCurves` `crypto.{get|set}Fips` `crypto.hkdf` `crypto.hkdfSync` `crypto.randomInt` `crypto.secureHeapUsed` `crypto.setEngine` `crypto.sign` `crypto.verify`
+- Missing `crypto.Certificate` `crypto.ECDH` `crypto.KeyObject` `crypto.X509Certificate` `crypto.checkPrime{Sync}` `crypto.createPrivateKey` `crypto.createPublicKey` `crypto.createSecretKey` `crypto.diffieHellman` `crypto.generateKey{Sync}` `crypto.generateKeyPair{Sync}` `crypto.generatePrime{Sync}` `crypto.getCipherInfo` `crypto.getCurves` `crypto.{get|set}Fips` `crypto.hkdf` `crypto.hkdfSync` `crypto.secureHeapUsed` `crypto.setEngine` `crypto.sign` `crypto.verify`
 
 ---
 
@@ -87,7 +87,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_fs" %} [`node:fs`](https://nodejs.org/api/fs.html) {% /anchor %}
 - 🟡
-- Missing `fs.fdatasync{Sync}` `fs.opendir{Sync}` `fs.readv{Sync}` `fs.{watch|watchFile|unwatchFile}` `fs.writev{Sync}`.
+- Missing `fs.fdatasync{Sync}` `fs.opendir{Sync}` `fs.{watchFile|unwatchFile}` `fs.{cp|cpSync}`.
 
 ---
 
@@ -558,7 +558,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 - {% anchor id="node_require" %} [`require()`](https://nodejs.org/api/globals.html#require) {% /anchor %}
 - 🟢
-- Fully implemented.
+- Fully implemented, as well as [`require.main`](https://nodejs.org/api/modules.html#requiremain), [`require.cache`](https://nodejs.org/api/modules.html#requirecache), and [`require.resolve`](https://nodejs.org/api/modules.html#requireresolverequest-options)
 
 ---
 

@@ -2279,6 +2279,7 @@ pub const ParseTask = struct {
     known_target: ?options.Target = null,
     module_type: options.ModuleType = .unknown,
     ctx: *BundleV2,
+    package_version: ?string = null,
 
     /// Used by generated client components
     presolved_source_indices: []const Index.Int = &.{},
@@ -2299,6 +2300,7 @@ pub const ParseTask = struct {
             .jsx = resolve_result.jsx,
             .source_index = source_index orelse Index.invalid,
             .module_type = resolve_result.module_type,
+            .package_version = if (resolve_result.package_json) |package_json| package_json.version else null,
         };
     }
 
@@ -2591,6 +2593,8 @@ pub const ParseTask = struct {
         opts.warn_about_unbundled_modules = false;
         opts.macro_context = &this.data.macro_context;
         opts.bundle = true;
+        opts.package_version = task.package_version;
+
         opts.features.top_level_await = true;
         opts.features.jsx_optimization_inline = target.isBun() and (bundler.options.jsx_optimization_inline orelse !task.jsx.development);
         opts.features.auto_import_jsx = task.jsx.parse and bundler.options.auto_import_jsx;

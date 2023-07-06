@@ -2629,6 +2629,7 @@ pub const Parser = struct {
 
         tree_shaking: bool = false,
         bundle: bool = false,
+        package_version: ?string = null,
 
         macro_context: *MacroContextType() = undefined,
 
@@ -21918,11 +21919,26 @@ fn NewParser_(
 
                 // Only enable during bundling
                 .commonjs_named_exports_deoptimized = !opts.bundle,
-                .unwrap_all_requires = opts.bundle and
-                    if (source.path.packageName()) |pkg|
-                    opts.features.shouldUnwrapRequire(pkg)
-                else
-                    false,
+            };
+
+            this.unwrap_all_requires = brk: {
+                if (opts.bundle) {
+                    if (source.path.packageName()) |pkg| {
+                        if (opts.features.shouldUnwrapRequire(pkg)) {
+                            if (strings.eqlComptime(pkg, "react")) {
+                                if (opts.package_version) |version| {
+                                    if (version.len > 2 and (version[0] == '0' or (version[0] == '1' and version[1] < '8'))) {
+                                        break :brk false;
+                                    }
+                                }
+                            }
+
+                            break :brk true;
+                        }
+                    }
+                }
+
+                break :brk false;
             };
 
             this.symbols = std.ArrayList(Symbol).init(allocator);

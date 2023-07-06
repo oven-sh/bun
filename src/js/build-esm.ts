@@ -20,6 +20,7 @@ const minifyList = [
   "node/stream.promises.js",
   "node/stream.consumers.js",
   "node/stream.web.js",
+  "node/url.js",
 ];
 
 if (fs.existsSync(OUT_DIR + "/modules")) {

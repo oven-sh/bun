@@ -834,6 +834,7 @@ const defaultObject = {
   pathToFileURL,
   fileURLToPath,
   urlToHttpOptions,
+  [Symbol.for("CommonJS")]: 0,
 };
 
 export {

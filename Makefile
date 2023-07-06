@@ -1294,8 +1294,8 @@ release-bindings: $(OBJ_DIR) $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILE
 
 # Do not add $(DEBUG_DIR) to this list
 # It will break caching, causing you to have to wait for every .cpp file to rebuild.
-.PHONY: generate-bindings
-generate-bindings: $(DEBUG_OBJ_DIR) $(DEBUG_OBJ_FILES) $(DEBUG_WEBCORE_OBJ_FILES) $(DEBUG_SQLITE_OBJ_FILES) $(DEBUG_NODE_OS_OBJ_FILES) $(DEBUG_BUILTINS_OBJ_FILES) $(DEBUG_IO_FILES) $(DEBUG_MODULES_OBJ_FILES) $(DEBUG_WEBCRYPTO_OBJ_FILES)
+.PHONY: bindings
+bindings: $(DEBUG_OBJ_DIR) $(DEBUG_OBJ_FILES) $(DEBUG_WEBCORE_OBJ_FILES) $(DEBUG_SQLITE_OBJ_FILES) $(DEBUG_NODE_OS_OBJ_FILES) $(DEBUG_BUILTINS_OBJ_FILES) $(DEBUG_IO_FILES) $(DEBUG_MODULES_OBJ_FILES) $(DEBUG_WEBCRYPTO_OBJ_FILES)
 
 .PHONY: jsc-bindings-mac
 jsc-bindings-mac: bindings
@@ -1888,13 +1888,13 @@ vendor-dev: require init-submodules npm-install-dev vendor-without-npm
 .PHONY: bun
 bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local
 
-.PHONY: bindings
-bindings:
+.PHONY: regenerate-bindings
+regenerate-bindings:
 	@make clean-bindings builtins
-	@make generate-bindings -j$(CPU_COUNT)
+	@make bindings -j$(CPU_COUNT)
 
 .PHONY: setup
-setup: vendor-dev identifier-cache
+setup: vendor-dev identifier-cache clean-bindings
 	make jsc-check
 	make bindings
 	@echo ""

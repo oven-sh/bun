@@ -22,13 +22,9 @@ function generate(ssl) {
         fn: "write",
         length: 3,
       },
-      wrapTLS: {
-        fn: "wrapTLS",
+      upgradeTLS: {
+        fn: "upgradeTLS",
         length: 1,
-      },
-      open: {
-        fn: "open",
-        length: 0,
       },
       end: {
         fn: "end",

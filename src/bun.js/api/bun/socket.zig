@@ -1966,24 +1966,10 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
-        pub fn open(
-            this: *This,
-            _: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
-            JSC.markBinding(@src());
-            if (comptime ssl) {
-                if (!this.detached) {
-                    this.socket.open(!this.handlers.is_server);
-                }
-            }
-            return JSValue.jsUndefined();
-        }
-
         // this invalidates the current socket returning 2 new sockets
         // one for non-TLS and another for TLS
         // handlers for non-TLS are preserved
-        pub fn wrapTLS(
+        pub fn upgradeTLS(
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
@@ -2058,10 +2044,11 @@ fn NewSocket(comptime ssl: bool) type {
 
             const ext_size = @sizeOf(WrappedSocket);
 
+            const is_server = this.handlers.is_server;
             var tls = handlers.vm.allocator.create(TLSSocket) catch @panic("OOM");
             var handlers_ptr = handlers.vm.allocator.create(Handlers) catch @panic("OOM");
             handlers_ptr.* = handlers;
-            handlers_ptr.is_server = this.handlers.is_server;
+            handlers_ptr.is_server = is_server;
             handlers_ptr.protect();
 
             tls.* = .{
@@ -2113,7 +2100,7 @@ fn NewSocket(comptime ssl: bool) type {
                 .onError = this.handlers.onError,
                 .onHandshake = this.handlers.onHandshake,
                 .binary_type = this.handlers.binary_type,
-                .is_server = this.handlers.is_server,
+                .is_server = is_server,
             };
             this.handlers.onOpen = .zero;
             this.handlers.onClose = .zero;
@@ -2146,6 +2133,9 @@ fn NewSocket(comptime ssl: bool) type {
 
             // mark both instances on socket data
             new_socket.ext(WrappedSocket).?.* = .{ .tcp = raw, .tls = tls };
+
+            // start TLS handshake after we set ext
+            new_socket.startTLS(!this.handlers.is_server);
 
             //detach and invalidate the old instance
             this.detached = true;

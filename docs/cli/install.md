@@ -244,8 +244,18 @@ To tell Bun to allow lifecycle scripts for a particular package, add the package
   }
 ```
 
-Bun reads this field and will run lifecycle scripts for `my-trusted-package`. If you specify a version range, Bun will only execute lifecycle scripts if the resolved package version matches the range.
+```json-diff
+  {
+    "name": "my-app",
+    "version": "1.0.0",
++   "trustedDependencies": ["my-trusted-package"]
+  }
+```
 
+Bun reads this field and will run lifecycle scripts for `my-trusted-package`.
+
+<!-- If you specify a version range, Bun will only execute lifecycle scripts if the resolved package version matches the range. -->
+<!--
 ```json
 {
   "name": "my-app",
@@ -254,7 +264,7 @@ Bun reads this field and will run lifecycle scripts for `my-trusted-package`. If
     "my-trusted-package": "^1.0.0"
   }
 }
-```
+``` -->
 
 ## Git dependencies
 

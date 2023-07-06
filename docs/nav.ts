@@ -196,7 +196,7 @@ export default {
     page("test/snapshots", "Snapshots", {
       description: "Add lifecycle hooks to your tests that run before/after each test or test run",
     }),
-    page("test/time", "Time", {
+    page("test/time", "Dates and times", {
       description: "Control the date & time in your tests for more reliable and deterministic tests",
     }),
     page("test/dom", "DOM testing", {

@@ -4596,13 +4596,20 @@ pub const JSValue = enum(JSValueReprInt) {
         return FFI.JSVALUE_TO_BOOL(.{ .asJSValue = this });
     }
 
+    pub inline fn asInt52(this: JSValue) i64 {
+        if (comptime bun.Environment.allow_assert) {
+            std.debug.assert(this.isNumber());
+        }
+        return @intFromFloat(i64, @max(@min(this.asDouble(), std.math.maxInt(i52)), std.math.minInt(i52)));
+    }
+
     pub fn toInt32(this: JSValue) i32 {
         if (this.isInt32()) {
             return asInt32(this);
         }
 
         if (this.isNumber()) {
-            return @truncate(i32, @intFromFloat(i64, asDouble(this)));
+            return @truncate(i32, this.asInt52());
         }
 
         if (comptime bun.Environment.allow_assert) {

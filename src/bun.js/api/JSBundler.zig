@@ -26,7 +26,7 @@ const strings = bun.strings;
 const NewClass = Base.NewClass;
 const To = Base.To;
 const Request = WebCore.Request;
-
+const String = bun.String;
 const FetchEvent = WebCore.FetchEvent;
 const MacroMap = @import("../../resolver/package_json.zig").MacroMap;
 const TSConfigJSON = @import("../../resolver/tsconfig_json.zig").TSConfigJSON;
@@ -871,16 +871,16 @@ pub const JSBundler = struct {
 
         extern fn JSBundlerPlugin__anyMatches(
             *Plugin,
-            namespaceString: *const ZigString,
-            path: *const ZigString,
+            namespaceString: *const String,
+            path: *const String,
             bool,
         ) bool;
 
         extern fn JSBundlerPlugin__matchOnLoad(
             *JSC.JSGlobalObject,
             *Plugin,
-            namespaceString: *const ZigString,
-            path: *const ZigString,
+            namespaceString: *const String,
+            path: *const String,
             context: *anyopaque,
             u8,
         ) void;
@@ -888,9 +888,9 @@ pub const JSBundler = struct {
         extern fn JSBundlerPlugin__matchOnResolve(
             *JSC.JSGlobalObject,
             *Plugin,
-            namespaceString: *const ZigString,
-            path: *const ZigString,
-            importer: *const ZigString,
+            namespaceString: *const String,
+            path: *const String,
+            importer: *const String,
             context: *anyopaque,
             u8,
         ) void;
@@ -905,10 +905,10 @@ pub const JSBundler = struct {
             defer tracer.end();
 
             const namespace_string = if (path.isFile())
-                ZigString.Empty
+                bun.String.empty
             else
-                ZigString.fromUTF8(path.namespace);
-            const path_string = ZigString.fromUTF8(path.text);
+                bun.String.create(path.namespace);
+            const path_string = bun.String.create(path.text);
             return JSBundlerPlugin__anyMatches(this, &namespace_string, &path_string, is_onLoad);
         }
 
@@ -924,10 +924,12 @@ pub const JSBundler = struct {
             const tracer = bun.tracy.traceNamed(@src(), "JSBundler.matchOnLoad");
             defer tracer.end();
             const namespace_string = if (namespace.len == 0)
-                ZigString.init("file")
+                bun.String.static("file")
             else
-                ZigString.fromUTF8(namespace);
-            const path_string = ZigString.fromUTF8(path);
+                bun.String.create(namespace);
+            const path_string = bun.String.create(path);
+            defer namespace_string.deref();
+            defer path_string.deref();
             JSBundlerPlugin__matchOnLoad(globalThis, this, &namespace_string, &path_string, context, @intFromEnum(default_loader));
         }
 
@@ -944,11 +946,14 @@ pub const JSBundler = struct {
             const tracer = bun.tracy.traceNamed(@src(), "JSBundler.matchOnResolve");
             defer tracer.end();
             const namespace_string = if (strings.eqlComptime(namespace, "file"))
-                ZigString.Empty
+                bun.String.empty
             else
-                ZigString.fromUTF8(namespace);
-            const path_string = ZigString.fromUTF8(path);
-            const importer_string = ZigString.fromUTF8(importer);
+                bun.String.create(namespace);
+            const path_string = bun.String.create(path);
+            const importer_string = bun.String.create(importer);
+            defer namespace_string.deref();
+            defer path_string.deref();
+            defer importer_string.deref();
             JSBundlerPlugin__matchOnResolve(globalThis, this, &namespace_string, &path_string, &importer_string, context, @intFromEnum(import_record_kind));
         }
 

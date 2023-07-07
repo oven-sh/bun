@@ -54,7 +54,7 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
     nsGroup->append(WTFMove(regex));
 }
 
-bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, const ZigString* namespaceStr, const ZigString* path, bool isOnLoad)
+bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, const BunString* namespaceStr, const BunString* path, bool isOnLoad)
 {
     constexpr bool usesPatternContextBuffer = false;
     if (isOnLoad) {
@@ -62,7 +62,7 @@ bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, const ZigString* namespac
             return false;
 
         // Avoid unnecessary string copies
-        auto namespaceString = namespaceStr ? Zig::toString(*namespaceStr) : String();
+        auto namespaceString = namespaceStr ? Bun::toWTFString(*namespaceStr) : String();
 
         auto* group = this->onLoad.group(namespaceString);
         if (group == nullptr) {
@@ -70,7 +70,7 @@ bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, const ZigString* namespac
         }
 
         auto& filters = *group;
-        auto pathString = Zig::toString(*path);
+        auto pathString = Bun::toWTFString(*path);
 
         for (auto& filter : filters) {
             Yarr::MatchingContextHolder regExpContext(vm, usesPatternContextBuffer, nullptr, Yarr::MatchFrom::CompilerThread);
@@ -84,14 +84,14 @@ bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, const ZigString* namespac
             return false;
 
         // Avoid unnecessary string copies
-        auto namespaceString = namespaceStr ? Zig::toString(*namespaceStr) : String();
+        auto namespaceString = namespaceStr ? Bun::toWTFString(*namespaceStr) : String();
 
         auto* group = this->onResolve.group(namespaceString);
         if (group == nullptr) {
             return false;
         }
 
-        auto pathString = Zig::toString(*path);
+        auto pathString = Bun::toWTFString(*path);
         auto& filters = *group;
 
         for (auto& filter : filters) {
@@ -115,9 +115,19 @@ static const HashTableValue JSBundlerPluginHashTable[] = {
 class JSBundlerPlugin final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
-    static JSBundlerPlugin* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* config, BunPluginTarget target)
+    static JSBundlerPlugin* create(JSC::VM& vm,
+        JSC::JSGlobalObject* globalObject,
+        JSC::Structure* structure,
+        void* config,
+        BunPluginTarget target,
+        JSBundlerPluginAddErrorCallback addError = JSBundlerPlugin__addError,
+        JSBundlerPluginOnLoadAsyncCallback onLoadAsync = JSBundlerPlugin__onLoadAsync,
+        JSBundlerPluginOnResolveAsyncCallback onResolveAsync = JSBundlerPlugin__onResolveAsync)
     {
-        JSBundlerPlugin* ptr = new (NotNull, JSC::allocateCell<JSBundlerPlugin>(vm)) JSBundlerPlugin(vm, globalObject, structure, config, target);
+        JSBundlerPlugin* ptr = new (NotNull, JSC::allocateCell<JSBundlerPlugin>(vm)) JSBundlerPlugin(vm, globalObject, structure, config, target,
+            addError,
+            onLoadAsync,
+            onResolveAsync);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -147,9 +157,9 @@ public:
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> setupFunction;
 
 private:
-    JSBundlerPlugin(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure, void* config, BunPluginTarget target)
+    JSBundlerPlugin(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure, void* config, BunPluginTarget target, JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
         : JSC::JSNonFinalObject(vm, structure)
-        , plugin(BundlerPlugin(config, target))
+        , plugin(BundlerPlugin(config, target, addError, onLoadAsync, onResolveAsync))
     {
     }
 
@@ -199,7 +209,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addError, (JSC::JSGlobalObject 
 {
     JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(callFrame->thisValue());
     if (!thisObject->plugin.tombstoned) {
-        JSBundlerPlugin__addError(
+        thisObject->plugin.addError(
             UNWRAP_BUNDLER_PLUGIN(callFrame),
             thisObject->plugin.config,
             JSValue::encode(callFrame->argument(1)),
@@ -212,7 +222,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync, (JSC::JSGlobalObje
 {
     JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(callFrame->thisValue());
     if (!thisObject->plugin.tombstoned) {
-        JSBundlerPlugin__onLoadAsync(
+        thisObject->plugin.onLoadAsync(
             UNWRAP_BUNDLER_PLUGIN(callFrame),
             thisObject->plugin.config,
             JSValue::encode(callFrame->argument(1)),
@@ -225,7 +235,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onResolveAsync, (JSC::JSGlobalO
 {
     JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(callFrame->thisValue());
     if (!thisObject->plugin.tombstoned) {
-        JSBundlerPlugin__onResolveAsync(
+        thisObject->plugin.onResolveAsync(
             UNWRAP_BUNDLER_PLUGIN(callFrame),
             thisObject->plugin.config,
             JSValue::encode(callFrame->argument(1)),
@@ -274,15 +284,15 @@ void JSBundlerPlugin::finishCreation(JSC::VM& vm)
     reifyStaticProperties(vm, JSBundlerPlugin::info(), JSBundlerPluginHashTable, *this);
 }
 
-extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, const ZigString* namespaceString, const ZigString* path, bool isOnLoad)
+extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, const BunString* namespaceString, const BunString* path, bool isOnLoad)
 {
     return pluginObject->plugin.anyMatchesCrossThread(pluginObject->vm(), namespaceString, path, isOnLoad);
 }
 
-extern "C" void JSBundlerPlugin__matchOnLoad(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const ZigString* namespaceString, const ZigString* path, void* context, uint8_t defaultLoaderId)
+extern "C" void JSBundlerPlugin__matchOnLoad(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const BunString* namespaceString, const BunString* path, void* context, uint8_t defaultLoaderId)
 {
-    WTF::String namespaceStringStr = namespaceString ? Zig::toStringCopy(*namespaceString) : WTF::String();
-    WTF::String pathStr = path ? Zig::toStringCopy(*path) : WTF::String();
+    WTF::String namespaceStringStr = namespaceString ? Bun::toWTFString(*namespaceString) : WTF::String();
+    WTF::String pathStr = path ? Bun::toWTFString(*path) : WTF::String();
 
     JSFunction* function = plugin->onLoadFunction.get(plugin);
     if (UNLIKELY(!function))
@@ -306,7 +316,7 @@ extern "C" void JSBundlerPlugin__matchOnLoad(JSC::JSGlobalObject* globalObject, 
         auto exception = scope.exception();
         scope.clearException();
         if (!plugin->plugin.tombstoned) {
-            JSBundlerPlugin__addError(
+            plugin->plugin.addError(
                 context,
                 plugin->plugin.config,
                 JSC::JSValue::encode(exception),
@@ -315,14 +325,14 @@ extern "C" void JSBundlerPlugin__matchOnLoad(JSC::JSGlobalObject* globalObject, 
     }
 }
 
-extern "C" void JSBundlerPlugin__matchOnResolve(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const ZigString* namespaceString, const ZigString* path, const ZigString* importer, void* context, uint8_t kindId)
+extern "C" void JSBundlerPlugin__matchOnResolve(JSC::JSGlobalObject* globalObject, Bun::JSBundlerPlugin* plugin, const BunString* namespaceString, const BunString* path, const BunString* importer, void* context, uint8_t kindId)
 {
-    WTF::String namespaceStringStr = namespaceString ? Zig::toStringCopy(*namespaceString) : WTF::String("file"_s);
+    WTF::String namespaceStringStr = namespaceString ? Bun::toWTFString(*namespaceString) : WTF::String("file"_s);
     if (namespaceStringStr.length() == 0) {
         namespaceStringStr = WTF::String("file"_s);
     }
-    WTF::String pathStr = path ? Zig::toStringCopy(*path) : WTF::String();
-    WTF::String importerStr = importer ? Zig::toStringCopy(*importer) : WTF::String();
+    WTF::String pathStr = path ? Bun::toWTFString(*path) : WTF::String();
+    WTF::String importerStr = importer ? Bun::toWTFString(*importer) : WTF::String();
     auto& vm = globalObject->vm();
 
     JSFunction* function = plugin->onResolveFunction.get(plugin);

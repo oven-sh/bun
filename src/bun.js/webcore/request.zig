@@ -255,19 +255,7 @@ pub const Request = struct {
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        const string_contents: string = switch (this.method) {
-            .GET => "GET",
-            .HEAD => "HEAD",
-            .PATCH => "PATCH",
-            .PUT => "PUT",
-            .POST => "POST",
-            .OPTIONS => "OPTIONS",
-            .CONNECT => "CONNECT",
-            .TRACE => "TRACE",
-            .DELETE => "DELETE",
-        };
-
-        return ZigString.init(string_contents).toValueGC(globalThis);
+        return bun.String.static(@tagName(this.method)).toJSConst(globalThis);
     }
 
     pub fn getMode(

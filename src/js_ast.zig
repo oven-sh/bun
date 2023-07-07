@@ -1734,23 +1734,23 @@ pub const E = struct {
         }
 
         pub inline fn toU64(self: Number) u64 {
-            @setRuntimeSafety(false);
-            return @intFromFloat(u64, @max(@trunc(self.value), 0));
+            return self.to(u64);
         }
 
         pub inline fn toUsize(self: Number) usize {
-            @setRuntimeSafety(false);
-            return @intFromFloat(usize, @max(@trunc(self.value), 0));
+            return self.to(usize);
         }
 
         pub inline fn toU32(self: Number) u32 {
-            @setRuntimeSafety(false);
-            return @intFromFloat(u32, @max(@trunc(self.value), 0));
+            return self.to(u32);
         }
 
         pub inline fn toU16(self: Number) u16 {
-            @setRuntimeSafety(false);
-            return @intFromFloat(u16, @max(@trunc(self.value), 0));
+            return self.to(u16);
+        }
+
+        pub fn to(self: Number, comptime T: type) T {
+            return @intFromFloat(T, @min(@max(@trunc(self.value), 0), comptime @min(std.math.floatMax(f64), std.math.maxInt(T))));
         }
 
         pub fn jsonStringify(self: *const Number, opts: anytype, o: anytype) !void {

@@ -35,7 +35,7 @@ const Mode = JSC.Node.Mode;
 const uid_t = std.os.uid_t;
 const gid_t = std.os.gid_t;
 /// u63 to allow one null bit
-const ReadPosition = u63;
+const ReadPosition = i64;
 
 const Stats = JSC.Node.Stats;
 const Dirent = JSC.Node.Dirent;
@@ -1524,7 +1524,7 @@ pub const Arguments = struct {
                         // fs.write(fd, string[, position[, encoding]], callback)
                         .string => {
                             if (current.isNumber()) {
-                                args.position = current.toU32();
+                                args.position = current.to(i52);
                                 arguments.eat();
                                 current = arguments.next() orelse break :parse;
                             }
@@ -1540,18 +1540,18 @@ pub const Arguments = struct {
                                 break :parse;
                             }
 
-                            if (!current.isNumber()) break :parse;
-                            args.offset = current.toU32();
+                            if (!(current.isNumber() or current.isBigInt())) break :parse;
+                            args.offset = current.to(u52);
                             arguments.eat();
                             current = arguments.next() orelse break :parse;
 
-                            if (!current.isNumber()) break :parse;
-                            args.length = current.toU32();
+                            if (!(current.isNumber() or current.isBigInt())) break :parse;
+                            args.length = current.to(u52);
                             arguments.eat();
                             current = arguments.next() orelse break :parse;
 
-                            if (!current.isNumber()) break :parse;
-                            args.position = current.toU32();
+                            if (!(current.isNumber() or current.isBigInt())) break :parse;
+                            args.position = current.to(i52);
                             arguments.eat();
                         },
                     }
@@ -1631,8 +1631,8 @@ pub const Arguments = struct {
 
             if (arguments.next()) |current| {
                 arguments.eat();
-                if (current.isNumber()) {
-                    args.offset = current.toU32();
+                if (current.isNumber() or current.isBigInt()) {
+                    args.offset = current.to(u52);
 
                     if (arguments.remaining.len < 2) {
                         JSC.throwInvalidArguments(
@@ -1644,8 +1644,8 @@ pub const Arguments = struct {
 
                         return null;
                     }
-
-                    args.length = arguments.remaining[0].toU32();
+                    if (arguments.remaining[0].isNumber() or arguments.remaining[0].isBigInt())
+                        args.length = arguments.remaining[0].to(u52);
 
                     if (args.length == 0) {
                         JSC.throwInvalidArguments(
@@ -1658,26 +1658,26 @@ pub const Arguments = struct {
                         return null;
                     }
 
-                    const position: i32 = if (arguments.remaining[1].isNumber())
-                        arguments.remaining[1].toInt32()
-                    else
-                        -1;
+                    if (arguments.remaining[1].isNumber() or arguments.remaining[1].isBigInt())
+                        args.position = @intCast(ReadPosition, arguments.remaining[1].to(i52));
 
-                    args.position = if (position > -1) @intCast(ReadPosition, position) else null;
                     arguments.remaining = arguments.remaining[2..];
                 } else if (current.isObject()) {
-                    if (current.getIfPropertyExists(ctx.ptr(), "offset")) |num| {
-                        args.offset = num.toU32();
+                    if (current.getTruthy(ctx.ptr(), "offset")) |num| {
+                        if (num.isNumber() or num.isBigInt()) {
+                            args.offset = num.to(u52);
+                        }
                     }
 
-                    if (current.getIfPropertyExists(ctx.ptr(), "length")) |num| {
-                        args.length = num.toU32();
+                    if (current.getTruthy(ctx.ptr(), "length")) |num| {
+                        if (num.isNumber() or num.isBigInt()) {
+                            args.length = num.to(u52);
+                        }
                     }
 
-                    if (current.getIfPropertyExists(ctx.ptr(), "position")) |num| {
-                        const position: i32 = if (num.isEmptyOrUndefinedOrNull()) -1 else num.coerce(i32, ctx);
-                        if (position > -1) {
-                            args.position = @intCast(ReadPosition, position);
+                    if (current.getTruthy(ctx.ptr(), "position")) |num| {
+                        if (num.isNumber() or num.isBigInt()) {
+                            args.position = num.to(i52);
                         }
                     }
                 }

@@ -241,3 +241,12 @@ for (const StringDecoder of [FakeStringDecoderCall, RealStringDecoder]) {
     });
   });
 }
+
+it("invalid utf-8 input, pr #3562", () => {
+  const decoder = new RealStringDecoder("utf-8");
+  let output = "";
+  output += decoder.write(Buffer.from("B9", "hex"));
+  output += decoder.write(Buffer.from("A9", "hex"));
+  output += decoder.end();
+  expect(output).toStrictEqual("\uFFFD\uFFFD");
+});

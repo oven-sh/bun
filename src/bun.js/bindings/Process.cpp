@@ -268,7 +268,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         }
     }
 
-    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject * globalObject,
+    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject* globalObject,
         JSC::EncodedJSValue exports);
 
     napi_register_module_v1 = reinterpret_cast<JSC::EncodedJSValue (*)(JSC::JSGlobalObject*,
@@ -452,86 +452,152 @@ JSC_DEFINE_CUSTOM_SETTER(Process_setterRelease,
     return true;
 }
 
-// static const NeverDestroyed<String> signalNames[] = {
-//     MAKE_STATIC_STRING_IMPL("SIGHUP"),
-//     MAKE_STATIC_STRING_IMPL("SIGINT"),
-//     MAKE_STATIC_STRING_IMPL("SIGQUIT"),
-//     MAKE_STATIC_STRING_IMPL("SIGILL"),
-//     MAKE_STATIC_STRING_IMPL("SIGTRAP"),
-//     MAKE_STATIC_STRING_IMPL("SIGABRT"),
-//     MAKE_STATIC_STRING_IMPL("SIGIOT"),
-//     MAKE_STATIC_STRING_IMPL("SIGBUS"),
-//     MAKE_STATIC_STRING_IMPL("SIGFPE"),
-//     MAKE_STATIC_STRING_IMPL("SIGKILL"),
-//     MAKE_STATIC_STRING_IMPL("SIGUSR1"),
-//     MAKE_STATIC_STRING_IMPL("SIGSEGV"),
-//     MAKE_STATIC_STRING_IMPL("SIGUSR2"),
-//     MAKE_STATIC_STRING_IMPL("SIGPIPE"),
-//     MAKE_STATIC_STRING_IMPL("SIGALRM"),
-//     MAKE_STATIC_STRING_IMPL("SIGTERM"),
-//     MAKE_STATIC_STRING_IMPL("SIGCHLD"),
-//     MAKE_STATIC_STRING_IMPL("SIGCONT"),
-//     MAKE_STATIC_STRING_IMPL("SIGSTOP"),
-//     MAKE_STATIC_STRING_IMPL("SIGTSTP"),
-//     MAKE_STATIC_STRING_IMPL("SIGTTIN"),
-//     MAKE_STATIC_STRING_IMPL("SIGTTOU"),
-//     MAKE_STATIC_STRING_IMPL("SIGURG"),
-//     MAKE_STATIC_STRING_IMPL("SIGXCPU"),
-//     MAKE_STATIC_STRING_IMPL("SIGXFSZ"),
-//     MAKE_STATIC_STRING_IMPL("SIGVTALRM"),
-//     MAKE_STATIC_STRING_IMPL("SIGPROF"),
-//     MAKE_STATIC_STRING_IMPL("SIGWINCH"),
-//     MAKE_STATIC_STRING_IMPL("SIGIO"),
-//     MAKE_STATIC_STRING_IMPL("SIGINFO"),
-//     MAKE_STATIC_STRING_IMPL("SIGSYS"),
-// };
-// static const int signalNumbers[] = {
-//     SIGHUP,
-//     SIGINT,
-//     SIGQUIT,
-//     SIGILL,
-//     SIGTRAP,
-//     SIGABRT,
-//     SIGIOT,
-//     SIGBUS,
-//     SIGFPE,
-//     SIGKILL,
-//     SIGUSR1,
-//     SIGSEGV,
-//     SIGUSR2,
-//     SIGPIPE,
-//     SIGALRM,
-//     SIGTERM,
-//     SIGCHLD,
-//     SIGCONT,
-//     SIGSTOP,
-//     SIGTSTP,
-//     SIGTTIN,
-//     SIGTTOU,
-//     SIGURG,
-//     SIGXCPU,
-//     SIGXFSZ,
-//     SIGVTALRM,
-//     SIGPROF,
-//     SIGWINCH,
-//     SIGIO,
-//     SIGINFO,
-//     SIGSYS,
-// };
+static const NeverDestroyed<String> signalNames[] = {
+    MAKE_STATIC_STRING_IMPL("SIGHUP"),
+    MAKE_STATIC_STRING_IMPL("SIGINT"),
+    MAKE_STATIC_STRING_IMPL("SIGQUIT"),
+    MAKE_STATIC_STRING_IMPL("SIGILL"),
+    MAKE_STATIC_STRING_IMPL("SIGTRAP"),
+    MAKE_STATIC_STRING_IMPL("SIGABRT"),
+    MAKE_STATIC_STRING_IMPL("SIGIOT"),
+    MAKE_STATIC_STRING_IMPL("SIGBUS"),
+    MAKE_STATIC_STRING_IMPL("SIGFPE"),
+    MAKE_STATIC_STRING_IMPL("SIGKILL"),
+    MAKE_STATIC_STRING_IMPL("SIGUSR1"),
+    MAKE_STATIC_STRING_IMPL("SIGSEGV"),
+    MAKE_STATIC_STRING_IMPL("SIGUSR2"),
+    MAKE_STATIC_STRING_IMPL("SIGPIPE"),
+    MAKE_STATIC_STRING_IMPL("SIGALRM"),
+    MAKE_STATIC_STRING_IMPL("SIGTERM"),
+    MAKE_STATIC_STRING_IMPL("SIGCHLD"),
+    MAKE_STATIC_STRING_IMPL("SIGCONT"),
+    MAKE_STATIC_STRING_IMPL("SIGSTOP"),
+    MAKE_STATIC_STRING_IMPL("SIGTSTP"),
+    MAKE_STATIC_STRING_IMPL("SIGTTIN"),
+    MAKE_STATIC_STRING_IMPL("SIGTTOU"),
+    MAKE_STATIC_STRING_IMPL("SIGURG"),
+    MAKE_STATIC_STRING_IMPL("SIGXCPU"),
+    MAKE_STATIC_STRING_IMPL("SIGXFSZ"),
+    MAKE_STATIC_STRING_IMPL("SIGVTALRM"),
+    MAKE_STATIC_STRING_IMPL("SIGPROF"),
+    MAKE_STATIC_STRING_IMPL("SIGWINCH"),
+    MAKE_STATIC_STRING_IMPL("SIGIO"),
+    MAKE_STATIC_STRING_IMPL("SIGINFO"),
+    MAKE_STATIC_STRING_IMPL("SIGSYS"),
+};
 
-// JSC_DEFINE_HOST_FUNCTION(jsFunctionProcessOn, (JSGlobalObject * globalObject, CallFrame* callFrame))
-// {
-//     VM& vm = globalObject->vm();
-//     auto scope = DECLARE_THROW_SCOPE(vm);
+const HashMap<String, int> signalNameToNumberMap = {
+    { signalNames[0], SIGHUP },
+    { signalNames[1], SIGINT },
+    { signalNames[2], SIGQUIT },
+    { signalNames[3], SIGILL },
+    { signalNames[4], SIGTRAP },
+    { signalNames[5], SIGABRT },
+    { signalNames[6], SIGIOT },
+    { signalNames[7], SIGBUS },
+    { signalNames[8], SIGFPE },
+    // { signalNames[9], SIGKILL },
+    { signalNames[10], SIGUSR1 },
+    { signalNames[11], SIGSEGV },
+    { signalNames[12], SIGUSR2 },
+    { signalNames[13], SIGPIPE },
+    { signalNames[14], SIGALRM },
+    { signalNames[15], SIGTERM },
+    { signalNames[16], SIGCHLD },
+    { signalNames[17], SIGCONT },
+    { signalNames[18], SIGSTOP },
+    { signalNames[19], SIGTSTP },
+    { signalNames[20], SIGTTIN },
+    { signalNames[21], SIGTTOU },
+    { signalNames[22], SIGURG },
+    { signalNames[23], SIGXCPU },
+    { signalNames[24], SIGXFSZ },
+    { signalNames[25], SIGVTALRM },
+    { signalNames[26], SIGPROF },
+    { signalNames[27], SIGWINCH },
+    { signalNames[28], SIGIO },
+    { signalNames[29], SIGINFO },
+    { signalNames[30], SIGSYS },
+};
 
-//     if (callFrame->argumentCount() < 2) {
-//         throwVMError(globalObject, scope, "Not enough arguments"_s);
-//         return JSValue::encode(jsUndefined());
-//     }
+const HashMap<int, String> signalNumberToNameMap = {
+    { SIGHUP, signalNames[0] },
+    { SIGINT, signalNames[1] },
+    { SIGQUIT, signalNames[2] },
+    { SIGILL, signalNames[3] },
+    { SIGTRAP, signalNames[4] },
+    { SIGABRT, signalNames[5] },
+    { SIGIOT, signalNames[6] },
+    { SIGBUS, signalNames[7] },
+    { SIGFPE, signalNames[8] },
+    // { SIGKILL, signalNames[9] },
+    { SIGUSR1, signalNames[10] },
+    { SIGSEGV, signalNames[11] },
+    { SIGUSR2, signalNames[12] },
+    { SIGPIPE, signalNames[13] },
+    { SIGALRM, signalNames[14] },
+    { SIGTERM, signalNames[15] },
+    { SIGCHLD, signalNames[16] },
+    { SIGCONT, signalNames[17] },
+    { SIGSTOP, signalNames[18] },
+    { SIGTSTP, signalNames[19] },
+    { SIGTTIN, signalNames[20] },
+    { SIGTTOU, signalNames[21] },
+    { SIGURG, signalNames[22] },
+    { SIGXCPU, signalNames[23] },
+    { SIGXFSZ, signalNames[24] },
+    { SIGVTALRM, signalNames[25] },
+    { SIGPROF, signalNames[26] },
+    { SIGWINCH, signalNames[27] },
+    { SIGIO, signalNames[28] },
+    { SIGINFO, signalNames[29] },
+    { SIGSYS, signalNames[30] },
+};
 
-//     String eventName = callFrame->uncheckedArgument(0).toWTFString(globalObject);
-//     RETURN_IF_EXCEPTION(scope, encodedJSValue());
-// }
+std::function<void(int)> signalHandler;
+void _signalHandler(int signalNumber)
+{
+    signalHandler(signalNumber);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionProcessOn, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 2) {
+        throwVMError(globalObject, scope, "Not enough arguments"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    String eventName = callFrame->uncheckedArgument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+    JSValue thisValue = callFrame->thisValue();
+    JSObject* thisObject = thisValue.getObject();
+    if (UNLIKELY(!thisObject))
+        return JSValue::encode(jsUndefined());
+
+    Process* process = jsCast<Process*>(thisObject);
+
+    if (signalNameToNumberMap.find(eventName) != signalNameToNumberMap.end()) {
+        signalHandler = [process](int signalNumber) {
+            if (UNLIKELY(signalNumberToNameMap.find(signalNumber) == signalNumberToNameMap.end()))
+                return;
+
+            JSEventEmitter* eventEmitter = jsCast<JSEventEmitter*>(process);
+            String signalName = signalNumberToNameMap.get(signalNumber);
+            eventEmitter->wrapped().emitForBindings(Identifier::fromString(eventEmitter->vm(), signalName), {});
+        };
+
+        int signalNumber = signalNameToNumberMap.get(eventName);
+        signal(signalNumber, _signalHandler);
+    }
+
+    WebCore::JSEventEmitter::addListener(globalObject, callFrame, jsCast<JSEventEmitter*>(thisObject), false, false);
+
+    return JSValue::encode(thisValue);
+}
 
 Process::~Process()
 {
@@ -790,6 +856,12 @@ void Process::finishCreation(JSC::VM& vm)
 
     this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "emitWarning"_s),
         1, Process_emitWarning, ImplementationVisibility::Public, NoIntrinsic, 0);
+
+    this->putDirectNativeFunction(vm, globalObject, Identifier::fromString(this->vm(), "on"_s),
+        2, jsFunctionProcessOn, ImplementationVisibility::Public, NoIntrinsic, 0);
+
+    this->putDirectNativeFunction(vm, globalObject, Identifier::fromString(this->vm(), "addListener"_s),
+        2, jsFunctionProcessOn, ImplementationVisibility::Public, NoIntrinsic, 0);
 
     JSC::JSFunction* requireDotMainFunction = JSFunction::create(
         vm,

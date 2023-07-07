@@ -7,15 +7,20 @@ describe("URLSearchParams", () => {
       params.append("foo", "bar");
       params.append("foo", "boop");
       params.append("bar", "baz");
+      // @ts-ignore
       expect(params.length).toBe(3);
       params.delete("foo");
+      // @ts-ignore
       expect(params.length).toBe(1);
       params.append("foo", "bar");
+      // @ts-ignore
       expect(params.length).toBe(2);
       params.delete("foo");
       params.delete("foo");
+      // @ts-ignore
       expect(params.length).toBe(1);
       params.delete("bar");
+      // @ts-ignore
       expect(params.length).toBe(0);
     });
 

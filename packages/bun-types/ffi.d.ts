@@ -344,6 +344,7 @@ declare module "bun:ffi" {
      *
      */
     u64_fast = 16,
+    function = 17,
   }
 
   type UNTYPED = never;

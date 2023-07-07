@@ -6,12 +6,10 @@
     // "skipLibCheck": true,
     "allowJs": true
   },
-  "include": [
-    ".",
-    "packages/bun-types/index.d.ts"
-  ],
+  "include": [".", "packages/bun-types/index.d.ts"],
   "exclude": [
     "src/test",
+    // "src/js/builtins",
     "packages",
     "bench",
     "examples/*/*",
@@ -21,5 +19,6 @@
     "src/bun.js/WebKit",
     "src/api/demo",
     "node_modules"
-  ]
+  ],
+  "files": ["src/js/builtins/builtins.d.ts"]
 }

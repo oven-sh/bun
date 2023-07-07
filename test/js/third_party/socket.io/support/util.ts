@@ -1,3 +1,4 @@
+// @ts-nocheck
 import type { Server } from "socket.io";
 import request from "supertest";
 

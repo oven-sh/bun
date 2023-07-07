@@ -75,7 +75,7 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
   var length = values.length;
 
   if (length > 0) {
-    var outValues = $newArrayWithSize<T>(length);
+    var outValues = $newArrayWithSize(length);
     if ($isReadableByteStreamController(controller)) {
       {
         const buf = values[0];
@@ -150,7 +150,7 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
 
   var pullResult = controller.$pull(controller);
   if (pullResult && $isPromise(pullResult)) {
-    return pullResult.$then(onPullMany);
+    return pullResult.$then(onPullMany) as any;
   }
 
   return onPullMany(pullResult);

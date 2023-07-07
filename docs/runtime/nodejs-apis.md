@@ -1,6 +1,6 @@
 Bun aims for complete Node.js API compatibility. Most `npm` packages intended for `Node.js` environments will work with Bun out of the box; the best way to know for certain is to try it.
 
-This page is updated regularly to reflect compatibility status of the latest version of Bun.
+This page is updated regularly to reflect compatibility status of the latest version of Bun. If you run into any bugs with a particular package, please [open an issue](https://bun.sh/issues). Opening issues for compatibility bugs helps us prioritize what to work on next.
 
 ## Built-in modules
 
@@ -123,7 +123,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_net" %} [`node:net`](https://nodejs.org/api/net.html) {% /anchor %}
 - 🟡
-- Missing `net.createServer` `net.{get|set}DefaultAutoSelectFamily` `net.SocketAddress` `net.BlockList`.
+- Missing `net.{get|set}DefaultAutoSelectFamily` `net.SocketAddress` `net.BlockList`.
 
 ---
 
@@ -201,7 +201,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_tls" %} [`node:tls`](https://nodejs.org/api/tls.html) {% /anchor %}
 - 🟡
-- Missing `tls.Server` `tls.createServer` `tls.createSecurePair` `tls.checkServerIdentity` `tls.rootCertificates`
+- Missing `tls.createSecurePair` `tls.checkServerIdentity` `tls.rootCertificates`
 
 ---
 
@@ -219,13 +219,13 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_url" %} [`node:url`](https://nodejs.org/api/url.html) {% /anchor %}
 - 🟡
-- Missing `url.domainTo{ASCII|Unicode}` `url.urlToHttpOptions`. Recommended to use `URL` and `URLSearchParams` globals instead.
+- Missing `url.domainTo{ASCII|Unicode}`. Recommended to use `URL` and `URLSearchParams` globals instead.
 
 ---
 
 - {% anchor id="node_util" %} [`node:util`](https://nodejs.org/api/util.html) {% /anchor %}
 - 🟡
-- Missing `util.MIMEParams` `util.MIMEType` `util.formatWithOptions()` `util.getSystemErrorMap()` `util.getSystemErrorName()` `util.parseArgs()` `util.stripVTControlCharacters()` `util.toUSVString()` `util.transferableAbortController()` `util.transferableAbortSignal()`.
+- Missing `util.MIMEParams` `util.MIMEType` `util.formatWithOptions()` `util.getSystemErrorMap()` `util.getSystemErrorName()` `util.parseArgs()` `util.stripVTControlCharacters()` `util.transferableAbortController()` `util.transferableAbortSignal()`.
 
 ---
 

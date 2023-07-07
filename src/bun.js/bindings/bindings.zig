@@ -3445,6 +3445,7 @@ pub const JSValue = enum(JSValueReprInt) {
             c_int => @intCast(c_int, toInt32(this)),
             ?AnyPromise => asAnyPromise(this),
             u52 => @truncate(u52, @intCast(u64, @max(this.toInt64(), 0))),
+            i52 => @truncate(i52, @intCast(i52, this.toInt64())),
             u64 => toUInt64NoTruncate(this),
             u8 => @truncate(u8, toU32(this)),
             i16 => @truncate(i16, toInt32(this)),
@@ -4620,11 +4621,11 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub inline fn toU16(this: JSValue) u16 {
-        return @truncate(u16, this.toU32());
+        return @truncate(u16, @max(this.toInt32(), 0));
     }
 
     pub inline fn toU32(this: JSValue) u32 {
-        return @intCast(u32, @max(this.toInt32(), 0));
+        return @intCast(u32, @min(@max(this.toInt64(), 0), std.math.maxInt(u32)));
     }
 
     /// This function supports:

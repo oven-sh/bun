@@ -7,9 +7,8 @@
 declare function $bundleError(error: string);
 
 type BunFSWatchOptions = { encoding?: BufferEncoding; persistent?: boolean; recursive?: boolean; signal?: AbortSignal };
-
 type BunWatchEventType = "rename" | "change" | "error" | "close";
-type BunWatchListener<T> = (event: WatchEventType, filename: T | Error | undefined) => void;
+type BunWatchListener<T> = (event: WatchEventType, filename: T | undefined) => void;
 
 interface BunFSWatcher {
   /**

@@ -184,7 +184,7 @@ export function createFIFO() {
       this._capacityMask = (this._capacityMask << 1) | 1;
     }
 
-    shrinkArray() {
+    _shrinkArray() {
       this._list.length >>>= 1;
       this._capacityMask >>>= 1;
     }

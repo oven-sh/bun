@@ -57,6 +57,9 @@ declare function $getPromiseInternalField<K extends PromiseFieldType, V>(
   promise: Promise<V>,
   key: K,
 ): PromiseFieldToValue<K, V>;
+declare function $fulfillPromise(...args: any[]): TODO;
+declare function $evaluateCommonJSModule(...args: any[]): TODO;
+declare function $loadCJS2ESM(...args: any[]): TODO;
 declare function $getGeneratorInternalField(): TODO;
 declare function $getAsyncGeneratorInternalField(): TODO;
 declare function $getAbstractModuleRecordInternalField(): TODO;
@@ -229,7 +232,7 @@ declare function $createFIFO(): TODO;
 declare function $createNativeReadableStream(): TODO;
 declare function $createReadableStream(): TODO;
 declare function $createUninitializedArrayBuffer(size: number): ArrayBuffer;
-declare function $createWritableStreamFromInternal(): TODO;
+declare function $createWritableStreamFromInternal(...args: any[]): TODO;
 declare function $cwd(): TODO;
 declare function $data(): TODO;
 declare function $dataView(): TODO;
@@ -330,6 +333,7 @@ declare function $read(): TODO;
 declare function $readIntoRequests(): TODO;
 declare function $readRequests(): TODO;
 declare function $readable(): TODO;
+declare function $readableByteStreamControllerGetDesiredSize(...args: any): TODO;
 declare function $readableStreamController(): TODO;
 declare function $readableStreamToArray(): TODO;
 declare function $reader(): TODO;

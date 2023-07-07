@@ -218,6 +218,28 @@ it("process.emitWarning", () => {
   expect(called).toBe(1);
 });
 
+it("process.on signal events", () => {
+  var called = false;
+  expect(
+    process.on("SIGUSR2", () => {
+      called = true;
+    }),
+  ).toBeInstanceOf(process.constructor);
+  process.emit("SIGUSR2");
+  process.removeListener("SIGUSR2");
+  expect(called).toBeTruthy();
+
+  // works with addListener too
+  called = false;
+  expect(
+    process.addListener("SIGUSR2", () => {
+      called = true;
+    }),
+  ).toBeInstanceOf(process.constructor);
+  process.emit("SIGUSR2");
+  expect(called).toBeTruthy();
+});
+
 it("process.execArgv", () => {
   expect(process.execArgv instanceof Array).toBe(true);
 });

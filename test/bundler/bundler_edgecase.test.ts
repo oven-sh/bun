@@ -320,7 +320,6 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/JSONDefaultAndNamedImport", {
-    // We don't support rewriting default import to property acceses yet
     todo: true,
     files: {
       "/entry.js": /* js */ `
@@ -662,7 +661,6 @@ describe("bundler", () => {
     target: "bun",
   });
   itBundled("edgecase/RuntimeExternalRequire", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         console.log(require("hello-1").type);

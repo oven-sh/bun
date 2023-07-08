@@ -288,6 +288,6 @@ describe("process.onBeforeExit", () => {
       env: bunEnv,
     });
     expect(exitCode).toBe(0);
-    expect(stdout.toString().trim()).toBe("beforeExit:0\nbeforeExit:1\nexit:2");
+    expect(stdout.toString().trim()).toBe("beforeExit: 0\nbeforeExit: 1\nexit: 2");
   });
 });

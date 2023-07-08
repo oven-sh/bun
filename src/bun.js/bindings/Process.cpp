@@ -486,73 +486,8 @@ static const NeverDestroyed<String> signalNames[] = {
     MAKE_STATIC_STRING_IMPL("SIGSYS"),
 };
 
-const HashMap<String, int> signalNameToNumberMap = {
-    { signalNames[0], SIGHUP },
-    { signalNames[1], SIGINT },
-    { signalNames[2], SIGQUIT },
-    { signalNames[3], SIGILL },
-    { signalNames[4], SIGTRAP },
-    { signalNames[5], SIGABRT },
-    { signalNames[6], SIGIOT },
-    { signalNames[7], SIGBUS },
-    { signalNames[8], SIGFPE },
-    // { signalNames[9], SIGKILL },
-    { signalNames[10], SIGUSR1 },
-    { signalNames[11], SIGSEGV },
-    { signalNames[12], SIGUSR2 },
-    { signalNames[13], SIGPIPE },
-    { signalNames[14], SIGALRM },
-    { signalNames[15], SIGTERM },
-    { signalNames[16], SIGCHLD },
-    { signalNames[17], SIGCONT },
-    // { signalNames[18], SIGSTOP },
-    { signalNames[19], SIGTSTP },
-    { signalNames[20], SIGTTIN },
-    { signalNames[21], SIGTTOU },
-    { signalNames[22], SIGURG },
-    { signalNames[23], SIGXCPU },
-    { signalNames[24], SIGXFSZ },
-    { signalNames[25], SIGVTALRM },
-    { signalNames[26], SIGPROF },
-    { signalNames[27], SIGWINCH },
-    { signalNames[28], SIGIO },
-    { signalNames[29], SIGINFO },
-    { signalNames[30], SIGSYS },
-};
-
-const HashMap<int, String> signalNumberToNameMap = {
-    { SIGHUP, signalNames[0] },
-    { SIGINT, signalNames[1] },
-    { SIGQUIT, signalNames[2] },
-    { SIGILL, signalNames[3] },
-    { SIGTRAP, signalNames[4] },
-    { SIGABRT, signalNames[5] },
-    { SIGIOT, signalNames[6] },
-    { SIGBUS, signalNames[7] },
-    { SIGFPE, signalNames[8] },
-    // { SIGKILL, signalNames[9] },
-    { SIGUSR1, signalNames[10] },
-    { SIGSEGV, signalNames[11] },
-    { SIGUSR2, signalNames[12] },
-    { SIGPIPE, signalNames[13] },
-    { SIGALRM, signalNames[14] },
-    { SIGTERM, signalNames[15] },
-    { SIGCHLD, signalNames[16] },
-    { SIGCONT, signalNames[17] },
-    // { SIGSTOP, signalNames[18] },
-    { SIGTSTP, signalNames[19] },
-    { SIGTTIN, signalNames[20] },
-    { SIGTTOU, signalNames[21] },
-    { SIGURG, signalNames[22] },
-    { SIGXCPU, signalNames[23] },
-    { SIGXFSZ, signalNames[24] },
-    { SIGVTALRM, signalNames[25] },
-    { SIGPROF, signalNames[26] },
-    { SIGWINCH, signalNames[27] },
-    { SIGIO, signalNames[28] },
-    { SIGINFO, signalNames[29] },
-    { SIGSYS, signalNames[30] },
-};
+HashMap<String, int>* signalNameToNumberMap = nullptr;
+HashMap<int, String>* signalNumberToNameMap = nullptr;
 
 // signal number to array of script execution context ids that care about the signal
 static HashMap<int, Vector<uint32_t>> signalToContextIdsMap;
@@ -560,8 +495,80 @@ static Lock signalToContextIdsMapLock;
 
 void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
+    static std::once_flag signalNameToNumberMapOnceFlag;
+    std::call_once(signalNameToNumberMapOnceFlag, [] {
+        signalNameToNumberMap = new HashMap<String, int>();
+        signalNameToNumberMap->add(signalNames[0], SIGHUP);
+        signalNameToNumberMap->add(signalNames[1], SIGINT);
+        signalNameToNumberMap->add(signalNames[2], SIGQUIT);
+        signalNameToNumberMap->add(signalNames[3], SIGILL);
+        signalNameToNumberMap->add(signalNames[4], SIGTRAP);
+        signalNameToNumberMap->add(signalNames[5], SIGABRT);
+        signalNameToNumberMap->add(signalNames[6], SIGIOT);
+        signalNameToNumberMap->add(signalNames[7], SIGBUS);
+        signalNameToNumberMap->add(signalNames[8], SIGFPE);
+        // signalNameToNumberMap->add(signalNames[9], SIGKILL);
+        signalNameToNumberMap->add(signalNames[10], SIGUSR1);
+        signalNameToNumberMap->add(signalNames[11], SIGSEGV);
+        signalNameToNumberMap->add(signalNames[12], SIGUSR2);
+        signalNameToNumberMap->add(signalNames[13], SIGPIPE);
+        signalNameToNumberMap->add(signalNames[14], SIGALRM);
+        signalNameToNumberMap->add(signalNames[15], SIGTERM);
+        signalNameToNumberMap->add(signalNames[16], SIGCHLD);
+        signalNameToNumberMap->add(signalNames[17], SIGCONT);
+        // signalNameToNumberMap->add(signalNames[18], SIGSTOP);
+        signalNameToNumberMap->add(signalNames[19], SIGTSTP);
+        signalNameToNumberMap->add(signalNames[20], SIGTTIN);
+        signalNameToNumberMap->add(signalNames[21], SIGTTOU);
+        signalNameToNumberMap->add(signalNames[22], SIGURG);
+        signalNameToNumberMap->add(signalNames[23], SIGXCPU);
+        signalNameToNumberMap->add(signalNames[24], SIGXFSZ);
+        signalNameToNumberMap->add(signalNames[25], SIGVTALRM);
+        signalNameToNumberMap->add(signalNames[26], SIGPROF);
+        signalNameToNumberMap->add(signalNames[27], SIGWINCH);
+        signalNameToNumberMap->add(signalNames[28], SIGIO);
+        signalNameToNumberMap->add(signalNames[29], SIGINFO);
+        signalNameToNumberMap->add(signalNames[30], SIGSYS);
+    });
+
+    static std::once_flag signalNumberToNameMapOnceFlag;
+    std::call_once(signalNumberToNameMapOnceFlag, [] {
+        signalNumberToNameMap = new HashMap<int, String>();
+        signalNumberToNameMap->add(SIGHUP, signalNames[0]);
+        signalNumberToNameMap->add(SIGINT, signalNames[1]);
+        signalNumberToNameMap->add(SIGQUIT, signalNames[2]);
+        signalNumberToNameMap->add(SIGILL, signalNames[3]);
+        signalNumberToNameMap->add(SIGTRAP, signalNames[4]);
+        signalNumberToNameMap->add(SIGABRT, signalNames[5]);
+        signalNumberToNameMap->add(SIGIOT, signalNames[6]);
+        signalNumberToNameMap->add(SIGBUS, signalNames[7]);
+        signalNumberToNameMap->add(SIGFPE, signalNames[8]);
+        // signalNumberToNameMap->add(SIGKILL, signalNames[9]);
+        signalNumberToNameMap->add(SIGUSR1, signalNames[10]);
+        signalNumberToNameMap->add(SIGSEGV, signalNames[11]);
+        signalNumberToNameMap->add(SIGUSR2, signalNames[12]);
+        signalNumberToNameMap->add(SIGPIPE, signalNames[13]);
+        signalNumberToNameMap->add(SIGALRM, signalNames[14]);
+        signalNumberToNameMap->add(SIGTERM, signalNames[15]);
+        signalNumberToNameMap->add(SIGCHLD, signalNames[16]);
+        signalNumberToNameMap->add(SIGCONT, signalNames[17]);
+        // signalNumberToNameMap->add(SIGSTOP, signalNames[18]);
+        signalNumberToNameMap->add(SIGTSTP, signalNames[19]);
+        signalNumberToNameMap->add(SIGTTIN, signalNames[20]);
+        signalNumberToNameMap->add(SIGTTOU, signalNames[21]);
+        signalNumberToNameMap->add(SIGURG, signalNames[22]);
+        signalNumberToNameMap->add(SIGXCPU, signalNames[23]);
+        signalNumberToNameMap->add(SIGXFSZ, signalNames[24]);
+        signalNumberToNameMap->add(SIGVTALRM, signalNames[25]);
+        signalNumberToNameMap->add(SIGPROF, signalNames[26]);
+        signalNumberToNameMap->add(SIGWINCH, signalNames[27]);
+        signalNumberToNameMap->add(SIGIO, signalNames[28]);
+        signalNumberToNameMap->add(SIGINFO, signalNames[29]);
+        signalNumberToNameMap->add(SIGSYS, signalNames[30]);
+    });
+
     if (isAdded) {
-        if (auto signalNumber = signalNameToNumberMap.get(eventName.string())) {
+        if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
             uint32_t contextId = eventEmitter.scriptExecutionContext()->identifier();
             Locker lock { signalToContextIdsMapLock };
             if (signalToContextIdsMap.find(signalNumber) == signalToContextIdsMap.end()) {
@@ -575,7 +582,7 @@ void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventNam
             }
 
             signal(signalNumber, [](int signalNumber) {
-                if (UNLIKELY(signalNumberToNameMap.find(signalNumber) == signalNumberToNameMap.end()))
+                if (UNLIKELY(signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()))
                     return;
 
                 if (UNLIKELY(signalToContextIdsMap.find(signalNumber) == signalToContextIdsMap.end()))
@@ -595,7 +602,7 @@ void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventNam
             });
         }
     } else {
-        if (auto signalNumber = signalNameToNumberMap.get(eventName.string())) {
+        if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
             uint32_t contextId = eventEmitter.scriptExecutionContext()->identifier();
             Locker lock { signalToContextIdsMapLock };
             if (signalToContextIdsMap.find(signalNumber) != signalToContextIdsMap.end()) {
@@ -609,7 +616,7 @@ void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventNam
 
 void Process::emitSignalEvent(int signalNumber)
 {
-    String signalName = signalNumberToNameMap.get(signalNumber);
+    String signalName = signalNumberToNameMap->get(signalNumber);
     Identifier signalNameIdentifier = Identifier::fromString(vm(), signalName);
     MarkedArgumentBuffer args;
     args.append(jsNumber(signalNumber));

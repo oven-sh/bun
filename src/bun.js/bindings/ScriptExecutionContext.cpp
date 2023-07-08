@@ -20,6 +20,12 @@ static HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allSc
     return contexts;
 }
 
+ScriptExecutionContext* getScriptExecutionContext(ScriptExecutionContextIdentifier identifier)
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    return allScriptExecutionContextsMap().get(identifier);
+}
+
 template<bool SSL, bool isServer>
 static void registerHTTPContextForWebSocket(ScriptExecutionContext* script, us_socket_context_t* ctx, us_loop_t* loop)
 {

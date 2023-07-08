@@ -556,9 +556,15 @@ const HashMap<int, String> signalNumberToNameMap = {
 
 extern "C" JSGlobalObject* Bun__getDefaultGlobal();
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionProcessOn, (JSGlobalObject * globalObject, CallFrame* callFrame))
+// signal number to array of script execution context ids that care about the signal
+HashMap<int, Vector<uint32_t>> signalToContextIdsMap;
+static Lock signalToContextIdsMapLock;
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionProcessOn, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    VM& vm = globalObject->vm();
+    VM& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (callFrame->argumentCount() < 2) {
@@ -575,25 +581,61 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionProcessOn, (JSGlobalObject * globalObject, Ca
         return JSValue::encode(jsUndefined());
 
     if (signalNameToNumberMap.find(eventName) != signalNameToNumberMap.end()) {
+
         int signalNumber = signalNameToNumberMap.get(eventName);
+        uint32_t contextId = globalObject->scriptExecutionContext()->identifier();
+        Locker lock { signalToContextIdsMapLock };
+        if (signalToContextIdsMap.find(signalNumber) == signalToContextIdsMap.end()) {
+            Vector<uint32_t> contextIds;
+            contextIds.append(contextId);
+            signalToContextIdsMap.add(signalNumber, contextIds);
+        } else {
+            Vector<uint32_t> contextIds = signalToContextIdsMap.get(signalNumber);
+            contextIds.append(contextId);
+            signalToContextIdsMap.set(signalNumber, contextIds);
+        }
+
         signal(signalNumber, [](int signalNumber) {
             if (UNLIKELY(signalNumberToNameMap.find(signalNumber) == signalNumberToNameMap.end()))
                 return;
-
-            JSGlobalObject* lexicalGlobalObject = Bun__getDefaultGlobal();
-            Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-
-            Process* process = jsCast<Process*>(globalObject->processObject());
             String signalName = signalNumberToNameMap.get(signalNumber);
-            MarkedArgumentBuffer args;
-            args.append(jsNumber(signalNumber));
-            process->wrapped().emitForBindings(Identifier::fromString(globalObject->vm(), signalName), args);
+
+            if (UNLIKELY(signalToContextIdsMap.find(signalNumber) == signalToContextIdsMap.end()))
+                return;
+            Vector<uint32_t> contextIds = signalToContextIdsMap.get(signalNumber);
+
+            for (int contextId : contextIds) {
+                JSGlobalObject* lexicalGlobalObject = Bun__getDefaultGlobal();
+                Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+                Identifier signalNameIdentifier = Identifier::fromString(globalObject->vm(), signalName);
+
+                Process* process = jsCast<Process*>(globalObject->processObject());
+                // MarkedArgumentBuffer args;
+                // args.append(jsNumber(signalNumber));
+
+                auto* context = ScriptExecutionContext::getScriptExecutionContext(contextId);
+
+                // context->postCrossThreadTask(std::function<void()>::target, [process, signalNameIdentifier, args] {
+                //     process->wrapped().eventEmitter().emit(signalNameIdentifier, args);
+                // }));
+
+                context->postCrossThreadTask(process, &Process::emitSignalEvent, signalNumber);
+            }
         });
     }
 
     WebCore::JSEventEmitter::addListener(globalObject, callFrame, jsCast<JSEventEmitter*>(thisObject), false, false);
 
     return JSValue::encode(thisValue);
+}
+
+void Process::emitSignalEvent(int signalNumber)
+{
+    String signalName = signalNumberToNameMap.get(signalNumber);
+    Identifier signalNameIdentifier = Identifier::fromString(vm(), signalName);
+    MarkedArgumentBuffer args;
+    args.append(jsNumber(signalNumber));
+    wrapped().emitForBindings(signalNameIdentifier, args);
 }
 
 Process::~Process()

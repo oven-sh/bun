@@ -578,16 +578,21 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionProcessOn, (JSGlobalObject * globalObject, Ca
     if (UNLIKELY(!thisObject))
         return JSValue::encode(jsUndefined());
 
-    Process* process = jsCast<Process*>(thisObject);
-
     if (signalNameToNumberMap.find(eventName) != signalNameToNumberMap.end()) {
-        signalHandler = [process](int signalNumber) {
+
+        WebCore::Process* process = jsDynamicCast<WebCore::Process*>(thisObject);
+        WeakPtr<EventEmitter> eventEmitter = process->wrapped();
+
+        signalHandler = [eventEmitter](int signalNumber) {
             if (UNLIKELY(signalNumberToNameMap.find(signalNumber) == signalNumberToNameMap.end()))
                 return;
 
-            JSEventEmitter* eventEmitter = jsCast<JSEventEmitter*>(process);
-            String signalName = signalNumberToNameMap.get(signalNumber);
-            eventEmitter->wrapped().emitForBindings(Identifier::fromString(eventEmitter->vm(), signalName), {});
+            if (auto* context = eventEmitter->scriptExecutionContext()) {
+                String signalName = signalNumberToNameMap.get(signalNumber);
+                MarkedArgumentBuffer args;
+                args.append(jsNumber(signalNumber));
+                eventEmitter->emitForBindings(Identifier::fromString(context->vm(), signalName), args);
+            }
         };
 
         int signalNumber = signalNameToNumberMap.get(eventName);

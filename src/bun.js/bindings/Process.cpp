@@ -268,7 +268,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         }
     }
 
-    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject * globalObject,
         JSC::EncodedJSValue exports);
 
     napi_register_module_v1 = reinterpret_cast<JSC::EncodedJSValue (*)(JSC::JSGlobalObject*,
@@ -452,40 +452,6 @@ JSC_DEFINE_CUSTOM_SETTER(Process_setterRelease,
     return true;
 }
 
-static const NeverDestroyed<String> signalNames[] = {
-    MAKE_STATIC_STRING_IMPL("SIGHUP"),
-    MAKE_STATIC_STRING_IMPL("SIGINT"),
-    MAKE_STATIC_STRING_IMPL("SIGQUIT"),
-    MAKE_STATIC_STRING_IMPL("SIGILL"),
-    MAKE_STATIC_STRING_IMPL("SIGTRAP"),
-    MAKE_STATIC_STRING_IMPL("SIGABRT"),
-    MAKE_STATIC_STRING_IMPL("SIGIOT"),
-    MAKE_STATIC_STRING_IMPL("SIGBUS"),
-    MAKE_STATIC_STRING_IMPL("SIGFPE"),
-    MAKE_STATIC_STRING_IMPL("SIGKILL"),
-    MAKE_STATIC_STRING_IMPL("SIGUSR1"),
-    MAKE_STATIC_STRING_IMPL("SIGSEGV"),
-    MAKE_STATIC_STRING_IMPL("SIGUSR2"),
-    MAKE_STATIC_STRING_IMPL("SIGPIPE"),
-    MAKE_STATIC_STRING_IMPL("SIGALRM"),
-    MAKE_STATIC_STRING_IMPL("SIGTERM"),
-    MAKE_STATIC_STRING_IMPL("SIGCHLD"),
-    MAKE_STATIC_STRING_IMPL("SIGCONT"),
-    MAKE_STATIC_STRING_IMPL("SIGSTOP"),
-    MAKE_STATIC_STRING_IMPL("SIGTSTP"),
-    MAKE_STATIC_STRING_IMPL("SIGTTIN"),
-    MAKE_STATIC_STRING_IMPL("SIGTTOU"),
-    MAKE_STATIC_STRING_IMPL("SIGURG"),
-    MAKE_STATIC_STRING_IMPL("SIGXCPU"),
-    MAKE_STATIC_STRING_IMPL("SIGXFSZ"),
-    MAKE_STATIC_STRING_IMPL("SIGVTALRM"),
-    MAKE_STATIC_STRING_IMPL("SIGPROF"),
-    MAKE_STATIC_STRING_IMPL("SIGWINCH"),
-    MAKE_STATIC_STRING_IMPL("SIGIO"),
-    MAKE_STATIC_STRING_IMPL("SIGINFO"),
-    MAKE_STATIC_STRING_IMPL("SIGSYS"),
-};
-
 HashMap<String, int>* signalNameToNumberMap = nullptr;
 HashMap<int, String>* signalNumberToNameMap = nullptr;
 
@@ -495,9 +461,45 @@ static Lock signalToContextIdsMapLock;
 
 void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
+
+    static const NeverDestroyed<String> signalNames[] = {
+        MAKE_STATIC_STRING_IMPL("SIGHUP"),
+        MAKE_STATIC_STRING_IMPL("SIGINT"),
+        MAKE_STATIC_STRING_IMPL("SIGQUIT"),
+        MAKE_STATIC_STRING_IMPL("SIGILL"),
+        MAKE_STATIC_STRING_IMPL("SIGTRAP"),
+        MAKE_STATIC_STRING_IMPL("SIGABRT"),
+        MAKE_STATIC_STRING_IMPL("SIGIOT"),
+        MAKE_STATIC_STRING_IMPL("SIGBUS"),
+        MAKE_STATIC_STRING_IMPL("SIGFPE"),
+        MAKE_STATIC_STRING_IMPL("SIGKILL"),
+        MAKE_STATIC_STRING_IMPL("SIGUSR1"),
+        MAKE_STATIC_STRING_IMPL("SIGSEGV"),
+        MAKE_STATIC_STRING_IMPL("SIGUSR2"),
+        MAKE_STATIC_STRING_IMPL("SIGPIPE"),
+        MAKE_STATIC_STRING_IMPL("SIGALRM"),
+        MAKE_STATIC_STRING_IMPL("SIGTERM"),
+        MAKE_STATIC_STRING_IMPL("SIGCHLD"),
+        MAKE_STATIC_STRING_IMPL("SIGCONT"),
+        MAKE_STATIC_STRING_IMPL("SIGSTOP"),
+        MAKE_STATIC_STRING_IMPL("SIGTSTP"),
+        MAKE_STATIC_STRING_IMPL("SIGTTIN"),
+        MAKE_STATIC_STRING_IMPL("SIGTTOU"),
+        MAKE_STATIC_STRING_IMPL("SIGURG"),
+        MAKE_STATIC_STRING_IMPL("SIGXCPU"),
+        MAKE_STATIC_STRING_IMPL("SIGXFSZ"),
+        MAKE_STATIC_STRING_IMPL("SIGVTALRM"),
+        MAKE_STATIC_STRING_IMPL("SIGPROF"),
+        MAKE_STATIC_STRING_IMPL("SIGWINCH"),
+        MAKE_STATIC_STRING_IMPL("SIGIO"),
+        MAKE_STATIC_STRING_IMPL("SIGINFO"),
+        MAKE_STATIC_STRING_IMPL("SIGSYS"),
+    };
+
     static std::once_flag signalNameToNumberMapOnceFlag;
     std::call_once(signalNameToNumberMapOnceFlag, [] {
         signalNameToNumberMap = new HashMap<String, int>();
+        signalNameToNumberMap->reserveInitialCapacity(31);
         signalNameToNumberMap->add(signalNames[0], SIGHUP);
         signalNameToNumberMap->add(signalNames[1], SIGINT);
         signalNameToNumberMap->add(signalNames[2], SIGQUIT);
@@ -527,13 +529,20 @@ void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventNam
         signalNameToNumberMap->add(signalNames[26], SIGPROF);
         signalNameToNumberMap->add(signalNames[27], SIGWINCH);
         signalNameToNumberMap->add(signalNames[28], SIGIO);
+#ifdef SIGINFO
         signalNameToNumberMap->add(signalNames[29], SIGINFO);
+#endif
+
+#ifndef SIGINFO
+        signalNameToNumberMap->add(signalNames[29], 255);
+#endif
         signalNameToNumberMap->add(signalNames[30], SIGSYS);
     });
 
     static std::once_flag signalNumberToNameMapOnceFlag;
     std::call_once(signalNumberToNameMapOnceFlag, [] {
         signalNumberToNameMap = new HashMap<int, String>();
+        signalNumberToNameMap->reserveInitialCapacity(31);
         signalNumberToNameMap->add(SIGHUP, signalNames[0]);
         signalNumberToNameMap->add(SIGINT, signalNames[1]);
         signalNumberToNameMap->add(SIGQUIT, signalNames[2]);
@@ -563,7 +572,9 @@ void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventNam
         signalNumberToNameMap->add(SIGPROF, signalNames[26]);
         signalNumberToNameMap->add(SIGWINCH, signalNames[27]);
         signalNumberToNameMap->add(SIGIO, signalNames[28]);
-        signalNumberToNameMap->add(SIGINFO, signalNames[29]);
+#ifdef SIGINFO
+        signalNameToNumberMap->add(signalNames[29], SIGINFO);
+#endif
         signalNumberToNameMap->add(SIGSYS, signalNames[30]);
     });
 
@@ -610,7 +621,12 @@ void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventNam
             if (signalToContextIdsMap.find(signalNumber) != signalToContextIdsMap.end()) {
                 Vector<uint32_t> contextIds = signalToContextIdsMap.get(signalNumber);
                 contextIds.removeFirst(contextId);
-                signalToContextIdsMap.set(signalNumber, contextIds);
+                if (contextIds.isEmpty()) {
+                    signal(signalNumber, SIG_DFL);
+                    signalToContextIdsMap.remove(signalNumber);
+                } else {
+                    signalToContextIdsMap.set(signalNumber, contextIds);
+                }
             }
         }
     }
@@ -627,8 +643,6 @@ void Process::emitSignalEvent(int signalNumber)
 
 Process::~Process()
 {
-    for (auto& listener : this->wrapped().eventListenerMap().entries()) {
-    }
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, CallFrame*))

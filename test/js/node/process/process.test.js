@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, realpathSync } from "fs";
 import { bunExe } from "harness";
 import { basename, resolve } from "path";
+import { raise } from "./call-raise.js";
 
 it("process", () => {
   // this property isn't implemented yet but it should at least return a string
@@ -237,6 +238,17 @@ it("process.on signal events", () => {
     }),
   ).toBeInstanceOf(process.constructor);
   process.emit("SIGUSR2");
+  expect(called).toBeTruthy();
+
+  called = false;
+  raise(31);
+  expect(called).toBeTruthy();
+
+  called = false;
+  process.on("SIGUSR1", () => {
+    called = true;
+  });
+  raise(30);
   expect(called).toBeTruthy();
 });
 

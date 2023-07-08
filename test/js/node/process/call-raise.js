@@ -3,7 +3,7 @@ import { dlopen } from "bun:ffi";
 var lazyRaise;
 export function raise(signal) {
   if (!lazyRaise) {
-    const suffix = process.platform === "darwin" ? "dylib" : "so";
+    const suffix = process.platform === "darwin" ? "dylib" : "so.6";
     lazyRaise = dlopen(`libc.${suffix}`, {
       raise: {
         args: ["int"],

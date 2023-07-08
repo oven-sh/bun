@@ -18146,7 +18146,18 @@ fn NewParser_(
                                         data.default_name = createDefaultName(p, stmt.loc) catch unreachable;
                                     }
 
-                                    stmts.append(stmt.*) catch unreachable;
+                                    var class_stmts = p.lowerClass(.{ .stmt = s2 });
+
+                                    if (class_stmts.len > 1) {
+                                        std.debug.assert(class_stmts[0].data == .s_class);
+                                        data.value.stmt = class_stmts[0];
+                                        stmts.append(stmt.*) catch {};
+                                        stmts.appendSlice(class_stmts[1..]) catch {};
+                                    } else {
+                                        data.value.stmt = class_stmts[0];
+                                        stmts.append(stmt.*) catch {};
+                                    }
+
                                     return;
                                 },
                                 else => {},

@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { test, expect, describe } from "bun:test";
+import DecoratedClass from "./decorator-export-default-class-fixture";
 
 test("decorator order of evaluation", () => {
   let counter = 0;
@@ -987,4 +988,8 @@ describe("constructor statements", () => {
     expect(a.v).toBe("test");
     expect(a.v2).toBe(0);
   });
+});
+
+test("export default class works", () => {
+  expect(new DecoratedClass()["methoddecorated"]).toBe(true);
 });

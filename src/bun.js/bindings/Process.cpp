@@ -554,11 +554,7 @@ const HashMap<int, String> signalNumberToNameMap = {
     { SIGSYS, signalNames[30] },
 };
 
-std::function<void(int)> signalHandler;
-void _signalHandler(int signalNumber)
-{
-    signalHandler(signalNumber);
-}
+extern "C" JSGlobalObject* Bun__getDefaultGlobal();
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionProcessOn, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -579,24 +575,20 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionProcessOn, (JSGlobalObject * globalObject, Ca
         return JSValue::encode(jsUndefined());
 
     if (signalNameToNumberMap.find(eventName) != signalNameToNumberMap.end()) {
-
-        WebCore::Process* process = jsDynamicCast<WebCore::Process*>(thisObject);
-        WeakPtr<EventEmitter> eventEmitter = process->wrapped();
-
-        signalHandler = [eventEmitter](int signalNumber) {
+        int signalNumber = signalNameToNumberMap.get(eventName);
+        signal(signalNumber, [](int signalNumber) {
             if (UNLIKELY(signalNumberToNameMap.find(signalNumber) == signalNumberToNameMap.end()))
                 return;
 
-            if (auto* context = eventEmitter->scriptExecutionContext()) {
-                String signalName = signalNumberToNameMap.get(signalNumber);
-                MarkedArgumentBuffer args;
-                args.append(jsNumber(signalNumber));
-                eventEmitter->emitForBindings(Identifier::fromString(context->vm(), signalName), args);
-            }
-        };
+            JSGlobalObject* lexicalGlobalObject = Bun__getDefaultGlobal();
+            Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
 
-        int signalNumber = signalNameToNumberMap.get(eventName);
-        signal(signalNumber, _signalHandler);
+            Process* process = jsCast<Process*>(globalObject->processObject());
+            String signalName = signalNumberToNameMap.get(signalNumber);
+            MarkedArgumentBuffer args;
+            args.append(jsNumber(signalNumber));
+            process->wrapped().emitForBindings(Identifier::fromString(globalObject->vm(), signalName), args);
+        });
     }
 
     WebCore::JSEventEmitter::addListener(globalObject, callFrame, jsCast<JSEventEmitter*>(thisObject), false, false);

@@ -555,68 +555,60 @@ const HashMap<int, String> signalNumberToNameMap = {
 };
 
 // signal number to array of script execution context ids that care about the signal
-HashMap<int, Vector<uint32_t>> signalToContextIdsMap;
+static HashMap<int, Vector<uint32_t>> signalToContextIdsMap;
 static Lock signalToContextIdsMapLock;
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionProcessOn, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
-    VM& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    if (isAdded) {
+        if (signalNameToNumberMap.find(eventName.string()) != signalNameToNumberMap.end()) {
 
-    auto scope = DECLARE_THROW_SCOPE(vm);
+            int signalNumber = signalNameToNumberMap.get(eventName.string());
+            uint32_t contextId = eventEmitter.scriptExecutionContext()->identifier();
+            Locker lock { signalToContextIdsMapLock };
+            if (signalToContextIdsMap.find(signalNumber) == signalToContextIdsMap.end()) {
+                Vector<uint32_t> contextIds;
+                contextIds.append(contextId);
+                signalToContextIdsMap.add(signalNumber, contextIds);
+            } else {
+                Vector<uint32_t> contextIds = signalToContextIdsMap.get(signalNumber);
+                contextIds.append(contextId);
+                signalToContextIdsMap.set(signalNumber, contextIds);
+            }
 
-    if (callFrame->argumentCount() < 2) {
-        throwVMError(globalObject, scope, "Not enough arguments"_s);
-        return JSValue::encode(jsUndefined());
-    }
+            signal(signalNumber, [](int signalNumber) {
+                if (UNLIKELY(signalNumberToNameMap.find(signalNumber) == signalNumberToNameMap.end()))
+                    return;
 
-    String eventName = callFrame->uncheckedArgument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+                if (UNLIKELY(signalToContextIdsMap.find(signalNumber) == signalToContextIdsMap.end()))
+                    return;
+                Vector<uint32_t> contextIds = signalToContextIdsMap.get(signalNumber);
 
-    JSValue thisValue = callFrame->thisValue();
-    JSObject* thisObject = thisValue.getObject();
-    if (UNLIKELY(!thisObject))
-        return JSValue::encode(jsUndefined());
+                for (int contextId : contextIds) {
+                    auto* context = ScriptExecutionContext::getScriptExecutionContext(contextId);
 
-    if (signalNameToNumberMap.find(eventName) != signalNameToNumberMap.end()) {
+                    JSGlobalObject* lexicalGlobalObject = context->jsGlobalObject();
+                    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
 
-        int signalNumber = signalNameToNumberMap.get(eventName);
-        uint32_t contextId = globalObject->scriptExecutionContext()->identifier();
-        Locker lock { signalToContextIdsMapLock };
-        if (signalToContextIdsMap.find(signalNumber) == signalToContextIdsMap.end()) {
-            Vector<uint32_t> contextIds;
-            contextIds.append(contextId);
-            signalToContextIdsMap.add(signalNumber, contextIds);
-        } else {
-            Vector<uint32_t> contextIds = signalToContextIdsMap.get(signalNumber);
-            contextIds.append(contextId);
-            signalToContextIdsMap.set(signalNumber, contextIds);
+                    Process* process = jsCast<Process*>(globalObject->processObject());
+
+                    context->postCrossThreadTask(*process, &Process::emitSignalEvent, signalNumber);
+                }
+            });
         }
 
-        signal(signalNumber, [](int signalNumber) {
-            if (UNLIKELY(signalNumberToNameMap.find(signalNumber) == signalNumberToNameMap.end()))
-                return;
-
-            if (UNLIKELY(signalToContextIdsMap.find(signalNumber) == signalToContextIdsMap.end()))
-                return;
-            Vector<uint32_t> contextIds = signalToContextIdsMap.get(signalNumber);
-
-            for (int contextId : contextIds) {
-                auto* context = ScriptExecutionContext::getScriptExecutionContext(contextId);
-
-                JSGlobalObject* lexicalGlobalObject = context->jsGlobalObject();
-                Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-
-                Process* process = jsCast<Process*>(globalObject->processObject());
-
-                context->postCrossThreadTask(*process, &Process::emitSignalEvent, signalNumber);
+    } else {
+        if (signalNameToNumberMap.find(eventName.string()) != signalNameToNumberMap.end()) {
+            int signalNumber = signalNameToNumberMap.get(eventName.string());
+            uint32_t contextId = eventEmitter.scriptExecutionContext()->identifier();
+            Locker lock { signalToContextIdsMapLock };
+            if (signalToContextIdsMap.find(signalNumber) != signalToContextIdsMap.end()) {
+                Vector<uint32_t> contextIds = signalToContextIdsMap.get(signalNumber);
+                contextIds.removeFirst(contextId);
+                signalToContextIdsMap.set(signalNumber, contextIds);
             }
-        });
+        }
     }
-
-    WebCore::JSEventEmitter::addListener(globalObject, callFrame, jsCast<JSEventEmitter*>(thisObject), false, false);
-
-    return JSValue::encode(thisValue);
 }
 
 void Process::emitSignalEvent(int signalNumber)
@@ -626,41 +618,6 @@ void Process::emitSignalEvent(int signalNumber)
     MarkedArgumentBuffer args;
     args.append(jsNumber(signalNumber));
     wrapped().emitForBindings(signalNameIdentifier, args);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionProcessOff, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-
-    VM& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (callFrame->argumentCount() < 1) {
-        throwVMError(globalObject, scope, "Not enough arguments"_s);
-        return JSValue::encode(jsUndefined());
-    }
-
-    String eventName = callFrame->uncheckedArgument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
-
-    JSValue thisValue = callFrame->thisValue();
-    JSObject* thisObject = thisValue.getObject();
-    if (UNLIKELY(!thisObject))
-        return JSValue::encode(jsUndefined());
-
-    if (signalNameToNumberMap.find(eventName) != signalNameToNumberMap.end()) {
-        int signalNumber = signalNameToNumberMap.get(eventName);
-        uint32_t contextId = globalObject->scriptExecutionContext()->identifier();
-        Locker lock { signalToContextIdsMapLock };
-        if (signalToContextIdsMap.find(signalNumber) != signalToContextIdsMap.end()) {
-            Vector<uint32_t> contextIds = signalToContextIdsMap.get(signalNumber);
-            contextIds.removeFirst(contextId);
-            signalToContextIdsMap.set(signalNumber, contextIds);
-        }
-    }
-
-    return WebCore::JSEventEmitter::removeListener(globalObject, callFrame, jsCast<JSEventEmitter*>(thisObject));
 }
 
 Process::~Process()
@@ -758,6 +715,7 @@ void Process::finishCreation(JSC::VM& vm)
     Base::finishCreation(vm);
     auto clientData = WebCore::clientData(vm);
     auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(this->globalObject());
+    this->wrapped().onDidChangeListener = &onDidChangeListeners;
 
     putDirectCustomAccessor(vm, clientData->builtinNames().pidPublicName(),
         JSC::CustomGetterSetter::create(vm, Process_getPID, nullptr),
@@ -920,18 +878,6 @@ void Process::finishCreation(JSC::VM& vm)
 
     this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "emitWarning"_s),
         1, Process_emitWarning, ImplementationVisibility::Public, NoIntrinsic, 0);
-
-    this->putDirectNativeFunction(vm, globalObject, Identifier::fromString(this->vm(), "on"_s),
-        2, jsFunctionProcessOn, ImplementationVisibility::Public, NoIntrinsic, 0);
-
-    this->putDirectNativeFunction(vm, globalObject, Identifier::fromString(this->vm(), "addListener"_s),
-        2, jsFunctionProcessOn, ImplementationVisibility::Public, NoIntrinsic, 0);
-
-    this->putDirectNativeFunction(vm, globalObject, Identifier::fromString(this->vm(), "off"_s),
-        2, jsFunctionProcessOff, ImplementationVisibility::Public, NoIntrinsic, 0);
-
-    this->putDirectNativeFunction(vm, globalObject, Identifier::fromString(this->vm(), "removeListener"_s),
-        2, jsFunctionProcessOff, ImplementationVisibility::Public, NoIntrinsic, 0);
 
     JSC::JSFunction* requireDotMainFunction = JSFunction::create(
         vm,

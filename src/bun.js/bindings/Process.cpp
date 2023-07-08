@@ -42,6 +42,35 @@ static JSC_DECLARE_CUSTOM_GETTER(Process_getPID);
 static JSC_DECLARE_CUSTOM_GETTER(Process_getPPID);
 
 static JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
+static bool processIsExiting = false;
+
+extern "C" uint8_t Bun__getExitCode(void*);
+extern "C" uint8_t Bun__setExitCode(void*, uint8_t);
+extern "C" void* Bun__getVM();
+extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
+
+static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
+{
+
+    if (processIsExiting)
+        return;
+    processIsExiting = true;
+    auto& emitter = process->wrapped();
+    auto& vm = globalObject->vm();
+
+    if (vm.hasTerminationRequest() || vm.hasExceptionsAfterHandlingTraps())
+        return;
+
+    auto event = Identifier::fromString(vm, "exit"_s);
+    if (!emitter.hasEventListeners(event)) {
+        return;
+    }
+    process->putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(true), 0);
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(jsNumber(exitCode));
+    emitter.emit(event, arguments);
+}
 
 static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int fd)
 {
@@ -324,6 +353,29 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask,
 extern "C" uint64_t Bun__readOriginTimer(void*);
 extern "C" double Bun__readOriginTimerStart(void*);
 
+// https://github.com/nodejs/node/blob/1936160c31afc9780e4365de033789f39b7cbc0c/src/api/hooks.cc#L49
+extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
+{
+    if (!globalObject->hasProcessObject()) {
+        return;
+    }
+
+    auto* process = jsCast<Process*>(globalObject->processObject());
+    MarkedArgumentBuffer arguments;
+    arguments.append(jsNumber(exitCode));
+    process->wrapped().emit(Identifier::fromString(globalObject->vm(), "beforeExit"_s), arguments);
+}
+
+extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
+{
+    if (!globalObject->hasProcessObject()) {
+        return;
+    }
+
+    auto* process = jsCast<Process*>(globalObject->processObject());
+    dispatchExitInternal(globalObject, process, exitCode);
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionUptime,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -336,14 +388,38 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUptime,
 JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    if (callFrame->argumentCount() == 0) {
-        // TODO: exitCode
-        Bun__Process__exit(globalObject, 0);
+    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+    uint8_t exitCode = 0;
+    JSValue arg0 = callFrame->argument(0);
+    if (arg0.isNumber()) {
+        if (!arg0.isInt32()) {
+            throwRangeError(globalObject, throwScope, "The \"code\" argument must be an integer"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+
+        int extiCode32 = arg0.toInt32(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
+
+        if (extiCode32 < 0 || extiCode32 > 127) {
+            throwRangeError(globalObject, throwScope, "The \"code\" argument must be an integer between 0 and 127"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+
+        exitCode = static_cast<uint8_t>(extiCode32);
+    } else if (!arg0.isUndefinedOrNull()) {
+        throwTypeError(globalObject, throwScope, "The \"code\" argument must be an integer"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
     } else {
-        Bun__Process__exit(globalObject, callFrame->argument(0).toInt32(globalObject));
+        exitCode = Bun__getExitCode(Bun__getVM());
     }
 
-    return JSC::JSValue::encode(JSC::jsUndefined());
+    auto* zigGlobal = jsDynamicCast<Zig::GlobalObject*>(globalObject);
+    if (UNLIKELY(!zigGlobal)) {
+        zigGlobal = Bun__getDefaultGlobal();
+    }
+
+    Process__dispatchOnExit(zigGlobal, exitCode);
+    Bun__Process__exit(zigGlobal, exitCode);
 }
 
 extern "C" uint64_t Bun__readOriginTimer(void*);
@@ -391,18 +467,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime,
     array->setIndexQuickly(vm, 1, JSC::jsNumber(nanoseconds));
     return JSC::JSValue::encode(JSC::JSValue(array));
 }
-static JSC_DECLARE_HOST_FUNCTION(Process_functionHRTimeBigInt);
 
-static JSC_DEFINE_HOST_FUNCTION(Process_functionHRTimeBigInt,
+JSC_DEFINE_HOST_FUNCTION(Process_functionHRTimeBigInt,
     (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
     return JSC::JSValue::encode(JSValue(JSC::JSBigInt::createFrom(globalObject, Bun__readOriginTimer(globalObject->bunVM()))));
 }
 
-static JSC_DECLARE_HOST_FUNCTION(Process_functionChdir);
-
-static JSC_DEFINE_HOST_FUNCTION(Process_functionChdir,
+JSC_DEFINE_HOST_FUNCTION(Process_functionChdir,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -611,6 +684,46 @@ JSC_DEFINE_CUSTOM_GETTER(Process_lazyExecArgvGetter, (JSC::JSGlobalObject * glob
     return ret;
 }
 
+JSC_DEFINE_CUSTOM_GETTER(Process__getExitCode, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
+{
+    Process* process = jsDynamicCast<Process*>(JSValue::decode(thisValue));
+    if (!process) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    return JSValue::encode(jsNumber(Bun__getExitCode(jsCast<Zig::GlobalObject*>(process->globalObject())->bunVM())));
+}
+JSC_DEFINE_CUSTOM_SETTER(Process__setExitCode, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName))
+{
+    Process* process = jsDynamicCast<Process*>(JSValue::decode(thisValue));
+    if (!process) {
+        return false;
+    }
+
+    auto throwScope = DECLARE_THROW_SCOPE(process->vm());
+    JSValue exitCode = JSValue::decode(value);
+    if (!exitCode.isNumber()) {
+        throwTypeError(lexicalGlobalObject, throwScope, "exitCode must be a number"_s);
+        return false;
+    }
+
+    if (!exitCode.isInt32()) {
+        throwRangeError(lexicalGlobalObject, throwScope, "The \"code\" argument must be an integer"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    int exitCodeInt = exitCode.toInt32(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, false);
+    if (exitCodeInt < 0 || exitCodeInt > 127) {
+        throwRangeError(lexicalGlobalObject, throwScope, "exitCode must be between 0 and 127"_s);
+        return false;
+    }
+
+    void* ptr = jsCast<Zig::GlobalObject*>(process->globalObject())->bunVM();
+    Bun__setExitCode(ptr, static_cast<uint8_t>(exitCodeInt));
+    return true;
+}
+
 JSC_DEFINE_CUSTOM_GETTER(Process_lazyExecPathGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
 {
     JSC::JSObject* thisObject = JSValue::decode(thisValue).getObject();
@@ -677,39 +790,42 @@ void Process::finishCreation(JSC::VM& vm)
         vm, clientData->builtinNames().versionsPublicName(),
         JSC::CustomGetterSetter::create(vm, Process_getVersionsLazy, Process_setVersionsLazy), 0);
     // this should be transpiled out, but just incase
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "browser"_s),
-        JSC::JSValue(false));
+    this->putDirect(vm, JSC::Identifier::fromString(vm, "browser"_s),
+        JSC::JSValue(false), PropertyAttribute::DontEnum | 0);
 
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "exitCode"_s),
-        JSC::JSValue(JSC::jsNumber(0)));
+    this->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "exitCode"_s),
+        JSC::CustomGetterSetter::create(vm,
+            Process__getExitCode,
+            Process__setExitCode),
+        0);
 
-    this->putDirect(this->vm(), clientData->builtinNames().versionPublicName(),
-        JSC::jsString(this->vm(), makeString("v", REPORTED_NODE_VERSION)));
+    this->putDirect(vm, clientData->builtinNames().versionPublicName(),
+        JSC::jsString(vm, makeString("v", REPORTED_NODE_VERSION)));
 
     // this gives some way of identifying at runtime whether the SSR is happening in node or not.
     // this should probably be renamed to what the name of the bundler is, instead of "notNodeJS"
     // but it must be something that won't evaluate to truthy in Node.js
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "isBun"_s), JSC::JSValue(true));
+    this->putDirect(vm, JSC::Identifier::fromString(vm, "isBun"_s), JSC::JSValue(true));
 #if defined(__APPLE__)
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "platform"_s),
-        JSC::jsString(this->vm(), makeAtomString("darwin")));
+    this->putDirect(vm, JSC::Identifier::fromString(vm, "platform"_s),
+        JSC::jsString(vm, makeAtomString("darwin")));
 #else
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "platform"_s),
-        JSC::jsString(this->vm(), makeAtomString("linux")));
+    this->putDirect(vm, JSC::Identifier::fromString(vm, "platform"_s),
+        JSC::jsString(vm, makeAtomString("linux")));
 #endif
 
 #if defined(__x86_64__)
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "arch"_s),
-        JSC::jsString(this->vm(), makeAtomString("x64")));
+    this->putDirect(vm, JSC::Identifier::fromString(vm, "arch"_s),
+        JSC::jsString(vm, makeAtomString("x64")));
 #elif defined(__i386__)
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "arch"_s),
-        JSC::jsString(this->vm(), makeAtomString("x86")));
+    this->putDirect(vm, JSC::Identifier::fromString(vm, "arch"_s),
+        JSC::jsString(vm, makeAtomString("x86")));
 #elif defined(__arm__)
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "arch"_s),
-        JSC::jsString(this->vm(), makeAtomString("arm")));
+    this->putDirect(vm, JSC::Identifier::fromString(vm, "arch"_s),
+        JSC::jsString(vm, makeAtomString("arm")));
 #elif defined(__aarch64__)
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "arch"_s),
-        JSC::jsString(this->vm(), makeAtomString("arm64")));
+    this->putDirect(vm, JSC::Identifier::fromString(vm, "arch"_s),
+        JSC::jsString(vm, makeAtomString("arm64")));
 #endif
 
     JSC::JSFunction* hrtime = JSC::JSFunction::create(vm, globalObject, 0,
@@ -719,7 +835,7 @@ void Process::finishCreation(JSC::VM& vm)
         MAKE_STATIC_STRING_IMPL("bigint"), Process_functionHRTimeBigInt, ImplementationVisibility::Public);
 
     hrtime->putDirect(vm, JSC::Identifier::fromString(vm, "bigint"_s), hrtimeBigInt);
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "hrtime"_s), hrtime);
+    this->putDirect(vm, JSC::Identifier::fromString(vm, "hrtime"_s), hrtime);
 
     this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "release"_s)),
         JSC::CustomGetterSetter::create(vm, Process_getterRelease, Process_setterRelease), 0);
@@ -733,7 +849,10 @@ void Process::finishCreation(JSC::VM& vm)
     this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "stdin"_s)),
         JSC::CustomGetterSetter::create(vm, Process_lazyStdinGetter, Process_defaultSetter), 0);
 
-    this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "abort"_s),
+    this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "abort"_s),
+        0, Process_functionAbort, ImplementationVisibility::Public, NoIntrinsic, 0);
+
+    this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "abort"_s),
         0, Process_functionAbort, ImplementationVisibility::Public, NoIntrinsic, 0);
 
     this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "argv0"_s)),
@@ -745,13 +864,13 @@ void Process::finishCreation(JSC::VM& vm)
     this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "execArgv"_s)),
         JSC::CustomGetterSetter::create(vm, Process_lazyExecArgvGetter, Process_defaultSetter), 0);
 
-    this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "uptime"_s),
+    this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "uptime"_s),
         0, Process_functionUptime, ImplementationVisibility::Public, NoIntrinsic, 0);
 
-    this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "umask"_s),
+    this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "umask"_s),
         1, Process_functionUmask, ImplementationVisibility::Public, NoIntrinsic, 0);
 
-    this->putDirectBuiltinFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "binding"_s),
+    this->putDirectBuiltinFunction(vm, globalObject, JSC::Identifier::fromString(vm, "binding"_s),
         processObjectInternalsBindingCodeGenerator(vm),
         0);
 
@@ -788,7 +907,7 @@ void Process::finishCreation(JSC::VM& vm)
     config->putDirect(vm, JSC::Identifier::fromString(vm, "variables"_s), variables, 0);
     this->putDirect(vm, JSC::Identifier::fromString(vm, "config"_s), config, 0);
 
-    this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "emitWarning"_s),
+    this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "emitWarning"_s),
         1, Process_emitWarning, ImplementationVisibility::Public, NoIntrinsic, 0);
 
     JSC::JSFunction* requireDotMainFunction = JSFunction::create(

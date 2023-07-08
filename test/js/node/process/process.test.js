@@ -1,8 +1,8 @@
-import { resolveSync, which } from "bun";
+import { resolveSync, spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readFileSync, realpathSync } from "fs";
-import { bunExe } from "harness";
-import { basename, resolve } from "path";
+import { bunEnv, bunExe } from "harness";
+import { basename, join, resolve } from "path";
 
 it("process", () => {
   // this property isn't implemented yet but it should at least return a string
@@ -232,4 +232,62 @@ it("process.argv in testing", () => {
 
   // assert we aren't creating a new process.argv each call
   expect(process.argv).toBe(process.argv);
+});
+
+describe("process.exitCode", () => {
+  it("validates int", () => {
+    expect(() => (process.exitCode = "potato")).toThrow("exitCode must be a number");
+    expect(() => (process.exitCode = 1.2)).toThrow('The "code" argument must be an integer');
+    expect(() => (process.exitCode = NaN)).toThrow('The "code" argument must be an integer');
+    expect(() => (process.exitCode = Infinity)).toThrow('The "code" argument must be an integer');
+    expect(() => (process.exitCode = -Infinity)).toThrow('The "code" argument must be an integer');
+    expect(() => (process.exitCode = -1)).toThrow("exitCode must be between 0 and 127");
+  });
+
+  it("works with implicit process.exit", () => {
+    const { exitCode, stdout } = spawnSync({
+      cmd: [bunExe(), join(import.meta.dir, "process-exitCode-with-exit.js"), "42"],
+      env: bunEnv,
+    });
+    expect(exitCode).toBe(42);
+    expect(stdout.toString().trim()).toBe("PASS");
+  });
+
+  it("works with explicit process.exit", () => {
+    const { exitCode, stdout } = spawnSync({
+      cmd: [bunExe(), join(import.meta.dir, "process-exitCode-fixture.js"), "42"],
+      env: bunEnv,
+    });
+    expect(exitCode).toBe(42);
+    expect(stdout.toString().trim()).toBe("PASS");
+  });
+});
+
+it("process.exit", () => {
+  const { exitCode, stdout } = spawnSync({
+    cmd: [bunExe(), join(import.meta.dir, "process-exit-fixture.js")],
+    env: bunEnv,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString().trim()).toBe("PASS");
+});
+
+describe("process.onBeforeExit", () => {
+  it("emitted", () => {
+    const { exitCode, stdout } = spawnSync({
+      cmd: [bunExe(), join(import.meta.dir, "process-onBeforeExit-fixture.js")],
+      env: bunEnv,
+    });
+    expect(exitCode).toBe(0);
+    expect(stdout.toString().trim()).toBe("beforeExit\nexit");
+  });
+
+  it("works with explicit process.exit", () => {
+    const { exitCode, stdout } = spawnSync({
+      cmd: [bunExe(), join(import.meta.dir, "process-onBeforeExit-keepAlive.js")],
+      env: bunEnv,
+    });
+    expect(exitCode).toBe(0);
+    expect(stdout.toString().trim()).toBe("beforeExit: 0\nbeforeExit: 1\nexit: 2");
+  });
 });

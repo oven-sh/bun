@@ -561,9 +561,7 @@ static Lock signalToContextIdsMapLock;
 void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
     if (isAdded) {
-        if (signalNameToNumberMap.find(eventName.string()) != signalNameToNumberMap.end()) {
-
-            int signalNumber = signalNameToNumberMap.get(eventName.string());
+        if (auto signalNumber = signalNameToNumberMap.get(eventName.string())) {
             uint32_t contextId = eventEmitter.scriptExecutionContext()->identifier();
             Locker lock { signalToContextIdsMapLock };
             if (signalToContextIdsMap.find(signalNumber) == signalToContextIdsMap.end()) {
@@ -596,10 +594,8 @@ void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventNam
                 }
             });
         }
-
     } else {
-        if (signalNameToNumberMap.find(eventName.string()) != signalNameToNumberMap.end()) {
-            int signalNumber = signalNameToNumberMap.get(eventName.string());
+        if (auto signalNumber = signalNameToNumberMap.get(eventName.string())) {
             uint32_t contextId = eventEmitter.scriptExecutionContext()->identifier();
             Locker lock { signalToContextIdsMapLock };
             if (signalToContextIdsMap.find(signalNumber) != signalToContextIdsMap.end()) {

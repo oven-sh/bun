@@ -628,6 +628,41 @@ void Process::emitSignalEvent(int signalNumber)
     wrapped().emitForBindings(signalNameIdentifier, args);
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionProcessOff, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+
+    VM& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 1) {
+        throwVMError(globalObject, scope, "Not enough arguments"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    String eventName = callFrame->uncheckedArgument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+    JSValue thisValue = callFrame->thisValue();
+    JSObject* thisObject = thisValue.getObject();
+    if (UNLIKELY(!thisObject))
+        return JSValue::encode(jsUndefined());
+
+    if (signalNameToNumberMap.find(eventName) != signalNameToNumberMap.end()) {
+        int signalNumber = signalNameToNumberMap.get(eventName);
+        uint32_t contextId = globalObject->scriptExecutionContext()->identifier();
+        Locker lock { signalToContextIdsMapLock };
+        if (signalToContextIdsMap.find(signalNumber) != signalToContextIdsMap.end()) {
+            Vector<uint32_t> contextIds = signalToContextIdsMap.get(signalNumber);
+            contextIds.removeFirst(contextId);
+            signalToContextIdsMap.set(signalNumber, contextIds);
+        }
+    }
+
+    return WebCore::JSEventEmitter::removeListener(globalObject, callFrame, jsCast<JSEventEmitter*>(thisObject));
+}
+
 Process::~Process()
 {
     for (auto& listener : this->wrapped().eventListenerMap().entries()) {
@@ -891,6 +926,12 @@ void Process::finishCreation(JSC::VM& vm)
 
     this->putDirectNativeFunction(vm, globalObject, Identifier::fromString(this->vm(), "addListener"_s),
         2, jsFunctionProcessOn, ImplementationVisibility::Public, NoIntrinsic, 0);
+
+    this->putDirectNativeFunction(vm, globalObject, Identifier::fromString(this->vm(), "off"_s),
+        2, jsFunctionProcessOff, ImplementationVisibility::Public, NoIntrinsic, 0);
+
+    this->putDirectNativeFunction(vm, globalObject, Identifier::fromString(this->vm(), "removeListener"_s),
+        2, jsFunctionProcessOff, ImplementationVisibility::Public, NoIntrinsic, 0);
 
     JSC::JSFunction* requireDotMainFunction = JSFunction::create(
         vm,

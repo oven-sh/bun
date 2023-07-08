@@ -554,8 +554,6 @@ const HashMap<int, String> signalNumberToNameMap = {
     { SIGSYS, signalNames[30] },
 };
 
-extern "C" JSGlobalObject* Bun__getDefaultGlobal();
-
 // signal number to array of script execution context ids that care about the signal
 HashMap<int, Vector<uint32_t>> signalToContextIdsMap;
 static Lock signalToContextIdsMapLock;
@@ -598,28 +596,20 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionProcessOn, (JSGlobalObject * lexicalGlobalObj
         signal(signalNumber, [](int signalNumber) {
             if (UNLIKELY(signalNumberToNameMap.find(signalNumber) == signalNumberToNameMap.end()))
                 return;
-            String signalName = signalNumberToNameMap.get(signalNumber);
 
             if (UNLIKELY(signalToContextIdsMap.find(signalNumber) == signalToContextIdsMap.end()))
                 return;
             Vector<uint32_t> contextIds = signalToContextIdsMap.get(signalNumber);
 
             for (int contextId : contextIds) {
-                JSGlobalObject* lexicalGlobalObject = Bun__getDefaultGlobal();
-                Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-                Identifier signalNameIdentifier = Identifier::fromString(globalObject->vm(), signalName);
-
-                Process* process = jsCast<Process*>(globalObject->processObject());
-                // MarkedArgumentBuffer args;
-                // args.append(jsNumber(signalNumber));
-
                 auto* context = ScriptExecutionContext::getScriptExecutionContext(contextId);
 
-                // context->postCrossThreadTask(std::function<void()>::target, [process, signalNameIdentifier, args] {
-                //     process->wrapped().eventEmitter().emit(signalNameIdentifier, args);
-                // }));
+                JSGlobalObject* lexicalGlobalObject = context->jsGlobalObject();
+                Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
 
-                context->postCrossThreadTask(process, &Process::emitSignalEvent, signalNumber);
+                Process* process = jsCast<Process*>(globalObject->processObject());
+
+                context->postCrossThreadTask(*process, &Process::emitSignalEvent, signalNumber);
             }
         });
     }

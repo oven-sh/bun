@@ -19,7 +19,7 @@ public:
     {
     }
 
-    void Process::emitSignalEvent(int signalNumber);
+    void emitSignalEvent(int signalNumber);
 
     DECLARE_EXPORT_INFO;
 

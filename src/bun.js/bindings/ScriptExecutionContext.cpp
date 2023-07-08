@@ -20,7 +20,7 @@ static HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allSc
     return contexts;
 }
 
-ScriptExecutionContext* getScriptExecutionContext(ScriptExecutionContextIdentifier identifier)
+ScriptExecutionContext* ScriptExecutionContext::getScriptExecutionContext(ScriptExecutionContextIdentifier identifier)
 {
     Locker locker { allScriptExecutionContextsMapLock };
     return allScriptExecutionContextsMap().get(identifier);

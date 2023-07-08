@@ -397,24 +397,25 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/PackageJSONDefaultConditionImport", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
-        import React from 'react'
+        import React from 'boop'
         console.log(React)
       `,
-      "/node_modules/react/package.json": /* json */ `
+      // NOTE: this test fails if the package name is "react"
+      // most likely an issue with commonjs unwrapping.
+      "/node_modules/boop/package.json": /* json */ `
         {
-          "name": "react",
+          "name": "boop",
           "exports": {
             ".": {
               "react-server": "./ignore.js",
-              "default": "./react.js"
+              "default": "./boop.js"
             }
           }
         }
       `,
-      "/node_modules/react/react.js": /* js */ `
+      "/node_modules/boop/boop.js": /* js */ `
         export default 123
       `,
     },

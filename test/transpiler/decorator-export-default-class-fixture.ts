@@ -1,5 +1,5 @@
 function decorator(target: any, propertyKey: any) {
-  target[propertyKey + "decorated"] = 42;
+  target[propertyKey + "decorated"] = true;
 }
 
 export default class DecoratedClass {

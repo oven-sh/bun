@@ -581,6 +581,8 @@ void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventNam
                 signalToContextIdsMap.set(signalNumber, contextIds);
             }
 
+            lock.unlockEarly();
+
             signal(signalNumber, [](int signalNumber) {
                 if (UNLIKELY(signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()))
                     return;

@@ -363,6 +363,9 @@ const Scanner = struct {
                     return;
                 }
 
+                if (comptime Environment.allow_assert)
+                    std.debug.assert(!strings.contains(name, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str));
+
                 for (this.exclusion_names) |exclude_name| {
                     if (strings.eql(exclude_name, name)) return;
                 }

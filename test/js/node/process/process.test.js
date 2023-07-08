@@ -219,33 +219,7 @@ it("process.emitWarning", () => {
   expect(called).toBe(1);
 });
 
-it("process.on signal events", () => {
-  var called2 = false;
-  expect(
-    process.on("SIGUSR2", () => {
-      called2 = true;
-    }),
-  ).toBeInstanceOf(process.constructor);
-  process.emit("SIGUSR2");
-  process.removeListener("SIGUSR2");
-  expect(called2).toBeTruthy();
-
-  // works with addListener too
-  called2 = false;
-  expect(
-    process.addListener("SIGUSR2", () => {
-      called2 = true;
-    }),
-  ).toBeInstanceOf(process.constructor);
-  process.emit("SIGUSR2");
-  expect(called2).toBeTruthy();
-
-  var called2 = false;
-  raise(31);
-  process.nextTick(() => {
-    expect(called2).toBeTruthy();
-  });
-
+it("process on SIGUSR1", done => {
   var called1 = false;
   process.on("SIGUSR1", () => {
     called1 = true;
@@ -253,7 +227,34 @@ it("process.on signal events", () => {
   raise(30);
   process.nextTick(() => {
     expect(called1).toBeTruthy();
+    done();
   });
+});
+
+it("process on and off SIGINFO", done => {
+  var calledSIGINFO = false;
+  process.on("SIGINFO", () => {
+    calledSIGINFO = true;
+  });
+  process.off("SIGINFO");
+  raise(29);
+  process.nextTick(() => {
+    expect(calledSIGINFO).toBeFalsy();
+    done();
+  });
+});
+
+it("process signal event works like normal event", () => {
+  var called = false;
+  process.on("SIGUSR2", () => {
+    called = true;
+  });
+  process.emit("SIGUSR2");
+  expect(called).toBeTruthy();
+  process.removeListener("SIGUSR2");
+  called = false;
+  process.emit("SIGUSR2");
+  expect(called).toBeFalsy();
 });
 
 it("process.execArgv", () => {

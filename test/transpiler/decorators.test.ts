@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { test, expect, describe } from "bun:test";
 import DecoratedClass from "./decorator-export-default-class-fixture";
+import DecoratedAnonClass from "./decorator-export-default-class-fixture-anon";
 
 test("decorator order of evaluation", () => {
   let counter = 0;
@@ -990,6 +991,10 @@ describe("constructor statements", () => {
   });
 });
 
-test("export default class works", () => {
+test("export default class Named works", () => {
   expect(new DecoratedClass()["methoddecorated"]).toBe(true);
+});
+
+test("export default class works (anonymous name)", () => {
+  expect(new DecoratedAnonClass()["methoddecorated"]).toBe(true);
 });

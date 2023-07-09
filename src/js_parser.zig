@@ -18146,10 +18146,20 @@ fn NewParser_(
                                         data.default_name = createDefaultName(p, stmt.loc) catch unreachable;
                                     }
 
+                                    // We only inject a name into classes when there is a decorator
+                                    if (class.class.has_decorators) {
+                                        if (class.class.class_name == null or
+                                            class.class.class_name.?.ref == null)
+                                        {
+                                            class.class.class_name = data.default_name;
+                                        }
+                                    }
+
+                                    // This is to handle TS decorators, mostly.
                                     var class_stmts = p.lowerClass(.{ .stmt = s2 });
+                                    std.debug.assert(class_stmts[0].data == .s_class);
 
                                     if (class_stmts.len > 1) {
-                                        std.debug.assert(class_stmts[0].data == .s_class);
                                         data.value.stmt = class_stmts[0];
                                         stmts.append(stmt.*) catch {};
                                         stmts.appendSlice(class_stmts[1..]) catch {};

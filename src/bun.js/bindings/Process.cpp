@@ -957,7 +957,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionOpenStdin, (JSGlobalObject * globalObje
     if (JSValue stdin = global->processObject()->getIfPropertyExists(globalObject, Identifier::fromString(vm, "stdin"_s))) {
         RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
 
-        if (stdin.isObject()) {
+        if (!stdin.isObject()) {
             throwTypeError(globalObject, throwScope, "stdin is not an object"_s);
             return JSValue::encode(jsUndefined());
         }

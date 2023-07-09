@@ -57,7 +57,7 @@ pub fn nextUUID(this: *RareData) UUID {
     this.entropy_cache.?.fill();
 
     const bytes = this.entropy_cache.?.get();
-    return UUID.initWith(bytes);
+    return UUID.initWith(&bytes);
 }
 
 pub fn entropySlice(this: *RareData, len: usize) []u8 {

@@ -1,3 +1,5 @@
+import { EventEmitter } from "stream";
+
 /**
  * "blob" is not supported yet
  */
@@ -339,7 +341,7 @@ interface EncodeIntoResult {
   written: number;
 }
 
-interface Process {
+interface Process extends EventEmitter {
   /**
    * A Node.js LTS version
    *
@@ -420,6 +422,28 @@ interface Process {
   emitWarning(warning: string | Error /*name?: string, ctor?: Function*/): void;
 
   readonly config: Object;
+
+  /**
+   * Return the memory usage of the current process, in bytes.
+   */
+  memoryUsage(): {
+    /**
+     * Resident Set Size, the actual amount of space occupied in the main memory
+     */
+    rss: number;
+
+    /**
+     * This is currently set to ram size
+     */
+    heapTotal: number;
+    /**
+     * This corresponds to JSC::Heap::size()
+     */
+    heapUsed: number;
+
+    external: number;
+    arrayBuffers: number;
+  };
 }
 
 declare var process: Process;

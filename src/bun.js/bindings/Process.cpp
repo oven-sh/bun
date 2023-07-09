@@ -13,6 +13,8 @@
 #include <JavaScriptCore/GetterSetter.h>
 #pragma mark - Node.js Process
 
+#include "mimalloc.h"
+
 namespace Zig {
 
 using namespace JSC;
@@ -186,7 +188,43 @@ JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter,
     return true;
 }
 
-JSC_DECLARE_HOST_FUNCTION(Process_functionNextTick);
+JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+
+    size_t elapsed_msecs = 0;
+    size_t user_msecs = 0;
+    size_t system_msecs = 0;
+    size_t current_rss = 0;
+    size_t peak_rss = 0;
+    size_t current_commit = 0;
+    size_t peak_commit = 0;
+    size_t page_faults = 0;
+
+    mi_process_info(&elapsed_msecs, &user_msecs, &system_msecs,
+        &current_rss, &peak_rss,
+        &current_commit, &peak_commit, &page_faults);
+
+    // TODO: is this worth caching the structure?
+    JSC::JSObject* result = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 5);
+
+    // {
+    //  rss: 4935680,
+    //  heapTotal: 1826816,
+    //  heapUsed: 650472,
+    //  external: 49879,
+    //  arrayBuffers: 9386
+    // }
+
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "rss"_s), JSC::jsNumber(current_rss));
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "heapTotal"_s), JSC::jsNumber(JSC::Options::forceRAMSize()));
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "heapUsed"_s), JSC::jsNumber(vm.heap.size()));
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "external"_s), JSC::jsNumber(vm.heap.extraMemorySize() + vm.heap.externalMemorySize()));
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "arrayBuffers"_s), JSC::jsNumber(vm.heap.objectTypeCounts()->count("ArrayBuffer")));
+
+    return JSC::JSValue::encode(result);
+}
 JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -852,8 +890,8 @@ void Process::finishCreation(JSC::VM& vm)
     this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "abort"_s),
         0, Process_functionAbort, ImplementationVisibility::Public, NoIntrinsic, 0);
 
-    this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "abort"_s),
-        0, Process_functionAbort, ImplementationVisibility::Public, NoIntrinsic, 0);
+    this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "memoryUsage"_s),
+        0, Process_functionMemoryUsage, ImplementationVisibility::Public, NoIntrinsic, 0);
 
     this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "argv0"_s)),
         JSC::CustomGetterSetter::create(vm, Process_lazyArgv0Getter, Process_defaultSetter), 0);

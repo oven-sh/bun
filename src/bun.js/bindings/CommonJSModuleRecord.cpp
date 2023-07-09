@@ -817,6 +817,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
     WTF::String specifier = specifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 
+    // Special-case for "process" to just return the process object directly.
+    if (UNLIKELY(specifier == "process"_s || specifier == "node:process"_s)) {
+        jsDynamicCast<JSCommonJSModule*>(callframe->argument(1))->putDirect(vm, builtinNames(vm).exportsPublicName(), globalObject->processObject(), 0);
+        return JSValue::encode(globalObject->processObject());
+    }
+
     WTF::String referrer = thisObject->id().toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 

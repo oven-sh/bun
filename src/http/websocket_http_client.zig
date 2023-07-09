@@ -60,7 +60,7 @@ fn buildRequestBody(
     extra_headers: NonUTF8Headers,
 ) std.mem.Allocator.Error![]u8 {
     const allocator = vm.allocator;
-    const input_rand_buf = vm.rareData().nextUUID();
+    const input_rand_buf = vm.rareData().nextUUID().bytes;
     const temp_buf_size = comptime std.base64.standard.Encoder.calcSize(16);
     var encoded_buf: [temp_buf_size]u8 = undefined;
     const accept_key = std.base64.standard.Encoder.encode(&encoded_buf, &input_rand_buf);

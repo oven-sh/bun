@@ -169,6 +169,29 @@ extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject
     return JSValue::encode(Bun::toJS(globalObject, *bunString));
 }
 
+extern "C" BunString BunString__fromUTF16Unitialized(size_t length)
+{
+    unsigned utf16Length = length;
+    UChar* ptr;
+    auto impl = WTF::StringImpl::createUninitialized(utf16Length, ptr);
+    if (UNLIKELY(!ptr))
+        return { BunStringTag::Dead };
+
+    impl->ref();
+    return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
+}
+
+extern "C" BunString BunString__fromLatin1Unitialized(size_t length)
+{
+    unsigned latin1Length = length;
+    LChar* ptr;
+    auto impl = WTF::StringImpl::createUninitialized(latin1Length, ptr);
+    if (UNLIKELY(!ptr))
+        return { BunStringTag::Dead };
+    impl->ref();
+    return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
+}
+
 extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
 {
     if (simdutf::validate_utf8(bytes, length)) {

@@ -541,9 +541,12 @@ pub const Encoding = enum(u8) {
                 const result = JSC.ZigString.init(out).toValueGC(globalThis);
                 return result;
             },
-            else => {
-                globalThis.throwInvalidArguments("Unexpected encoding", .{});
-                return JSC.JSValue.zero;
+            .buffer => {
+                return JSC.ArrayBuffer.createBuffer(globalThis, input);
+            },
+
+            inline else => |enc| {
+                return JSC.WebCore.Encoder.toString(input.ptr, size, globalThis, enc);
             },
         }
     }
@@ -571,9 +574,11 @@ pub const Encoding = enum(u8) {
                 const result = JSC.ZigString.init(out).toValueGC(globalThis);
                 return result;
             },
-            else => {
-                globalThis.throwInvalidArguments("Unexpected encoding", .{});
-                return JSC.JSValue.zero;
+            .buffer => {
+                return JSC.ArrayBuffer.createBuffer(globalThis, input);
+            },
+            inline else => |enc| {
+                return JSC.WebCore.Encoder.toString(input.ptr, input.len, globalThis, enc);
             },
         }
     }

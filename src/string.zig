@@ -257,6 +257,8 @@ pub const String = extern struct {
 
     extern fn BunString__fromLatin1(bytes: [*]const u8, len: usize) String;
     extern fn BunString__fromBytes(bytes: [*]const u8, len: usize) String;
+    extern fn BunString__fromLatin1Unitialized(len: usize) String;
+    extern fn BunString__fromUTF16Unitialized(len: usize) String;
 
     pub fn toOwnedSlice(this: String, allocator: std.mem.Allocator) ![]u8 {
         switch (this.tag) {
@@ -276,6 +278,30 @@ pub const String = extern struct {
             .Empty => return &[_]u8{},
             else => unreachable,
         }
+    }
+
+    pub fn createUninitializedLatin1(len: usize) String {
+        JSC.markBinding(@src());
+        return BunString__fromLatin1Unitialized(len);
+    }
+
+    pub fn createUninitializedUTF16(len: usize) String {
+        JSC.markBinding(@src());
+        return BunString__fromUTF16Unitialized(len);
+    }
+
+    pub fn createUninitialized(comptime kind: @Type(.EnumLiteral), len: usize) ?String {
+        const without_check = switch (comptime kind) {
+            .latin1 => createUninitializedLatin1(len),
+            .utf16 => createUninitializedUTF16(len),
+            else => @compileError("Invalid string kind"),
+        };
+
+        if (without_check.tag == .Dead) {
+            return null;
+        }
+
+        return without_check;
     }
 
     pub fn createLatin1(bytes: []const u8) String {

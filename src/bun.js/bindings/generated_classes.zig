@@ -4462,6 +4462,8 @@ pub const JSTCPSocket = struct {
             @compileLog("Expected TCPSocket.flush to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.flush)));
         if (@TypeOf(TCPSocket.getAuthorizationError) != CallbackType)
             @compileLog("Expected TCPSocket.getAuthorizationError to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getAuthorizationError)));
+        if (@TypeOf(TCPSocket.getCertificate) != CallbackType)
+            @compileLog("Expected TCPSocket.getCertificate to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getCertificate)));
         if (@TypeOf(TCPSocket.getListener) != GetterType)
             @compileLog("Expected TCPSocket.getListener to be a getter");
 
@@ -4497,6 +4499,7 @@ pub const JSTCPSocket = struct {
             @export(TCPSocket.getALPNProtocol, .{ .name = "TCPSocketPrototype__getALPNProtocol" });
             @export(TCPSocket.getAuthorizationError, .{ .name = "TCPSocketPrototype__getAuthorizationError" });
             @export(TCPSocket.getAuthorized, .{ .name = "TCPSocketPrototype__getAuthorized" });
+            @export(TCPSocket.getCertificate, .{ .name = "TCPSocketPrototype__getCertificate" });
             @export(TCPSocket.getData, .{ .name = "TCPSocketPrototype__getData" });
             @export(TCPSocket.getListener, .{ .name = "TCPSocketPrototype__getListener" });
             @export(TCPSocket.getLocalPort, .{ .name = "TCPSocketPrototype__getLocalPort" });
@@ -4627,6 +4630,8 @@ pub const JSTLSSocket = struct {
             @compileLog("Expected TLSSocket.flush to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.flush)));
         if (@TypeOf(TLSSocket.getAuthorizationError) != CallbackType)
             @compileLog("Expected TLSSocket.getAuthorizationError to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getAuthorizationError)));
+        if (@TypeOf(TLSSocket.getCertificate) != CallbackType)
+            @compileLog("Expected TLSSocket.getCertificate to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getCertificate)));
         if (@TypeOf(TLSSocket.getListener) != GetterType)
             @compileLog("Expected TLSSocket.getListener to be a getter");
 
@@ -4662,6 +4667,7 @@ pub const JSTLSSocket = struct {
             @export(TLSSocket.getALPNProtocol, .{ .name = "TLSSocketPrototype__getALPNProtocol" });
             @export(TLSSocket.getAuthorizationError, .{ .name = "TLSSocketPrototype__getAuthorizationError" });
             @export(TLSSocket.getAuthorized, .{ .name = "TLSSocketPrototype__getAuthorized" });
+            @export(TLSSocket.getCertificate, .{ .name = "TLSSocketPrototype__getCertificate" });
             @export(TLSSocket.getData, .{ .name = "TLSSocketPrototype__getData" });
             @export(TLSSocket.getListener, .{ .name = "TLSSocketPrototype__getListener" });
             @export(TLSSocket.getLocalPort, .{ .name = "TLSSocketPrototype__getLocalPort" });

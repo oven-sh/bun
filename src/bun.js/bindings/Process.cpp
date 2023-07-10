@@ -12,12 +12,21 @@
 #include "ZigConsoleClient.h"
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/JSSet.h>
-#include "mimalloc.h"
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 
 #pragma mark - Node.js Process
+
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#include <mach/mach_time.h>
+#endif
+
+#if defined(__linux__)
+#include <sys/resource.h>
+#include <sys/time.h>
+#endif
 
 #if !defined(_MSC_VER)
 #include <unistd.h> // setuid, getuid
@@ -1065,41 +1074,43 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
 
     if (callFrame->argumentCount() > 0) {
         JSValue comparatorValue = callFrame->argument(0);
-        if (!comparatorValue.isObject()) {
-            throwTypeError(globalObject, throwScope, "Expected an object as the first argument"_s);
-            return JSC::JSValue::encode(JSC::jsUndefined());
+        if (!comparatorValue.isUndefined()) {
+            if (UNLIKELY(!comparatorValue.isObject())) {
+                throwTypeError(globalObject, throwScope, "Expected an object as the first argument"_s);
+                return JSC::JSValue::encode(JSC::jsUndefined());
+            }
+
+            JSC::JSObject* comparator = comparatorValue.getObject();
+            JSValue userValue;
+            JSValue systemValue;
+
+            if (LIKELY(comparator->structureID() == cpuUsageStructure->id())) {
+                userValue = comparator->getDirect(0);
+                systemValue = comparator->getDirect(1);
+            } else {
+                userValue = comparator->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "user"_s));
+                RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
+
+                systemValue = comparator->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "system"_s));
+                RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
+            }
+
+            if (UNLIKELY(!userValue || !userValue.isNumber())) {
+                throwTypeError(globalObject, throwScope, "Expected a number for the user property"_s);
+                return JSC::JSValue::encode(JSC::jsUndefined());
+            }
+
+            if (UNLIKELY(!systemValue || !systemValue.isNumber())) {
+                throwTypeError(globalObject, throwScope, "Expected a number for the system property"_s);
+                return JSC::JSValue::encode(JSC::jsUndefined());
+            }
+
+            double userComparator = userValue.asNumber();
+            double systemComparator = systemValue.asNumber();
+
+            user -= userComparator;
+            system -= systemComparator;
         }
-
-        JSC::JSObject* comparator = comparatorValue.getObject();
-        JSValue userValue;
-        JSValue systemValue;
-
-        if (comparator->structureID() == cpuUsageStructure->structureID()) {
-            userValue = comparator->getDirect(0);
-            systemValue = comparator->getDirect(1);
-        } else {
-            userValue = comparator->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "user"_s));
-            RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
-
-            systemValue = comparator->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "system"_s));
-            RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
-        }
-
-        if (!userValue || !userValue.isNumber()) {
-            throwTypeError(globalObject, throwScope, "Expected a number for the user property"_s);
-            return JSC::JSValue::encode(JSC::jsUndefined());
-        }
-
-        if (!systemValue || !systemValue.isNumber()) {
-            throwTypeError(globalObject, throwScope, "Expected a number for the user property"_s);
-            return JSC::JSValue::encode(JSC::jsUndefined());
-        }
-
-        double userComparator = userValue.asNumber();
-        double systemComparator = systemValue.asNumber();
-
-        user -= userComparator;
-        system -= systemComparator;
     }
 
     result->putDirectOffset(vm, 0, JSC::jsNumber(user));
@@ -1108,44 +1119,129 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
 }
 
+static int getRSS(size_t* rss)
+{
+#if defined(__APPLE__)
+    mach_msg_type_number_t count;
+    task_basic_info_data_t info;
+    kern_return_t err;
+
+    count = TASK_BASIC_INFO_COUNT;
+    err = task_info(mach_task_self(),
+        TASK_BASIC_INFO,
+        reinterpret_cast<task_info_t>(&info),
+        &count);
+
+    if (err == KERN_SUCCESS) {
+        *rss = (size_t)info.resident_size;
+        return 0;
+    }
+
+    return -1;
+#elif defined(__LINUX__)
+    // Taken from libuv.
+    char buf[1024];
+    const char* s;
+    ssize_t n;
+    long val;
+    int fd;
+    int i;
+
+    do
+        fd = open("/proc/self/stat", O_RDONLY);
+    while (fd == -1 && errno == EINTR);
+
+    if (fd == -1)
+        return errno;
+
+    do
+        n = read(fd, buf, sizeof(buf) - 1);
+    while (n == -1 && errno == EINTR);
+
+    uv__close(fd);
+    if (n == -1)
+        return errno;
+    buf[n] = '\0';
+
+    s = strchr(buf, ' ');
+    if (s == NULL)
+        goto err;
+
+    s += 1;
+    if (*s != '(')
+        goto err;
+
+    s = strchr(s, ')');
+    if (s == NULL)
+        goto err;
+
+    for (i = 1; i <= 22; i++) {
+        s = strchr(s + 1, ' ');
+        if (s == NULL)
+            goto err;
+    }
+
+    errno = 0;
+    val = strtol(s, NULL, 10);
+    if (errno != 0)
+        goto err;
+    if (val < 0)
+        goto err;
+
+    *rss = val * getpagesize();
+    return 0;
+
+err:
+    return EINVAL;
+#else
+#error "Unsupported platform"
+#endif
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    size_t elapsed_msecs = 0;
-    size_t user_msecs = 0;
-    size_t system_msecs = 0;
-    size_t current_rss = 0;
-    size_t peak_rss = 0;
-    size_t current_commit = 0;
-    size_t peak_commit = 0;
-    size_t page_faults = 0;
-
-    mi_process_info(&elapsed_msecs, &user_msecs, &system_msecs,
-        &current_rss, &peak_rss,
-        &current_commit, &peak_commit, &page_faults);
-
     auto* process = getProcessObject(globalObject, callFrame->thisValue());
+
+    size_t current_rss = 0;
+    if (getRSS(&current_rss) != 0) {
+        SystemError error;
+        error.errno_ = errno;
+        error.syscall = Bun::toString("memoryUsage"_s);
+        error.message = Bun::toString("Failed to get memory usage"_s);
+        throwException(globalObject, throwScope, JSValue::decode(SystemError__toErrorInstance(&error, globalObject)));
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
     JSC::JSObject* result = JSC::constructEmptyObject(vm, process->memoryUsageStructure.getInitializedOnMainThread(process));
     if (UNLIKELY(throwScope.exception())) {
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
+    // Node.js:
     // {
-    //  rss: 4935680,
-    //  heapTotal: 1826816,
-    //  heapUsed: 650472,
-    //  external: 49879,
-    //  arrayBuffers: 9386
+    //    rss: 4935680,
+    //    heapTotal: 1826816,
+    //    heapUsed: 650472,
+    //    external: 49879,
+    //    arrayBuffers: 9386
     // }
 
     result->putDirectOffset(vm, 0, JSC::jsNumber(current_rss));
-    result->putDirectOffset(vm, 1, JSC::jsNumber(peak_commit));
-    result->putDirectOffset(vm, 2, JSC::jsNumber(vm.heap.size()));
-    result->putDirectOffset(vm, 3, JSC::jsNumber(vm.heap.extraMemorySize() + vm.heap.externalMemorySize()));
-    result->putDirectOffset(vm, 4, JSC::jsNumber(vm.heap.objectTypeCounts()->count("ArrayBuffer")));
+    result->putDirectOffset(vm, 1, JSC::jsNumber(vm.heap.blockBytesAllocated()));
+
+    // heap.size() loops through every cell...
+    // TODO: add a binding for heap.sizeAfterLastCollection()
+    result->putDirectOffset(vm, 2, JSC::jsNumber(vm.heap.sizeAfterLastEdenCollection()));
+
+    result->putDirectOffset(vm, 3, JSC::jsNumber(vm.heap.externalMemorySize()));
+
+    // We report 0 for this because m_arrayBuffers in JSC::Heap is private and we need to add a binding
+    // If we use objectTypeCounts(), it's hideously slow because it loops through every single object in the heap
+    // TODO: add a binding for m_arrayBuffers, registerWrapper() in TypedArrayController doesn't work
+    result->putDirectOffset(vm, 4, JSC::jsNumber(0));
 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
 }
@@ -1154,21 +1250,19 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsageRSS,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    size_t elapsed_msecs = 0;
-    size_t user_msecs = 0;
-    size_t system_msecs = 0;
     size_t current_rss = 0;
-    size_t peak_rss = 0;
-    size_t current_commit = 0;
-    size_t peak_commit = 0;
-    size_t page_faults = 0;
+    if (getRSS(&current_rss) != 0) {
+        SystemError error;
+        error.errno_ = errno;
+        error.syscall = Bun::toString("memoryUsage"_s);
+        error.message = Bun::toString("Failed to get memory usage"_s);
+        throwException(globalObject, throwScope, JSValue::decode(SystemError__toErrorInstance(&error, globalObject)));
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
 
-    mi_process_info(&elapsed_msecs, &user_msecs, &system_msecs,
-        &current_rss, &peak_rss,
-        &current_commit, &peak_commit, &page_faults);
-
-    return JSValue::encode(jsNumber(current_rss));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(jsNumber(current_rss)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionOpenStdin, (JSGlobalObject * globalObject, CallFrame* callFrame))

@@ -350,7 +350,8 @@ describe("process.cpuUsage", () => {
     }
   });
 
-  it("increases monotonically", () => {
+  // Skipped on Linux because it seems to not change as often as on macOS
+  it.skipIf(process.platform === "linux")("increases monotonically", () => {
     const init = process.cpuUsage();
     for (let i = 0; i < 10000; i++) {}
     const another = process.cpuUsage();

@@ -254,7 +254,7 @@ describe("bundler", () => {
                 "c:\\\\good",
                 "C:/good",
                 "C:\\\\good",
-  
+
                 "bad",
                 "@bad/core",
                 ".*/bad",
@@ -653,7 +653,7 @@ describe("bundler", () => {
     files: {
       "/Users/user/project/entry.ts": /* ts */ `
         import { fib } from "fib";
-  
+
         console.log(fib(10));
       `,
       "/Users/user/project/node_modules/fib/index.js": /* js */ `
@@ -859,7 +859,7 @@ describe("bundler", () => {
     },
   });
   test.skip("tsconfig/JsonExtendsAbsolute", () => {
-    expectBundled("tsconfig/JsonExtendsAbsoluteUnix", {
+    itBundled("tsconfig/JsonExtendsAbsoluteUnix", {
       // GENERATED
       host: "unix",
       files: {
@@ -882,7 +882,7 @@ describe("bundler", () => {
         `,
       },
     });
-    expectBundled("tsconfig/JsonExtendsAbsoluteWindows", {
+    itBundled("tsconfig/JsonExtendsAbsoluteWindows", {
       // GENERATED
       host: "windows",
       files: {
@@ -1364,7 +1364,7 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
-    unsupportedJSFeatures: "es6",
+    unsupportedJSFeatures: ["es6"],
     /* TODO FIX expectedScanLog: `Users/user/project/src/entry.ts: ERROR: Top-level await is not available in the configured target environment ("es6")
   Users/user/project/src/tsconfig.json: NOTE: The target environment was set to "es6" here:
   `, */
@@ -1382,7 +1382,7 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
-    unsupportedJSFeatures: "es2020",
+    unsupportedJSFeatures: ["es2020"],
     targetFromAPI: "TargetWasConfigured",
     /* TODO FIX expectedScanLog: `Users/user/project/src/entry.ts: ERROR: Top-level await is not available in the configured target environment (es2020)
   `, */

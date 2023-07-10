@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
-  describe as jscDescribe,
-  describeArray,
+  jscDescribe,
+  jscDescribeArray,
   gcAndSweep,
   fullGC,
   edenGC,
@@ -35,11 +35,11 @@ describe("bun:jsc", () => {
     return j;
   }
 
-  it("describe", () => {
+  it("jscDescribe", () => {
     expect(jscDescribe([])).toBeDefined();
   });
-  it("describeArray", () => {
-    expect(describeArray([1, 2, 3])).toBeDefined();
+  it("jscDescribeArray", () => {
+    expect(jscDescribeArray([1, 2, 3])).toBeDefined();
   });
   it("gcAndSweep", () => {
     expect(gcAndSweep()).toBeGreaterThan(0);

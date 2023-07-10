@@ -17,7 +17,7 @@ describe("bundler", () => {
         var e3
       `,
     },
-    unsupportedJSFeatures: "es2018",
+    unsupportedJSFeatures: ["es2018"],
     bundling: false,
   });
   itBundled("lower/LowerObjectSpreadNoBundle", {
@@ -40,7 +40,7 @@ describe("bundler", () => {
         ]
       `,
     },
-    unsupportedJSFeatures: "es2017",
+    unsupportedJSFeatures: ["es2017"],
     bundling: false,
   });
   itBundled("lower/LowerExponentiationOperatorNoBundle", {
@@ -51,7 +51,7 @@ describe("bundler", () => {
           // Exponentiation operator
           0: a ** b ** c,
           1: (a ** b) ** c,
-  
+
           // Exponentiation assignment operator
           2: a **= b,
           3: a.b **= c,
@@ -60,7 +60,7 @@ describe("bundler", () => {
           6: a()[b] **= c,
           7: a[b()] **= c,
           8: a()[b()] **= c,
-  
+
           // These all should not need capturing (no object identity)
           9: a[0] **= b,
           10: a[false] **= b,
@@ -68,7 +68,7 @@ describe("bundler", () => {
           12: a[void 0] **= b,
           13: a[123n] **= b,
           14: a[this] **= b,
-  
+
           // These should need capturing (have object identitiy)
           15: a[/x/] **= b,
           16: a[{}] **= b,
@@ -78,7 +78,7 @@ describe("bundler", () => {
         }
       `,
     },
-    unsupportedJSFeatures: "es2015",
+    unsupportedJSFeatures: ["es2015"],
     bundling: false,
     /* TODO FIX expectedScanLog: `entry.js: ERROR: Big integer literals are not available in the configured target environment
   `, */
@@ -116,7 +116,7 @@ describe("bundler", () => {
         }
       `,
     },
-    unsupportedJSFeatures: "es2015",
+    unsupportedJSFeatures: ["es2015"],
     bundling: false,
   });
   itBundled("lower/LowerPrivateFieldAssignments2019NoBundle", {
@@ -152,7 +152,7 @@ describe("bundler", () => {
         }
       `,
     },
-    unsupportedJSFeatures: "es2019",
+    unsupportedJSFeatures: ["es2019"],
     bundling: false,
   });
   itBundled("lower/LowerPrivateFieldAssignments2020NoBundle", {
@@ -188,7 +188,7 @@ describe("bundler", () => {
         }
       `,
     },
-    unsupportedJSFeatures: "es2020",
+    unsupportedJSFeatures: ["es2020"],
     bundling: false,
   });
   itBundled("lower/LowerPrivateFieldAssignmentsNextNoBundle", {
@@ -240,7 +240,7 @@ describe("bundler", () => {
         }
       `,
     },
-    unsupportedJSFeatures: "es2019",
+    unsupportedJSFeatures: ["es2019"],
     bundling: false,
   });
   itBundled("lower/LowerPrivateFieldOptionalChain2020NoBundle", {
@@ -257,7 +257,7 @@ describe("bundler", () => {
         }
       `,
     },
-    unsupportedJSFeatures: "es2020",
+    unsupportedJSFeatures: ["es2020"],
     bundling: false,
   });
   itBundled("lower/LowerPrivateFieldOptionalChainNextNoBundle", {
@@ -290,7 +290,7 @@ describe("bundler", () => {
         }
       `,
     },
-    unsupportedJSFeatures: "es2015",
+    unsupportedJSFeatures: ["es2015"],
     bundling: false,
   });
   itBundled("lower/TSLowerPrivateStaticMembers2015NoBundle", {
@@ -310,7 +310,7 @@ describe("bundler", () => {
         }
       `,
     },
-    unsupportedJSFeatures: "es2015",
+    unsupportedJSFeatures: ["es2015"],
     bundling: false,
   });
   itBundled("lower/TSLowerPrivateFieldAndMethodAvoidNameCollision2015", {
@@ -325,7 +325,7 @@ describe("bundler", () => {
         }
       `,
     },
-    unsupportedJSFeatures: "es2015",
+    unsupportedJSFeatures: ["es2015"],
   });
   itBundled("lower/LowerPrivateGetterSetter2015", {
     // GENERATED
@@ -369,7 +369,7 @@ describe("bundler", () => {
         }
       `,
     },
-    unsupportedJSFeatures: "es2015",
+    unsupportedJSFeatures: ["es2015"],
   });
   itBundled("lower/LowerPrivateGetterSetter2019", {
     // GENERATED
@@ -413,7 +413,7 @@ describe("bundler", () => {
         }
       `,
     },
-    unsupportedJSFeatures: "es2019",
+    unsupportedJSFeatures: ["es2019"],
   });
   itBundled("lower/LowerPrivateGetterSetter2020", {
     // GENERATED
@@ -457,7 +457,7 @@ describe("bundler", () => {
         }
       `,
     },
-    unsupportedJSFeatures: "es2020",
+    unsupportedJSFeatures: ["es2020"],
   });
   itBundled("lower/LowerPrivateGetterSetterNext", {
     // GENERATED
@@ -535,7 +535,7 @@ describe("bundler", () => {
         }
       `,
     },
-    unsupportedJSFeatures: "es2019",
+    unsupportedJSFeatures: ["es2019"],
   });
   itBundled("lower/LowerPrivateMethod2020", {
     // GENERATED
@@ -570,7 +570,7 @@ describe("bundler", () => {
         }
       `,
     },
-    unsupportedJSFeatures: "es2020",
+    unsupportedJSFeatures: ["es2020"],
   });
   itBundled("lower/LowerPrivateMethodNext", {
     // GENERATED
@@ -622,7 +622,7 @@ describe("bundler", () => {
         }
       `,
     },
-    unsupportedJSFeatures: "es2020",
+    unsupportedJSFeatures: ["es2020"],
     bundling: false,
   });
   itBundled("lower/LowerPrivateMethodWithModifiers2020", {
@@ -633,14 +633,14 @@ describe("bundler", () => {
           *#g() {}
           async #a() {}
           async *#ag() {}
-  
+
           static *#sg() {}
           static async #sa() {}
           static async *#sag() {}
         }
       `,
     },
-    unsupportedJSFeatures: "es2020",
+    unsupportedJSFeatures: ["es2020"],
   });
   itBundled("lower/LowerAsync2016NoBundle", {
     // GENERATED
@@ -667,7 +667,7 @@ describe("bundler", () => {
         ]
       `,
     },
-    unsupportedJSFeatures: "es2016",
+    unsupportedJSFeatures: ["es2016"],
     bundling: false,
   });
   itBundled("lower/LowerAsync2017NoBundle", {
@@ -695,7 +695,7 @@ describe("bundler", () => {
         ]
       `,
     },
-    unsupportedJSFeatures: "es2017",
+    unsupportedJSFeatures: ["es2017"],
     bundling: false,
   });
   itBundled("lower/LowerAsyncThis2016CommonJS", {
@@ -703,7 +703,7 @@ describe("bundler", () => {
     files: {
       "/entry.js": `exports.foo = async () => this`,
     },
-    unsupportedJSFeatures: "es2016",
+    unsupportedJSFeatures: ["es2016"],
   });
   itBundled("lower/LowerAsyncThis2016ES6", {
     // GENERATED
@@ -714,7 +714,7 @@ describe("bundler", () => {
       `,
       "/other.js": `export let bar = async () => {}`,
     },
-    unsupportedJSFeatures: "es2016",
+    unsupportedJSFeatures: ["es2016"],
     /* TODO FIX expectedScanLog: `entry.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
   entry.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
   `, */
@@ -739,7 +739,7 @@ describe("bundler", () => {
       "/export-def-2.js": `export default async function() {}`,
       "/obj-method.js": `({async foo() {}})`,
     },
-    unsupportedJSFeatures: "es5",
+    unsupportedJSFeatures: ["es5"],
     /* TODO FIX expectedScanLog: `arrow-1.js: ERROR: Transforming async functions to the configured target environment is not supported yet
   arrow-2.js: ERROR: Transforming async functions to the configured target environment is not supported yet
   export-def-1.js: ERROR: Transforming async functions to the configured target environment is not supported yet
@@ -760,36 +760,36 @@ describe("bundler", () => {
               await super[key],
               await ([super.foo] = [0]),
               await ([super[key]] = [0]),
-  
+
               await (super.foo = 1),
               await (super[key] = 1),
               await (super.foo += 2),
               await (super[key] += 2),
-  
+
               await ++super.foo,
               await ++super[key],
               await super.foo++,
               await super[key]++,
-  
+
               await super.foo.name,
               await super[key].name,
               await super.foo?.name,
               await super[key]?.name,
-  
+
               await super.foo(1, 2),
               await super[key](1, 2),
               await super.foo?.(1, 2),
               await super[key]?.(1, 2),
-  
+
               await (() => super.foo)(),
               await (() => super[key])(),
               await (() => super.foo())(),
               await (() => super[key]())(),
-  
+
               await super.foo\` + "\`\`" +
       `,
     },
-    unsupportedJSFeatures: "es2017",
+    unsupportedJSFeatures: ["es2017"],
     bundling: false,
   });
   itBundled("lower/LowerAsyncSuperES2016NoBundle", {
@@ -803,36 +803,36 @@ describe("bundler", () => {
               await super[key],
               await ([super.foo] = [0]),
               await ([super[key]] = [0]),
-  
+
               await (super.foo = 1),
               await (super[key] = 1),
               await (super.foo += 2),
               await (super[key] += 2),
-  
+
               await ++super.foo,
               await ++super[key],
               await super.foo++,
               await super[key]++,
-  
+
               await super.foo.name,
               await super[key].name,
               await super.foo?.name,
               await super[key]?.name,
-  
+
               await super.foo(1, 2),
               await super[key](1, 2),
               await super.foo?.(1, 2),
               await super[key]?.(1, 2),
-  
+
               await (() => super.foo)(),
               await (() => super[key])(),
               await (() => super.foo())(),
               await (() => super[key]())(),
-  
+
               await super.foo\` + "\`\`" +
       `,
     },
-    unsupportedJSFeatures: "es2016",
+    unsupportedJSFeatures: ["es2016"],
     bundling: false,
   });
   itBundled("lower/LowerStaticAsyncSuperES2021NoBundle", {
@@ -846,36 +846,36 @@ describe("bundler", () => {
               await super[key],
               await ([super.foo] = [0]),
               await ([super[key]] = [0]),
-  
+
               await (super.foo = 1),
               await (super[key] = 1),
               await (super.foo += 2),
               await (super[key] += 2),
-  
+
               await ++super.foo,
               await ++super[key],
               await super.foo++,
               await super[key]++,
-  
+
               await super.foo.name,
               await super[key].name,
               await super.foo?.name,
               await super[key]?.name,
-  
+
               await super.foo(1, 2),
               await super[key](1, 2),
               await super.foo?.(1, 2),
               await super[key]?.(1, 2),
-  
+
               await (() => super.foo)(),
               await (() => super[key])(),
               await (() => super.foo())(),
               await (() => super[key]())(),
-  
+
               await super.foo\` + "\`\`" +
       `,
     },
-    unsupportedJSFeatures: "es2021",
+    unsupportedJSFeatures: ["es2021"],
     bundling: false,
   });
   itBundled("lower/LowerStaticAsyncSuperES2016NoBundle", {
@@ -889,36 +889,36 @@ describe("bundler", () => {
               await super[key],
               await ([super.foo] = [0]),
               await ([super[key]] = [0]),
-  
+
               await (super.foo = 1),
               await (super[key] = 1),
               await (super.foo += 2),
               await (super[key] += 2),
-  
+
               await ++super.foo,
               await ++super[key],
               await super.foo++,
               await super[key]++,
-  
+
               await super.foo.name,
               await super[key].name,
               await super.foo?.name,
               await super[key]?.name,
-  
+
               await super.foo(1, 2),
               await super[key](1, 2),
               await super.foo?.(1, 2),
               await super[key]?.(1, 2),
-  
+
               await (() => super.foo)(),
               await (() => super[key])(),
               await (() => super.foo())(),
               await (() => super[key]())(),
-  
+
               await super.foo\` + "\`\`" +
       `,
     },
-    unsupportedJSFeatures: "es2016",
+    unsupportedJSFeatures: ["es2016"],
     bundling: false,
   });
   itBundled("lower/LowerStaticSuperES2021NoBundle", {
@@ -932,36 +932,36 @@ describe("bundler", () => {
               super[key],
               ([super.foo] = [0]),
               ([super[key]] = [0]),
-  
+
               (super.foo = 1),
               (super[key] = 1),
               (super.foo += 2),
               (super[key] += 2),
-  
+
               ++super.foo,
               ++super[key],
               super.foo++,
               super[key]++,
-  
+
               super.foo.name,
               super[key].name,
               super.foo?.name,
               super[key]?.name,
-  
+
               super.foo(1, 2),
               super[key](1, 2),
               super.foo?.(1, 2),
               super[key]?.(1, 2),
-  
+
               (() => super.foo)(),
               (() => super[key])(),
               (() => super.foo())(),
               (() => super[key]())(),
-  
+
               super.foo\` + "\`\`" +
       `,
     },
-    unsupportedJSFeatures: "es2021",
+    unsupportedJSFeatures: ["es2021"],
     bundling: false,
   });
   itBundled("lower/LowerStaticSuperES2016NoBundle", {
@@ -975,36 +975,36 @@ describe("bundler", () => {
               super[key],
               ([super.foo] = [0]),
               ([super[key]] = [0]),
-  
+
               (super.foo = 1),
               (super[key] = 1),
               (super.foo += 2),
               (super[key] += 2),
-  
+
               ++super.foo,
               ++super[key],
               super.foo++,
               super[key]++,
-  
+
               super.foo.name,
               super[key].name,
               super.foo?.name,
               super[key]?.name,
-  
+
               super.foo(1, 2),
               super[key](1, 2),
               super.foo?.(1, 2),
               super[key]?.(1, 2),
-  
+
               (() => super.foo)(),
               (() => super[key])(),
               (() => super.foo())(),
               (() => super[key]())(),
-  
+
               super.foo\` + "\`\`" +
       `,
     },
-    unsupportedJSFeatures: "es2016",
+    unsupportedJSFeatures: ["es2016"],
     bundling: false,
   });
   itBundled("lower/LowerAsyncArrowSuperES2016", {
@@ -1043,7 +1043,7 @@ describe("bundler", () => {
         })()
       `,
     },
-    unsupportedJSFeatures: "es2016",
+    unsupportedJSFeatures: ["es2016"],
   });
   itBundled("lower/LowerAsyncArrowSuperSetterES2016", {
     // GENERATED
@@ -1081,7 +1081,7 @@ describe("bundler", () => {
         })()
       `,
     },
-    unsupportedJSFeatures: "es2016",
+    unsupportedJSFeatures: ["es2016"],
   });
   itBundled("lower/LowerStaticAsyncArrowSuperES2016", {
     // GENERATED
@@ -1119,7 +1119,7 @@ describe("bundler", () => {
         })()
       `,
     },
-    unsupportedJSFeatures: "es2016",
+    unsupportedJSFeatures: ["es2016"],
   });
   itBundled("lower/LowerStaticAsyncArrowSuperSetterES2016", {
     // GENERATED
@@ -1157,7 +1157,7 @@ describe("bundler", () => {
         })()
       `,
     },
-    unsupportedJSFeatures: "es2016",
+    unsupportedJSFeatures: ["es2016"],
   });
   itBundled("lower/LowerPrivateSuperES2022", {
     // GENERATED
@@ -1181,7 +1181,7 @@ describe("bundler", () => {
       "/foo7.js": `export default class extends x { static #foo = () => { super.foo() } }`,
       "/foo8.js": `export default class extends x { static #foo = () => { super.foo++ } }`,
     },
-    unsupportedJSFeatures: "es2022",
+    unsupportedJSFeatures: ["es2022"],
   });
   itBundled("lower/LowerPrivateSuperES2021", {
     // GENERATED
@@ -1205,7 +1205,7 @@ describe("bundler", () => {
       "/foo7.js": `export default class extends x { static #foo = () => { super.foo() } }`,
       "/foo8.js": `export default class extends x { static #foo = () => { super.foo++ } }`,
     },
-    unsupportedJSFeatures: "es2021",
+    unsupportedJSFeatures: ["es2021"],
   });
   itBundled("lower/LowerPrivateSuperStaticBundleESBuildIssue2158", {
     // GENERATED
@@ -1237,7 +1237,7 @@ describe("bundler", () => {
         }
       `,
     },
-    unsupportedJSFeatures: "es2020",
+    unsupportedJSFeatures: ["es2020"],
     bundling: false,
   });
   itBundled("lower/LowerClassFieldNextNoBundle", {
@@ -1274,7 +1274,7 @@ describe("bundler", () => {
         }
       `,
     },
-    unsupportedJSFeatures: "es2020",
+    unsupportedJSFeatures: ["es2020"],
     bundling: false,
   });
   itBundled("lower/TSLowerClassPrivateFieldNextNoBundle", {
@@ -1328,7 +1328,7 @@ describe("bundler", () => {
         }
       `,
     },
-    unsupportedJSFeatures: "es2020",
+    unsupportedJSFeatures: ["es2020"],
   });
   itBundled("lower/TSLowerClassFieldStrictTsconfigJson2020", {
     // GENERATED
@@ -1363,7 +1363,7 @@ describe("bundler", () => {
         }
       `,
     },
-    unsupportedJSFeatures: "es2020",
+    unsupportedJSFeatures: ["es2020"],
   });
   itBundled("lower/TSLowerObjectRest2017NoBundle", {
     // GENERATED
@@ -1375,12 +1375,12 @@ describe("bundler", () => {
         let arrow_fn = ({ ...x }) => { };
         let fn_expr = function ({ ...x } = default_value) {};
         let class_expr = class { method(x, ...[y, { ...z }]) {} };
-  
+
         function fn_stmt({ a = b(), ...x }, { c = d(), ...y }) {}
         class class_stmt { method({ ...x }) {} }
         namespace ns { export let { ...x } = {} }
         try { } catch ({ ...catch_clause }) {}
-  
+
         for (const { ...for_in_const } in { abc }) {}
         for (let { ...for_in_let } in { abc }) {}
         for (var { ...for_in_var } in { abc }) ;
@@ -1393,10 +1393,10 @@ describe("bundler", () => {
         for ({ ...x } in { abc }) {}
         for ({ ...x } of [{}]) {}
         for ({ ...x } = {}; x; x = null) {}
-  
+
         ({ ...assign } = {});
         ({ obj_method({ ...x }) {} });
-  
+
         // Check for used return values
         ({ ...x } = x);
         for ({ ...x } = x; 0; ) ;
@@ -1405,7 +1405,7 @@ describe("bundler", () => {
         console.log({ x: { ...xx } } = { x });
       `,
     },
-    unsupportedJSFeatures: "es2017",
+    unsupportedJSFeatures: ["es2017"],
     bundling: false,
   });
   itBundled("lower/TSLowerObjectRest2018NoBundle", {
@@ -1418,12 +1418,12 @@ describe("bundler", () => {
         let arrow_fn = ({ ...x }) => { };
         let fn_expr = function ({ ...x } = default_value) {};
         let class_expr = class { method(x, ...[y, { ...z }]) {} };
-  
+
         function fn_stmt({ a = b(), ...x }, { c = d(), ...y }) {}
         class class_stmt { method({ ...x }) {} }
         namespace ns { export let { ...x } = {} }
         try { } catch ({ ...catch_clause }) {}
-  
+
         for (const { ...for_in_const } in { abc }) {}
         for (let { ...for_in_let } in { abc }) {}
         for (var { ...for_in_var } in { abc }) ;
@@ -1436,10 +1436,10 @@ describe("bundler", () => {
         for ({ ...x } in { abc }) {}
         for ({ ...x } of [{}]) {}
         for ({ ...x } = {}; x; x = null) {}
-  
+
         ({ ...assign } = {});
         ({ obj_method({ ...x }) {} });
-  
+
         // Check for used return values
         ({ ...x } = x);
         for ({ ...x } = x; 0; ) ;
@@ -1448,7 +1448,7 @@ describe("bundler", () => {
         console.log({ x: { ...xx } } = { x });
       `,
     },
-    unsupportedJSFeatures: "es2018",
+    unsupportedJSFeatures: ["es2018"],
     bundling: false,
   });
   itBundled("lower/ClassSuperThisESBuildIssue242NoBundle", {
@@ -1456,7 +1456,7 @@ describe("bundler", () => {
     files: {
       "/entry.ts": /* ts */ `
         export class A {}
-  
+
         export class B extends A {
           #e: string
           constructor(c: { d: any }) {
@@ -1469,7 +1469,7 @@ describe("bundler", () => {
         }
       `,
     },
-    unsupportedJSFeatures: "es2019",
+    unsupportedJSFeatures: ["es2019"],
     bundling: false,
   });
   itBundled("lower/LowerExportStarAsNameCollisionNoBundle", {
@@ -1481,7 +1481,7 @@ describe("bundler", () => {
         export {ns as sn}
       `,
     },
-    unsupportedJSFeatures: "es2019",
+    unsupportedJSFeatures: ["es2019"],
     bundling: false,
   });
   itBundled("lower/LowerExportStarAsNameCollision", {
@@ -1500,7 +1500,7 @@ describe("bundler", () => {
         export {foo as oof}
       `,
     },
-    unsupportedJSFeatures: "es2019",
+    unsupportedJSFeatures: ["es2019"],
   });
   itBundled("lower/LowerStrictModeSyntax", {
     // GENERATED
@@ -1582,7 +1582,7 @@ describe("bundler", () => {
           static bar = Foo.#foo
         }
         console.log(Foo.bar === 123)
-  
+
         class FooThis {
           static #foo = 123 // This must be set before "bar" is initialized
           static bar = this.#foo
@@ -1601,7 +1601,7 @@ describe("bundler", () => {
           static #foo() { return 123 } // This must be set before "bar" is initialized
         }
         console.log(Foo.bar === 123)
-  
+
         class FooThis {
           static bar = this.#foo()
           static #foo() { return 123 } // This must be set before "bar" is initialized
@@ -1620,7 +1620,7 @@ describe("bundler", () => {
           static get #foo() { return 123 } // This must be set before "bar" is initialized
         }
         console.log(Foo.bar === 123)
-  
+
         class FooThis {
           static bar = this.#foo
           static get #foo() { return 123 } // This must be set before "bar" is initialized

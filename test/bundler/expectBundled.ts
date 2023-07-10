@@ -92,9 +92,11 @@ export interface BundlerTestInput {
   /** Defaults to "esm" */
   format?: "esm" | "cjs" | "iife";
   globalName?: string;
+  host?: string;
   ignoreDCEAnnotations?: boolean;
   inject?: string[];
   jsx?: {
+    development?: boolean;
     runtime?: "automatic" | "classic";
     importSource?: string; // for automatic
     factory?: string; // for classic
@@ -117,6 +119,7 @@ export interface BundlerTestInput {
   metafile?: boolean | string;
   minifyIdentifiers?: boolean;
   minifySyntax?: boolean;
+  mode?: string;
   targetFromAPI?: "TargetWasConfigured";
   minifyWhitespace?: boolean;
   splitting?: boolean;
@@ -553,7 +556,7 @@ function expectBundled(
               // jsx.preserve && "--jsx=preserve",
               jsx.factory && `--jsx-factory=${jsx.factory}`,
               jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
-              env?.NODE_ENV !== "production" && `--jsx-dev`,
+              (jsx.development || env?.NODE_ENV !== "production") && `--jsx-dev`,
               entryNaming &&
                 entryNaming !== "[dir]/[name].[ext]" &&
                 `--entry-names=${entryNaming.replace(/\.\[ext]$/, "")}`,

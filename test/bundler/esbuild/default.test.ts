@@ -157,7 +157,7 @@ describe("bundler", () => {
       "/test.js": /* js */ `
         import * as module from "./out";
         import { strictEqual } from "node:assert";
-        
+
         strictEqual(module.default, 123, ".default");
         strictEqual(module.v, 234, ".v");
         strictEqual(module.l, 345, ".l");
@@ -272,7 +272,7 @@ describe("bundler", () => {
           await import('./c'),
           function nested() { return import('./c') },
         ]
-  
+
         deepEqual(a, 1, 'a');
         deepEqual(a2, 4, 'a2');
         deepEqual(c3, 2, 'c3');
@@ -331,7 +331,7 @@ describe("bundler", () => {
         const f = require("./f").default;
         const g = require("./g").default;
         const h = require("./h").default;
-        
+
         assert.deepEqual(commonjs.default, 123, "commonjs.default");
         assert.deepEqual(commonjs.v, 234, "commonjs.default");
         assert.deepEqual(commonjs.l, 345, "commonjs.l");
@@ -454,7 +454,7 @@ describe("bundler", () => {
   //   jsx: {
   //     factory: "elem",
   //     fragment: "frag",
-  //     automaticRuntime: true,
+  //     runtime: "automatic",
   //   },
   //   run: {
   //     stdout: `
@@ -558,7 +558,7 @@ describe("bundler", () => {
   //     "/custom-react.js": `module.exports = { jsx: 'jsx', Fragment: 'fragment2' }`,
   //   },
   //   jsx: {
-  //     automaticRuntime: true,
+  //     runtime: "automatic",
   //   },
   //   external: ["react"],
   //   run: {
@@ -581,7 +581,7 @@ describe("bundler", () => {
   //     `,
   //   },
   //   jsx: {
-  //     automaticRuntime: true,
+  //     runtime: "automatic",
   //   },
   //   external: ["react"],
   //   run: {
@@ -597,7 +597,7 @@ describe("bundler", () => {
   //     "/entry.mjs": `console.log(<div/>)`,
   //   },
   //   jsx: {
-  //     automaticRuntime: true,
+  //     runtime: "automatic",
   //   },
   //   external: ["react"],
   //   bundleErrors: {
@@ -790,19 +790,19 @@ describe("bundler", () => {
       "/entry.cjs": `
         require(tag\`./b\`)
         require(\`./\${b}\`)
-  
+
         try {
           require(tag\`./b\`)
           require(\`./\${b}\`)
         } catch {
         }
-  
+
         (async () => {
           import(tag\`./b\`)
           import(\`./\${b}\`)
           await import(tag\`./b\`)
           await import(\`./\${b}\`)
-  
+
           try {
             import(tag\`./b\`)
             import(\`./\${b}\`)
@@ -876,7 +876,7 @@ describe("bundler", () => {
         const x = process.argv[2] === 'true';
         const y = process.argv[3] === 'true';
         const c = process.argv[4];
-        
+
         console.log(require(x ? 'a' : y ? './b' : 'c').foo)
         console.log(require(x ? y ? 'a' : './b' : c).foo)
       `,
@@ -961,7 +961,7 @@ describe("bundler", () => {
       "/entry.js": /* js */ `
         require()
         require("a", "b")
-  
+
         try {
           require()
           require("a", "b")
@@ -1639,7 +1639,7 @@ describe("bundler", () => {
             foo(x = this) { return [x, this]; }
             static bar(x = this) { return [x, this]; }
           }
-          
+
           assert.deepEqual(bar('bun'), ['bun', undefined]);
           assert.deepEqual(bar.call('this'), ['this', 'this']);
           assert.deepEqual(bar.call('this', 'bun'), ['bun', 'this']);
@@ -1670,14 +1670,14 @@ describe("bundler", () => {
     files: {
       "/entry.js": /* js */ `
         import './cjs'
-  
+
         import './es6-import-stmt'
         import './es6-import-assign'
         import './es6-import-dynamic'
         import './es6-import-meta'
         import './es6-expr-import-dynamic'
         import './es6-expr-import-meta'
-  
+
         import './es6-export-variable'
         import './es6-export-function'
         import './es6-export-async-function'
@@ -1694,7 +1694,7 @@ describe("bundler", () => {
         import './es6-export-star-as'
         import './es6-export-assign'
         import './es6-export-import-assign'
-  
+
         import './es6-ns-export-variable'
         import './es6-ns-export-function'
         import './es6-ns-export-async-function'
@@ -1839,17 +1839,17 @@ describe("bundler", () => {
       "/entry.cjs": /* js */ `
         (async() => {
           var arguments = 'var';
-  
+
           const f1 = function foo(x = arguments) { return [x, arguments] }
           const f2 = (function(x = arguments) { return [x, arguments] });
           const o1 = ({foo(x = arguments) { return [x, arguments] }});
           const C1 = class Foo { foo(x = arguments) { return [x, arguments] } }
           const C2 = (class { foo(x = arguments) { return [x, arguments] } });
-  
+
           const f3 = function foo(x = arguments) { var arguments; return [x, arguments] }
           const f4 = (function(x = arguments) { var arguments; return [x, arguments] });
           const o2 = ({foo(x = arguments) { var arguments; return [x, arguments] }});
-  
+
           console.log('marker');
 
           const a1 = (x => [x, arguments]);
@@ -1857,19 +1857,19 @@ describe("bundler", () => {
           const a3 = (async () => [arguments]);
           const a4 = ((x = arguments) => [x, arguments]);
           const a5 = (async (x = arguments) => [x, arguments]);
-  
+
           const a6 = x => [x, arguments];
           const a7 = () => [arguments];
           const a8 = async () => [arguments];
           const a9 = (x = arguments) => [x, arguments];
           const a10 = async (x = arguments) => [x, arguments];
-  
+
           const a11 = (x => { return [x, arguments] });
           const a12 = (() => { return [arguments] });
           const a13 = (async () => { return [arguments] });
           const a14 = ((x = arguments) => { return [x, arguments] });
           const a15 = (async (x = arguments) => { return [x, arguments] });
-  
+
           const a16 = x => { return [x, arguments] };
           const a17 = () => { return [arguments] };
           const a18 = async () => { return [arguments] };
@@ -1989,7 +1989,7 @@ describe("bundler", () => {
           }
           eval('add(1, 2)')
         }
-  
+
         function test2() {
           let renameMe1 = 1;
           function add(first, second) {
@@ -1998,7 +1998,7 @@ describe("bundler", () => {
           }
           (0, eval)('add(1, 2)')
         }
-  
+
         function test3() {
           let renameMe1 = 1;
           function add(first, second) {
@@ -2006,7 +2006,7 @@ describe("bundler", () => {
             return first + second
           }
         }
-  
+
         function test4(eval) {
           let shouldNotBeRenamed2 = 1;
           function add(first, second) {
@@ -2015,7 +2015,7 @@ describe("bundler", () => {
           }
           eval('add(1, 2)')
         }
-  
+
         function test5() {
           let shouldNotBeRenamed3 = 1;
           function containsDirectEval() { eval() }
@@ -2067,7 +2067,7 @@ describe("bundler", () => {
     },
     jsx: {
       factory: "h",
-      automaticRuntime: false,
+      runtime: "classic",
     },
     external: ["preact"],
     run: true,
@@ -2089,12 +2089,12 @@ describe("bundler", () => {
         import '@a1'
         import '@a1/a2'
         import '@a1-a2'
-  
+
         import '@b1'
         import '@b1/b2'
         import '@b1/b2/b3'
         import '@b1/b2-b3'
-  
+
         import '@c1'
         import '@c1/c2'
         import '@c1/c2/c3'
@@ -2279,11 +2279,11 @@ describe("bundler", () => {
         // These URLs should be external automatically
         import fs from "node:fs/promises";
         fs.readFile();
-  
+
         // This should be external and should be tree-shaken because it's side-effect free
         import "node:path";
         import "querystring";
-  
+
         // This should be external too, but shouldn't be tree-shaken because it could be a run-time error
         import "node:what-is-this";
       `,
@@ -2309,11 +2309,11 @@ describe("bundler", () => {
         fs.readFile();
         import { CryptoHasher } from "bun";
         new CryptoHasher();
-        
+
         // This should be external and should be tree-shaken because it's side-effect free
         import "node:path";
         import "bun:sqlite";
-  
+
         // This should be external too, but shouldn't be tree-shaken because it could be a run-time error
         import "node:what-is-this";
         import "bun:what-is-this";
@@ -2339,7 +2339,7 @@ describe("bundler", () => {
         import "/dir/x/file.gif";
         import "/dir//file.gif";
         import "./file.png";
-  
+
         // Should not match
         import "/sassets/images/test.jpg";
         import "/dir/file.gif";
@@ -3434,7 +3434,7 @@ describe("bundler", () => {
           yield 2;
           yield 3;
           return 4;
-        } 
+        }
         console.log(await (Promise.resolve(0)));
         for await (const bar of foo()) console.log(bar);
       `,
@@ -3537,7 +3537,7 @@ describe("bundler", () => {
         import "./bad13.js"
         import "./bad14.js"
         import "./bad15.js"
-  
+
         import "./good0.js"
         import "./good1.js"
         import "./good2.js"
@@ -4117,10 +4117,10 @@ describe("bundler", () => {
           import.meta,
           import.meta.foo,
           import.meta.foo.bar,
-  
+
           // Should just substitute "import.meta.foo"
           import.meta.foo.length,
-  
+
           // This should not be substituted
           import.meta.main,
         )
@@ -4192,14 +4192,14 @@ describe("bundler", () => {
           this,
           this.foo,
           this.foo.bar,
-  
+
           // Should just substitute "this.foo"
           this.foo.baz,
-  
+
           // This should not be substituted
           this.bar,
         );
-  
+
         // This code should be the same as above
         (() => {
           ok(
@@ -4210,7 +4210,7 @@ describe("bundler", () => {
             this.bar,
           );
         })();
-  
+
         // Nothing should be substituted in this code
         export default function() {
           doNotSubstitute(
@@ -4403,15 +4403,15 @@ describe("bundler", () => {
           function fnStmtRemove() {}
           function fnStmtKeep() {}
           x = fnStmtKeep
-    
+
           let fnExprRemove = function remove() {}
           let fnExprKeep = function keepFn() {}
           x = fnExprKeep
-    
+
           class clsStmtRemove {}
           class clsStmtKeep {}
           new clsStmtKeep()
-    
+
           let clsExprRemove = class remove {}
           let clsExprKeep = class keepClass {}
           new clsExprKeep()
@@ -4441,14 +4441,14 @@ describe("bundler", () => {
         class ClassName1D { static get name() {} }
         class ClassName1E { static set name(x) {} }
         class ClassName1F { static ['name'] = 0 }
-  
+
         let a = class ClassName2a { static foo }
         let b = class ClassName2b { static name }
         let c = class ClassName2c { static name() {} }
         let d = class ClassName2d { static get name() {} }
         let e = class ClassName2e { static set name(x) {} }
         let f = class ClassName2f { static ['name'] = 0 }
-  
+
         let ClassName_a2 = class { static foo }
         let ClassName_b2 = class { static name }
         let ClassName_c2 = class { static name() {} }
@@ -4503,7 +4503,7 @@ describe("bundler", () => {
         export default function(one, two, three, four) {
           return 'the argument names must be the same'
         }
-  
+
         // Some comment text to change the character frequency histogram:
         // ________________________________________________________________________________
         // FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
@@ -4723,7 +4723,7 @@ describe("bundler", () => {
   //   external: ["react/jsx-dev-runtime", "react"],
   //   jsx: {
   //     development: false,
-  //     automaticRuntime: false,
+  //     runtime: "classic",
   //     factory: "this",
   //     fragment: "this",
   //   },
@@ -5227,7 +5227,7 @@ describe("bundler", () => {
           require('fs'),
           require('fs/promises'),
           require('node:foo'),
-  
+
           // These are not node core modules
           require('fs/abc'),
           require('fs/'),
@@ -5333,33 +5333,33 @@ describe("bundler", () => {
     files: {
       "/entry.js": /* js */ `
         import 'a_nowrap'
-  
+
         import { b } from 'b_nowrap'
         b()
-  
+
         export * from 'c_nowrap'
-  
+
         import * as d from 'd_WRAP'
         x = d.x
-  
+
         import e from 'e_WRAP'
         e()
-  
+
         import { default as f } from 'f_WRAP'
         f()
-  
+
         import { __esModule as g } from 'g_WRAP'
         g()
-  
+
         import * as h from 'h_WRAP'
         x = h
-  
+
         import * as i from 'i_WRAP'
         i.x()
-  
+
         import * as j from 'j_WRAP'
         j.x\` + "\`\`" + \`
-  
+
         x = import("k_WRAP")
       `,
     },
@@ -5421,7 +5421,7 @@ describe("bundler", () => {
           }
           return { bar_, foo_ }
         }
-  
+
         export function shouldNotMangle() {
           let foo = {
             'bar_': 0,
@@ -5468,7 +5468,7 @@ describe("bundler", () => {
           }
           return { bar_, foo_ }
         }
-  
+
         export function shouldNotMangle_YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY() {
           let foo = {
             'bar_': 0,
@@ -5683,7 +5683,7 @@ describe("bundler", () => {
           ) {
           }
         }
-  
+
         let foo = new Foo
         console.log(foo.KEEP_FIELD, foo.MANGLE_FIELD_)
       `,
@@ -5697,7 +5697,7 @@ describe("bundler", () => {
           export class MANGLE_CLASS_ {}
           export namespace MANGLE_NAMESPACE_ { ; }
           export enum MANGLE_ENUM_ {}
-  
+
           console.log({
             VAR: MANGLE_VAR_,
             LET: MANGLE_LET_,
@@ -5709,7 +5709,7 @@ describe("bundler", () => {
             ENUM: MANGLE_ENUM_,
           })
         }
-  
+
         console.log({
           VAR: ns.MANGLE_VAR_,
           LET: ns.MANGLE_LET_,
@@ -5720,7 +5720,7 @@ describe("bundler", () => {
           NAMESPACE: ns.MANGLE_NAMESPACE_,
           ENUM: ns.MANGLE_ENUM_,
         })
-  
+
         namespace ns {
           console.log({
             VAR: MANGLE_VAR_,
@@ -5741,7 +5741,7 @@ describe("bundler", () => {
           foo: TopLevelNumber.foo_,
           bar: TopLevelString.bar_,
         })
-  
+
         function fn() {
           enum NestedNumber { foo_ = 0 }
           enum NestedString { bar_ = '' }
@@ -6281,7 +6281,7 @@ describe("bundler", () => {
           import(foo /* after */),
           import('foo' /* after */),
         )
-  
+
         console.log(
           import('foo', /* before */ { assert: { type: 'json' } }),
           import('foo', { /* before */ assert: { type: 'json' } }),
@@ -6292,21 +6292,21 @@ describe("bundler", () => {
           import('foo', { assert: { type: 'json' } /* before */ }),
           import('foo', { assert: { type: 'json' } } /* before */),
         )
-  
+
         console.log(
           require(/* before */ foo),
           require(/* before */ 'foo'),
           require(foo /* after */),
           require('foo' /* after */),
         )
-  
+
         console.log(
           require.resolve(/* before */ foo),
           require.resolve(/* before */ 'foo'),
           require.resolve(foo /* after */),
           require.resolve('foo' /* after */),
         )
-  
+
         let [/* foo */] = [/* bar */];
         let [
           // foo
@@ -6315,7 +6315,7 @@ describe("bundler", () => {
         ];
         let [/*before*/ ...s] = [/*before*/ ...s]
         let [... /*before*/ s2] = [... /*before*/ s2]
-  
+
         let { /* foo */ } = { /* bar */ };
         let {
           // foo
@@ -6324,7 +6324,7 @@ describe("bundler", () => {
         };
         let { /*before*/ ...s3 } = { /*before*/ ...s3 }
         let { ... /*before*/ s4 } = { ... /*before*/ s4 }
-  
+
         let [/* before */ x] = [/* before */ x];
         let [/* before */ x2 /* after */] = [/* before */ x2 /* after */];
         let [
@@ -6336,7 +6336,7 @@ describe("bundler", () => {
           x3
           // after
         ];
-  
+
         let { /* before */ y } = { /* before */ y };
         let { /* before */ y2 /* after */ } = { /* before */ y2 /* after */ };
         let {
@@ -6351,10 +6351,10 @@ describe("bundler", () => {
         let { /* before */ [y4]: y4 } = { /* before */ [y4]: y4 };
         let { [/* before */ y5]: y5 } = { [/* before */ y5]: y5 };
         let { [y6 /* after */]: y6 } = { [y6 /* after */]: y6 };
-  
+
         foo[/* before */ x] = foo[/* before */ x]
         foo[x /* after */] = foo[x /* after */]
-  
+
         console.log(
           // before
           foo,
@@ -6362,7 +6362,7 @@ describe("bundler", () => {
           bar,
           // comment after
         )
-  
+
         console.log([
           // before
           foo,
@@ -6370,7 +6370,7 @@ describe("bundler", () => {
           bar,
           // comment after
         ])
-  
+
         console.log({
           // before
           foo,
@@ -6378,7 +6378,7 @@ describe("bundler", () => {
           bar,
           // comment after
         })
-  
+
         console.log(class {
           // before
           foo
@@ -6386,7 +6386,7 @@ describe("bundler", () => {
           bar
           // comment after
         })
-  
+
         console.log(
           () => { return /* foo */ null },
           () => { throw /* foo */ null },
@@ -6401,22 +6401,22 @@ describe("bundler", () => {
               null) + 1
           },
         )
-  
+
         console.log(
           /*a*/ a ? /*b*/ b : /*c*/ c,
           a /*a*/ ? b /*b*/ : c /*c*/,
         )
-  
+
         for (/*foo*/a;;);
         for (;/*foo*/a;);
         for (;;/*foo*/a);
-  
+
         for (/*foo*/a in b);
         for (a in /*foo*/b);
-  
+
         for (/*foo*/a of b);
         for (a of /*foo*/b);
-  
+
         if (/*foo*/a);
         while (/*foo*/a);
         do {} while (/*foo*/a);
@@ -6475,7 +6475,7 @@ describe("bundler", () => {
           <div {/*before*/...x} />,
           <div>{/*before*/x}</div>,
           <>{/*before*/x}</>,
-  
+
           // Comments on absent AST nodes
           <div>before{}after</div>,
           <div>before{/* comment 1 *//* comment 2 */}after</div>,
@@ -6505,7 +6505,7 @@ describe("bundler", () => {
           <div {/*before*/...x} />,
           <div>{/*before*/x}</div>,
           <>{/*before*/x}</>,
-  
+
           // Comments on absent AST nodes
           <div>before{}after</div>,
           <div>before{/* comment 1 *//* comment 2 */}after</div>,

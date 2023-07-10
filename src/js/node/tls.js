@@ -378,15 +378,18 @@ const TLSSocket = (function (InternalTLSSocket) {
       throw Error("Not implented in Bun yet");
     }
     getPeerCertificate(abbreviated) {
-      const cert = arguments.length < 1 ? this[bunSocketInternal]?.getPeerCertificate() : this[bunSocketInternal]?.getPeerCertificate(abbreviated);
-      if(cert) {
+      const cert =
+        arguments.length < 1
+          ? this[bunSocketInternal]?.getPeerCertificate()
+          : this[bunSocketInternal]?.getPeerCertificate(abbreviated);
+      if (cert) {
         return translatePeerCertificate(cert);
       }
     }
     getCertificate() {
       // need to implement certificate on socket.zig
       const cert = this[bunSocketInternal]?.getCertificate();
-      if(cert) {
+      if (cert) {
         // It's not a peer cert, but the formatting is identical.
         return translatePeerCertificate(cert);
       }

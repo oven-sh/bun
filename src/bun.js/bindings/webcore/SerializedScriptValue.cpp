@@ -139,10 +139,18 @@ enum class SerializationReturnCode {
     UnspecifiedError
 };
 
-enum WalkerState { StateUnknown, ArrayStartState, ArrayStartVisitMember, ArrayEndVisitMember,
-    ObjectStartState, ObjectStartVisitMember, ObjectEndVisitMember,
-    MapDataStartVisitEntry, MapDataEndVisitKey, MapDataEndVisitValue,
-    SetDataStartVisitEntry, SetDataEndVisitKey };
+enum WalkerState { StateUnknown,
+    ArrayStartState,
+    ArrayStartVisitMember,
+    ArrayEndVisitMember,
+    ObjectStartState,
+    ObjectStartVisitMember,
+    ObjectEndVisitMember,
+    MapDataStartVisitEntry,
+    MapDataEndVisitKey,
+    MapDataEndVisitValue,
+    SetDataStartVisitEntry,
+    SetDataEndVisitKey };
 
 // These can't be reordered, and any new types must be added to the end of the list
 // When making changes to these lists please cover your new type(s) in the API test "IndexedDB.StructuredCloneBackwardCompatibility"
@@ -260,7 +268,8 @@ static unsigned typedArrayElementSize(ArrayBufferViewSubtag tag)
 enum class PredefinedColorSpaceTag : uint8_t {
     SRGB = 0
 #if ENABLE(PREDEFINED_COLOR_SPACE_DISPLAY_P3)
-    , DisplayP3 = 1
+    ,
+    DisplayP3 = 1
 #endif
 };
 
@@ -360,7 +369,6 @@ enum class CryptoKeyOKPOpNameTag {
     ED25519 = 1,
 };
 const uint8_t cryptoKeyOKPOpNameTagMaximumValue = 1;
-
 
 #endif
 
@@ -575,6 +583,7 @@ using DeserializationResult = std::pair<JSC::JSValue, SerializationReturnCode>;
 
 class CloneBase {
     WTF_FORBID_HEAP_ALLOCATION;
+
 protected:
     CloneBase(JSGlobalObject* lexicalGlobalObject)
         : m_lexicalGlobalObject(lexicalGlobalObject)
@@ -607,12 +616,12 @@ static bool unwrapCryptoKey(JSGlobalObject* lexicalGlobalObject, const Vector<ui
 #endif
 
 #if ASSUME_LITTLE_ENDIAN
-template <typename T> static void writeLittleEndian(Vector<uint8_t>& buffer, T value)
+template<typename T> static void writeLittleEndian(Vector<uint8_t>& buffer, T value)
 {
     buffer.append(reinterpret_cast<uint8_t*>(&value), sizeof(value));
 }
 #else
-template <typename T> static void writeLittleEndian(Vector<uint8_t>& buffer, T value)
+template<typename T> static void writeLittleEndian(Vector<uint8_t>& buffer, T value)
 {
     for (unsigned i = 0; i < sizeof(T); i++) {
         buffer.append(value & 0xFF);
@@ -621,12 +630,12 @@ template <typename T> static void writeLittleEndian(Vector<uint8_t>& buffer, T v
 }
 #endif
 
-template <> void writeLittleEndian<uint8_t>(Vector<uint8_t>& buffer, uint8_t value)
+template<> void writeLittleEndian<uint8_t>(Vector<uint8_t>& buffer, uint8_t value)
 {
     buffer.append(value);
 }
 
-template <typename T> static bool writeLittleEndian(Vector<uint8_t>& buffer, const T* values, uint32_t length)
+template<typename T> static bool writeLittleEndian(Vector<uint8_t>& buffer, const T* values, uint32_t length)
 {
     if (length > std::numeric_limits<uint32_t>::max() / sizeof(T))
         return false;
@@ -645,7 +654,7 @@ template <typename T> static bool writeLittleEndian(Vector<uint8_t>& buffer, con
     return true;
 }
 
-template <> bool writeLittleEndian<uint8_t>(Vector<uint8_t>& buffer, const uint8_t* values, uint32_t length)
+template<> bool writeLittleEndian<uint8_t>(Vector<uint8_t>& buffer, const uint8_t* values, uint32_t length)
 {
     buffer.append(values, length);
     return true;
@@ -653,21 +662,22 @@ template <> bool writeLittleEndian<uint8_t>(Vector<uint8_t>& buffer, const uint8
 
 class CloneSerializer : CloneBase {
     WTF_FORBID_HEAP_ALLOCATION;
+
 public:
     static SerializationReturnCode serialize(JSGlobalObject* lexicalGlobalObject, JSValue value, Vector<RefPtr<MessagePort>>& messagePorts, Vector<RefPtr<JSC::ArrayBuffer>>& arrayBuffers, const Vector<RefPtr<ImageBitmap>>& imageBitmaps,
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
-            const Vector<RefPtr<OffscreenCanvas>>& offscreenCanvases,
+        const Vector<RefPtr<OffscreenCanvas>>& offscreenCanvases,
 #endif
 #if ENABLE(WEB_RTC)
-            const Vector<Ref<RTCDataChannel>>& rtcDataChannels,
+        const Vector<Ref<RTCDataChannel>>& rtcDataChannels,
 #endif
 #if ENABLE(WEB_CODECS)
-            Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>>& serializedVideoChunks,
-            Vector<RefPtr<WebCodecsVideoFrame>>& serializedVideoFrames,
+        Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>>& serializedVideoChunks,
+        Vector<RefPtr<WebCodecsVideoFrame>>& serializedVideoFrames,
 #endif
 #if ENABLE(WEBASSEMBLY)
-            WasmModuleArray& wasmModules,
-            WasmMemoryHandleArray& wasmMemoryHandles,
+        WasmModuleArray& wasmModules,
+        WasmMemoryHandleArray& wasmMemoryHandles,
 #endif
         Vector<URLKeepingBlobAlive>& blobHandles, Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers,
         SerializationForStorage forStorage)
@@ -712,18 +722,18 @@ private:
 
     CloneSerializer(JSGlobalObject* lexicalGlobalObject, Vector<RefPtr<MessagePort>>& messagePorts, Vector<RefPtr<JSC::ArrayBuffer>>& arrayBuffers, const Vector<RefPtr<ImageBitmap>>& imageBitmaps,
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
-            const Vector<RefPtr<OffscreenCanvas>>& offscreenCanvases,
+        const Vector<RefPtr<OffscreenCanvas>>& offscreenCanvases,
 #endif
 #if ENABLE(WEB_RTC)
-            const Vector<Ref<RTCDataChannel>>& rtcDataChannels,
+        const Vector<Ref<RTCDataChannel>>& rtcDataChannels,
 #endif
 #if ENABLE(WEB_CODECS)
-            Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>>& serializedVideoChunks,
-            Vector<RefPtr<WebCodecsVideoFrame>>& serializedVideoFrames,
+        Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>>& serializedVideoChunks,
+        Vector<RefPtr<WebCodecsVideoFrame>>& serializedVideoFrames,
 #endif
 #if ENABLE(WEBASSEMBLY)
-            WasmModuleArray& wasmModules,
-            WasmMemoryHandleArray& wasmMemoryHandles,
+        WasmModuleArray& wasmModules,
+        WasmMemoryHandleArray& wasmMemoryHandles,
 #endif
         Vector<URLKeepingBlobAlive>& blobHandles, Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers, SerializationForStorage forStorage)
         : CloneBase(lexicalGlobalObject)
@@ -754,7 +764,7 @@ private:
 #endif
     }
 
-    template <class T>
+    template<class T>
     void fillTransferMap(const Vector<RefPtr<T>>& input, ObjectPool& result)
     {
         if (input.isEmpty())
@@ -767,7 +777,7 @@ private:
                 result.add(obj, i);
         }
     }
-    template <class T>
+    template<class T>
     void fillTransferMap(const Vector<Ref<T>>& input, ObjectPool& result)
     {
         if (input.isEmpty())
@@ -1414,7 +1424,7 @@ private:
                 }
                 if (!startObjectInternal(obj)) // handle duplicates
                     return true;
-                
+
                 if (arrayBuffer->isShared() && m_context == SerializationContext::WorkerPostMessage) {
                     // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
                     if (!JSC::Options::useSharedArrayBuffer()) {
@@ -1430,7 +1440,7 @@ private:
                         return true;
                     }
                 }
-                
+
                 if (arrayBuffer->isResizableOrGrowableShared()) {
                     write(ResizableArrayBufferTag);
                     uint64_t byteLength = arrayBuffer->byteLength();
@@ -1470,12 +1480,12 @@ private:
                 WasmMemoryHandleArray dummyMemoryHandles;
 #endif
                 ArrayBufferContentsArray dummySharedBuffers;
-                CloneSerializer rawKeySerializer(m_lexicalGlobalObject, dummyMessagePorts, dummyArrayBuffers, { },
+                CloneSerializer rawKeySerializer(m_lexicalGlobalObject, dummyMessagePorts, dummyArrayBuffers, {},
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
-                    { },
+                    {},
 #endif
 #if ENABLE(WEB_RTC)
-                    { },
+                    {},
 #endif
 #if ENABLE(WEB_CODECS)
                     dummyVideoChunks,
@@ -1514,7 +1524,7 @@ private:
                 if (m_context != SerializationContext::WorkerPostMessage && m_context != SerializationContext::WindowPostMessage)
                     return false;
 
-                uint32_t index = m_wasmModules.size(); 
+                uint32_t index = m_wasmModules.size();
                 m_wasmModules.append(&module->module());
                 write(WasmModuleTag);
                 write(agentClusterIDFromGlobalObject(*m_lexicalGlobalObject));
@@ -1666,7 +1676,7 @@ private:
     {
         writeLittleEndian(m_buffer, i);
     }
-    
+
     void write(uint16_t ch)
     {
         writeLittleEndian(m_buffer, ch);
@@ -1676,13 +1686,13 @@ private:
     {
         writeConstantPoolIndex(m_constantPool, i);
     }
-    
+
     void writeObjectIndex(unsigned i)
     {
         writeConstantPoolIndex(m_objectPool, i);
     }
 
-    template <class T> void writeConstantPoolIndex(const T& constantPool, unsigned i)
+    template<class T> void writeConstantPoolIndex(const T& constantPool, unsigned i)
     {
         ASSERT(i < constantPool.size());
         if (constantPool.size() <= 0xFF)
@@ -2081,232 +2091,232 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
     auto scope = DECLARE_THROW_SCOPE(vm);
     while (1) {
         switch (state) {
-            arrayStartState:
-            case ArrayStartState: {
-                ASSERT(isArray(inValue));
-                if (inputObjectStack.size() > maximumFilterRecursion)
-                    return SerializationReturnCode::StackOverflowError;
+        arrayStartState:
+        case ArrayStartState: {
+            ASSERT(isArray(inValue));
+            if (inputObjectStack.size() > maximumFilterRecursion)
+                return SerializationReturnCode::StackOverflowError;
 
-                JSArray* inArray = asArray(inValue);
-                unsigned length = inArray->length();
-                if (!startArray(inArray))
-                    break;
-                inputObjectStack.append(inArray);
-                indexStack.append(0);
-                lengthStack.append(length);
-            }
-            arrayStartVisitMember:
+            JSArray* inArray = asArray(inValue);
+            unsigned length = inArray->length();
+            if (!startArray(inArray))
+                break;
+            inputObjectStack.append(inArray);
+            indexStack.append(0);
+            lengthStack.append(length);
+        }
+        arrayStartVisitMember:
             FALLTHROUGH;
-            case ArrayStartVisitMember: {
-                JSObject* array = inputObjectStack.last();
-                uint32_t index = indexStack.last();
-                if (index == lengthStack.last()) {
-                    indexStack.removeLast();
-                    lengthStack.removeLast();
+        case ArrayStartVisitMember: {
+            JSObject* array = inputObjectStack.last();
+            uint32_t index = indexStack.last();
+            if (index == lengthStack.last()) {
+                indexStack.removeLast();
+                lengthStack.removeLast();
 
-                    propertyStack.append(PropertyNameArray(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
-                    array->getOwnNonIndexPropertyNames(m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
-                    if (UNLIKELY(scope.exception()))
-                        return SerializationReturnCode::ExistingExceptionError;
-                    if (propertyStack.last().size()) {
-                        write(NonIndexPropertiesTag);
-                        indexStack.append(0);
-                        goto objectStartVisitMember;
-                    }
-                    propertyStack.removeLast();
-
-                    endObject();
-                    inputObjectStack.removeLast();
-                    break;
-                }
-                inValue = array->getDirectIndex(m_lexicalGlobalObject, index);
+                propertyStack.append(PropertyNameArray(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
+                array->getOwnNonIndexPropertyNames(m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
                 if (UNLIKELY(scope.exception()))
                     return SerializationReturnCode::ExistingExceptionError;
-                if (!inValue) {
-                    indexStack.last()++;
-                    goto arrayStartVisitMember;
+                if (propertyStack.last().size()) {
+                    write(NonIndexPropertiesTag);
+                    indexStack.append(0);
+                    goto objectStartVisitMember;
                 }
+                propertyStack.removeLast();
 
-                write(index);
-                auto terminalCode = SerializationReturnCode::SuccessfullyCompleted;
-                if (dumpIfTerminal(inValue, terminalCode)) {
-                    if (terminalCode != SerializationReturnCode::SuccessfullyCompleted)
-                        return terminalCode;
-                    indexStack.last()++;
-                    goto arrayStartVisitMember;
-                }
-                stateStack.append(ArrayEndVisitMember);
-                goto stateUnknown;
+                endObject();
+                inputObjectStack.removeLast();
+                break;
             }
-            case ArrayEndVisitMember: {
+            inValue = array->getDirectIndex(m_lexicalGlobalObject, index);
+            if (UNLIKELY(scope.exception()))
+                return SerializationReturnCode::ExistingExceptionError;
+            if (!inValue) {
                 indexStack.last()++;
                 goto arrayStartVisitMember;
             }
-            objectStartState:
-            case ObjectStartState: {
-                ASSERT(inValue.isObject());
-                if (inputObjectStack.size() > maximumFilterRecursion)
-                    return SerializationReturnCode::StackOverflowError;
-                JSObject* inObject = asObject(inValue);
-                if (!startObject(inObject))
-                    break;
-                // At this point, all supported objects other than Object
-                // objects have been handled. If we reach this point and
-                // the input is not an Object object then we should throw
-                // a DataCloneError.
-                if (inObject->classInfo() != JSFinalObject::info())
-                    return SerializationReturnCode::DataCloneError;
-                inputObjectStack.append(inObject);
-                indexStack.append(0);
-                propertyStack.append(PropertyNameArray(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
-                inObject->methodTable()->getOwnPropertyNames(inObject, m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
-                if (UNLIKELY(scope.exception()))
-                    return SerializationReturnCode::ExistingExceptionError;
-            }
-            objectStartVisitMember:
-            FALLTHROUGH;
-            case ObjectStartVisitMember: {
-                JSObject* object = inputObjectStack.last();
-                uint32_t index = indexStack.last();
-                PropertyNameArray& properties = propertyStack.last();
-                if (index == properties.size()) {
-                    endObject();
-                    inputObjectStack.removeLast();
-                    indexStack.removeLast();
-                    propertyStack.removeLast();
-                    break;
-                }
-                inValue = getProperty(object, properties[index]);
-                if (UNLIKELY(scope.exception()))
-                    return SerializationReturnCode::ExistingExceptionError;
 
-                if (!inValue) {
-                    // Property was removed during serialisation
-                    indexStack.last()++;
-                    goto objectStartVisitMember;
-                }
-                write(properties[index]);
-
-                if (UNLIKELY(scope.exception()))
-                    return SerializationReturnCode::ExistingExceptionError;
-
-                auto terminalCode = SerializationReturnCode::SuccessfullyCompleted;
-                if (!dumpIfTerminal(inValue, terminalCode)) {
-                    stateStack.append(ObjectEndVisitMember);
-                    goto stateUnknown;
-                }
+            write(index);
+            auto terminalCode = SerializationReturnCode::SuccessfullyCompleted;
+            if (dumpIfTerminal(inValue, terminalCode)) {
                 if (terminalCode != SerializationReturnCode::SuccessfullyCompleted)
                     return terminalCode;
-                FALLTHROUGH;
+                indexStack.last()++;
+                goto arrayStartVisitMember;
             }
-            case ObjectEndVisitMember: {
-                if (UNLIKELY(scope.exception()))
-                    return SerializationReturnCode::ExistingExceptionError;
+            stateStack.append(ArrayEndVisitMember);
+            goto stateUnknown;
+        }
+        case ArrayEndVisitMember: {
+            indexStack.last()++;
+            goto arrayStartVisitMember;
+        }
+        objectStartState:
+        case ObjectStartState: {
+            ASSERT(inValue.isObject());
+            if (inputObjectStack.size() > maximumFilterRecursion)
+                return SerializationReturnCode::StackOverflowError;
+            JSObject* inObject = asObject(inValue);
+            if (!startObject(inObject))
+                break;
+            // At this point, all supported objects other than Object
+            // objects have been handled. If we reach this point and
+            // the input is not an Object object then we should throw
+            // a DataCloneError.
+            if (inObject->classInfo() != JSFinalObject::info())
+                return SerializationReturnCode::DataCloneError;
+            inputObjectStack.append(inObject);
+            indexStack.append(0);
+            propertyStack.append(PropertyNameArray(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
+            inObject->methodTable()->getOwnPropertyNames(inObject, m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
+            if (UNLIKELY(scope.exception()))
+                return SerializationReturnCode::ExistingExceptionError;
+        }
+        objectStartVisitMember:
+            FALLTHROUGH;
+        case ObjectStartVisitMember: {
+            JSObject* object = inputObjectStack.last();
+            uint32_t index = indexStack.last();
+            PropertyNameArray& properties = propertyStack.last();
+            if (index == properties.size()) {
+                endObject();
+                inputObjectStack.removeLast();
+                indexStack.removeLast();
+                propertyStack.removeLast();
+                break;
+            }
+            inValue = getProperty(object, properties[index]);
+            if (UNLIKELY(scope.exception()))
+                return SerializationReturnCode::ExistingExceptionError;
 
+            if (!inValue) {
+                // Property was removed during serialisation
                 indexStack.last()++;
                 goto objectStartVisitMember;
             }
-            mapStartState: {
-                ASSERT(inValue.isObject());
-                if (inputObjectStack.size() > maximumFilterRecursion)
-                    return SerializationReturnCode::StackOverflowError;
-                JSMap* inMap = jsCast<JSMap*>(inValue);
-                if (!startMap(inMap))
-                    break;
-                JSMapIterator* iterator = JSMapIterator::create(vm, m_lexicalGlobalObject->mapIteratorStructure(), inMap, IterationKind::Entries);
-                m_gcBuffer.appendWithCrashOnOverflow(inMap);
-                m_gcBuffer.appendWithCrashOnOverflow(iterator);
-                mapIteratorStack.append(iterator);
-                inputObjectStack.append(inMap);
-                goto mapDataStartVisitEntry;
-            }
-            mapDataStartVisitEntry:
-            case MapDataStartVisitEntry: {
-                JSMapIterator* iterator = mapIteratorStack.last();
-                JSValue key, value;
-                if (!iterator->nextKeyValue(m_lexicalGlobalObject, key, value)) {
-                    mapIteratorStack.removeLast();
-                    JSObject* object = inputObjectStack.last();
-                    ASSERT(jsDynamicCast<JSMap*>(object));
-                    propertyStack.append(PropertyNameArray(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
-                    object->methodTable()->getOwnPropertyNames(object, m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
-                    if (UNLIKELY(scope.exception()))
-                        return SerializationReturnCode::ExistingExceptionError;
-                    write(NonMapPropertiesTag);
-                    indexStack.append(0);
-                    goto objectStartVisitMember;
-                }
-                inValue = key;
-                m_gcBuffer.appendWithCrashOnOverflow(value);
-                mapIteratorValueStack.append(value);
-                stateStack.append(MapDataEndVisitKey);
+            write(properties[index]);
+
+            if (UNLIKELY(scope.exception()))
+                return SerializationReturnCode::ExistingExceptionError;
+
+            auto terminalCode = SerializationReturnCode::SuccessfullyCompleted;
+            if (!dumpIfTerminal(inValue, terminalCode)) {
+                stateStack.append(ObjectEndVisitMember);
                 goto stateUnknown;
             }
-            case MapDataEndVisitKey: {
-                inValue = mapIteratorValueStack.last();
-                mapIteratorValueStack.removeLast();
-                stateStack.append(MapDataEndVisitValue);
-                goto stateUnknown;
+            if (terminalCode != SerializationReturnCode::SuccessfullyCompleted)
+                return terminalCode;
+            FALLTHROUGH;
+        }
+        case ObjectEndVisitMember: {
+            if (UNLIKELY(scope.exception()))
+                return SerializationReturnCode::ExistingExceptionError;
+
+            indexStack.last()++;
+            goto objectStartVisitMember;
+        }
+        mapStartState : {
+            ASSERT(inValue.isObject());
+            if (inputObjectStack.size() > maximumFilterRecursion)
+                return SerializationReturnCode::StackOverflowError;
+            JSMap* inMap = jsCast<JSMap*>(inValue);
+            if (!startMap(inMap))
+                break;
+            JSMapIterator* iterator = JSMapIterator::create(vm, m_lexicalGlobalObject->mapIteratorStructure(), inMap, IterationKind::Entries);
+            m_gcBuffer.appendWithCrashOnOverflow(inMap);
+            m_gcBuffer.appendWithCrashOnOverflow(iterator);
+            mapIteratorStack.append(iterator);
+            inputObjectStack.append(inMap);
+            goto mapDataStartVisitEntry;
+        }
+        mapDataStartVisitEntry:
+        case MapDataStartVisitEntry: {
+            JSMapIterator* iterator = mapIteratorStack.last();
+            JSValue key, value;
+            if (!iterator->nextKeyValue(m_lexicalGlobalObject, key, value)) {
+                mapIteratorStack.removeLast();
+                JSObject* object = inputObjectStack.last();
+                ASSERT(jsDynamicCast<JSMap*>(object));
+                propertyStack.append(PropertyNameArray(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
+                object->methodTable()->getOwnPropertyNames(object, m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
+                if (UNLIKELY(scope.exception()))
+                    return SerializationReturnCode::ExistingExceptionError;
+                write(NonMapPropertiesTag);
+                indexStack.append(0);
+                goto objectStartVisitMember;
             }
-            case MapDataEndVisitValue: {
-                goto mapDataStartVisitEntry;
+            inValue = key;
+            m_gcBuffer.appendWithCrashOnOverflow(value);
+            mapIteratorValueStack.append(value);
+            stateStack.append(MapDataEndVisitKey);
+            goto stateUnknown;
+        }
+        case MapDataEndVisitKey: {
+            inValue = mapIteratorValueStack.last();
+            mapIteratorValueStack.removeLast();
+            stateStack.append(MapDataEndVisitValue);
+            goto stateUnknown;
+        }
+        case MapDataEndVisitValue: {
+            goto mapDataStartVisitEntry;
+        }
+
+        setStartState : {
+            ASSERT(inValue.isObject());
+            if (inputObjectStack.size() > maximumFilterRecursion)
+                return SerializationReturnCode::StackOverflowError;
+            JSSet* inSet = jsCast<JSSet*>(inValue);
+            if (!startSet(inSet))
+                break;
+            JSSetIterator* iterator = JSSetIterator::create(vm, m_lexicalGlobalObject->setIteratorStructure(), inSet, IterationKind::Keys);
+            m_gcBuffer.appendWithCrashOnOverflow(inSet);
+            m_gcBuffer.appendWithCrashOnOverflow(iterator);
+            setIteratorStack.append(iterator);
+            inputObjectStack.append(inSet);
+            goto setDataStartVisitEntry;
+        }
+        setDataStartVisitEntry:
+        case SetDataStartVisitEntry: {
+            JSSetIterator* iterator = setIteratorStack.last();
+            JSValue key;
+            if (!iterator->next(m_lexicalGlobalObject, key)) {
+                setIteratorStack.removeLast();
+                JSObject* object = inputObjectStack.last();
+                ASSERT(jsDynamicCast<JSSet*>(object));
+                propertyStack.append(PropertyNameArray(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
+                object->methodTable()->getOwnPropertyNames(object, m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
+                if (UNLIKELY(scope.exception()))
+                    return SerializationReturnCode::ExistingExceptionError;
+                write(NonSetPropertiesTag);
+                indexStack.append(0);
+                goto objectStartVisitMember;
+            }
+            inValue = key;
+            stateStack.append(SetDataEndVisitKey);
+            goto stateUnknown;
+        }
+        case SetDataEndVisitKey: {
+            goto setDataStartVisitEntry;
+        }
+
+        stateUnknown:
+        case StateUnknown: {
+            auto terminalCode = SerializationReturnCode::SuccessfullyCompleted;
+            if (dumpIfTerminal(inValue, terminalCode)) {
+                if (terminalCode != SerializationReturnCode::SuccessfullyCompleted)
+                    return terminalCode;
+                break;
             }
 
-            setStartState: {
-                ASSERT(inValue.isObject());
-                if (inputObjectStack.size() > maximumFilterRecursion)
-                    return SerializationReturnCode::StackOverflowError;
-                JSSet* inSet = jsCast<JSSet*>(inValue);
-                if (!startSet(inSet))
-                    break;
-                JSSetIterator* iterator = JSSetIterator::create(vm, m_lexicalGlobalObject->setIteratorStructure(), inSet, IterationKind::Keys);
-                m_gcBuffer.appendWithCrashOnOverflow(inSet);
-                m_gcBuffer.appendWithCrashOnOverflow(iterator);
-                setIteratorStack.append(iterator);
-                inputObjectStack.append(inSet);
-                goto setDataStartVisitEntry;
-            }
-            setDataStartVisitEntry:
-            case SetDataStartVisitEntry: {
-                JSSetIterator* iterator = setIteratorStack.last();
-                JSValue key;
-                if (!iterator->next(m_lexicalGlobalObject, key)) {
-                    setIteratorStack.removeLast();
-                    JSObject* object = inputObjectStack.last();
-                    ASSERT(jsDynamicCast<JSSet*>(object));
-                    propertyStack.append(PropertyNameArray(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
-                    object->methodTable()->getOwnPropertyNames(object, m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
-                    if (UNLIKELY(scope.exception()))
-                        return SerializationReturnCode::ExistingExceptionError;
-                    write(NonSetPropertiesTag);
-                    indexStack.append(0);
-                    goto objectStartVisitMember;
-                }
-                inValue = key;
-                stateStack.append(SetDataEndVisitKey);
-                goto stateUnknown;
-            }
-            case SetDataEndVisitKey: {
-                goto setDataStartVisitEntry;
-            }
-
-            stateUnknown:
-            case StateUnknown: {
-                auto terminalCode = SerializationReturnCode::SuccessfullyCompleted;
-                if (dumpIfTerminal(inValue, terminalCode)) {
-                    if (terminalCode != SerializationReturnCode::SuccessfullyCompleted)
-                        return terminalCode;
-                    break;
-                }
-
-                if (isArray(inValue))
-                    goto arrayStartState;
-                if (isMap(inValue))
-                    goto mapStartState;
-                if (isSet(inValue))
-                    goto setStartState;
-                goto objectStartState;
-            }
+            if (isArray(inValue))
+                goto arrayStartState;
+            if (isMap(inValue))
+                goto mapStartState;
+            if (isSet(inValue))
+                goto setStartState;
+            goto objectStartState;
+        }
         }
         if (stateStack.isEmpty())
             break;
@@ -2322,6 +2332,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
 
 class CloneDeserializer : CloneBase {
     WTF_FORBID_HEAP_ALLOCATION;
+
 public:
     static String deserializeString(const Vector<uint8_t>& buffer)
     {
@@ -2348,40 +2359,45 @@ public:
 
     static DeserializationResult deserialize(JSGlobalObject* lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<RefPtr<MessagePort>>& messagePorts, Vector<std::optional<ImageBitmapBacking>>&& backingStores
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
-        , Vector<std::unique_ptr<DetachedOffscreenCanvas>>&& detachedOffscreenCanvases
+        ,
+        Vector<std::unique_ptr<DetachedOffscreenCanvas>>&& detachedOffscreenCanvases
 #endif
 #if ENABLE(WEB_RTC)
-        , Vector<std::unique_ptr<DetachedRTCDataChannel>>&& detachedRTCDataChannels
+        ,
+        Vector<std::unique_ptr<DetachedRTCDataChannel>>&& detachedRTCDataChannels
 #endif
-        , ArrayBufferContentsArray* arrayBufferContentsArray, const Vector<uint8_t>& buffer, const Vector<String>& blobURLs, const Vector<String> blobFilePaths, ArrayBufferContentsArray* sharedBuffers
+        ,
+        ArrayBufferContentsArray* arrayBufferContentsArray, const Vector<uint8_t>& buffer, const Vector<String>& blobURLs, const Vector<String> blobFilePaths, ArrayBufferContentsArray* sharedBuffers
 #if ENABLE(WEBASSEMBLY)
-        , WasmModuleArray* wasmModules
-        , WasmMemoryHandleArray* wasmMemoryHandles
+        ,
+        WasmModuleArray* wasmModules, WasmMemoryHandleArray* wasmMemoryHandles
 #endif
 #if ENABLE(WEB_CODECS)
-        , Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>>&& serializedVideoChunks
-        , Vector<WebCodecsVideoFrameData>&& serializedVideoFrames
+        ,
+        Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>>&& serializedVideoChunks, Vector<WebCodecsVideoFrameData>&& serializedVideoFrames
 #endif
-        )
+    )
     {
         if (!buffer.size())
             return std::make_pair(jsNull(), SerializationReturnCode::UnspecifiedError);
         CloneDeserializer deserializer(lexicalGlobalObject, globalObject, messagePorts, arrayBufferContentsArray, buffer, blobURLs, blobFilePaths, sharedBuffers, WTFMove(backingStores)
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
-            , WTFMove(detachedOffscreenCanvases)
+                                                                                                                                                                      ,
+            WTFMove(detachedOffscreenCanvases)
 #endif
 #if ENABLE(WEB_RTC)
-            , WTFMove(detachedRTCDataChannels)
+                ,
+            WTFMove(detachedRTCDataChannels)
 #endif
 #if ENABLE(WEBASSEMBLY)
-            , wasmModules
-            , wasmMemoryHandles
+                ,
+            wasmModules, wasmMemoryHandles
 #endif
 #if ENABLE(WEB_CODECS)
-            , WTFMove(serializedVideoChunks)
-            , WTFMove(serializedVideoFrames)
+            ,
+            WTFMove(serializedVideoChunks), WTFMove(serializedVideoFrames)
 #endif
-            );
+        );
         if (!deserializer.isValid())
             return std::make_pair(JSValue(), SerializationReturnCode::ValidationError);
         return deserializer.deserialize();
@@ -2419,9 +2435,13 @@ private:
             , m_index(index)
         {
         }
-        
-        CachedString* operator->() { ASSERT(m_base); return &m_base->at(m_index); }
-        
+
+        CachedString* operator->()
+        {
+            ASSERT(m_base);
+            return &m_base->at(m_index);
+        }
+
     private:
         Vector<CachedString>* m_base;
         size_t m_index;
@@ -2429,18 +2449,20 @@ private:
 
     CloneDeserializer(JSGlobalObject* lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<RefPtr<MessagePort>>& messagePorts, ArrayBufferContentsArray* arrayBufferContents, Vector<std::optional<ImageBitmapBacking>>&& backingStores, const Vector<uint8_t>& buffer
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
-        , Vector<std::unique_ptr<DetachedOffscreenCanvas>>&& detachedOffscreenCanvases = { }
+        ,
+        Vector<std::unique_ptr<DetachedOffscreenCanvas>>&& detachedOffscreenCanvases = {}
 #endif
 #if ENABLE(WEB_RTC)
-        , Vector<std::unique_ptr<DetachedRTCDataChannel>>&& detachedRTCDataChannels = { }
+        ,
+        Vector<std::unique_ptr<DetachedRTCDataChannel>>&& detachedRTCDataChannels = {}
 #endif
 #if ENABLE(WEBASSEMBLY)
-        , WasmModuleArray* wasmModules = nullptr
-        , WasmMemoryHandleArray* wasmMemoryHandles = nullptr
+        ,
+        WasmModuleArray* wasmModules = nullptr, WasmMemoryHandleArray* wasmMemoryHandles = nullptr
 #endif
 #if ENABLE(WEB_CODECS)
-        , Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>>&& serializedVideoChunks = { }
-        , Vector<WebCodecsVideoFrameData>&& serializedVideoFrames = { }
+        ,
+        Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>>&& serializedVideoChunks = {}, Vector<WebCodecsVideoFrameData>&& serializedVideoFrames = {}
 #endif
         )
         : CloneBase(lexicalGlobalObject)
@@ -2480,18 +2502,20 @@ private:
 
     CloneDeserializer(JSGlobalObject* lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<RefPtr<MessagePort>>& messagePorts, ArrayBufferContentsArray* arrayBufferContents, const Vector<uint8_t>& buffer, const Vector<String>& blobURLs, const Vector<String> blobFilePaths, ArrayBufferContentsArray* sharedBuffers, Vector<std::optional<ImageBitmapBacking>>&& backingStores
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
-        , Vector<std::unique_ptr<DetachedOffscreenCanvas>>&& detachedOffscreenCanvases
+        ,
+        Vector<std::unique_ptr<DetachedOffscreenCanvas>>&& detachedOffscreenCanvases
 #endif
 #if ENABLE(WEB_RTC)
-        , Vector<std::unique_ptr<DetachedRTCDataChannel>>&& detachedRTCDataChannels
+        ,
+        Vector<std::unique_ptr<DetachedRTCDataChannel>>&& detachedRTCDataChannels
 #endif
 #if ENABLE(WEBASSEMBLY)
-        , WasmModuleArray* wasmModules
-        , WasmMemoryHandleArray* wasmMemoryHandles
+        ,
+        WasmModuleArray* wasmModules, WasmMemoryHandleArray* wasmMemoryHandles
 #endif
 #if ENABLE(WEB_CODECS)
-        , Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>>&& serializedVideoChunks = { }
-        , Vector<WebCodecsVideoFrameData>&& serializedVideoFrames = { }
+        ,
+        Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>>&& serializedVideoChunks = {}, Vector<WebCodecsVideoFrameData>&& serializedVideoFrames = {}
 #endif
         )
         : CloneBase(lexicalGlobalObject)
@@ -2536,7 +2560,7 @@ private:
 
     bool isValid() const { return m_version <= CurrentVersion; }
 
-    template <typename T> bool readLittleEndian(T& value)
+    template<typename T> bool readLittleEndian(T& value)
     {
         if (m_failed || !readLittleEndian(m_ptr, m_end, value)) {
             fail();
@@ -2545,7 +2569,7 @@ private:
         return true;
     }
 #if ASSUME_LITTLE_ENDIAN
-    template <typename T> static bool readLittleEndian(const uint8_t*& ptr, const uint8_t* end, T& value)
+    template<typename T> static bool readLittleEndian(const uint8_t*& ptr, const uint8_t* end, T& value)
     {
         if (ptr > end - sizeof(value))
             return false;
@@ -2559,7 +2583,7 @@ private:
         return true;
     }
 #else
-    template <typename T> static bool readLittleEndian(const uint8_t*& ptr, const uint8_t* end, T& value)
+    template<typename T> static bool readLittleEndian(const uint8_t*& ptr, const uint8_t* end, T& value)
     {
         if (ptr > end - sizeof(value))
             return false;
@@ -2617,7 +2641,7 @@ private:
         return readConstantPoolIndex(m_constantPool, i);
     }
 
-    template <class T> bool readConstantPoolIndex(const T& constantPool, uint32_t& i)
+    template<class T> bool readConstantPoolIndex(const T& constantPool, uint32_t& i)
     {
         if (constantPool.size() <= 0xFF) {
             uint8_t i8;
@@ -2811,7 +2835,7 @@ private:
         return true;
     }
 
-    template <typename LengthType>
+    template<typename LengthType>
     bool readArrayBufferViewImpl(VM& vm, JSValue& arrayBufferView)
     {
         ArrayBufferViewSubtag arrayBufferViewSubtag;
@@ -3397,16 +3421,16 @@ private:
     {
         double x;
         if (!read(x))
-            return { };
+            return {};
         double y;
         if (!read(y))
-            return { };
+            return {};
         double z;
         if (!read(z))
-            return { };
+            return {};
         double w;
         if (!read(w))
-            return { };
+            return {};
 
         return toJSNewlyCreated(m_lexicalGlobalObject, jsCast<JSDOMGlobalObject*>(m_globalObject), T::create(x, y, z, w));
     }
@@ -3416,79 +3440,79 @@ private:
     {
         uint8_t is2D;
         if (!read(is2D))
-            return { };
+            return {};
 
         if (is2D) {
             double m11;
             if (!read(m11))
-                return { };
+                return {};
             double m12;
             if (!read(m12))
-                return { };
+                return {};
             double m21;
             if (!read(m21))
-                return { };
+                return {};
             double m22;
             if (!read(m22))
-                return { };
+                return {};
             double m41;
             if (!read(m41))
-                return { };
+                return {};
             double m42;
             if (!read(m42))
-                return { };
+                return {};
 
             TransformationMatrix matrix(m11, m12, m21, m22, m41, m42);
             return toJSNewlyCreated(m_lexicalGlobalObject, jsCast<JSDOMGlobalObject*>(m_globalObject), T::create(WTFMove(matrix), DOMMatrixReadOnly::Is2D::Yes));
         } else {
             double m11;
             if (!read(m11))
-                return { };
+                return {};
             double m12;
             if (!read(m12))
-                return { };
+                return {};
             double m13;
             if (!read(m13))
-                return { };
+                return {};
             double m14;
             if (!read(m14))
-                return { };
+                return {};
             double m21;
             if (!read(m21))
-                return { };
+                return {};
             double m22;
             if (!read(m22))
-                return { };
+                return {};
             double m23;
             if (!read(m23))
-                return { };
+                return {};
             double m24;
             if (!read(m24))
-                return { };
+                return {};
             double m31;
             if (!read(m31))
-                return { };
+                return {};
             double m32;
             if (!read(m32))
-                return { };
+                return {};
             double m33;
             if (!read(m33))
-                return { };
+                return {};
             double m34;
             if (!read(m34))
-                return { };
+                return {};
             double m41;
             if (!read(m41))
-                return { };
+                return {};
             double m42;
             if (!read(m42))
-                return { };
+                return {};
             double m43;
             if (!read(m43))
-                return { };
+                return {};
             double m44;
             if (!read(m44))
-                return { };
+                return {};
 
             TransformationMatrix matrix(m11, m12, m13, m14, m21, m22, m23, m24, m31, m32, m33, m34, m41, m42, m43, m44);
             return toJSNewlyCreated(m_lexicalGlobalObject, jsCast<JSDOMGlobalObject*>(m_globalObject), T::create(WTFMove(matrix), DOMMatrixReadOnly::Is2D::No));
@@ -3500,16 +3524,16 @@ private:
     {
         double x;
         if (!read(x))
-            return { };
+            return {};
         double y;
         if (!read(y))
-            return { };
+            return {};
         double width;
         if (!read(width))
-            return { };
+            return {};
         double height;
         if (!read(height))
-            return { };
+            return {};
 
         return toJSNewlyCreated(m_lexicalGlobalObject, jsCast<JSDOMGlobalObject*>(m_globalObject), T::create(x, y, width, height));
     }
@@ -4070,7 +4094,7 @@ private:
             scope.releaseAssertNoException();
 
             RefPtr<Wasm::Memory> memory;
-            auto handler = [&vm, result] (Wasm::Memory::GrowSuccess, PageCount oldPageCount, PageCount newPageCount) { result->growSuccessCallback(vm, oldPageCount, newPageCount); };
+            auto handler = [&vm, result](Wasm::Memory::GrowSuccess, PageCount oldPageCount, PageCount newPageCount) { result->growSuccessCallback(vm, oldPageCount, newPageCount); };
             if (RefPtr<SharedArrayBufferContents> contents = m_wasmMemoryHandles->at(index)) {
                 if (!contents->memoryHandle()) {
                     fail();
@@ -4142,7 +4166,7 @@ private:
                 fail();
                 return JSValue();
             }
-            
+
             RELEASE_ASSERT(m_sharedBuffers->at(index));
             auto buffer = ArrayBuffer::create(WTFMove(m_sharedBuffers->at(index)));
             JSValue result = getJSValue(buffer.get());
@@ -4172,7 +4196,7 @@ private:
             }
             JSValue cryptoKey;
             Vector<RefPtr<MessagePort>> dummyMessagePorts;
-            CloneDeserializer rawKeyDeserializer(m_lexicalGlobalObject, m_globalObject, dummyMessagePorts, nullptr, { }, serializedKey);
+            CloneDeserializer rawKeyDeserializer(m_lexicalGlobalObject, m_globalObject, dummyMessagePorts, nullptr, {}, serializedKey);
             if (!rawKeyDeserializer.readCryptoKey(cryptoKey)) {
                 fail();
                 return JSValue();
@@ -4313,7 +4337,7 @@ DeserializationResult CloneDeserializer::deserialize()
             outputObjectStack.append(outArray);
         }
         arrayStartVisitMember:
-        FALLTHROUGH;
+            FALLTHROUGH;
         case ArrayStartVisitMember: {
             uint32_t index;
             if (!read(index)) {
@@ -4354,7 +4378,7 @@ DeserializationResult CloneDeserializer::deserialize()
             outputObjectStack.append(outObject);
         }
         objectStartVisitMember:
-        FALLTHROUGH;
+            FALLTHROUGH;
         case ObjectStartVisitMember: {
             CachedStringRef cachedString;
             bool wasTerminator = false;
@@ -4381,7 +4405,7 @@ DeserializationResult CloneDeserializer::deserialize()
             propertyNameStack.removeLast();
             goto objectStartVisitMember;
         }
-        mapObjectStartState: {
+        mapObjectStartState : {
             if (outputObjectStack.size() > maximumFilterRecursion)
                 return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
             JSMap* map = JSMap::create(m_lexicalGlobalObject->vm(), m_globalObject->mapStructure());
@@ -4410,7 +4434,7 @@ DeserializationResult CloneDeserializer::deserialize()
             goto mapDataStartVisitEntry;
         }
 
-        setObjectStartState: {
+        setObjectStartState : {
             if (outputObjectStack.size() > maximumFilterRecursion)
                 return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
             JSSet* set = JSSet::create(m_lexicalGlobalObject->vm(), m_globalObject->setStructure());
@@ -4469,13 +4493,14 @@ SerializedScriptValue::~SerializedScriptValue() = default;
 
 SerializedScriptValue::SerializedScriptValue(Vector<uint8_t>&& buffer, std::unique_ptr<ArrayBufferContentsArray>&& arrayBufferContentsArray
 #if ENABLE(WEB_RTC)
-        , Vector<std::unique_ptr<DetachedRTCDataChannel>>&& detachedRTCDataChannels
+    ,
+    Vector<std::unique_ptr<DetachedRTCDataChannel>>&& detachedRTCDataChannels
 #endif
 #if ENABLE(WEB_CODECS)
-    , Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>>&& serializedVideoChunks
-    , Vector<WebCodecsVideoFrameData>&& serializedVideoFrames
+    ,
+    Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>>&& serializedVideoChunks, Vector<WebCodecsVideoFrameData>&& serializedVideoFrames
 #endif
-        )
+    )
     : m_data(WTFMove(buffer))
     , m_arrayBufferContentsArray(WTFMove(arrayBufferContentsArray))
 #if ENABLE(WEB_RTC)
@@ -4491,20 +4516,22 @@ SerializedScriptValue::SerializedScriptValue(Vector<uint8_t>&& buffer, std::uniq
 
 SerializedScriptValue::SerializedScriptValue(Vector<uint8_t>&& buffer, Vector<URLKeepingBlobAlive>&& blobHandles, std::unique_ptr<ArrayBufferContentsArray> arrayBufferContentsArray, std::unique_ptr<ArrayBufferContentsArray> sharedBufferContentsArray, Vector<std::optional<ImageBitmapBacking>>&& backingStores
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
-        , Vector<std::unique_ptr<DetachedOffscreenCanvas>>&& detachedOffscreenCanvases
+    ,
+    Vector<std::unique_ptr<DetachedOffscreenCanvas>>&& detachedOffscreenCanvases
 #endif
 #if ENABLE(WEB_RTC)
-        , Vector<std::unique_ptr<DetachedRTCDataChannel>>&& detachedRTCDataChannels
+    ,
+    Vector<std::unique_ptr<DetachedRTCDataChannel>>&& detachedRTCDataChannels
 #endif
 #if ENABLE(WEBASSEMBLY)
-        , std::unique_ptr<WasmModuleArray> wasmModulesArray
-        , std::unique_ptr<WasmMemoryHandleArray> wasmMemoryHandlesArray
+    ,
+    std::unique_ptr<WasmModuleArray> wasmModulesArray, std::unique_ptr<WasmMemoryHandleArray> wasmMemoryHandlesArray
 #endif
 #if ENABLE(WEB_CODECS)
-        , Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>>&& serializedVideoChunks
-        , Vector<WebCodecsVideoFrameData>&& serializedVideoFrames
+    ,
+    Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>>&& serializedVideoChunks, Vector<WebCodecsVideoFrameData>&& serializedVideoFrames
 #endif
-        )
+    )
     : m_data(WTFMove(buffer))
     , m_arrayBufferContentsArray(WTFMove(arrayBufferContentsArray))
     , m_sharedBufferContentsArray(WTFMove(sharedBufferContentsArray))
@@ -4630,7 +4657,7 @@ static void maybeThrowExceptionIfSerializationFailed(JSGlobalObject& lexicalGlob
 static Exception exceptionForSerializationFailure(SerializationReturnCode code)
 {
     ASSERT(code != SerializationReturnCode::SuccessfullyCompleted);
-    
+
     switch (code) {
     case SerializationReturnCode::StackOverflowError:
         return Exception { StackOverflowError };
@@ -4694,7 +4721,7 @@ static bool canDetachRTCDataChannels(const Vector<Ref<RTCDataChannel>>& channels
 RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSC::JSGlobalObject& globalObject, JSC::JSValue value, SerializationForStorage forStorage, SerializationErrorMode throwExceptions, SerializationContext serializationContext)
 {
     Vector<RefPtr<MessagePort>> dummyPorts;
-    auto result = create(globalObject, value, { }, dummyPorts, forStorage, throwExceptions, serializationContext);
+    auto result = create(globalObject, value, {}, dummyPorts, forStorage, throwExceptions, serializationContext);
     if (result.hasException())
         return nullptr;
     return result.releaseReturnValue();
@@ -4849,20 +4876,22 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 
     return adoptRef(*new SerializedScriptValue(WTFMove(buffer), WTFMove(blobHandles), arrayBufferContentsArray.releaseReturnValue(), context == SerializationContext::WorkerPostMessage ? WTFMove(sharedBuffers) : nullptr, WTFMove(backingStores)
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
-                , WTFMove(detachedCanvases)
+                                                                                                                                                                                                                                ,
+        WTFMove(detachedCanvases)
 #endif
 #if ENABLE(WEB_RTC)
-                , WTFMove(detachedRTCDataChannels)
+            ,
+        WTFMove(detachedRTCDataChannels)
 #endif
 #if ENABLE(WEBASSEMBLY)
-                , makeUnique<WasmModuleArray>(wasmModules)
-                , context == SerializationContext::WorkerPostMessage ? makeUnique<WasmMemoryHandleArray>(wasmMemoryHandles) : nullptr
+            ,
+        makeUnique<WasmModuleArray>(wasmModules), context == SerializationContext::WorkerPostMessage ? makeUnique<WasmMemoryHandleArray>(wasmMemoryHandles) : nullptr
 #endif
 #if ENABLE(WEB_CODECS)
-                , WTFMove(serializedVideoChunks)
-                , WTFMove(serializedVideoFrameData)
+        ,
+        WTFMove(serializedVideoChunks), WTFMove(serializedVideoFrameData)
 #endif
-                ));
+            ));
 }
 
 RefPtr<SerializedScriptValue> SerializedScriptValue::create(StringView string)
@@ -4899,7 +4928,7 @@ String SerializedScriptValue::toString() const
 
 JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, JSGlobalObject* globalObject, SerializationErrorMode throwExceptions, bool* didFail)
 {
-    return deserialize(lexicalGlobalObject, globalObject, { }, throwExceptions, didFail);
+    return deserialize(lexicalGlobalObject, globalObject, {}, throwExceptions, didFail);
 }
 
 JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, JSGlobalObject* globalObject, const Vector<RefPtr<MessagePort>>& messagePorts, SerializationErrorMode throwExceptions, bool* didFail)
@@ -4913,21 +4942,24 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
 {
     DeserializationResult result = CloneDeserializer::deserialize(&lexicalGlobalObject, globalObject, messagePorts, WTFMove(m_backingStores)
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
-        , WTFMove(m_detachedOffscreenCanvases)
+                                                                                                                        ,
+        WTFMove(m_detachedOffscreenCanvases)
 #endif
 #if ENABLE(WEB_RTC)
-        , WTFMove(m_detachedRTCDataChannels)
+            ,
+        WTFMove(m_detachedRTCDataChannels)
 #endif
-        , m_arrayBufferContentsArray.get(), m_data, blobURLs, blobFilePaths, m_sharedBufferContentsArray.get()
+            ,
+        m_arrayBufferContentsArray.get(), m_data, blobURLs, blobFilePaths, m_sharedBufferContentsArray.get()
 #if ENABLE(WEBASSEMBLY)
-        , m_wasmModulesArray.get()
-        , m_wasmMemoryHandlesArray.get()
+                                                                               ,
+        m_wasmModulesArray.get(), m_wasmMemoryHandlesArray.get()
 #endif
 #if ENABLE(WEB_CODECS)
-        , WTFMove(m_serializedVideoChunks)
-        , WTFMove(m_serializedVideoFrames)
+                                      ,
+        WTFMove(m_serializedVideoChunks), WTFMove(m_serializedVideoFrames)
 #endif
-        );
+    );
     if (didFail)
         *didFail = result.second != SerializationReturnCode::SuccessfullyCompleted;
     if (throwExceptions == SerializationErrorMode::Throwing)
@@ -4975,13 +5007,13 @@ void SerializedScriptValue::writeBlobsToDiskForIndexedDB(CompletionHandler<void(
     ASSERT(isMainThread());
     ASSERT(hasBlobURLs());
 
-    blobRegistry().writeBlobsToTemporaryFilesForIndexedDB(blobURLs(), [completionHandler = WTFMove(completionHandler), this, protectedThis = Ref { *this }] (auto&& blobFilePaths) mutable {
+    blobRegistry().writeBlobsToTemporaryFilesForIndexedDB(blobURLs(), [completionHandler = WTFMove(completionHandler), this, protectedThis = Ref { *this }](auto&& blobFilePaths) mutable {
         ASSERT(isMainThread());
 
         if (blobFilePaths.isEmpty()) {
             // We should have successfully written blobs to temporary files.
             // If we failed, then we can't successfully store this record.
-            completionHandler({ });
+            completionHandler({});
             return;
         }
 

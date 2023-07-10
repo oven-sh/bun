@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "bun:test";
 import type { Server, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
-import { bunEnv, nodeExe } from "harness";
+import { bunEnv, bunExe, nodeExe } from "harness";
 
 const strings = [
   {
@@ -557,8 +557,9 @@ function test(
 async function connect(server: Server): Promise<void> {
   const url = new URL(`ws://${server.hostname}:${server.port}/`);
   const { pathname } = new URL("./websocket-client-echo.mjs", import.meta.url);
+  // @ts-ignore
   const client = spawn({
-    cmd: [nodeExe() ?? bunEnv(), pathname, url],
+    cmd: [nodeExe() ?? bunExe(), pathname, url],
     cwd: import.meta.dir,
     env: bunEnv,
     stderr: "ignore",

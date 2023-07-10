@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { bunEnv, bunExe, nodeExe } from "harness";
+import { WebSocket } from "ws";
 
 const strings = [
   {
@@ -74,11 +75,11 @@ describe("WebSocket", () => {
   });
   test("readyState", (ws, done) => {
     expect(ws.readyState).toBe(WebSocket.CONNECTING);
-    ws.addEventListener("open", () => {
+    ws.on("open", () => {
       expect(ws.readyState).toBe(WebSocket.OPEN);
       ws.close();
     });
-    ws.addEventListener("close", () => {
+    ws.on("close", () => {
       expect(ws.readyState).toBe(WebSocket.CLOSED);
       done();
     });
@@ -100,19 +101,20 @@ describe("WebSocket", () => {
     for (const { label, type } of binaryTypes) {
       test(label, (ws, done) => {
         ws.binaryType = label;
-        ws.addEventListener("open", () => {
+        ws.on("open", () => {
           expect(ws.binaryType).toBe(label);
           ws.send(new Uint8Array(1));
         });
-        ws.addEventListener("message", ({ data }) => {
+        ws.on("message", (data, isBinary) => {
           expect(data).toBeInstanceOf(type);
+          expect(isBinary).toBeTrue();
           ws.ping();
         });
-        ws.addEventListener("ping", ({ data }) => {
+        ws.on("ping", (data) => {
           expect(data).toBeInstanceOf(type);
           ws.pong();
         });
-        ws.addEventListener("pong", ({ data }) => {
+        ws.on("pong", (data) => {
           expect(data).toBeInstanceOf(type);
           done();
         });
@@ -122,14 +124,16 @@ describe("WebSocket", () => {
   describe("send()", () => {
     for (const { label, message, bytes } of messages) {
       test(label, (ws, done) => {
-        ws.addEventListener("open", () => {
+        ws.on("open", () => {
           ws.send(message);
         });
-        ws.addEventListener("message", ({ data }) => {
+        ws.on("message", (data, isBinary) => {
           if (typeof data === "string") {
             expect(data).toBe(message);
+            expect(isBinary).toBeFalse();
           } else {
             expect(data).toEqual(Buffer.from(bytes));
+            expect(isBinary).toBeTrue();
           }
           done();
         });
@@ -138,20 +142,20 @@ describe("WebSocket", () => {
   });
   describe("ping()", () => {
     test("(no argument)", (ws, done) => {
-      ws.addEventListener("open", () => {
+      ws.on("open", () => {
         ws.ping();
       });
-      ws.addEventListener("ping", ({ data }) => {
+      ws.on("ping", (data) => {
         expect(data).toBeInstanceOf(Buffer);
         done();
       });
     });
     for (const { label, message, bytes } of messages) {
       test(label, (ws, done) => {
-        ws.addEventListener("open", () => {
+        ws.on("open", () => {
           ws.ping(message);
         });
-        ws.addEventListener("ping", ({ data }) => {
+        ws.on("ping", (data) => {
           expect(data).toEqual(Buffer.from(bytes));
           done();
         });
@@ -160,20 +164,20 @@ describe("WebSocket", () => {
   });
   describe("pong()", () => {
     test("(no argument)", (ws, done) => {
-      ws.addEventListener("open", () => {
+      ws.on("open", () => {
         ws.pong();
       });
-      ws.addEventListener("pong", ({ data }) => {
+      ws.on("pong", (data) => {
         expect(data).toBeInstanceOf(Buffer);
         done();
       });
     });
     for (const { label, message, bytes } of messages) {
       test(label, (ws, done) => {
-        ws.addEventListener("open", () => {
+        ws.on("open", () => {
           ws.pong(message);
         });
-        ws.addEventListener("pong", ({ data }) => {
+        ws.on("pong", (data) => {
           expect(data).toEqual(Buffer.from(bytes));
           done();
         });
@@ -182,10 +186,10 @@ describe("WebSocket", () => {
   });
   describe("close()", () => {
     test("(no arguments)", (ws, done) => {
-      ws.addEventListener("open", () => {
+      ws.on("open", () => {
         ws.close();
       });
-      ws.addEventListener("close", ({ code, reason, wasClean }) => {
+      ws.on("close", (code: number, reason: string, wasClean: boolean) => {
         expect(code).toBe(1000);
         expect(reason).toBeString();
         expect(wasClean).toBeTrue();
@@ -193,10 +197,10 @@ describe("WebSocket", () => {
       });
     });
     test("(no reason)", (ws, done) => {
-      ws.addEventListener("open", () => {
+      ws.on("open", () => {
         ws.close(1001);
       });
-      ws.addEventListener("close", ({ code, reason, wasClean }) => {
+      ws.on("close", (code: number, reason: string, wasClean: boolean) => {
         expect(code).toBe(1001);
         expect(reason).toBeString();
         expect(wasClean).toBeTrue();
@@ -209,10 +213,10 @@ describe("WebSocket", () => {
     /*
     for (const { label, message } of strings) {
       test(label, (ws, done) => {
-        ws.addEventListener("open", () => {
+        ws.on("open", () => {
           ws.close(1002, message);
         });
-        ws.addEventListener("close", ({ code, reason, wasClean }) => {
+        ws.on("close", (code, reason, wasClean) => {
           expect(code).toBe(1002);
           expect(reason).toBe(message);
           expect(wasClean).toBeTrue();
@@ -223,10 +227,10 @@ describe("WebSocket", () => {
     */
   });
   test("terminate()", (ws, done) => {
-    ws.addEventListener("open", () => {
+    ws.on("open", () => {
       ws.terminate();
     });
-    ws.addEventListener("close", ({ code, reason, wasClean }) => {
+    ws.on("close", (code: number, reason: string, wasClean: boolean) => {
       expect(code).toBe(1006);
       expect(reason).toBeString();
       expect(wasClean).toBeFalse();
@@ -259,7 +263,7 @@ function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) 
 }
 
 async function listen(): Promise<URL> {
-  const { pathname } = new URL("./websocket-server-echo.mjs", import.meta.url);
+  const { pathname } = new URL("../../web/websocket/websocket-server-echo.mjs", import.meta.url);
   const server = spawn({
     cmd: [nodeExe() ?? bunExe(), pathname],
     cwd: import.meta.dir,

@@ -3,12 +3,20 @@
 // this just wraps WebSocket to look like an EventEmitter
 // without actually using an EventEmitter polyfill
 
-import { EventEmitter } from "events";
-import http from "http";
+import { EventEmitter } from "node:events";
+import http from "node:http";
 
 const kBunInternals = Symbol.for("::bunternal::");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
 const encoder = new TextEncoder();
+const eventIds = {
+  open: 1,
+  close: 2,
+  message: 3,
+  error: 4,
+  ping: 5,
+  pong: 6,
+};
 
 const emittedWarnings = new Set();
 function emitWarning(type, message) {
@@ -18,11 +26,8 @@ function emitWarning(type, message) {
   console.warn("[bun] Warning:", message);
 }
 
-/*
- * deviations: we do not implement these events
- * - "unexpected-response"
- * - "upgrade"
- * - "redirect"
+/**
+ * @link https://github.com/websockets/ws/blob/master/doc/ws.md#class-websocket
  */
 class BunWebSocket extends EventEmitter {
   static CONNECTING = 0;
@@ -34,58 +39,69 @@ class BunWebSocket extends EventEmitter {
   #paused = false;
   #fragments = false;
   #binaryType = "nodebuffer";
-  readyState = BunWebSocket.CONNECTING;
+
+  // Bitset to track whether event handlers are set.
+  #eventId = 0;
 
   constructor(url, protocols, options) {
-    // deviation: we don't support anything in `options`
     super();
     let ws = (this.#ws = new WebSocket(url, protocols));
-    ws.binaryType = "nodebuffer"; // bun's WebSocket supports "nodebuffer"
-    ws.addEventListener("open", () => {
-      this.readyState = BunWebSocket.OPEN;
-      this.emit("open");
-    });
-    ws.addEventListener("error", err => {
-      this.readyState = BunWebSocket.CLOSED;
-      this.emit("error", err);
-    });
-    ws.addEventListener("close", ev => {
-      this.readyState = BunWebSocket.CLOSED;
-      this.emit("close", ev.code, ev.reason);
-    });
-    ws.addEventListener("message", ev => {
-      const isBinary = typeof ev.data !== "string";
-      if (isBinary) {
-        this.emit("message", this.#fragments ? [ev.data] : ev.data, isBinary);
-      } else {
-        var encoded = encoder.encode(ev.data);
-        if (this.#binaryType !== "arraybuffer") {
-          encoded = Buffer.from(encoded.buffer, encoded.byteOffset, encoded.byteLength);
-        }
-        this.emit("message", this.#fragments ? [encoded] : encoded, isBinary);
-      }
-    });
-    ws.addEventListener("ping", ({ data }) => {
-      this.emit("ping", data);
-    });
-    ws.addEventListener("pong", ({ data }) => {
-      this.emit("pong", data);
-    });
+    ws.binaryType = "nodebuffer";
+    // TODO: options
   }
 
   on(event, listener) {
-    if (
-      event === "unexpected-response" ||
-      event === "upgrade" ||
-      event === "redirect"
-    ) {
+    if (event === "unexpected-response" || event === "upgrade" || event === "redirect") {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
+    }
+    const mask = 1 << eventIds[event];
+    if (mask && (this.#eventId & mask) !== mask) {
+      this.#eventId |= mask;
+      if (event === "open") {
+        this.#ws.addEventListener("open", () => {
+          this.emit("open");
+        });
+      } else if (event === "close") {
+        this.#ws.addEventListener("close", ({ code, reason, wasClean }) => {
+          this.emit("close", code, reason, wasClean);
+        });
+      } else if (event === "message") {
+        this.#ws.addEventListener("message", ({ data }) => {
+          const isBinary = typeof data !== "string";
+          if (isBinary) {
+            this.emit("message", this.#fragments ? [data] : data, isBinary);
+          } else {
+            let encoded = encoder.encode(data);
+            if (this.#binaryType !== "arraybuffer") {
+              encoded = Buffer.from(encoded.buffer, encoded.byteOffset, encoded.byteLength);
+            }
+            this.emit("message", this.#fragments ? [encoded] : encoded, isBinary);
+          }
+        });
+      } else if (event === "error") {
+        this.#ws.addEventListener("error", (err) => {
+          this.emit("error", err);
+        });
+      } else if (event === "ping") {
+        this.#ws.addEventListener("ping", ({ data }) => {
+          this.emit("ping", data);
+        });
+      } else if (event === "pong") {
+        this.#ws.addEventListener("pong", ({ data }) => {
+          this.emit("pong", data);
+        });
+      }
     }
     return super.on(event, listener);
   }
 
   send(data, opts, cb) {
-    this.#ws.send(data, opts?.compress);
+    try {
+      this.#ws.send(data, opts?.compress);
+    } catch (error) {
+      typeof cb === "function" && cb(error);
+      return;
+    }
     // deviation: this should be called once the data is written, not immediately
     typeof cb === "function" && cb();
   }
@@ -98,12 +114,16 @@ class BunWebSocket extends EventEmitter {
     this.#ws.terminate();
   }
 
-  get binaryType() {
-    return this.#binaryType;
+  get url() {
+    return this.#ws.url;
   }
 
-  set binaryType(value) {
-    if (value) this.#ws.binaryType = value;
+  get readyState() {
+    return this.#ws.readyState;
+  }
+
+  get binaryType() {
+    return this.#binaryType;
   }
 
   set binaryType(value) {
@@ -114,6 +134,8 @@ class BunWebSocket extends EventEmitter {
       this.#ws.binaryType = "nodebuffer";
       this.#binaryType = "fragments";
       this.#fragments = true;
+    } else {
+      throw new Error(`Invalid binaryType: ${value}`);
     }
   }
 
@@ -186,7 +208,13 @@ class BunWebSocket extends EventEmitter {
 
     if (typeof data === "number") data = data.toString();
 
-    this.#ws.ping(data);
+    try {
+      this.#ws.ping(data);
+    } catch (error) {
+      typeof cb === "function" && cb(error);
+      return;
+    }
+
     typeof cb === "function" && cb();
   }
 
@@ -201,13 +229,21 @@ class BunWebSocket extends EventEmitter {
 
     if (typeof data === "number") data = data.toString();
 
-    this.#ws.pong(data);
+    try {
+      this.#ws.pong(data);
+    } catch (error) {
+      typeof cb === "function" && cb(error);
+      return;
+    }
+
     typeof cb === "function" && cb();
   }
 
   pause() {
-    if (this.readyState === WebSocket.CONNECTING || this.readyState === WebSocket.CLOSED) {
-      return;
+    switch (this.readyState) {
+      case WebSocket.CONNECTING:
+      case WebSocket.CLOSED:
+        return;
     }
 
     this.#paused = true;
@@ -217,8 +253,10 @@ class BunWebSocket extends EventEmitter {
   }
 
   resume() {
-    if (this.readyState === WebSocket.CONNECTING || this.readyState === WebSocket.CLOSED) {
-      return;
+    switch (this.readyState) {
+      case WebSocket.CONNECTING:
+      case WebSocket.CLOSED:
+        return;
     }
 
     this.#paused = false;

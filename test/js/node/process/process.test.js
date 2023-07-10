@@ -392,6 +392,15 @@ describe("signal", () => {
     expect(await child.exited).toBe(0);
     expect(await new Response(child.stdout).text()).toBe("PASS\n");
   });
+  it("process.emit will call signal events", async () => {
+    const child = Bun.spawn({
+      cmd: [bunExe(), fixture, "SIGUSR2"],
+      env: bunEnv,
+    });
+
+    expect(await child.exited).toBe(0);
+    expect(await new Response(child.stdout).text()).toBe("PASS\n");
+  });
 });
 
 const undefinedStubs = [

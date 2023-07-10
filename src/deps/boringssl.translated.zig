@@ -3759,7 +3759,6 @@ pub fn sk_X509_REVOKED_deep_copy(arg_sk: ?*const struct_stack_st_X509_REVOKED, a
     return @ptrCast(?*struct_stack_st_X509_REVOKED, sk_deep_copy(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), sk_X509_REVOKED_call_copy_func, @ptrCast(stack_copy_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) ?*anyopaque), copy_func)), sk_X509_REVOKED_call_free_func, @ptrCast(stack_free_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) void), free_func))));
 }
 pub const struct_stack_st_GENERAL_NAMES = opaque {};
-pub const struct_stack_st_GENERAL_NAME = opaque {};
 
 pub const GENERAL_NAME = extern struct {
     name_type: enum(c_int) {
@@ -3775,12 +3774,14 @@ pub const GENERAL_NAME = extern struct {
     },
     d: extern union {
         ptr: *c_char,
-        otherName: ?*OTHERNAME,
+        //OTHERNAME
+        otherName: ?*anyopaque, 
         rfc822Name: ?*ASN1_IA5STRING,
         dNSName: ?*ASN1_IA5STRING,
         x400Address: ?*ASN1_STRING,
         directoryName: ?*X509_NAME,
-        ediPartyName: ?*EDIPARTYNAME,
+        //EDIPARTYNAME
+        ediPartyName: ?*anyopaque,
         uniformResourceIdentifier: ?*ASN1_IA5STRING,
         iPAddress: ?*ASN1_OCTET_STRING,
         registeredID: ?*ASN1_OBJECT,
@@ -3802,6 +3803,11 @@ pub fn sk_GENERAL_NAME_free(arg_sk: ?*struct_stack_st_GENERAL_NAME) callconv(.C)
 }
 pub const stack_GENERAL_NAME_free_func = ?*const fn (?*struct_stack_st_GENERAL_NAME) callconv(.C) void;
 
+pub fn sk_GENERAL_NAME_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
+    var free_func = arg_free_func;
+    var ptr = arg_ptr;
+    @ptrCast(stack_GENERAL_NAME_free_func, @alignCast(@import("std").meta.alignment(fn (?*struct_stack_st_GENERAL_NAME) callconv(.C) void), free_func)).?(@ptrCast(?*struct_stack_st_GENERAL_NAME, ptr));
+}
 pub fn sk_GENERAL_NAME_pop_free(arg_sk: ?*struct_stack_st_GENERAL_NAME, arg_free_func: stack_GENERAL_NAME_free_func) callconv(.C) void {
     var sk = arg_sk;
     var free_func = arg_free_func;

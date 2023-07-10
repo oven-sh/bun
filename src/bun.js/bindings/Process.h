@@ -45,6 +45,24 @@ public:
         return accessor;
     }
 
+    LazyProperty<JSObject, Structure> cpuUsageStructure;
+    LazyProperty<JSObject, Structure> memoryUsageStructure;
+
+    DECLARE_VISIT_CHILDREN;
+
+    template<typename, SubspaceAccess mode>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<Process, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForProcessObject.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForProcessObject = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForProcessObject.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForProcessObject = std::forward<decltype(space)>(space); });
+    }
+
     void finishCreation(JSC::VM& vm);
 };
 

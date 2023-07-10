@@ -12,6 +12,11 @@
 #include "ZigConsoleClient.h"
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/JSSet.h>
+#include "mimalloc.h"
+#include <JavaScriptCore/LazyProperty.h>
+#include <JavaScriptCore/LazyPropertyInlines.h>
+#include <JavaScriptCore/VMTrapsInlines.h>
+
 #pragma mark - Node.js Process
 
 #if !defined(_MSC_VER)
@@ -680,10 +685,10 @@ static JSValue constructProcessHrtimeObject(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
     JSC::JSFunction* hrtime = JSC::JSFunction::create(vm, globalObject, 0,
-        MAKE_STATIC_STRING_IMPL("hrtime"), Process_functionHRTime, ImplementationVisibility::Public);
+        String("hrtime"_s), Process_functionHRTime, ImplementationVisibility::Public);
 
     JSC::JSFunction* hrtimeBigInt = JSC::JSFunction::create(vm, globalObject, 0,
-        MAKE_STATIC_STRING_IMPL("bigint"), Process_functionHRTimeBigInt, ImplementationVisibility::Public);
+        String("bigint"_s), Process_functionHRTimeBigInt, ImplementationVisibility::Public);
 
     hrtime->putDirect(vm, JSC::Identifier::fromString(vm, "bigint"_s), hrtimeBigInt);
 
@@ -945,6 +950,227 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     __builtin_unreachable();
 }
 
+template<typename Visitor>
+void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    Process* thisObject = jsCast<Process*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    thisObject->cpuUsageStructure.visit(visitor);
+    thisObject->memoryUsageStructure.visit(visitor);
+}
+
+DEFINE_VISIT_CHILDREN(Process);
+
+static Structure* constructCPUUsageStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), 2);
+    PropertyOffset offset;
+    structure = structure->addPropertyTransition(
+        vm,
+        structure,
+        JSC::Identifier::fromString(vm, "user"_s),
+        0,
+        offset);
+    structure = structure->addPropertyTransition(
+        vm,
+        structure,
+        JSC::Identifier::fromString(vm, "system"_s),
+        0,
+        offset);
+    return structure;
+}
+static Structure* constructMemoryUsageStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), 5);
+    PropertyOffset offset;
+    structure = structure->addPropertyTransition(
+        vm,
+        structure,
+        JSC::Identifier::fromString(vm, "rss"_s),
+        0,
+        offset);
+    structure = structure->addPropertyTransition(
+        vm,
+        structure,
+        JSC::Identifier::fromString(vm, "heapTotal"_s),
+        0,
+        offset);
+    structure = structure->addPropertyTransition(
+        vm,
+        structure,
+        JSC::Identifier::fromString(vm, "heapUsed"_s),
+        0,
+        offset);
+    structure = structure->addPropertyTransition(
+        vm,
+        structure,
+        JSC::Identifier::fromString(vm, "external"_s),
+        0,
+        offset);
+    structure = structure->addPropertyTransition(
+        vm,
+        structure,
+        JSC::Identifier::fromString(vm, "arrayBuffers"_s),
+        0,
+        offset);
+
+    return structure;
+}
+
+static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue)
+{
+    Process* process = jsDynamicCast<Process*>(thisValue);
+
+    // Handle "var memoryUsage = process.memoryUsage; memoryUsage()"
+    if (UNLIKELY(!process)) {
+        // Handle calling this function from inside a node:vm
+        Zig::GlobalObject* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
+
+        if (UNLIKELY(!zigGlobalObject)) {
+            zigGlobalObject = Bun__getDefaultGlobal();
+        }
+
+        return jsCast<Process*>(zigGlobalObject->processObject());
+    }
+
+    return process;
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    struct rusage rusage;
+    if (getrusage(RUSAGE_SELF, &rusage) != 0) {
+        SystemError error;
+        error.errno_ = errno;
+        error.syscall = Bun::toString("getrusage"_s);
+        error.message = Bun::toString("Failed to get CPU usage"_s);
+        throwException(globalObject, throwScope, JSValue::decode(SystemError__toErrorInstance(&error, globalObject)));
+        return JSValue::encode(jsUndefined());
+    }
+
+    auto* process = getProcessObject(globalObject, callFrame->thisValue());
+
+    Structure* cpuUsageStructure = process->cpuUsageStructure.getInitializedOnMainThread(process);
+    JSC::JSObject* result = JSC::constructEmptyObject(vm, cpuUsageStructure);
+    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
+
+    constexpr double MICROS_PER_SEC = 1000000.0;
+
+    double user = MICROS_PER_SEC * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec;
+    double system = MICROS_PER_SEC * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
+
+    if (callFrame->argumentCount() > 0) {
+        JSValue comparatorValue = callFrame->argument(0);
+        if (!comparatorValue.isObject()) {
+            throwTypeError(globalObject, throwScope, "Expected an object as the first argument"_s);
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        }
+
+        JSC::JSObject* comparator = comparatorValue.getObject();
+        JSValue userValue;
+        JSValue systemValue;
+
+        if (comparator->structureID() == cpuUsageStructure->structureID()) {
+            userValue = comparator->getDirect(0);
+            systemValue = comparator->getDirect(1);
+        } else {
+            userValue = comparator->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "user"_s));
+            RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
+
+            systemValue = comparator->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "system"_s));
+            RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
+        }
+
+        if (!userValue || !userValue.isNumber()) {
+            throwTypeError(globalObject, throwScope, "Expected a number for the user property"_s);
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        }
+
+        if (!systemValue || !systemValue.isNumber()) {
+            throwTypeError(globalObject, throwScope, "Expected a number for the user property"_s);
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        }
+
+        double userComparator = userValue.asNumber();
+        double systemComparator = systemValue.asNumber();
+
+        user -= userComparator;
+        system -= systemComparator;
+    }
+
+    result->putDirectOffset(vm, 0, JSC::jsNumber(user));
+    result->putDirectOffset(vm, 1, JSC::jsNumber(system));
+
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    size_t elapsed_msecs = 0;
+    size_t user_msecs = 0;
+    size_t system_msecs = 0;
+    size_t current_rss = 0;
+    size_t peak_rss = 0;
+    size_t current_commit = 0;
+    size_t peak_commit = 0;
+    size_t page_faults = 0;
+
+    mi_process_info(&elapsed_msecs, &user_msecs, &system_msecs,
+        &current_rss, &peak_rss,
+        &current_commit, &peak_commit, &page_faults);
+
+    auto* process = getProcessObject(globalObject, callFrame->thisValue());
+    JSC::JSObject* result = JSC::constructEmptyObject(vm, process->memoryUsageStructure.getInitializedOnMainThread(process));
+    if (UNLIKELY(throwScope.exception())) {
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    // {
+    //  rss: 4935680,
+    //  heapTotal: 1826816,
+    //  heapUsed: 650472,
+    //  external: 49879,
+    //  arrayBuffers: 9386
+    // }
+
+    result->putDirectOffset(vm, 0, JSC::jsNumber(current_rss));
+    result->putDirectOffset(vm, 1, JSC::jsNumber(peak_commit));
+    result->putDirectOffset(vm, 2, JSC::jsNumber(vm.heap.size()));
+    result->putDirectOffset(vm, 3, JSC::jsNumber(vm.heap.extraMemorySize() + vm.heap.externalMemorySize()));
+    result->putDirectOffset(vm, 4, JSC::jsNumber(vm.heap.objectTypeCounts()->count("ArrayBuffer")));
+
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsageRSS,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+
+    size_t elapsed_msecs = 0;
+    size_t user_msecs = 0;
+    size_t system_msecs = 0;
+    size_t current_rss = 0;
+    size_t peak_rss = 0;
+    size_t current_commit = 0;
+    size_t peak_commit = 0;
+    size_t page_faults = 0;
+
+    mi_process_info(&elapsed_msecs, &user_msecs, &system_msecs,
+        &current_rss, &peak_rss,
+        &current_commit, &peak_commit, &page_faults);
+
+    return JSValue::encode(jsNumber(current_rss));
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionOpenStdin, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
@@ -1008,6 +1234,19 @@ static JSValue Process_stubEmptySet(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
     return JSSet::create(vm, globalObject->setStructure());
+}
+
+static JSValue constructMemoryUsage(VM& vm, JSObject* processObject)
+{
+    auto* globalObject = processObject->globalObject();
+    JSC::JSFunction* memoryUsage = JSC::JSFunction::create(vm, globalObject, 0,
+        String("memoryUsage"_s), Process_functionMemoryUsage, ImplementationVisibility::Public);
+
+    JSC::JSFunction* rss = JSC::JSFunction::create(vm, globalObject, 0,
+        String("rss"_s), Process_functionMemoryUsageRSS, ImplementationVisibility::Public);
+
+    memoryUsage->putDirect(vm, JSC::Identifier::fromString(vm, "rss"_s), rss, JSC::PropertyAttribute::Function | 0);
+    return memoryUsage;
 }
 
 static JSValue constructFeatures(VM& vm, JSObject* processObject)
@@ -1133,16 +1372,16 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd,
   browser                          constructBrowser                         PropertyCallback
   chdir                            Process_functionChdir                    Function 1
   config                           constructProcessConfigObject             PropertyCallback
-  debugPort                        processDebugPort                         CustomAccessor
-  exitCode                         processExitCode                          CustomAccessor
-  title                            processTitle                             CustomAccessor
+  cpuUsage                         Process_functionCpuUsage                 Function 1
   cwd                              Process_functionCwd                      Function 1
+  debugPort                        processDebugPort                         CustomAccessor
   dlopen                           Process_functionDlopen                   Function 1
   emitWarning                      Process_emitWarning                      Function 1
   env                              constructEnv                             PropertyCallback
   execArgv                         constructExecArgv                        PropertyCallback
   execPath                         constructExecPath                        PropertyCallback
   exit                             Process_functionExit                     Function 1
+  exitCode                         processExitCode                          CustomAccessor
   features                         constructFeatures                        PropertyCallback
   getActiveResourcesInfo           Process_stubFunctionReturningArray       Function 0
   getegid                          Process_functiongetegid                  Function 0
@@ -1153,6 +1392,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd,
   hrtime                           constructProcessHrtimeObject             PropertyCallback
   isBun                            constructIsBun                           PropertyCallback
   mainModule                       JSBuiltin                                ReadOnly|Builtin|Accessor|Function 0
+  memoryUsage                      constructMemoryUsage                     PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                   PropertyCallback
   nextTick                         Process_functionNextTick                 Function 1
   openStdin                        Process_functionOpenStdin                Function 0
@@ -1166,6 +1406,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd,
   stderr                           constructStderr                          PropertyCallback
   stdin                            constructStdin                           PropertyCallback
   stdout                           constructStdout                          PropertyCallback
+  title                            processTitle                             CustomAccessor
   umask                            Process_functionUmask                    Function 1
   uptime                           Process_functionUptime                   Function 1
   version                          constructVersion                         PropertyCallback
@@ -1191,6 +1432,14 @@ const JSC::ClassInfo Process::s_info = { "Process"_s, &Base::s_info, &processObj
 void Process::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
+
+    this->cpuUsageStructure.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::Structure>::Initializer& init) {
+        init.set(constructCPUUsageStructure(init.vm, init.owner->globalObject()));
+    });
+
+    this->memoryUsageStructure.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::Structure>::Initializer& init) {
+        init.set(constructMemoryUsageStructure(init.vm, init.owner->globalObject()));
+    });
 
     this->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
 }

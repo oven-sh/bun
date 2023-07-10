@@ -588,6 +588,7 @@ pub const X509_LOOKUP_METHOD = struct_x509_lookup_method_st;
 pub const struct_x509_object_st = opaque {};
 pub const X509_OBJECT = struct_x509_object_st;
 pub const struct_stack_st_X509_EXTENSION = opaque {};
+pub const struct_stack_st_v3_ext_method = opaque {};
 pub const struct_stack_st_GENERAL_NAME = opaque {};
 pub const struct_x509_revoked_st = extern struct {
     serialNumber: [*c]ASN1_INTEGER,
@@ -3759,6 +3760,12 @@ pub fn sk_X509_REVOKED_deep_copy(arg_sk: ?*const struct_stack_st_X509_REVOKED, a
     return @ptrCast(?*struct_stack_st_X509_REVOKED, sk_deep_copy(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), sk_X509_REVOKED_call_copy_func, @ptrCast(stack_copy_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) ?*anyopaque), copy_func)), sk_X509_REVOKED_call_free_func, @ptrCast(stack_free_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) void), free_func))));
 }
 pub const struct_stack_st_GENERAL_NAMES = opaque {};
+pub const struct_stack_st_ACCESS_DESCRIPTION = opaque {};
+
+pub const OTHERNAME = extern struct {
+    type_id: ?*ASN1_OBJECT,
+    value: ?*ASN1_TYPE,
+};
 
 pub const GENERAL_NAME = extern struct {
     name_type: enum(c_int) {
@@ -3774,23 +3781,27 @@ pub const GENERAL_NAME = extern struct {
     },
     d: extern union {
         ptr: *c_char,
-        //OTHERNAME
-        otherName: ?*anyopaque, 
-        rfc822Name: ?*ASN1_IA5STRING,
-        dNSName: ?*ASN1_IA5STRING,
-        x400Address: ?*ASN1_STRING,
-        directoryName: ?*X509_NAME,
+        otherName: *OTHERNAME,
+        rfc822Name: *ASN1_IA5STRING,
+        dNSName: *ASN1_IA5STRING,
+        x400Address: *ASN1_STRING,
+        directoryName: *X509_NAME,
         //EDIPARTYNAME
-        ediPartyName: ?*anyopaque,
-        uniformResourceIdentifier: ?*ASN1_IA5STRING,
-        iPAddress: ?*ASN1_OCTET_STRING,
-        registeredID: ?*ASN1_OBJECT,
-        ip: ?*ASN1_OCTET_STRING,
-        dirn: ?*X509_NAME,
-        ia5: ?*ASN1_IA5STRING,
-        rid: ?*ASN1_OBJECT,
-        other: ?*ASN1_TYPE,
+        ediPartyName: *anyopaque,
+        uniformResourceIdentifier: *ASN1_IA5STRING,
+        iPAddress: *ASN1_OCTET_STRING,
+        registeredID: *ASN1_OBJECT,
+        ip: *ASN1_OCTET_STRING,
+        dirn: *X509_NAME,
+        ia5: *ASN1_IA5STRING,
+        rid: *ASN1_OBJECT,
+        other: *ASN1_TYPE,
     },
+};
+
+pub const ACCESS_DESCRIPTION = extern struct {
+    method: *ASN1_OBJECT,
+    location: *GENERAL_NAME,
 };
 
 pub fn sk_GENERAL_NAME_num(arg_sk: ?*const struct_stack_st_GENERAL_NAME) callconv(.C) usize {
@@ -3813,10 +3824,36 @@ pub fn sk_GENERAL_NAME_pop_free(arg_sk: ?*struct_stack_st_GENERAL_NAME, arg_free
     var free_func = arg_free_func;
     sk_pop_free_ex(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), sk_GENERAL_NAME_call_free_func, @ptrCast(stack_free_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) void), free_func)));
 }
-pub fn sk_GENERAL_NAME_value(arg_sk: ?*const struct_stack_st_GENERAL_NAME, arg_i: usize) callconv(.C) GENERAL_NAME {
+pub fn sk_GENERAL_NAME_value(arg_sk: ?*const struct_stack_st_GENERAL_NAME, arg_i: usize) callconv(.C) ?*GENERAL_NAME {
     var sk = arg_sk;
     var i = arg_i;
-    return @ptrCast(GENERAL_NAME, @alignCast(@import("std").meta.alignment(u8), sk_value(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), i)));
+    return @ptrCast(?*GENERAL_NAME, @alignCast(@alignOf(GENERAL_NAME), sk_value(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), i)));
+}
+
+pub fn sk_ACCESS_DESCRIPTION_num(arg_sk: ?*const AUTHORITY_INFO_ACCESS) callconv(.C) usize {
+    var sk = arg_sk;
+    return sk_num(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)));
+}
+pub fn sk_ACCESS_DESCRIPTION_free(arg_sk: ?*AUTHORITY_INFO_ACCESS) callconv(.C) void {
+    var sk = arg_sk;
+    sk_free(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)));
+}
+pub const stack_ACCESS_DESCRIPTION_free_func = ?*const fn (?*AUTHORITY_INFO_ACCESS) callconv(.C) void;
+
+pub fn sk_ACCESS_DESCRIPTION_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
+    var free_func = arg_free_func;
+    var ptr = arg_ptr;
+    @ptrCast(stack_ACCESS_DESCRIPTION_free_func, @alignCast(@import("std").meta.alignment(fn (?*AUTHORITY_INFO_ACCESS) callconv(.C) void), free_func)).?(@ptrCast(?*AUTHORITY_INFO_ACCESS, ptr));
+}
+pub fn sk_ACCESS_DESCRIPTION_pop_free(arg_sk: ?*AUTHORITY_INFO_ACCESS, arg_free_func: stack_ACCESS_DESCRIPTION_free_func) callconv(.C) void {
+    var sk = arg_sk;
+    var free_func = arg_free_func;
+    sk_pop_free_ex(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), sk_ACCESS_DESCRIPTION_call_free_func, @ptrCast(stack_free_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) void), free_func)));
+}
+pub fn sk_ACCESS_DESCRIPTION_value(arg_sk: ?*const AUTHORITY_INFO_ACCESS, arg_i: usize) callconv(.C) ?*ACCESS_DESCRIPTION {
+    var sk = arg_sk;
+    var i = arg_i;
+    return @ptrCast(?*ACCESS_DESCRIPTION, @alignCast(@alignOf(ACCESS_DESCRIPTION), sk_value(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), i)));
 }
 
 pub const stack_X509_CRL_free_func = ?*const fn (?*X509_CRL) callconv(.C) void;
@@ -4048,6 +4085,7 @@ pub fn sk_X509_INFO_deep_copy(arg_sk: ?*const struct_stack_st_X509_INFO, arg_cop
     var free_func = arg_free_func;
     return @ptrCast(?*struct_stack_st_X509_INFO, sk_deep_copy(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), sk_X509_INFO_call_copy_func, @ptrCast(stack_copy_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) ?*anyopaque), copy_func)), sk_X509_INFO_call_free_func, @ptrCast(stack_free_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) void), free_func))));
 }
+pub const X509V3_EXT_METHOD = struct_stack_st_v3_ext_method;
 pub extern fn X509_get_version(x509: ?*const X509) c_long;
 pub extern fn X509_set_version(x509: ?*X509, version: c_long) c_int;
 pub extern fn X509_get0_serialNumber(x509: ?*const X509) [*c]const ASN1_INTEGER;
@@ -4172,6 +4210,8 @@ pub extern fn X509_dup(x509: ?*X509) ?*X509;
 pub extern fn X509_ATTRIBUTE_dup(xa: ?*X509_ATTRIBUTE) ?*X509_ATTRIBUTE;
 pub extern fn X509_EXTENSION_dup(ex: ?*X509_EXTENSION) ?*X509_EXTENSION;
 pub extern fn X509V3_EXT_d2i(ex: ?*X509_EXTENSION) ?*anyopaque;
+pub extern fn X509V3_EXT_get(ex: ?*X509_EXTENSION) ?*X509V3_EXT_METHOD;
+pub extern fn X509V3_EXT_get_nid(ndi: c_int) ?*X509V3_EXT_METHOD;
 pub extern fn X509_CRL_dup(crl: ?*X509_CRL) ?*X509_CRL;
 pub extern fn X509_REVOKED_dup(rev: [*c]X509_REVOKED) [*c]X509_REVOKED;
 pub extern fn X509_REQ_dup(req: ?*X509_REQ) ?*X509_REQ;
@@ -18720,6 +18760,7 @@ pub const stack_st_DIST_POINT = struct_stack_st_DIST_POINT;
 pub const stack_st_X509_TRUST = struct_stack_st_X509_TRUST;
 pub const stack_st_X509_REVOKED = struct_stack_st_X509_REVOKED;
 pub const stack_st_GENERAL_NAMES = struct_stack_st_GENERAL_NAMES;
+pub const AUTHORITY_INFO_ACCESS = struct_stack_st_ACCESS_DESCRIPTION;
 pub const stack_st_X509_INFO = struct_stack_st_X509_INFO;
 pub const stack_st_X509_LOOKUP = struct_stack_st_X509_LOOKUP;
 pub const stack_st_X509_OBJECT = struct_stack_st_X509_OBJECT;

@@ -12,6 +12,10 @@ function generate(ssl) {
         fn: "getAuthorizationError",
         length: 0,
       },
+      getCertificate: {
+        fn: "getCertificate",
+        length: 0,
+      },
       authorized: {
         getter: "getAuthorized",
       },

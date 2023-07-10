@@ -352,8 +352,8 @@ const TLSSocket = (function (InternalTLSSocket) {
     encrypted = true;
 
     _start() {
-      // some frameworks uses this _start internal implementation is suposed to start TLS handshake
-      // on Bun we auto start this after on_open callback and when wrapping we start it after the socket is attached to the net.Socket/tls.Socket
+      // some frameworks uses this _start internal implementation is suposed to start TLS handshake/connect
+      this.connect();
     }
 
     exportKeyingMaterial(length, label, context) {
@@ -377,22 +377,19 @@ const TLSSocket = (function (InternalTLSSocket) {
     setSession() {
       throw Error("Not implented in Bun yet");
     }
-    getPeerCertificate() {
-      // need to implement peerCertificate on socket.zig
-      // const cert = this[bunSocketInternal]?.peerCertificate;
-      // if(cert) {
-      //   return translatePeerCertificate(cert);
-      // }
-      throw Error("Not implented in Bun yet");
+    getPeerCertificate(abbreviated) {
+      const cert = arguments.length < 1 ? this[bunSocketInternal]?.getPeerCertificate() : this[bunSocketInternal]?.getPeerCertificate(abbreviated);
+      if(cert) {
+        return translatePeerCertificate(cert);
+      }
     }
     getCertificate() {
       // need to implement certificate on socket.zig
-      // const cert = this[bunSocketInternal]?.certificate;
-      // if(cert) {
-      // It's not a peer cert, but the formatting is identical.
-      //   return translatePeerCertificate(cert);
-      // }
-      throw Error("Not implented in Bun yet");
+      const cert = this[bunSocketInternal]?.getCertificate();
+      if(cert) {
+        // It's not a peer cert, but the formatting is identical.
+        return translatePeerCertificate(cert);
+      }
     }
     getPeerX509Certificate() {
       throw Error("Not implented in Bun yet");

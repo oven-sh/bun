@@ -1911,6 +1911,62 @@ fn NewSocket(comptime ssl: bool) type {
             }
             return ZigString.fromUTF8(slice).toValueGC(globalObject);
         }
+
+        pub fn getPeerCertifficate(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            JSC.markBinding(@src());
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+
+            if (this.detached) {
+                return JSValue.jsUndefined();
+            }
+
+            const args = callframe.arguments(1);
+            var abbreviated: bool = true;
+            if (args.len > 0) {
+                const arg = args.ptr[0];
+                if (!arg.isBoolean()) {
+                    globalObject.throw("Expected abbreviated to be a boolean", .{});
+                    return .zero;
+                }
+                abbreviated = arg.toBoolean();
+            }
+
+            const ssl_ptr = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+
+            if (abbreviated) {
+                if (this.handlers.is_server) {
+                    const cert = BoringSSL.SSL_get_peer_certificate(ssl_ptr);
+                    if (cert) |x509| {
+                        return X509.toJS(x509, globalObject);
+                    }
+                }
+
+                const cert_chain = BoringSSL.SSL_get_peer_cert_chain(ssl_ptr) orelse return JSValue.jsUndefined();
+                const cert = BoringSSL.sk_X509_value(cert_chain) orelse return JSValue.jsUndefined();
+                return X509.toJS(cert, globalObject);
+            }
+            var cert: ?*BoringSSL.X509 = null;
+            if (this.handlers.is_server) {
+                cert = BoringSSL.SSL_get_peer_certificate(ssl_ptr);
+            }
+
+            const cert_chain = BoringSSL.SSL_get_peer_cert_chain(ssl_ptr);
+            const first_cert = if (cert) |c| c else if (cert_chain) |cc| BoringSSL.sk_X509_value(cc) else null;
+
+            if (first_cert == null) {
+                return JSValue.jsUndefined();
+            }
+
+            // TODO
+            return JSValue.jsUndefined();
+        }
+
         pub fn getCertificate(
             this: *This,
             globalObject: *JSC.JSGlobalObject,

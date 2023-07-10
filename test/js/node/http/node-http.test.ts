@@ -146,6 +146,29 @@ describe("node:http", () => {
             res.end("Path correct!\n");
             return;
           }
+          if (reqUrl.pathname === "/customWriteHead") {
+            function createWriteHead(prevWriteHead, listener) {
+              let fired = false;
+              return function writeHead() {
+                if (!fired) {
+                  fired = true;
+                  listener.call(this);
+                }
+                return prevWriteHead.apply(this, arguments);
+              };
+            }
+
+            function addPoweredBy() {
+              if (!this.getHeader("X-Powered-By")) {
+                this.setHeader("X-Powered-By", "Bun");
+              }
+            }
+
+            res.writeHead = createWriteHead(res.writeHead, addPoweredBy);
+            res.setHeader("Content-Type", "text/plain");
+            res.end("Hello World");
+            return;
+          }
         }
 
         res.writeHead(200, { "Content-Type": "text/plain" });
@@ -502,6 +525,16 @@ describe("node:http", () => {
         const req = request(`http://localhost:${serverPort}/lowerCaseHeaders`, res => {
           expect(res.headers["content-type"]).toBe("text/plain");
           expect(res.headers["x-custom-header"]).toBe("custom_value");
+          done();
+        });
+        req.end();
+      });
+    });
+    it("re-implemented writeHead, issue#3585", done => {
+      runTest(done, (server, serverPort, done) => {
+        const req = request(`http://localhost:${serverPort}/customWriteHead`, res => {
+          expect(res.headers["content-type"]).toBe("text/plain");
+          expect(res.headers["x-powered-by"]).toBe("Bun");
           done();
         });
         req.end();

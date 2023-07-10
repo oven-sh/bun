@@ -460,7 +460,7 @@ pub const ZigStackTrace = extern struct {
             var source_line_len = source_lines_iter.getLength();
 
             if (source_line_len > 0) {
-                var source_lines = try allocator.alloc(Api.SourceLine, @intCast(usize, @max(source_lines_iter.i, 0)));
+                var source_lines = try allocator.alloc(Api.SourceLine, @intCast(usize, @max(source_lines_iter.i + 1, 0)));
                 var source_line_buf = try allocator.alloc(u8, source_line_len);
                 source_lines_iter = this.sourceLineIterator();
                 var remain_buf = source_line_buf[0..];
@@ -468,7 +468,7 @@ pub const ZigStackTrace = extern struct {
                 while (source_lines_iter.next()) |source| {
                     const text = source.text.slice();
                     defer source.text.deinit();
-                    defer bun.copy(
+                    bun.copy(
                         u8,
                         remain_buf,
                         text,
@@ -515,7 +515,7 @@ pub const ZigStackTrace = extern struct {
 
         pub fn getLength(this: *SourceLineIterator) usize {
             var count: usize = 0;
-            for (this.trace.source_lines_ptr[0..@intCast(usize, this.i)]) |*line| {
+            for (this.trace.source_lines_ptr[0..@intCast(usize, this.i + 1)]) |*line| {
                 count += line.length();
             }
 

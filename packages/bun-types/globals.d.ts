@@ -420,6 +420,32 @@ interface Process {
   emitWarning(warning: string | Error /*name?: string, ctor?: Function*/): void;
 
   readonly config: Object;
+
+  memoryUsage: {
+    (delta?: MemoryUsageObject): MemoryUsageObject;
+
+    rss(): number;
+  };
+
+  cpuUsage(previousValue?: CPUUsageObject): CPUUsageObject;
+
+  /**
+   * Does nothing in Bun
+   */
+  setSourceMapsEnabled(enabled: boolean): void;
+}
+
+interface MemoryUsageObject {
+  rss: number;
+  heapTotal: number;
+  heapUsed: number;
+  external: number;
+  arrayBuffers: number;
+}
+
+interface CPUUsageObject {
+  user: number;
+  system: number;
 }
 
 declare var process: Process;
@@ -1437,8 +1463,8 @@ declare function queueMicrotask(callback: (...args: any[]) => void): void;
 declare function reportError(error: any): void;
 
 interface Timer {
-  ref(): void;
-  unref(): void;
+  ref(): Timer;
+  unref(): Timer;
   hasRef(): boolean;
 
   [Symbol.toPrimitive](): number;

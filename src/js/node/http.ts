@@ -992,8 +992,8 @@ export class ServerResponse extends Writable {
 
   // Express "compress" package uses this
   _implicitHeader() {
-    const statusMessage = this.statusMessage ?? STATUS_CODES[this.statusCode];
-    this.writeHead(this.statusCode, statusMessage, {});
+    // @ts-ignore
+    this.writeHead(this.statusCode);
   }
 
   _write(chunk, encoding, callback) {

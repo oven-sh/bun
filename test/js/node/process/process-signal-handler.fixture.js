@@ -18,6 +18,23 @@ function done() {
   }
 }
 
+var counter2 = 0;
+function done2() {
+  counter2++;
+  if (counter2 === 2) {
+    setTimeout(() => {
+      if (counter2 !== 2) {
+        console.log(counter2);
+        console.log("FAIL");
+        process.exit(1);
+      }
+
+      console.log("PASS");
+      process.exit(0);
+    }, 1);
+  }
+}
+
 const SIGUSR1 = os.constants.signals.SIGUSR1;
 const SIGUSR2 = os.constants.signals.SIGUSR2;
 
@@ -33,18 +50,12 @@ switch (process.argv.at(-1)) {
     break;
   }
   case "SIGUSR2": {
-    var callbackSIGUSR2 = false;
     process.on("SIGUSR2", () => {
-      callbackSIGUSR2 = true;
+      done2();
     });
     process.emit("SIGUSR2");
-    if (!callbackSIGUSR2) {
-      console.log("FAIL");
-      process.exit(1);
-    }
-
-    console.log("PASS");
-    process.exit(0);
+    raise(SIGUSR2);
+    break;
   }
   default: {
     throw new Error("Unknown argument: " + process.argv.at(-1));

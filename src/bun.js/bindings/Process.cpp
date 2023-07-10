@@ -1154,7 +1154,7 @@ static int getRSS(size_t* rss)
     }
 
     return -1;
-#elif defined(__LINUX__)
+#elif defined(__linux__)
     // Taken from libuv.
     char buf[1024];
     const char* s;

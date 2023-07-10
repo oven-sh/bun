@@ -358,3 +358,73 @@ describe("process.cpuUsage", () => {
     expect(another.system).toBeGreaterThan(init.system);
   });
 });
+
+it("process.getegid", () => {
+  expect(typeof process.getegid()).toBe("number");
+});
+it("process.geteuid", () => {
+  expect(typeof process.geteuid()).toBe("number");
+});
+it("process.getgid", () => {
+  expect(typeof process.getgid()).toBe("number");
+});
+it("process.getgroups", () => {
+  expect(process.getgroups()).toBeInstanceOf(Array);
+  expect(process.getgroups().length).toBeGreaterThan(0);
+});
+it("process.getuid", () => {
+  expect(typeof process.getuid()).toBe("number");
+});
+
+it("process.getuid", () => {
+  expect(typeof process.getuid()).toBe("number");
+});
+
+const undefinedStubs = [
+  "_debugEnd",
+  "_debugProcess",
+  "_fatalException",
+  "_linkedBinding",
+  "_rawDebug",
+  "_startProfilerIdleNotifier",
+  "_stopProfilerIdleNotifier",
+  "_tickCallback",
+];
+
+for (const stub of undefinedStubs) {
+  it(`process.${stub}`, () => {
+    expect(process[stub]()).toBeUndefined();
+  });
+}
+
+const arrayStubs = ["getActiveResourcesInfo", "_getActiveRequests", "_getActiveHandles"];
+
+for (const stub of arrayStubs) {
+  it(`process.${stub}`, () => {
+    expect(process[stub]()).toBeInstanceOf(Array);
+  });
+}
+
+const emptyObjectStubs = ["_preload_modules"];
+const emptySetStubs = ["allowedNodeEnvironmentFlags"];
+const emptyArrayStubs = ["moduleLoadList"];
+
+for (const stub of emptyObjectStubs) {
+  it(`process.${stub}`, () => {
+    expect(process[stub]).toEqual({});
+  });
+}
+
+for (const stub of emptySetStubs) {
+  it(`process.${stub}`, () => {
+    expect(process[stub]).toBeInstanceOf(Set);
+    expect(process[stub].size).toBe(0);
+  });
+}
+
+for (const stub of emptyArrayStubs) {
+  it(`process.${stub}`, () => {
+    expect(process[stub]).toBeInstanceOf(Array);
+    expect(process[stub]).toHaveLength(0);
+  });
+}

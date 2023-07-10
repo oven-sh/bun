@@ -26,6 +26,8 @@
 #if defined(__linux__)
 #include <sys/resource.h>
 #include <sys/time.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #endif
 
 #if !defined(_MSC_VER)

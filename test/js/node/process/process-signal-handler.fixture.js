@@ -1,8 +1,20 @@
 import { raise } from "./call-raise";
 
+var counter = 0;
 function done() {
-  console.log("PASS");
-  process.exit(0);
+  counter++;
+  if (counter === 2) {
+    setTimeout(() => {
+      if (counter !== 2) {
+        console.log(counter);
+        console.log("FAIL");
+        process.exit(1);
+      }
+
+      console.log("PASS");
+      process.exit(0);
+    }, 1);
+  }
 }
 
 const SIGUSR1 = {
@@ -13,6 +25,9 @@ const SIGUSR1 = {
 
 switch (process.argv.at(-1)) {
   case "SIGUSR1": {
+    process.on("SIGUSR1", () => {
+      done();
+    });
     process.on("SIGUSR1", () => {
       done();
     });

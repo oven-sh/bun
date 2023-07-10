@@ -3302,13 +3302,12 @@ var require_readable = __commonJS({
       __DEBUG__ && debug("endEmitted @ endReadable", state.endEmitted, stream.__id);
       if (!state.endEmitted) {
         state.ended = true;
-        state.endEmitted = true;
         runOnNextTick(endReadableNT, state, stream);
       }
     }
     function endReadableNT(state, stream) {
       __DEBUG__ && debug("endReadableNT -- endEmitted, state.length", state.endEmitted, state.length, stream.__id);
-      if (!state.errored && !state.closeEmitted && state.length === 0) {
+      if (!state.errored && !state.closeEmitted && !state.endEmitted && state.length === 0) {
         state.endEmitted = true;
         stream.emit("end");
         __DEBUG__ && debug("end emitted @ endReadableNT", stream.__id);

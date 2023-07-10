@@ -12,7 +12,23 @@
 #include "ZigConsoleClient.h"
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/JSSet.h>
+#include <JavaScriptCore/LazyProperty.h>
+#include <JavaScriptCore/LazyPropertyInlines.h>
+#include <JavaScriptCore/VMTrapsInlines.h>
+
 #pragma mark - Node.js Process
+
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#include <mach/mach_time.h>
+#endif
+
+#if defined(__linux__)
+#include <sys/resource.h>
+#include <sys/time.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#endif
 
 #if !defined(_MSC_VER)
 #include <unistd.h> // setuid, getuid
@@ -335,9 +351,12 @@ extern "C" uint64_t Bun__readOriginTimer(void*);
 JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime,
     (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
+
     Zig::GlobalObject* globalObject
         = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
     auto& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
     uint64_t time = Bun__readOriginTimer(globalObject->bunVM());
     int64_t seconds = static_cast<int64_t>(time / 1000000000);
     int64_t nanoseconds = time % 1000000000;
@@ -346,7 +365,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime,
         JSC::JSValue arg0 = callFrame->uncheckedArgument(0);
         if (!arg0.isUndefinedOrNull()) {
             JSArray* relativeArray = JSC::jsDynamicCast<JSC::JSArray*>(arg0);
-            auto throwScope = DECLARE_THROW_SCOPE(vm);
             if ((!relativeArray && !arg0.isUndefinedOrNull()) || relativeArray->length() < 2) {
                 JSC::throwTypeError(globalObject, throwScope, "hrtime() argument must be an array or undefined"_s);
                 return JSC::JSValue::encode(JSC::JSValue {});
@@ -366,14 +384,28 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime,
                 seconds--;
                 nanoseconds += 1000000000;
             }
-            throwScope.release();
         }
     }
 
-    auto* array = JSArray::create(vm, globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), 2);
-    array->setIndexQuickly(vm, 0, JSC::jsNumber(seconds));
-    array->setIndexQuickly(vm, 1, JSC::jsNumber(nanoseconds));
-    return JSC::JSValue::encode(JSC::JSValue(array));
+    JSC::JSArray* array = nullptr;
+    {
+        JSC::ObjectInitializationScope initializationScope(vm);
+        if ((array = JSC::JSArray::tryCreateUninitializedRestricted(
+                 initializationScope, nullptr,
+                 globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
+                 2))) {
+
+            array->initializeIndex(initializationScope, 0, JSC::jsNumber(seconds));
+            array->initializeIndex(initializationScope, 1, JSC::jsNumber(nanoseconds));
+        }
+    }
+
+    if (UNLIKELY(!array)) {
+        JSC::throwOutOfMemoryError(globalObject, throwScope);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(array));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionHRTimeBigInt,
@@ -680,10 +712,10 @@ static JSValue constructProcessHrtimeObject(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
     JSC::JSFunction* hrtime = JSC::JSFunction::create(vm, globalObject, 0,
-        MAKE_STATIC_STRING_IMPL("hrtime"), Process_functionHRTime, ImplementationVisibility::Public);
+        String("hrtime"_s), Process_functionHRTime, ImplementationVisibility::Public);
 
     JSC::JSFunction* hrtimeBigInt = JSC::JSFunction::create(vm, globalObject, 0,
-        MAKE_STATIC_STRING_IMPL("bigint"), Process_functionHRTimeBigInt, ImplementationVisibility::Public);
+        String("bigint"_s), Process_functionHRTimeBigInt, ImplementationVisibility::Public);
 
     hrtime->putDirect(vm, JSC::Identifier::fromString(vm, "bigint"_s), hrtimeBigInt);
 
@@ -945,6 +977,317 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     __builtin_unreachable();
 }
 
+template<typename Visitor>
+void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    Process* thisObject = jsCast<Process*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    thisObject->cpuUsageStructure.visit(visitor);
+    thisObject->memoryUsageStructure.visit(visitor);
+}
+
+DEFINE_VISIT_CHILDREN(Process);
+
+static Structure* constructCPUUsageStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), 2);
+    PropertyOffset offset;
+    structure = structure->addPropertyTransition(
+        vm,
+        structure,
+        JSC::Identifier::fromString(vm, "user"_s),
+        0,
+        offset);
+    structure = structure->addPropertyTransition(
+        vm,
+        structure,
+        JSC::Identifier::fromString(vm, "system"_s),
+        0,
+        offset);
+    return structure;
+}
+static Structure* constructMemoryUsageStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), 5);
+    PropertyOffset offset;
+    structure = structure->addPropertyTransition(
+        vm,
+        structure,
+        JSC::Identifier::fromString(vm, "rss"_s),
+        0,
+        offset);
+    structure = structure->addPropertyTransition(
+        vm,
+        structure,
+        JSC::Identifier::fromString(vm, "heapTotal"_s),
+        0,
+        offset);
+    structure = structure->addPropertyTransition(
+        vm,
+        structure,
+        JSC::Identifier::fromString(vm, "heapUsed"_s),
+        0,
+        offset);
+    structure = structure->addPropertyTransition(
+        vm,
+        structure,
+        JSC::Identifier::fromString(vm, "external"_s),
+        0,
+        offset);
+    structure = structure->addPropertyTransition(
+        vm,
+        structure,
+        JSC::Identifier::fromString(vm, "arrayBuffers"_s),
+        0,
+        offset);
+
+    return structure;
+}
+
+static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue)
+{
+    Process* process = jsDynamicCast<Process*>(thisValue);
+
+    // Handle "var memoryUsage = process.memoryUsage; memoryUsage()"
+    if (UNLIKELY(!process)) {
+        // Handle calling this function from inside a node:vm
+        Zig::GlobalObject* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
+
+        if (UNLIKELY(!zigGlobalObject)) {
+            zigGlobalObject = Bun__getDefaultGlobal();
+        }
+
+        return jsCast<Process*>(zigGlobalObject->processObject());
+    }
+
+    return process;
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    struct rusage rusage;
+    if (getrusage(RUSAGE_SELF, &rusage) != 0) {
+        SystemError error;
+        error.errno_ = errno;
+        error.syscall = Bun::toString("getrusage"_s);
+        error.message = Bun::toString("Failed to get CPU usage"_s);
+        throwException(globalObject, throwScope, JSValue::decode(SystemError__toErrorInstance(&error, globalObject)));
+        return JSValue::encode(jsUndefined());
+    }
+
+    auto* process = getProcessObject(globalObject, callFrame->thisValue());
+
+    Structure* cpuUsageStructure = process->cpuUsageStructure.getInitializedOnMainThread(process);
+
+    constexpr double MICROS_PER_SEC = 1000000.0;
+
+    double user = MICROS_PER_SEC * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec;
+    double system = MICROS_PER_SEC * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
+
+    if (callFrame->argumentCount() > 0) {
+        JSValue comparatorValue = callFrame->argument(0);
+        if (!comparatorValue.isUndefined()) {
+            if (UNLIKELY(!comparatorValue.isObject())) {
+                throwTypeError(globalObject, throwScope, "Expected an object as the first argument"_s);
+                return JSC::JSValue::encode(JSC::jsUndefined());
+            }
+
+            JSC::JSObject* comparator = comparatorValue.getObject();
+            JSValue userValue;
+            JSValue systemValue;
+
+            if (LIKELY(comparator->structureID() == cpuUsageStructure->id())) {
+                userValue = comparator->getDirect(0);
+                systemValue = comparator->getDirect(1);
+            } else {
+                userValue = comparator->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "user"_s));
+                RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
+
+                systemValue = comparator->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "system"_s));
+                RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
+            }
+
+            if (UNLIKELY(!userValue || !userValue.isNumber())) {
+                throwTypeError(globalObject, throwScope, "Expected a number for the user property"_s);
+                return JSC::JSValue::encode(JSC::jsUndefined());
+            }
+
+            if (UNLIKELY(!systemValue || !systemValue.isNumber())) {
+                throwTypeError(globalObject, throwScope, "Expected a number for the system property"_s);
+                return JSC::JSValue::encode(JSC::jsUndefined());
+            }
+
+            double userComparator = userValue.asNumber();
+            double systemComparator = systemValue.asNumber();
+
+            user -= userComparator;
+            system -= systemComparator;
+        }
+    }
+
+    JSC::JSObject* result = JSC::constructEmptyObject(vm, cpuUsageStructure);
+    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
+
+    result->putDirectOffset(vm, 0, JSC::jsNumber(user));
+    result->putDirectOffset(vm, 1, JSC::jsNumber(system));
+
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
+}
+
+static int getRSS(size_t* rss)
+{
+#if defined(__APPLE__)
+    mach_msg_type_number_t count;
+    task_basic_info_data_t info;
+    kern_return_t err;
+
+    count = TASK_BASIC_INFO_COUNT;
+    err = task_info(mach_task_self(),
+        TASK_BASIC_INFO,
+        reinterpret_cast<task_info_t>(&info),
+        &count);
+
+    if (err == KERN_SUCCESS) {
+        *rss = (size_t)info.resident_size;
+        return 0;
+    }
+
+    return -1;
+#elif defined(__linux__)
+    // Taken from libuv.
+    char buf[1024];
+    const char* s;
+    ssize_t n;
+    long val;
+    int fd;
+    int i;
+
+    do
+        fd = open("/proc/self/stat", O_RDONLY);
+    while (fd == -1 && errno == EINTR);
+
+    if (fd == -1)
+        return errno;
+
+    do
+        n = read(fd, buf, sizeof(buf) - 1);
+    while (n == -1 && errno == EINTR);
+
+    int closeErrno = 0;
+    do {
+        closeErrno = close(fd);
+    } while (closeErrno == -1 && errno == EINTR);
+
+    if (n == -1)
+        return errno;
+    buf[n] = '\0';
+
+    s = strchr(buf, ' ');
+    if (s == NULL)
+        goto err;
+
+    s += 1;
+    if (*s != '(')
+        goto err;
+
+    s = strchr(s, ')');
+    if (s == NULL)
+        goto err;
+
+    for (i = 1; i <= 22; i++) {
+        s = strchr(s + 1, ' ');
+        if (s == NULL)
+            goto err;
+    }
+
+    errno = 0;
+    val = strtol(s, NULL, 10);
+    if (errno != 0)
+        goto err;
+    if (val < 0)
+        goto err;
+
+    *rss = val * getpagesize();
+    return 0;
+
+err:
+    return EINVAL;
+#else
+#error "Unsupported platform"
+#endif
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* process = getProcessObject(globalObject, callFrame->thisValue());
+
+    size_t current_rss = 0;
+    if (getRSS(&current_rss) != 0) {
+        SystemError error;
+        error.errno_ = errno;
+        error.syscall = Bun::toString("memoryUsage"_s);
+        error.message = Bun::toString("Failed to get memory usage"_s);
+        throwException(globalObject, throwScope, JSValue::decode(SystemError__toErrorInstance(&error, globalObject)));
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    JSC::JSObject* result = JSC::constructEmptyObject(vm, process->memoryUsageStructure.getInitializedOnMainThread(process));
+    if (UNLIKELY(throwScope.exception())) {
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    // Node.js:
+    // {
+    //    rss: 4935680,
+    //    heapTotal: 1826816,
+    //    heapUsed: 650472,
+    //    external: 49879,
+    //    arrayBuffers: 9386
+    // }
+
+    result->putDirectOffset(vm, 0, JSC::jsNumber(current_rss));
+    result->putDirectOffset(vm, 1, JSC::jsNumber(vm.heap.blockBytesAllocated()));
+
+    // heap.size() loops through every cell...
+    // TODO: add a binding for heap.sizeAfterLastCollection()
+    result->putDirectOffset(vm, 2, JSC::jsNumber(vm.heap.sizeAfterLastEdenCollection()));
+
+    result->putDirectOffset(vm, 3, JSC::jsNumber(vm.heap.externalMemorySize()));
+
+    // We report 0 for this because m_arrayBuffers in JSC::Heap is private and we need to add a binding
+    // If we use objectTypeCounts(), it's hideously slow because it loops through every single object in the heap
+    // TODO: add a binding for m_arrayBuffers, registerWrapper() in TypedArrayController doesn't work
+    result->putDirectOffset(vm, 4, JSC::jsNumber(0));
+
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsageRSS,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    size_t current_rss = 0;
+    if (getRSS(&current_rss) != 0) {
+        SystemError error;
+        error.errno_ = errno;
+        error.syscall = Bun::toString("memoryUsage"_s);
+        error.message = Bun::toString("Failed to get memory usage"_s);
+        throwException(globalObject, throwScope, JSValue::decode(SystemError__toErrorInstance(&error, globalObject)));
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(jsNumber(current_rss)));
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionOpenStdin, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
@@ -1008,6 +1351,19 @@ static JSValue Process_stubEmptySet(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
     return JSSet::create(vm, globalObject->setStructure());
+}
+
+static JSValue constructMemoryUsage(VM& vm, JSObject* processObject)
+{
+    auto* globalObject = processObject->globalObject();
+    JSC::JSFunction* memoryUsage = JSC::JSFunction::create(vm, globalObject, 0,
+        String("memoryUsage"_s), Process_functionMemoryUsage, ImplementationVisibility::Public);
+
+    JSC::JSFunction* rss = JSC::JSFunction::create(vm, globalObject, 0,
+        String("rss"_s), Process_functionMemoryUsageRSS, ImplementationVisibility::Public);
+
+    memoryUsage->putDirect(vm, JSC::Identifier::fromString(vm, "rss"_s), rss, JSC::PropertyAttribute::Function | 0);
+    return memoryUsage;
 }
 
 static JSValue constructFeatures(VM& vm, JSObject* processObject)
@@ -1133,16 +1489,16 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd,
   browser                          constructBrowser                         PropertyCallback
   chdir                            Process_functionChdir                    Function 1
   config                           constructProcessConfigObject             PropertyCallback
-  debugPort                        processDebugPort                         CustomAccessor
-  exitCode                         processExitCode                          CustomAccessor
-  title                            processTitle                             CustomAccessor
+  cpuUsage                         Process_functionCpuUsage                 Function 1
   cwd                              Process_functionCwd                      Function 1
+  debugPort                        processDebugPort                         CustomAccessor
   dlopen                           Process_functionDlopen                   Function 1
   emitWarning                      Process_emitWarning                      Function 1
   env                              constructEnv                             PropertyCallback
   execArgv                         constructExecArgv                        PropertyCallback
   execPath                         constructExecPath                        PropertyCallback
   exit                             Process_functionExit                     Function 1
+  exitCode                         processExitCode                          CustomAccessor
   features                         constructFeatures                        PropertyCallback
   getActiveResourcesInfo           Process_stubFunctionReturningArray       Function 0
   getegid                          Process_functiongetegid                  Function 0
@@ -1153,6 +1509,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd,
   hrtime                           constructProcessHrtimeObject             PropertyCallback
   isBun                            constructIsBun                           PropertyCallback
   mainModule                       JSBuiltin                                ReadOnly|Builtin|Accessor|Function 0
+  memoryUsage                      constructMemoryUsage                     PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                   PropertyCallback
   nextTick                         Process_functionNextTick                 Function 1
   openStdin                        Process_functionOpenStdin                Function 0
@@ -1166,6 +1523,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd,
   stderr                           constructStderr                          PropertyCallback
   stdin                            constructStdin                           PropertyCallback
   stdout                           constructStdout                          PropertyCallback
+  title                            processTitle                             CustomAccessor
   umask                            Process_functionUmask                    Function 1
   uptime                           Process_functionUptime                   Function 1
   version                          constructVersion                         PropertyCallback
@@ -1191,6 +1549,14 @@ const JSC::ClassInfo Process::s_info = { "Process"_s, &Base::s_info, &processObj
 void Process::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
+
+    this->cpuUsageStructure.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::Structure>::Initializer& init) {
+        init.set(constructCPUUsageStructure(init.vm, init.owner->globalObject()));
+    });
+
+    this->memoryUsageStructure.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::Structure>::Initializer& init) {
+        init.set(constructMemoryUsageStructure(init.vm, init.owner->globalObject()));
+    });
 
     this->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
 }

@@ -162,7 +162,8 @@ it("process.umask()", () => {
   expect(process.umask()).toBe(orig);
 });
 
-const versions = existsSync(import.meta.dir + "/../../src/generated_versions_list.zig");
+const generated_versions_list = join(import.meta.dir, "../../../../src/generated_versions_list.zig");
+const versions = existsSync(generated_versions_list);
 (versions ? it : it.skip)("process.versions", () => {
   // Generate a list of all the versions in the versions object
   // example:
@@ -178,7 +179,7 @@ const versions = existsSync(import.meta.dir + "/../../src/generated_versions_lis
   // pub const c_ares = "0e7a5dee0fbb04080750cf6eabbe89d8bae87faa";
   // pub const usockets = "fafc241e8664243fc0c51d69684d5d02b9805134";
   const versions = Object.fromEntries(
-    readFileSync(import.meta.dir + "/../../src/generated_versions_list.zig", "utf8")
+    readFileSync(generated_versions_list, "utf8")
       .split("\n")
       .filter(line => line.startsWith("pub const") && !line.includes("zig") && line.includes(' = "'))
       .map(line => line.split(" = "))
@@ -291,3 +292,140 @@ describe("process.onBeforeExit", () => {
     expect(stdout.toString().trim()).toBe("beforeExit: 0\nbeforeExit: 1\nexit: 2");
   });
 });
+
+it("process.memoryUsage", () => {
+  expect(process.memoryUsage()).toEqual({
+    rss: expect.any(Number),
+    heapTotal: expect.any(Number),
+    heapUsed: expect.any(Number),
+    external: expect.any(Number),
+    arrayBuffers: expect.any(Number),
+  });
+});
+
+it("process.memoryUsage.rss", () => {
+  expect(process.memoryUsage.rss()).toEqual(expect.any(Number));
+});
+
+describe("process.cpuUsage", () => {
+  it("works", () => {
+    expect(process.cpuUsage()).toEqual({
+      user: expect.any(Number),
+      system: expect.any(Number),
+    });
+  });
+
+  it("works with diff", () => {
+    const init = process.cpuUsage();
+    for (let i = 0; i < 1000; i++) {}
+    const delta = process.cpuUsage(init);
+    expect(delta.user).toBeGreaterThan(0);
+    expect(delta.system).toBeGreaterThan(0);
+  });
+
+  it("works with diff of different structure", () => {
+    const init = {
+      user: 0,
+      system: 0,
+    };
+    for (let i = 0; i < 1000; i++) {}
+    const delta = process.cpuUsage(init);
+    expect(delta.user).toBeGreaterThan(0);
+    expect(delta.system).toBeGreaterThan(0);
+  });
+
+  it("throws on invalid property", () => {
+    const fixtures = [
+      {},
+      { user: null },
+      { user: {} },
+      { user: "potato" },
+
+      { user: 123 },
+      { user: 123, system: null },
+      { user: 123, system: "potato" },
+    ];
+    for (const fixture of fixtures) {
+      expect(() => process.cpuUsage(fixture)).toThrow();
+    }
+  });
+
+  // Skipped on Linux because it seems to not change as often as on macOS
+  it.skipIf(process.platform === "linux")("increases monotonically", () => {
+    const init = process.cpuUsage();
+    for (let i = 0; i < 10000; i++) {}
+    const another = process.cpuUsage();
+    expect(another.user).toBeGreaterThan(init.user);
+    expect(another.system).toBeGreaterThan(init.system);
+  });
+});
+
+it("process.getegid", () => {
+  expect(typeof process.getegid()).toBe("number");
+});
+it("process.geteuid", () => {
+  expect(typeof process.geteuid()).toBe("number");
+});
+it("process.getgid", () => {
+  expect(typeof process.getgid()).toBe("number");
+});
+it("process.getgroups", () => {
+  expect(process.getgroups()).toBeInstanceOf(Array);
+  expect(process.getgroups().length).toBeGreaterThan(0);
+});
+it("process.getuid", () => {
+  expect(typeof process.getuid()).toBe("number");
+});
+
+it("process.getuid", () => {
+  expect(typeof process.getuid()).toBe("number");
+});
+
+const undefinedStubs = [
+  "_debugEnd",
+  "_debugProcess",
+  "_fatalException",
+  "_linkedBinding",
+  "_rawDebug",
+  "_startProfilerIdleNotifier",
+  "_stopProfilerIdleNotifier",
+  "_tickCallback",
+];
+
+for (const stub of undefinedStubs) {
+  it(`process.${stub}`, () => {
+    expect(process[stub]()).toBeUndefined();
+  });
+}
+
+const arrayStubs = ["getActiveResourcesInfo", "_getActiveRequests", "_getActiveHandles"];
+
+for (const stub of arrayStubs) {
+  it(`process.${stub}`, () => {
+    expect(process[stub]()).toBeInstanceOf(Array);
+  });
+}
+
+const emptyObjectStubs = ["_preload_modules"];
+const emptySetStubs = ["allowedNodeEnvironmentFlags"];
+const emptyArrayStubs = ["moduleLoadList"];
+
+for (const stub of emptyObjectStubs) {
+  it(`process.${stub}`, () => {
+    expect(process[stub]).toEqual({});
+  });
+}
+
+for (const stub of emptySetStubs) {
+  it(`process.${stub}`, () => {
+    expect(process[stub]).toBeInstanceOf(Set);
+    expect(process[stub].size).toBe(0);
+  });
+}
+
+for (const stub of emptyArrayStubs) {
+  it(`process.${stub}`, () => {
+    expect(process[stub]).toBeInstanceOf(Array);
+    expect(process[stub]).toHaveLength(0);
+  });
+}

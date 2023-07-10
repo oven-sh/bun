@@ -1080,8 +1080,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
     auto* process = getProcessObject(globalObject, callFrame->thisValue());
 
     Structure* cpuUsageStructure = process->cpuUsageStructure.getInitializedOnMainThread(process);
-    JSC::JSObject* result = JSC::constructEmptyObject(vm, cpuUsageStructure);
-    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
 
     constexpr double MICROS_PER_SEC = 1000000.0;
 
@@ -1129,6 +1127,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
         }
     }
 
+    JSC::JSObject* result = JSC::constructEmptyObject(vm, cpuUsageStructure);
+    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
+
     result->putDirectOffset(vm, 0, JSC::jsNumber(user));
     result->putDirectOffset(vm, 1, JSC::jsNumber(system));
 
@@ -1174,7 +1175,11 @@ static int getRSS(size_t* rss)
         n = read(fd, buf, sizeof(buf) - 1);
     while (n == -1 && errno == EINTR);
 
-    uv__close(fd);
+    int closeErrno = 0;
+    do {
+        closeErrno = close(fd);
+    } while (closeErrno == -1 && errno == EINTR);
+
     if (n == -1)
         return errno;
     buf[n] = '\0';

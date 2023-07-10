@@ -23802,12 +23802,35 @@ timingSafeEqual &&
   Object.defineProperty(scryptSync, "name", {
     value: "::bunternal::",
   }));
+
+const harcoded_curves = [
+  "p192",
+  "p224",
+  "p256",
+  "p384",
+  "p521",
+  "curve25519",
+  "ed25519",
+  "secp256k1",
+  "secp224r1",
+  "prime256v1",
+  "prime192v1",
+  "ed25519",
+  "secp384r1",
+  "secp521r1",
+];
+
+function getCurves() {
+  return harcoded_curves;
+}
+
 var webcrypto = crypto;
 __export(crypto_exports, {
   DEFAULT_ENCODING: () => DEFAULT_ENCODING,
   getRandomValues: () => getRandomValues,
   randomUUID: () => randomUUID,
   randomInt: () => randomInt,
+  getCurves: () => getCurves,
   scrypt: () => scrypt,
   scryptSync: () => scryptSync,
   timingSafeEqual: () => timingSafeEqual,
@@ -23856,6 +23879,17 @@ export const {
   createCredentials,
   constants,
 } = crypto_exports;
-export { DEFAULT_ENCODING, getRandomValues, randomUUID, randomInt, scrypt, scryptSync, timingSafeEqual, webcrypto };
+
+export {
+  DEFAULT_ENCODING,
+  getRandomValues,
+  getCurves,
+  randomUUID,
+  randomInt,
+  scrypt,
+  scryptSync,
+  timingSafeEqual,
+  webcrypto,
+};
 export default crypto_exports;
 /*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */

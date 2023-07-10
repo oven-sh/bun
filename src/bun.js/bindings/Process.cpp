@@ -586,6 +586,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                     if (UNLIKELY(signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()))
                         return;
 
+                    Locker lock { signalToContextIdsMapLock };
                     if (UNLIKELY(signalToContextIdsMap->find(signalNumber) == signalToContextIdsMap->end()))
                         return;
                     auto contextIds = signalToContextIdsMap->get(signalNumber);

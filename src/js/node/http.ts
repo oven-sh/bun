@@ -948,7 +948,10 @@ export class ServerResponse extends Writable {
   #finished = false;
 
   // Express "compress" package uses this
-  _implicitHeader() {}
+  _implicitHeader() {
+    const statusMessage = this.statusMessage ?? STATUS_CODES[this.statusCode];
+    this.writeHead(this.statusCode, statusMessage, {});
+  }
 
   _write(chunk, encoding, callback) {
     if (!this.#firstWrite && !this.headersSent) {
@@ -1015,6 +1018,7 @@ export class ServerResponse extends Writable {
       var data = this.#firstWrite || "";
       this.#firstWrite = undefined;
       this.#finished = true;
+      this._implicitHeader();
       this._reply(
         new Response(data, {
           headers: this.#headers,

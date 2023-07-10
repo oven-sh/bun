@@ -12,7 +12,7 @@ export const randomUUID = () => {
   return crypto.randomUUID();
 };
 
-export const harcoded_curves = [
+const harcoded_curves = [
   "p192",
   "p224",
   "p256",
@@ -29,7 +29,7 @@ export const harcoded_curves = [
   "secp521r1",
 ];
 
-function getCurves() {
+export function getCurves() {
   return harcoded_curves;
 }
 

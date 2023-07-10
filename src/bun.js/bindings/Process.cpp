@@ -349,9 +349,12 @@ extern "C" uint64_t Bun__readOriginTimer(void*);
 JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime,
     (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
+
     Zig::GlobalObject* globalObject
         = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
     auto& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
     uint64_t time = Bun__readOriginTimer(globalObject->bunVM());
     int64_t seconds = static_cast<int64_t>(time / 1000000000);
     int64_t nanoseconds = time % 1000000000;
@@ -360,7 +363,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime,
         JSC::JSValue arg0 = callFrame->uncheckedArgument(0);
         if (!arg0.isUndefinedOrNull()) {
             JSArray* relativeArray = JSC::jsDynamicCast<JSC::JSArray*>(arg0);
-            auto throwScope = DECLARE_THROW_SCOPE(vm);
             if ((!relativeArray && !arg0.isUndefinedOrNull()) || relativeArray->length() < 2) {
                 JSC::throwTypeError(globalObject, throwScope, "hrtime() argument must be an array or undefined"_s);
                 return JSC::JSValue::encode(JSC::JSValue {});
@@ -380,14 +382,28 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime,
                 seconds--;
                 nanoseconds += 1000000000;
             }
-            throwScope.release();
         }
     }
 
-    auto* array = JSArray::create(vm, globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), 2);
-    array->setIndexQuickly(vm, 0, JSC::jsNumber(seconds));
-    array->setIndexQuickly(vm, 1, JSC::jsNumber(nanoseconds));
-    return JSC::JSValue::encode(JSC::JSValue(array));
+    JSC::JSArray* array = nullptr;
+    {
+        JSC::ObjectInitializationScope initializationScope(vm);
+        if ((array = JSC::JSArray::tryCreateUninitializedRestricted(
+                 initializationScope, nullptr,
+                 globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
+                 2))) {
+
+            array->initializeIndex(initializationScope, 0, JSC::jsNumber(seconds));
+            array->initializeIndex(initializationScope, 1, JSC::jsNumber(nanoseconds));
+        }
+    }
+
+    if (UNLIKELY(!array)) {
+        JSC::throwOutOfMemoryError(globalObject, throwScope);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(array));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionHRTimeBigInt,

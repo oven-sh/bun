@@ -1,7 +1,12 @@
 import { bench, run } from "./runner.mjs";
+import { performance } from "perf_hooks";
 
 bench("process.memoryUsage()", () => {
   process.memoryUsage();
+});
+
+bench("process.memoryUsage.rss()", () => {
+  process.memoryUsage.rss();
 });
 
 bench("process.cpuUsage()", () => {
@@ -13,15 +18,16 @@ bench("process.cpuUsage(delta)", () => {
   process.cpuUsage(init);
 });
 
-bench("process.memoryUsage.rss()", () => {
-  process.memoryUsage.rss();
+bench("performance.now()", () => {
+  performance.now();
+});
+
+bench("process.hrtime()", () => {
+  process.hrtime();
+});
+
+bench("process.hrtime.bigint()", () => {
+  process.hrtime.bigint();
 });
 
 await run();
-
-// Bun.gc();
-// await 123;
-// await 456;
-// await Bun.sleep(5);
-globalThis.abc = Buffer.from("county");
-console.log(process.memoryUsage());

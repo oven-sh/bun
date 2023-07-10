@@ -366,7 +366,6 @@ pub const Prompt = struct {
 };
 
 pub const Crypto = struct {
-    const UUID = @import("./uuid.zig");
     const BoringSSL = @import("root").bun.BoringSSL;
     pub const Class = JSC.NewClass(
         void,
@@ -693,9 +692,8 @@ pub const Crypto = struct {
         _: []const JSC.JSValue,
     ) JSC.JSValue {
         var out: [36]u8 = undefined;
-        const uuid: UUID = .{
-            .bytes = globalThis.bunVM().rareData().nextUUID(),
-        };
+        const uuid = globalThis.bunVM().rareData().nextUUID();
+
         uuid.print(&out);
         return JSC.ZigString.init(&out).toValueGC(globalThis);
     }
@@ -723,9 +721,8 @@ pub const Crypto = struct {
         _: *anyopaque,
     ) callconv(.C) JSC.JSValue {
         var out: [36]u8 = undefined;
-        const uuid: UUID = .{
-            .bytes = globalThis.bunVM().rareData().nextUUID(),
-        };
+        const uuid = globalThis.bunVM().rareData().nextUUID();
+
         uuid.print(&out);
         return JSC.ZigString.init(&out).toValueGC(globalThis);
     }

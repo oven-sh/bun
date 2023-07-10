@@ -49,9 +49,14 @@ export function binding(bindingName) {
   return constants;
 }
 
-export function getStdioWriteStream(fd_, rawRequire) {
-  var module = { path: "node:process", require: rawRequire };
-  var require = path => module.require(path);
+export function getStdioWriteStream(fd_) {
+  var require = path => {
+    var existing = $requireMap.get(path);
+    if (existing) return existing.exports;
+
+    return $internalRequire(path);
+  };
+  var module = { path: "node:process", require };
 
   function createStdioWriteStream(fd_) {
     var { Duplex, eos, destroy } = require("node:stream");
@@ -472,10 +477,15 @@ export function getStdioWriteStream(fd_, rawRequire) {
   return new FastStdioWriteStream(fd_);
 }
 
-export function getStdinStream(fd_, rawRequire, Bun) {
-  var module = { path: "node:process", require: rawRequire };
-  var require = path => module.require(path);
+export function getStdinStream(fd_) {
+  var require = path => {
+    var existing = $requireMap.get(path);
+    if (existing) return existing.exports;
 
+    return $internalRequire(path);
+  };
+
+  var module = { path: "node:process", require: require };
   var { Duplex, eos, destroy } = require("node:stream");
 
   var StdinStream = class StdinStream extends Duplex {

@@ -55,23 +55,39 @@ const opts = {
   },
 } as const;
 
+const productionOpts = {
+  ...opts,
+  define: {
+    ...opts.define,
+    "IS_BUN_DEVELOPMENT": "false",
+  },
+};
+
+const devOpts = {
+  ...opts,
+  define: {
+    ...opts.define,
+    "IS_BUN_DEVELOPMENT": "true",
+  },
+};
+
 const build_prod_minified = await Bun.build({
   entrypoints: entrypoints.filter(file => minifyList.includes(file.slice(import.meta.dir.length + 1))),
   minify: true,
-  ...opts,
+  ...productionOpts,
 });
 
 const build_prod_unminified = await Bun.build({
   entrypoints: entrypoints.filter(file => !minifyList.includes(file.slice(import.meta.dir.length + 1))),
   minify: { syntax: true },
-  ...opts,
+  ...productionOpts,
 });
 
 const build_dev = await Bun.build({
   entrypoints: entrypoints,
   minify: { syntax: true },
   sourcemap: "external",
-  ...opts,
+  ...devOpts,
 });
 
 for (const [build, outdir] of [

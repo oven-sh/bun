@@ -610,16 +610,17 @@ export function setUpWritableStreamDefaultControllerFromUnderlyingSink(
   highWaterMark,
   sizeAlgorithm,
 ) {
+  // @ts-ignore
   const controller = new $WritableStreamDefaultController();
 
-  let startAlgorithm = () => {};
-  let writeAlgorithm = () => {
+  let startAlgorithm: (...args: any[]) => any = () => {};
+  let writeAlgorithm: (...args: any[]) => any = () => {
     return Promise.$resolve();
   };
-  let closeAlgorithm = () => {
+  let closeAlgorithm: (...args: any[]) => any = () => {
     return Promise.$resolve();
   };
-  let abortAlgorithm = () => {
+  let abortAlgorithm: (...args: any[]) => any = () => {
     return Promise.$resolve();
   };
 

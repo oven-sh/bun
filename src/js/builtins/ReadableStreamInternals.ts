@@ -1,3 +1,4 @@
+// @ts-nocheck
 /*
  * Copyright (C) 2015 Canon Inc. All rights reserved.
  * Copyright (C) 2015 Igalia.

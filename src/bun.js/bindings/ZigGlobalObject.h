@@ -270,6 +270,8 @@ public:
 
     JSWeakMap* vmModuleContextMap() { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
 
+    bool hasProcessObject() const { return m_processObject.isInitialized(); }
+
     JSC::JSObject* processObject()
     {
         return m_processObject.getInitializedOnMainThread(this);

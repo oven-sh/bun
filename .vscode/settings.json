@@ -7,6 +7,8 @@
   "search.followSymlinks": false,
   "search.useIgnoreFiles": true,
   "zig.buildOnSave": false,
+  // We do this until we upgrade to latest Zig so that zls doesn't break our code.
+  "zig.formattingProvider": "extension",
   "zig.buildArgs": ["obj", "-Dfor-editor"],
   "zig.buildOption": "build",
   "zig.buildFilePath": "${workspaceFolder}/build.zig",

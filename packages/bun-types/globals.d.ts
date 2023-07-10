@@ -420,6 +420,32 @@ interface Process {
   emitWarning(warning: string | Error /*name?: string, ctor?: Function*/): void;
 
   readonly config: Object;
+
+  memoryUsage: {
+    (delta?: MemoryUsageObject): MemoryUsageObject;
+
+    rss(): number;
+  };
+
+  cpuUsage(previousValue?: CPUUsageObject): CPUUsageObject;
+
+  /**
+   * Does nothing in Bun
+   */
+  setSourceMapsEnabled(enabled: boolean): void;
+}
+
+interface MemoryUsageObject {
+  rss: number;
+  heapTotal: number;
+  heapUsed: number;
+  external: number;
+  arrayBuffers: number;
+}
+
+interface CPUUsageObject {
+  user: number;
+  system: number;
 }
 
 declare var process: Process;
@@ -1401,21 +1427,6 @@ declare function clearTimeout(id?: number | Timer): void;
 declare function clearImmediate(id?: number | Timer): void;
 // declare function createImageBitmap(image: ImageBitmapSource, options?: ImageBitmapOptions): Promise<ImageBitmap>;
 // declare function createImageBitmap(image: ImageBitmapSource, sx: number, sy: number, sw: number, sh: number, options?: ImageBitmapOptions): Promise<ImageBitmap>;
-/**
- * Send a HTTP(s) request
- *
- * @param url URL string
- * @param init A structured value that contains settings for the fetch() request.
- *
- * @returns A promise that resolves to {@link Response} object.
- *
- *
- */
-
-declare function fetch(
-  url: string | URL | Request,
-  init?: FetchRequestInit,
-): Promise<Response>;
 
 /**
  * Send a HTTP(s) request
@@ -1429,6 +1440,20 @@ declare function fetch(
  */
 // tslint:disable-next-line:unified-signatures
 declare function fetch(request: Request, init?: RequestInit): Promise<Response>;
+/**
+ * Send a HTTP(s) request
+ *
+ * @param url URL string
+ * @param init A structured value that contains settings for the fetch() request.
+ *
+ * @returns A promise that resolves to {@link Response} object.
+ *
+ *
+ */
+declare function fetch(
+  url: string | URL | Request,
+  init?: FetchRequestInit,
+): Promise<Response>;
 
 declare function queueMicrotask(callback: (...args: any[]) => void): void;
 /**
@@ -1438,8 +1463,8 @@ declare function queueMicrotask(callback: (...args: any[]) => void): void;
 declare function reportError(error: any): void;
 
 interface Timer {
-  ref(): void;
-  unref(): void;
+  ref(): Timer;
+  unref(): Timer;
   hasRef(): boolean;
 
   [Symbol.toPrimitive](): number;
@@ -1951,7 +1976,7 @@ interface URLSearchParams {
   ): void;
   /** Returns a string containing a query string suitable for use in a URL. Does not include the question mark. */
   toString(): string;
-  [Symbol.iterator](): IterableIterator<[string, FormDataEntryValue]>;
+  [Symbol.iterator](): IterableIterator<[string, string]>;
 }
 
 declare var URLSearchParams: {

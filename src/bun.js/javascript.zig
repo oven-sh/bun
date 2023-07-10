@@ -334,6 +334,33 @@ pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSG
     jsc_vm.bundler.linker.plugin_runner = &jsc_vm.plugin_runner.?;
 }
 
+pub const ExitHandler = struct {
+    exit_code: u8 = 0,
+
+    pub export fn Bun__getExitCode(vm: *VirtualMachine) u8 {
+        return vm.exit_handler.exit_code;
+    }
+
+    pub export fn Bun__setExitCode(vm: *VirtualMachine, code: u8) void {
+        vm.exit_handler.exit_code = code;
+    }
+
+    extern fn Process__dispatchOnBeforeExit(*JSC.JSGlobalObject, code: u8) void;
+    extern fn Process__dispatchOnExit(*JSC.JSGlobalObject, code: u8) void;
+    extern fn Bun__closeAllSQLiteDatabasesForTermination() void;
+
+    pub fn dispatchOnExit(this: *ExitHandler) void {
+        var vm = @fieldParentPtr(VirtualMachine, "exit_handler", this);
+        Process__dispatchOnExit(vm.global, this.exit_code);
+        Bun__closeAllSQLiteDatabasesForTermination();
+    }
+
+    pub fn dispatchOnBeforeExit(this: *ExitHandler) void {
+        var vm = @fieldParentPtr(VirtualMachine, "exit_handler", this);
+        Process__dispatchOnBeforeExit(vm.global, this.exit_code);
+    }
+};
+
 /// TODO: rename this to ScriptExecutionContext
 /// This is the shared global state for a single JS instance execution
 /// Today, Bun is one VM per thread, so the name "VirtualMachine" sort of makes sense
@@ -376,6 +403,7 @@ pub const VirtualMachine = struct {
     plugin_runner: ?PluginRunner = null,
     is_main_thread: bool = false,
     last_reported_error_for_dedupe: JSValue = .zero,
+    exit_handler: ExitHandler = .{},
 
     /// Do not access this field directly
     /// It exists in the VirtualMachine struct so that
@@ -620,7 +648,29 @@ pub const VirtualMachine = struct {
         loop.run();
     }
 
+    pub fn onBeforeExit(this: *VirtualMachine) void {
+        this.exit_handler.dispatchOnBeforeExit();
+        var dispatch = false;
+        while (true) {
+            while (this.eventLoop().tasks.count > 0 or this.active_tasks > 0 or this.uws_event_loop.?.active > 0) : (dispatch = true) {
+                this.tick();
+                this.eventLoop().autoTickActive();
+            }
+
+            if (dispatch) {
+                this.exit_handler.dispatchOnBeforeExit();
+                dispatch = false;
+
+                if (this.eventLoop().tasks.count > 0 or this.active_tasks > 0 or this.uws_event_loop.?.active > 0) continue;
+            }
+
+            break;
+        }
+    }
+
     pub fn onExit(this: *VirtualMachine) void {
+        this.exit_handler.dispatchOnExit();
+
         var rare_data = this.rare_data orelse return;
         var hook = rare_data.cleanup_hook orelse return;
         hook.execute();

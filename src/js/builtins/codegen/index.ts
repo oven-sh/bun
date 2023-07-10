@@ -3,7 +3,35 @@ import path from "path";
 import { sliceSourceCode } from "./builtin-parser";
 import { applyGlobalReplacements, enums, globalsToPrefix } from "./replacements";
 import { cap, fmtCPPString, low } from "./helpers";
+import { spawn, spawnSync } from "bun";
 
+async function createStaticHashtables() {
+  const STATIC_HASH_TABLES = ["src/bun.js/bindings/Process.cpp"];
+  console.time("Creating static hash tables...");
+  const create_hash_table = path.join(
+    import.meta.dir,
+    "../../../../bun-webkit/Source/JavaScriptCore/create_hash_table",
+  );
+  for (let cpp of STATIC_HASH_TABLES) {
+    cpp = path.join(import.meta.dir, "../../../../", cpp);
+    const { stdout, exited } = spawn({
+      cmd: [create_hash_table, cpp],
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    await exited;
+    let str = await new Response(stdout).text();
+    str = str.replaceAll(/^\/\/.*$/gm, "");
+    str = str.replaceAll(/^#include.*$/gm, "");
+    str = str.replaceAll(`namespace JSC {`, "");
+    str = str.replaceAll(`} // namespace JSC`, "");
+    str = "// File generated via `make generate-builtins`\n" + str.trim() + "\n";
+    await Bun.write(cpp.replace(/\.cpp$/, ".lut.h"), str);
+  }
+  console.timeEnd("Creating static hash tables...");
+}
+
+const staticHashTablePromise = createStaticHashtables();
 console.log("Bundling Bun builtins...");
 
 const MINIFY = process.argv.includes("--minify") || process.argv.includes("-m");
@@ -617,6 +645,8 @@ const totalJSSize = files.reduce(
 if (!KEEP_TMP) {
   await rmSync(TMP_DIR, { recursive: true });
 }
+
+await staticHashTablePromise;
 
 console.log(
   `Embedded JS size: %s bytes (across %s functions, %s files)`,

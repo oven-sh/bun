@@ -829,23 +829,18 @@ pub const Encoder = struct {
                     return ZigString.init(input).toValueGC(global);
                 }
 
-                if (input.len < 512) {
-                    var buf: [512]u8 = undefined;
-                    var to = buf[0..input.len];
-                    strings.copyLatin1IntoASCII(to, input);
-                    return ZigString.init(to).toValueGC(global);
-                }
-
-                var to = allocator.alloc(u8, len) catch return ZigString.init("Out of memory").toErrorInstance(global);
-                strings.copyLatin1IntoASCII(to, input);
-                return ZigString.init(to).toExternalValue(global);
+                var str = bun.String.createUninitialized(.latin1, len) orelse return ZigString.init("Out of memory").toErrorInstance(global);
+                defer str.deref();
+                strings.copyLatin1IntoASCII(@constCast(str.latin1()), input);
+                return str.toJS(global);
             },
             .latin1 => {
-                var to = allocator.alloc(u8, len) catch return ZigString.init("Out of memory").toErrorInstance(global);
+                var str = bun.String.createUninitialized(.latin1, len) orelse return ZigString.init("Out of memory").toErrorInstance(global);
+                defer str.deref();
 
-                @memcpy(to, input_ptr[0..to.len]);
+                @memcpy(@constCast(str.latin1()), input_ptr[0..len]);
 
-                return ZigString.init(to).toExternalValue(global);
+                return str.toJS(global);
             },
             .buffer, .utf8 => {
                 const converted = strings.toUTF16Alloc(allocator, input, false) catch return ZigString.init("Out of memory").toErrorInstance(global);
@@ -861,21 +856,22 @@ pub const Encoder = struct {
                 // Avoid incomplete characters
                 if (len / 2 == 0) return ZigString.Empty.toValue(global);
 
-                var output = allocator.alloc(u16, len / 2) catch return ZigString.init("Out of memory").toErrorInstance(global);
-                var output_bytes = std.mem.sliceAsBytes(output);
+                var output = bun.String.createUninitialized(.utf16, len / 2) orelse return ZigString.init("Out of memory").toErrorInstance(global);
+                defer output.deref();
+                var output_bytes = std.mem.sliceAsBytes(@constCast(output.utf16()));
                 output_bytes[output_bytes.len - 1] = 0;
 
                 @memcpy(output_bytes, input_ptr[0..output_bytes.len]);
-                return ZigString.toExternalU16(output.ptr, output.len, global);
+                return output.toJS(global);
             },
 
             .hex => {
-                var output = allocator.alloc(u8, input.len * 2) catch return ZigString.init("Out of memory").toErrorInstance(global);
+                var str = bun.String.createUninitialized(.latin1, len * 2) orelse return ZigString.init("Out of memory").toErrorInstance(global);
+                defer str.deref();
+                var output = @constCast(str.latin1());
                 const wrote = strings.encodeBytesToHex(output, input);
                 std.debug.assert(wrote == output.len);
-                var val = ZigString.init(output);
-                val.mark();
-                return val.toExternalValue(global);
+                return str.toJS(global);
             },
 
             .base64url => {

@@ -44,11 +44,19 @@ inline void generateProcessSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
       reinterpret_cast<GlobalObject *>(lexicalGlobalObject);
 
   JSC::JSObject *process = globalObject->processObject();
+  auto scope = DECLARE_THROW_SCOPE(vm);
+  if (!process->staticPropertiesReified()) {
+    process->reifyAllStaticProperties(globalObject);
+    if (scope.exception())
+      return;
+  }
 
   PropertyNameArray properties(vm, PropertyNameMode::Strings,
                                PrivateSymbolMode::Exclude);
   process->getPropertyNames(globalObject, properties,
                             DontEnumPropertiesMode::Exclude);
+  if (scope.exception())
+    return;
 
   exportNames.append(vm.propertyNames->defaultKeyword);
   exportValues.append(process);

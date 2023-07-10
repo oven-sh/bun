@@ -41,9 +41,7 @@ $ brew install llvm@15
 ```
 
 ```bash#Ubuntu/Debian
-# On Ubuntu 22.04 and newer, LLVM 15 is available in the default repositories
-$ sudo apt install llvm-15 lld-15 clang-15
-# On older versions,
+$ # LLVM has an automatic installation script that is compatible with all versions of Ubuntu
 $ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 15 all
 ```
 
@@ -85,7 +83,7 @@ $ brew install automake ccache cmake coreutils esbuild gnu-sed go libiconv libto
 ```
 
 ```bash#Ubuntu/Debian
-$ sudo apt install cargo ccache cmake esbuild git golang libtool ninja-build pkg-config rustc
+$ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config rustc esbuild
 ```
 
 ```bash#Arch
@@ -94,7 +92,19 @@ $ pacman -S base-devel ccache cmake esbuild git go libiconv libtool make ninja p
 
 {% /codetabs %}
 
-In addition to this, you will need either `bun` or `npm` installed to install the package.json dependencies.
+{% details summary="Ubuntu — Unable to locate package esbuild" %}
+
+The `apt install esbuild` command may fail with an `Unable to locate package` error if you are using a Ubuntu mirror that does not contain an exact copy of the original Ubuntu server. Note that the same error may occur if you are not using any mirror but have the Ubuntu Universe enabled in the `sources.list`. In this case, you can install esbuild manually:
+
+```bash
+$ curl -fsSL https://esbuild.github.io/dl/latest | sh
+$ chmod +x ./esbuild
+$ sudo mv ./esbuild /usr/local/bin
+```
+
+{% /details %}
+
+In addition to this, you will need an npm package manager (`bun`, `npm`, etc) to install the `package.json` dependencies.
 
 ## Install Zig
 
@@ -107,7 +117,7 @@ $ zigup 0.11.0-dev.3737+9eb008717
 
 ## Building
 
-After cloning the repository, prepare bun to be built:
+After cloning the repository, run the following command. The runs
 
 ```bash
 $ make setup

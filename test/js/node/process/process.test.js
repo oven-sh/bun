@@ -1,9 +1,8 @@
-import { resolveSync, which } from "bun";
+import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
-import { existsSync, readFileSync, realpathSync } from "fs";
-import { bunExe } from "harness";
-import { basename, resolve } from "path";
-import { raise } from "./call-raise.js";
+import { existsSync, readFileSync } from "fs";
+import { bunEnv, bunExe } from "harness";
+import { basename, join, resolve } from "path";
 
 it("process", () => {
   // this property isn't implemented yet but it should at least return a string
@@ -163,7 +162,8 @@ it("process.umask()", () => {
   expect(process.umask()).toBe(orig);
 });
 
-const versions = existsSync(import.meta.dir + "/../../src/generated_versions_list.zig");
+const generated_versions_list = join(import.meta.dir, "../../../../src/generated_versions_list.zig");
+const versions = existsSync(generated_versions_list);
 (versions ? it : it.skip)("process.versions", () => {
   // Generate a list of all the versions in the versions object
   // example:
@@ -179,7 +179,7 @@ const versions = existsSync(import.meta.dir + "/../../src/generated_versions_lis
   // pub const c_ares = "0e7a5dee0fbb04080750cf6eabbe89d8bae87faa";
   // pub const usockets = "fafc241e8664243fc0c51d69684d5d02b9805134";
   const versions = Object.fromEntries(
-    readFileSync(import.meta.dir + "/../../src/generated_versions_list.zig", "utf8")
+    readFileSync(generated_versions_list, "utf8")
       .split("\n")
       .filter(line => line.startsWith("pub const") && !line.includes("zig") && line.includes(' = "'))
       .map(line => line.split(" = "))
@@ -219,44 +219,6 @@ it("process.emitWarning", () => {
   expect(called).toBe(1);
 });
 
-it("process on SIGUSR1", done => {
-  var called1 = false;
-  process.on("SIGUSR1", () => {
-    called1 = true;
-  });
-  raise(30);
-  process.nextTick(() => {
-    expect(called1).toBeTruthy();
-    done();
-  });
-});
-
-it("process on and off SIGINFO", done => {
-  var calledSIGINFO = false;
-  process.on("SIGINFO", () => {
-    calledSIGINFO = true;
-  });
-  process.off("SIGINFO");
-  raise(29);
-  process.nextTick(() => {
-    expect(calledSIGINFO).toBeFalsy();
-    done();
-  });
-});
-
-it("process signal event works like normal event", () => {
-  var called = false;
-  process.on("SIGUSR2", () => {
-    called = true;
-  });
-  process.emit("SIGUSR2");
-  expect(called).toBeTruthy();
-  process.removeListener("SIGUSR2");
-  called = false;
-  process.emit("SIGUSR2");
-  expect(called).toBeFalsy();
-});
-
 it("process.execArgv", () => {
   expect(process.execArgv instanceof Array).toBe(true);
 });
@@ -272,3 +234,211 @@ it("process.argv in testing", () => {
   // assert we aren't creating a new process.argv each call
   expect(process.argv).toBe(process.argv);
 });
+
+describe("process.exitCode", () => {
+  it("validates int", () => {
+    expect(() => (process.exitCode = "potato")).toThrow("exitCode must be a number");
+    expect(() => (process.exitCode = 1.2)).toThrow('The "code" argument must be an integer');
+    expect(() => (process.exitCode = NaN)).toThrow('The "code" argument must be an integer');
+    expect(() => (process.exitCode = Infinity)).toThrow('The "code" argument must be an integer');
+    expect(() => (process.exitCode = -Infinity)).toThrow('The "code" argument must be an integer');
+    expect(() => (process.exitCode = -1)).toThrow("exitCode must be between 0 and 127");
+  });
+
+  it("works with implicit process.exit", () => {
+    const { exitCode, stdout } = spawnSync({
+      cmd: [bunExe(), join(import.meta.dir, "process-exitCode-with-exit.js"), "42"],
+      env: bunEnv,
+    });
+    expect(exitCode).toBe(42);
+    expect(stdout.toString().trim()).toBe("PASS");
+  });
+
+  it("works with explicit process.exit", () => {
+    const { exitCode, stdout } = spawnSync({
+      cmd: [bunExe(), join(import.meta.dir, "process-exitCode-fixture.js"), "42"],
+      env: bunEnv,
+    });
+    expect(exitCode).toBe(42);
+    expect(stdout.toString().trim()).toBe("PASS");
+  });
+});
+
+it("process.exit", () => {
+  const { exitCode, stdout } = spawnSync({
+    cmd: [bunExe(), join(import.meta.dir, "process-exit-fixture.js")],
+    env: bunEnv,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString().trim()).toBe("PASS");
+});
+
+describe("process.onBeforeExit", () => {
+  it("emitted", () => {
+    const { exitCode, stdout } = spawnSync({
+      cmd: [bunExe(), join(import.meta.dir, "process-onBeforeExit-fixture.js")],
+      env: bunEnv,
+    });
+    expect(exitCode).toBe(0);
+    expect(stdout.toString().trim()).toBe("beforeExit\nexit");
+  });
+
+  it("works with explicit process.exit", () => {
+    const { exitCode, stdout } = spawnSync({
+      cmd: [bunExe(), join(import.meta.dir, "process-onBeforeExit-keepAlive.js")],
+      env: bunEnv,
+    });
+    expect(exitCode).toBe(0);
+    expect(stdout.toString().trim()).toBe("beforeExit: 0\nbeforeExit: 1\nexit: 2");
+  });
+});
+
+it("process.memoryUsage", () => {
+  expect(process.memoryUsage()).toEqual({
+    rss: expect.any(Number),
+    heapTotal: expect.any(Number),
+    heapUsed: expect.any(Number),
+    external: expect.any(Number),
+    arrayBuffers: expect.any(Number),
+  });
+});
+
+it("process.memoryUsage.rss", () => {
+  expect(process.memoryUsage.rss()).toEqual(expect.any(Number));
+});
+
+describe("process.cpuUsage", () => {
+  it("works", () => {
+    expect(process.cpuUsage()).toEqual({
+      user: expect.any(Number),
+      system: expect.any(Number),
+    });
+  });
+
+  it("works with diff", () => {
+    const init = process.cpuUsage();
+    for (let i = 0; i < 1000; i++) {}
+    const delta = process.cpuUsage(init);
+    expect(delta.user).toBeGreaterThan(0);
+    expect(delta.system).toBeGreaterThan(0);
+  });
+
+  it("works with diff of different structure", () => {
+    const init = {
+      user: 0,
+      system: 0,
+    };
+    for (let i = 0; i < 1000; i++) {}
+    const delta = process.cpuUsage(init);
+    expect(delta.user).toBeGreaterThan(0);
+    expect(delta.system).toBeGreaterThan(0);
+  });
+
+  it("throws on invalid property", () => {
+    const fixtures = [
+      {},
+      { user: null },
+      { user: {} },
+      { user: "potato" },
+
+      { user: 123 },
+      { user: 123, system: null },
+      { user: 123, system: "potato" },
+    ];
+    for (const fixture of fixtures) {
+      expect(() => process.cpuUsage(fixture)).toThrow();
+    }
+  });
+
+  // Skipped on Linux because it seems to not change as often as on macOS
+  it.skipIf(process.platform === "linux")("increases monotonically", () => {
+    const init = process.cpuUsage();
+    for (let i = 0; i < 10000; i++) {}
+    const another = process.cpuUsage();
+    expect(another.user).toBeGreaterThan(init.user);
+    expect(another.system).toBeGreaterThan(init.system);
+  });
+});
+
+it("process.getegid", () => {
+  expect(typeof process.getegid()).toBe("number");
+});
+it("process.geteuid", () => {
+  expect(typeof process.geteuid()).toBe("number");
+});
+it("process.getgid", () => {
+  expect(typeof process.getgid()).toBe("number");
+});
+it("process.getgroups", () => {
+  expect(process.getgroups()).toBeInstanceOf(Array);
+  expect(process.getgroups().length).toBeGreaterThan(0);
+});
+it("process.getuid", () => {
+  expect(typeof process.getuid()).toBe("number");
+});
+
+it("process.getuid", () => {
+  expect(typeof process.getuid()).toBe("number");
+});
+
+describe("signal", () => {
+  const fixture = join(import.meta.dir, "./process-signal-handler.fixture.js");
+  it("simple case works", async () => {
+    const child = Bun.spawn({
+      cmd: [bunExe(), fixture, "SIGUSR1"],
+      env: bunEnv,
+    });
+
+    expect(await child.exited).toBe(0);
+    expect(await new Response(child.stdout).text()).toBe("PASS\n");
+  });
+});
+
+const undefinedStubs = [
+  "_debugEnd",
+  "_debugProcess",
+  "_fatalException",
+  "_linkedBinding",
+  "_rawDebug",
+  "_startProfilerIdleNotifier",
+  "_stopProfilerIdleNotifier",
+  "_tickCallback",
+];
+
+for (const stub of undefinedStubs) {
+  it(`process.${stub}`, () => {
+    expect(process[stub]()).toBeUndefined();
+  });
+}
+
+const arrayStubs = ["getActiveResourcesInfo", "_getActiveRequests", "_getActiveHandles"];
+
+for (const stub of arrayStubs) {
+  it(`process.${stub}`, () => {
+    expect(process[stub]()).toBeInstanceOf(Array);
+  });
+}
+
+const emptyObjectStubs = ["_preload_modules"];
+const emptySetStubs = ["allowedNodeEnvironmentFlags"];
+const emptyArrayStubs = ["moduleLoadList"];
+
+for (const stub of emptyObjectStubs) {
+  it(`process.${stub}`, () => {
+    expect(process[stub]).toEqual({});
+  });
+}
+
+for (const stub of emptySetStubs) {
+  it(`process.${stub}`, () => {
+    expect(process[stub]).toBeInstanceOf(Set);
+    expect(process[stub].size).toBe(0);
+  });
+}
+
+for (const stub of emptyArrayStubs) {
+  it(`process.${stub}`, () => {
+    expect(process[stub]).toBeInstanceOf(Array);
+    expect(process[stub]).toHaveLength(0);
+  });
+}

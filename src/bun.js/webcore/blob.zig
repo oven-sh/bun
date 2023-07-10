@@ -249,7 +249,7 @@ pub const Blob = struct {
 
         var hex_buf: [70]u8 = undefined;
         const boundary = brk: {
-            var random = globalThis.bunVM().rareData().nextUUID();
+            var random = globalThis.bunVM().rareData().nextUUID().bytes;
             var formatter = std.fmt.fmtSliceHexLower(&random);
             break :brk std.fmt.bufPrint(&hex_buf, "-WebkitFormBoundary{any}", .{formatter}) catch unreachable;
         };

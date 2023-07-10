@@ -12,6 +12,27 @@ export const randomUUID = () => {
   return crypto.randomUUID();
 };
 
+export const harcoded_curves = [
+  "p192",
+  "p224",
+  "p256",
+  "p384",
+  "p521",
+  "curve25519",
+  "ed25519",
+  "secp256k1",
+  "secp224r1",
+  "prime256v1",
+  "prime192v1",
+  "ed25519",
+  "secp384r1",
+  "secp521r1",
+];
+
+function getCurves() {
+  return harcoded_curves;
+}
+
 export const timingSafeEqual =
   "timingSafeEqual" in crypto
     ? (a, b) => {
@@ -89,4 +110,5 @@ export default {
   scryptSync,
   scrypt,
   webcrypto,
+  getCurves,
 };

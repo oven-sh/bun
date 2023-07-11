@@ -1417,23 +1417,20 @@ pub const ZigConsoleClient = struct {
 
                 // If we check an Object has a method table and it does not
                 // it will crash
-                const callable = js_type != .Object and value.isCallable(globalThis.vm());
+                if (js_type != .Object and value.isCallable(globalThis.vm())) {
+                    if (value.isClass(globalThis)) {
+                        return .{
+                            .tag = .Class,
+                            .cell = js_type,
+                        };
+                    }
 
-                if (value.isClass(globalThis) and !callable) {
                     return .{
-                        .tag = .Object,
-                        .cell = js_type,
-                    };
-                }
-
-                if (callable and js_type == .JSFunction) {
-                    return .{
-                        .tag = .Function,
-                        .cell = js_type,
-                    };
-                } else if (callable and js_type == .InternalFunction) {
-                    return .{
-                        .tag = .Object,
+                        // TODO: we print InternalFunction as Object because we have a lot of
+                        // callable namespaces and printing the contents of it is better than [Function: namespace]
+                        // ideally, we would print [Function: namespace] { ... } on all functions, internal and js.
+                        // what we'll do later is rid of .Function and .Class and handle the prefix in the .Object formatter
+                        .tag = if (js_type == .InternalFunction) .Object else .Function,
                         .cell = js_type,
                     };
                 }
@@ -1756,7 +1753,7 @@ pub const ZigConsoleClient = struct {
                 parent: JSValue,
                 const enable_ansi_colors = enable_ansi_colors_;
                 pub fn handleFirstProperty(this: *@This(), globalThis: *JSC.JSGlobalObject, value: JSValue) void {
-                    if (!value.jsType().isFunction() and !value.isClass(globalThis)) {
+                    if (!value.jsType().isFunction()) {
                         var writer = WrappedWriter(Writer){
                             .ctx = this.writer,
                             .failed = false,
@@ -2094,9 +2091,9 @@ pub const ZigConsoleClient = struct {
                     this.addForNewLine(printable.len);
 
                     if (printable.len == 0) {
-                        writer.print(comptime Output.prettyFmt("[class]", enable_ansi_colors), .{});
+                        writer.print(comptime Output.prettyFmt("<cyan>[class]<r>", enable_ansi_colors), .{});
                     } else {
-                        writer.print(comptime Output.prettyFmt("[class <cyan>{}<r>]", enable_ansi_colors), .{printable});
+                        writer.print(comptime Output.prettyFmt("<cyan>[class {}]<r>", enable_ansi_colors), .{printable});
                     }
                 },
                 .Function => {
@@ -2106,7 +2103,7 @@ pub const ZigConsoleClient = struct {
                     if (printable.len == 0) {
                         writer.print(comptime Output.prettyFmt("<cyan>[Function]<r>", enable_ansi_colors), .{});
                     } else {
-                        writer.print(comptime Output.prettyFmt("<cyan>[Function<d>:<r> <cyan>{}]<r>", enable_ansi_colors), .{printable});
+                        writer.print(comptime Output.prettyFmt("<cyan>[Function: {}]<r>", enable_ansi_colors), .{printable});
                     }
                 },
                 .Getter => {
@@ -2802,7 +2799,7 @@ pub const ZigConsoleClient = struct {
                     }
 
                     if (iter.i == 0) {
-                        if (value.isClass(this.globalThis) and !value.isCallable(this.globalThis.vm()))
+                        if (value.isClass(this.globalThis))
                             this.printAs(.Class, Writer, writer_, value, jsType, enable_ansi_colors)
                         else if (value.isCallable(this.globalThis.vm()))
                             this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors)

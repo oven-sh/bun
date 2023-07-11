@@ -106,6 +106,8 @@
 #include "BunJSCModule.h"
 #include "ModuleLoader.h"
 #include "NodeVMScript.h"
+#include "ProcessIdentifier.h"
+#include "SerializedScriptValue.h"
 
 #include "ZigGeneratedClasses.h"
 #include "JavaScriptCore/DateInstance.h"
@@ -643,6 +645,19 @@ extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* g
 
 #define PUT_WEBCORE_GENERATED_CONSTRUCTOR(name, ConstructorName) \
     putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, name)), JSC::CustomGetterSetter::create(vm, ConstructorName##_getter, ConstructorName##_setter), 0)
+
+String GlobalObject::defaultAgentClusterID()
+{
+    return makeString(ProcessIdent::identifier().toUInt64(), "-default");
+}
+
+String GlobalObject::agentClusterID() const
+{
+    // TODO: workers
+    // if (is<SharedWorkerGlobalScope>(scriptExecutionContext()))
+    //     return makeString(WProcess::identifier().toUInt64(), "-sharedworker");
+    return defaultAgentClusterID();
+}
 
 namespace Zig {
 
@@ -1193,6 +1208,19 @@ JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
     JSC::JSValue num = callFrame->argument(0);
 
     return Bun__Timer__clearTimeout(globalObject, JSC::JSValue::encode(num));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionStructuredClone,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+
+    JSC::JSValue value = callFrame->argument(0);
+
+    auto serialized = SerializedScriptValue::convert(*globalObject, value);
+    JSValue deserialized = serialized->deserialize(*globalObject, globalObject, SerializationErrorMode::Throwing);
+
+    return JSValue::encode(deserialized);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionBTOA,
@@ -3648,7 +3676,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     auto& builtinNames = WebCore::builtinNames(vm);
 
     WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-    extraStaticGlobals.reserveCapacity(44);
+    extraStaticGlobals.reserveCapacity(45);
 
     JSC::Identifier queueMicrotaskIdentifier = JSC::Identifier::fromString(vm, "queueMicrotask"_s);
     extraStaticGlobals.uncheckedAppend(
@@ -3670,6 +3698,12 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         GlobalPropertyInfo { JSC::Identifier::fromString(vm, "clearImmediate"_s),
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
                 "clearImmediate"_s, functionClearTimeout, ImplementationVisibility::Public),
+            JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
+
+    extraStaticGlobals.uncheckedAppend(
+        GlobalPropertyInfo { JSC::Identifier::fromString(vm, "structuredClone"_s),
+            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 2,
+                "structuredClone"_s, functionStructuredClone, ImplementationVisibility::Public),
             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier setTimeoutIdentifier = JSC::Identifier::fromString(vm, "setTimeout"_s);

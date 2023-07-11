@@ -131,4 +131,11 @@ void ScriptExecutionContext::removeFromContextsMap()
     // allScriptExecutionContextsMap().remove(m_identifier);
 }
 
+ScriptExecutionContext* executionContext(JSC::JSGlobalObject* globalObject)
+{
+    if (!globalObject || !globalObject->inherits<JSDOMGlobalObject>())
+        return nullptr;
+    return JSC::jsCast<JSDOMGlobalObject*>(globalObject)->scriptExecutionContext();
+}
+
 }

@@ -373,6 +373,9 @@ public:
     JSObject* navigatorObject();
     JSFunction* nativeMicrotaskTrampoline() { return m_nativeMicrotaskTrampoline.getInitializedOnMainThread(this); }
 
+    String agentClusterID() const;
+    static String defaultAgentClusterID();
+
     void trackFFIFunction(JSC::JSFunction* function)
     {
         this->m_ffiFunctions.append(JSC::Strong<JSC::JSFunction> { vm(), function });

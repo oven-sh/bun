@@ -972,6 +972,7 @@ export class ServerResponse extends Writable {
     this.#firstWrite = undefined;
     this._writableState.decodeStrings = false;
     this.#deferred = undefined;
+    this._hasBody = req.method !== "HEAD";
   }
 
   req;
@@ -987,6 +988,7 @@ export class ServerResponse extends Writable {
   _defaultKeepAlive = false;
   _removedConnection = false;
   _removedContLen = false;
+  _hasBody;
   #deferred: (() => void) | undefined = undefined;
   #finished = false;
 

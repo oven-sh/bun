@@ -630,7 +630,7 @@ class OutgoingMessage extends Writable {
 class ServerResponse extends Writable {
   constructor({ req, reply }) {
     super();
-    this.req = req, this._reply = reply, this.sendDate = !0, this.statusCode = 200, this.headersSent = !1, this.statusMessage = void 0, this.#controller = void 0, this.#firstWrite = void 0, this._writableState.decodeStrings = !1, this.#deferred = void 0;
+    this.req = req, this._reply = reply, this.sendDate = !0, this.statusCode = 200, this.headersSent = !1, this.statusMessage = void 0, this.#controller = void 0, this.#firstWrite = void 0, this._writableState.decodeStrings = !1, this.#deferred = void 0, this._hasBody = req.method !== "HEAD";
   }
   req;
   _reply;
@@ -645,6 +645,7 @@ class ServerResponse extends Writable {
   _defaultKeepAlive = !1;
   _removedConnection = !1;
   _removedContLen = !1;
+  _hasBody;
   #deferred = void 0;
   #finished = !1;
   _implicitHeader() {

@@ -2,6 +2,7 @@ import { file, gc, Serve, serve, Server } from "bun";
 import { afterEach, describe, it, expect, afterAll } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
+import { bunExe, bunEnv } from "harness";
 import { renderToReadableStream } from "react-dom/server";
 import app_jsx from "./app.jsx";
 
@@ -978,6 +979,17 @@ describe("should support Content-Range with Bun.file()", () => {
       });
     });
   }
+});
+
+it("formats error responses correctly", async () => {
+  const { stdout, stderr } = Bun.spawnSync({
+    cmd: [bunExe(), "error-response.js"],
+    cwd: import.meta.dir,
+    env: bunEnv,
+  });
+
+  expect(stdout.toString()).toBe("");
+  expect(stderr.toString()).toContain('throw new Error("test");\n');
 });
 
 it("request body and signal life cycle", async () => {

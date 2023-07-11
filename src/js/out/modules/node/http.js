@@ -626,6 +626,7 @@ class OutgoingMessage extends Writable {
     return this;
   }
 }
+var OriginalWriteHeadFn, OriginalImplicitHeadFn;
 
 class ServerResponse extends Writable {
   constructor({ req, reply }) {
@@ -692,12 +693,15 @@ class ServerResponse extends Writable {
       statusText: this.statusMessage ?? STATUS_CODES[this.statusCode]
     }));
   }
+  #drainHeadersIfObservable() {
+    if (this._implicitHeader === OriginalImplicitHeadFn && this.writeHead === OriginalWriteHeadFn)
+      return;
+    this._implicitHeader();
+  }
   _final(callback) {
     if (!this.headersSent) {
       var data = this.#firstWrite || "";
-      if (this.#firstWrite = void 0, this.#finished = !0, this.writeHead !== Object.getPrototypeOf(this).writeHead)
-        this._implicitHeader();
-      this._reply(new Response(data, {
+      this.#firstWrite = void 0, this.#finished = !0, this.#drainHeadersIfObservable(), this._reply(new Response(data, {
         headers: this.#headers,
         status: this.statusCode,
         statusText: this.statusMessage ?? STATUS_CODES[this.statusCode]
@@ -783,6 +787,8 @@ class ServerResponse extends Writable {
     return _writeHead(statusCode, statusMessage, headers, this), this;
   }
 }
+OriginalWriteHeadFn = ServerResponse.prototype.writeHead;
+OriginalImplicitHeadFn = ServerResponse.prototype._implicitHeader;
 
 class ClientRequest extends OutgoingMessage {
   #timeout;

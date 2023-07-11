@@ -62,8 +62,8 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
                 return block.used >= @as(SizeType, count);
             }
 
-            pub fn append(block: *Block, comptime ValueType: type, value: ValueType) *UnionValueType {
-                if (comptime Environment.allow_assert) std.debug.assert(block.used < count);
+            pub fn append(block: *Block, comptime ValueType: type, value: ValueType) ?*UnionValueType {
+                if (block.used >= count) return error.OutOfMemory;
                 const index = block.used;
                 block.items[index][0..value.len].* = value.*;
                 block.used +|= 1;
@@ -79,7 +79,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
             allocator: Allocator = default_allocator,
             ptrs: [max]*Block = undefined,
 
-            pub fn tail(this: *Overflow) *Block {
+            pub fn tail(this: *Overflow) error{OutOfMemory}!*Block {
                 if (this.ptrs[this.used].isFull()) {
                     this.used +%= 1;
                     if (this.allocated > this.used) {
@@ -88,7 +88,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
                 }
 
                 if (this.allocated <= this.used) {
-                    var new_ptrs = this.allocator.alloc(Block, 2) catch unreachable;
+                    const new_ptrs = this.allocator.alloc(Block, 2) catch return error.OutOfMemory;
                     new_ptrs[0] = Block{};
                     new_ptrs[1] = Block{};
                     this.ptrs[this.allocated] = &new_ptrs[0];
@@ -107,42 +107,6 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
         overflow: Overflow = Overflow{},
 
         pub threadlocal var _self: *Self = undefined;
-
-        pub fn reclaim() []*Block {
-            var overflow = &_self.overflow;
-
-            if (overflow.used == 0) {
-                if (overflow.allocated == 0 or overflow.ptrs[0].used == 0) {
-                    return &.{};
-                }
-            }
-
-            var to_move = overflow.ptrs[0..overflow.allocated][overflow.used..];
-
-            // This returns the list of maxed out blocks
-            var used_list = overflow.slice();
-
-            // The last block may be partially used.
-            if (overflow.allocated > overflow.used and to_move.len > 0 and to_move.ptr[0].used > 0) {
-                to_move = to_move[1..];
-                used_list.len += 1;
-            }
-
-            var used = overflow.allocator.dupe(*Block, used_list) catch unreachable;
-
-            for (to_move, overflow.ptrs[0..to_move.len]) |b, *out| {
-                b.* = Block{
-                    .items = undefined,
-                    .used = 0,
-                };
-                out.* = b;
-            }
-
-            overflow.allocated = @truncate(Overflow.UsedSize, to_move.len);
-            overflow.used = 0;
-
-            return used;
-        }
 
         /// Reset all AST nodes, allowing the memory to be reused for the next parse.
         /// Only call this when we're done with ALL AST nodes, or you risk
@@ -163,10 +127,10 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
             _self.overflow.used = 0;
         }
 
-        pub fn init(allocator: std.mem.Allocator) *Self {
-            var base = allocator.create(WithBase) catch unreachable;
+        pub fn init(allocator: std.mem.Allocator) error{OutOfMemory}!*Self {
+            const base = try allocator.create(WithBase);
             base.* = WithBase{ .store = .{ .overflow = Overflow{ .allocator = allocator } } };
-            var instance = &base.store;
+            const instance = &base.store;
             instance.overflow.ptrs[0] = &base.head;
             instance.overflow.allocated = 1;
 
@@ -176,42 +140,43 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
         }
 
         fn deinit() void {
-            var sliced = _self.overflow.slice();
-            var allocator = _self.overflow.allocator;
+            const sliced = _self.overflow.slice();
+            const allocator = _self.overflow.allocator;
 
             if (sliced.len > 1) {
                 var i: usize = 1;
                 const end = sliced.len;
                 while (i < end) {
-                    var ptrs = @ptrCast(*[2]Block, sliced[i]);
+                    const ptrs = @ptrCast(*[2]Block, sliced[i]);
                     allocator.free(ptrs);
                     i += 2;
                 }
                 _self.overflow.allocated = 1;
             }
-            var base_store = @fieldParentPtr(WithBase, "store", _self);
+            const base_store = @fieldParentPtr(WithBase, "store", _self);
             if (_self.overflow.ptrs[0] == &base_store.head) {
                 allocator.destroy(base_store);
             }
             _self = undefined;
         }
 
-        pub fn append(comptime Disabler: type, comptime ValueType: type, value: ValueType) *ValueType {
+        pub fn append(comptime Disabler: type, comptime ValueType: type, value: ValueType) error{OutOfMemory}!*ValueType {
             Disabler.assert();
             return _self._append(ValueType, value);
         }
 
-        inline fn _append(self: *Self, comptime ValueType: type, value: ValueType) *ValueType {
+        inline fn _append(self: *Self, comptime ValueType: type, value: ValueType) error{OutOfMemory}!*ValueType {
             const bytes = std.mem.asBytes(&value);
             const BytesAsSlice = @TypeOf(bytes);
 
-            var block = self.overflow.tail();
+            const block = try self.overflow.tail();
+            const result = try block.append(BytesAsSlice, bytes);
 
             return @ptrCast(
                 *ValueType,
                 @alignCast(
                     @alignOf(ValueType),
-                    @alignCast(@alignOf(ValueType), block.append(BytesAsSlice, bytes)),
+                    result,
                 ),
             );
         }

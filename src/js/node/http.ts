@@ -109,6 +109,28 @@ function isValidTLSArray(obj) {
   }
 }
 
+class ERR_INVALID_ARG_TYPE extends TypeError {
+  constructor(name, expected, actual) {
+    super(`The ${name} argument must be of type ${expected}. Received type ${typeof actual}`);
+    this.code = "ERR_INVALID_ARG_TYPE";
+  }
+}
+
+function validateMsecs(numberlike: any, field: string) {
+  if (typeof numberlike !== "number" || numberlike < 0) {
+    throw new ERR_INVALID_ARG_TYPE(field, "number", numberlike);
+  }
+
+  return numberlike;
+}
+function validateFunction(callable: any, field: string) {
+  if (typeof callable !== "function") {
+    throw new ERR_INVALID_ARG_TYPE(field, "Function", callable);
+  }
+
+  return callable;
+}
+
 function getHeader(headers, name) {
   if (!headers) return;
   const result = headers.get(name);
@@ -792,12 +814,13 @@ export class OutgoingMessage extends Writable {
   headersSent = false;
   sendDate = true;
   req;
+  timeout;
 
   #finished = false;
   [kEndCalled] = false;
 
   #fakeSocket;
-  #timeoutTimer: Timer | null = null;
+  #timeoutTimer?: Timer;
   [kAbortController]: AbortController | null = null;
 
   // Express "compress" package uses this
@@ -894,21 +917,41 @@ export class OutgoingMessage extends Writable {
   [kClearTimeout]() {
     if (this.#timeoutTimer) {
       clearTimeout(this.#timeoutTimer);
-      this.#timeoutTimer = null;
+      this.removeAllListeners("timeout");
+      this.#timeoutTimer = undefined;
     }
   }
 
-  setTimeout(msecs, callback) {
-    if (this.#timeoutTimer) return this;
-    if (callback) {
-      this.on("timeout", callback);
-    }
+  #onTimeout() {
+    this.#timeoutTimer = undefined;
+    this[kAbortController]?.abort();
+    this.emit("timeout");
+  }
 
-    this.#timeoutTimer = setTimeout(async () => {
-      this.#timeoutTimer = null;
-      this[kAbortController]?.abort();
-      this.emit("timeout");
-    }, msecs);
+  setTimeout(msecs, callback) {
+    if (this.destroyed) return this;
+
+    this.timeout = msecs = validateMsecs(msecs, "msecs");
+
+    // Attempt to clear an existing timer in both cases -
+    //  even if it will be rescheduled we don't want to leak an existing timer.
+    clearTimeout(this.#timeoutTimer!);
+
+    if (msecs === 0) {
+      if (callback !== undefined) {
+        validateFunction(callback, "callback");
+        this.removeListener("timeout", callback);
+      }
+
+      this.#timeoutTimer = undefined;
+    } else {
+      this.#timeoutTimer = setTimeout(this.#onTimeout.bind(this), msecs).unref();
+
+      if (callback !== undefined) {
+        validateFunction(callback, "callback");
+        this.once("timeout", callback);
+      }
+    }
 
     return this;
   }
@@ -1155,7 +1198,7 @@ export class ClientRequest extends OutgoingMessage {
   #fetchRequest;
   #signal: AbortSignal | null = null;
   [kAbortController]: AbortController | null = null;
-  #timeoutTimer: Timer | null = null;
+  #timeoutTimer?: Timer = undefined;
   #options;
   #finished;
 
@@ -1224,6 +1267,9 @@ export class ClientRequest extends OutgoingMessage {
           redirect: "manual",
           verbose: Boolean(__DEBUG__),
           signal: this[kAbortController].signal,
+
+          // Timeouts are handled via this.setTimeout.
+          timeout: false,
         },
       )
         .then(response => {
@@ -1348,8 +1394,6 @@ export class ClientRequest extends OutgoingMessage {
 
     this.#socketPath = options.socketPath;
 
-    if (options.timeout !== undefined) this.setTimeout(options.timeout, null);
-
     const signal = options.signal;
     if (signal) {
       //We still want to control abort function and timeout so signal call our AbortController
@@ -1427,7 +1471,12 @@ export class ClientRequest extends OutgoingMessage {
     this.#reusedSocket = false;
     this.#host = host;
     this.#protocol = protocol;
-    this.#timeoutTimer = null;
+
+    var timeout = options.timeout;
+    if (timeout !== undefined && timeout !== 0) {
+      this.setTimeout(timeout, undefined);
+    }
+
     const headersArray = ArrayIsArray(headers);
     if (!headersArray) {
       var headers = options.headers;
@@ -1482,17 +1531,8 @@ export class ClientRequest extends OutgoingMessage {
 
     // this[kUniqueHeaders] = parseUniqueHeadersOption(options.uniqueHeaders);
 
-    var optsWithoutSignal = options;
-    if (optsWithoutSignal.signal) {
-      optsWithoutSignal = ObjectAssign({}, options);
-      delete optsWithoutSignal.signal;
-    }
+    var { signal: _signal, ...optsWithoutSignal } = options;
     this.#options = optsWithoutSignal;
-
-    var timeout = options.timeout;
-    if (timeout) {
-      this.setTimeout(timeout);
-    }
   }
 
   setSocketKeepAlive(enable = true, initialDelay = 0) {
@@ -1505,21 +1545,41 @@ export class ClientRequest extends OutgoingMessage {
   [kClearTimeout]() {
     if (this.#timeoutTimer) {
       clearTimeout(this.#timeoutTimer);
-      this.#timeoutTimer = null;
+      this.#timeoutTimer = undefined;
+      this.removeAllListeners("timeout");
     }
   }
 
-  setTimeout(msecs, callback?) {
-    if (this.#timeoutTimer) return this;
-    if (callback) {
-      this.on("timeout", callback);
-    }
+  #onTimeout() {
+    this.#timeoutTimer = undefined;
+    this[kAbortController]?.abort();
+    this.emit("timeout");
+  }
 
-    this.#timeoutTimer = setTimeout(async () => {
-      this.#timeoutTimer = null;
-      this[kAbortController]?.abort();
-      this.emit("timeout");
-    }, msecs);
+  setTimeout(msecs, callback) {
+    if (this.destroyed) return this;
+
+    this.timeout = msecs = validateMsecs(msecs, "msecs");
+
+    // Attempt to clear an existing timer in both cases -
+    //  even if it will be rescheduled we don't want to leak an existing timer.
+    clearTimeout(this.#timeoutTimer!);
+
+    if (msecs === 0) {
+      if (callback !== undefined) {
+        validateFunction(callback, "callback");
+        this.removeListener("timeout", callback);
+      }
+
+      this.#timeoutTimer = undefined;
+    } else {
+      this.#timeoutTimer = setTimeout(this.#onTimeout.bind(this), msecs).unref();
+
+      if (callback !== undefined) {
+        validateFunction(callback, "callback");
+        this.once("timeout", callback);
+      }
+    }
 
     return this;
   }

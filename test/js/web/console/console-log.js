@@ -1,4 +1,6 @@
 console.log("Hello World!");
+console.log(0);
+console.log(-0);
 console.log(123);
 console.log(-123);
 console.log(123.567);
@@ -7,6 +9,8 @@ console.log(true);
 console.log(false);
 console.log(null);
 console.log(undefined);
+console.log(Infinity);
+console.log(-Infinity);
 console.log(Symbol("Symbol Description"));
 console.log(new Date(Math.pow(2, 34) * 56));
 console.log([123, 456, 789]);
@@ -27,7 +31,9 @@ console.log(new Promise(() => {}));
 class Foo {}
 
 console.log(() => {});
+console.log(function () {});
 console.log(Foo);
+console.log(class {});
 console.log(new Foo());
 console.log(function foooo() {});
 

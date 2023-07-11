@@ -423,23 +423,20 @@ pub const JestPrettyFormat = struct {
 
                 // If we check an Object has a method table and it does not
                 // it will crash
-                const callable = js_type != .Object and value.isCallable(globalThis.vm());
+                if (js_type != .Object and value.isCallable(globalThis.vm())) {
+                    if (value.isClass(globalThis)) {
+                        return .{
+                            .tag = .Class,
+                            .cell = js_type,
+                        };
+                    }
 
-                if (value.isClass(globalThis) and !callable) {
                     return .{
-                        .tag = .Object,
-                        .cell = js_type,
-                    };
-                }
-
-                if (callable and js_type == .JSFunction) {
-                    return .{
-                        .tag = .Function,
-                        .cell = js_type,
-                    };
-                } else if (callable and js_type == .InternalFunction) {
-                    return .{
-                        .tag = .Object,
+                        // TODO: we print InternalFunction as Object because we have a lot of
+                        // callable namespaces and printing the contents of it is better than [Function: namespace]
+                        // ideally, we would print [Function: namespace] { ... } on all functions, internal and js.
+                        // what we'll do later is rid of .Function and .Class and handle the prefix in the .Object formatter
+                        .tag = if (js_type == .InternalFunction) .Object else .Function,
                         .cell = js_type,
                     };
                 }
@@ -750,7 +747,7 @@ pub const JestPrettyFormat = struct {
                 parent: JSValue,
                 const enable_ansi_colors = enable_ansi_colors_;
                 pub fn handleFirstProperty(this: *@This(), globalThis: *JSC.JSGlobalObject, value: JSValue) void {
-                    if (!value.jsType().isFunction() and !value.isClass(globalThis)) {
+                    if (!value.jsType().isFunction()) {
                         var writer = WrappedWriter(Writer){
                             .ctx = this.writer,
                             .failed = false,
@@ -1126,13 +1123,20 @@ pub const JestPrettyFormat = struct {
                     this.addForNewLine(printable.len);
 
                     if (printable.len == 0) {
-                        writer.print(comptime Output.prettyFmt("[class]", enable_ansi_colors), .{});
+                        writer.print(comptime Output.prettyFmt("<cyan>[class]<r>", enable_ansi_colors), .{});
                     } else {
-                        writer.print(comptime Output.prettyFmt("[class <cyan>{}<r>]", enable_ansi_colors), .{printable});
+                        writer.print(comptime Output.prettyFmt("<cyan>[class {}]<r>", enable_ansi_colors), .{printable});
                     }
                 },
                 .Function => {
-                    writer.writeAll("[Function]");
+                    var printable = ZigString.init(&name_buf);
+                    value.getNameProperty(this.globalThis, &printable);
+
+                    if (printable.len == 0) {
+                        writer.print(comptime Output.prettyFmt("<cyan>[Function]<r>", enable_ansi_colors), .{});
+                    } else {
+                        writer.print(comptime Output.prettyFmt("<cyan>[Function: {}]<r>", enable_ansi_colors), .{printable});
+                    }
                 },
                 .Array => {
                     const len = @truncate(u32, value.getLength(this.globalThis));

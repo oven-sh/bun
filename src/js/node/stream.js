@@ -5356,10 +5356,10 @@ function createNativeStreamReadable(nativeType, Readable) {
       return chunk;
     }
 
-    push(result, encoding) {
-      __DEBUG__ && debug("NativeReadable push -- result, encoding", result, encoding, this.__id);
-      return super.push(...arguments);
-    }
+    // push(result, encoding) {
+    //   __DEBUG__ && debug("NativeReadable push -- result, encoding", result, encoding, this.__id);
+    //   return super.push(...arguments);
+    // }
 
     #handleResult(result, view, isClosed) {
       __DEBUG__ && debug("result, isClosed @ #handleResult", result, isClosed, this.__id);
@@ -5372,7 +5372,9 @@ function createNativeStreamReadable(nativeType, Readable) {
 
         return handleNumberResult(this, result, view, isClosed);
       } else if (typeof result === "boolean") {
-        this.push(null);
+        process.nextTick(() => {
+          this.push(null);
+        });
         return view?.byteLength ?? 0 > 0 ? view : undefined;
       } else if (ArrayBuffer.isView(result)) {
         if (result.byteLength >= this.#highWaterMark && !this.#hasResized && !isClosed) {

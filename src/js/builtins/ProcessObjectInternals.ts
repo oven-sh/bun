@@ -35,9 +35,7 @@ export function binding(bindingName) {
     // TODO: make this less hacky.
     // This calls require("node:fs").constants
     // except, outside an ESM module.
-    const { constants: fs } = globalThis[globalThis.Symbol.for("Bun.lazy")]("createImportMeta", "node:process").require(
-      "node:fs",
-    );
+    const { constants: fs } = Bun.lazy("createImportMeta", "node:process").require("node:fs");
     constants = {
       fs,
       zlib: {},

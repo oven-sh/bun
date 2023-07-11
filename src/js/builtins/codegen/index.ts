@@ -57,6 +57,7 @@ const define = {
   "process.env.NODE_ENV": "development",
   "process.platform": process.platform,
   "process.arch": process.arch,
+  "Bun.lazy": "___BUN_LAZY___",
 };
 
 for (const name in enums) {
@@ -234,7 +235,8 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     const finalReplacement =
       (fn.directives.sloppy ? captured : captured.replace(/function\s*\(.*?\)\s*{/, '$&"use strict";'))
         .replace(/^\((async )?function\(/, "($1function (")
-        .replace(/__intrinsic__/g, "@") + "\n";
+        .replace(/__intrinsic__/g, "@")
+        .replace(/___BUN_LAZY___/g, "globalThis[globalThis.Symbol.for('Bun.lazy')]") + "\n";
 
     bundledFunctions.push({
       name: fn.name,

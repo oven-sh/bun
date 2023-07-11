@@ -107,6 +107,7 @@ declare module "bun" {
    * This is only valid in src/js/ as it is replaced with `globalThis[Symbol.for("Bun.lazy")]` at bundle time.
    */
   function lazy<T extends keyof BunLazyModules>(id: T): BunLazyModules[T];
+  function lazy(id: "createImportMeta", from: string): BunLazyModules[T];
 
   interface BunLazyModules {
     /**
@@ -149,6 +150,11 @@ declare module "bun" {
       functionRegular: any;
       callback: any;
     };
+
+    // ReadableStream related
+    [1]: any;
+    [2]: any;
+    [4]: any;
   }
 }
 

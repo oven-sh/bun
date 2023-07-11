@@ -972,7 +972,10 @@ export class ServerResponse extends Writable {
     this.#firstWrite = undefined;
     this._writableState.decodeStrings = false;
     this.#deferred = undefined;
-    this._hasBody = req.method !== "HEAD";
+
+    // this is matching node's behaviour
+    // https://github.com/nodejs/node/blob/cf8c6994e0f764af02da4fa70bc5962142181bf3/lib/_http_server.js#L192
+    if (req.method === "HEAD") this._hasBody = false;
   }
 
   req;

@@ -972,7 +972,6 @@ export class ServerResponse extends Writable {
     this.#firstWrite = undefined;
     this._writableState.decodeStrings = false;
     this.#deferred = undefined;
-    this.#originalWriteHead = this.writeHead;
   }
 
   req;
@@ -990,7 +989,6 @@ export class ServerResponse extends Writable {
   _removedContLen = false;
   #deferred: (() => void) | undefined = undefined;
   #finished = false;
-  #originalWriteHead: (statusCode, statusMessage, headers) => ServerResponse;
   // Express "compress" package uses this
   _implicitHeader() {
     // @ts-ignore
@@ -1062,7 +1060,7 @@ export class ServerResponse extends Writable {
       var data = this.#firstWrite || "";
       this.#firstWrite = undefined;
       this.#finished = true;
-      if (this.writeHead !== this.#originalWriteHead) {
+      if (this.writeHead !== Object.getPrototypeOf(this).writeHead) {
         this._implicitHeader();
       }
       this._reply(

@@ -285,7 +285,13 @@ interface Bun {
 
   write(
     destination: string | number | BunFile | URL,
-    input: string | Blob | ArrayBuffer | SharedArrayBuffer | TypedArray | Response,
+    input:
+      | string
+      | Blob
+      | ArrayBuffer
+      | SharedArrayBuffer
+      | TypedArray
+      | Response,
   ): Promise<number>;
 }
 
@@ -301,7 +307,9 @@ interface BunFile {
 }
 
 export interface FileSink {
-  write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number;
+  write(
+    chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
+  ): number;
   flush(): number | Promise<number>;
   end(error?: Error): number | Promise<number>;
   start(options?: { highWaterMark?: number }): void;

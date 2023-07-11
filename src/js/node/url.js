@@ -820,7 +820,7 @@ function urlToHttpOptions(url) {
   return options;
 }
 
-const lazy = globalThis[Symbol.for("Bun.lazy")];
+const lazy = Bun.lazy;
 const pathToFileURL = lazy("pathToFileURL");
 const fileURLToPath = lazy("fileURLToPath");
 const defaultObject = {

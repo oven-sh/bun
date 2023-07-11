@@ -2,7 +2,7 @@
 // Reference: https://github.com/nodejs/node/blob/main/lib/events.js
 import { throwNotImplemented } from "../shared";
 
-var { isPromise, Array, Object } = globalThis[Symbol.for("Bun.lazy")]("primordials");
+var { isPromise, Array, Object } = Bun.lazy("primordials");
 const SymbolFor = Symbol.for;
 const ObjectDefineProperty = Object.defineProperty;
 const kCapture = Symbol("kCapture");

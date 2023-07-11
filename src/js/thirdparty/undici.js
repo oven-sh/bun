@@ -1,4 +1,4 @@
-const { Object } = globalThis[Symbol.for("Bun.lazy")]("primordials");
+const { Object } = Bun.lazy("primordials");
 import { EventEmitter } from "events";
 import NodeStreamModule from "node:stream";
 import { Readable } from "node:stream";

@@ -3,15 +3,23 @@ import path from "path";
 import { sliceSourceCode } from "./builtin-parser";
 import { applyGlobalReplacements, enums, globalsToPrefix } from "./replacements";
 import { cap, fmtCPPString, low } from "./helpers";
-import { spawn, spawnSync } from "bun";
+import { spawn } from "bun";
 
 async function createStaticHashtables() {
   const STATIC_HASH_TABLES = ["src/bun.js/bindings/Process.cpp"];
   console.time("Creating static hash tables...");
-  const create_hash_table = path.join(
-    import.meta.dir,
-    "../../../../bun-webkit/Source/JavaScriptCore/create_hash_table",
-  );
+  const create_hash_table = [
+    "src/bun.js/WebKit/Source/JavaScriptCore/create_hash_table",
+    "bun-webkit/Source/JavaScriptCore/create_hash_table",
+  ]
+    .map(x => path.join(import.meta.dir, "../../../../" + x))
+    .find(x => existsSync(x));
+  if (!create_hash_table) {
+    console.warn(
+      "Could not find create_hash_table executable. Run `bun i` or clone webkit to build static hash tables",
+    );
+    return;
+  }
   for (let cpp of STATIC_HASH_TABLES) {
     cpp = path.join(import.meta.dir, "../../../../", cpp);
     const { stdout, exited } = spawn({

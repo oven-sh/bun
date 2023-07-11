@@ -23,10 +23,7 @@ var runInContext = function(code, context, options) {
   throwNotImplemented("node:vm compileFunction", 401);
 }, measureMemory = function() {
   throwNotImplemented("node:vm measureMemory", 401);
-}, lazy = globalThis[Symbol.for("Bun.lazy")];
-if (!lazy || typeof lazy !== "function")
-  throw new Error("Something went wrong while loading Bun. Expected 'Bun.lazy' to be defined.");
-var vm = lazy("vm"), { createContext, isContext, Script, runInNewContext, runInThisContext } = vm, defaultObject = {
+}, vm = globalThis[Symbol.for("Bun.lazy")]("vm"), { createContext, isContext, Script, runInNewContext, runInThisContext } = vm, defaultObject = {
   createContext,
   runInContext,
   runInNewContext,

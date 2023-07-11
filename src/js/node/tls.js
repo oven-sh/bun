@@ -4,7 +4,7 @@ import net, { Server as NetServer } from "node:net";
 const InternalTCPSocket = net[Symbol.for("::bunternal::")];
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
 
-const { RegExp, Array, String } = globalThis[Symbol.for("Bun.lazy")]("primordials");
+const { RegExp, Array, String } = Bun.lazy("primordials");
 const SymbolReplace = Symbol.replace;
 const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];
 const RegExpPrototypeExec = RegExp.prototype.exec;

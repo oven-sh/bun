@@ -25,7 +25,7 @@
 // ----------------------------------------------------------------------------
 // Section: Imports
 // ----------------------------------------------------------------------------
-var { Array, RegExp, String, Bun } = globalThis[Symbol.for("Bun.lazy")]("primordials");
+var { Array, RegExp, String, Bun } = Bun.lazy("primordials");
 import { EventEmitter } from "node:events";
 import { clearTimeout, setTimeout } from "timers";
 import { StringDecoder } from "string_decoder";

@@ -56,7 +56,7 @@ function isIP(s) {
   return 0;
 }
 
-const { Bun, createFIFO, Object } = globalThis[Symbol.for("Bun.lazy")]("primordials");
+const { Bun, createFIFO, Object } = Bun.lazy("primordials");
 const { connect: bunConnect } = Bun;
 var { setTimeout } = globalThis;
 

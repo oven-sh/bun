@@ -1,10 +1,7 @@
 // Hardcoded module "node:os"
 
 export var tmpdir = function () {
-  var lazy = Symbol.for("Bun.lazy");
-  var primordials = globalThis[lazy]("primordials");
-
-  var { Bun } = primordials;
+  var { Bun } = Bun.lazy("primordials");
   var env = Bun.env;
 
   tmpdir = function () {

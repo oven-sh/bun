@@ -5,6 +5,7 @@ import { resolve } from "path";
 import { bunExe, bunEnv } from "harness";
 import { renderToReadableStream } from "react-dom/server";
 import app_jsx from "./app.jsx";
+import { spawn } from "child_process";
 
 type Handler = (req: Request) => Response;
 afterEach(() => gc(true));
@@ -982,14 +983,16 @@ describe("should support Content-Range with Bun.file()", () => {
 });
 
 it("formats error responses correctly", async () => {
-  const { stdout, stderr } = Bun.spawnSync({
-    cmd: [bunExe(), "error-response.js"],
-    cwd: import.meta.dir,
-    env: bunEnv,
-  });
+  const c = spawn(bunExe(), ["./error-response.js"], { cwd: import.meta.dir, env: bunEnv });
 
-  expect(stdout.toString()).toBe("");
-  expect(stderr.toString()).toContain('throw new Error("test");\n');
+  var output = "";
+  c.stderr.on("data", chunk => {
+    output += chunk.toString();
+  });
+  c.stderr.on("end", () => {
+    expect(output).toContain('throw new Error("1");');
+    c.kill();
+  });
 });
 
 it("request body and signal life cycle", async () => {

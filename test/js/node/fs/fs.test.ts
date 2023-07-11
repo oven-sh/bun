@@ -1448,3 +1448,26 @@ describe("utimesSync", () => {
     expect(finalStats.atime).toEqual(prevAccessTime);
   });
 });
+
+it("createReadStream on a large file emits readable event correctly", () => {
+  return new Promise<void>((resolve, reject) => {
+    const tmp = mkdtempSync(`${tmpdir()}/readable`);
+    // write a 10mb file
+    writeFileSync(`${tmp}/large.txt`, "a".repeat(10 * 1024 * 1024));
+    var stream = createReadStream(`${tmp}/large.txt`);
+    var ended = false;
+    var timer: Timer;
+    stream.on("readable", () => {
+      const v = stream.read();
+      if (ended) {
+        clearTimeout(timer);
+        reject(new Error("readable emitted after end"));
+      } else if (v == null) {
+        ended = true;
+        timer = setTimeout(() => {
+          resolve();
+        }, 20);
+      }
+    });
+  });
+});

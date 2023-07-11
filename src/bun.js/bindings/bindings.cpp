@@ -2786,6 +2786,7 @@ bool JSC__JSValue__isClass(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
             return false;
         return value.isConstructor();
     }
+    return false;
 }
 bool JSC__JSValue__isCell(JSC__JSValue JSValue0) { return JSC::JSValue::decode(JSValue0).isCell(); }
 bool JSC__JSValue__isCustomGetterSetter(JSC__JSValue JSValue0)

@@ -630,7 +630,7 @@ class OutgoingMessage extends Writable {
 class ServerResponse extends Writable {
   constructor({ req, reply }) {
     super();
-    this.req = req, this._reply = reply, this.sendDate = !0, this.statusCode = 200, this.headersSent = !1, this.statusMessage = void 0, this.#controller = void 0, this.#firstWrite = void 0, this._writableState.decodeStrings = !1, this.#deferred = void 0;
+    this.req = req, this._reply = reply, this.sendDate = !0, this.statusCode = 200, this.headersSent = !1, this.statusMessage = void 0, this.#controller = void 0, this.#firstWrite = void 0, this._writableState.decodeStrings = !1, this.#deferred = void 0, this.#originalWriteHead = this.writeHead;
   }
   req;
   _reply;
@@ -647,7 +647,9 @@ class ServerResponse extends Writable {
   _removedContLen = !1;
   #deferred = void 0;
   #finished = !1;
+  #originalWriteHead;
   _implicitHeader() {
+    this.writeHead(this.statusCode);
   }
   _write(chunk, encoding, callback) {
     if (!this.#firstWrite && !this.headersSent) {
@@ -694,7 +696,9 @@ class ServerResponse extends Writable {
   _final(callback) {
     if (!this.headersSent) {
       var data = this.#firstWrite || "";
-      this.#firstWrite = void 0, this.#finished = !0, this._reply(new Response(data, {
+      if (this.#firstWrite = void 0, this.#finished = !0, this.writeHead !== this.#originalWriteHead)
+        this._implicitHeader();
+      this._reply(new Response(data, {
         headers: this.#headers,
         status: this.statusCode,
         statusText: this.statusMessage ?? STATUS_CODES[this.statusCode]

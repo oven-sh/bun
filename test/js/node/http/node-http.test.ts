@@ -530,7 +530,7 @@ describe("node:http", () => {
         req.end();
       });
     });
-    it("re-implemented writeHead, issue#3585", done => {
+    it("reassign writeHead method, issue#3585", done => {
       runTest(done, (server, serverPort, done) => {
         const req = request(`http://localhost:${serverPort}/customWriteHead`, res => {
           expect(res.headers["content-type"]).toBe("text/plain");

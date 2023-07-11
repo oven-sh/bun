@@ -67,8 +67,15 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
                 args,
                 comptime Flavor.sync,
             );
+
             switch (result) {
                 .err => |err| {
+                    if (comptime @hasField(Arguments, "throw_if_no_entry")) {
+                        if (args.throw_if_no_entry == false and err.errno == 2) { // .ENOENT
+                            return JSC.JSValue.jsUndefined();
+                        }
+                    }
+
                     globalObject.throwValue(JSC.JSValue.c(err.toJS(globalObject)));
                     return .zero;
                 },

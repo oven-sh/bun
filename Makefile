@@ -1886,10 +1886,10 @@ vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimallo
 vendor-without-check: npm-install vendor-without-npm
 
 .PHONY: vendor
-vendor: require init-submodules vendor-without-check
+vendor: require submodule vendor-without-check
 
 .PHONY: vendor-dev
-vendor-dev: require init-submodules npm-install-dev vendor-without-npm
+vendor-dev: require submodule npm-install-dev vendor-without-npm
 
 .PHONY: bun
 bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local

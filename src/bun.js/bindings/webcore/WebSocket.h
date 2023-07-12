@@ -79,6 +79,11 @@ public:
         Pong = 0xA,
     };
 
+    enum CleanStatus {
+        NotClean = 0,
+        Clean = 1,
+    };
+
     ExceptionOr<void> connect(const String& url);
     ExceptionOr<void> connect(const String& url, const String& protocol);
     ExceptionOr<void> connect(const String& url, const Vector<String>& protocols);
@@ -176,7 +181,7 @@ private:
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
-    void didReceiveClose(bool wasClean, unsigned short code, WTF::String reason);
+    void didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason);
     void didUpdateBufferedAmount(unsigned bufferedAmount);
     void didStartClosingHandshake();
 

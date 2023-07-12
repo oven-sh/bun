@@ -98,8 +98,8 @@ fn buildRequestBody(
             "Connection: Upgrade\r\n" ++
             "Upgrade: websocket\r\n" ++
             "Sec-WebSocket-Version: 13\r\n" ++
-            "{any}" ++
-            "{any}" ++
+            "{s}" ++
+            "{s}" ++
             "\r\n",
         .{ pathname_.slice(), host_.slice(), pico_headers, extra_headers },
     );
@@ -143,7 +143,7 @@ const CppWebSocket = opaque {
         buffered_len: usize,
     ) void;
     extern fn WebSocket__didAbruptClose(websocket_context: *CppWebSocket, reason: ErrorCode) void;
-    extern fn WebSocket__didClose(websocket_context: *CppWebSocket, code: u16, reason: *const JSC.ZigString) void;
+    extern fn WebSocket__didClose(websocket_context: *CppWebSocket, code: u16, reason: *const bun.String) void;
     extern fn WebSocket__didReceiveText(websocket_context: *CppWebSocket, clone: bool, text: *const JSC.ZigString) void;
     extern fn WebSocket__didReceiveBytes(websocket_context: *CppWebSocket, bytes: [*]const u8, byte_len: usize, opcode: u8) void;
 
@@ -1431,10 +1431,10 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             var mask_buf: *[4]u8 = final_body_bytes[2..6];
             std.mem.writeIntSliceBig(u16, final_body_bytes[6..8], code);
 
-            var reason = JSC.ZigString.Empty;
+            var reason = bun.String.empty;
             if (body) |data| {
                 if (body_len > 0) {
-                    reason = JSC.ZigString.init(data[0..body_len]);
+                    reason = bun.String.create(data[0..body_len]);
                     @memcpy(final_body_bytes[8..][0..body_len], data[0..body_len]);
                 }
             }
@@ -1561,7 +1561,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             out.didAbruptClose(ErrorCode.closed);
         }
 
-        fn dispatchClose(this: *WebSocket, code: u16, reason: *const JSC.ZigString) void {
+        fn dispatchClose(this: *WebSocket, code: u16, reason: *const bun.String) void {
             var out = this.outgoing_websocket orelse return;
             this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
             JSC.markBinding(@src());

@@ -652,6 +652,7 @@ pub const Arguments = struct {
     pub const Stat = struct {
         path: PathLike,
         big_int: bool = false,
+        throw_if_no_entry: bool = true,
 
         pub fn deinit(this: Stat) void {
             this.path.deinit();
@@ -672,13 +673,25 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
+            var throw_if_no_entry = true;
+
             const big_int = brk: {
                 if (arguments.next()) |next_val| {
                     if (next_val.isObject()) {
                         if (next_val.isCallable(ctx.ptr().vm())) break :brk false;
                         arguments.eat();
 
-                        if (next_val.getOptional(ctx.ptr(), "bigint", bool) catch false) |big_int| {
+                        if (next_val.getOptional(ctx.ptr(), "throwIfNoEntry", bool) catch {
+                            path.deinit();
+                            return null;
+                        }) |throw_if_no_entry_val| {
+                            throw_if_no_entry = throw_if_no_entry_val;
+                        }
+
+                        if (next_val.getOptional(ctx.ptr(), "bigint", bool) catch {
+                            path.deinit();
+                            return null;
+                        }) |big_int| {
                             break :brk big_int;
                         }
                     }
@@ -688,7 +701,7 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            return Stat{ .path = path, .big_int = big_int };
+            return Stat{ .path = path, .big_int = big_int, .throw_if_no_entry = throw_if_no_entry };
         }
     };
 
@@ -2497,6 +2510,18 @@ pub const Arguments = struct {
     };
 };
 
+pub const StatOrNotFound = union(enum) {
+    stats: Stats,
+    not_found: void,
+
+    pub fn toJS(this: *StatOrNotFound, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        return switch (this.*) {
+            .stats => this.stats.toJS(globalObject),
+            .not_found => JSC.JSValue.undefined,
+        };
+    }
+};
+
 const Return = struct {
     pub const Access = void;
     pub const AppendFile = void;
@@ -2515,7 +2540,7 @@ const Return = struct {
     pub const Lchmod = void;
     pub const Lchown = void;
     pub const Link = void;
-    pub const Lstat = Stats;
+    pub const Lstat = StatOrNotFound;
     pub const Mkdir = bun.String;
     pub const Mkdtemp = JSC.ZigString;
     pub const Open = FileDescriptor;
@@ -2617,7 +2642,7 @@ const Return = struct {
     pub const RealpathNative = Realpath;
     pub const Rename = void;
     pub const Rmdir = void;
-    pub const Stat = Stats;
+    pub const Stat = StatOrNotFound;
 
     pub const Symlink = void;
     pub const Truncate = void;
@@ -3129,8 +3154,13 @@ pub const NodeFS = struct {
                         &this.sync_error_buf,
                     ),
                 )) {
-                    .result => |result| Maybe(Return.Lstat){ .result = Return.Lstat.init(result, false) },
-                    .err => |err| Maybe(Return.Lstat){ .err = err },
+                    .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = Stats.init(result, args.big_int) } },
+                    .err => |err| brk: {
+                        if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
+                            return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
+                        }
+                        break :brk Maybe(Return.Lstat){ .err = err };
+                    },
                 };
             },
             else => {},
@@ -4333,8 +4363,13 @@ pub const NodeFS = struct {
                         &this.sync_error_buf,
                     ),
                 )) {
-                    .result => |result| Maybe(Return.Stat){ .result = Return.Stat.init(result, false) },
-                    .err => |err| Maybe(Return.Stat){ .err = err },
+                    .result => |result| Maybe(Return.Stat){ .result = .{ .stats = Stats.init(result, args.big_int) } },
+                    .err => |err| brk: {
+                        if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
+                            return Maybe(Return.Stat){ .result = .{ .not_found = {} } };
+                        }
+                        break :brk Maybe(Return.Stat){ .err = err };
+                    },
                 });
             },
             else => {},

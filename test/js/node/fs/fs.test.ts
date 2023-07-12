@@ -159,6 +159,18 @@ it("readdirSync on import.meta.dir", () => {
   expect(match).toBe(true);
 });
 
+it("statSync throwIfNoEntry", () => {
+  expect(statSync("/tmp/404/not-found/ok", { throwIfNoEntry: false })).toBeUndefined();
+  expect(lstatSync("/tmp/404/not-found/ok", { throwIfNoEntry: false })).toBeUndefined();
+});
+
+it("statSync throwIfNoEntry: true", () => {
+  expect(() => statSync("/tmp/404/not-found/ok", { throwIfNoEntry: true })).toThrow("No such file or directory");
+  expect(() => statSync("/tmp/404/not-found/ok")).toThrow("No such file or directory");
+  expect(() => lstatSync("/tmp/404/not-found/ok", { throwIfNoEntry: true })).toThrow("No such file or directory");
+  expect(() => lstatSync("/tmp/404/not-found/ok")).toThrow("No such file or directory");
+});
+
 // https://github.com/oven-sh/bun/issues/1887
 it("mkdtempSync, readdirSync, rmdirSync and unlinkSync with non-ascii", () => {
   const tempdir = mkdtempSync(`${tmpdir()}/emoji-fruit-🍇 🍈 🍉 🍊 🍋`);

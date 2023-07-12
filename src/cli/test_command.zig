@@ -255,17 +255,12 @@ pub const CommandLineReporter = struct {
 
     pub fn printSummary(this: *CommandLineReporter, total_tests: ?u32) void {
         const runned_tests = this.summary.fail + this.summary.pass + this.summary.skip + this.summary.todo;
-        var fileOrFiles: []const u8 = "files";
-
-        if (this.jest.files.len == 1) {
-            fileOrFiles = "file";
-        }
 
         // if it's not null it's most likely called after all tests are done, else it bailed out.
         if (total_tests) |total| {
-            Output.prettyError("Ran {d} tests across {d} {s}. <d>{d} total<r> ", .{ runned_tests, this.jest.files.len, fileOrFiles, total });
+            Output.prettyError("Ran {d} tests across {d} files. <d>{d} total<r> ", .{ runned_tests, this.jest.files.len, total });
         } else {
-            Output.prettyError("Ran {d} tests across {d} {s}. ", .{ runned_tests, this.jest.files.len, fileOrFiles });
+            Output.prettyError("Ran {d} tests across {d} files. ", .{ runned_tests, this.jest.files.len });
         }
 
         Output.printStartEnd(bun.start_time, std.time.nanoTimestamp());

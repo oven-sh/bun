@@ -92,6 +92,7 @@ pub const CommandLineReporter = struct {
         skip: u32 = 0,
         todo: u32 = 0,
         fail: u32 = 0,
+        files: u32 = 0,
     };
 
     const DotColorMap = std.EnumMap(TestRunner.Test.Status, string);
@@ -202,7 +203,7 @@ pub const CommandLineReporter = struct {
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.fail;
 
         if (this.jest.bail == this.summary.fail) {
-            this.printSummary(null, null);
+            this.printSummary();
             Output.prettyError("\nBailed out after {d} failures<r>\n", .{this.jest.bail});
             Global.exit(1);
         }
@@ -253,21 +254,11 @@ pub const CommandLineReporter = struct {
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.todo;
     }
 
-    pub fn printSummary(this: *CommandLineReporter, total_tests: ?u32, files_len: ?usize) void {
-        const runned_tests = this.summary.fail + this.summary.pass + this.summary.skip + this.summary.todo;
-        var files = this.jest.files.len;
+    pub fn printSummary(this: *CommandLineReporter) void {
+        const tests = this.summary.fail + this.summary.pass + this.summary.skip + this.summary.todo;
+        const files = this.summary.files;
 
-        if (files_len) |f| {
-            files = f;
-        }
-
-        // if it's not null it's most likely called after all tests are done, else it bailed out.
-        if (total_tests) |total| {
-            Output.prettyError("Ran {d} tests across {d} files. <d>{d} total<r> ", .{ runned_tests, files, total });
-        } else {
-            Output.prettyError("Ran {d} tests across {d} files. ", .{ runned_tests, files});
-        }
-
+        Output.prettyError("Ran {d} tests across {d} files. ", .{ tests, files });
         Output.printStartEnd(bun.start_time, std.time.nanoTimestamp());
     }
 };
@@ -675,8 +666,7 @@ pub const TestCommand = struct {
                 Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary.expectations});
             }
 
-            const total_tests = reporter.summary.fail + reporter.summary.pass + reporter.summary.skip + reporter.summary.todo;
-            reporter.printSummary(total_tests, test_files.len);
+            reporter.printSummary();
         }
 
         Output.prettyError("\n", .{});
@@ -787,12 +777,20 @@ pub const TestCommand = struct {
             Output.flush();
 
             var promise = try vm.loadEntryPoint(file_path);
+            reporter.summary.files += 1;
 
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
                     var result = promise.result(vm.global.vm());
                     vm.runErrorHandler(result, null);
                     reporter.summary.fail += 1;
+
+                    if (reporter.jest.bail == reporter.summary.fail) {
+                        reporter.printSummary();
+                        Output.prettyError("\nBailed out after {d} failures<r>\n", .{reporter.jest.bail});
+                        Global.exit(1);
+                    }
+
                     return;
                 },
                 else => {},

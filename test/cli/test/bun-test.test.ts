@@ -218,7 +218,6 @@ describe("bun test", () => {
       expect(stderr).not.toContain("test #2");
     });
 
-
     test("should bail out after 3 failures", () => {
       const stderr = runTest({
         args: ["--bail", "3"],

@@ -164,6 +164,7 @@ public:
 
     void* dataPtr = nullptr;
     FFIFunction m_constructor = nullptr;
+    NapiRef* napiRef = nullptr;
 
 private:
     NapiClass(VM& vm, NativeExecutable* executable, JSC::JSGlobalObject* global, Structure* structure)

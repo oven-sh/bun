@@ -1022,10 +1022,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObje
     int ngroups = getgroups(0, nullptr);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (ngroups == -1) {
-        SystemError error;
-        error.errno_ = errno;
-        error.syscall = Bun::toString("getgroups"_s);
-        throwException(globalObject, throwScope, JSValue::decode(SystemError__toErrorInstance(&error, globalObject)));
+        throwSystemError(throwScope, globalObject, "getgroups"_s, errno);
         return JSValue::encode(jsUndefined());
     }
 
@@ -1200,11 +1197,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     struct rusage rusage;
     if (getrusage(RUSAGE_SELF, &rusage) != 0) {
-        SystemError error;
-        error.errno_ = errno;
-        error.syscall = Bun::toString("getrusage"_s);
-        error.message = Bun::toString("Failed to get CPU usage"_s);
-        throwException(globalObject, throwScope, JSValue::decode(SystemError__toErrorInstance(&error, globalObject)));
+        throwSystemError(throwScope, globalObject, "Failed to get CPU usage"_s, "getrusage"_s, errno);
         return JSValue::encode(jsUndefined());
     }
 
@@ -1359,11 +1352,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage,
 
     size_t current_rss = 0;
     if (getRSS(&current_rss) != 0) {
-        SystemError error;
-        error.errno_ = errno;
-        error.syscall = Bun::toString("memoryUsage"_s);
-        error.message = Bun::toString("Failed to get memory usage"_s);
-        throwException(globalObject, throwScope, JSValue::decode(SystemError__toErrorInstance(&error, globalObject)));
+        throwSystemError(throwScope, globalObject, "Failed to get memory usage"_s, "memoryUsage"_s, errno);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
@@ -1406,11 +1395,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsageRSS,
 
     size_t current_rss = 0;
     if (getRSS(&current_rss) != 0) {
-        SystemError error;
-        error.errno_ = errno;
-        error.syscall = Bun::toString("memoryUsage"_s);
-        error.message = Bun::toString("Failed to get memory usage"_s);
-        throwException(globalObject, throwScope, JSValue::decode(SystemError__toErrorInstance(&error, globalObject)));
+        throwSystemError(throwScope, globalObject, "Failed to get memory usage"_s, "memoryUsage"_s, errno);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
@@ -1618,15 +1603,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill,
     RETURN_IF_EXCEPTION(scope, {});
 
     int result = kill(pid, signal);
-    if (result == -1) {
-        SystemError error;
-        error.errno_ = errno;
-        error.syscall = Bun::toString("kill"_s);
-        throwException(globalObject, scope, JSValue::decode(SystemError__toErrorInstance(&error, globalObject)));
-        return JSValue::encode(jsUndefined());
+    if (result < 0) {
+        throwSystemError(scope, globalObject, "kill"_s, errno);
     }
 
-    return JSValue::encode(jsUndefined());
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
 JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1665,11 +1646,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
 
     int result = kill(pid, signal);
 
-    if (result == -1) {
-        SystemError error;
-        error.errno_ = errno;
-        error.syscall = Bun::toString("kill"_s);
-        throwException(globalObject, scope, JSValue::decode(SystemError__toErrorInstance(&error, globalObject)));
+    if (result < 0) {
+        throwSystemError(scope, globalObject, "kill"_s, errno);
         return JSValue::encode(jsUndefined());
     }
 

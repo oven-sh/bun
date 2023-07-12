@@ -391,6 +391,19 @@ static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC__JSGlobalObj
 
 }; // namespace Zig
 
+JSC::JSValue createSystemError(JSC::JSGlobalObject* global, ASCIILiteral message, ASCIILiteral syscall, int err);
+JSC::JSValue createSystemError(JSC::JSGlobalObject* global, ASCIILiteral syscall, int err);
+
+static void throwSystemError(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral syscall, int err)
+{
+    scope.throwException(globalObject, createSystemError(globalObject, syscall, err));
+}
+
+static void throwSystemError(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral message, ASCIILiteral syscall, int err)
+{
+    scope.throwException(globalObject, createSystemError(globalObject, message, syscall, err));
+}
+
 template<typename WebCoreType, typename OutType>
 OutType* WebCoreCast(JSC__JSValue JSValue0)
 {

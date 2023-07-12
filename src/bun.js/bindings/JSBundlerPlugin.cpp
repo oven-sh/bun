@@ -157,7 +157,8 @@ public:
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> setupFunction;
 
 private:
-    JSBundlerPlugin(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure, void* config, BunPluginTarget target, JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
+    JSBundlerPlugin(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure, void* config, BunPluginTarget target,
+        JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
         : JSC::JSNonFinalObject(vm, structure)
         , plugin(BundlerPlugin(config, target, addError, onLoadAsync, onResolveAsync))
     {

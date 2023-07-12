@@ -1,6 +1,6 @@
-import { resolveSync, spawnSync, which } from "bun";
+import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
-import { existsSync, readFileSync, realpathSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { basename, join, resolve } from "path";
 
@@ -379,6 +379,28 @@ it("process.getuid", () => {
 
 it("process.getuid", () => {
   expect(typeof process.getuid()).toBe("number");
+});
+
+describe("signal", () => {
+  const fixture = join(import.meta.dir, "./process-signal-handler.fixture.js");
+  it("simple case works", async () => {
+    const child = Bun.spawn({
+      cmd: [bunExe(), fixture, "SIGUSR1"],
+      env: bunEnv,
+    });
+
+    expect(await child.exited).toBe(0);
+    expect(await new Response(child.stdout).text()).toBe("PASS\n");
+  });
+  it("process.emit will call signal events", async () => {
+    const child = Bun.spawn({
+      cmd: [bunExe(), fixture, "SIGUSR2"],
+      env: bunEnv,
+    });
+
+    expect(await child.exited).toBe(0);
+    expect(await new Response(child.stdout).text()).toBe("PASS\n");
+  });
 });
 
 const undefinedStubs = [

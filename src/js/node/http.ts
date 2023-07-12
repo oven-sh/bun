@@ -957,6 +957,7 @@ export class OutgoingMessage extends Writable {
   }
 }
 
+let OriginalWriteHeadFn, OriginalImplicitHeadFn;
 export class ServerResponse extends Writable {
   declare _writableState: any;
 
@@ -994,9 +995,11 @@ export class ServerResponse extends Writable {
   _hasBody = true;
   #deferred: (() => void) | undefined = undefined;
   #finished = false;
-
   // Express "compress" package uses this
-  _implicitHeader() {}
+  _implicitHeader() {
+    // @ts-ignore
+    this.writeHead(this.statusCode);
+  }
 
   _write(chunk, encoding, callback) {
     if (!this.#firstWrite && !this.headersSent) {
@@ -1058,11 +1061,20 @@ export class ServerResponse extends Writable {
     );
   }
 
+  #drainHeadersIfObservable() {
+    if (this._implicitHeader === OriginalImplicitHeadFn && this.writeHead === OriginalWriteHeadFn) {
+      return;
+    }
+
+    this._implicitHeader();
+  }
+
   _final(callback) {
     if (!this.headersSent) {
       var data = this.#firstWrite || "";
       this.#firstWrite = undefined;
       this.#finished = true;
+      this.#drainHeadersIfObservable();
       this._reply(
         new Response(data, {
           headers: this.#headers,
@@ -1180,6 +1192,9 @@ export class ServerResponse extends Writable {
     return this;
   }
 }
+
+OriginalWriteHeadFn = ServerResponse.prototype.writeHead;
+OriginalImplicitHeadFn = ServerResponse.prototype._implicitHeader;
 
 export class ClientRequest extends OutgoingMessage {
   #timeout;

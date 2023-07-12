@@ -2775,8 +2775,18 @@ void JSC__JSValue__put(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, const Z
 
 bool JSC__JSValue__isClass(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
 {
-    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    return value.isConstructor();
+    JSValue value = JSValue::decode(JSValue0);
+    auto callData = getCallData(value);
+
+    switch (callData.type) {
+    case CallData::Type::JS:
+        return callData.js.functionExecutable->isClassConstructorFunction();
+    case CallData::Type::Native:
+        if (callData.native.isBoundFunction)
+            return false;
+        return value.isConstructor();
+    }
+    return false;
 }
 bool JSC__JSValue__isCell(JSC__JSValue JSValue0) { return JSC::JSValue::decode(JSValue0).isCell(); }
 bool JSC__JSValue__isCustomGetterSetter(JSC__JSValue JSValue0)

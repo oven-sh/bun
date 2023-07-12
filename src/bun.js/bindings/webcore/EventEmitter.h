@@ -67,6 +67,8 @@ public:
     bool hasActiveEventListeners(const Identifier& eventType) const;
     bool hasEventListeners(JSC::VM& vm, ASCIILiteral eventType) const;
 
+    WTF::Function<void(EventEmitter&, const Identifier& eventName, bool isAdded)> onDidChangeListener = WTF::Function<void(EventEmitter&, const Identifier& eventName, bool isAdded)>(nullptr);
+
     unsigned getMaxListeners() const { return m_maxListeners; };
 
     void setMaxListeners(unsigned count);
@@ -101,7 +103,9 @@ private:
     EventEmitterData* eventTargetData() { return &m_eventTargetData; }
     EventEmitterData* eventTargetDataConcurrently() { return &m_eventTargetData; }
     EventEmitterData& ensureEventEmitterData() { return m_eventTargetData; }
-    void eventListenersDidChange() {}
+    void eventListenersDidChange()
+    {
+    }
 
     void innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
     void invalidateEventListenerRegions();

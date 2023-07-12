@@ -5554,7 +5554,7 @@ pub const PackageManager = struct {
             // Done
             if (manager.options.log_level != .silent)
                 Output.prettyln(
-                    \\<r><green>Success!<r> Registered \"{[name]s}\"
+                    \\<r><green>Success!<r> Registered "{[name]s}"
                     \\
                     \\To use {[name]s} in a project, run:
                     \\  <cyan>bun link {[name]s}<r>

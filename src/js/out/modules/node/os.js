@@ -27,7 +27,7 @@ var bound = function(obj) {
     [Symbol.for("CommonJS")]: 0
   };
 }, tmpdir = function() {
-  var lazy = Symbol.for("Bun.lazy"), primordials = globalThis[lazy]("primordials"), { Bun: Bun2 } = primordials, env = Bun2.env;
+  var { Bun: Bun2 } = globalThis[Symbol.for("Bun.lazy")]("primordials"), env = Bun2.env;
   return tmpdir = function() {
     var path = env.TMPDIR || env.TMP || env.TEMP || "/tmp";
     const length = path.length;

@@ -57,7 +57,7 @@ function isIPv6(input) {
 // Importing from node:url is unnecessary
 const { URL } = globalThis;
 
-const { newArrayWithSize, String, Object, Array } = globalThis[Symbol.for("Bun.lazy")]("primordials");
+const { newArrayWithSize, String, Object, Array } = $lazy("primordials");
 
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;

@@ -57,6 +57,7 @@ declare function $getPromiseInternalField<K extends PromiseFieldType, V>(
   promise: Promise<V>,
   key: K,
 ): PromiseFieldToValue<K, V>;
+declare function $getInternalField(base: any, number: number): any;
 declare function $fulfillPromise(...args: any[]): TODO;
 declare function $evaluateCommonJSModule(...args: any[]): TODO;
 declare function $loadCJS2ESM(...args: any[]): TODO;
@@ -110,6 +111,7 @@ declare function $putByIdDirectPrivate(obj: any, key: PropertyKey, value: any): 
 declare function $putByValDirect(obj: any, key: PropertyKey, value: any): void;
 declare function $putByValWithThisSloppy(): TODO;
 declare function $putByValWithThisStrict(): TODO;
+declare function $putInternalField(base: any, number: number, value: any): any;
 declare function $putPromiseInternalField<T extends PromiseFieldType, P extends Promise<any>>(
   promise: P,
   key: T,

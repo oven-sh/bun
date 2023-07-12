@@ -52,6 +52,7 @@ const opts = {
   define: {
     "process.platform": JSON.stringify(process.platform),
     "process.arch": JSON.stringify(process.arch),
+    "$lazy": "$$BUN_LAZY$$",
   },
 } as const;
 
@@ -111,7 +112,9 @@ for (const [build, outdir] of [
     fs.mkdirSync(path.join(outdir, path.dirname(output.path)), { recursive: true });
 
     if (output.kind === "entry-point" || output.kind === "chunk") {
-      const transformedOutput = (await output.text()).replace(/^(\/\/.*?\n)+/g, "");
+      const transformedOutput = (await output.text())
+        .replace(/^(\/\/.*?\n)+/g, "")
+        .replace(/\$\$BUN_LAZY\$\$/g, 'globalThis[Symbol.for("Bun.lazy")]');
 
       if (transformedOutput.includes("$bundleError")) {
         // attempt to find the string that was passed to $bundleError

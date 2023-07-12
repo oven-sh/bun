@@ -1588,10 +1588,6 @@ JSC:
             return JSValue::encode(obj);
         }
 
-        if (string == "vm"_s) {
-            auto* obj = constructEmptyObject(globalObject);
-        }
-
         if (string == "primordials"_s) {
             auto sourceOrigin = callFrame->callerSourceOrigin(vm).url();
             bool isBuiltin = sourceOrigin.protocolIs("builtin"_s);

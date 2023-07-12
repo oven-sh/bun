@@ -973,6 +973,10 @@ export class ServerResponse extends Writable {
     this.#firstWrite = undefined;
     this._writableState.decodeStrings = false;
     this.#deferred = undefined;
+
+    // this is matching node's behaviour
+    // https://github.com/nodejs/node/blob/cf8c6994e0f764af02da4fa70bc5962142181bf3/lib/_http_server.js#L192
+    if (req.method === "HEAD") this._hasBody = false;
   }
 
   req;
@@ -988,6 +992,7 @@ export class ServerResponse extends Writable {
   _defaultKeepAlive = false;
   _removedConnection = false;
   _removedContLen = false;
+  _hasBody = true;
   #deferred: (() => void) | undefined = undefined;
   #finished = false;
   // Express "compress" package uses this
@@ -1834,6 +1839,20 @@ function _writeHead(statusCode, reason, obj, response) {
         if (k) response.setHeader(k, obj[k]);
       }
     }
+  }
+
+  if (statusCode === 204 || statusCode === 304 || (statusCode >= 100 && statusCode <= 199)) {
+    // RFC 2616, 10.2.5:
+    // The 204 response MUST NOT include a message-body, and thus is always
+    // terminated by the first empty line after the header fields.
+    // RFC 2616, 10.3.5:
+    // The 304 response MUST NOT contain a message-body, and thus is always
+    // terminated by the first empty line after the header fields.
+    // RFC 2616, 10.1 Informational 1xx:
+    // This class of status code indicates a provisional response,
+    // consisting only of the Status-Line and optional headers, and is
+    // terminated by an empty line.
+    response._hasBody = false;
   }
 }
 

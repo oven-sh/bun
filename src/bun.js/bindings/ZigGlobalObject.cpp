@@ -1214,11 +1214,43 @@ JSC_DEFINE_HOST_FUNCTION(functionStructuredClone,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() == 0) {
+        throwTypeError(globalObject, throwScope, "structuredClone requires 1 argument"_s);
+        return JSValue::encode(jsUndefined());
+    }
 
     JSC::JSValue value = callFrame->argument(0);
+    JSC::JSValue options = callFrame->argument(1);
 
-    auto serialized = SerializedScriptValue::convert(*globalObject, value);
-    JSValue deserialized = serialized->deserialize(*globalObject, globalObject, SerializationErrorMode::Throwing);
+    Vector<JSC::Strong<JSC::JSObject>> transferList;
+
+    if (options.isObject()) {
+        JSC::JSObject* optionsObject = options.getObject();
+        JSC::JSValue transferListValue = optionsObject->get(globalObject, vm.propertyNames->transfer);
+        if (transferListValue.isObject()) {
+            JSC::JSObject* transferListObject = transferListValue.getObject();
+            if (transferListObject->inherits<JSC::JSArray>()) {
+                JSC::JSArray* transferListArray = JSC::jsCast<JSC::JSArray*>(transferListObject);
+                for (unsigned i = 0; i < transferListArray->length(); i++) {
+                    JSC::JSValue transferListValue = transferListArray->get(globalObject, i);
+                    if (transferListValue.isObject()) {
+                        JSC::JSObject* transferListObject = transferListValue.getObject();
+                        transferList.append(JSC::Strong<JSC::JSObject>(vm, transferListObject));
+                    }
+                }
+            }
+        }
+    }
+
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList));
+    if (serialized.hasException()) {
+        WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSValue deserialized = serialized.returnValue()->deserialize(*globalObject, globalObject);
 
     return JSValue::encode(deserialized);
 }

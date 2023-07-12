@@ -174,12 +174,12 @@ test("prepare stack trace", () => {
     let e = { message: "bad error!" };
     let prevPrepareStackTrace = Error.prepareStackTrace;
     Error.prepareStackTrace = (e, s) => {
-      expect(e.message === "bad error!").toBe(true);
+      expect(e.message).toBe("bad error!");
       expect(s.length).toBe(4);
     };
     Error.stackTraceLimit = 10;
     Error.captureStackTrace(e);
-    expect(e.stack === undefined).toBe(true);
+    expect(e.stack).toBeUndefined();
     Error.prepareStackTrace = prevPrepareStackTrace;
   }
 

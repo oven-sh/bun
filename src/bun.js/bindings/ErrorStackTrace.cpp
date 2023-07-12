@@ -19,7 +19,7 @@ using namespace WebCore;
 
 namespace Zig {
 
-JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames)
+JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames, int skipCount)
 {
     WTF::Vector<JSCStackFrame> newFrames;
 
@@ -29,7 +29,7 @@ JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::St
     }
 
     newFrames.reserveInitialCapacity(frameCount);
-    for (size_t i = 0; i < frameCount; i++) {
+    for (size_t i = skipCount; i < frameCount; i++) {
         newFrames.constructAndAppend(vm, existingFrames.at(i));
     }
 

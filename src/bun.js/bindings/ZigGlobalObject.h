@@ -367,6 +367,8 @@ public:
     mutable WriteBarrier<Unknown> m_JSWebSocketSetterValue;
     mutable WriteBarrier<Unknown> m_JSDOMFormDataSetterValue;
     mutable WriteBarrier<Unknown> m_BunCommonJSModuleValue;
+    mutable WriteBarrier<Unknown> m_callStackTraceSetter;
+    mutable WriteBarrier<Unknown> m_callStackTraceAccessor;
 
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
 

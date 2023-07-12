@@ -139,7 +139,7 @@ public:
     bool isEmpty() const { return m_frames.isEmpty(); }
     JSCStackFrame& at(size_t i) { return m_frames.at(i); }
 
-    static JSCStackTrace fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames);
+    static JSCStackTrace fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames, int skipCount = 0);
 
     /* This is based on JSC::Interpreter::getStackTrace, but skips native (non js and not wasm)
      * frames, which is what v8 does. Note that we could have just called JSC::Interpreter::getStackTrace

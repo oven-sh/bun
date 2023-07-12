@@ -436,7 +436,7 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
                 hasSet = true;
                 line = thisLine;
                 column = thisColumn;
-                sourceURL = sourceURLForFrame;
+                sourceURL = frame.sourceURL(vm);
 
                 if (errorInstance) {
                     if (remappedFrames[i].remapped) {

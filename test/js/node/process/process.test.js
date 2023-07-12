@@ -425,8 +425,8 @@ describe("signal", () => {
   });
 
   it("process.kill(2) throws on invalid input", async () => {
-    expect(() => process.kill(0, "SIGPOOP")).toThrow();
-    expect(() => process.kill(0, 456)).toThrow();
+    expect(() => process.kill(2147483640, "SIGPOOP")).toThrow();
+    expect(() => process.kill(2147483640, 456)).toThrow();
   });
 });
 

@@ -301,6 +301,34 @@ it("should return non-zero exit code for invalid syntax", async () => {
   }
 });
 
+it("invalid syntax counts towards bail", async () => {
+  const test_dir = realpathSync(await mkdtemp(join(tmpdir(), "test")));
+  try {
+    await writeFile(join(test_dir, "bad1.test.js"), "!!!");
+    await writeFile(join(test_dir, "bad2.test.js"), "!!!");
+    await writeFile(join(test_dir, "bad3.test.js"), "!!!");
+    await writeFile(join(test_dir, "bad4.test.js"), "!!!");
+    await writeFile(join(test_dir, "bad5.test.js"), "!!!");
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "test", "--bail", "3"],
+      cwd: test_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Bailed out after 3 failures");
+    expect(err).not.toContain("DO NOT RUN ME");
+    expect(err).toContain("Ran 3 tests across 3 files");
+    expect(stdout).toBeDefined();
+    expect(await new Response(stdout).text()).toBe("");
+    expect(await exited).toBe(1);
+  } finally {
+    // await rm(test_dir, { force: true, recursive: true });
+  }
+});
+
 describe("skip test inner", () => {
   it("should pass", () => {
     expect(2 + 2).toBe(4);

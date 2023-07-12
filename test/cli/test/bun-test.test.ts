@@ -179,6 +179,68 @@ describe("bun test", () => {
       expect(stderr.match(/reachable/g)).toHaveLength(4);
     });
   });
+  describe("--bail", () => {
+    test("must provide a number bail", () => {
+      const stderr = runTest({
+        args: ["--bail", "foo"],
+      });
+      expect(stderr).toContain("expects a number");
+    });
+
+    test("must provide non-negative bail", () => {
+      const stderr = runTest({
+        args: ["--bail", "-1"],
+      });
+      expect(stderr).toContain("expects a number");
+    });
+
+    test("should not be 0", () => {
+      const stderr = runTest({
+        args: ["--bail", "0"],
+      });
+      expect(stderr).toContain("expects a number");
+    });
+
+    test("bail should be 1 by default", () => {
+      const stderr = runTest({
+        args: ["--bail"],
+        input: `
+          import { test, expect } from "bun:test";
+          test("test #1", () => {
+            expect(true).toBe(false);
+          });
+          test("test #2", () => {
+            expect(true).toBe(true);
+          });
+        `,
+      });
+      expect(stderr).toContain("Bailed out after 1 failures");
+      expect(stderr).not.toContain("test #2");
+    });
+
+    test("should bail out after 3 failures", () => {
+      const stderr = runTest({
+        args: ["--bail", "3"],
+        input: `
+          import { test, expect } from "bun:test";
+          test("test #1", () => {
+            expect(true).toBe(false);
+          });
+          test("test #2", () => {
+            expect(true).toBe(false);
+          });
+          test("test #3", () => {
+            expect(true).toBe(false);
+          });
+          test("test #4", () => {
+            expect(true).toBe(true);
+          });
+        `,
+      });
+      expect(stderr).toContain("Bailed out after 3 failures");
+      expect(stderr).not.toContain("test #4");
+    });
+  });
   describe("--timeout", () => {
     test("must provide a number timeout", () => {
       const stderr = runTest({

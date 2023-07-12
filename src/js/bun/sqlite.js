@@ -1,5 +1,5 @@
 // Hardcoded module "sqlite"
-const lazy = Bun.lazy;
+const lazy = $lazy;
 
 var defineProperties = Object.defineProperties;
 
@@ -166,7 +166,7 @@ export class Statement {
   }
 }
 
-var cachedCount = symbolFor("Bun.Database.cache.count");
+var cachedCount = Symbol.for("Bun.Database.cache.count");
 export class Database {
   constructor(filenameGiven, options) {
     if (typeof filenameGiven === "undefined") {

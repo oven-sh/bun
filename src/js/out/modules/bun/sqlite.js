@@ -1,4 +1,4 @@
-var lazy = Bun.lazy, defineProperties = Object.defineProperties, toStringTag = Symbol.toStringTag, apply = Function.prototype.apply, isArray = Array.isArray, isTypedArray = ArrayBuffer.isView, constants = {
+var lazy = globalThis[Symbol.for("Bun.lazy")], defineProperties = Object.defineProperties, toStringTag = Symbol.toStringTag, apply = Function.prototype.apply, isArray = Array.isArray, isTypedArray = ArrayBuffer.isView, constants = {
   SQLITE_OPEN_READONLY: 1,
   SQLITE_OPEN_READWRITE: 2,
   SQLITE_OPEN_CREATE: 4,
@@ -108,7 +108,7 @@ class Statement {
     return this.isFinalized = !0, this.#raw.finalize(...args);
   }
 }
-var cachedCount = symbolFor("Bun.Database.cache.count");
+var cachedCount = Symbol.for("Bun.Database.cache.count");
 
 class Database {
   constructor(filenameGiven, options) {

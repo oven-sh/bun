@@ -458,13 +458,22 @@ pub const TestCommand = struct {
 
         var reporter = try ctx.allocator.create(CommandLineReporter);
         reporter.* = CommandLineReporter{
-            .jest = TestRunner{ .allocator = ctx.allocator, .log = ctx.log, .callback = undefined, .default_timeout_ms = ctx.test_options.default_timeout_ms, .run_todo = ctx.test_options.run_todo, .only = ctx.test_options.only, .bail = ctx.test_options.bail, .snapshots = Snapshots{
+            .jest = TestRunner{
                 .allocator = ctx.allocator,
-                .update_snapshots = ctx.test_options.update_snapshots,
-                .file_buf = &snapshot_file_buf,
-                .values = &snapshot_values,
-                .counts = &snapshot_counts,
-            } },
+                .log = ctx.log,
+                .callback = undefined,
+                .default_timeout_ms = ctx.test_options.default_timeout_ms,
+                .run_todo = ctx.test_options.run_todo,
+                .only = ctx.test_options.only,
+                .bail = ctx.test_options.bail,
+                .snapshots = Snapshots{
+                    .allocator = ctx.allocator,
+                    .update_snapshots = ctx.test_options.update_snapshots,
+                    .file_buf = &snapshot_file_buf,
+                    .values = &snapshot_values,
+                    .counts = &snapshot_counts,
+                },
+            },
             .callback = undefined,
         };
         reporter.callback = TestRunner.Callback{

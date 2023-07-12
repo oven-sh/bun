@@ -433,6 +433,8 @@ interface Process {
    * Does nothing in Bun
    */
   setSourceMapsEnabled(enabled: boolean): void;
+
+  kill(pid: number, signal?: string | number): void;
 }
 
 interface MemoryUsageObject {

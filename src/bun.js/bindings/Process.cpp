@@ -444,42 +444,42 @@ static HashMap<int, String>* signalNumberToNameMap = nullptr;
 static HashMap<int, HashSet<uint32_t>>* signalToContextIdsMap = nullptr;
 static Lock signalToContextIdsMapLock;
 
-static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
-{
+static const NeverDestroyed<String> signalNames[] = {
+    MAKE_STATIC_STRING_IMPL("SIGHUP"),
+    MAKE_STATIC_STRING_IMPL("SIGINT"),
+    MAKE_STATIC_STRING_IMPL("SIGQUIT"),
+    MAKE_STATIC_STRING_IMPL("SIGILL"),
+    MAKE_STATIC_STRING_IMPL("SIGTRAP"),
+    MAKE_STATIC_STRING_IMPL("SIGABRT"),
+    MAKE_STATIC_STRING_IMPL("SIGIOT"),
+    MAKE_STATIC_STRING_IMPL("SIGBUS"),
+    MAKE_STATIC_STRING_IMPL("SIGFPE"),
+    MAKE_STATIC_STRING_IMPL("SIGKILL"),
+    MAKE_STATIC_STRING_IMPL("SIGUSR1"),
+    MAKE_STATIC_STRING_IMPL("SIGSEGV"),
+    MAKE_STATIC_STRING_IMPL("SIGUSR2"),
+    MAKE_STATIC_STRING_IMPL("SIGPIPE"),
+    MAKE_STATIC_STRING_IMPL("SIGALRM"),
+    MAKE_STATIC_STRING_IMPL("SIGTERM"),
+    MAKE_STATIC_STRING_IMPL("SIGCHLD"),
+    MAKE_STATIC_STRING_IMPL("SIGCONT"),
+    MAKE_STATIC_STRING_IMPL("SIGSTOP"),
+    MAKE_STATIC_STRING_IMPL("SIGTSTP"),
+    MAKE_STATIC_STRING_IMPL("SIGTTIN"),
+    MAKE_STATIC_STRING_IMPL("SIGTTOU"),
+    MAKE_STATIC_STRING_IMPL("SIGURG"),
+    MAKE_STATIC_STRING_IMPL("SIGXCPU"),
+    MAKE_STATIC_STRING_IMPL("SIGXFSZ"),
+    MAKE_STATIC_STRING_IMPL("SIGVTALRM"),
+    MAKE_STATIC_STRING_IMPL("SIGPROF"),
+    MAKE_STATIC_STRING_IMPL("SIGWINCH"),
+    MAKE_STATIC_STRING_IMPL("SIGIO"),
+    MAKE_STATIC_STRING_IMPL("SIGINFO"),
+    MAKE_STATIC_STRING_IMPL("SIGSYS"),
+};
 
-    static const NeverDestroyed<String> signalNames[] = {
-        MAKE_STATIC_STRING_IMPL("SIGHUP"),
-        MAKE_STATIC_STRING_IMPL("SIGINT"),
-        MAKE_STATIC_STRING_IMPL("SIGQUIT"),
-        MAKE_STATIC_STRING_IMPL("SIGILL"),
-        MAKE_STATIC_STRING_IMPL("SIGTRAP"),
-        MAKE_STATIC_STRING_IMPL("SIGABRT"),
-        MAKE_STATIC_STRING_IMPL("SIGIOT"),
-        MAKE_STATIC_STRING_IMPL("SIGBUS"),
-        MAKE_STATIC_STRING_IMPL("SIGFPE"),
-        MAKE_STATIC_STRING_IMPL("SIGKILL"),
-        MAKE_STATIC_STRING_IMPL("SIGUSR1"),
-        MAKE_STATIC_STRING_IMPL("SIGSEGV"),
-        MAKE_STATIC_STRING_IMPL("SIGUSR2"),
-        MAKE_STATIC_STRING_IMPL("SIGPIPE"),
-        MAKE_STATIC_STRING_IMPL("SIGALRM"),
-        MAKE_STATIC_STRING_IMPL("SIGTERM"),
-        MAKE_STATIC_STRING_IMPL("SIGCHLD"),
-        MAKE_STATIC_STRING_IMPL("SIGCONT"),
-        MAKE_STATIC_STRING_IMPL("SIGSTOP"),
-        MAKE_STATIC_STRING_IMPL("SIGTSTP"),
-        MAKE_STATIC_STRING_IMPL("SIGTTIN"),
-        MAKE_STATIC_STRING_IMPL("SIGTTOU"),
-        MAKE_STATIC_STRING_IMPL("SIGURG"),
-        MAKE_STATIC_STRING_IMPL("SIGXCPU"),
-        MAKE_STATIC_STRING_IMPL("SIGXFSZ"),
-        MAKE_STATIC_STRING_IMPL("SIGVTALRM"),
-        MAKE_STATIC_STRING_IMPL("SIGPROF"),
-        MAKE_STATIC_STRING_IMPL("SIGWINCH"),
-        MAKE_STATIC_STRING_IMPL("SIGIO"),
-        MAKE_STATIC_STRING_IMPL("SIGINFO"),
-        MAKE_STATIC_STRING_IMPL("SIGSYS"),
-    };
+static void loadSignalNumberMap()
+{
 
     static std::once_flag signalNameToNumberMapOnceFlag;
     std::call_once(signalNameToNumberMapOnceFlag, [] {
@@ -523,6 +523,11 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #endif
         signalNameToNumberMap->add(signalNames[30], SIGSYS);
     });
+}
+
+static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
+{
+    loadSignalNumberMap();
 
     static std::once_flag signalNumberToNameMapOnceFlag;
     std::call_once(signalNumberToNameMapOnceFlag, [] {
@@ -1601,6 +1606,76 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd,
     return JSC::JSValue::encode(result);
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    int pid = callFrame->argument(0).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    int signal = callFrame->argument(1).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    int result = kill(pid, signal);
+    if (result == -1) {
+        SystemError error;
+        error.errno_ = errno;
+        error.syscall = Bun::toString("kill"_s);
+        throwException(globalObject, scope, JSValue::decode(SystemError__toErrorInstance(&error, globalObject)));
+        return JSValue::encode(jsUndefined());
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    int pid = callFrame->argument(0).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (pid < 0) {
+        throwRangeError(globalObject, scope, "pid must be a positive integer"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSC::JSValue signalValue = callFrame->argument(1);
+
+    int signal = SIGTERM;
+
+    if (signalValue.isNumber()) {
+        signal = signalValue.toInt32(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    } else if (signalValue.isString()) {
+        loadSignalNumberMap();
+        if (auto num = signalNameToNumberMap->get(signalValue.toWTFString(globalObject))) {
+            signal = num;
+            RETURN_IF_EXCEPTION(scope, {});
+        } else {
+            throwRangeError(globalObject, scope, "Unknown signal name"_s);
+            return JSValue::encode(jsUndefined());
+        }
+
+        RETURN_IF_EXCEPTION(scope, {});
+    } else if (!signalValue.isUndefinedOrNull()) {
+        throwTypeError(globalObject, scope, "signal must be a string or number"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    int result = kill(pid, signal);
+
+    if (result == -1) {
+        SystemError error;
+        error.errno_ = errno;
+        error.syscall = Bun::toString("kill"_s);
+        throwException(globalObject, scope, JSValue::decode(SystemError__toErrorInstance(&error, globalObject)));
+        return JSValue::encode(jsUndefined());
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
 /* Source for Process.lut.h
 @begin processObjectTable
   abort                            Process_functionAbort                    Function 1
@@ -1632,6 +1707,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd,
   getuid                           Process_functiongetuid                   Function 0
   hrtime                           constructProcessHrtimeObject             PropertyCallback
   isBun                            constructIsBun                           PropertyCallback
+  kill                             Process_functionKill                     Function 2
   mainModule                       JSBuiltin                                ReadOnly|Builtin|Accessor|Function 0
   memoryUsage                      constructMemoryUsage                     PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                   PropertyCallback
@@ -1663,6 +1739,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd,
   _startProfilerIdleNotifier       Process_stubEmptyFunction                Function 0
   _stopProfilerIdleNotifier        Process_stubEmptyFunction                Function 0
   _tickCallback                    Process_stubEmptyFunction                Function 0
+  _kill                            Process_functionReallyKill               Function 2
 @end
 */
 

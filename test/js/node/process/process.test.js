@@ -401,6 +401,33 @@ describe("signal", () => {
     expect(await child.exited).toBe(0);
     expect(await new Response(child.stdout).text()).toBe("PASS\n");
   });
+
+  it("process.kill(2) works", async () => {
+    const child = Bun.spawn({
+      cmd: ["bash", "-c", "sleep 1000000"],
+      stdout: "pipe",
+    });
+    const prom = child.exited;
+    process.kill(child.pid, "SIGTERM");
+    await prom;
+    expect(child.signalCode).toBe("SIGTERM");
+  });
+
+  it("process._kill(2) works", async () => {
+    const child = Bun.spawn({
+      cmd: ["bash", "-c", "sleep 1000000"],
+      stdout: "pipe",
+    });
+    const prom = child.exited;
+    process.kill(child.pid, 9);
+    await prom;
+    expect(child.signalCode).toBe("SIGKILL");
+  });
+
+  it("process.kill(2) throws on invalid input", async () => {
+    expect(() => process.kill(0, "SIGPOOP")).toThrow();
+    expect(() => process.kill(0, 456)).toThrow();
+  });
 });
 
 const undefinedStubs = [

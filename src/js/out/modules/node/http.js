@@ -99,6 +99,8 @@ var _writeHead = function(statusCode, reason, obj, response) {
           response.setHeader(k, obj[k]);
     }
   }
+  if (statusCode === 204 || statusCode === 304 || statusCode >= 100 && statusCode <= 199)
+    response._hasBody = !1;
 };
 function request(url, options, cb) {
   return new ClientRequest(url, options, cb);
@@ -630,7 +632,8 @@ class OutgoingMessage extends Writable {
 class ServerResponse extends Writable {
   constructor({ req, reply }) {
     super();
-    this.req = req, this._reply = reply, this.sendDate = !0, this.statusCode = 200, this.headersSent = !1, this.statusMessage = void 0, this.#controller = void 0, this.#firstWrite = void 0, this._writableState.decodeStrings = !1, this.#deferred = void 0, this._hasBody = req.method !== "HEAD";
+    if (this.req = req, this._reply = reply, this.sendDate = !0, this.statusCode = 200, this.headersSent = !1, this.statusMessage = void 0, this.#controller = void 0, this.#firstWrite = void 0, this._writableState.decodeStrings = !1, this.#deferred = void 0, req.method === "HEAD")
+      this._hasBody = !1;
   }
   req;
   _reply;
@@ -645,7 +648,7 @@ class ServerResponse extends Writable {
   _defaultKeepAlive = !1;
   _removedConnection = !1;
   _removedContLen = !1;
-  _hasBody;
+  _hasBody = !0;
   #deferred = void 0;
   #finished = !1;
   _implicitHeader() {

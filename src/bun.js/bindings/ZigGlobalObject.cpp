@@ -390,6 +390,7 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
 
     size_t framesCount = stackTrace.size();
     ZigStackFrame remappedFrames[framesCount];
+
     bool hasSet = false;
     for (size_t i = 0; i < framesCount; i++) {
         StackFrame& frame = stackTrace.at(i);
@@ -418,6 +419,8 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
             unsigned int thisLine = 0;
             unsigned int thisColumn = 0;
             frame.computeLineAndColumn(thisLine, thisColumn);
+            memset(remappedFrames + i, 0, sizeof(ZigStackFrame));
+
             remappedFrames[i].position.line = thisLine;
             remappedFrames[i].position.column_start = thisColumn;
             String sourceURLForFrame = frame.sourceURL(vm);
@@ -2680,7 +2683,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotaskVariadic, (JSGlobalObject * g
     return JSValue::encode(jsUndefined());
 }
 
-void GlobalObject::createCallSitesFromFrames(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ObjectInitializationScope& objectScope, JSCStackTrace& stackTrace, JSC::JSArray* callSites)
+void GlobalObject::createCallSitesFromFrames(JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, JSC::JSArray* callSites)
 {
     /* From v8's "Stack Trace API" (https://github.com/v8/v8/wiki/Stack-Trace-API):
      * "To maintain restrictions imposed on strict mode functions, frames that have a
@@ -2691,16 +2694,10 @@ void GlobalObject::createCallSitesFromFrames(JSC::JSGlobalObject* lexicalGlobalO
     GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
 
     JSC::Structure* callSiteStructure = globalObject->callSiteStructure();
-    JSC::IndexingType callSitesIndexingType = callSites->indexingType();
     size_t framesCount = stackTrace.size();
     for (size_t i = 0; i < framesCount; i++) {
-        /* Note that we're using initializeIndex and not callSites->butterfly()->contiguous().data()
-         * directly, since if we're "having a bad time" (globalObject->isHavingABadTime()),
-         * the array won't be contiguous, but a "slow put" array.
-         * See https://github.com/WebKit/webkit/commit/1c4a32c94c1f6c6aa35cf04a2b40c8fe29754b8e for more info
-         * about what's a "bad time". */
         CallSite* callSite = CallSite::create(lexicalGlobalObject, callSiteStructure, stackTrace.at(i), encounteredStrictFrame);
-        callSites->initializeIndex(objectScope, i, callSite, callSitesIndexingType);
+        callSites->putDirectIndex(lexicalGlobalObject, i, callSite);
 
         if (!encounteredStrictFrame) {
             encounteredStrictFrame = callSite->isStrict();
@@ -2815,10 +2812,6 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSC::JSObject* errorObject = objectArg.asCell()->getObject();
     JSC::JSValue caller = callFrame->argument(1);
 
-    // We cannot use our ErrorInstance::captureStackTrace() fast path here unfortunately.
-    // We need to return these CallSite array objects which means we need to create them
-    JSValue errorValue = lexicalGlobalObject->get(lexicalGlobalObject, vm.propertyNames->Error);
-    auto* errorConstructor = jsDynamicCast<JSC::JSObject*>(errorValue);
     size_t stackTraceLimit = globalObject->stackTraceLimit().value();
     if (stackTraceLimit == 0) {
         stackTraceLimit = DEFAULT_ERROR_STACK_TRACE_LIMIT;
@@ -2826,17 +2819,13 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
 
     JSCStackTrace stackTrace = JSCStackTrace::captureCurrentJSStackTrace(globalObject, callFrame, stackTraceLimit, caller);
 
-    // Create an (uninitialized) array for our "call sites"
-    JSC::GCDeferralContext deferralContext(vm);
-    JSC::ObjectInitializationScope objectScope(vm);
-    JSC::JSArray* callSites = JSC::JSArray::tryCreateUninitializedRestricted(objectScope,
-        &deferralContext,
+    // Note: we cannot use tryCreateUninitializedRestricted here because we cannot allocate memory inside initializeIndex()
+    JSC::JSArray* callSites = JSC::JSArray::create(vm,
         globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
         stackTrace.size());
-    RELEASE_ASSERT(callSites);
 
     // Create the call sites (one per frame)
-    GlobalObject::createCallSitesFromFrames(lexicalGlobalObject, objectScope, stackTrace, callSites);
+    GlobalObject::createCallSitesFromFrames(lexicalGlobalObject, stackTrace, callSites);
 
     /* Foramt the stack trace.
      * Note that v8 won't actually format the stack trace here, but will create a "stack" accessor
@@ -2847,6 +2836,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     size_t framesCount = stackTrace.size();
     ZigStackFrame remappedFrames[framesCount];
     for (int i = 0; i < framesCount; i++) {
+        memset(remappedFrames + i, 0, sizeof(ZigStackFrame));
         remappedFrames[i].source_url = Bun::toString(lexicalGlobalObject, stackTrace.at(i).sourceURL());
         if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
             remappedFrames[i].position.line = sourcePositions->line.zeroBasedInt();

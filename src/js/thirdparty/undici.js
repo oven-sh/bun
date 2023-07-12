@@ -1,4 +1,4 @@
-const { Object } = Bun.lazy("primordials");
+const { Object } = $lazy("primordials");
 import { EventEmitter } from "events";
 import NodeStreamModule from "node:stream";
 import { Readable } from "node:stream";

@@ -57,7 +57,7 @@ const define = {
   "process.env.NODE_ENV": "development",
   "process.platform": process.platform,
   "process.arch": process.arch,
-  "Bun.lazy": "___BUN_LAZY___",
+  "$lazy": "___BUN_LAZY___",
 };
 
 for (const name in enums) {

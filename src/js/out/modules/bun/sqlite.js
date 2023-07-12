@@ -1,4 +1,4 @@
-var lazy = globalThis[Symbol.for("Bun.lazy")], defineProperties = Object.defineProperties, toStringTag = Symbol.toStringTag, apply = Function.prototype.apply, isArray = Array.isArray, isTypedArray = ArrayBuffer.isView, constants = {
+var lazy = Bun.lazy, defineProperties = Object.defineProperties, toStringTag = Symbol.toStringTag, apply = Function.prototype.apply, isArray = Array.isArray, isTypedArray = ArrayBuffer.isView, constants = {
   SQLITE_OPEN_READONLY: 1,
   SQLITE_OPEN_READWRITE: 2,
   SQLITE_OPEN_CREATE: 4,

@@ -161,7 +161,7 @@ export function consumeReadableStream(nativePtr, nativeType, inputStream) {
   }
   var Prototype = cached[nativeType];
   if (Prototype === undefined) {
-    var [doRead, doError, doReadMany, doClose, onClose, deinit] = Bun.lazy(nativeType);
+    var [doRead, doError, doReadMany, doClose, onClose, deinit] = $lazy(nativeType);
 
     Prototype = class NativeReadableStreamSink {
       handleError: any;

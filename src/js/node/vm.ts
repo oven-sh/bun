@@ -1,7 +1,7 @@
 // Hardcoded module "node:vm"
 import { throwNotImplemented } from "../shared";
 
-const vm = Bun.lazy("vm");
+const vm = $lazy("vm");
 
 const { createContext, isContext, Script, runInNewContext, runInThisContext } = vm;
 

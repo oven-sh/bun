@@ -1,5 +1,5 @@
 // Hardcoded module "bun:jsc"
-const jsc = Bun.lazy("bun:jsc");
+const jsc = $lazy("bun:jsc");
 
 export const callerSourceOrigin = jsc.callerSourceOrigin;
 export const jscDescribe = jsc.describe;

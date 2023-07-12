@@ -5,7 +5,7 @@ import { constants } from "node:os";
 import { promisify } from "node:util";
 const signals = constants.signals;
 
-const { ArrayBuffer, Uint8Array, String, Object, Buffer, Promise } = Bun.lazy("primordials");
+const { ArrayBuffer, Uint8Array, String, Object, Buffer, Promise } = $lazy("primordials");
 
 var ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 var ObjectCreate = Object.create;

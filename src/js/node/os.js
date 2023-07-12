@@ -1,7 +1,7 @@
 // Hardcoded module "node:os"
 
 export var tmpdir = function () {
-  var { Bun } = Bun.lazy("primordials");
+  var { Bun } = $lazy("primordials");
   var env = Bun.env;
 
   tmpdir = function () {

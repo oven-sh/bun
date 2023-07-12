@@ -52,7 +52,7 @@ const opts = {
   define: {
     "process.platform": JSON.stringify(process.platform),
     "process.arch": JSON.stringify(process.arch),
-    "Bun.lazy": "$$BUN_LAZY$$",
+    "$lazy": "$$BUN_LAZY$$",
   },
 } as const;
 

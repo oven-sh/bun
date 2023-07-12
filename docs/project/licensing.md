@@ -85,6 +85,11 @@ Bun statically links these libraries:
 
 ---
 
+- [`libbase64`](https://github.com/aklomp/base64/blob/master/LICENSE)
+- BSD 2-Clause
+
+---
+
 - A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets)
 - Apache 2.0 licensed
 

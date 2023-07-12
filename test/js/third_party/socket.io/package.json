@@ -2,9 +2,8 @@
   "name": "socket.io",
   "version": "1.0.0",
   "dependencies": {
-    "socket.io": "^4.6.1",
-    "socket.io-client": "^4.6.1",
-    "supertest": "^6.1.6",
-    "uWebSockets.js": "uNetworking/uWebSockets.js#v20.24.0"
+    "socket.io": "4.6.1",
+    "socket.io-client": "4.6.1",
+    "supertest": "6.3.3"
   }
 }

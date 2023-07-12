@@ -43,7 +43,7 @@ export function cancel(this, reason) {
   return $readableStreamReaderGenericCancel(this, reason);
 }
 
-export function readMany(this) {
+export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefaultReadManyResult<any> {
   if (!$isReadableStreamDefaultReader(this))
     throw new TypeError("ReadableStreamDefaultReader.readMany() should not be called directly");
 
@@ -150,7 +150,7 @@ export function readMany(this) {
 
   var pullResult = controller.$pull(controller);
   if (pullResult && $isPromise(pullResult)) {
-    return pullResult.$then(onPullMany);
+    return pullResult.$then(onPullMany) as any;
   }
 
   return onPullMany(pullResult);

@@ -34,9 +34,8 @@ const Mode = JSC.Node.Mode;
 
 const uid_t = std.os.uid_t;
 const gid_t = std.os.gid_t;
-
 /// u63 to allow one null bit
-const ReadPosition = u63;
+const ReadPosition = i64;
 
 const Stats = JSC.Node.Stats;
 const Dirent = JSC.Node.Dirent;
@@ -133,6 +132,154 @@ pub const Arguments = struct {
             };
 
             return Truncate{ .path = path, .len = len };
+        }
+    };
+
+    pub const Writev = struct {
+        fd: FileDescriptor,
+        buffers: JSC.Node.VectorArrayBuffer,
+        position: ?u52 = 0,
+
+        pub fn deinit(_: *const @This()) void {}
+
+        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Writev {
+            const fd_value = arguments.nextEat() orelse {
+                if (exception.* == null) {
+                    JSC.throwInvalidArguments(
+                        "file descriptor is required",
+                        .{},
+                        ctx,
+                        exception,
+                    );
+                }
+                return null;
+            };
+
+            const fd = JSC.Node.fileDescriptorFromJS(ctx, fd_value, exception) orelse {
+                if (exception.* == null) {
+                    JSC.throwInvalidArguments(
+                        "file descriptor must be a number",
+                        .{},
+                        ctx,
+                        exception,
+                    );
+                }
+                return null;
+            };
+
+            const buffers = JSC.Node.VectorArrayBuffer.fromJS(
+                ctx,
+                arguments.protectEatNext() orelse {
+                    JSC.throwInvalidArguments("Expected an ArrayBufferView[]", .{}, ctx, exception);
+                    return null;
+                },
+                exception,
+                arguments.arena.allocator(),
+            ) orelse {
+                if (exception.* == null) {
+                    JSC.throwInvalidArguments(
+                        "buffers must be an array of TypedArray",
+                        .{},
+                        ctx,
+                        exception,
+                    );
+                }
+                return null;
+            };
+
+            var position: ?u52 = null;
+
+            if (arguments.nextEat()) |pos_value| {
+                if (!pos_value.isUndefinedOrNull()) {
+                    if (pos_value.isNumber()) {
+                        position = pos_value.to(u52);
+                    } else {
+                        JSC.throwInvalidArguments(
+                            "position must be a number",
+                            .{},
+                            ctx,
+                            exception,
+                        );
+                        return null;
+                    }
+                }
+            }
+
+            return Writev{ .fd = fd, .buffers = buffers, .position = position };
+        }
+    };
+
+    pub const Readv = struct {
+        fd: FileDescriptor,
+        buffers: JSC.Node.VectorArrayBuffer,
+        position: ?u52 = 0,
+
+        pub fn deinit(_: *const @This()) void {}
+
+        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Readv {
+            const fd_value = arguments.nextEat() orelse {
+                if (exception.* == null) {
+                    JSC.throwInvalidArguments(
+                        "file descriptor is required",
+                        .{},
+                        ctx,
+                        exception,
+                    );
+                }
+                return null;
+            };
+
+            const fd = JSC.Node.fileDescriptorFromJS(ctx, fd_value, exception) orelse {
+                if (exception.* == null) {
+                    JSC.throwInvalidArguments(
+                        "file descriptor must be a number",
+                        .{},
+                        ctx,
+                        exception,
+                    );
+                }
+                return null;
+            };
+
+            const buffers = JSC.Node.VectorArrayBuffer.fromJS(
+                ctx,
+                arguments.protectEatNext() orelse {
+                    JSC.throwInvalidArguments("Expected an ArrayBufferView[]", .{}, ctx, exception);
+                    return null;
+                },
+                exception,
+                arguments.arena.allocator(),
+            ) orelse {
+                if (exception.* == null) {
+                    JSC.throwInvalidArguments(
+                        "buffers must be an array of TypedArray",
+                        .{},
+                        ctx,
+                        exception,
+                    );
+                }
+                return null;
+            };
+
+            var position: ?u52 = null;
+
+            if (arguments.nextEat()) |pos_value| {
+                if (!pos_value.isUndefinedOrNull()) {
+                    if (pos_value.isNumber()) {
+                        position = pos_value.to(u52);
+                    } else {
+                        JSC.throwInvalidArguments(
+                            "position must be a number",
+                            .{},
+                            ctx,
+                            exception,
+                        );
+                        return null;
+                    }
+                }
+            }
+
+            return Readv{ .fd = fd, .buffers = buffers, .position = position };
         }
     };
 
@@ -505,6 +652,7 @@ pub const Arguments = struct {
     pub const Stat = struct {
         path: PathLike,
         big_int: bool = false,
+        throw_if_no_entry: bool = true,
 
         pub fn deinit(this: Stat) void {
             this.path.deinit();
@@ -525,13 +673,25 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
+            var throw_if_no_entry = true;
+
             const big_int = brk: {
                 if (arguments.next()) |next_val| {
                     if (next_val.isObject()) {
                         if (next_val.isCallable(ctx.ptr().vm())) break :brk false;
                         arguments.eat();
 
-                        if (next_val.getOptional(ctx.ptr(), "bigint", bool) catch false) |big_int| {
+                        if (next_val.getOptional(ctx.ptr(), "throwIfNoEntry", bool) catch {
+                            path.deinit();
+                            return null;
+                        }) |throw_if_no_entry_val| {
+                            throw_if_no_entry = throw_if_no_entry_val;
+                        }
+
+                        if (next_val.getOptional(ctx.ptr(), "bigint", bool) catch {
+                            path.deinit();
+                            return null;
+                        }) |big_int| {
                             break :brk big_int;
                         }
                     }
@@ -541,7 +701,7 @@ pub const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            return Stat{ .path = path, .big_int = big_int };
+            return Stat{ .path = path, .big_int = big_int, .throw_if_no_entry = throw_if_no_entry };
         }
     };
 
@@ -1377,7 +1537,7 @@ pub const Arguments = struct {
                         // fs.write(fd, string[, position[, encoding]], callback)
                         .string => {
                             if (current.isNumber()) {
-                                args.position = current.toU32();
+                                args.position = current.to(i52);
                                 arguments.eat();
                                 current = arguments.next() orelse break :parse;
                             }
@@ -1393,18 +1553,18 @@ pub const Arguments = struct {
                                 break :parse;
                             }
 
-                            if (!current.isNumber()) break :parse;
-                            args.offset = current.toU32();
+                            if (!(current.isNumber() or current.isBigInt())) break :parse;
+                            args.offset = current.to(u52);
                             arguments.eat();
                             current = arguments.next() orelse break :parse;
 
-                            if (!current.isNumber()) break :parse;
-                            args.length = current.toU32();
+                            if (!(current.isNumber() or current.isBigInt())) break :parse;
+                            args.length = current.to(u52);
                             arguments.eat();
                             current = arguments.next() orelse break :parse;
 
-                            if (!current.isNumber()) break :parse;
-                            args.position = current.toU32();
+                            if (!(current.isNumber() or current.isBigInt())) break :parse;
+                            args.position = current.to(i52);
                             arguments.eat();
                         },
                     }
@@ -1484,8 +1644,8 @@ pub const Arguments = struct {
 
             if (arguments.next()) |current| {
                 arguments.eat();
-                if (current.isNumber()) {
-                    args.offset = current.toU32();
+                if (current.isNumber() or current.isBigInt()) {
+                    args.offset = current.to(u52);
 
                     if (arguments.remaining.len < 2) {
                         JSC.throwInvalidArguments(
@@ -1497,8 +1657,8 @@ pub const Arguments = struct {
 
                         return null;
                     }
-
-                    args.length = arguments.remaining[0].toU32();
+                    if (arguments.remaining[0].isNumber() or arguments.remaining[0].isBigInt())
+                        args.length = arguments.remaining[0].to(u52);
 
                     if (args.length == 0) {
                         JSC.throwInvalidArguments(
@@ -1511,26 +1671,26 @@ pub const Arguments = struct {
                         return null;
                     }
 
-                    const position: i32 = if (arguments.remaining[1].isNumber())
-                        arguments.remaining[1].toInt32()
-                    else
-                        -1;
+                    if (arguments.remaining[1].isNumber() or arguments.remaining[1].isBigInt())
+                        args.position = @intCast(ReadPosition, arguments.remaining[1].to(i52));
 
-                    args.position = if (position > -1) @intCast(ReadPosition, position) else null;
                     arguments.remaining = arguments.remaining[2..];
                 } else if (current.isObject()) {
-                    if (current.getIfPropertyExists(ctx.ptr(), "offset")) |num| {
-                        args.offset = num.toU32();
+                    if (current.getTruthy(ctx.ptr(), "offset")) |num| {
+                        if (num.isNumber() or num.isBigInt()) {
+                            args.offset = num.to(u52);
+                        }
                     }
 
-                    if (current.getIfPropertyExists(ctx.ptr(), "length")) |num| {
-                        args.length = num.toU32();
+                    if (current.getTruthy(ctx.ptr(), "length")) |num| {
+                        if (num.isNumber() or num.isBigInt()) {
+                            args.length = num.to(u52);
+                        }
                     }
 
-                    if (current.getIfPropertyExists(ctx.ptr(), "position")) |num| {
-                        const position: i32 = if (num.isEmptyOrUndefinedOrNull()) -1 else num.coerce(i32, ctx);
-                        if (position > -1) {
-                            args.position = @intCast(ReadPosition, position);
+                    if (current.getTruthy(ctx.ptr(), "position")) |num| {
+                        if (num.isNumber() or num.isBigInt()) {
+                            args.position = num.to(i52);
                         }
                     }
                 }
@@ -2264,7 +2424,7 @@ pub const Arguments = struct {
             return CopyFile{
                 .src = src,
                 .dest = dest,
-                .mode = @intToEnum(Constants.Copyfile, mode),
+                .mode = @enumFromInt(Constants.Copyfile, mode),
             };
         }
     };
@@ -2313,7 +2473,7 @@ pub const Arguments = struct {
     };
 
     pub const UnwatchFile = void;
-    pub const Watch = void;
+    pub const Watch = JSC.Node.FSWatcher.Arguments;
     pub const WatchFile = void;
     pub const Fsync = struct {
         fd: FileDescriptor,
@@ -2350,6 +2510,18 @@ pub const Arguments = struct {
     };
 };
 
+pub const StatOrNotFound = union(enum) {
+    stats: Stats,
+    not_found: void,
+
+    pub fn toJS(this: *StatOrNotFound, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        return switch (this.*) {
+            .stats => this.stats.toJS(globalObject),
+            .not_found => JSC.JSValue.undefined,
+        };
+    }
+};
+
 const Return = struct {
     pub const Access = void;
     pub const AppendFile = void;
@@ -2368,11 +2540,12 @@ const Return = struct {
     pub const Lchmod = void;
     pub const Lchown = void;
     pub const Link = void;
-    pub const Lstat = Stats;
-    pub const Mkdir = string;
+    pub const Lstat = StatOrNotFound;
+    pub const Mkdir = bun.String;
     pub const Mkdtemp = JSC.ZigString;
     pub const Open = FileDescriptor;
     pub const WriteFile = void;
+    pub const Readv = Read;
     pub const Read = struct {
         bytes_read: u52,
 
@@ -2469,18 +2642,20 @@ const Return = struct {
     pub const RealpathNative = Realpath;
     pub const Rename = void;
     pub const Rmdir = void;
-    pub const Stat = Stats;
+    pub const Stat = StatOrNotFound;
 
     pub const Symlink = void;
     pub const Truncate = void;
     pub const Unlink = void;
     pub const UnwatchFile = void;
-    pub const Watch = void;
+    pub const Watch = JSC.JSValue;
     pub const WatchFile = void;
     pub const Utimes = void;
 
     pub const Chown = void;
     pub const Lutimes = void;
+
+    pub const Writev = Write;
 };
 
 /// Bun's implementation of the Node.js "fs" module
@@ -2493,12 +2668,13 @@ pub const NodeFS = struct {
     /// That means a stack-allocated buffer won't suffice. Instead, we re-use
     /// the heap allocated buffer on the NodefS struct
     sync_error_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
+    vm: ?*JSC.VirtualMachine = null,
 
     pub const ReturnType = Return;
 
     pub fn access(this: *NodeFS, args: Arguments.Access, comptime _: Flavor) Maybe(Return.Access) {
         var path = args.path.sliceZ(&this.sync_error_buf);
-        const rc = Syscall.system.access(path, @enumToInt(args.mode));
+        const rc = Syscall.system.access(path, @intFromEnum(args.mode));
         return Maybe(Return.Access).errnoSysP(rc, .access, path) orelse Maybe(Return.Access).success;
     }
 
@@ -2528,7 +2704,7 @@ pub const NodeFS = struct {
                 const path = path_.sliceZ(&this.sync_error_buf);
                 switch (comptime flavor) {
                     .sync => {
-                        const fd = switch (Syscall.open(path, @enumToInt(FileSystemFlags.a), 0o000666)) {
+                        const fd = switch (Syscall.open(path, @intFromEnum(FileSystemFlags.a), 0o000666)) {
                             .result => |result| result,
                             .err => |err| return .{ .err = err },
                         };
@@ -2594,7 +2770,7 @@ pub const NodeFS = struct {
                         };
 
                         if (!os.S.ISREG(stat_.mode)) {
-                            return Maybe(Return.CopyFile){ .err = .{ .errno = @enumToInt(C.SystemErrno.ENOTSUP) } };
+                            return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP) } };
                         }
 
                         // 64 KB is about the break-even point for clonefile() to be worth it
@@ -2723,7 +2899,7 @@ pub const NodeFS = struct {
                     };
 
                     if (!os.S.ISREG(stat_.mode)) {
-                        return Maybe(Return.CopyFile){ .err = .{ .errno = @enumToInt(C.SystemErrno.ENOTSUP) } };
+                        return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP) } };
                     }
 
                     var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY;
@@ -2978,8 +3154,13 @@ pub const NodeFS = struct {
                         &this.sync_error_buf,
                     ),
                 )) {
-                    .result => |result| Maybe(Return.Lstat){ .result = Return.Lstat.init(result, false) },
-                    .err => |err| Maybe(Return.Lstat){ .err = err },
+                    .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = Stats.init(result, args.big_int) } },
+                    .err => |err| brk: {
+                        if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
+                            return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
+                        }
+                        break :brk Maybe(Return.Lstat){ .err = err };
+                    },
                 };
             },
             else => {},
@@ -2997,7 +3178,7 @@ pub const NodeFS = struct {
             .sync => {
                 const path = args.path.sliceZ(&this.sync_error_buf);
                 return switch (Syscall.mkdir(path, args.mode)) {
-                    .result => Maybe(Return.Mkdir){ .result = "" },
+                    .result => Maybe(Return.Mkdir){ .result = bun.String.empty },
                     .err => |err| Maybe(Return.Mkdir){ .err = err },
                 };
             },
@@ -3026,24 +3207,29 @@ pub const NodeFS = struct {
                     .err => |err| {
                         switch (err.getErrno()) {
                             else => {
-                                @memcpy(&this.sync_error_buf, path.ptr, len);
+                                @memcpy(this.sync_error_buf[0..len], path[0..len]);
                                 return .{ .err = err.withPath(this.sync_error_buf[0..len]) };
                             },
 
                             .EXIST => {
-                                return Option{ .result = "" };
+                                return Option{ .result = bun.String.empty };
                             },
                             // continue
                             .NOENT => {},
                         }
                     },
                     .result => {
-                        return Option{ .result = args.path.slice() };
+                        return Option{
+                            .result = if (args.path == .slice_with_underlying_string)
+                                args.path.slice_with_underlying_string.underlying
+                            else
+                                bun.String.create(args.path.slice()),
+                        };
                     },
                 }
 
                 var working_mem = &this.sync_error_buf;
-                @memcpy(working_mem, path.ptr, len);
+                @memcpy(working_mem[0..len], path[0..len]);
 
                 var i: u16 = len - 1;
 
@@ -3111,10 +3297,9 @@ pub const NodeFS = struct {
                         switch (err.getErrno()) {
                             // handle the race condition
                             .EXIST => {
-                                var display_path: []const u8 = "";
+                                var display_path = bun.String.empty;
                                 if (first_match != std.math.maxInt(u16)) {
-                                    // TODO: this leaks memory
-                                    display_path = bun.default_allocator.dupe(u8, display_path[0..first_match]) catch unreachable;
+                                    display_path = bun.String.create(working_mem[0..first_match]);
                                 }
                                 return Option{ .result = display_path };
                             },
@@ -3126,12 +3311,14 @@ pub const NodeFS = struct {
                         }
                     },
                     .result => {
-                        var display_path = args.path.slice();
-                        if (first_match != std.math.maxInt(u16)) {
-                            // TODO: this leaks memory
-                            display_path = bun.default_allocator.dupe(u8, display_path[0..first_match]) catch unreachable;
-                        }
-                        return Option{ .result = display_path };
+                        return Option{
+                            .result = if (first_match != std.math.maxInt(u16))
+                                bun.String.create(working_mem[0..first_match])
+                            else if (args.path == .slice_with_underlying_string)
+                                args.path.slice_with_underlying_string.underlying
+                            else
+                                bun.String.create(args.path.slice()),
+                        };
                     },
                 }
             },
@@ -3146,7 +3333,7 @@ pub const NodeFS = struct {
         const prefix_slice = args.prefix.slice();
         const len = @min(prefix_slice.len, prefix_buf.len -| 7);
         if (len > 0) {
-            @memcpy(prefix_buf, prefix_slice.ptr, len);
+            @memcpy(prefix_buf[0..len], prefix_slice[0..len]);
         }
         prefix_buf[len..][0..6].* = "XXXXXX".*;
         prefix_buf[len..][6] = 0;
@@ -3162,15 +3349,15 @@ pub const NodeFS = struct {
             };
         }
         // std.c.getErrno(rc) returns SUCCESS if rc is null so we call std.c._errno() directly
-        const errno = @intToEnum(std.c.E, std.c._errno().*);
-        return .{ .err = Syscall.Error{ .errno = @truncate(Syscall.Error.Int, @enumToInt(errno)), .syscall = .mkdtemp } };
+        const errno = @enumFromInt(std.c.E, std.c._errno().*);
+        return .{ .err = Syscall.Error{ .errno = @truncate(Syscall.Error.Int, @intFromEnum(errno)), .syscall = .mkdtemp } };
     }
     pub fn open(this: *NodeFS, args: Arguments.Open, comptime flavor: Flavor) Maybe(Return.Open) {
         switch (comptime flavor) {
             // The sync version does no allocation except when returning the path
             .sync => {
                 const path = args.path.sliceZ(&this.sync_error_buf);
-                return switch (Syscall.open(path, @enumToInt(args.flags), args.mode)) {
+                return switch (Syscall.open(path, @intFromEnum(args.flags), args.mode)) {
                     .err => |err| .{
                         .err = err.withPath(args.path.slice()),
                     },
@@ -3250,6 +3437,14 @@ pub const NodeFS = struct {
             );
     }
 
+    pub fn readv(this: *NodeFS, args: Arguments.Readv, comptime flavor: Flavor) Maybe(Return.Read) {
+        return if (args.position != null) _preadv(this, args, flavor) else _readv(this, args, flavor);
+    }
+
+    pub fn writev(this: *NodeFS, args: Arguments.Writev, comptime flavor: Flavor) Maybe(Return.Write) {
+        return if (args.position != null) _pwritev(this, args, flavor) else _writev(this, args, flavor);
+    }
+
     pub fn write(this: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {
         return if (args.position != null) _pwrite(this, args, flavor) else _write(this, args, flavor);
     }
@@ -3287,6 +3482,82 @@ pub const NodeFS = struct {
                 buf = buf[0..@min(args.length, buf.len)];
 
                 return switch (Syscall.pwrite(args.fd, buf, position)) {
+                    .err => |err| .{
+                        .err = err,
+                    },
+                    .result => |amt| .{ .result = .{
+                        .bytes_written = @truncate(u52, amt),
+                    } },
+                };
+            },
+            else => {},
+        }
+
+        return Maybe(Return.Write).todo;
+    }
+
+    fn _preadv(_: *NodeFS, args: Arguments.Readv, comptime flavor: Flavor) Maybe(Return.Readv) {
+        const position = args.position.?;
+
+        switch (comptime flavor) {
+            .sync => {
+                return switch (Syscall.preadv(args.fd, args.buffers.buffers.items, position)) {
+                    .err => |err| .{
+                        .err = err,
+                    },
+                    .result => |amt| .{ .result = .{
+                        .bytes_read = @truncate(u52, amt),
+                    } },
+                };
+            },
+            else => {},
+        }
+
+        return Maybe(Return.Write).todo;
+    }
+
+    fn _readv(_: *NodeFS, args: Arguments.Readv, comptime flavor: Flavor) Maybe(Return.Readv) {
+        switch (comptime flavor) {
+            .sync => {
+                return switch (Syscall.readv(args.fd, args.buffers.buffers.items)) {
+                    .err => |err| .{
+                        .err = err,
+                    },
+                    .result => |amt| .{ .result = .{
+                        .bytes_read = @truncate(u52, amt),
+                    } },
+                };
+            },
+            else => {},
+        }
+
+        return Maybe(Return.Write).todo;
+    }
+
+    fn _pwritev(_: *NodeFS, args: Arguments.Writev, comptime flavor: Flavor) Maybe(Return.Write) {
+        const position = args.position.?;
+
+        switch (comptime flavor) {
+            .sync => {
+                return switch (Syscall.pwritev(args.fd, args.buffers.buffers.items, position)) {
+                    .err => |err| .{
+                        .err = err,
+                    },
+                    .result => |amt| .{ .result = .{
+                        .bytes_written = @truncate(u52, amt),
+                    } },
+                };
+            },
+            else => {},
+        }
+
+        return Maybe(Return.Write).todo;
+    }
+
+    fn _writev(_: *NodeFS, args: Arguments.Writev, comptime flavor: Flavor) Maybe(Return.Write) {
+        switch (comptime flavor) {
+            .sync => {
+                return switch (Syscall.writev(args.fd, args.buffers.buffers.items)) {
                     .err => |err| .{
                         .err = err,
                     },
@@ -3443,6 +3714,35 @@ pub const NodeFS = struct {
                 const fd = switch (args.path) {
                     .path => brk: {
                         path = args.path.path.sliceZ(&this.sync_error_buf);
+                        if (this.vm) |vm| {
+                            if (vm.standalone_module_graph) |graph| {
+                                if (graph.find(path)) |file| {
+                                    if (args.encoding == .buffer) {
+                                        return .{
+                                            .result = .{
+                                                .buffer = Buffer.fromBytes(
+                                                    bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"),
+                                                    bun.default_allocator,
+                                                    .Uint8Array,
+                                                ),
+                                            },
+                                        };
+                                    } else if (comptime string_type == .default)
+                                        return .{
+                                            .result = .{
+                                                .string = bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"),
+                                            },
+                                        }
+                                    else
+                                        return .{
+                                            .result = .{
+                                                .null_terminated = bun.default_allocator.dupeZ(u8, file.contents) catch @panic("out of memory"),
+                                            },
+                                        };
+                                }
+                            }
+                        }
+
                         break :brk switch (Syscall.open(
                             path,
                             os.O.RDONLY | os.O.NOCTTY,
@@ -3605,7 +3905,7 @@ pub const NodeFS = struct {
                 break :brk switch (Syscall.openat(
                     args.dirfd,
                     path,
-                    @enumToInt(args.flag) | os.O.NOCTTY,
+                    @intFromEnum(args.flag) | os.O.NOCTTY,
                     args.mode,
                 )) {
                     .err => |err| return .{
@@ -3672,7 +3972,7 @@ pub const NodeFS = struct {
         }
 
         // https://github.com/oven-sh/bun/issues/2931
-        if ((@enumToInt(args.flag) & std.os.O.APPEND) == 0) {
+        if ((@intFromEnum(args.flag) & std.os.O.APPEND) == 0) {
             _ = ftruncateSync(.{ .fd = fd, .len = @truncate(JSC.WebCore.Blob.SizeType, written) });
         }
 
@@ -3819,12 +4119,12 @@ pub const NodeFS = struct {
 
                         while (true) {
                             if (Maybe(Return.Rmdir).errnoSys(bun.C.darwin.removefileat(std.os.AT.FDCWD, dest, null, flags), .rmdir)) |errno| {
-                                switch (@intToEnum(os.E, errno.err.errno)) {
+                                switch (@enumFromInt(os.E, errno.err.errno)) {
                                     .AGAIN, .INTR => continue,
                                     .NOENT => return Maybe(Return.Rmdir).success,
                                     .MLINK => {
                                         var copy: [bun.MAX_PATH_BYTES]u8 = undefined;
-                                        @memcpy(&copy, dest.ptr, dest.len);
+                                        @memcpy(copy[0..dest.len], dest);
                                         copy[dest.len] = 0;
                                         var dest_copy = copy[0..dest.len :0];
                                         switch (Syscall.unlink(dest_copy).getErrno()) {
@@ -3906,7 +4206,7 @@ pub const NodeFS = struct {
                         }
 
                         if (Maybe(Return.Rm).errnoSys(bun.C.darwin.removefileat(std.os.AT.FDCWD, dest, null, flags), .unlink)) |errno| {
-                            switch (@intToEnum(os.E, errno.err.errno)) {
+                            switch (@enumFromInt(os.E, errno.err.errno)) {
                                 .AGAIN, .INTR => continue,
                                 .NOENT => {
                                     if (args.force) {
@@ -3918,7 +4218,7 @@ pub const NodeFS = struct {
 
                                 .MLINK => {
                                     var copy: [bun.MAX_PATH_BYTES]u8 = undefined;
-                                    @memcpy(&copy, dest.ptr, dest.len);
+                                    @memcpy(copy[0..dest.len], dest);
                                     copy[dest.len] = 0;
                                     var dest_copy = copy[0..dest.len :0];
                                     switch (Syscall.unlink(dest_copy).getErrno()) {
@@ -4063,8 +4363,13 @@ pub const NodeFS = struct {
                         &this.sync_error_buf,
                     ),
                 )) {
-                    .result => |result| Maybe(Return.Stat){ .result = Return.Stat.init(result, false) },
-                    .err => |err| Maybe(Return.Stat){ .err = err },
+                    .result => |result| Maybe(Return.Stat){ .result = .{ .stats = Stats.init(result, args.big_int) } },
+                    .err => |err| brk: {
+                        if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
+                            return Maybe(Return.Stat){ .result = .{ .not_found = {} } };
+                        }
+                        break :brk Maybe(Return.Stat){ .err = err };
+                    },
                 });
             },
             else => {},
@@ -4181,8 +4486,12 @@ pub const NodeFS = struct {
 
         return Maybe(Return.Lutimes).todo;
     }
-    pub fn watch(_: *NodeFS, _: Arguments.Watch, comptime _: Flavor) Maybe(Return.Watch) {
-        return Maybe(Return.Watch).todo;
+    pub fn watch(_: *NodeFS, args: Arguments.Watch, comptime _: Flavor) Maybe(Return.Watch) {
+        const watcher = args.createFSWatcher() catch |err| {
+            args.global_this.throwError(err, "Failed to watch filename");
+            return Maybe(Return.Watch){ .result = JSC.JSValue.jsUndefined() };
+        };
+        return Maybe(Return.Watch){ .result = watcher };
     }
     pub fn createReadStream(_: *NodeFS, _: Arguments.CreateReadStream, comptime _: Flavor) Maybe(Return.CreateReadStream) {
         return Maybe(Return.CreateReadStream).todo;

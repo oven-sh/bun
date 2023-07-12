@@ -1062,8 +1062,8 @@ var nodeFsConstants = constants, __getOwnPropNames = Object.getOwnPropertyNames,
         }
       }
       initWasiFdInfo() {
-        if (this.env["WASI_FD_INFO"] != null) {
-          const fdInfo = JSON.parse(this.env["WASI_FD_INFO"]);
+        if (this.env.WASI_FD_INFO != null) {
+          const fdInfo = JSON.parse(this.env.WASI_FD_INFO);
           for (let wasi_fd in fdInfo) {
             console.log(wasi_fd);
             const fd = parseInt(wasi_fd);

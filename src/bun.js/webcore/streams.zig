@@ -247,7 +247,7 @@ pub const ReadableStream = struct {
 
     pub fn fromNative(globalThis: *JSGlobalObject, id: Tag, ptr: *anyopaque) JSC.JSValue {
         JSC.markBinding(@src());
-        return ZigGlobalObject__createNativeReadableStream(globalThis, JSValue.fromPtr(ptr), JSValue.jsNumber(@enumToInt(id)));
+        return ZigGlobalObject__createNativeReadableStream(globalThis, JSValue.fromPtr(ptr), JSValue.jsNumber(@intFromEnum(id)));
     }
 
     pub fn fromBlob(globalThis: *JSGlobalObject, blob: *const Blob, recommended_chunk_size: Blob.SizeType) JSC.JSValue {
@@ -329,11 +329,11 @@ pub const ReadableStream = struct {
             const filedes_ = @bitCast([8]u8, @as(usize, @truncate(u56, @intCast(usize, filedes))));
             bytes[1..8].* = filedes_[0..7].*;
 
-            return @intToEnum(StreamTag, @bitCast(u64, bytes));
+            return @enumFromInt(StreamTag, @bitCast(u64, bytes));
         }
 
         pub fn fd(this: StreamTag) bun.FileDescriptor {
-            var bytes = @bitCast([8]u8, @enumToInt(this));
+            var bytes = @bitCast([8]u8, @intFromEnum(this));
             if (bytes[0] != 1) {
                 return bun.invalid_fd;
             }
@@ -780,13 +780,15 @@ pub const StreamResult = union(Tag) {
             .temporary => |temp| {
                 var array = JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);
                 var slice_ = array.asArrayBuffer(globalThis).?.slice();
-                @memcpy(slice_.ptr, temp.ptr, temp.len);
+                const temp_slice = temp.slice();
+                @memcpy(slice_[0..temp_slice.len], temp_slice);
                 return array;
             },
             .temporary_and_done => |temp| {
                 var array = JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);
                 var slice_ = array.asArrayBuffer(globalThis).?.slice();
-                @memcpy(slice_.ptr, temp.ptr, temp.len);
+                const temp_slice = temp.slice();
+                @memcpy(slice_[0..temp_slice.len], temp_slice);
                 return array;
             },
             .into_array => |array| {
@@ -818,7 +820,7 @@ pub const Signal = struct {
     ptr: *anyopaque = dead,
     vtable: VTable = VTable.Dead,
 
-    pub const dead = @intToPtr(*anyopaque, 0xaaaaaaaa);
+    pub const dead = @ptrFromInt(*anyopaque, 0xaaaaaaaa);
 
     pub fn clear(this: *Signal) void {
         this.ptr = dead;
@@ -920,7 +922,7 @@ pub const Sink = struct {
     used: bool = false,
 
     pub const pending = Sink{
-        .ptr = @intToPtr(*anyopaque, 0xaaaaaaaa),
+        .ptr = @ptrFromInt(*anyopaque, 0xaaaaaaaa),
         .vtable = undefined,
     };
 
@@ -961,7 +963,8 @@ pub const Sink = struct {
 
             if (stack_size >= str.len) {
                 var buf: [stack_size]u8 = undefined;
-                @memcpy(&buf, str.ptr, str.len);
+                @memcpy(buf[0..str.len], str);
+
                 strings.replaceLatin1WithUTF8(buf[0..str.len]);
                 if (input.isDone()) {
                     const result = writeFn(ctx, .{ .temporary_and_done = bun.ByteList.init(buf[0..str.len]) });
@@ -974,7 +977,8 @@ pub const Sink = struct {
 
             {
                 var slice = bun.default_allocator.alloc(u8, str.len) catch return .{ .err = Syscall.Error.oom };
-                @memcpy(slice.ptr, str.ptr, str.len);
+                @memcpy(slice[0..str.len], str);
+
                 strings.replaceLatin1WithUTF8(slice[0..str.len]);
                 if (input.isDone()) {
                     return writeFn(ctx, .{ .owned_and_done = bun.ByteList.init(slice) });
@@ -1262,7 +1266,7 @@ pub const FileSink = struct {
 
         const initial_remain = remain;
         defer {
-            std.debug.assert(total - initial == @ptrToInt(remain.ptr) - @ptrToInt(initial_remain.ptr));
+            std.debug.assert(total - initial == @intFromPtr(remain.ptr) - @intFromPtr(initial_remain.ptr));
 
             if (remain.len == 0) {
                 this.head = 0;
@@ -1908,15 +1912,15 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             pub fn init(cpp: JSValue) Signal {
                 // this one can be null
                 @setRuntimeSafety(false);
-                return Signal.initWithType(SinkSignal, @intToPtr(*SinkSignal, @bitCast(usize, @enumToInt(cpp))));
+                return Signal.initWithType(SinkSignal, @ptrFromInt(*SinkSignal, @bitCast(usize, @intFromEnum(cpp))));
             }
 
             pub fn close(this: *@This(), _: ?Syscall.Error) void {
-                onClose(@bitCast(SinkSignal, @ptrToInt(this)).cpp, JSValue.jsUndefined());
+                onClose(@bitCast(SinkSignal, @intFromPtr(this)).cpp, JSValue.jsUndefined());
             }
 
             pub fn ready(this: *@This(), _: ?Blob.SizeType, _: ?Blob.SizeType) void {
-                onReady(@bitCast(SinkSignal, @ptrToInt(this)).cpp, JSValue.jsUndefined(), JSValue.jsUndefined());
+                onReady(@bitCast(SinkSignal, @intFromPtr(this)).cpp, JSValue.jsUndefined(), JSValue.jsUndefined());
             }
 
             pub fn start(_: *@This()) void {}
@@ -1960,10 +1964,10 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                     pub const message = std.fmt.comptimePrint("{s} is not constructable", .{SinkType.name});
                 };
                 const err = JSC.SystemError{
-                    .message = ZigString.init(Static.message),
-                    .code = ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_ILLEGAL_CONSTRUCTOR))),
+                    .message = bun.String.static(Static.message),
+                    .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_ILLEGAL_CONSTRUCTOR))),
                 };
-                globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
+                globalThis.throwValue(err.toErrorInstance(globalThis));
                 return JSC.JSValue.jsUndefined();
             }
 
@@ -1992,7 +1996,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             if (this.sink.signal.isDead())
                 return;
             this.sink.signal.clear();
-            const value = @intToEnum(JSValue, @bitCast(JSC.JSValueReprInt, @ptrToInt(ptr)));
+            const value = @enumFromInt(JSValue, @bitCast(JSC.JSValueReprInt, @intFromPtr(ptr)));
             value.unprotect();
             detachPtr(value);
         }
@@ -3127,7 +3131,7 @@ pub const ByteBlobLoader = struct {
         this.remain -|= copied;
         this.offset +|= copied;
         std.debug.assert(buffer.ptr != temporary.ptr);
-        @memcpy(buffer.ptr, temporary.ptr, temporary.len);
+        @memcpy(buffer[0..temporary.len], temporary);
         if (this.remain == 0) {
             return .{ .into_array_and_done = .{ .value = array, .len = copied } };
         }
@@ -3231,7 +3235,7 @@ pub const ByteStream = struct {
         }
 
         if (this.has_received_last_chunk) {
-            return .{ .chunk_size = @truncate(Blob.SizeType, @min(1024 * 1024 * 2, this.buffer.items.len)) };
+            return .{ .chunk_size = @min(1024 * 1024 * 2, this.buffer.items.len) };
         }
 
         if (this.highWaterMark == 0) {
@@ -3292,7 +3296,7 @@ pub const ByteStream = struct {
             var to_copy = this.pending_buffer[0..@min(chunk.len, this.pending_buffer.len)];
             const pending_buffer_len = this.pending_buffer.len;
             std.debug.assert(to_copy.ptr != chunk.ptr);
-            @memcpy(to_copy.ptr, chunk.ptr, to_copy.len);
+            @memcpy(to_copy, chunk[0..to_copy.len]);
             this.pending_buffer = &.{};
 
             const is_really_done = this.has_received_last_chunk and to_copy.len <= pending_buffer_len;
@@ -3382,7 +3386,7 @@ pub const ByteStream = struct {
             );
             var remaining_in_buffer = this.buffer.items[this.offset..][0..to_write];
 
-            @memcpy(buffer.ptr, this.buffer.items.ptr + this.offset, to_write);
+            @memcpy(buffer[0..to_write], this.buffer.items[this.offset..][0..to_write]);
 
             if (this.offset + to_write == this.buffer.items.len) {
                 this.offset = 0;
@@ -4071,7 +4075,7 @@ pub const File = struct {
                     this.pending.result = .{
                         .err = Syscall.Error{
                             // this is too hacky
-                            .errno = @truncate(Syscall.Error.Int, @intCast(u16, @max(1, @errorToInt(err)))),
+                            .errno = @truncate(Syscall.Error.Int, @intCast(u16, @max(1, @intFromError(err)))),
                             .syscall = .read,
                         },
                     };
@@ -4655,4 +4659,3 @@ pub fn NewReadyWatcher(
 //         pub fn onError(this: *Streamer): anytype,
 //     };
 // }
-

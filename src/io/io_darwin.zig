@@ -245,7 +245,7 @@ const system = darwin;
 
 pub fn asError(err: anytype) Errno {
     const int = if (@typeInfo(@TypeOf(err)) == .Enum)
-        @enumToInt(err)
+        @intFromEnum(err)
     else
         err;
 
@@ -274,7 +274,11 @@ pub const darwin = struct {
     pub extern "c" fn @"openat$NOCANCEL"(fd: c.fd_t, path: [*:0]const u8, oflag: c_uint, ...) c_int;
     pub extern "c" fn @"read$NOCANCEL"(fd: c.fd_t, buf: [*]u8, nbyte: usize) isize;
     pub extern "c" fn @"pread$NOCANCEL"(fd: c.fd_t, buf: [*]u8, nbyte: usize, offset: c.off_t) isize;
+    pub extern "c" fn @"preadv$NOCANCEL"(fd: c.fd_t, uf: [*]std.os.iovec, count: i32, offset: c.off_t) isize;
+    pub extern "c" fn @"readv$NOCANCEL"(fd: c.fd_t, uf: [*]std.os.iovec, count: i32) isize;
     pub extern "c" fn @"write$NOCANCEL"(fd: c.fd_t, buf: [*]const u8, nbyte: usize) isize;
+    pub extern "c" fn @"writev$NOCANCEL"(fd: c.fd_t, buf: [*]std.os.iovec_const, count: i32) isize;
+    pub extern "c" fn @"pwritev$NOCANCEL"(fd: c.fd_t, buf: [*]std.os.iovec_const, count: i32, offset: c.off_t) isize;
 };
 pub const OpenError = error{
     /// In WASI, this error may occur when the file descriptor does
@@ -772,7 +776,7 @@ fn flush(self: *IO, comptime _: @Type(.EnumLiteral)) !void {
             continue;
         }
 
-        const completion = @intToPtr(*Completion, kevent.udata);
+        const completion = @ptrFromInt(*Completion, kevent.udata);
         completion.next = null;
         self.completed.push(completion);
     }
@@ -837,7 +841,7 @@ fn flush_io(_: *IO, events: []Kevent64, io_pending_top: *?*Completion) usize {
             .flags = @intCast(u16, event_info[2]),
             .fflags = 0,
             .data = 0,
-            .udata = @ptrToInt(completion),
+            .udata = @intFromPtr(completion),
         };
     }
 
@@ -995,7 +999,7 @@ fn submitWithIncrementPending(
 
             // Complete the Completion
             return callback(
-                @intToPtr(Context, @ptrToInt(_completion.context)),
+                @ptrFromInt(Context, @intFromPtr(_completion.context)),
                 _completion,
                 result,
             );
@@ -1203,7 +1207,7 @@ pub fn connect(
                         const rc = system.getsockopt(op.socket, os.SOL.SOCKET, os.SO.ERROR, @ptrCast([*]u8, &err_code), &size);
                         assert(size == 4);
                         break :brk switch (darwin.getErrno(rc)) {
-                            .SUCCESS => switch (@intToEnum(os.E, err_code)) {
+                            .SUCCESS => switch (@enumFromInt(os.E, err_code)) {
                                 .SUCCESS => {},
                                 .ACCES => error.PermissionDenied,
                                 .PERM => error.PermissionDenied,
@@ -1351,7 +1355,7 @@ pub fn read(
                         op.buf,
                         op.len,
                     );
-                    return switch (@enumToInt(os.errno(rc))) {
+                    return switch (@intFromEnum(os.errno(rc))) {
                         0 => @intCast(usize, rc),
                         os.EINTR => continue,
                         os.EAGAIN => error.WouldBlock,

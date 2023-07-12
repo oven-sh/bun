@@ -14,7 +14,8 @@
       "name": "bun test [file]",
       "program": "bun-debug",
       "args": ["test", "${file}"],
-      "cwd": "${fileDirname}",
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
+      "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
@@ -29,7 +30,8 @@
       "name": "bun test [file] (fast)",
       "program": "bun-debug",
       "args": ["test", "${file}"],
-      "cwd": "${fileDirname}",
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
+      "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1"
@@ -44,7 +46,8 @@
       "name": "bun test [file] (verbose)",
       "program": "bun-debug",
       "args": ["test", "${file}"],
-      "cwd": "${fileDirname}",
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
+      "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1"
       },
@@ -57,7 +60,8 @@
       "name": "bun test [file] --watch",
       "program": "bun-debug",
       "args": ["test", "--watch", "${file}"],
-      "cwd": "${fileDirname}",
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
+      "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1"
@@ -71,7 +75,8 @@
       "name": "bun test [file] --only",
       "program": "bun-debug",
       "args": ["test", "--only", "${file}"],
-      "cwd": "${fileDirname}",
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
+      "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1"
@@ -100,6 +105,7 @@
       "name": "bun test [*] (fast)",
       "program": "bun-debug",
       "args": ["test"],
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
       "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1",
@@ -114,6 +120,7 @@
       "name": "bun test [*] --only",
       "program": "bun-debug",
       "args": ["test", "--only"],
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
       "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1",
@@ -318,7 +325,7 @@
       "name": "bun install",
       "program": "bun-debug",
       "args": ["install"],
-      "cwd": "${workspaceFolder}",
+      "cwd": "${fileDirname}",
       "console": "internalConsole",
       "env": {
         "BUN_DEBUG_QUIET_LOGS": "1"

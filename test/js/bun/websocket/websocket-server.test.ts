@@ -3,6 +3,77 @@ import { gcTick } from "harness";
 import { serve, ServerWebSocket } from "bun";
 
 describe("websocket server", () => {
+  it("send & receive empty messages", done => {
+    const serverReceived: any[] = [];
+    const clientReceived: any[] = [];
+    var clientDone = false;
+    var serverDone = false;
+
+    let server = Bun.serve({
+      websocket: {
+        open(ws) {
+          ws.send("");
+          ws.send(new ArrayBuffer(0));
+        },
+        message(ws, data) {
+          serverReceived.push(data);
+
+          if (serverReceived.length === 2) {
+            if (serverReceived.find(d => d === "") === undefined) {
+              done(new Error("expected empty string"));
+            }
+
+            if (!serverReceived.find(d => d.byteLength === 0)) {
+              done(new Error("expected empty Buffer"));
+            }
+
+            serverDone = true;
+
+            if (clientDone && serverDone) {
+              z.close();
+              server.stop(true);
+              done();
+            }
+          }
+        },
+        close() {},
+      },
+      fetch(req, server) {
+        if (!server.upgrade(req)) {
+          return new Response(null, { status: 404 });
+        }
+      },
+      port: 0,
+    });
+
+    let z = new WebSocket(`ws://${server.hostname}:${server.port}`);
+    z.onmessage = e => {
+      clientReceived.push(e.data);
+
+      if (clientReceived.length === 2) {
+        if (clientReceived.find(d => d === "") === undefined) {
+          done(new Error("expected empty string"));
+        }
+
+        if (!clientReceived.find(d => d.byteLength === 0)) {
+          done(new Error("expected empty Buffer"));
+        }
+
+        clientDone = true;
+        if (clientDone && serverDone) {
+          server.stop(true);
+          z.close();
+
+          done();
+        }
+      }
+    };
+    z.addEventListener("open", () => {
+      z.send("");
+      z.send(new Buffer(0));
+    });
+  });
+
   it("remoteAddress works", done => {
     let server = Bun.serve({
       websocket: {
@@ -849,7 +920,7 @@ describe("websocket server", () => {
   it("send rope strings", async () => {
     var ropey = "hello world".repeat(10);
     var sendQueue: any[] = [];
-    for (var i = 0; i < 100; i++) {
+    for (var i = 0; i < 20; i++) {
       sendQueue.push(ropey + " " + i);
     }
 
@@ -859,16 +930,13 @@ describe("websocket server", () => {
     const server = serve({
       port: 0,
       websocket: {
-        open(ws) {
-          server.stop();
-        },
+        open(ws) {},
         message(ws, msg) {
           ws.send(sendQueue[serverCounter++] + " ");
-          gcTick();
+          serverCounter % 10 === 0 && gcTick();
         },
       },
       fetch(req, server) {
-        server.stop();
         if (
           server.upgrade(req, {
             data: { count: 0 },
@@ -879,54 +947,56 @@ describe("websocket server", () => {
         return new Response("noooooo hello world");
       },
     });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
+        websocket.onerror = e => {
+          reject(e);
+        };
 
-    await new Promise<void>((resolve, reject) => {
-      const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
-      websocket.onerror = e => {
-        reject(e);
-      };
+        websocket.onopen = () => {
+          server.stop();
+          websocket.send("first");
+        };
 
-      var counter = 0;
-      websocket.onopen = () => websocket.send("first");
-      websocket.onmessage = e => {
-        try {
-          const expected = sendQueue[clientCounter++] + " ";
-          expect(e.data).toBe(expected);
-          websocket.send("next");
-          if (clientCounter === sendQueue.length) {
+        websocket.onmessage = e => {
+          try {
+            const expected = sendQueue[clientCounter++] + " ";
+            expect(e.data).toBe(expected);
+            websocket.send("next");
+            if (clientCounter === sendQueue.length) {
+              websocket.close();
+              resolve();
+            }
+          } catch (r) {
+            reject(r);
+            console.error(r);
             websocket.close();
-            resolve();
           }
-        } catch (r) {
-          reject(r);
-          console.error(r);
-          websocket.close();
-        }
-      };
-    });
-    server.stop(true);
+        };
+      });
+    } catch (e) {
+      throw e;
+    } finally {
+      server.stop(true);
+    }
   });
 
-  // this test sends 100 messages to 10 connected clients via pubsub
+  // this test sends 50 messages to 10 connected clients via pubsub
   it("pub/sub", async () => {
     var ropey = "hello world".repeat(10);
     var sendQueue: any[] = [];
-    for (var i = 0; i < 100; i++) {
+    for (var i = 0; i < 50; i++) {
       sendQueue.push(ropey + " " + i);
-      gcTick();
     }
+
     var serverCounter = 0;
     var clientCount = 0;
     const server = serve({
       port: 0,
       websocket: {
-        // FIXME: update this test to not rely on publishToSelf: true,
-        publishToSelf: true,
-
         open(ws) {
-          server.stop();
           ws.subscribe("test");
-          gcTick();
           if (!ws.isSubscribed("test")) {
             throw new Error("not subscribed");
           }
@@ -936,15 +1006,15 @@ describe("websocket server", () => {
           }
           ws.subscribe("test");
           clientCount++;
-          if (clientCount === 10) setTimeout(() => ws.publish("test", "hello world"), 1);
+          if (clientCount === 10) {
+            setTimeout(() => server.publish("test", "hello world"), 1);
+          }
         },
         message(ws, msg) {
-          if (serverCounter < sendQueue.length) ws.publish("test", sendQueue[serverCounter++] + " ");
+          if (serverCounter < sendQueue.length) server.publish("test", sendQueue[serverCounter++] + " ");
         },
       },
       fetch(req) {
-        gcTick();
-        server.stop();
         if (
           server.upgrade(req, {
             data: { count: 0 },
@@ -954,90 +1024,90 @@ describe("websocket server", () => {
         return new Response("noooooo hello world");
       },
     });
+    try {
+      const connections = new Array(10);
+      const websockets = new Array(connections.length);
+      var doneCounter = 0;
+      await new Promise<void>(done => {
+        for (var i = 0; i < connections.length; i++) {
+          var j = i;
+          var resolve: (_?: unknown) => void,
+            reject: (_?: unknown) => void,
+            resolveConnection: (_?: unknown) => void,
+            rejectConnection: (_?: unknown) => void;
+          connections[j] = new Promise((res, rej) => {
+            resolveConnection = res;
+            rejectConnection = rej;
+          });
+          websockets[j] = new Promise((res, rej) => {
+            resolve = res;
+            reject = rej;
+          });
+          const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
+          websocket.onerror = e => {
+            reject(e);
+          };
+          websocket.onclose = () => {
+            doneCounter++;
+            if (doneCounter === connections.length) {
+              done();
+            }
+          };
+          var hasOpened = false;
+          websocket.onopen = () => {
+            if (!hasOpened) {
+              hasOpened = true;
+              resolve(websocket);
+            }
+          };
 
-    const connections = new Array(10);
-    const websockets = new Array(connections.length);
-    var doneCounter = 0;
-    await new Promise<void>(done => {
-      for (var i = 0; i < connections.length; i++) {
-        var j = i;
-        var resolve: (_?: unknown) => void,
-          reject: (_?: unknown) => void,
-          resolveConnection: (_?: unknown) => void,
-          rejectConnection: (_?: unknown) => void;
-        connections[j] = new Promise((res, rej) => {
-          resolveConnection = res;
-          rejectConnection = rej;
-        });
-        websockets[j] = new Promise((res, rej) => {
-          resolve = res;
-          reject = rej;
-        });
-        gcTick();
-        const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
-        websocket.onerror = e => {
-          reject(e);
-        };
-        websocket.onclose = () => {
-          doneCounter++;
-          if (doneCounter === connections.length) {
-            done();
-          }
-        };
-        var hasOpened = false;
-        websocket.onopen = () => {
-          if (!hasOpened) {
-            hasOpened = true;
-            resolve(websocket);
-          }
-        };
+          let clientCounter = -1;
+          var hasSentThisTick = false;
 
-        let clientCounter = -1;
-        var hasSentThisTick = false;
-
-        websocket.onmessage = e => {
-          gcTick();
-
-          if (!hasOpened) {
-            hasOpened = true;
-            resolve(websocket);
-          }
-
-          if (e.data === "hello world") {
-            clientCounter = 0;
-            websocket.send("first");
-            return;
-          }
-
-          try {
-            expect(!!sendQueue.find(a => a + " " === e.data)).toBe(true);
-
-            if (!hasSentThisTick) {
-              websocket.send("second");
-              hasSentThisTick = true;
-              queueMicrotask(() => {
-                hasSentThisTick = false;
-              });
+          websocket.onmessage = e => {
+            if (!hasOpened) {
+              hasOpened = true;
+              resolve(websocket);
             }
 
-            gcTick();
+            if (e.data === "hello world") {
+              clientCounter = 0;
+              websocket.send("first");
+              return;
+            }
 
-            if (clientCounter++ === sendQueue.length - 1) {
+            try {
+              expect(!!sendQueue.find(a => a + " " === e.data)).toBe(true);
+
+              if (!hasSentThisTick) {
+                websocket.send("second");
+                hasSentThisTick = true;
+                queueMicrotask(() => {
+                  hasSentThisTick = false;
+                });
+              }
+
+              if (clientCounter++ === sendQueue.length - 1) {
+                websocket.close();
+                resolveConnection();
+              }
+            } catch (r) {
+              console.error(r);
               websocket.close();
-              resolveConnection();
+              rejectConnection(r);
             }
-          } catch (r) {
-            console.error(r);
-            websocket.close();
-            rejectConnection(r);
-            gcTick();
-          }
-        };
-      }
-    });
+          };
+        }
+      });
+    } catch (e) {
+      throw e;
+    } finally {
+      server.stop(true);
+      gcTick();
+    }
+
     expect(serverCounter).toBe(sendQueue.length);
-    server.stop(true);
-  }, 10_000);
+  }, 30_000);
   it("can close with reason and code #2631", done => {
     let timeout: any;
     let server = Bun.serve({

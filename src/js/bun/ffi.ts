@@ -239,7 +239,7 @@ ffiWrappers[FFIType.function] = function functionType(val) {
 };
 
 function FFIBuilder(params, returnType, functionToCall, name) {
-  const hasReturnType = typeof FFIType[returnType] === "number" && FFIType[returnType] !== FFIType.void;
+  const hasReturnType = typeof FFIType[returnType] === "number" && FFIType[returnType as string] !== FFIType.void;
   var paramNames = new Array(params.length);
   var args = new Array(params.length);
   for (let i = 0; i < params.length; i++) {
@@ -255,7 +255,7 @@ function FFIBuilder(params, returnType, functionToCall, name) {
 
   var code = `functionToCall(${args.join(", ")})`;
   if (hasReturnType) {
-    if (FFIType[returnType] === FFIType.cstring) {
+    if (FFIType[returnType as string] === FFIType.cstring) {
       code = `return (${cstringReturnType.toString()})(${code})`;
     } else {
       code = `return ${code}`;
@@ -328,7 +328,7 @@ export function dlopen(path, options) {
 
   for (let key in result.symbols) {
     var symbol = result.symbols[key];
-    if (options[key]?.args?.length || FFIType[options[key]?.returns] === FFIType.cstring) {
+    if (options[key]?.args?.length || FFIType[options[key]?.returns as string] === FFIType.cstring) {
       result.symbols[key] = FFIBuilder(
         options[key].args ?? [],
         options[key].returns ?? FFIType.void,
@@ -354,7 +354,7 @@ export function linkSymbols(options) {
 
   for (let key in result.symbols) {
     var symbol = result.symbols[key];
-    if (options[key]?.args?.length || FFIType[options[key]?.returns] === FFIType.cstring) {
+    if (options[key]?.args?.length || FFIType[options[key]?.returns as string] === FFIType.cstring) {
       result.symbols[key] = FFIBuilder(options[key].args ?? [], options[key].returns ?? FFIType.void, symbol, key);
     } else {
       // consistentcy

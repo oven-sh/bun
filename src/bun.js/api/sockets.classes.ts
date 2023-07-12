@@ -15,9 +15,16 @@ function generate(ssl) {
       authorized: {
         getter: "getAuthorized",
       },
+      alpnProtocol: {
+        getter: "getALPNProtocol",
+      },
       write: {
         fn: "write",
         length: 3,
+      },
+      upgradeTLS: {
+        fn: "upgradeTLS",
+        length: 1,
       },
       end: {
         fn: "end",
@@ -80,6 +87,11 @@ function generate(ssl) {
 
       reload: {
         fn: "reload",
+        length: 1,
+      },
+
+      setServername: {
+        fn: "setServername",
         length: 1,
       },
     },

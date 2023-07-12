@@ -29,6 +29,7 @@ const Backtrace = @import("../../crash_reporter.zig");
 const JSPrinter = bun.js_printer;
 const JSLexer = bun.js_lexer;
 const typeBaseName = @import("../../meta.zig").typeBaseName;
+const String = bun.String;
 
 pub const ZigGlobalObject = extern struct {
     pub const shim = Shimmer("Zig", "GlobalObject", @This());
@@ -112,11 +113,11 @@ pub const ErrorCode = enum(ErrorCodeInt) {
     _,
 
     pub inline fn from(code: anyerror) ErrorCode {
-        return @intToEnum(ErrorCode, @errorToInt(code));
+        return @enumFromInt(ErrorCode, @intFromError(code));
     }
 
-    pub const ParserError = @enumToInt(ErrorCode.from(error.ParserError));
-    pub const JSErrorObject = @enumToInt(ErrorCode.from(error.JSErrorObject));
+    pub const ParserError = @intFromEnum(ErrorCode.from(error.ParserError));
+    pub const JSErrorObject = @intFromEnum(ErrorCode.from(error.JSErrorObject));
 
     pub const Type = ErrorCodeInt;
 };
@@ -216,9 +217,10 @@ pub const ResolvedSource = extern struct {
 
     pub const Tag = enum(u64) {
         javascript = 0,
-        wasm = 1,
-        object = 2,
-        file = 3,
+        package_json_type_module = 1,
+        wasm = 2,
+        object = 3,
+        file = 4,
 
         @"node:buffer" = 1024,
         @"node:process" = 1025,
@@ -244,7 +246,7 @@ export fn ZigString__free(raw: [*]const u8, len: usize, allocator_: ?*anyopaque)
 }
 
 export fn ZigString__free_global(ptr: [*]const u8, len: usize) void {
-    var untagged = @intToPtr(*anyopaque, @ptrToInt(ZigString.init(ptr[0..len]).slice().ptr));
+    var untagged = @ptrFromInt(*anyopaque, @intFromPtr(ZigString.init(ptr[0..len]).slice().ptr));
     if (comptime Environment.allow_assert) {
         std.debug.assert(Mimalloc.mi_is_in_heap_region(ptr));
     }
@@ -437,7 +439,7 @@ pub const Process = extern struct {
 };
 
 pub const ZigStackTrace = extern struct {
-    source_lines_ptr: [*c]ZigString,
+    source_lines_ptr: [*c]bun.String,
     source_lines_numbers: [*c]i32,
     source_lines_len: u8,
     source_lines_to_collect: u8,
@@ -455,23 +457,24 @@ pub const ZigStackTrace = extern struct {
         {
             var source_lines_iter = this.sourceLineIterator();
 
-            var source_line_len: usize = 0;
-            var count: usize = 0;
-            while (source_lines_iter.next()) |source| {
-                count += 1;
-                source_line_len += source.text.len;
-            }
+            var source_line_len = source_lines_iter.getLength();
 
-            if (count > 0 and source_line_len > 0) {
-                var source_lines = try allocator.alloc(Api.SourceLine, count);
+            if (source_line_len > 0) {
+                var source_lines = try allocator.alloc(Api.SourceLine, @intCast(usize, @max(source_lines_iter.i + 1, 0)));
                 var source_line_buf = try allocator.alloc(u8, source_line_len);
                 source_lines_iter = this.sourceLineIterator();
                 var remain_buf = source_line_buf[0..];
                 var i: usize = 0;
                 while (source_lines_iter.next()) |source| {
-                    bun.copy(u8, remain_buf, source.text);
-                    const copied_line = remain_buf[0..source.text.len];
-                    remain_buf = remain_buf[source.text.len..];
+                    const text = source.text.slice();
+                    defer source.text.deinit();
+                    bun.copy(
+                        u8,
+                        remain_buf,
+                        text,
+                    );
+                    const copied_line = remain_buf[0..text.len];
+                    remain_buf = remain_buf[text.len..];
                     source_lines[i] = .{ .text = copied_line, .line = source.line };
                     i += 1;
                 }
@@ -507,8 +510,17 @@ pub const ZigStackTrace = extern struct {
 
         pub const SourceLine = struct {
             line: i32,
-            text: string,
+            text: ZigString.Slice,
         };
+
+        pub fn getLength(this: *SourceLineIterator) usize {
+            var count: usize = 0;
+            for (this.trace.source_lines_ptr[0..@intCast(usize, this.i + 1)]) |*line| {
+                count += line.length();
+            }
+
+            return count;
+        }
 
         pub fn untilLast(this: *SourceLineIterator) ?SourceLine {
             if (this.i < 1) return null;
@@ -521,7 +533,7 @@ pub const ZigStackTrace = extern struct {
             const source_line = this.trace.source_lines_ptr[@intCast(usize, this.i)];
             const result = SourceLine{
                 .line = this.trace.source_lines_numbers[@intCast(usize, this.i)],
-                .text = source_line.slice(),
+                .text = source_line.toUTF8(bun.default_allocator),
             };
             this.i -= 1;
             return result;
@@ -540,28 +552,35 @@ pub const ZigStackTrace = extern struct {
 };
 
 pub const ZigStackFrame = extern struct {
-    function_name: ZigString,
-    source_url: ZigString,
+    function_name: String,
+    source_url: String,
     position: ZigStackFramePosition,
     code_type: ZigStackFrameCode,
 
     /// This informs formatters whether to display as a blob URL or not
     remapped: bool = false,
 
+    pub fn deinit(this: *ZigStackFrame) void {
+        this.function_name.deref();
+        this.source_url.deref();
+    }
+
     pub fn toAPI(this: *const ZigStackFrame, root_path: string, origin: ?*const ZigURL, allocator: std.mem.Allocator) !Api.StackFrame {
         var frame: Api.StackFrame = comptime std.mem.zeroes(Api.StackFrame);
-        if (this.function_name.len > 0) {
-            frame.function_name = try allocator.dupe(u8, this.function_name.slice());
+        if (!this.function_name.isEmpty()) {
+            var slicer = this.function_name.toUTF8(allocator);
+            defer slicer.deinit();
+            frame.function_name = (try slicer.clone(allocator)).slice();
         }
 
-        if (this.source_url.len > 0) {
+        if (!this.source_url.isEmpty()) {
             frame.file = try std.fmt.allocPrint(allocator, "{any}", .{this.sourceURLFormatter(root_path, origin, true, false)});
         }
 
         frame.position.source_offset = this.position.source_offset;
 
         // For remapped code, we add 1 to the line number
-        frame.position.line = this.position.line + @as(i32, @boolToInt(this.remapped));
+        frame.position.line = this.position.line + @as(i32, @intFromBool(this.remapped));
 
         frame.position.line_start = this.position.line_start;
         frame.position.line_stop = this.position.line_stop;
@@ -569,13 +588,13 @@ pub const ZigStackFrame = extern struct {
         frame.position.column_stop = this.position.column_stop;
         frame.position.expression_start = this.position.expression_start;
         frame.position.expression_stop = this.position.expression_stop;
-        frame.scope = @intToEnum(Api.StackFrameScope, @enumToInt(this.code_type));
+        frame.scope = @enumFromInt(Api.StackFrameScope, @intFromEnum(this.code_type));
 
         return frame;
     }
 
     pub const SourceURLFormatter = struct {
-        source_url: ZigString,
+        source_url: bun.String,
         position: ZigStackFramePosition,
         enable_color: bool,
         origin: ?*const ZigURL,
@@ -587,7 +606,9 @@ pub const ZigStackFrame = extern struct {
                 try writer.writeAll(Output.prettyFmt("<r><cyan>", true));
             }
 
-            var source_slice = this.source_url.slice();
+            var source_slice_ = this.source_url.toUTF8(bun.default_allocator);
+            var source_slice = source_slice_.slice();
+            defer source_slice_.deinit();
 
             if (!this.remapped) {
                 if (this.origin) |origin| {
@@ -646,12 +667,12 @@ pub const ZigStackFrame = extern struct {
     };
 
     pub const NameFormatter = struct {
-        function_name: ZigString,
+        function_name: String,
         code_type: ZigStackFrameCode,
         enable_color: bool,
 
         pub fn format(this: NameFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            const name = this.function_name.slice();
+            const name = this.function_name;
 
             switch (this.code_type) {
                 .Eval => {
@@ -661,26 +682,26 @@ pub const ZigStackFrame = extern struct {
                     // try writer.writeAll("(esm)");
                 },
                 .Function => {
-                    if (name.len > 0) {
+                    if (!name.isEmpty()) {
                         if (this.enable_color) {
-                            try std.fmt.format(writer, comptime Output.prettyFmt("<r><b><i>{s}<r>", true), .{name});
+                            try std.fmt.format(writer, comptime Output.prettyFmt("<r><b><i>{}<r>", true), .{name});
                         } else {
-                            try std.fmt.format(writer, "{s}", .{name});
+                            try std.fmt.format(writer, "{}", .{name});
                         }
                     }
                 },
                 .Global => {
-                    if (name.len > 0) {
-                        try std.fmt.format(writer, "globalThis {s}", .{name});
+                    if (!name.isEmpty()) {
+                        try std.fmt.format(writer, "globalThis {}", .{name});
                     } else {
                         try writer.writeAll("globalThis");
                     }
                 },
                 .Wasm => {
-                    try std.fmt.format(writer, "WASM {s}", .{name});
+                    try std.fmt.format(writer, "WASM {}", .{name});
                 },
                 .Constructor => {
-                    try std.fmt.format(writer, "new {s}", .{name});
+                    try std.fmt.format(writer, "new {}", .{name});
                 },
                 else => {},
             }
@@ -688,9 +709,9 @@ pub const ZigStackFrame = extern struct {
     };
 
     pub const Zero: ZigStackFrame = ZigStackFrame{
-        .function_name = ZigString{ ._unsafe_ptr_do_not_use = "", .len = 0 },
+        .function_name = String.empty,
         .code_type = ZigStackFrameCode.None,
-        .source_url = ZigString{ ._unsafe_ptr_do_not_use = "", .len = 0 },
+        .source_url = String.empty,
         .position = ZigStackFramePosition.Invalid,
     };
 
@@ -743,14 +764,14 @@ pub const ZigException = extern struct {
     /// SystemError only
     errno: c_int = 0,
     /// SystemError only
-    syscall: ZigString = ZigString.Empty,
+    syscall: String = String.empty,
     /// SystemError only
-    system_code: ZigString = ZigString.Empty,
+    system_code: String = String.empty,
     /// SystemError only
-    path: ZigString = ZigString.Empty,
+    path: String = String.empty,
 
-    name: ZigString,
-    message: ZigString,
+    name: String,
+    message: String,
     stack: ZigStackTrace,
 
     exception: ?*anyopaque,
@@ -758,6 +779,19 @@ pub const ZigException = extern struct {
     remapped: bool = false,
 
     fd: i32 = -1,
+
+    pub fn deinit(this: *ZigException) void {
+        this.syscall.deref();
+        this.system_code.deref();
+        this.path.deref();
+
+        this.name.deref();
+        this.message.deref();
+
+        for (this.stack.frames_ptr[0..this.stack.frames_len]) |*frame| {
+            frame.deinit();
+        }
+    }
 
     pub const shim = Shimmer("Zig", "Exception", @This());
     pub const name = "ZigException";
@@ -767,7 +801,7 @@ pub const ZigException = extern struct {
         const frame_count = 32;
         pub const source_lines_count = 6;
         source_line_numbers: [source_lines_count]i32,
-        source_lines: [source_lines_count]ZigString,
+        source_lines: [source_lines_count]String,
         frames: [frame_count]ZigStackFrame,
         loaded: bool,
         zig_exception: ZigException,
@@ -775,18 +809,18 @@ pub const ZigException = extern struct {
         pub const Zero: Holder = Holder{
             .frames = brk: {
                 var _frames: [frame_count]ZigStackFrame = undefined;
-                std.mem.set(ZigStackFrame, &_frames, ZigStackFrame.Zero);
+                @memset(&_frames, ZigStackFrame.Zero);
                 break :brk _frames;
             },
             .source_line_numbers = brk: {
                 var lines: [source_lines_count]i32 = undefined;
-                std.mem.set(i32, &lines, -1);
+                @memset(&lines, -1);
                 break :brk lines;
             },
 
             .source_lines = brk: {
-                var lines: [source_lines_count]ZigString = undefined;
-                std.mem.set(ZigString, &lines, ZigString.Empty);
+                var lines: [source_lines_count]String = undefined;
+                @memset(&lines, String.empty);
                 break :brk lines;
             },
             .zig_exception = undefined,
@@ -797,13 +831,17 @@ pub const ZigException = extern struct {
             return Holder.Zero;
         }
 
+        pub fn deinit(this: *Holder) void {
+            this.zigException().deinit();
+        }
+
         pub fn zigException(this: *Holder) *ZigException {
             if (!this.loaded) {
                 this.zig_exception = ZigException{
-                    .code = @intToEnum(JSErrorCode, 255),
+                    .code = @enumFromInt(JSErrorCode, 255),
                     .runtime_type = JSRuntimeType.Nothing,
-                    .name = ZigString.Empty,
-                    .message = ZigString.Empty,
+                    .name = String.empty,
+                    .message = String.empty,
                     .exception = null,
                     .stack = ZigStackTrace{
                         .source_lines_ptr = &this.source_lines,
@@ -831,13 +869,18 @@ pub const ZigException = extern struct {
         root_path: string,
         origin: ?*const ZigURL,
     ) !void {
-        const _name: string = @field(this, "name").slice();
-        const message: string = @field(this, "message").slice();
+        const name_slice = @field(this, "name").toUTF8(bun.default_allocator);
+        const message_slice = @field(this, "message").toUTF8(bun.default_allocator);
+
+        const _name = name_slice.slice();
+        defer name_slice.deinit();
+        const message = message_slice.slice();
+        defer message_slice.deinit();
 
         var is_empty = true;
         var api_exception = Api.JsException{
-            .runtime_type = @enumToInt(this.runtime_type),
-            .code = @enumToInt(this.code),
+            .runtime_type = @intFromEnum(this.runtime_type),
+            .code = @intFromEnum(this.code),
         };
 
         if (_name.len > 0) {
@@ -1314,7 +1357,7 @@ pub const ZigConsoleClient = struct {
             };
 
             pub fn getAdvanced(value: JSValue, globalThis: *JSGlobalObject, opts: Options) Result {
-                switch (@enumToInt(value)) {
+                switch (@intFromEnum(value)) {
                     0, 0xa => return Result{
                         .tag = .Undefined,
                     },
@@ -1374,23 +1417,20 @@ pub const ZigConsoleClient = struct {
 
                 // If we check an Object has a method table and it does not
                 // it will crash
-                const callable = js_type != .Object and value.isCallable(globalThis.vm());
+                if (js_type != .Object and value.isCallable(globalThis.vm())) {
+                    if (value.isClass(globalThis)) {
+                        return .{
+                            .tag = .Class,
+                            .cell = js_type,
+                        };
+                    }
 
-                if (value.isClass(globalThis) and !callable) {
                     return .{
-                        .tag = .Object,
-                        .cell = js_type,
-                    };
-                }
-
-                if (callable and js_type == .JSFunction) {
-                    return .{
-                        .tag = .Function,
-                        .cell = js_type,
-                    };
-                } else if (callable and js_type == .InternalFunction) {
-                    return .{
-                        .tag = .Object,
+                        // TODO: we print InternalFunction as Object because we have a lot of
+                        // callable namespaces and printing the contents of it is better than [Function: namespace]
+                        // ideally, we would print [Function: namespace] { ... } on all functions, internal and js.
+                        // what we'll do later is rid of .Function and .Class and handle the prefix in the .Object formatter
+                        .tag = if (js_type == .InternalFunction) .Object else .Function,
                         .cell = js_type,
                     };
                 }
@@ -1713,7 +1753,7 @@ pub const ZigConsoleClient = struct {
                 parent: JSValue,
                 const enable_ansi_colors = enable_ansi_colors_;
                 pub fn handleFirstProperty(this: *@This(), globalThis: *JSC.JSGlobalObject, value: JSValue) void {
-                    if (!value.jsType().isFunction() and !value.isClass(globalThis)) {
+                    if (!value.jsType().isFunction()) {
                         var writer = WrappedWriter(Writer){
                             .ctx = this.writer,
                             .failed = false,
@@ -1878,7 +1918,7 @@ pub const ZigConsoleClient = struct {
                     this.map = this.map_node.?.data;
                 }
 
-                var entry = this.map.getOrPut(@enumToInt(value)) catch unreachable;
+                var entry = this.map.getOrPut(@intFromEnum(value)) catch unreachable;
                 if (entry.found_existing) {
                     writer.writeAll(comptime Output.prettyFmt("<r><cyan>[Circular]<r>", enable_ansi_colors));
                     return;
@@ -1887,7 +1927,7 @@ pub const ZigConsoleClient = struct {
 
             defer {
                 if (comptime Format.canHaveCircularReferences()) {
-                    _ = this.map.remove(@enumToInt(value));
+                    _ = this.map.remove(@intFromEnum(value));
                 }
             }
 
@@ -1959,7 +1999,7 @@ pub const ZigConsoleClient = struct {
                             i = -i;
                         }
                         const digits = if (i != 0)
-                            bun.fmt.fastDigitCount(@intCast(usize, i)) + @as(usize, @boolToInt(is_negative))
+                            bun.fmt.fastDigitCount(@intCast(usize, i)) + @as(usize, @intFromBool(is_negative))
                         else
                             1;
                         this.addForNewLine(digits);
@@ -2051,9 +2091,9 @@ pub const ZigConsoleClient = struct {
                     this.addForNewLine(printable.len);
 
                     if (printable.len == 0) {
-                        writer.print(comptime Output.prettyFmt("[class]", enable_ansi_colors), .{});
+                        writer.print(comptime Output.prettyFmt("<cyan>[class]<r>", enable_ansi_colors), .{});
                     } else {
-                        writer.print(comptime Output.prettyFmt("[class <cyan>{}<r>]", enable_ansi_colors), .{printable});
+                        writer.print(comptime Output.prettyFmt("<cyan>[class {}]<r>", enable_ansi_colors), .{printable});
                     }
                 },
                 .Function => {
@@ -2063,7 +2103,7 @@ pub const ZigConsoleClient = struct {
                     if (printable.len == 0) {
                         writer.print(comptime Output.prettyFmt("<cyan>[Function]<r>", enable_ansi_colors), .{});
                     } else {
-                        writer.print(comptime Output.prettyFmt("<cyan>[Function<d>:<r> <cyan>{}]<r>", enable_ansi_colors), .{printable});
+                        writer.print(comptime Output.prettyFmt("<cyan>[Function: {}]<r>", enable_ansi_colors), .{printable});
                     }
                 },
                 .Getter => {
@@ -2220,11 +2260,11 @@ pub const ZigConsoleClient = struct {
                     } else if (value.as(JSC.ResolveMessage)) |resolve_log| {
                         resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                         return;
-                    } else if (value.as(JSC.Jest.ExpectAnything) != null) {
+                    } else if (value.as(JSC.Expect.ExpectAnything) != null) {
                         writer.writeAll("Anything");
                         return;
-                    } else if (value.as(JSC.Jest.ExpectAny) != null) {
-                        const constructor_value = JSC.Jest.ExpectAny.constructorValueGetCached(value) orelse return;
+                    } else if (value.as(JSC.Expect.ExpectAny) != null) {
+                        const constructor_value = JSC.Expect.ExpectAny.constructorValueGetCached(value) orelse return;
 
                         this.addForNewLine("Any<".len);
                         writer.writeAll("Any<");
@@ -2237,16 +2277,16 @@ pub const ZigConsoleClient = struct {
                         writer.writeAll(">");
 
                         return;
-                    } else if (value.as(JSC.Jest.ExpectStringContaining) != null) {
-                        const substring_value = JSC.Jest.ExpectStringContaining.stringValueGetCached(value) orelse return;
+                    } else if (value.as(JSC.Expect.ExpectStringContaining) != null) {
+                        const substring_value = JSC.Expect.ExpectStringContaining.stringValueGetCached(value) orelse return;
 
                         this.addForNewLine("StringContaining ".len);
                         writer.writeAll("StringContaining ");
                         this.printAs(.String, Writer, writer_, substring_value, .String, enable_ansi_colors);
 
                         return;
-                    } else if (value.as(JSC.Jest.ExpectStringMatching) != null) {
-                        const test_value = JSC.Jest.ExpectStringMatching.testValueGetCached(value) orelse return;
+                    } else if (value.as(JSC.Expect.ExpectStringMatching) != null) {
+                        const test_value = JSC.Expect.ExpectStringMatching.testValueGetCached(value) orelse return;
 
                         this.addForNewLine("StringMatching ".len);
                         writer.writeAll("StringMatching ");
@@ -2559,7 +2599,7 @@ pub const ZigConsoleClient = struct {
                             {
                                 this.indent += 1;
                                 defer this.indent -|= 1;
-                                const count_without_children = props_iter.len - @as(usize, @boolToInt(children_prop != null));
+                                const count_without_children = props_iter.len - @as(usize, @intFromBool(children_prop != null));
 
                                 while (props_iter.next()) |prop| {
                                     if (prop.eqlComptime("children"))
@@ -2759,7 +2799,7 @@ pub const ZigConsoleClient = struct {
                     }
 
                     if (iter.i == 0) {
-                        if (value.isClass(this.globalThis) and !value.isCallable(this.globalThis.vm()))
+                        if (value.isClass(this.globalThis))
                             this.printAs(.Class, Writer, writer_, value, jsType, enable_ansi_colors)
                         else if (value.isCallable(this.globalThis.vm()))
                             this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors)
@@ -3002,7 +3042,7 @@ pub const ZigConsoleClient = struct {
         chars: [*]const u8,
         len: usize,
     ) callconv(.C) void {
-        const id = std.hash.Wyhash.hash(0, chars[0..len]);
+        const id = bun.hash(chars[0..len]);
         if (!pending_time_logs_loaded) {
             pending_time_logs = PendingTimers.init(default_allocator);
             pending_time_logs_loaded = true;
@@ -3026,12 +3066,12 @@ pub const ZigConsoleClient = struct {
             return;
         }
 
-        const id = std.hash.Wyhash.hash(0, chars[0..len]);
+        const id = bun.hash(chars[0..len]);
         var result = (pending_time_logs.fetchPut(id, null) catch null) orelse return;
         var value: std.time.Timer = result.value orelse return;
         // get the duration in microseconds
         // then display it in milliseconds
-        Output.printElapsed(@intToFloat(f64, value.read() / std.time.ns_per_us) / std.time.us_per_ms);
+        Output.printElapsed(@floatFromInt(f64, value.read() / std.time.ns_per_us) / std.time.us_per_ms);
         switch (len) {
             0 => Output.printErrorln("\n", .{}),
             else => Output.printErrorln(" {s}", .{chars[0..len]}),
@@ -3056,11 +3096,11 @@ pub const ZigConsoleClient = struct {
             return;
         }
 
-        const id = std.hash.Wyhash.hash(0, chars[0..len]);
+        const id = bun.hash(chars[0..len]);
         var value: std.time.Timer = (pending_time_logs.get(id) orelse return) orelse return;
         // get the duration in microseconds
         // then display it in milliseconds
-        Output.printElapsed(@intToFloat(f64, value.read() / std.time.ns_per_us) / std.time.us_per_ms);
+        Output.printElapsed(@floatFromInt(f64, value.read() / std.time.ns_per_us) / std.time.us_per_ms);
         switch (len) {
             0 => Output.printErrorln("\n", .{}),
             else => Output.printErrorln(" {s}", .{chars[0..len]}),

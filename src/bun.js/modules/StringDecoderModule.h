@@ -16,11 +16,11 @@ generateStringDecoderSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
   exportNames.append(JSC::Identifier::fromString(vm, "StringDecoder"_s));
   exportValues.append(globalObject->JSStringDecoder());
 
+  auto CommonJS =
+      Identifier::fromUid(vm.symbolRegistry().symbolForKey("CommonJS"_s));
+
   JSC::JSObject *defaultObject = constructEmptyObject(globalObject);
-  defaultObject->putDirect(vm,
-                           PropertyName(Identifier::fromUid(
-                               vm.symbolRegistry().symbolForKey("CommonJS"_s))),
-                           jsNumber(0), 0);
+  defaultObject->putDirect(vm, PropertyName(CommonJS), jsNumber(0), 0);
 
   for (size_t i = 0; i < exportNames.size(); i++) {
     defaultObject->putDirect(vm, exportNames[i], exportValues.at(i), 0);
@@ -28,6 +28,9 @@ generateStringDecoderSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
 
   exportNames.append(vm.propertyNames->defaultKeyword);
   exportValues.append(defaultObject);
+
+  exportNames.append(CommonJS);
+  exportValues.append(jsNumber(0));
 }
 
 } // namespace Zig

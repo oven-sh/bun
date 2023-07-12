@@ -271,14 +271,8 @@ pub const ModuleLoader = struct {
 
             pub fn onPoll(this: *Queue) void {
                 debug("onPoll", .{});
-                var pm = this.vm().packageManager();
-
                 this.runTasks();
-                _ = pm.scheduleTasks();
-                this.runTasks();
-
                 this.pollModules();
-                _ = pm.flushDependencyQueue();
             }
 
             pub fn runTasks(this: *Queue) void {
@@ -988,6 +982,14 @@ pub const ModuleLoader = struct {
                     jsc_vm.bundler.options.macro_remap;
 
                 var fallback_source: logger.Source = undefined;
+
+                // Usually, we want to close the input file automatically.
+                //
+                // If we're re-using the file descriptor from the fs watcher
+                // Do not close it because that will break the kqueue-based watcher
+                //
+                var should_close_input_file_fd = fd == null;
+
                 var input_file_fd: StoredFileDescriptorType = 0;
                 var parse_options = Bundler.ParseOptions{
                     .allocator = allocator,
@@ -1008,6 +1010,13 @@ pub const ModuleLoader = struct {
                         jsc_vm.main_hash == hash and
                         strings.eqlLong(jsc_vm.main, path.text, false),
                 };
+                defer {
+                    if (should_close_input_file_fd and input_file_fd != 0) {
+                        _ = bun.JSC.Node.Syscall.close(input_file_fd);
+                        input_file_fd = 0;
+                    }
+                }
+
                 if (is_node_override) {
                     if (NodeFallbackModules.contentsFromPath(specifier)) |code| {
                         const fallback_path = Fs.Path.initWithNamespace(specifier, "node");
@@ -1025,6 +1034,7 @@ pub const ModuleLoader = struct {
                         if (jsc_vm.isWatcherEnabled()) {
                             if (input_file_fd != 0) {
                                 if (jsc_vm.bun_watcher != null and !is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
+                                    should_close_input_file_fd = false;
                                     jsc_vm.bun_watcher.?.addFile(
                                         input_file_fd,
                                         path.text,
@@ -1065,6 +1075,7 @@ pub const ModuleLoader = struct {
                     if (jsc_vm.isWatcherEnabled()) {
                         if (input_file_fd != 0) {
                             if (jsc_vm.bun_watcher != null and !is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
+                                should_close_input_file_fd = false;
                                 jsc_vm.bun_watcher.?.addFile(
                                     input_file_fd,
                                     path.text,
@@ -1225,6 +1236,25 @@ pub const ModuleLoader = struct {
                     return resolved_source;
                 }
 
+                // Pass along package.json type "module" if set.
+                const tag = brk: {
+                    if (parse_result.ast.exports_kind == .cjs and parse_result.source.path.isFile()) {
+                        var actual_package_json: *PackageJSON = package_json orelse brk2: {
+                            // this should already be cached virtually always so it's fine to do this
+                            var dir_info = (jsc_vm.bundler.resolver.readDirInfo(parse_result.source.path.name.dir) catch null) orelse
+                                break :brk .javascript;
+
+                            break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;
+                        } orelse break :brk .javascript;
+
+                        if (actual_package_json.module_type == .esm) {
+                            break :brk ResolvedSource.Tag.package_json_type_module;
+                        }
+                    }
+
+                    break :brk ResolvedSource.Tag.javascript;
+                };
+
                 return .{
                     .allocator = null,
                     .source_code = bun.String.createLatin1(printer.ctx.getWritten()),
@@ -1245,6 +1275,8 @@ pub const ModuleLoader = struct {
 
                     // having JSC own the memory causes crashes
                     .hash = 0,
+
+                    .tag = tag,
                 };
             },
             // provideFetch() should be called
@@ -1298,7 +1330,7 @@ pub const ModuleLoader = struct {
                             var encoded = JSC.EncodedJSValue{
                                 .asPtr = globalThis,
                             };
-                            const globalValue = @intToEnum(JSC.JSValue, encoded.asInt64);
+                            const globalValue = @enumFromInt(JSC.JSValue, encoded.asInt64);
                             globalValue.put(
                                 globalThis,
                                 JSC.ZigString.static("wasmSourceBytes"),
@@ -1836,8 +1868,7 @@ pub const ModuleLoader = struct {
                 .@"node:wasi" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:wasi", "node/wasi.js", specifier),
                 .@"node:zlib" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:zlib", "node/zlib.js", specifier),
 
-                .@"detect-libc" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .depd, if (Environment.isLinux) "thirdparty/detect-libc.linux.js" else "thirdparty/detect-libc.js", specifier),
-                .depd => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .depd, "thirdparty/depd.js", specifier),
+                .@"detect-libc" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"detect-libc", if (Environment.isLinux) "thirdparty/detect-libc.linux.js" else "thirdparty/detect-libc.js", specifier),
                 .undici => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .undici, "thirdparty/undici.js", specifier),
                 .ws => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .ws, "thirdparty/ws.js", specifier),
 
@@ -1851,7 +1882,9 @@ pub const ModuleLoader = struct {
                 .@"node:v8" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:v8", "node/v8.js", specifier),
             }
         } else if (specifier.hasPrefixComptime(js_ast.Macro.namespaceWithColon)) {
-            if (jsc_vm.macro_entry_points.get(MacroEntryPoint.generateIDFromSpecifier(specifier.byteSlice()))) |entry| {
+            const spec = specifier.toUTF8(bun.default_allocator);
+            defer spec.deinit();
+            if (jsc_vm.macro_entry_points.get(MacroEntryPoint.generateIDFromSpecifier(spec.slice()))) |entry| {
                 return ResolvedSource{
                     .allocator = null,
                     .source_code = bun.String.create(entry.source.contents),
@@ -1864,10 +1897,9 @@ pub const ModuleLoader = struct {
             return ResolvedSource{
                 .allocator = null,
                 .source_code = bun.String.static(
-                    \\const symbol = Symbol.for("CommonJS");
-                    \\const lazy = globalThis[Symbol.for("Bun.lazy")];
-                    \\var masqueradesAsUndefined = lazy("masqueradesAsUndefined");
-                    \\masqueradesAsUndefined[symbol] = 0;
+                    \\var masqueradesAsUndefined=globalThis[Symbol.for("Bun.lazy")]("masqueradesAsUndefined");
+                    \\masqueradesAsUndefined[Symbol.for("CommonJS")]=0;
+                    \\masqueradesAsUndefined.default=masqueradesAsUndefined;
                     \\export default masqueradesAsUndefined;
                     \\
                 ),
@@ -2021,7 +2053,6 @@ pub const HardcodedModule = enum {
     @"node:vm",
     @"node:wasi",
     @"node:zlib",
-    depd,
     undici,
     ws,
     // These are all not implemented yet, but are stubbed
@@ -2047,7 +2078,6 @@ pub const HardcodedModule = enum {
             .{ "bun:main", HardcodedModule.@"bun:main" },
             .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
             .{ "bun:events_native", HardcodedModule.@"bun:events_native" },
-            .{ "depd", HardcodedModule.depd },
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "node:assert", HardcodedModule.@"node:assert" },
             .{ "node:assert/strict", HardcodedModule.@"node:assert/strict" },
@@ -2118,7 +2148,6 @@ pub const HardcodedModule = enum {
             .{ "bun:events_native", .{ .path = "bun:events_native" } },
             .{ "child_process", .{ .path = "node:child_process" } },
             .{ "crypto", .{ .path = "node:crypto" } },
-            .{ "depd", .{ .path = "depd" } },
             .{ "detect-libc", .{ .path = "detect-libc" } },
             .{ "detect-libc/lib/detect-libc.js", .{ .path = "detect-libc" } },
             .{ "dns", .{ .path = "node:dns" } },

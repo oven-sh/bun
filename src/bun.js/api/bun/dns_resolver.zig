@@ -123,7 +123,7 @@ const LibInfo = struct {
                 this.vm.uws_event_loop.?,
                 .machport,
                 true,
-                @ptrToInt(request.backend.libinfo.machport),
+                @intFromPtr(request.backend.libinfo.machport),
             ) == .result,
         );
 
@@ -230,7 +230,7 @@ fn addrInfoCount(addrinfo: *std.c.addrinfo) u32 {
     var count: u32 = 1;
     var current: ?*std.c.addrinfo = addrinfo.next;
     while (current != null) : (current = current.?.next) {
-        count += @boolToInt(current.?.addr != null);
+        count += @intFromBool(current.?.addr != null);
     }
     return count;
 }
@@ -285,7 +285,7 @@ pub const GetAddrInfo = struct {
 
     pub fn toCAres(this: GetAddrInfo) bun.c_ares.AddrInfo_hints {
         var hints: bun.c_ares.AddrInfo_hints = undefined;
-        @memset(std.mem.asBytes(&hints), 0, @sizeOf(bun.c_ares.AddrInfo_hints));
+        @memset(std.mem.asBytes(&hints)[0..@sizeOf(bun.c_ares.AddrInfo_hints)], 0);
 
         hints.ai_family = this.options.family.toLibC();
         hints.ai_socktype = this.options.socktype.toLibC();
@@ -320,7 +320,7 @@ pub const GetAddrInfo = struct {
             }
 
             var hints: std.c.addrinfo = undefined;
-            @memset(std.mem.asBytes(&hints), 0, @sizeOf(std.c.addrinfo));
+            @memset(std.mem.asBytes(&hints)[0..@sizeOf(std.c.addrinfo)], 0);
 
             hints.family = this.family.toLibC();
             hints.socktype = this.socktype.toLibC();
@@ -793,7 +793,7 @@ pub const GetAddrInfoRequest = struct {
         addr_info: ?*std.c.addrinfo,
         arg: ?*anyopaque,
     ) callconv(.C) void {
-        const this = @intToPtr(*GetAddrInfoRequest, @ptrToInt(arg));
+        const this = @ptrFromInt(*GetAddrInfoRequest, @intFromPtr(arg));
         log("getAddrInfoAsyncCallback: status={d}", .{status});
 
         if (this.backend == .libinfo) {
@@ -846,8 +846,8 @@ pub const GetAddrInfoRequest = struct {
                     err,
                     debug_timer,
                 });
-                if (@enumToInt(err) != 0 or addrinfo == null) {
-                    this.* = .{ .err = @enumToInt(err) };
+                if (@intFromEnum(err) != 0 or addrinfo == null) {
+                    this.* = .{ .err = @intFromEnum(err) };
                     return;
                 }
 
@@ -1925,8 +1925,8 @@ pub const DNSResolver = struct {
             .err => |err| {
                 const system_error = JSC.SystemError{
                     .errno = -1,
-                    .code = JSC.ZigString.init(err.code()),
-                    .message = JSC.ZigString.init(err.label()),
+                    .code = bun.String.static(err.code()),
+                    .message = bun.String.static(err.label()),
                 };
 
                 globalThis.throwValue(system_error.toErrorInstance(globalThis));
@@ -1972,8 +1972,8 @@ pub const DNSResolver = struct {
             .err => |err| {
                 const system_error = JSC.SystemError{
                     .errno = -1,
-                    .code = JSC.ZigString.init(err.code()),
-                    .message = JSC.ZigString.init(err.label()),
+                    .code = bun.String.static(err.code()),
+                    .message = bun.String.static(err.label()),
                 };
 
                 globalThis.throwValue(system_error.toErrorInstance(globalThis));

@@ -41,7 +41,7 @@ pub const Integrity = extern struct {
         var i: usize = 0;
 
         {
-            std.mem.set(u8, &integrity.value, 0);
+            @memset(&integrity.value, 0);
         }
 
         while (i < end) {
@@ -111,13 +111,13 @@ pub const Integrity = extern struct {
         _,
 
         pub inline fn isSupported(this: Tag) bool {
-            return @enumToInt(this) >= @enumToInt(Tag.sha1) and @enumToInt(this) <= @enumToInt(Tag.sha512);
+            return @intFromEnum(this) >= @intFromEnum(Tag.sha1) and @intFromEnum(this) <= @intFromEnum(Tag.sha512);
         }
 
         pub fn parse(buf: []const u8) Tag {
             const Matcher = strings.ExactSizeMatcher(8);
 
-            const i = std.mem.indexOfScalar(u8, buf[0..@min(buf.len, 7)], '-') orelse return Tag.unknown;
+            const i = strings.indexOfChar(buf[0..@min(buf.len, 7)], '-') orelse return Tag.unknown;
 
             return switch (Matcher.match(buf[0..i])) {
                 Matcher.case("sha1") => Tag.sha1,

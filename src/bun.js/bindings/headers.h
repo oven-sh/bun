@@ -253,6 +253,7 @@ CPP_DECL JSC__JSPromise* JSC__JSPromise__resolvedPromise(JSC__JSGlobalObject* ar
 CPP_DECL JSC__JSValue JSC__JSPromise__resolvedPromiseValue(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL void JSC__JSPromise__resolveOnNextTick(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL JSC__JSValue JSC__JSPromise__result(JSC__JSPromise* arg0, JSC__VM* arg1);
+CPP_DECL void JSC__JSPromise__setHandled(JSC__JSPromise* arg0, JSC__VM* arg1);
 CPP_DECL uint32_t JSC__JSPromise__status(const JSC__JSPromise* arg0, JSC__VM* arg1);
 
 #pragma mark - JSC::JSInternalPromise
@@ -267,6 +268,7 @@ CPP_DECL void JSC__JSInternalPromise__rejectWithCaughtException(JSC__JSInternalP
 CPP_DECL void JSC__JSInternalPromise__resolve(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL JSC__JSInternalPromise* JSC__JSInternalPromise__resolvedPromise(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL JSC__JSValue JSC__JSInternalPromise__result(const JSC__JSInternalPromise* arg0, JSC__VM* arg1);
+CPP_DECL void JSC__JSInternalPromise__setHandled(JSC__JSInternalPromise* arg0, JSC__VM* arg1);
 CPP_DECL uint32_t JSC__JSInternalPromise__status(const JSC__JSInternalPromise* arg0, JSC__VM* arg1);
 
 #pragma mark - JSC::JSFunction

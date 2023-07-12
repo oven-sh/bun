@@ -138,6 +138,25 @@ it("crypto.randomUUID", () => {
   });
 });
 
+it("crypto.randomUUID version, issues#3575", () => {
+  var uuid = crypto.randomUUID();
+
+  function validate(uuid) {
+    const regex =
+      /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|00000000-0000-0000-0000-000000000000)$/i;
+    return typeof uuid === "string" && regex.test(uuid);
+  }
+  function version(uuid) {
+    if (!validate(uuid)) {
+      throw TypeError("Invalid UUID");
+    }
+
+    return parseInt(uuid.slice(14, 15), 16);
+  }
+
+  expect(version(uuid)).toBe(4);
+});
+
 it("URL.prototype.origin", () => {
   const url = new URL("https://html.spec.whatwg.org/");
   const { origin, host, hostname } = url;

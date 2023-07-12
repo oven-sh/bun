@@ -2,18 +2,22 @@ import { it, test, expect } from "bun:test";
 import { spawn } from "bun";
 import { bunExe, bunEnv, gcTick } from "harness";
 import { closeSync, openSync } from "fs";
+import { tmpdir } from "node:os";
+import { join } from "path";
+import { unlinkSync } from "node:fs";
 
 const N = 100;
 test("spawn can write to stdin multiple chunks", async () => {
   const maxFD = openSync("/dev/null", "w");
   for (let i = 0; i < N; i++) {
+    const tmperr = join(tmpdir(), "stdin-repro-error.log." + i);
     var exited;
     await (async function () {
       const proc = spawn({
         cmd: [bunExe(), import.meta.dir + "/stdin-repro.js"],
         stdout: "pipe",
         stdin: "pipe",
-        stderr: Bun.file("/tmp/out.log"),
+        stderr: Bun.file(tmperr),
         env: bunEnv,
       });
       exited = proc.exited;
@@ -45,6 +49,10 @@ test("spawn can write to stdin multiple chunks", async () => {
       await Promise.all([prom, prom2]);
       expect(Buffer.concat(chunks).toString().trim()).toBe("Wrote to stdin!\n".repeat(4).trim());
       await proc.exited;
+
+      try {
+        unlinkSync(tmperr);
+      } catch (e) {}
     })();
   }
 
@@ -54,4 +62,4 @@ test("spawn can write to stdin multiple chunks", async () => {
 
   // assert we didn't leak any file descriptors
   expect(newMaxFD).toBe(maxFD);
-});
+}, 10_000);

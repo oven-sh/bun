@@ -18,6 +18,14 @@ pub const StandaloneModuleGraph = struct {
         return &this.files.values()[this.entry_point_id];
     }
 
+    pub fn find(this: *const StandaloneModuleGraph, name: []const u8) ?*File {
+        if (!bun.strings.hasPrefixComptime(name, "compiled://root/")) {
+            return null;
+        }
+
+        return this.files.getPtr(name);
+    }
+
     pub const CompiledModuleGraphFile = struct {
         name: Schema.StringPointer = .{},
         loader: bun.options.Loader = .file,
@@ -30,6 +38,32 @@ pub const StandaloneModuleGraph = struct {
         loader: bun.options.Loader,
         contents: []const u8 = "",
         sourcemap: LazySourceMap,
+        blob_: ?*bun.JSC.WebCore.Blob = null,
+
+        pub fn blob(this: *File, globalObject: *bun.JSC.JSGlobalObject) *bun.JSC.WebCore.Blob {
+            if (this.blob_ == null) {
+                var store = bun.JSC.WebCore.Blob.Store.init(@constCast(this.contents), bun.default_allocator) catch @panic("out of memory");
+                // make it never free
+                store.ref();
+
+                var blob_ = bun.default_allocator.create(bun.JSC.WebCore.Blob) catch @panic("out of memory");
+                blob_.* = bun.JSC.WebCore.Blob.initWithStore(store, globalObject);
+                blob_.allocator = bun.default_allocator;
+
+                if (bun.HTTP.MimeType.byExtensionNoDefault(bun.strings.trimLeadingChar(std.fs.path.extension(this.name), '.'))) |mime| {
+                    store.mime_type = mime;
+                    blob_.content_type = mime.value;
+                    blob_.content_type_was_set = true;
+                    blob_.content_type_allocated = false;
+                }
+
+                store.data.bytes.stored_name = bun.PathString.init(this.name);
+
+                this.blob_ = blob_;
+            }
+
+            return this.blob_.?;
+        }
     };
 
     pub const LazySourceMap = union(enum) {
@@ -152,8 +186,16 @@ pub const StandaloneModuleGraph = struct {
                 continue;
             }
 
+            var dest_path = output_file.dest_path;
+            if (bun.strings.hasPrefixComptime(dest_path, "./")) {
+                dest_path = dest_path[2..];
+            }
+
             var module = CompiledModuleGraphFile{
-                .name = string_builder.fmtAppendCount("{s}{s}", .{ prefix, output_file.dest_path }),
+                .name = string_builder.fmtAppendCount("{s}{s}", .{
+                    prefix,
+                    dest_path,
+                }),
                 .loader = output_file.loader,
                 .contents = string_builder.appendCount(output_file.value.buffer.bytes),
             };
@@ -468,7 +510,7 @@ pub const StandaloneModuleGraph = struct {
         // at the very least
         // if you have not a ton of code, we only do a single read() call
         if (Environment.allow_assert or offsets.byte_count > 1024 * 3) {
-            const offset_from_end = trailer_bytes.len - (@ptrToInt(end) - @ptrToInt(@as([]u8, &trailer_bytes).ptr));
+            const offset_from_end = trailer_bytes.len - (@intFromPtr(end) - @intFromPtr(@as([]u8, &trailer_bytes).ptr));
             std.os.lseek_END(self_exe, -@intCast(i64, offset_from_end + offsets.byte_count)) catch return null;
 
             if (comptime Environment.allow_assert) {
@@ -497,7 +539,7 @@ pub const StandaloneModuleGraph = struct {
         if (offsets.byte_count <= 1024 * 3) {
             // we already have the bytes
             end -= offsets.byte_count;
-            @memcpy(to_read.ptr, end, offsets.byte_count);
+            @memcpy(to_read[0..offsets.byte_count], end[0..offsets.byte_count]);
             if (comptime Environment.allow_assert) {
                 std.debug.assert(bun.strings.eqlLong(to_read, end[0..offsets.byte_count], true));
             }

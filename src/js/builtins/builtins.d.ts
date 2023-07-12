@@ -57,6 +57,9 @@ declare function $getPromiseInternalField<K extends PromiseFieldType, V>(
   promise: Promise<V>,
   key: K,
 ): PromiseFieldToValue<K, V>;
+declare function $fulfillPromise(...args: any[]): TODO;
+declare function $evaluateCommonJSModule(...args: any[]): TODO;
+declare function $loadCJS2ESM(...args: any[]): TODO;
 declare function $getGeneratorInternalField(): TODO;
 declare function $getAsyncGeneratorInternalField(): TODO;
 declare function $getAbstractModuleRecordInternalField(): TODO;
@@ -229,7 +232,7 @@ declare function $createFIFO(): TODO;
 declare function $createNativeReadableStream(): TODO;
 declare function $createReadableStream(): TODO;
 declare function $createUninitializedArrayBuffer(size: number): ArrayBuffer;
-declare function $createWritableStreamFromInternal(): TODO;
+declare function $createWritableStreamFromInternal(...args: any[]): TODO;
 declare function $cwd(): TODO;
 declare function $data(): TODO;
 declare function $dataView(): TODO;
@@ -330,6 +333,7 @@ declare function $read(): TODO;
 declare function $readIntoRequests(): TODO;
 declare function $readRequests(): TODO;
 declare function $readable(): TODO;
+declare function $readableByteStreamControllerGetDesiredSize(...args: any): TODO;
 declare function $readableStreamController(): TODO;
 declare function $readableStreamToArray(): TODO;
 declare function $reader(): TODO;
@@ -341,9 +345,9 @@ declare function $releaseLock(): TODO;
 declare function $removeEventListener(): TODO;
 declare function $require(): TODO;
 declare function $requireESM(path: string): any;
-declare const $requireMap: Map<string, TODO>;
+declare const $requireMap: Map<string, NodeModule>;
 declare function $resolve(name: string, from: string): Promise<string>;
-declare function $resolveSync(name: string, from: string): string;
+declare function $resolveSync(name: string, from: string, isESM?: boolean): string;
 declare function $resume(): TODO;
 declare function $search(): TODO;
 declare function $searchParams(): TODO;
@@ -402,6 +406,8 @@ declare function $writer(): TODO;
 declare function $writing(): TODO;
 declare function $written(): TODO;
 
+declare function $createCommonJSModule(id: string, exports: any, hasEvaluated: boolean): NodeModule;
+
 // The following I cannot find any definitions of, but they are functional.
 declare function $toLength(length: number): number;
 declare function $isTypedArrayView(obj: unknown): obj is ArrayBufferView | DataView | Uint8Array;
@@ -431,9 +437,9 @@ declare interface ArrayBufferConstructor<T> extends ClassWithIntrinsics<ArrayBuf
 declare interface PromiseConstructor<T> extends ClassWithIntrinsics<PromiseConstructor<T>> {}
 
 declare interface UnderlyingSource {
-  $lazy: boolean;
-  $bunNativeType: number;
-  $bunNativePtr: number;
+  $lazy?: boolean;
+  $bunNativeType?: number;
+  $bunNativePtr?: number;
   autoAllocateChunkSize?: number;
 }
 

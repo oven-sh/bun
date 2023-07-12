@@ -43,11 +43,16 @@ it("tmpdir", () => {
     expect(os.tmpdir()).toBe(process.env.TEMP || process.env.TMP);
     expect(os.tmpdir()).toBe(`${process.env.SystemRoot || process.env.windir}\\temp`);
   } else {
+    const originalEnv = process.env.TMPDIR;
     let dir = process.env.TMPDIR || process.env.TMP || process.env.TEMP || "/tmp";
     if (dir.length > 1 && dir.endsWith("/")) {
       dir = dir.substring(0, dir.length - 1);
     }
     expect(realpathSync(os.tmpdir())).toBe(realpathSync(dir));
+
+    process.env.TMPDIR = "/boop";
+    expect(os.tmpdir()).toBe("/boop");
+    process.env.TMPDIR = originalEnv;
   }
 });
 

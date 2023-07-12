@@ -274,7 +274,7 @@ fn NewLexer_(
         }
 
         pub inline fn isIdentifierOrKeyword(lexer: LexerType) bool {
-            return @enumToInt(lexer.token) >= @enumToInt(T.t_identifier);
+            return @intFromEnum(lexer.token) >= @intFromEnum(T.t_identifier);
         }
 
         pub fn deinit(this: *LexerType) void {
@@ -304,7 +304,7 @@ fn NewLexer_(
 
                         // Convert '\r\n' into '\n'
                         const next_i: usize = iter.i + 1;
-                        iter.i += @as(u32, @boolToInt(next_i < text.len and text[next_i] == '\n'));
+                        iter.i += @as(u32, @intFromBool(next_i < text.len and text[next_i] == '\n'));
 
                         // Convert '\r' into '\n'
                         buf.append('\n') catch unreachable;
@@ -572,7 +572,7 @@ fn NewLexer_(
 
                                 // Make sure Windows CRLF counts as a single newline
                                 const next_i: usize = iter.i + 1;
-                                iter.i += @as(u32, @boolToInt(next_i < text.len and text[next_i] == '\n'));
+                                iter.i += @as(u32, @intFromBool(next_i < text.len and text[next_i] == '\n'));
 
                                 // Ignore line continuations. A line continuation is not an escaped newline.
                                 continue;
@@ -819,7 +819,7 @@ fn NewLexer_(
             // This count is approximate because it handles "\n" and "\r\n" (the common
             // cases) but not "\r" or "\u2028" or "\u2029". Getting this wrong is harmless
             // because it's only a preallocation. The array will just grow if it's too small.
-            lexer.approximate_newline_count += @boolToInt(lexer.code_point == '\n');
+            lexer.approximate_newline_count += @intFromBool(lexer.code_point == '\n');
         }
 
         pub inline fn expect(self: *LexerType, comptime token: T) !void {
@@ -1784,7 +1784,7 @@ fn NewLexer_(
 
         pub fn unexpected(lexer: *LexerType) !void {
             const found = finder: {
-                lexer.start = std.math.min(lexer.start, lexer.end);
+                lexer.start = @min(lexer.start, lexer.end);
 
                 if (lexer.start == lexer.source.contents.len) {
                     break :finder "end of file";
@@ -1868,7 +1868,7 @@ fn NewLexer_(
                     const at = @bitCast(strings.AsciiVectorU1, vec == @splat(strings.ascii_vector_size, @as(u8, '@')));
 
                     if (@reduce(.Max, hashtag + at) == 1) {
-                        rest.len = @ptrToInt(end) - @ptrToInt(rest.ptr);
+                        rest.len = @intFromPtr(end) - @intFromPtr(rest.ptr);
                         if (comptime Environment.allow_assert) {
                             std.debug.assert(
                                 strings.containsChar(&@as([strings.ascii_vector_size]u8, vec), '#') or
@@ -1918,7 +1918,7 @@ fn NewLexer_(
 
                     rest.ptr += strings.ascii_vector_size;
                 }
-                rest.len = @ptrToInt(end) - @ptrToInt(rest.ptr);
+                rest.len = @intFromPtr(end) - @intFromPtr(rest.ptr);
             }
 
             if (comptime Environment.allow_assert)
@@ -1930,7 +1930,7 @@ fn NewLexer_(
                 switch (c) {
                     '@', '#' => {
                         const chunk = rest;
-                        const i = @ptrToInt(chunk.ptr) - @ptrToInt(text.ptr);
+                        const i = @intFromPtr(chunk.ptr) - @intFromPtr(text.ptr);
                         if (!lexer.has_pure_comment_before) {
                             if (strings.hasPrefixWithWordBoundary(chunk, "__PURE__")) {
                                 lexer.has_pure_comment_before = true;
@@ -2952,7 +2952,7 @@ fn NewLexer_(
                     for (text) |c| {
                         number = number * 10 + @intCast(u32, c - '0');
                     }
-                    lexer.number = @intToFloat(f64, number);
+                    lexer.number = @floatFromInt(f64, number);
                 } else {
                     // Parse a double-precision floating-point number
                     if (bun.parseDouble(text)) |num| {
@@ -3155,7 +3155,7 @@ pub fn rangeOfIdentifier(source: *const Source, loc: logger.Loc) logger.Range {
 }
 
 inline fn float64(num: anytype) f64 {
-    return @intToFloat(f64, num);
+    return @floatFromInt(f64, num);
 }
 
 pub fn isLatin1Identifier(comptime Buffer: type, name: Buffer) bool {
@@ -3226,7 +3226,7 @@ fn latin1IdentifierContinueLength(name: []const u8) usize {
                 }
 
                 return @as(usize, first) +
-                    @ptrToInt(wrapped.ptr) - @ptrToInt(name.ptr);
+                    @intFromPtr(wrapped.ptr) - @intFromPtr(name.ptr);
             }
         }
     }
@@ -3330,12 +3330,12 @@ fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
             const first = @ctz(bitmask);
             std.debug.assert(first < strings.ascii_vector_size);
             std.debug.assert(text.ptr[first] == '*' or text.ptr[first] == '\r' or text.ptr[first] == '\n' or text.ptr[first] > 127);
-            return @truncate(u32, first + (@ptrToInt(text.ptr) - @ptrToInt(text_.ptr)));
+            return @truncate(u32, first + (@intFromPtr(text.ptr) - @intFromPtr(text_.ptr)));
         }
         text.ptr += strings.ascii_vector_size;
     }
 
-    return @truncate(u32, @ptrToInt(text.ptr) - @ptrToInt(text_.ptr));
+    return @truncate(u32, @intFromPtr(text.ptr) - @intFromPtr(text_.ptr));
 }
 
 fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usize {
@@ -3357,7 +3357,7 @@ fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usi
             const bitmask = @bitCast(u16, any_significant);
             const first = @ctz(bitmask);
             std.debug.assert(first < strings.ascii_vector_size);
-            return first + (@ptrToInt(text.ptr) - @ptrToInt(text_.ptr));
+            return first + (@intFromPtr(text.ptr) - @intFromPtr(text_.ptr));
         }
         text = text[strings.ascii_vector_size..];
     }

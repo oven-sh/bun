@@ -26,6 +26,8 @@ pub const Cloudflare = struct {
     pub const AttributeIterator = @import("./bun.js/api/html_rewriter.zig").AttributeIterator;
 };
 pub const Jest = @import("./bun.js/test/jest.zig");
+pub const Expect = @import("./bun.js/test/expect.zig");
+pub const Snapshot = @import("./bun.js/test/snapshot.zig");
 pub const API = struct {
     pub const JSBundler = @import("./bun.js/api/JSBundler.zig").JSBundler;
     pub const BuildArtifact = @import("./bun.js/api/JSBundler.zig").BuildArtifact;
@@ -48,6 +50,7 @@ pub const FFI = @import("./bun.js/api/ffi.zig").FFI;
 pub const Node = struct {
     pub usingnamespace @import("./bun.js/node/types.zig");
     pub usingnamespace @import("./bun.js/node/node_fs.zig");
+    pub usingnamespace @import("./bun.js/node/node_fs_watcher.zig");
     pub usingnamespace @import("./bun.js/node/node_fs_binding.zig");
     pub usingnamespace @import("./bun.js/node/node_os.zig");
     pub const Syscall = @import("./bun.js/node/syscall.zig");

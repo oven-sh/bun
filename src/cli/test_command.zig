@@ -41,7 +41,7 @@ const HTTPThread = @import("root").bun.HTTP.HTTPThread;
 const JSC = @import("root").bun.JSC;
 const jest = JSC.Jest;
 const TestRunner = JSC.Jest.TestRunner;
-const Snapshots = JSC.Jest.Snapshots;
+const Snapshots = JSC.Snapshot.Snapshots;
 const Test = TestRunner.Test;
 const NetworkThread = @import("root").bun.HTTP.NetworkThread;
 const uws = @import("root").bun.uws;
@@ -362,6 +362,9 @@ const Scanner = struct {
                 if ((name.len > 0 and name[0] == '.') or strings.eqlComptime(name, "node_modules")) {
                     return;
                 }
+
+                if (comptime Environment.allow_assert)
+                    std.debug.assert(!strings.contains(name, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str));
 
                 for (this.exclusion_names) |exclude_name| {
                     if (strings.eql(exclude_name, name)) return;

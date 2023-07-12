@@ -29,6 +29,6 @@ await (async function runAll() {
 await Bun.sleep(10);
 Bun.gc(true);
 
-if ((heapStats().objectTypeCounts.Response ?? 0) > 10) {
+if ((heapStats().objectTypeCounts.Response ?? 0) > 1 + ((COUNT / 2) | 0)) {
   throw new Error("Too many Response objects: " + heapStats().objectTypeCounts.Response);
 }

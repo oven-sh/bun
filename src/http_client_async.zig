@@ -42,7 +42,7 @@ const HiveArray = @import("./hive_array.zig").HiveArray;
 const Batch = NetworkThread.Batch;
 const TaggedPointerUnion = @import("./tagged_pointer.zig").TaggedPointerUnion;
 const DeadSocket = opaque {};
-var dead_socket = @intToPtr(*DeadSocket, 1);
+var dead_socket = @ptrFromInt(*DeadSocket, 1);
 //TODO: this needs to be freed when Worker Threads are implemented
 var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, *uws.Socket).init(bun.default_allocator);
 var async_http_id: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0);
@@ -208,7 +208,7 @@ const ProxyTunnel = struct {
                 _ = BoringSSL.BIO_push(out_bio, proxy_bio);
             } else {
                 // socket output bio for non-TLS -> TLS
-                var fd = @intCast(c_int, @ptrToInt(socket.getNativeHandle()));
+                var fd = @intCast(c_int, @intFromPtr(socket.getNativeHandle()));
                 out_bio = BoringSSL.BIO_new_fd(fd, BoringSSL.BIO_NOCLOSE);
             }
 
@@ -306,7 +306,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             HTTPClient,
             PooledSocket,
         });
-        const ssl_int = @as(c_int, @boolToInt(ssl));
+        const ssl_int = @as(c_int, @intFromBool(ssl));
 
         const MAX_KEEPALIVE_HOSTNAME = 128;
 
@@ -320,7 +320,8 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
         pub fn init(this: *@This()) !void {
             var opts: uws.us_socket_context_options_t = undefined;
-            @memset(@ptrCast([*]u8, &opts), 0, @sizeOf(uws.us_socket_context_options_t));
+            const size = @sizeOf(uws.us_socket_context_options_t);
+            @memset(@ptrCast([*]u8, &opts)[0..size], 0);
             this.us_socket_context = uws.us_create_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts).?;
             if (comptime ssl) {
                 this.sslCtx().setup();
@@ -337,7 +338,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
         /// Attempt to keep the socket alive by reusing it for another request.
         /// If no space is available, close the socket.
         pub fn releaseSocket(this: *@This(), socket: HTTPSocket, hostname: []const u8, port: u16) void {
-            log("releaseSocket(0x{})", .{bun.fmt.hexIntUpper(@ptrToInt(socket.socket))});
+            log("releaseSocket(0x{})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
 
             if (comptime Environment.allow_assert) {
                 std.debug.assert(!socket.isClosed());
@@ -354,11 +355,11 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     socket.timeout(300);
 
                     pending.http_socket = socket;
-                    @memcpy(&pending.hostname_buf, hostname.ptr, hostname.len);
+                    @memcpy(pending.hostname_buf[0..hostname.len], hostname);
                     pending.hostname_len = @truncate(u8, hostname.len);
                     pending.port = port;
 
-                    log("Keep-Alive release {s}:{d} (0x{})", .{ hostname, port, @ptrToInt(socket.socket) });
+                    log("Keep-Alive release {s}:{d} (0x{})", .{ hostname, port, @intFromPtr(socket.socket) });
                     return;
                 }
             }
@@ -778,7 +779,7 @@ pub fn onOpen(
             var hostname_needs_free = false;
             if (!strings.isIPAddress(_hostname)) {
                 if (_hostname.len < temp_hostname.len) {
-                    @memcpy(&temp_hostname, _hostname.ptr, _hostname.len);
+                    @memcpy(temp_hostname[0.._hostname.len], _hostname);
                     temp_hostname[_hostname.len] = 0;
                     hostname = temp_hostname[0.._hostname.len :0];
                 } else {
@@ -1393,7 +1394,7 @@ pub const AsyncHTTP = struct {
                 if (proxy.password.len > 0 and proxy.password.len < 4096) {
                     // decode password
                     var password_buffer: [4096]u8 = undefined;
-                    std.mem.set(u8, &password_buffer, 0);
+                    @memset(&password_buffer, 0);
                     var password_stream = std.io.fixedBufferStream(&password_buffer);
                     var password_writer = password_stream.writer();
                     const PassWriter = @TypeOf(password_writer);
@@ -1405,7 +1406,7 @@ pub const AsyncHTTP = struct {
 
                     // Decode username
                     var username_buffer: [4096]u8 = undefined;
-                    std.mem.set(u8, &username_buffer, 0);
+                    @memset(&username_buffer, 0);
                     var username_stream = std.io.fixedBufferStream(&username_buffer);
                     var username_writer = username_stream.writer();
                     const UserWriter = @TypeOf(username_writer);
@@ -1426,7 +1427,7 @@ pub const AsyncHTTP = struct {
                 } else {
                     //Decode username
                     var username_buffer: [4096]u8 = undefined;
-                    std.mem.set(u8, &username_buffer, 0);
+                    @memset(&username_buffer, 0);
                     var username_stream = std.io.fixedBufferStream(&username_buffer);
                     var username_writer = username_stream.writer();
                     const UserWriter = @TypeOf(username_writer);
@@ -1469,7 +1470,7 @@ pub const AsyncHTTP = struct {
                 if (proxy.password.len > 0 and proxy.password.len < 4096) {
                     // decode password
                     var password_buffer: [4096]u8 = undefined;
-                    std.mem.set(u8, &password_buffer, 0);
+                    @memset(&password_buffer, 0);
                     var password_stream = std.io.fixedBufferStream(&password_buffer);
                     var password_writer = password_stream.writer();
                     const PassWriter = @TypeOf(password_writer);
@@ -1481,7 +1482,7 @@ pub const AsyncHTTP = struct {
 
                     // Decode username
                     var username_buffer: [4096]u8 = undefined;
-                    std.mem.set(u8, &username_buffer, 0);
+                    @memset(&username_buffer, 0);
                     var username_stream = std.io.fixedBufferStream(&username_buffer);
                     var username_writer = username_stream.writer();
                     const UserWriter = @TypeOf(username_writer);
@@ -1503,7 +1504,7 @@ pub const AsyncHTTP = struct {
                 } else {
                     //Decode username
                     var username_buffer: [4096]u8 = undefined;
-                    std.mem.set(u8, &username_buffer, 0);
+                    @memset(&username_buffer, 0);
                     var username_stream = std.io.fixedBufferStream(&username_buffer);
                     var username_writer = username_stream.writer();
                     const UserWriter = @TypeOf(username_writer);
@@ -1628,7 +1629,6 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var override_accept_encoding = false;
     var override_accept_header = false;
     var override_host_header = false;
-
     var override_user_agent = false;
 
     for (header_names, 0..) |head, i| {
@@ -1709,7 +1709,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
         header_count += 1;
     }
 
-    if (body_len > 0) {
+    if (body_len > 0 or this.method.hasRequestBody()) {
         request_headers_buf[header_count] = .{
             .name = content_length_header_name,
             .value = std.fmt.bufPrint(&this.request_content_len_buf, "{d}", .{body_len}) catch "0",
@@ -1872,7 +1872,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 var remain = list.items.ptr[list.items.len..list.capacity];
                 const wrote = @min(remain.len, this.state.request_body.len);
                 std.debug.assert(wrote > 0);
-                @memcpy(remain.ptr, this.state.request_body.ptr, wrote);
+                @memcpy(remain[0..wrote], this.state.request_body[0..wrote]);
                 list.items.len += wrote;
             }
 
@@ -2021,7 +2021,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 var remain = list.items.ptr[list.items.len..list.capacity];
                 const wrote = @min(remain.len, this.state.request_body.len);
                 std.debug.assert(wrote > 0);
-                @memcpy(remain.ptr, this.state.request_body.ptr, wrote);
+                @memcpy(remain[0..wrote], this.state.request_body[0..wrote]);
                 list.items.len += wrote;
             }
 
@@ -2582,8 +2582,8 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
     if (this.state.encoding.isCompressed()) {
         var body_buffer = this.state.body_out_str.?;
         if (body_buffer.list.capacity == 0) {
-            const min = @min(@ceil(@intToFloat(f64, incoming_data.len) * 1.5), @as(f64, 1024 * 1024 * 2));
-            try body_buffer.growBy(@max(@floatToInt(usize, min), 32));
+            const min = @min(@ceil(@floatFromInt(f64, incoming_data.len) * 1.5), @as(f64, 1024 * 1024 * 2));
+            try body_buffer.growBy(@max(@intFromFloat(usize, min), 32));
         }
 
         try ZlibPool.decompress(incoming_data, body_buffer, default_allocator);
@@ -2737,7 +2737,7 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
         buffer = bun.constStrToU8(incoming_data);
     } else {
         buffer = single_packet_small_buffer[0..incoming_data.len];
-        @memcpy(buffer.ptr, incoming_data.ptr, incoming_data.len);
+        @memcpy(buffer[0..incoming_data.len], incoming_data);
     }
 
     var bytes_decoded = incoming_data.len;
@@ -2871,7 +2871,7 @@ pub fn handleResponseMetadata(
                             return error.UnsupportedRedirectProtocol;
                         }
 
-                        if ((protocol_name.len * @as(usize, @boolToInt(is_protocol_relative))) + location.len > url_buf.data.len) {
+                        if ((protocol_name.len * @as(usize, @intFromBool(is_protocol_relative))) + location.len > url_buf.data.len) {
                             return error.RedirectURLTooLong;
                         }
 

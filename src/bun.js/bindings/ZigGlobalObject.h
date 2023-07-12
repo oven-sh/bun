@@ -248,8 +248,8 @@ public:
 
     JSC::JSFunction* emitReadableNextTickFunction() { return m_emitReadableNextTickFunction.getInitializedOnMainThread(this); }
 
-    Structure* requireResolveFunctionStructure() { return m_requireResolveFunctionStructure.getInitializedOnMainThread(this); }
-    JSObject* requireResolveFunctionPrototype() { return m_resolveFunctionPrototype.getInitializedOnMainThread(this); }
+    JSObject* importMetaRequireFunctionUnbound() { return m_importMetaRequireFunctionUnbound.getInitializedOnMainThread(this); }
+    JSObject* importMetaRequireResolveFunctionUnbound() { return m_importMetaRequireResolveFunctionUnbound.getInitializedOnMainThread(this); }
 
     JSObject* lazyRequireCacheObject() { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
 
@@ -262,12 +262,15 @@ public:
     JSObject* lazyTestModuleObject() { return m_lazyTestModuleObject.getInitializedOnMainThread(this); }
     JSObject* lazyPreloadTestModuleObject() { return m_lazyPreloadTestModuleObject.getInitializedOnMainThread(this); }
     Structure* CommonJSModuleObjectStructure() { return m_commonJSModuleObjectStructure.getInitializedOnMainThread(this); }
+    Structure* ImportMetaObjectStructure() { return m_importMetaObjectStructure.getInitializedOnMainThread(this); }
 
     Structure* commonJSFunctionArgumentsStructure() { return m_commonJSFunctionArgumentsStructure.getInitializedOnMainThread(this); }
 
     JSObject* passwordObject() { return m_lazyPasswordObject.getInitializedOnMainThread(this); }
 
     JSWeakMap* vmModuleContextMap() { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
+
+    bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
     JSC::JSObject* processObject()
     {
@@ -368,6 +371,7 @@ public:
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
 
     JSObject* navigatorObject();
+    JSFunction* nativeMicrotaskTrampoline() { return m_nativeMicrotaskTrampoline.getInitializedOnMainThread(this); }
 
     void trackFFIFunction(JSC::JSFunction* function)
     {
@@ -465,6 +469,7 @@ private:
      */
     LazyProperty<JSGlobalObject, JSC::Structure> m_pendingVirtualModuleResultStructure;
     LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskFunction;
+    LazyProperty<JSGlobalObject, JSFunction> m_nativeMicrotaskTrampoline;
     LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskVariadicFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_emitReadableNextTickFunction;
     LazyProperty<JSGlobalObject, JSMap> m_lazyReadableStreamPrototypeMap;
@@ -481,8 +486,6 @@ private:
     LazyProperty<JSGlobalObject, JSObject> m_subtleCryptoObject;
     LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;
     LazyProperty<JSGlobalObject, JSC::Structure> m_JSBufferSubclassStructure;
-    LazyProperty<JSGlobalObject, JSC::Structure> m_requireResolveFunctionStructure;
-    LazyProperty<JSGlobalObject, JSObject> m_resolveFunctionPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_dnsObject;
     LazyProperty<JSGlobalObject, JSWeakMap> m_vmModuleContextMap;
     LazyProperty<JSGlobalObject, JSObject> m_lazyRequireCacheObject;
@@ -495,6 +498,10 @@ private:
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalProxyStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSModuleObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSFunctionArgumentsStructure;
+
+    LazyProperty<JSGlobalObject, JSC::JSObject> m_importMetaRequireFunctionUnbound;
+    LazyProperty<JSGlobalObject, JSC::JSObject> m_importMetaRequireResolveFunctionUnbound;
+    LazyProperty<JSGlobalObject, JSC::Structure> m_importMetaObjectStructure;
 
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     void* m_bunVM;

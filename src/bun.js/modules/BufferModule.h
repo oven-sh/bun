@@ -2,10 +2,126 @@
 #include "../bindings/ZigGlobalObject.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "simdutf.h"
 
 namespace Zig {
 using namespace WebCore;
 using namespace JSC;
+
+// TODO: Add DOMJIT fast path
+JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isUtf8,
+                         (JSC::JSGlobalObject * lexicalGlobalObject,
+                          JSC::CallFrame *callframe)) {
+  auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
+
+  auto buffer = callframe->argument(0);
+  auto *bufferView = JSC::jsDynamicCast<JSC::JSArrayBufferView *>(buffer);
+  const char *ptr = nullptr;
+  size_t byteLength = 0;
+  if (bufferView) {
+    if (UNLIKELY(bufferView->isDetached())) {
+      throwTypeError(lexicalGlobalObject, throwScope,
+                     "ArrayBufferView is detached"_s);
+      return JSValue::encode({});
+    }
+
+    byteLength = bufferView->byteLength();
+
+    if (byteLength == 0) {
+      return JSValue::encode(jsBoolean(true));
+    }
+
+    ptr = reinterpret_cast<const char *>(bufferView->vector());
+  } else if (auto *arrayBuffer =
+                 JSC::jsDynamicCast<JSC::JSArrayBuffer *>(buffer)) {
+    auto *impl = arrayBuffer->impl();
+
+    if (!impl) {
+      return JSValue::encode(jsBoolean(true));
+    }
+
+    if (UNLIKELY(impl->isDetached())) {
+      throwTypeError(lexicalGlobalObject, throwScope,
+                     "ArrayBuffer is detached"_s);
+      return JSValue::encode({});
+    }
+
+    byteLength = impl->byteLength();
+
+    if (byteLength == 0) {
+      return JSValue::encode(jsBoolean(true));
+    }
+
+    ptr = reinterpret_cast<const char *>(impl->data());
+  } else {
+    throwVMError(
+        lexicalGlobalObject, throwScope,
+        createTypeError(lexicalGlobalObject,
+                        "First argument must be an ArrayBufferView"_s));
+    return JSValue::encode({});
+  }
+
+  RELEASE_AND_RETURN(throwScope, JSValue::encode(jsBoolean(
+                                     simdutf::validate_utf8(ptr, byteLength))));
+}
+
+// TODO: Add DOMJIT fast path
+JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
+                         (JSC::JSGlobalObject * lexicalGlobalObject,
+                          JSC::CallFrame *callframe)) {
+  auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
+
+  auto buffer = callframe->argument(0);
+  auto *bufferView = JSC::jsDynamicCast<JSC::JSArrayBufferView *>(buffer);
+  const char *ptr = nullptr;
+  size_t byteLength = 0;
+  if (bufferView) {
+
+    if (UNLIKELY(bufferView->isDetached())) {
+      throwTypeError(lexicalGlobalObject, throwScope,
+                     "ArrayBufferView is detached"_s);
+      return JSValue::encode({});
+    }
+
+    byteLength = bufferView->byteLength();
+
+    if (byteLength == 0) {
+      return JSValue::encode(jsBoolean(true));
+    }
+
+    ptr = reinterpret_cast<const char *>(bufferView->vector());
+  } else if (auto *arrayBuffer =
+                 JSC::jsDynamicCast<JSC::JSArrayBuffer *>(buffer)) {
+    auto *impl = arrayBuffer->impl();
+    if (UNLIKELY(impl->isDetached())) {
+      throwTypeError(lexicalGlobalObject, throwScope,
+                     "ArrayBuffer is detached"_s);
+      return JSValue::encode({});
+    }
+
+    if (!impl) {
+      return JSValue::encode(jsBoolean(true));
+    }
+
+    byteLength = impl->byteLength();
+
+    if (byteLength == 0) {
+      return JSValue::encode(jsBoolean(true));
+    }
+
+    ptr = reinterpret_cast<const char *>(impl->data());
+  } else {
+    throwVMError(
+        lexicalGlobalObject, throwScope,
+        createTypeError(lexicalGlobalObject,
+                        "First argument must be an ArrayBufferView"_s));
+    return JSValue::encode({});
+  }
+
+  RELEASE_AND_RETURN(
+      throwScope,
+      JSValue::encode(jsBoolean(simdutf::validate_ascii(ptr, byteLength))));
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplemented,
                          (JSGlobalObject * globalObject,
@@ -29,10 +145,13 @@ inline void generateBufferSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
   JSC::JSObject *defaultObject = JSC::constructEmptyObject(
       globalObject, globalObject->objectPrototype(), 12);
 
-  defaultObject->putDirect(vm,
-                           PropertyName(Identifier::fromUid(
-                               vm.symbolRegistry().symbolForKey("CommonJS"_s))),
-                           jsNumber(0), 0);
+  auto CommonJS =
+      Identifier::fromUid(vm.symbolRegistry().symbolForKey("CommonJS"_s));
+
+  defaultObject->putDirect(vm, PropertyName(CommonJS), jsNumber(0), 0);
+
+  exportNames.append(CommonJS);
+  exportValues.append(jsNumber(0));
 
   auto exportProperty = [&](JSC::Identifier name, JSC::JSValue value) {
     exportNames.append(name);
@@ -102,6 +221,20 @@ inline void generateBufferSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
 
   exportProperty(JSC::Identifier::fromString(vm, "resolveObjectURL"_s),
                  resolveObjectURL);
+
+  exportProperty(JSC::Identifier::fromString(vm, "isAscii"_s),
+                 JSC::JSFunction::create(vm, globalObject, 1, "isAscii"_s,
+                                         jsBufferConstructorFunction_isAscii,
+                                         ImplementationVisibility::Public,
+                                         NoIntrinsic,
+                                         jsBufferConstructorFunction_isUtf8));
+
+  exportProperty(JSC::Identifier::fromString(vm, "isUtf8"_s),
+                 JSC::JSFunction::create(vm, globalObject, 1, "isUtf8"_s,
+                                         jsBufferConstructorFunction_isUtf8,
+                                         ImplementationVisibility::Public,
+                                         NoIntrinsic,
+                                         jsBufferConstructorFunction_isUtf8));
 
   exportNames.append(vm.propertyNames->defaultKeyword);
   exportValues.append(defaultObject);

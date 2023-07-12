@@ -5,6 +5,18 @@ afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
 });
 
+test("Regular .stack", () => {
+  var err;
+  class Foo {
+    constructor() {
+      err = new Error("wat");
+    }
+  }
+
+  new Foo();
+  expect(err.stack).toMatch(/at new Foo/);
+});
+
 test("capture stack trace", () => {
   function f1() {
     f2();

@@ -103,7 +103,6 @@ const Resolver = _resolver.Resolver;
 const TOML = @import("../toml/toml_parser.zig").TOML;
 const EntryPoints = @import("./entry_points.zig");
 const ThisBundler = @import("../bundler.zig").Bundler;
-const wyhash = std.hash.Wyhash.hash;
 const Dependency = js_ast.Dependency;
 const JSAst = js_ast.BundledAst;
 const Loader = options.Loader;
@@ -361,6 +360,8 @@ pub const BundleV2 = struct {
             redirect_map: PathToSourceIndexMap,
             dynamic_import_entry_points: *std.AutoArrayHashMap(Index.Int, void),
 
+            const MAX_REDIRECTS: usize = 20;
+
             // Find all files reachable from all entry points. This order should be
             // deterministic given that the entry point order is deterministic, since the
             // returned order is the postorder of the graph traversal and import record
@@ -383,13 +384,20 @@ pub const BundleV2 = struct {
                 if (import_record_list_id.get() < v.all_import_records.len) {
                     var import_records = v.all_import_records[import_record_list_id.get()].slice();
                     for (import_records) |*import_record| {
-                        const other_source = import_record.source_index;
+                        var other_source = import_record.source_index;
                         if (other_source.isValid()) {
-                            if (getRedirectId(v.redirects[other_source.get()])) |redirect_id| {
+                            var redirect_count: usize = 0;
+                            while (getRedirectId(v.redirects[other_source.get()])) |redirect_id| : (redirect_count += 1) {
                                 var other_import_records = v.all_import_records[other_source.get()].slice();
                                 const other_import_record = &other_import_records[redirect_id];
                                 import_record.source_index = other_import_record.source_index;
                                 import_record.path = other_import_record.path;
+                                other_source = other_import_record.source_index;
+                                if (redirect_count == MAX_REDIRECTS) {
+                                    import_record.path.is_disabled = true;
+                                    import_record.source_index = Index.invalid;
+                                    break;
+                                }
                             }
 
                             v.visit(import_record.source_index, check_dynamic_imports and import_record.kind == .dynamic, check_dynamic_imports);
@@ -1364,8 +1372,8 @@ pub const BundleV2 = struct {
             },
             .err => |err| {
                 log.msgs.append(err) catch unreachable;
-                log.errors += @as(usize, @boolToInt(err.kind == .err));
-                log.warnings += @as(usize, @boolToInt(err.kind == .warn));
+                log.errors += @as(usize, @intFromBool(err.kind == .err));
+                log.warnings += @as(usize, @intFromBool(err.kind == .warn));
 
                 // An error ocurred, prevent spinning the event loop forever
                 _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .Monotonic);
@@ -1520,8 +1528,8 @@ pub const BundleV2 = struct {
             },
             .err => |err| {
                 log.msgs.append(err) catch unreachable;
-                log.errors += @as(usize, @boolToInt(err.kind == .err));
-                log.warnings += @as(usize, @boolToInt(err.kind == .warn));
+                log.errors += @as(usize, @intFromBool(err.kind == .err));
+                log.warnings += @as(usize, @intFromBool(err.kind == .warn));
             },
             .pending, .consumed => unreachable,
         }
@@ -1618,8 +1626,8 @@ pub const BundleV2 = struct {
         bundler.resolver.generation = generation;
         bundler.options.code_splitting = config.code_splitting;
 
-        try bundler.configureDefines();
         bundler.configureLinker();
+        try bundler.configureDefines();
 
         bundler.resolver.opts = bundler.options;
 
@@ -1819,7 +1827,7 @@ pub const BundleV2 = struct {
                 import_record.source_index = Index.invalid;
             }
 
-            estimated_resolve_queue_count += @as(usize, @boolToInt(!(import_record.is_internal or import_record.is_unused or import_record.source_index.isValid())));
+            estimated_resolve_queue_count += @as(usize, @intFromBool(!(import_record.is_internal or import_record.is_unused or import_record.source_index.isValid())));
         }
         var resolve_queue = ResolveQueue.init(this.graph.allocator);
         resolve_queue.ensureTotalCapacity(estimated_resolve_queue_count) catch @panic("OOM");
@@ -2271,6 +2279,7 @@ pub const ParseTask = struct {
     known_target: ?options.Target = null,
     module_type: options.ModuleType = .unknown,
     ctx: *BundleV2,
+    package_version: string = "",
 
     /// Used by generated client components
     presolved_source_indices: []const Index.Int = &.{},
@@ -2291,6 +2300,7 @@ pub const ParseTask = struct {
             .jsx = resolve_result.jsx,
             .source_index = source_index orelse Index.invalid,
             .module_type = resolve_result.module_type,
+            .package_version = if (resolve_result.package_json) |package_json| package_json.version else "",
         };
     }
 
@@ -2464,7 +2474,7 @@ pub const ParseTask = struct {
                 defer trace.end();
                 if (bundler.options.framework) |framework| {
                     if (framework.override_modules_hashes.len > 0) {
-                        const package_relative_path_hash = wyhash(0, file_path.pretty);
+                        const package_relative_path_hash = bun.hash(file_path.pretty);
                         if (std.mem.indexOfScalar(
                             u64,
                             framework.override_modules_hashes,
@@ -2583,6 +2593,8 @@ pub const ParseTask = struct {
         opts.warn_about_unbundled_modules = false;
         opts.macro_context = &this.data.macro_context;
         opts.bundle = true;
+        opts.package_version = task.package_version;
+
         opts.features.top_level_await = true;
         opts.features.jsx_optimization_inline = target.isBun() and (bundler.options.jsx_optimization_inline orelse !task.jsx.development);
         opts.features.auto_import_jsx = task.jsx.parse and bundler.options.auto_import_jsx;
@@ -3264,7 +3276,7 @@ const LinkerGraph = struct {
         var entry_point_kinds = files.items(.entry_point_kind);
         {
             var kinds = std.mem.sliceAsBytes(entry_point_kinds);
-            @memset(kinds.ptr, 0, kinds.len);
+            @memset(kinds, 0);
         }
 
         // Setup entry points
@@ -3276,7 +3288,7 @@ const LinkerGraph = struct {
             var path_strings: []bun.PathString = this.entry_points.items(.output_path);
             {
                 var output_was_auto_generated = std.mem.sliceAsBytes(this.entry_points.items(.output_path_was_auto_generated));
-                @memset(output_was_auto_generated.ptr, 0, output_was_auto_generated.len);
+                @memset(output_was_auto_generated, 0);
             }
 
             for (entry_points, path_strings, source_indices) |i, *path_string, *source_index| {
@@ -3397,7 +3409,7 @@ const LinkerGraph = struct {
             var stable_source_indices = try this.allocator.alloc(Index, sources.len + 1);
 
             // set it to max value so that if we access an invalid one, it crashes
-            @memset(std.mem.sliceAsBytes(stable_source_indices).ptr, 255, std.mem.sliceAsBytes(stable_source_indices).len);
+            @memset(std.mem.sliceAsBytes(stable_source_indices), 255);
 
             for (this.reachable_files, 0..) |source_index, i| {
                 stable_source_indices[source_index.get()] = Index.source(i);
@@ -3405,8 +3417,7 @@ const LinkerGraph = struct {
 
             const file = LinkerGraph.File{};
             // TODO: verify this outputs efficient code
-            std.mem.set(
-                @TypeOf(file.distance_from_entry_point),
+            @memset(
                 files.items(.distance_from_entry_point),
                 file.distance_from_entry_point,
             );
@@ -4449,13 +4460,13 @@ const LinkerContext = struct {
                 var wrap_cjs_count: usize = 0;
                 var wrap_esm_count: usize = 0;
                 for (exports_kind) |kind| {
-                    cjs_count += @boolToInt(kind == .cjs);
-                    esm_count += @boolToInt(kind == .esm);
+                    cjs_count += @intFromBool(kind == .cjs);
+                    esm_count += @intFromBool(kind == .esm);
                 }
 
                 for (flags) |flag| {
-                    wrap_cjs_count += @boolToInt(flag.wrap == .cjs);
-                    wrap_esm_count += @boolToInt(flag.wrap == .esm);
+                    wrap_cjs_count += @intFromBool(flag.wrap == .cjs);
+                    wrap_esm_count += @intFromBool(flag.wrap == .esm);
                 }
 
                 debug("Step 1: {d} CommonJS modules (+ {d} wrapped), {d} ES modules (+ {d} wrapped)", .{
@@ -4844,7 +4855,7 @@ const LinkerContext = struct {
                     const add_wrapper = wrap != .none;
                     var dependencies = std.ArrayList(js_ast.Dependency).initCapacity(
                         this.allocator,
-                        @as(usize, @boolToInt(force_include_exports)) + @as(usize, @boolToInt(add_wrapper)),
+                        @as(usize, @intFromBool(force_include_exports)) + @as(usize, @intFromBool(add_wrapper)),
                     ) catch unreachable;
                     var resolved_exports_list: *ResolvedExports = &this.graph.meta.items(.resolved_exports)[id];
                     for (aliases) |alias| {
@@ -4875,7 +4886,7 @@ const LinkerContext = struct {
                         }
                     }
 
-                    dependencies.ensureUnusedCapacity(@as(usize, @boolToInt(force_include_exports)) + @as(usize, @boolToInt(add_wrapper))) catch unreachable;
+                    dependencies.ensureUnusedCapacity(@as(usize, @intFromBool(force_include_exports)) + @as(usize, @intFromBool(add_wrapper))) catch unreachable;
 
                     // Ensure "exports" is included if the current output format needs it
                     if (force_include_exports) {
@@ -5171,9 +5182,9 @@ const LinkerContext = struct {
             // 2 statements for every export
             export_aliases.len * 2 +
             // + 1 if there are non-zero exports
-            @as(usize, @boolToInt(export_aliases.len > 0)) +
+            @as(usize, @intFromBool(export_aliases.len > 0)) +
             // + 1 if we need to inject the exports variable
-            @as(usize, @boolToInt(needs_exports_variable));
+            @as(usize, @intFromBool(needs_exports_variable));
 
         var stmts = js_ast.Stmt.Batcher.init(allocator_, stmts_count) catch unreachable;
         defer stmts.done();
@@ -5275,7 +5286,7 @@ const LinkerContext = struct {
 
         var declared_symbols = js_ast.DeclaredSymbol.List{};
         var exports_ref = c.graph.ast.items(.exports_ref)[id];
-        var all_export_stmts: []js_ast.Stmt = stmts.head[0 .. @as(usize, @boolToInt(needs_exports_variable)) + @as(usize, @boolToInt(properties.items.len > 0))];
+        var all_export_stmts: []js_ast.Stmt = stmts.head[0 .. @as(usize, @intFromBool(needs_exports_variable)) + @as(usize, @intFromBool(properties.items.len > 0))];
         stmts.head = stmts.head[all_export_stmts.len..];
         var remaining_stmts = all_export_stmts;
         defer std.debug.assert(remaining_stmts.len == 0); // all must be used
@@ -5862,7 +5873,7 @@ const LinkerContext = struct {
             // of hash calculation.
             if (chunk_meta.dynamic_imports.count() > 0) {
                 var dynamic_chunk_indices = chunk_meta.dynamic_imports.keys();
-                std.sort.sort(Index.Int, dynamic_chunk_indices, {}, std.sort.asc(Index.Int));
+                std.sort.block(Index.Int, dynamic_chunk_indices, {}, std.sort.asc(Index.Int));
 
                 var imports = chunk.cross_chunk_imports.listManaged(c.allocator);
                 defer chunk.cross_chunk_imports.update(imports);
@@ -6121,7 +6132,7 @@ const LinkerContext = struct {
                 }
             }
 
-            std.sort.sort(StableRef, list.items, {}, StableRef.isLessThan);
+            std.sort.block(StableRef, list.items, {}, StableRef.isLessThan);
             break :brk list;
         };
         defer sorted_imports_from_other_chunks.deinit();
@@ -6193,7 +6204,7 @@ const LinkerContext = struct {
                     }
                 }
 
-                std.sort.sort(renamer.StableSymbolCount, top_level_symbols.items, {}, StableSymbolCount.lessThan);
+                std.sort.block(renamer.StableSymbolCount, top_level_symbols.items, {}, StableSymbolCount.lessThan);
                 capacity += top_level_symbols.items.len;
                 top_level_symbols_all.appendSlice(top_level_symbols.items) catch unreachable;
             }
@@ -7703,7 +7714,7 @@ const LinkerContext = struct {
 
                                 // Prefix this module with "__reExport(exports, ns, module.exports)"
                                 const export_star_ref = c.runtimeFunction("__reExport");
-                                var args = try allocator.alloc(Expr, 2 + @as(usize, @boolToInt(module_exports_for_export != null)));
+                                var args = try allocator.alloc(Expr, 2 + @as(usize, @intFromBool(module_exports_for_export != null)));
                                 args[0..2].* = .{
                                     Expr.init(
                                         E.Identifier,
@@ -7801,7 +7812,7 @@ const LinkerContext = struct {
 
                                 // Prefix this module with "__reExport(exports, require(path), module.exports)"
                                 const export_star_ref = c.runtimeFunction("__reExport");
-                                var args = try allocator.alloc(Expr, 2 + @as(usize, @boolToInt(module_exports_for_export != null)));
+                                var args = try allocator.alloc(Expr, 2 + @as(usize, @intFromBool(module_exports_for_export != null)));
                                 args[0..2].* = .{
                                     Expr.init(
                                         E.Identifier,
@@ -7952,27 +7963,31 @@ const LinkerContext = struct {
                         } else if (FeatureFlags.unwrap_commonjs_to_esm and s.was_commonjs_export and wrap == .cjs) {
                             std.debug.assert(stmt.data.s_local.decls.len == 1);
                             const decl = stmt.data.s_local.decls.ptr[0];
-                            stmt = Stmt.alloc(
-                                S.SExpr,
-                                S.SExpr{
-                                    .value = Expr.init(
-                                        E.Binary,
-                                        E.Binary{
-                                            .op = .bin_assign,
-                                            .left = Expr.init(
-                                                E.CommonJSExportIdentifier,
-                                                E.CommonJSExportIdentifier{
-                                                    .ref = decl.binding.data.b_identifier.ref,
-                                                },
-                                                decl.binding.loc,
-                                            ),
-                                            .right = decl.value orelse Expr.init(E.Undefined, E.Undefined{}, Logger.Loc.Empty),
-                                        },
-                                        stmt.loc,
-                                    ),
-                                },
-                                stmt.loc,
-                            );
+                            if (decl.value) |decl_value| {
+                                stmt = Stmt.alloc(
+                                    S.SExpr,
+                                    S.SExpr{
+                                        .value = Expr.init(
+                                            E.Binary,
+                                            E.Binary{
+                                                .op = .bin_assign,
+                                                .left = Expr.init(
+                                                    E.CommonJSExportIdentifier,
+                                                    E.CommonJSExportIdentifier{
+                                                        .ref = decl.binding.data.b_identifier.ref,
+                                                    },
+                                                    decl.binding.loc,
+                                                ),
+                                                .right = decl_value,
+                                            },
+                                            stmt.loc,
+                                        ),
+                                    },
+                                    stmt.loc,
+                                );
+                            } else {
+                                continue;
+                            }
                         }
                     },
 
@@ -8786,8 +8801,8 @@ const LinkerContext = struct {
                     return strings.order(a, b) == .lt;
                 }
             };
-            std.sort.sort(u32, sorted_client_component_ids.items, Sorter{ .sources = all_sources }, Sorter.isLessThan);
-            std.sort.sort(u32, sorted_server_component_ids.items, Sorter{ .sources = all_sources }, Sorter.isLessThan);
+            std.sort.block(u32, sorted_client_component_ids.items, Sorter{ .sources = all_sources }, Sorter.isLessThan);
+            std.sort.block(u32, sorted_server_component_ids.items, Sorter{ .sources = all_sources }, Sorter.isLessThan);
 
             inline for (.{
                 sorted_client_component_ids.items,
@@ -8892,7 +8907,7 @@ const LinkerContext = struct {
             bun.default_allocator,
             (if (c.options.source_maps == .external) chunks.len * 2 else chunks.len) + @as(
                 usize,
-                @boolToInt(react_client_components_manifest.len > 0) + c.parse_graph.additional_output_files.items.len,
+                @intFromBool(react_client_components_manifest.len > 0) + c.parse_graph.additional_output_files.items.len,
             ),
         ) catch unreachable;
 
@@ -9163,8 +9178,10 @@ const LinkerContext = struct {
                         },
                     )) {
                         .err => |err| {
+                            var message = err.toSystemError().message.toUTF8(bun.default_allocator);
+                            defer message.deinit();
                             c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing sourcemap for chunk {}", .{
-                                bun.fmt.quote(err.toSystemError().message.slice()),
+                                bun.fmt.quote(message.slice()),
                                 bun.fmt.quote(chunk.final_rel_path),
                             }) catch unreachable;
                             return error.WriteFailed;
@@ -9231,8 +9248,10 @@ const LinkerContext = struct {
                 },
             )) {
                 .err => |err| {
+                    var message = err.toSystemError().message.toUTF8(bun.default_allocator);
+                    defer message.deinit();
                     c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing chunk {}", .{
-                        bun.fmt.quote(err.toSystemError().message.slice()),
+                        bun.fmt.quote(message.slice()),
                         bun.fmt.quote(chunk.final_rel_path),
                     }) catch unreachable;
                     return error.WriteFailed;
@@ -9298,8 +9317,10 @@ const LinkerContext = struct {
                 },
             )) {
                 .err => |err| {
+                    const utf8 = err.toSystemError().message.toUTF8(bun.default_allocator);
+                    defer utf8.deinit();
                     c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing chunk {}", .{
-                        bun.fmt.quote(err.toSystemError().message.slice()),
+                        bun.fmt.quote(utf8.slice()),
                         bun.fmt.quote(components_manifest_path),
                     }) catch unreachable;
                     return error.WriteFailed;
@@ -9372,8 +9393,10 @@ const LinkerContext = struct {
                     },
                 )) {
                     .err => |err| {
+                        const utf8 = err.toSystemError().message.toUTF8(bun.default_allocator);
+                        defer utf8.deinit();
                         c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing file {}", .{
-                            bun.fmt.quote(err.toSystemError().message.slice()),
+                            bun.fmt.quote(utf8.slice()),
                             bun.fmt.quote(src.src_path.text),
                         }) catch unreachable;
                         return error.WriteFailed;
@@ -9412,7 +9435,7 @@ const LinkerContext = struct {
                 .ref = export_ref,
             };
         }
-        std.sort.sort(StableRef, result.items, {}, StableRef.isLessThan);
+        std.sort.block(StableRef, result.items, {}, StableRef.isLessThan);
     }
 
     pub fn markFileReachableForCodeSplitting(
@@ -10701,7 +10724,7 @@ pub const Chunk = struct {
         /// equidistant to an entry point, then break the tie by sorting on the
         /// stable source index derived from the DFS over all entry points.
         pub fn sort(a: []Order) void {
-            std.sort.sort(Order, a, Order{}, lessThan);
+            std.sort.block(Order, a, Order{}, lessThan);
         }
     };
 
@@ -10806,7 +10829,7 @@ pub const Chunk = struct {
                         shift.after.add(data_offset);
 
                         if (data.len > 0)
-                            @memcpy(remain.ptr, data.ptr, data.len);
+                            @memcpy(remain[0..data.len], data);
 
                         remain = remain[data.len..];
 
@@ -10838,13 +10861,13 @@ pub const Chunk = struct {
                                 );
 
                                 if (cheap_normalizer[0].len > 0) {
-                                    @memcpy(remain.ptr, cheap_normalizer[0].ptr, cheap_normalizer[0].len);
+                                    @memcpy(remain[0..cheap_normalizer[0].len], cheap_normalizer[0]);
                                     remain = remain[cheap_normalizer[0].len..];
                                     shift.after.advance(cheap_normalizer[0]);
                                 }
 
                                 if (cheap_normalizer[1].len > 0) {
-                                    @memcpy(remain.ptr, cheap_normalizer[1].ptr, cheap_normalizer[1].len);
+                                    @memcpy(remain[0..cheap_normalizer[1].len], cheap_normalizer[1]);
                                     remain = remain[cheap_normalizer[1].len..];
                                     shift.after.advance(cheap_normalizer[1]);
                                 }
@@ -10970,7 +10993,7 @@ pub const Chunk = struct {
                         const data = piece.data();
 
                         if (data.len > 0)
-                            @memcpy(remain.ptr, data.ptr, data.len);
+                            @memcpy(remain[0..data.len], data);
 
                         remain = remain[data.len..];
 
@@ -10998,12 +11021,12 @@ pub const Chunk = struct {
                                 );
 
                                 if (cheap_normalizer[0].len > 0) {
-                                    @memcpy(remain.ptr, cheap_normalizer[0].ptr, cheap_normalizer[0].len);
+                                    @memcpy(remain[0..cheap_normalizer[0].len], cheap_normalizer[0]);
                                     remain = remain[cheap_normalizer[0].len..];
                                 }
 
                                 if (cheap_normalizer[1].len > 0) {
-                                    @memcpy(remain.ptr, cheap_normalizer[1].ptr, cheap_normalizer[1].len);
+                                    @memcpy(remain[0..cheap_normalizer[1].len], cheap_normalizer[1]);
                                     remain = remain[cheap_normalizer[1].len..];
                                 }
                             },
@@ -11144,7 +11167,7 @@ pub const CrossChunkImport = struct {
                 item.export_alias = exports_to_other_chunks.get(item.ref).?;
                 std.debug.assert(item.export_alias.len > 0);
             }
-            std.sort.sort(CrossChunkImport.Item, import_items.slice(), {}, CrossChunkImport.Item.lessThan);
+            std.sort.block(CrossChunkImport.Item, import_items.slice(), {}, CrossChunkImport.Item.lessThan);
 
             result.append(CrossChunkImport{
                 .chunk_index = chunk_index,
@@ -11152,7 +11175,7 @@ pub const CrossChunkImport = struct {
             }) catch unreachable;
         }
 
-        std.sort.sort(CrossChunkImport, result.items, {}, CrossChunkImport.lessThan);
+        std.sort.block(CrossChunkImport, result.items, {}, CrossChunkImport.lessThan);
     }
 };
 

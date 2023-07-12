@@ -79,4 +79,27 @@ Bun.serve<User>({
   },
 });
 
+Bun.serve({
+  fetch(req) {
+    throw new Error("woops!");
+  },
+  error(error) {
+    return new Response(`<pre>${error}\n${error.stack}</pre>`, {
+      headers: {
+        "Content-Type": "text/html",
+      },
+    });
+  },
+});
+
 export {};
+
+Bun.serve({
+  port: 1234,
+  fetch(req, server) {
+    server.upgrade(req);
+    if (Math.random() > 0.5) return undefined;
+    return new Response();
+  },
+  websocket: { message() {} },
+});

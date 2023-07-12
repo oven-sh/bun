@@ -2,19 +2,18 @@ const std = @import("std");
 
 const FeatureFlags = @import("./feature_flags.zig");
 const Environment = @import("./env.zig");
-const Wyhash = std.hash.Wyhash;
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const constStrToU8 = @import("root").bun.constStrToU8;
 const bun = @import("root").bun;
 pub fn isSliceInBuffer(slice: anytype, buffer: anytype) bool {
-    return (@ptrToInt(&buffer) <= @ptrToInt(slice.ptr) and (@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(buffer) + buffer.len));
+    return (@intFromPtr(&buffer) <= @intFromPtr(slice.ptr) and (@intFromPtr(slice.ptr) + slice.len) <= (@intFromPtr(buffer) + buffer.len));
 }
 
 pub fn sliceRange(slice: []const u8, buffer: []const u8) ?[2]u32 {
-    return if (@ptrToInt(buffer.ptr) <= @ptrToInt(slice.ptr) and
-        (@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(buffer.ptr) + buffer.len))
+    return if (@intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and
+        (@intFromPtr(slice.ptr) + slice.len) <= (@intFromPtr(buffer.ptr) + buffer.len))
         [2]u32{
-            @truncate(u32, @ptrToInt(slice.ptr) - @ptrToInt(buffer.ptr)),
+            @truncate(u32, @intFromPtr(slice.ptr) - @intFromPtr(buffer.ptr)),
             @truncate(u32, slice.len),
         }
     else
@@ -53,7 +52,6 @@ pub const Result = struct {
         return r.index >= count;
     }
 };
-const Seed = 999;
 
 pub const NotFound = IndexType{
     .index = std.math.maxInt(u31),
@@ -488,7 +486,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
 
         pub fn getOrPut(self: *Self, denormalized_key: []const u8) !Result {
             const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, "/") else denormalized_key;
-            const _key = Wyhash.hash(Seed, key);
+            const _key = bun.hash(key);
 
             self.mutex.lock();
             defer self.mutex.unlock();
@@ -516,7 +514,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
 
         pub fn get(self: *Self, denormalized_key: []const u8) ?*ValueType {
             const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, "/") else denormalized_key;
-            const _key = Wyhash.hash(Seed, key);
+            const _key = bun.hash(key);
             self.mutex.lock();
             defer self.mutex.unlock();
             const index = self.index.get(_key) orelse return null;
@@ -577,7 +575,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
 
             const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, "/") else denormalized_key;
 
-            const _key = Wyhash.hash(Seed, key);
+            const _key = bun.hash(key);
             _ = self.index.remove(_key);
             // const index = self.index.get(_key) orelse return;
             // switch (index) {

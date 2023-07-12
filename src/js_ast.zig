@@ -38,8 +38,8 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
     var max_size = 0;
     var max_align = 1;
     for (Union) |kind| {
-        max_size = std.math.max(@sizeOf(kind), max_size);
-        max_align = if (@sizeOf(kind) == 0) max_align else std.math.max(@alignOf(kind), max_align);
+        max_size = @max(@sizeOf(kind), max_size);
+        max_align = if (@sizeOf(kind) == 0) max_align else @max(@alignOf(kind), max_align);
     }
 
     const UnionValueType = [max_size]u8;
@@ -156,7 +156,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
                 if (comptime Environment.isDebug) {
                     // ensure we crash if we use a freed value
                     var bytes = std.mem.asBytes(&b.items);
-                    @memset(bytes, undefined, bytes.len);
+                    @memset(bytes, undefined);
                 }
                 b.used = 0;
             }
@@ -666,7 +666,7 @@ pub const CharFreq = struct {
             break :brk _array;
         };
 
-        std.sort.sort(CharAndCount, &array, {}, CharAndCount.lessThan);
+        std.sort.block(CharAndCount, &array, {}, CharAndCount.lessThan);
 
         var minifier = NameMinifier.init(allocator);
         minifier.head.ensureTotalCapacityPrecise(NameMinifier.default_head.len) catch unreachable;
@@ -1158,7 +1158,7 @@ pub const Symbol = struct {
         }
 
         pub inline fn isPrivate(kind: Symbol.Kind) bool {
-            return @enumToInt(kind) >= @enumToInt(Symbol.Kind.private_field) and @enumToInt(kind) <= @enumToInt(Symbol.Kind.private_static_get_set_pair);
+            return @intFromEnum(kind) >= @intFromEnum(Symbol.Kind.private_field) and @intFromEnum(kind) <= @intFromEnum(Symbol.Kind.private_static_get_set_pair);
         }
 
         pub inline fn isHoisted(kind: Symbol.Kind) bool {
@@ -1706,7 +1706,7 @@ pub const E = struct {
 
         pub fn toStringFromF64Safe(value: f64, allocator: std.mem.Allocator) ?string {
             if (value == @trunc(value) and (value < std.math.maxInt(i32) and value > std.math.minInt(i32))) {
-                const int_value = @floatToInt(i64, value);
+                const int_value = @intFromFloat(i64, value);
                 const abs = @intCast(u64, std.math.absInt(int_value) catch return null);
                 if (abs < double_digit.len) {
                     return if (int_value < 0)
@@ -1734,23 +1734,23 @@ pub const E = struct {
         }
 
         pub inline fn toU64(self: Number) u64 {
-            @setRuntimeSafety(false);
-            return @floatToInt(u64, @max(@trunc(self.value), 0));
+            return self.to(u64);
         }
 
         pub inline fn toUsize(self: Number) usize {
-            @setRuntimeSafety(false);
-            return @floatToInt(usize, @max(@trunc(self.value), 0));
+            return self.to(usize);
         }
 
         pub inline fn toU32(self: Number) u32 {
-            @setRuntimeSafety(false);
-            return @floatToInt(u32, @max(@trunc(self.value), 0));
+            return self.to(u32);
         }
 
         pub inline fn toU16(self: Number) u16 {
-            @setRuntimeSafety(false);
-            return @floatToInt(u16, @max(@trunc(self.value), 0));
+            return self.to(u16);
+        }
+
+        pub fn to(self: Number, comptime T: type) T {
+            return @intFromFloat(T, @min(@max(@trunc(self.value), 0), comptime @min(std.math.floatMax(f64), std.math.maxInt(T))));
         }
 
         pub fn jsonStringify(self: *const Number, opts: anytype, o: anytype) !void {
@@ -2057,11 +2057,11 @@ pub const E = struct {
         }
 
         pub fn alphabetizeProperties(this: *Object) void {
-            std.sort.sort(G.Property, this.properties.slice(), {}, Sorter.isLessThan);
+            std.sort.block(G.Property, this.properties.slice(), {}, Sorter.isLessThan);
         }
 
         pub fn packageJSONSort(this: *Object) void {
-            std.sort.sort(G.Property, this.properties.slice(), {}, PackageJSONSort.Fields.isLessThan);
+            std.sort.block(G.Property, this.properties.slice(), {}, PackageJSONSort.Fields.isLessThan);
         }
 
         const PackageJSONSort = struct {
@@ -2096,15 +2096,15 @@ pub const E = struct {
                 });
 
                 pub fn isLessThan(ctx: void, lhs: G.Property, rhs: G.Property) bool {
-                    var lhs_key_size: u8 = @enumToInt(Fields.__fake);
-                    var rhs_key_size: u8 = @enumToInt(Fields.__fake);
+                    var lhs_key_size: u8 = @intFromEnum(Fields.__fake);
+                    var rhs_key_size: u8 = @intFromEnum(Fields.__fake);
 
                     if (lhs.key != null and lhs.key.?.data == .e_string) {
-                        lhs_key_size = @enumToInt(Map.get(lhs.key.?.data.e_string.data) orelse Fields.__fake);
+                        lhs_key_size = @intFromEnum(Map.get(lhs.key.?.data.e_string.data) orelse Fields.__fake);
                     }
 
                     if (rhs.key != null and rhs.key.?.data == .e_string) {
-                        rhs_key_size = @enumToInt(Map.get(rhs.key.?.data.e_string.data) orelse Fields.__fake);
+                        rhs_key_size = @intFromEnum(Map.get(rhs.key.?.data.e_string.data) orelse Fields.__fake);
                     }
 
                     return switch (std.math.order(lhs_key_size, rhs_key_size)) {
@@ -2139,6 +2139,14 @@ pub const E = struct {
         end: ?*String = null,
         rope_len: u32 = 0,
         is_utf16: bool = false,
+
+        pub fn isIdentifier(this: *String, allocator: std.mem.Allocator) bool {
+            if (!this.isUTF8()) {
+                return bun.js_lexer.isIdentifierUTF16(this.slice16());
+            }
+
+            return bun.js_lexer.isIdentifier(this.slice(allocator));
+        }
 
         pub var class = E.String{ .data = "class" };
         pub fn push(this: *String, other: *String) void {
@@ -2343,10 +2351,10 @@ pub const E = struct {
 
             if (s.isUTF8()) {
                 // hash utf-8
-                return std.hash.Wyhash.hash(0, s.data);
+                return bun.hash(s.data);
             } else {
                 // hash utf-16
-                return std.hash.Wyhash.hash(0, @ptrCast([*]const u8, s.slice16().ptr)[0 .. s.slice16().len * 2]);
+                return bun.hash(@ptrCast([*]const u8, s.slice16().ptr)[0 .. s.slice16().len * 2]);
             }
         }
 
@@ -3100,7 +3108,7 @@ pub const Expr = struct {
     pub fn hasAnyPropertyNamed(expr: *const Expr, comptime names: []const string) bool {
         if (std.meta.activeTag(expr.data) != .e_object) return false;
         const obj = expr.data.e_object;
-        if (@ptrToInt(obj.properties.ptr) == 0) return false;
+        if (@intFromPtr(obj.properties.ptr) == 0) return false;
 
         for (obj.properties.slice()) |prop| {
             if (prop.value == null) continue;
@@ -3162,7 +3170,7 @@ pub const Expr = struct {
     pub fn asProperty(expr: *const Expr, name: string) ?Query {
         if (std.meta.activeTag(expr.data) != .e_object) return null;
         const obj = expr.data.e_object;
-        if (@ptrToInt(obj.properties.ptr) == 0) return null;
+        if (@intFromPtr(obj.properties.ptr) == 0) return null;
 
         return obj.asProperty(name);
     }
@@ -3183,7 +3191,7 @@ pub const Expr = struct {
     pub fn asArray(expr: *const Expr) ?ArrayIterator {
         if (std.meta.activeTag(expr.data) != .e_array) return null;
         const array = expr.data.e_array;
-        if (array.items.len == 0 or @ptrToInt(array.items.ptr) == 0) return null;
+        if (array.items.len == 0 or @intFromPtr(array.items.ptr) == 0) return null;
 
         return ArrayIterator{ .array = array, .index = 0 };
     }
@@ -3290,7 +3298,7 @@ pub const Expr = struct {
         }
     }
 
-    pub fn joinAllWithCommaCallback(all: []Expr, comptime Context: type, ctx: Context, callback: (fn (ctx: anytype, expr: anytype) ?Expr), allocator: std.mem.Allocator) ?Expr {
+    pub fn joinAllWithCommaCallback(all: []Expr, comptime Context: type, ctx: Context, comptime callback: (fn (ctx: anytype, expr: Expr) ?Expr), allocator: std.mem.Allocator) ?Expr {
         switch (all.len) {
             0 => return null,
             1 => {
@@ -3637,7 +3645,7 @@ pub const Expr = struct {
                 if (comptime Environment.isDebug) {
                     // Sanity check: assert string is not a null ptr
                     if (st.data.len > 0 and st.isUTF8()) {
-                        std.debug.assert(@ptrToInt(st.data.ptr) > 0);
+                        std.debug.assert(@intFromPtr(st.data.ptr) > 0);
                     }
                 }
                 return Expr{
@@ -4002,7 +4010,7 @@ pub const Expr = struct {
                 if (comptime Environment.isDebug) {
                     // Sanity check: assert string is not a null ptr
                     if (st.data.len > 0 and st.isUTF8()) {
-                        std.debug.assert(@ptrToInt(st.data.ptr) > 0);
+                        std.debug.assert(@intFromPtr(st.data.ptr) > 0);
                     }
                 }
                 return Expr{
@@ -5692,9 +5700,9 @@ pub const Op = struct {
         }
 
         pub fn unaryAssignTarget(code: Op.Code) AssignTarget {
-            if (@enumToInt(code) >=
-                @enumToInt(Op.Code.un_pre_dec) and @enumToInt(code) <=
-                @enumToInt(Op.Code.un_post_inc))
+            if (@intFromEnum(code) >=
+                @intFromEnum(Op.Code.un_pre_dec) and @intFromEnum(code) <=
+                @intFromEnum(Op.Code.un_post_inc))
             {
                 return AssignTarget.update;
             }
@@ -5702,19 +5710,19 @@ pub const Op = struct {
             return AssignTarget.none;
         }
         pub fn isLeftAssociative(code: Op.Code) bool {
-            return @enumToInt(code) >=
-                @enumToInt(Op.Code.bin_add) and
-                @enumToInt(code) < @enumToInt(Op.Code.bin_comma) and code != .bin_pow;
+            return @intFromEnum(code) >=
+                @intFromEnum(Op.Code.bin_add) and
+                @intFromEnum(code) < @intFromEnum(Op.Code.bin_comma) and code != .bin_pow;
         }
         pub fn isRightAssociative(code: Op.Code) bool {
-            return @enumToInt(code) >= @enumToInt(Op.Code.bin_assign) or code == .bin_pow;
+            return @intFromEnum(code) >= @intFromEnum(Op.Code.bin_assign) or code == .bin_pow;
         }
         pub fn binaryAssignTarget(code: Op.Code) AssignTarget {
             if (code == .bin_assign) {
                 return AssignTarget.replace;
             }
 
-            if (@enumToInt(code) > @enumToInt(Op.Code.bin_assign)) {
+            if (@intFromEnum(code) > @intFromEnum(Op.Code.bin_assign)) {
                 return AssignTarget.update;
             }
 
@@ -5722,7 +5730,7 @@ pub const Op = struct {
         }
 
         pub fn isPrefix(code: Op.Code) bool {
-            return @enumToInt(code) < @enumToInt(Op.Code.un_post_dec);
+            return @intFromEnum(code) < @intFromEnum(Op.Code.un_post_dec);
         }
     };
 
@@ -5752,27 +5760,27 @@ pub const Op = struct {
         member,
 
         pub inline fn lt(self: Level, b: Level) bool {
-            return @enumToInt(self) < @enumToInt(b);
+            return @intFromEnum(self) < @intFromEnum(b);
         }
         pub inline fn gt(self: Level, b: Level) bool {
-            return @enumToInt(self) > @enumToInt(b);
+            return @intFromEnum(self) > @intFromEnum(b);
         }
         pub inline fn gte(self: Level, b: Level) bool {
-            return @enumToInt(self) >= @enumToInt(b);
+            return @intFromEnum(self) >= @intFromEnum(b);
         }
         pub inline fn lte(self: Level, b: Level) bool {
-            return @enumToInt(self) <= @enumToInt(b);
+            return @intFromEnum(self) <= @intFromEnum(b);
         }
         pub inline fn eql(self: Level, b: Level) bool {
-            return @enumToInt(self) == @enumToInt(b);
+            return @intFromEnum(self) == @intFromEnum(b);
         }
 
         pub inline fn sub(self: Level, i: anytype) Level {
-            return @intToEnum(Level, @enumToInt(self) - i);
+            return @enumFromInt(Level, @intFromEnum(self) - i);
         }
 
         pub inline fn addF(self: Level, i: anytype) Level {
-            return @intToEnum(Level, @enumToInt(self) + i);
+            return @enumFromInt(Level, @intFromEnum(self) + i);
         }
     };
 
@@ -6647,7 +6655,7 @@ pub const Scope = struct {
     }
 
     pub inline fn kindStopsHoisting(s: *const Scope) bool {
-        return @enumToInt(s.kind) >= @enumToInt(Kind.entry);
+        return @intFromEnum(s.kind) >= @intFromEnum(Kind.entry);
     }
 };
 
@@ -7284,7 +7292,7 @@ pub const Macro = struct {
                 _: js.JSStringRef,
                 _: js.ExceptionRef,
             ) js.JSObjectRef {
-                return JSC.JSValue.jsNumberFromU16(@intCast(u16, @enumToInt(std.meta.activeTag(this.data)))).asRef();
+                return JSC.JSValue.jsNumberFromU16(@intCast(u16, @intFromEnum(std.meta.activeTag(this.data)))).asRef();
             }
             pub fn getTagName(
                 this: *JSNode,
@@ -7691,7 +7699,7 @@ pub const Macro = struct {
                 var list = std.EnumArray(Tag, Expr.Data).initFill(Expr.Data{ .e_number = E.Number{ .value = 0.0 } });
                 const fields: []const std.builtin.Type.EnumField = @typeInfo(Tag).Enum.fields;
                 for (fields) |field| {
-                    list.set(@intToEnum(Tag, field.value), Expr.Data{ .e_number = E.Number{ .value = @intToFloat(f64, field.value) } });
+                    list.set(@enumFromInt(Tag, field.value), Expr.Data{ .e_number = E.Number{ .value = @floatFromInt(f64, field.value) } });
                 }
 
                 break :brk list;
@@ -7868,7 +7876,7 @@ pub const Macro = struct {
                 const Enum: std.builtin.Type.Enum = @typeInfo(Tag).Enum;
                 var max_value: u8 = 0;
                 for (Enum.fields) |field| {
-                    max_value = std.math.max(@as(u8, field.value), max_value);
+                    max_value = @max(@as(u8, field.value), max_value);
                 }
                 break :brk max_value;
             };
@@ -7877,7 +7885,7 @@ pub const Macro = struct {
                 const Enum: std.builtin.Type.Enum = @typeInfo(Tag).Enum;
                 var min: u8 = 255;
                 for (Enum.fields) |field| {
-                    min = std.math.min(@as(u8, field.value), min);
+                    min = @min(@as(u8, field.value), min);
                 }
                 break :brk min;
             };
@@ -8007,7 +8015,7 @@ pub const Macro = struct {
                                         Expr{
                                             .data = .{
                                                 .e_number = E.Number{
-                                                    .value = @intToFloat(f64, @boolToInt(value.data.e_boolean.value)),
+                                                    .value = @floatFromInt(f64, @intFromBool(value.data.e_boolean.value)),
                                                 },
                                             },
                                             .loc = value.loc,
@@ -8084,7 +8092,7 @@ pub const Macro = struct {
                             self.args.ensureUnusedCapacity(2 + children.len) catch unreachable;
                             self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.e_array) });
                             const children_count = @truncate(u16, children.len);
-                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = .{ .e_number = E.Number{ .value = @intToFloat(f64, children_count) } } });
+                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = .{ .e_number = E.Number{ .value = @floatFromInt(f64, children_count) } } });
 
                             var old_parent = self.parent_tag;
                             self.parent_tag = Tag.e_array;
@@ -8123,7 +8131,7 @@ pub const Macro = struct {
                             self.args.ensureUnusedCapacity(2 + children.len) catch unreachable;
                             self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.e_object) });
                             const children_count = @truncate(u16, children.len);
-                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = .{ .e_number = E.Number{ .value = @intToFloat(f64, children_count) } } });
+                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = .{ .e_number = E.Number{ .value = @floatFromInt(f64, children_count) } } });
 
                             var old_parent = self.parent_tag;
                             self.parent_tag = Tag.e_object;
@@ -8328,7 +8336,7 @@ pub const Macro = struct {
                             }
                             self.args.ensureUnusedCapacity(2 + count) catch unreachable;
                             self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.inline_inject) });
-                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = .{ .e_number = .{ .value = @intToFloat(f64, @intCast(u32, children.len)) } } });
+                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = .{ .e_number = .{ .value = @floatFromInt(f64, @intCast(u32, children.len)) } } });
 
                             const old_parent_tag = self.parent_tag;
                             self.parent_tag = Tag.inline_inject;
@@ -8393,7 +8401,7 @@ pub const Macro = struct {
                             const namespace_ = propertyValueNamed(props, "namespace");
 
                             const items_count: u32 = 1 +
-                                @intCast(u32, @boolToInt(namespace_ != null));
+                                @intCast(u32, @intFromBool(namespace_ != null));
 
                             self.args.ensureUnusedCapacity(items_count) catch unreachable;
                             self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.s_import) });
@@ -8504,7 +8512,7 @@ pub const Macro = struct {
                                 .loc = loc,
                                 .data = .{
                                     .e_number = E.Number{
-                                        .value = @intToFloat(f64, children.len),
+                                        .value = @floatFromInt(f64, children.len),
                                     },
                                 },
                             });
@@ -8742,11 +8750,11 @@ pub const Macro = struct {
                 pub fn fromJSValueRefNoValidate(ctx: js.JSContextRef, value: js.JSValueRef) TagOrJSNode {
                     switch (js.JSValueGetType(ctx, value)) {
                         js.JSType.kJSTypeNumber => {
-                            const tag_int = @floatToInt(u8, JSC.JSValue.fromRef(value).asNumber());
+                            const tag_int = @intFromFloat(u8, JSC.JSValue.fromRef(value).asNumber());
                             if (tag_int < Tag.min_tag or tag_int > Tag.max_tag) {
                                 return TagOrJSNode{ .invalid = {} };
                             }
-                            return TagOrJSNode{ .tag = @intToEnum(JSNode.Tag, tag_int) };
+                            return TagOrJSNode{ .tag = @enumFromInt(JSNode.Tag, tag_int) };
                         },
                         js.JSType.kJSTypeObject => {
                             if (JSCBase.GetJSPrivateData(JSNode, value)) |node| {
@@ -8764,13 +8772,13 @@ pub const Macro = struct {
                 pub fn fromJSValueRef(writer: *Writer, ctx: js.JSContextRef, value: js.JSValueRef) TagOrJSNode {
                     switch (js.JSValueGetType(ctx, value)) {
                         js.JSType.kJSTypeNumber => {
-                            const tag_int = @floatToInt(u8, JSC.JSValue.fromRef(value).asNumber());
+                            const tag_int = @intFromFloat(u8, JSC.JSValue.fromRef(value).asNumber());
                             if (tag_int < Tag.min_tag or tag_int > Tag.max_tag) {
                                 throwTypeError(ctx, "Node type has invalid value", writer.exception);
                                 writer.errored = true;
                                 return TagOrJSNode{ .invalid = {} };
                             }
-                            return TagOrJSNode{ .tag = @intToEnum(JSNode.Tag, tag_int) };
+                            return TagOrJSNode{ .tag = @enumFromInt(JSNode.Tag, tag_int) };
                         },
                         js.JSType.kJSTypeObject => {
                             if (JSCBase.GetJSPrivateData(JSNode, value)) |node| {
@@ -8932,7 +8940,7 @@ pub const Macro = struct {
 
                             import.import.items = writer.allocator.alloc(
                                 ClauseItem,
-                                @intCast(u32, @boolToInt(has_default)) + array_iter.len,
+                                @intCast(u32, @intFromBool(has_default)) + array_iter.len,
                             ) catch return false;
 
                             while (array_iter.next()) |name| {
@@ -8961,7 +8969,7 @@ pub const Macro = struct {
                         } else {
                             import.import.items = writer.allocator.alloc(
                                 ClauseItem,
-                                @intCast(u32, @boolToInt(has_default)),
+                                @intCast(u32, @intFromBool(has_default)),
                             ) catch return false;
                         }
 
@@ -9000,7 +9008,7 @@ pub const Macro = struct {
                             var nextArg = writer.eatArg() orelse return false;
                             if (js.JSValueIsArray(writer.ctx, nextArg.asRef())) {
                                 const extras = @truncate(u32, nextArg.getLength(writer.ctx.ptr()));
-                                count += std.math.max(@truncate(@TypeOf(count), extras), 1) - 1;
+                                count += @max(@truncate(@TypeOf(count), extras), 1) - 1;
                                 items.ensureUnusedCapacity(extras) catch unreachable;
                                 items.expandToCapacity();
                                 var new_writer = writer.*;
@@ -9919,7 +9927,7 @@ pub const Macro = struct {
                         },
 
                         .Integer => {
-                            return Expr.init(E.Number, E.Number{ .value = @intToFloat(f64, value.toInt32()) }, this.caller.loc);
+                            return Expr.init(E.Number, E.Number{ .value = @floatFromInt(f64, value.toInt32()) }, this.caller.loc);
                         },
                         .Double => {
                             return Expr.init(E.Number, E.Number{ .value = value.asNumber() }, this.caller.loc);
@@ -9992,7 +10000,7 @@ pub const Macro = struct {
             exception_holder = Zig.ZigException.Holder.init();
             var js_args: []JSC.JSValue = &.{};
             defer {
-                for (js_args[0 .. js_args.len - @as(usize, @boolToInt(!javascript_object.isEmpty()))]) |arg| {
+                for (js_args[0 .. js_args.len - @as(usize, @intFromBool(!javascript_object.isEmpty()))]) |arg| {
                     arg.unprotect();
                 }
 
@@ -10004,7 +10012,7 @@ pub const Macro = struct {
             switch (caller.data) {
                 .e_call => |call| {
                     const call_args: []Expr = call.args.slice();
-                    js_args = try allocator.alloc(JSC.JSValue, call_args.len + @as(usize, @boolToInt(!javascript_object.isEmpty())));
+                    js_args = try allocator.alloc(JSC.JSValue, call_args.len + @as(usize, @intFromBool(!javascript_object.isEmpty())));
 
                     for (call_args, js_args[0..call_args.len]) |in, *out| {
                         const value = try in.toJS(
@@ -10052,7 +10060,9 @@ pub const Macro = struct {
                 }
             };
 
-            return CallData.callWrapper(.{
+            // TODO: can change back to `return CallData.callWrapper(.{`
+            // when https://github.com/ziglang/zig/issues/16242 is fixed
+            return CallData.callWrapper(CallArgs{
                 macro,
                 log,
                 allocator,

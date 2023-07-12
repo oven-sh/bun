@@ -72,6 +72,7 @@ typedef struct ResolvedSource {
     void* allocator;
     uint64_t tag;
 } ResolvedSource;
+static const uint64_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
     ZigErrorType err;
@@ -83,10 +84,10 @@ typedef struct ErrorableResolvedSource {
 
 typedef struct SystemError {
     int errno_;
-    ZigString code;
-    ZigString message;
-    ZigString path;
-    ZigString syscall;
+    BunString code;
+    BunString message;
+    BunString path;
+    BunString syscall;
     int fd;
 } SystemError;
 
@@ -119,15 +120,15 @@ typedef struct ZigStackFramePosition {
 } ZigStackFramePosition;
 
 typedef struct ZigStackFrame {
-    ZigString function_name;
-    ZigString source_url;
+    BunString function_name;
+    BunString source_url;
     ZigStackFramePosition position;
     ZigStackFrameCode code_type;
     bool remapped;
 } ZigStackFrame;
 
 typedef struct ZigStackTrace {
-    ZigString* source_lines_ptr;
+    BunString* source_lines_ptr;
     int32_t* source_lines_numbers;
     uint8_t source_lines_len;
     uint8_t source_lines_to_collect;
@@ -139,11 +140,11 @@ typedef struct ZigException {
     unsigned char code;
     uint16_t runtime_type;
     int errno_;
-    ZigString syscall;
-    ZigString code_;
-    ZigString path;
-    ZigString name;
-    ZigString message;
+    BunString syscall;
+    BunString code_;
+    BunString path;
+    BunString name;
+    BunString message;
     ZigStackTrace stack;
     void* exception;
     bool remapped;
@@ -245,6 +246,10 @@ BunString toString(WTF::String& wtfString);
 BunString toString(const WTF::String& wtfString);
 BunString toString(WTF::StringImpl* wtfString);
 
+BunString toStringRef(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
+BunString toStringRef(WTF::String& wtfString);
+BunString toStringRef(const WTF::String& wtfString);
+BunString toStringRef(WTF::StringImpl* wtfString);
 }
 
 using Uint8Array_alias = JSC::JSUint8Array;

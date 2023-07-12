@@ -27,7 +27,6 @@ const CacheSet = cache.Set;
 const DataURL = @import("./data_url.zig").DataURL;
 pub const DirInfo = @import("./dir_info.zig");
 const HTTPWatcher = if (Environment.isTest or Environment.isWasm) void else @import("../http.zig").Watcher;
-const Wyhash = std.hash.Wyhash;
 const ResolvePath = @import("./resolve_path.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const Mutex = @import("../lock.zig").Lock;
@@ -95,6 +94,7 @@ const bufs = struct {
     threadlocal var remap_path_trailing_slash: [bun.MAX_PATH_BYTES]u8 = undefined;
     threadlocal var path_in_global_disk_cache: [bun.MAX_PATH_BYTES]u8 = undefined;
     threadlocal var abs_to_rel: [bun.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var node_modules_paths_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
     pub inline fn bufs(comptime field: std.meta.DeclEnum(@This())) *@TypeOf(@field(@This(), @tagName(field))) {
         return &@field(@This(), @tagName(field));
@@ -283,10 +283,10 @@ pub const Result = struct {
         if (strings.lastIndexOf(module, node_module_root)) |end_| {
             var end: usize = end_ + node_module_root.len;
 
-            return @truncate(u32, std.hash.Wyhash.hash(0, module[end..]));
+            return @truncate(u32, bun.hash(module[end..]));
         }
 
-        return @truncate(u32, std.hash.Wyhash.hash(0, this.path_pair.primary.text));
+        return @truncate(u32, bun.hash(this.path_pair.primary.text));
     }
 };
 
@@ -533,21 +533,24 @@ pub const Resolver = struct {
     // all parent directories
     dir_cache: *DirInfo.HashMap,
 
-    pub fn getPackageManager(this: *Resolver) *PackageManager {
-        if (this.package_manager != null) {
-            return this.package_manager.?;
-        }
-        bun.HTTPThead.init() catch unreachable;
-        this.package_manager = PackageManager.initWithRuntime(
-            this.log,
-            this.opts.install,
-            this.allocator,
-            .{},
-            this.env_loader.?,
-        ) catch @panic("Failed to initialize package manager");
-        this.package_manager.?.onWake = this.onWakePackageManager;
+    /// This is set to false for the runtime. The runtime should choose "main"
+    /// over "module" in package.json
+    prefer_module_field: bool = true,
 
-        return this.package_manager.?;
+    pub fn getPackageManager(this: *Resolver) *PackageManager {
+        return this.package_manager orelse brk: {
+            bun.HTTPThead.init() catch unreachable;
+            const pm = PackageManager.initWithRuntime(
+                this.log,
+                this.opts.install,
+                this.allocator,
+                .{},
+                this.env_loader.?,
+            ) catch @panic("Failed to initialize package manager");
+            pm.onWake = this.onWakePackageManager;
+            this.package_manager = pm;
+            break :brk pm;
+        };
     }
 
     pub inline fn usePackageManager(self: *const ThisResolver) bool {
@@ -609,7 +612,7 @@ pub const Resolver = struct {
         if (r.debug_logs) |*debug| {
             if (flush_mode == DebugLogs.FlushMode.fail) {
                 try r.log.addRangeDebugWithNotes(null, logger.Range{ .loc = logger.Loc{} }, debug.what, try debug.notes.toOwnedSlice());
-            } else if (@enumToInt(r.log.level) <= @enumToInt(logger.Log.Level.verbose)) {
+            } else if (@intFromEnum(r.log.level) <= @intFromEnum(logger.Log.Level.verbose)) {
                 try r.log.addVerboseWithNotes(null, logger.Loc.Empty, debug.what, try debug.notes.toOwnedSlice());
             }
         }
@@ -1253,19 +1256,13 @@ pub const Resolver = struct {
 
         if (check_package) {
             if (r.opts.polyfill_node_globals) {
-                var import_path_without_node_prefix = import_path;
-                const had_node_prefix = import_path_without_node_prefix.len > "node:".len and
-                    strings.eqlComptime(import_path_without_node_prefix[0.."node:".len], "node:");
-
-                import_path_without_node_prefix = if (had_node_prefix)
-                    import_path_without_node_prefix["node:".len..]
-                else
-                    import_path_without_node_prefix;
+                const had_node_prefix = strings.hasPrefixComptime(import_path, "node:");
+                const import_path_without_node_prefix = if (had_node_prefix) import_path["node:".len..] else import_path;
 
                 if (NodeFallbackModules.Map.get(import_path_without_node_prefix)) |*fallback_module| {
                     result.path_pair.primary = fallback_module.path;
                     result.module_type = .cjs;
-                    result.package_json = @intToPtr(*PackageJSON, @ptrToInt(fallback_module.package_json));
+                    result.package_json = @ptrFromInt(*PackageJSON, @intFromPtr(fallback_module.package_json));
                     result.is_from_node_modules = true;
                     return .{ .success = result };
                     // "node:*
@@ -1275,7 +1272,7 @@ pub const Resolver = struct {
                 } else if (had_node_prefix or
                     (strings.hasPrefixComptime(import_path_without_node_prefix, "fs") and
                     (import_path_without_node_prefix.len == 2 or
-                    import_path_without_node_prefix[3] == '/')))
+                    import_path_without_node_prefix[2] == '/')))
                 {
                     result.path_pair.primary.namespace = "node";
                     result.path_pair.primary.text = import_path_without_node_prefix;
@@ -1695,8 +1692,9 @@ pub const Resolver = struct {
                 // If the source directory doesn't have a node_modules directory, we can
                 // check the global cache directory for a package.json file.
                 var manager = r.getPackageManager();
-                var dependency_version: Dependency.Version = .{};
-                var dependency_behavior = @intToEnum(Dependency.Behavior, Dependency.Behavior.normal);
+                var dependency_version = Dependency.Version{};
+                var dependency_behavior = @enumFromInt(Dependency.Behavior, Dependency.Behavior.normal);
+                var string_buf = esm.version;
 
                 // const initial_pending_tasks = manager.pending_tasks;
                 var resolved_package_id: Install.PackageID = brk: {
@@ -1704,7 +1702,6 @@ pub const Resolver = struct {
                     // and try to look up the dependency from there
                     if (dir_info.package_json_for_dependencies) |package_json| {
                         var dependencies_list: []const Dependency = &[_]Dependency{};
-                        var string_buf: []const u8 = "";
                         const resolve_from_lockfile = package_json.package_manager_package_id != Install.invalid_package_id;
 
                         if (resolve_from_lockfile) {
@@ -1720,24 +1717,21 @@ pub const Resolver = struct {
                         }
 
                         for (dependencies_list, 0..) |dependency, dependency_id| {
-                            const dep_name = dependency.name.slice(string_buf);
-                            if (dep_name.len == esm.name.len) {
-                                if (!strings.eqlLong(dep_name, esm.name, false)) {
-                                    continue;
-                                }
-
-                                dependency_version = dependency.version;
-                                dependency_behavior = dependency.behavior;
-
-                                if (resolve_from_lockfile) {
-                                    const resolutions = &manager.lockfile.packages.items(.resolutions)[package_json.package_manager_package_id];
-
-                                    // found it!
-                                    break :brk resolutions.get(manager.lockfile.buffers.resolutions.items)[dependency_id];
-                                }
-
-                                break;
+                            if (!strings.eqlLong(dependency.name.slice(string_buf), esm.name, true)) {
+                                continue;
                             }
+
+                            dependency_version = dependency.version;
+                            dependency_behavior = dependency.behavior;
+
+                            if (resolve_from_lockfile) {
+                                const resolutions = &manager.lockfile.packages.items(.resolutions)[package_json.package_manager_package_id];
+
+                                // found it!
+                                break :brk resolutions.get(manager.lockfile.buffers.resolutions.items)[dependency_id];
+                            }
+
+                            break;
                         }
                     }
 
@@ -1767,6 +1761,7 @@ pub const Resolver = struct {
                             if (esm_.?.version.len > 0 and dir_info.enclosing_package_json != null and global_cache.allowVersionSpecifier()) {
                                 return .{ .failure = error.VersionSpecifierNotAllowedHere };
                             }
+                            string_buf = esm.version;
                             dependency_version = Dependency.parse(
                                 r.allocator,
                                 Semver.String.init(esm.name, esm.name),
@@ -1792,6 +1787,7 @@ pub const Resolver = struct {
                         dependency_behavior,
                         &resolved_package_id,
                         dependency_version,
+                        string_buf,
                     )) {
                         .resolution => |res| break :brk res,
                         .pending => |pending| return .{ .pending = pending },
@@ -2070,6 +2066,7 @@ pub const Resolver = struct {
         behavior: Dependency.Behavior,
         input_package_id_: *Install.PackageID,
         version: Dependency.Version,
+        version_buf: []const u8,
     ) DependencyToResolve {
         if (r.debug_logs) |*debug| {
             debug.addNoteFmt("Enqueueing pending dependency \"{s}@{s}\"", .{ esm.name, esm.version });
@@ -2132,7 +2129,7 @@ pub const Resolver = struct {
 
             // All packages are enqueued to the root
             // because we download all the npm package dependencies
-            switch (pm.enqueueDependencyToRoot(esm.name, esm.version, &version, behavior)) {
+            switch (pm.enqueueDependencyToRoot(esm.name, &version, version_buf, behavior)) {
                 .resolution => |result| {
                     input_package_id_.* = result.package_id;
                     return .{ .resolution = result.resolution };
@@ -2629,7 +2626,7 @@ pub const Resolver = struct {
 
                 // Directories must always end in a trailing slash or else various bugs can occur.
                 // This covers "what happens when the trailing"
-                end += @intCast(usize, @boolToInt(safe_path.len > end and end > 0 and safe_path[end - 1] != std.fs.path.sep and safe_path[end] == std.fs.path.sep));
+                end += @intCast(usize, @intFromBool(safe_path.len > end and end > 0 and safe_path[end - 1] != std.fs.path.sep and safe_path[end] == std.fs.path.sep));
                 break :brk safe_path[dir_path_i..end];
             };
 
@@ -3108,6 +3105,93 @@ pub const Resolver = struct {
         };
     }
 
+    pub export fn Resolver__nodeModulePathsForJS(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) callconv(.C) bun.JSC.JSValue {
+        bun.JSC.markBinding(@src());
+        const argument: bun.JSC.JSValue = callframe.argument(0);
+
+        if (argument.isEmpty() or !argument.isString()) {
+            globalThis.throwInvalidArgumentType("nodeModulePaths", "path", "string");
+            return .zero;
+        }
+
+        const in_str = argument.toBunString(globalThis);
+        var r = &globalThis.bunVM().bundler.resolver;
+        return nodeModulePathsJSValue(r, in_str, globalThis);
+    }
+
+    pub export fn Resolver__propForRequireMainPaths(globalThis: *bun.JSC.JSGlobalObject) callconv(.C) bun.JSC.JSValue {
+        bun.JSC.markBinding(@src());
+
+        const in_str = bun.String.create(".");
+        var r = &globalThis.bunVM().bundler.resolver;
+        return nodeModulePathsJSValue(r, in_str, globalThis);
+    }
+
+    pub fn nodeModulePathsJSValue(
+        r: *ThisResolver,
+        in_str: bun.String,
+        globalObject: *bun.JSC.JSGlobalObject,
+    ) bun.JSC.JSValue {
+        var list = std.ArrayList(bun.String).init(bun.default_allocator);
+        defer list.deinit();
+
+        const sliced = in_str.toUTF8(bun.default_allocator);
+        defer sliced.deinit();
+
+        const str = brk: {
+            if (std.fs.path.isAbsolute(sliced.slice())) break :brk sliced.slice();
+            var dir_path_buf = bufs(.node_modules_paths_buf);
+            break :brk r.fs.joinBuf(&[_]string{ r.fs.top_level_dir, sliced.slice() }, dir_path_buf);
+        };
+        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        defer arena.deinit();
+        var stack_fallback_allocator = std.heap.stackFallback(1024, arena.allocator());
+
+        if (r.readDirInfo(strings.withoutTrailingSlash(str)) catch null) |result| {
+            var dir_info = result;
+
+            while (true) {
+                const path_without_trailing_slash = strings.withoutTrailingSlash(dir_info.abs_path);
+                const path_parts = brk: {
+                    if (path_without_trailing_slash.len == 1 and path_without_trailing_slash[0] == '/') {
+                        break :brk [2]string{ "", "/node_modules" };
+                    }
+
+                    break :brk [2]string{ path_without_trailing_slash, "/node_modules" };
+                };
+                list.append(
+                    bun.String.create(
+                        bun.strings.concat(stack_fallback_allocator.get(), &path_parts) catch unreachable,
+                    ),
+                ) catch unreachable;
+                dir_info = (r.readDirInfo(std.fs.path.dirname(path_without_trailing_slash) orelse break) catch null) orelse break;
+            }
+        } else {
+            // does not exist
+            const full_path = std.fs.path.resolve(r.allocator, &[1][]const u8{str}) catch unreachable;
+            var path = full_path;
+            while (true) {
+                const path_without_trailing_slash = strings.withoutTrailingSlash(path);
+
+                list.append(
+                    bun.String.create(
+                        bun.strings.concat(
+                            stack_fallback_allocator.get(),
+                            &[_]string{
+                                path_without_trailing_slash,
+                                "/node_modules",
+                            },
+                        ) catch unreachable,
+                    ),
+                ) catch unreachable;
+
+                path = path[0 .. strings.lastIndexOfChar(path, '/') orelse break];
+            }
+        }
+
+        return bun.String.toJSArray(globalObject, list.items);
+    }
+
     pub fn loadAsIndex(r: *ThisResolver, dir_info: *DirInfo, extension_order: []const string) ?MatchResult {
         var rfs = &r.fs.fs;
         // Try the "index" file with extensions
@@ -3322,7 +3406,10 @@ pub const Resolver = struct {
                             // with this same path. The goal of this code is to avoid having
                             // both the "module" file and the "main" file in the bundle at the
                             // same time.
-                            if (kind != ast.ImportKind.require) {
+                            //
+                            // Additionally, if this is for the runtime, use the "main" field.
+                            // If it doesn't exist, the "module" field will be used.
+                            if (r.prefer_module_field and kind != ast.ImportKind.require) {
                                 if (r.debug_logs) |*debug| {
                                     debug.addNoteFmt("Resolved to \"{s}\" using the \"module\" field in \"{s}\"", .{ auto_main_result.path_pair.primary.text, pkg_json.source.key_path.text });
 
@@ -3893,3 +3980,10 @@ pub const GlobalCache = enum {
         };
     }
 };
+
+comptime {
+    if (!bun.JSC.is_bindgen) {
+        _ = Resolver.Resolver__nodeModulePathsForJS;
+        _ = Resolver.Resolver__propForRequireMainPaths;
+    }
+}

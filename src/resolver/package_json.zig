@@ -59,7 +59,7 @@ pub const PackageJSON = struct {
 
     pub fn generateHash(package_json: *PackageJSON) void {
         var hashy: [1024]u8 = undefined;
-        std.mem.set(u8, &hashy, 0);
+        @memset(&hashy, 0);
         var used: usize = 0;
         bun.copy(u8, &hashy, package_json.name);
         used = package_json.name.len;
@@ -390,7 +390,7 @@ pub const PackageJSON = struct {
                             var count: usize = 0;
                             const items = array.items.slice();
                             for (items) |item| {
-                                count += @boolToInt(item.data == .e_string and item.data.e_string.data.len > 0);
+                                count += @intFromBool(item.data == .e_string and item.data.e_string.data.len > 0);
                             }
                             switch (count) {
                                 0 => {},
@@ -888,10 +888,10 @@ pub const PackageJSON = struct {
 
                 const dependency_groups = comptime brk: {
                     var out_groups: [
-                        @as(usize, @boolToInt(features.dependencies)) +
-                            @as(usize, @boolToInt(features.dev_dependencies)) +
-                            @as(usize, @boolToInt(features.optional_dependencies)) +
-                            @as(usize, @boolToInt(features.peer_dependencies))
+                        @as(usize, @intFromBool(features.dependencies)) +
+                            @as(usize, @intFromBool(features.dev_dependencies)) +
+                            @as(usize, @intFromBool(features.optional_dependencies)) +
+                            @as(usize, @intFromBool(features.peer_dependencies))
                     ]DependencyGroup = undefined;
                     var out_group_i: usize = 0;
                     if (features.dependencies) {
@@ -989,7 +989,7 @@ pub const PackageJSON = struct {
                             const key = prop.key.?.asString(allocator) orelse continue;
                             const value = prop.value.?.asString(allocator) orelse continue;
 
-                            count += @as(usize, @boolToInt(key.len > 0 and value.len > 0));
+                            count += @as(usize, @intFromBool(key.len > 0 and value.len > 0));
                         }
 
                         if (count == 0) break :read_scripts;
@@ -1022,7 +1022,7 @@ pub const PackageJSON = struct {
     }
 
     pub fn hashModule(this: *const PackageJSON, module: string) u32 {
-        var hasher = std.hash.Wyhash.init(0);
+        var hasher = bun.Wyhash.init(0);
         hasher.update(std.mem.asBytes(&this.hash));
         hasher.update(module);
 
@@ -1148,7 +1148,7 @@ pub const ExportsMap = struct {
                     // PATTERN_KEY_COMPARE which orders in descending order of specificity.
                     const GlobLengthSorter: type = strings.NewGlobLengthSorter(Entry.Data.Map.MapEntry, "key");
                     var sorter = GlobLengthSorter{};
-                    std.sort.sort(Entry.Data.Map.MapEntry, expansion_keys, sorter, GlobLengthSorter.lessThan);
+                    std.sort.block(Entry.Data.Map.MapEntry, expansion_keys, sorter, GlobLengthSorter.lessThan);
 
                     return Entry{
                         .data = .{

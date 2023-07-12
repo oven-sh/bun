@@ -108,6 +108,8 @@ pub const JSBlob = struct {
 
         if (@TypeOf(Blob.getArrayBuffer) != CallbackType)
             @compileLog("Expected Blob.getArrayBuffer to be a callback but received " ++ @typeName(@TypeOf(Blob.getArrayBuffer)));
+        if (@TypeOf(Blob.getExists) != CallbackType)
+            @compileLog("Expected Blob.getExists to be a callback but received " ++ @typeName(@TypeOf(Blob.getExists)));
         if (@TypeOf(Blob.getFormData) != CallbackType)
             @compileLog("Expected Blob.getFormData to be a callback but received " ++ @typeName(@TypeOf(Blob.getFormData)));
         if (@TypeOf(Blob.getJSON) != CallbackType)
@@ -136,6 +138,7 @@ pub const JSBlob = struct {
             @export(Blob.constructor, .{ .name = "BlobClass__construct" });
             @export(Blob.finalize, .{ .name = "BlobClass__finalize" });
             @export(Blob.getArrayBuffer, .{ .name = "BlobPrototype__getArrayBuffer" });
+            @export(Blob.getExists, .{ .name = "BlobPrototype__getExists" });
             @export(Blob.getFormData, .{ .name = "BlobPrototype__getFormData" });
             @export(Blob.getJSON, .{ .name = "BlobPrototype__getJSON" });
             @export(Blob.getLastModified, .{ .name = "BlobPrototype__getLastModified" });
@@ -1406,6 +1409,97 @@ pub const JSExpectStringMatching = struct {
         }
     }
 };
+pub const JSFSWatcher = struct {
+    const FSWatcher = Classes.FSWatcher;
+    const GetterType = fn (*FSWatcher, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*FSWatcher, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*FSWatcher, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*FSWatcher, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*FSWatcher, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*FSWatcher {
+        JSC.markBinding(@src());
+        return FSWatcher__fromJS(value);
+    }
+
+    extern fn FSWatcherPrototype__listenerSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn FSWatcherPrototype__listenerGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `FSWatcher.listener` setter
+    /// This value will be visited by the garbage collector.
+    pub fn listenerSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        FSWatcherPrototype__listenerSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `FSWatcher.listener` getter
+    /// This value will be visited by the garbage collector.
+    pub fn listenerGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = FSWatcherPrototype__listenerGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of FSWatcher
+    pub fn toJS(this: *FSWatcher, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = FSWatcher__create(globalObject, this);
+            std.debug.assert(value__.as(FSWatcher).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return FSWatcher__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of FSWatcher.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*FSWatcher) bool {
+        JSC.markBinding(@src());
+        return FSWatcher__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *FSWatcher, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(FSWatcher__dangerouslySetPtr(value, null));
+    }
+
+    extern fn FSWatcher__fromJS(JSC.JSValue) ?*FSWatcher;
+    extern fn FSWatcher__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn FSWatcher__create(globalObject: *JSC.JSGlobalObject, ptr: ?*FSWatcher) JSC.JSValue;
+
+    extern fn FSWatcher__dangerouslySetPtr(JSC.JSValue, ?*FSWatcher) bool;
+
+    comptime {
+        if (@TypeOf(FSWatcher.finalize) != (fn (*FSWatcher) callconv(.C) void)) {
+            @compileLog("FSWatcher.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(FSWatcher.doClose) != CallbackType)
+            @compileLog("Expected FSWatcher.doClose to be a callback but received " ++ @typeName(@TypeOf(FSWatcher.doClose)));
+        if (@TypeOf(FSWatcher.hasRef) != CallbackType)
+            @compileLog("Expected FSWatcher.hasRef to be a callback but received " ++ @typeName(@TypeOf(FSWatcher.hasRef)));
+        if (@TypeOf(FSWatcher.doRef) != CallbackType)
+            @compileLog("Expected FSWatcher.doRef to be a callback but received " ++ @typeName(@TypeOf(FSWatcher.doRef)));
+        if (@TypeOf(FSWatcher.doUnref) != CallbackType)
+            @compileLog("Expected FSWatcher.doUnref to be a callback but received " ++ @typeName(@TypeOf(FSWatcher.doUnref)));
+        if (!JSC.is_bindgen) {
+            @export(FSWatcher.doClose, .{ .name = "FSWatcherPrototype__doClose" });
+            @export(FSWatcher.doRef, .{ .name = "FSWatcherPrototype__doRef" });
+            @export(FSWatcher.doUnref, .{ .name = "FSWatcherPrototype__doUnref" });
+            @export(FSWatcher.finalize, .{ .name = "FSWatcherClass__finalize" });
+            @export(FSWatcher.hasPendingActivity, .{ .name = "FSWatcher__hasPendingActivity" });
+            @export(FSWatcher.hasRef, .{ .name = "FSWatcherPrototype__hasRef" });
+        }
+    }
+};
 pub const JSFileSystemRouter = struct {
     const FileSystemRouter = Classes.FileSystemRouter;
     const GetterType = fn (*FileSystemRouter, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -2312,6 +2406,8 @@ pub const JSNodeJSFS = struct {
             @compileLog("Expected NodeJSFS.utimes to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.utimes)));
         if (@TypeOf(NodeJSFS.utimesSync) != CallbackType)
             @compileLog("Expected NodeJSFS.utimesSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.utimesSync)));
+        if (@TypeOf(NodeJSFS.watch) != CallbackType)
+            @compileLog("Expected NodeJSFS.watch to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.watch)));
         if (@TypeOf(NodeJSFS.write) != CallbackType)
             @compileLog("Expected NodeJSFS.write to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.write)));
         if (@TypeOf(NodeJSFS.writeFile) != CallbackType)
@@ -2402,6 +2498,7 @@ pub const JSNodeJSFS = struct {
             @export(NodeJSFS.unlinkSync, .{ .name = "NodeJSFSPrototype__unlinkSync" });
             @export(NodeJSFS.utimes, .{ .name = "NodeJSFSPrototype__utimes" });
             @export(NodeJSFS.utimesSync, .{ .name = "NodeJSFSPrototype__utimesSync" });
+            @export(NodeJSFS.watch, .{ .name = "NodeJSFSPrototype__watch" });
             @export(NodeJSFS.write, .{ .name = "NodeJSFSPrototype__write" });
             @export(NodeJSFS.writeFile, .{ .name = "NodeJSFSPrototype__writeFile" });
             @export(NodeJSFS.writeFileSync, .{ .name = "NodeJSFSPrototype__writeFileSync" });
@@ -4329,6 +4426,9 @@ pub const JSTCPSocket = struct {
             @compileLog("TCPSocket.finalize is not a finalizer");
         }
 
+        if (@TypeOf(TCPSocket.getALPNProtocol) != GetterType)
+            @compileLog("Expected TCPSocket.getALPNProtocol to be a getter");
+
         if (@TypeOf(TCPSocket.getAuthorized) != GetterType)
             @compileLog("Expected TCPSocket.getAuthorized to be a getter");
 
@@ -4359,18 +4459,23 @@ pub const JSTCPSocket = struct {
         if (@TypeOf(TCPSocket.getRemoteAddress) != GetterType)
             @compileLog("Expected TCPSocket.getRemoteAddress to be a getter");
 
+        if (@TypeOf(TCPSocket.setServername) != CallbackType)
+            @compileLog("Expected TCPSocket.setServername to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.setServername)));
         if (@TypeOf(TCPSocket.shutdown) != CallbackType)
             @compileLog("Expected TCPSocket.shutdown to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.shutdown)));
         if (@TypeOf(TCPSocket.timeout) != CallbackType)
             @compileLog("Expected TCPSocket.timeout to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.timeout)));
         if (@TypeOf(TCPSocket.unref) != CallbackType)
             @compileLog("Expected TCPSocket.unref to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.unref)));
+        if (@TypeOf(TCPSocket.upgradeTLS) != CallbackType)
+            @compileLog("Expected TCPSocket.upgradeTLS to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.upgradeTLS)));
         if (@TypeOf(TCPSocket.write) != CallbackType)
             @compileLog("Expected TCPSocket.write to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.write)));
         if (!JSC.is_bindgen) {
             @export(TCPSocket.end, .{ .name = "TCPSocketPrototype__end" });
             @export(TCPSocket.finalize, .{ .name = "TCPSocketClass__finalize" });
             @export(TCPSocket.flush, .{ .name = "TCPSocketPrototype__flush" });
+            @export(TCPSocket.getALPNProtocol, .{ .name = "TCPSocketPrototype__getALPNProtocol" });
             @export(TCPSocket.getAuthorizationError, .{ .name = "TCPSocketPrototype__getAuthorizationError" });
             @export(TCPSocket.getAuthorized, .{ .name = "TCPSocketPrototype__getAuthorized" });
             @export(TCPSocket.getData, .{ .name = "TCPSocketPrototype__getData" });
@@ -4382,9 +4487,11 @@ pub const JSTCPSocket = struct {
             @export(TCPSocket.ref, .{ .name = "TCPSocketPrototype__ref" });
             @export(TCPSocket.reload, .{ .name = "TCPSocketPrototype__reload" });
             @export(TCPSocket.setData, .{ .name = "TCPSocketPrototype__setData" });
+            @export(TCPSocket.setServername, .{ .name = "TCPSocketPrototype__setServername" });
             @export(TCPSocket.shutdown, .{ .name = "TCPSocketPrototype__shutdown" });
             @export(TCPSocket.timeout, .{ .name = "TCPSocketPrototype__timeout" });
             @export(TCPSocket.unref, .{ .name = "TCPSocketPrototype__unref" });
+            @export(TCPSocket.upgradeTLS, .{ .name = "TCPSocketPrototype__upgradeTLS" });
             @export(TCPSocket.write, .{ .name = "TCPSocketPrototype__write" });
         }
     }
@@ -4484,6 +4591,9 @@ pub const JSTLSSocket = struct {
             @compileLog("TLSSocket.finalize is not a finalizer");
         }
 
+        if (@TypeOf(TLSSocket.getALPNProtocol) != GetterType)
+            @compileLog("Expected TLSSocket.getALPNProtocol to be a getter");
+
         if (@TypeOf(TLSSocket.getAuthorized) != GetterType)
             @compileLog("Expected TLSSocket.getAuthorized to be a getter");
 
@@ -4514,18 +4624,23 @@ pub const JSTLSSocket = struct {
         if (@TypeOf(TLSSocket.getRemoteAddress) != GetterType)
             @compileLog("Expected TLSSocket.getRemoteAddress to be a getter");
 
+        if (@TypeOf(TLSSocket.setServername) != CallbackType)
+            @compileLog("Expected TLSSocket.setServername to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.setServername)));
         if (@TypeOf(TLSSocket.shutdown) != CallbackType)
             @compileLog("Expected TLSSocket.shutdown to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.shutdown)));
         if (@TypeOf(TLSSocket.timeout) != CallbackType)
             @compileLog("Expected TLSSocket.timeout to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.timeout)));
         if (@TypeOf(TLSSocket.unref) != CallbackType)
             @compileLog("Expected TLSSocket.unref to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.unref)));
+        if (@TypeOf(TLSSocket.upgradeTLS) != CallbackType)
+            @compileLog("Expected TLSSocket.upgradeTLS to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.upgradeTLS)));
         if (@TypeOf(TLSSocket.write) != CallbackType)
             @compileLog("Expected TLSSocket.write to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.write)));
         if (!JSC.is_bindgen) {
             @export(TLSSocket.end, .{ .name = "TLSSocketPrototype__end" });
             @export(TLSSocket.finalize, .{ .name = "TLSSocketClass__finalize" });
             @export(TLSSocket.flush, .{ .name = "TLSSocketPrototype__flush" });
+            @export(TLSSocket.getALPNProtocol, .{ .name = "TLSSocketPrototype__getALPNProtocol" });
             @export(TLSSocket.getAuthorizationError, .{ .name = "TLSSocketPrototype__getAuthorizationError" });
             @export(TLSSocket.getAuthorized, .{ .name = "TLSSocketPrototype__getAuthorized" });
             @export(TLSSocket.getData, .{ .name = "TLSSocketPrototype__getData" });
@@ -4537,9 +4652,11 @@ pub const JSTLSSocket = struct {
             @export(TLSSocket.ref, .{ .name = "TLSSocketPrototype__ref" });
             @export(TLSSocket.reload, .{ .name = "TLSSocketPrototype__reload" });
             @export(TLSSocket.setData, .{ .name = "TLSSocketPrototype__setData" });
+            @export(TLSSocket.setServername, .{ .name = "TLSSocketPrototype__setServername" });
             @export(TLSSocket.shutdown, .{ .name = "TLSSocketPrototype__shutdown" });
             @export(TLSSocket.timeout, .{ .name = "TLSSocketPrototype__timeout" });
             @export(TLSSocket.unref, .{ .name = "TLSSocketPrototype__unref" });
+            @export(TLSSocket.upgradeTLS, .{ .name = "TLSSocketPrototype__upgradeTLS" });
             @export(TLSSocket.write, .{ .name = "TLSSocketPrototype__write" });
         }
     }
@@ -4855,6 +4972,7 @@ comptime {
     _ = JSExpectAnything;
     _ = JSExpectStringContaining;
     _ = JSExpectStringMatching;
+    _ = JSFSWatcher;
     _ = JSFileSystemRouter;
     _ = JSListener;
     _ = JSMD4;

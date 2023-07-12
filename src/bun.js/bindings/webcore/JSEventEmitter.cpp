@@ -148,8 +148,8 @@ static const HashTableValue JSEventEmitterPrototypeTableValues[] = {
     { "addListener"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_addListener, 2 } },
     { "on"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_addListener, 2 } },
     { "once"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_addOnceListener, 2 } },
-    { "prepend"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_prependListener, 2 } },
-    { "prependOnce"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_prependOnceListener, 2 } },
+    { "prependListener"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_prependListener, 2 } },
+    { "prependOnceListener"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_prependOnceListener, 2 } },
     { "removeListener"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_removeListener, 2 } },
     { "off"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_removeListener, 2 } },
     { "removeAllListeners"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_removeAllListeners, 1 } },
@@ -219,7 +219,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsEventEmitterConstructor, (JSGlobalObject * lexicalGlo
     return JSValue::encode(JSEventEmitter::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
-static inline JSC::EncodedJSValue addListener(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis, bool once, bool prepend)
+inline JSC::EncodedJSValue JSEventEmitter::addListener(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSEventEmitter* castedThis, bool once, bool prepend)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -251,7 +251,7 @@ static inline JSC::EncodedJSValue addListener(JSC::JSGlobalObject* lexicalGlobal
 
 static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_addListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
 {
-    return addListener(lexicalGlobalObject, callFrame, castedThis, false, false);
+    return JSEventEmitter::addListener(lexicalGlobalObject, callFrame, castedThis, false, false);
 }
 
 static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_setMaxListenersBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
@@ -280,17 +280,17 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_getMaxListener
 
 static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_addOnceListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
 {
-    return addListener(lexicalGlobalObject, callFrame, castedThis, true, false);
+    return JSEventEmitter::addListener(lexicalGlobalObject, callFrame, castedThis, true, false);
 }
 
 static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_prependListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
 {
-    return addListener(lexicalGlobalObject, callFrame, castedThis, false, true);
+    return JSEventEmitter::addListener(lexicalGlobalObject, callFrame, castedThis, false, true);
 }
 
 static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_prependOnceListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
 {
-    return addListener(lexicalGlobalObject, callFrame, castedThis, true, true);
+    return JSEventEmitter::addListener(lexicalGlobalObject, callFrame, castedThis, true, true);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_addListener, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -324,6 +324,11 @@ JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_prependOnceListener, (J
 }
 
 static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_removeListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
+{
+    return JSEventEmitter::removeListener(lexicalGlobalObject, callFrame, castedThis);
+}
+
+inline JSC::EncodedJSValue JSEventEmitter::removeListener(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSEventEmitter* castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);

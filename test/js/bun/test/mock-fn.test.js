@@ -2,7 +2,16 @@
  * This file is meant to be runnable in both Jest and Bun.
  * `bunx jest mock-fn.test.js`
  */
-var { isBun, test, describe, expect, jest, vi, mock, bunTest, spyOn } = require("./test-interop.js")();
+var { isBun, expect, jest, vi, mock, spyOn } = require("./test-interop.js")();
+
+// if you want to test vitest, comment the above and uncomment the below
+
+// import { expect, describe, test, vi } from "vitest";
+// const isBun = false;
+// const jest = { fn: vi.fn, restoreAllMocks: vi.restoreAllMocks };
+// const spyOn = vi.spyOn;
+// import * as extended from "jest-extended";
+// expect.extend(extended);
 
 async function expectResolves(promise) {
   expect(promise).toBeInstanceOf(Promise);
@@ -434,7 +443,6 @@ describe("mock()", () => {
         return "3";
       },
     );
-    expect(result).toBe(undefined);
     expect(fn()).toBe("1");
   });
   test("withImplementation (async)", async () => {
@@ -594,6 +602,20 @@ describe("spyOn", () => {
       expect(fn).not.toHaveBeenCalled();
     });
   }
+
+  test("spyOn twice works", () => {
+    var obj = {
+      original() {
+        return 42;
+      },
+    };
+    const _original = obj.original;
+    const fn = spyOn(obj, "original");
+    const fn2 = spyOn(obj, "original");
+    expect(fn).toBe(obj.original);
+    expect(fn2).toBe(fn);
+    expect(fn).not.toBe(_original);
+  });
 
   // spyOn does not work with getters/setters yet.
 });

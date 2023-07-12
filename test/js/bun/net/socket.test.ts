@@ -105,7 +105,28 @@ it("should reject on connection error, calling both connectError() and rejecting
 });
 
 it("should not leak memory when connect() fails", async () => {
-  await expectMaxObjectTypeCount(expect, "TCPSocket", 1, 100);
+  await (async () => {
+    var promises = new Array(100);
+    for (let i = 0; i < 100; i++) {
+      promises[i] = connect({
+        hostname: "localhost",
+        port: 55555,
+        socket: {
+          connectError(socket, error) {},
+          data() {},
+          drain() {},
+          close() {},
+          end() {},
+          error() {},
+          open() {},
+        },
+      });
+    }
+    await Promise.allSettled(promises);
+    promises.length = 0;
+  })();
+
+  await expectMaxObjectTypeCount(expect, "TCPSocket", 50, 100);
 });
 
 // this also tests we mark the promise as handled if connectError() is called

@@ -300,4 +300,91 @@ describe("HTMLRewriter", () => {
         .text(),
     ).toEqual("<div></div>");
   });
+
+  it("it supports lastInTextNode", async () => {
+    let lastInTextNode;
+
+    await new HTMLRewriter()
+      .on("p", {
+        text(text) {
+          lastInTextNode ??= text.lastInTextNode;
+        },
+      })
+      .transform(new Response("<p>Lorem ipsum!</p>"))
+      .text();
+
+    expect(lastInTextNode).toBeBoolean();
+  });
+});
+
+// By not segfaulting, this test passes
+it("#3334 regression", async () => {
+  for (let i = 0; i < 10; i++) {
+    const headers = new Headers({
+      "content-type": "text/html",
+    });
+    const response = new Response("<div>content</div>", { headers });
+
+    const result = await new HTMLRewriter()
+      .on("div", {
+        element(elem) {
+          elem.setInnerContent("new");
+        },
+      })
+      .transform(response)
+      .text();
+    expect(result).toEqual("<div>new</div>");
+  }
+  Bun.gc(true);
+});
+
+it("#3489", async () => {
+  var el;
+  await new HTMLRewriter()
+    .on("p", {
+      element(element) {
+        el = element.getAttribute("id");
+      },
+    })
+    .transform(new Response('<p id="Šžõäöü"></p>'))
+    .text();
+  expect(el).toEqual("Šžõäöü");
+});
+
+it("get attribute - ascii", async () => {
+  for (let i = 0; i < 10; i++) {
+    var el;
+    await new HTMLRewriter()
+      .on("p", {
+        element(element) {
+          el = element.getAttribute("id");
+        },
+      })
+      .transform(new Response(`<p id="asciii"></p>`))
+      .text();
+    expect(el).toEqual("asciii");
+  }
+});
+
+it("#3520", async () => {
+  const pairs = [];
+
+  await new HTMLRewriter()
+    .on("p", {
+      element(element) {
+        for (const pair of element.attributes) {
+          pairs.push(pair);
+        }
+      },
+    })
+    .transform(new Response('<p šž="Õäöü" ab="Õäöü" šž="Õäöü" šž="dc" šž="🕵🏻"></p>'))
+    .text();
+
+  expect(pairs).toEqual([
+    ["šž", "Õäöü"],
+    ["ab", "Õäöü"],
+    ["šž", "Õäöü"],
+    ["šž", "dc"],
+    ["šž", "🕵🏻"],
+  ]);
 });

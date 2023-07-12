@@ -1,11 +1,12 @@
 // Hardcoded module "node:dns/promises"
-const { promises } = import.meta.require("node:dns");
+import { promises } from "node:dns";
 
 export const {
   lookup,
   lookupService,
   resolve,
   resolve4,
+  resolve6,
   resolveAny,
   resolveCname,
   resolveCaa,
@@ -27,6 +28,7 @@ export default {
   lookupService,
   resolve,
   resolve4,
+  resolve6,
   resolveAny,
   resolveCname,
   resolveCaa,

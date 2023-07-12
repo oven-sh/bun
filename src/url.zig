@@ -275,8 +275,8 @@ pub const URL = struct {
 
         if (base.len > path_offset and base[path_offset] == '/' and offset > 0) {
             if (url.search.len > 0) {
-                url.pathname = base[path_offset..std.math.min(
-                    std.math.min(offset + url.search.len, base.len),
+                url.pathname = base[path_offset..@min(
+                    @min(offset + url.search.len, base.len),
                     hash_offset,
                 )];
             } else if (hash_offset < std.math.maxInt(u32)) {
@@ -289,8 +289,8 @@ pub const URL = struct {
         if (url.path.len > 1) {
             const trimmed = std.mem.trim(u8, url.path, "/");
             if (trimmed.len > 1) {
-                url.path = url.path[std.math.min(
-                    std.math.max(@ptrToInt(trimmed.ptr) - @ptrToInt(url.path.ptr), 1) - 1,
+                url.path = url.path[@min(
+                    @max(@intFromPtr(trimmed.ptr) - @intFromPtr(url.path.ptr), 1) - 1,
                     hash_offset,
                 )..];
             } else {
@@ -348,8 +348,8 @@ pub const URL = struct {
                     url.username = str[0..i];
                     return i + 1;
                 },
-                // if we reach a slash, there's no username
-                '/' => {
+                // if we reach a slash or "?", there's no username
+                '?', '/' => {
                     return null;
                 },
                 else => {},
@@ -374,8 +374,8 @@ pub const URL = struct {
                     if (Environment.allow_assert) std.debug.assert(str[i..].len < 2 or std.mem.readIntNative(u16, str[i..][0..2]) != std.mem.readIntNative(u16, "//"));
                     return i + 1;
                 },
-                // if we reach a slash, there's no password
-                '/' => {
+                // if we reach a slash or "?", there's no password
+                '?', '/' => {
                     return null;
                 },
                 else => {},
@@ -402,8 +402,8 @@ pub const URL = struct {
                 ipv6_i = if (ipv6_i == null and str[i] == ']') i else ipv6_i;
                 colon_i = if (ipv6_i != null and colon_i == null and str[i] == ':') i else colon_i;
                 switch (str[i]) {
-                    // alright, we found the slash
-                    '/' => {
+                    // alright, we found the slash or "?"
+                    '?', '/' => {
                         break;
                     },
                     else => {},
@@ -421,8 +421,8 @@ pub const URL = struct {
             }
         } else {
 
-            // look for the first "/"
-            // if we have a slash, anything before that is the host
+            // look for the first "/" or "?"
+            // if we have a slash or "?", anything before that is the host
             // anything before the colon is the hostname
             // anything after the colon but before the slash is the port
             // the origin is the scheme before the slash
@@ -432,8 +432,8 @@ pub const URL = struct {
                 colon_i = if (colon_i == null and str[i] == ':') i else colon_i;
 
                 switch (str[i]) {
-                    // alright, we found the slash
-                    '/' => {
+                    // alright, we found the slash or "?"
+                    '?', '/' => {
                         break;
                     },
                     else => {},
@@ -542,12 +542,12 @@ pub const QueryStringMap = struct {
     }
 
     pub fn getIndex(this: *const QueryStringMap, input: string) ?usize {
-        const hash = std.hash.Wyhash.hash(0, input);
+        const hash = bun.hash(input);
         return std.mem.indexOfScalar(u64, this.list.items(.name_hash), hash);
     }
 
     pub fn get(this: *const QueryStringMap, input: string) ?string {
-        const hash = std.hash.Wyhash.hash(0, input);
+        const hash = bun.hash(input);
         const _slice = this.list.slice();
         const i = std.mem.indexOfScalar(u64, _slice.items(.name_hash), hash) orelse return null;
         return this.str(_slice.items(.value)[i]);
@@ -558,7 +558,7 @@ pub const QueryStringMap = struct {
     }
 
     pub fn getAll(this: *const QueryStringMap, input: string, target: []string) usize {
-        const hash = std.hash.Wyhash.hash(0, input);
+        const hash = bun.hash(input);
         const _slice = this.list.slice();
         return @call(.always_inline, getAllWithHashFromOffset, .{ this, target, hash, 0, _slice });
     }
@@ -638,7 +638,7 @@ pub const QueryStringMap = struct {
             try writer.writeAll(name_slice);
             buf_writer_pos += @truncate(u32, name_slice.len);
 
-            var name_hash: u64 = std.hash.Wyhash.hash(0, name_slice);
+            var name_hash: u64 = bun.hash(name_slice);
 
             value.length = PercentEncoding.decode(Writer, writer, result.rawValue(scanner.pathname.pathname)) catch continue;
             value.offset = buf_writer_pos;
@@ -659,9 +659,9 @@ pub const QueryStringMap = struct {
                 name.length = PercentEncoding.decode(Writer, writer, scanner.query.query_string[name.offset..][0..name.length]) catch continue;
                 name.offset = buf_writer_pos;
                 buf_writer_pos += name.length;
-                name_hash = std.hash.Wyhash.hash(0, buf.items[name.offset..][0..name.length]);
+                name_hash = bun.hash(buf.items[name.offset..][0..name.length]);
             } else {
-                name_hash = std.hash.Wyhash.hash(0, result.rawName(scanner.query.query_string));
+                name_hash = bun.hash(result.rawName(scanner.query.query_string));
                 if (std.mem.indexOfScalar(u64, list_slice.items(.name_hash), name_hash)) |index| {
 
                     // query string parameters should not override route parameters
@@ -726,7 +726,7 @@ pub const QueryStringMap = struct {
 
                 var name = result.name;
                 var value = result.value;
-                const name_hash: u64 = std.hash.Wyhash.hash(0, result.rawName(query_string));
+                const name_hash: u64 = bun.hash(result.rawName(query_string));
                 list.appendAssumeCapacity(Param{ .name = name, .value = value, .name_hash = name_hash });
             }
 
@@ -752,9 +752,9 @@ pub const QueryStringMap = struct {
                 name.length = PercentEncoding.decode(Writer, writer, query_string[name.offset..][0..name.length]) catch continue;
                 name.offset = buf_writer_pos;
                 buf_writer_pos += name.length;
-                name_hash = std.hash.Wyhash.hash(0, buf.items[name.offset..][0..name.length]);
+                name_hash = bun.hash(buf.items[name.offset..][0..name.length]);
             } else {
-                name_hash = std.hash.Wyhash.hash(0, result.rawName(query_string));
+                name_hash = bun.hash(result.rawName(query_string));
                 if (std.mem.indexOfScalar(u64, list_slice.items(.name_hash), name_hash)) |index| {
                     name = list_slice.items(.name)[index];
                 } else {
@@ -1126,7 +1126,7 @@ pub const FormData = struct {
                                         break;
                                     },
                                     '\\' => {
-                                        i += @boolToInt(field_value.len > i + 1 and field_value[i + 1] == '"');
+                                        i += @intFromBool(field_value.len > i + 1 and field_value[i + 1] == '"');
                                     },
                                     // the spec requires a end quote, but some browsers don't send it
                                     else => {},
@@ -1434,7 +1434,7 @@ test "Scanner.next - % encoded" {
 
 test "PercentEncoding.decode" {
     var buffer: [4096]u8 = undefined;
-    std.mem.set(u8, &buffer, 0);
+    @memset(&buffer, 0);
 
     var stream = std.io.fixedBufferStream(&buffer);
     var writer = stream.writer();

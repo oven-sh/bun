@@ -1,8 +1,8 @@
 import assert from "assert";
 import dedent from "dedent";
+
 import { ESBUILD_PATH, RUN_UNCHECKED_TESTS, itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
-
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_default_test.go
 
@@ -375,7 +375,10 @@ describe("bundler", () => {
 
       // assert bundles weird as of writing
       "/test.js": /* js */ `
-        globalThis.assert = import.meta.require('assert');
+        globalThis.assert = require('assert');
+        if (typeof assert.deepEqual !== 'function') {
+          throw new Error('assert.deepEqual is not a function');
+        }
         require('./out.js');
       `,
     },
@@ -1335,8 +1338,8 @@ describe("bundler", () => {
         import fs from "fs";
         import assert from "assert";
         import * as module from './out.js';
-        assert(module.fs === fs, 'export * as fs from "fs"; works')
-        assert(module.readFileSync === fs.readFileSync, 'export {readFileSync} from "fs"; works')
+        assert(module.fs.default === fs, 'export * as fs from "fs"; works')
+        assert(module.fs.default.readFileSync === fs.readFileSync, 'export {readFileSync} from "fs"; works')
       `,
     },
     target: "node",
@@ -1356,10 +1359,10 @@ describe("bundler", () => {
       `,
 
       "/test.js": /* js */ `
-        import fs from "fs";
+        import * as fs from "fs";
         import assert from "assert";
         import * as module from './out.js';
-        assert(module.f === fs, 'export {fs as f} works')
+        assert(module.f.default === fs.default, 'export {fs as f} works')
         assert(module.rfs === fs.readFileSync, 'export {rfs} works')
       `,
     },
@@ -1379,7 +1382,7 @@ describe("bundler", () => {
       `,
 
       "/test.js": /* js */ `
-        import fs from "fs";
+        import * as fs from "fs";
         import assert from "assert";
         import * as mod from './out.js';
         assert(mod.fs === fs, 'exports.fs')
@@ -6560,6 +6563,277 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       api.expectFile("/out.js").not.toContain("data = 123");
+    },
+  });
+  itBundled("default/BundlerUsesModuleFieldForEsm", {
+    files: {
+      "/entry.js": `
+        import { foo } from 'foo';
+        console.log(foo);
+      `,
+      "/node_modules/foo/package.json": `
+        {
+          "name": "foo",
+          "version": "2.0.0",
+          "module": "index.esm.js",
+          "main": "index.cjs.js"
+        }
+      `,
+      "/node_modules/foo/index.cjs.js": `
+        module.exports.foo = "hello index.cjs.js";
+      `,
+      "/node_modules/foo/index.esm.js": `
+        export const foo = "hello index.esm.js";
+      `,
+    },
+    run: {
+      stdout: "hello index.esm.js",
+    },
+  });
+  itBundled("default/BundlerUsesMainFieldForCjs", {
+    files: {
+      "/entry.js": `
+        const { foo } = require('foo');
+        console.log(foo);
+      `,
+      "/node_modules/foo/package.json": `
+        {
+          "name": "foo",
+          "version": "2.0.0",
+          "module": "index.esm.js",
+          "main": "index.cjs.js"
+        }
+      `,
+      "/node_modules/foo/index.cjs.js": `
+        module.exports.foo = "hello index.cjs.js";
+      `,
+      "/node_modules/foo/index.esm.js": `
+        export const foo = "hello index.esm.js";
+      `,
+    },
+    run: {
+      stdout: "hello index.cjs.js",
+    },
+  });
+  itBundled("default/RuntimeUsesMainFieldForCjs", {
+    files: {
+      "/entry.js": `
+        const { foo } = require('foo');
+        console.log(foo);
+      `,
+      "/node_modules/foo/package.json": `
+        {
+          "name": "foo",
+          "version": "2.0.0",
+          "module": "index.esm.js",
+          "main": "index.cjs.js"
+        }
+      `,
+      "/node_modules/foo/index.cjs.js": `
+        module.exports.foo = "hello index.cjs.js";
+      `,
+      "/node_modules/foo/index.esm.js": `
+        export const foo = "hello index.esm.js";
+      `,
+    },
+    bundling: false,
+    run: {
+      stdout: "hello index.cjs.js",
+    },
+  });
+  itBundled("default/RuntimeUsesMainFieldForEsm", {
+    files: {
+      "/entry.js": `
+        import { foo } from 'foo';
+        console.log(foo);
+      `,
+      "/node_modules/foo/package.json": `
+        {
+          "name": "foo",
+          "version": "2.0.0",
+          "module": "index.esm.js",
+          "main": "index.cjs.js"
+        }
+      `,
+      "/node_modules/foo/index.cjs.js": `
+        module.exports.foo = "hello index.cjs.js";
+      `,
+      "/node_modules/foo/index.esm.js": `
+        export const foo = "hello index.esm.js";
+      `,
+    },
+    bundling: false,
+    run: {
+      stdout: "hello index.cjs.js",
+    },
+  });
+  itBundled("default/BundlerUsesModuleFieldIfMainDoesNotExistCjs", {
+    files: {
+      "/entry.js": `
+        const { foo } = require('foo');
+        console.log(foo);
+      `,
+      "/node_modules/foo/package.json": `
+        {
+          "name": "foo",
+          "version": "2.0.0",
+          "module": "index.esm.js"
+        }
+      `,
+      "/node_modules/foo/index.cjs.js": `
+        module.exports.foo = "hello index.cjs.js";
+      `,
+      "/node_modules/foo/index.esm.js": `
+        export const foo = "hello index.esm.js";
+      `,
+    },
+    run: {
+      stdout: "hello index.esm.js",
+    },
+  });
+  itBundled("default/BundlerUsesModuleFieldIfMainDoesNotExistEsm", {
+    files: {
+      "/entry.js": `
+        import { foo } from 'foo';
+        console.log(foo);
+      `,
+      "/node_modules/foo/package.json": `
+        {
+          "name": "foo",
+          "version": "2.0.0",
+          "module": "index.esm.js"
+        }
+      `,
+      "/node_modules/foo/index.cjs.js": `
+        module.exports.foo = "hello index.cjs.js";
+      `,
+      "/node_modules/foo/index.esm.js": `
+        export const foo = "hello index.esm.js";
+      `,
+    },
+    run: {
+      stdout: "hello index.esm.js",
+    },
+  });
+  itBundled("default/RuntimeUsesModuleFieldIfMainDoesNotExistCjs", {
+    files: {
+      "/entry.js": `
+        const { foo } = require('foo');
+        console.log(foo);
+      `,
+      "/node_modules/foo/package.json": `
+        {
+          "name": "foo",
+          "version": "2.0.0",
+          "module": "index.esm.js"
+        }
+      `,
+      "/node_modules/foo/index.cjs.js": `
+        module.exports.foo = "hello index.cjs.js";
+      `,
+      "/node_modules/foo/index.esm.js": `
+        export const foo = "hello index.esm.js";
+      `,
+    },
+    bundling: false,
+    run: {
+      stdout: "hello index.esm.js",
+    },
+  });
+  itBundled("default/RuntimeUsesModuleFieldIfMainDoesNotExistEsm", {
+    files: {
+      "/entry.js": `
+        import { foo } from 'foo';
+        console.log(foo);
+      `,
+      "/node_modules/foo/package.json": `
+        {
+          "name": "foo",
+          "version": "2.0.0",
+          "module": "index.esm.js"
+        }
+      `,
+      "/node_modules/foo/index.cjs.js": `
+        module.exports.foo = "hello index.cjs.js";
+      `,
+      "/node_modules/foo/index.esm.js": `
+        export const foo = "hello index.esm.js";
+      `,
+    },
+    bundling: false,
+    run: {
+      stdout: "hello index.esm.js",
+    },
+  });
+  itBundled("default/RequireProperlyHandlesNamedExportDeclsInCjsModule", {
+    files: {
+      "/entry.js": `
+        const { a, b, c, d } = require('foo');
+        console.log(a, b, c, d);
+      `,
+      "/node_modules/foo/package.json": `
+        {
+          "name": "foo",
+          "version": "2.0.0"
+        }
+      `,
+      "/node_modules/foo/index.js": `
+        if (!exports.d) {
+          exports.d = 7;
+        }
+        if (exports.hasOwnProperty("d")) {
+          exports.a = 5;
+        }
+        
+        exports.b;
+        exports.b = 8;
+        exports.b = 9;
+        
+        var c;
+        c = 2;
+        exports.c = c;
+      `,
+    },
+    run: {
+      stdout: "5 9 2 7",
+    },
+    onAfterBundle(api) {
+      const contents = api.readFile("out.js");
+      expect(contents).not.toContain("undefined");
+      expect(contents).not.toContain("$");
+    },
+  });
+  itBundled("default/EsmImportProperlyHandlesNamedExportDeclsInUnwrappedCjsModule", {
+    files: {
+      "/entry.js": `
+        import { a, b, c, d } from 'foo';
+        console.log(a, b, c, d);
+      `,
+      "/node_modules/foo/package.json": `
+        {
+          "name": "foo",
+          "version": "2.0.0"
+        }
+      `,
+      "/node_modules/foo/index.js": `
+        if (!exports.d) {
+          exports.d = 7;
+        }
+        if (exports.hasOwnProperty("d")) {
+          exports.a = 5;
+        }
+        
+        exports.b;
+        exports.b = 8;
+        exports.b = 9;
+        
+        var c;
+        c = 2;
+        exports.c = c;
+      `,
+    },
+    run: {
+      stdout: "5 9 2 7",
     },
   });
 });

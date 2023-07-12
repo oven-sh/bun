@@ -427,29 +427,29 @@ export function hexWrite(this: BufferExt, text, offset, length) {
   return this.write(text, offset, length, "hex");
 }
 
-export function utf8Slice(this: BufferExt, offset, length) {
-  return this.toString(offset, length, "utf8");
+export function utf8Slice(this: BufferExt, start, end) {
+  return this.toString("utf8", start, end);
 }
-export function ucs2Slice(this: BufferExt, offset, length) {
-  return this.toString(offset, length, "ucs2");
+export function ucs2Slice(this: BufferExt, start, end) {
+  return this.toString("ucs2", start, end);
 }
-export function utf16leSlice(this: BufferExt, offset, length) {
-  return this.toString(offset, length, "utf16le");
+export function utf16leSlice(this: BufferExt, start, end) {
+  return this.toString("utf16le", start, end);
 }
-export function latin1Slice(this: BufferExt, offset, length) {
-  return this.toString(offset, length, "latin1");
+export function latin1Slice(this: BufferExt, start, end) {
+  return this.toString("latin1", start, end);
 }
-export function asciiSlice(this: BufferExt, offset, length) {
-  return this.toString(offset, length, "ascii");
+export function asciiSlice(this: BufferExt, start, end) {
+  return this.toString("ascii", start, end);
 }
-export function base64Slice(this: BufferExt, offset, length) {
-  return this.toString(offset, length, "base64");
+export function base64Slice(this: BufferExt, start, end) {
+  return this.toString("base64", start, end);
 }
-export function base64urlSlice(this: BufferExt, offset, length) {
-  return this.toString(offset, length, "base64url");
+export function base64urlSlice(this: BufferExt, start, end) {
+  return this.toString("base64url", start, end);
 }
-export function hexSlice(this: BufferExt, offset, length) {
-  return this.toString(offset, length, "hex");
+export function hexSlice(this: BufferExt, start, end) {
+  return this.toString("hex", start, end);
 }
 
 export function toJSON(this: BufferExt) {

@@ -5,6 +5,22 @@ pub const DecodeResult = struct {
     fail: bool = false,
 };
 
+pub const LibBase64 = struct {
+    pub const State = extern struct {
+        eof: c_int,
+        bytes: c_int,
+        flags: c_int,
+        carry: u8,
+    };
+    pub extern fn base64_encode(src: [*]const u8, srclen: usize, out: [*]u8, outlen: *usize, flags: c_int) void;
+    pub extern fn base64_stream_encode_init(state: *State, flags: c_int) void;
+    pub extern fn base64_stream_encode(state: *State, src: [*]const u8, srclen: usize, out: [*]u8, outlen: *usize) void;
+    pub extern fn base64_stream_encode_final(state: *State, out: [*]u8, outlen: *usize) void;
+    pub extern fn base64_decode(src: [*]const u8, srclen: usize, out: [*]u8, outlen: *usize, flags: c_int) c_int;
+    pub extern fn base64_stream_decode_init(state: *State, flags: c_int) void;
+    pub extern fn base64_stream_decode(state: *State, src: [*]const u8, srclen: usize, out: [*]u8, outlen: *usize) c_int;
+};
+
 const mixed_decoder = brk: {
     var decoder = zig_base64.standard.decoderWithIgnore("\xff \t\r\n" ++ [_]u8{
         std.ascii.control_code.vt,
@@ -30,7 +46,9 @@ pub fn decode(destination: []u8, source: []const u8) DecodeResult {
 }
 
 pub fn encode(destination: []u8, source: []const u8) usize {
-    return zig_base64.standard.Encoder.encode(destination, source).len;
+    var outlen: usize = destination.len;
+    LibBase64.base64_encode(source.ptr, source.len, destination.ptr, &outlen, 0);
+    return outlen;
 }
 
 pub fn decodeLenUpperBound(len: usize) usize {

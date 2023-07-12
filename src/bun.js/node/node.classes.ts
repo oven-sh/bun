@@ -2,6 +2,35 @@ import { define } from "../scripts/class-definitions";
 
 export default [
   define({
+    name: "FSWatcher",
+    construct: false,
+    noConstructor: true,
+    finalize: true,
+    configurable: false,
+    hasPendingActivity: true,
+    klass: {},
+    JSType: "0b11101110",
+    proto: {
+      ref: {
+        fn: "doRef",
+        length: 0,
+      },
+      unref: {
+        fn: "doUnref",
+        length: 0,
+      },
+      hasRef: {
+        fn: "hasRef",
+        length: 0,
+      },
+      close: {
+        fn: "doClose",
+        length: 0,
+      },
+    },
+    values: ["listener"],
+  }),
+  define({
     name: "Timeout",
     construct: false,
     noConstructor: true,
@@ -300,7 +329,7 @@ export default [
       utimes: { fn: "utimes", length: 4 },
       utimesSync: { fn: "utimesSync", length: 3 },
       // TODO:
-      // watch: { fn: "watch", length: 3 },
+      watch: { fn: "watch", length: 3 },
       // watchFile: { fn: "watchFile", length: 3 },
       writeFile: { fn: "writeFile", length: 4 },
       writeFileSync: { fn: "writeFileSync", length: 3 },

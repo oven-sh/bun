@@ -96,7 +96,12 @@ public:
         }
     }
 
-    const WTF::URL& url() const { return m_url; }
+    static ScriptExecutionContext* getScriptExecutionContext(ScriptExecutionContextIdentifier identifier);
+
+    const WTF::URL& url() const
+    {
+        return m_url;
+    }
     bool activeDOMObjectsAreSuspended() { return false; }
     bool activeDOMObjectsAreStopped() { return false; }
     bool isContextThread() { return true; }
@@ -141,6 +146,7 @@ public:
         auto* task = new EventLoopTask(WTFMove(lambda));
         postTaskOnTimeout(task, timeout);
     }
+
     template<typename... Arguments>
     void postCrossThreadTask(Arguments&&... arguments)
     {

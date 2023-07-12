@@ -1,5 +1,14 @@
 // @ts-nocheck
-import { createServer, request, get, Agent, globalAgent, Server } from "node:http";
+import {
+  createServer,
+  request,
+  get,
+  Agent,
+  globalAgent,
+  Server,
+  validateHeaderName,
+  validateHeaderValue,
+} from "node:http";
 import { createTest } from "node-harness";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
 
@@ -135,6 +144,29 @@ describe("node:http", () => {
           }
           if (reqUrl.pathname === "/pathTest") {
             res.end("Path correct!\n");
+            return;
+          }
+          if (reqUrl.pathname === "/customWriteHead") {
+            function createWriteHead(prevWriteHead, listener) {
+              let fired = false;
+              return function writeHead() {
+                if (!fired) {
+                  fired = true;
+                  listener.call(this);
+                }
+                return prevWriteHead.apply(this, arguments);
+              };
+            }
+
+            function addPoweredBy() {
+              if (!this.getHeader("X-Powered-By")) {
+                this.setHeader("X-Powered-By", "Bun");
+              }
+            }
+
+            res.writeHead = createWriteHead(res.writeHead, addPoweredBy);
+            res.setHeader("Content-Type", "text/plain");
+            res.end("Hello World");
             return;
           }
         }
@@ -498,6 +530,16 @@ describe("node:http", () => {
         req.end();
       });
     });
+    it("reassign writeHead method, issue#3585", done => {
+      runTest(done, (server, serverPort, done) => {
+        const req = request(`http://localhost:${serverPort}/customWriteHead`, res => {
+          expect(res.headers["content-type"]).toBe("text/plain");
+          expect(res.headers["x-powered-by"]).toBe("Bun");
+          done();
+        });
+        req.end();
+      });
+    });
   });
 
   describe("signal", () => {
@@ -623,5 +665,17 @@ describe("node:http", () => {
         });
       });
     });
+  });
+
+  test("validateHeaderName", () => {
+    validateHeaderName("Foo");
+    expect(() => validateHeaderName("foo:")).toThrow();
+    expect(() => validateHeaderName("foo:bar")).toThrow();
+  });
+
+  test("validateHeaderValue", () => {
+    validateHeaderValue("Foo", "Bar");
+    expect(() => validateHeaderValue("Foo", undefined as any)).toThrow();
+    expect(() => validateHeaderValue("Foo", "Bar\r")).toThrow();
   });
 });

@@ -1,8 +1,10 @@
-var { promises } = import.meta.require("node:dns"), {
+import {promises} from "node:dns";
+var {
   lookup,
   lookupService,
   resolve,
   resolve4,
+  resolve6,
   resolveAny,
   resolveCname,
   resolveCaa,
@@ -22,6 +24,7 @@ var { promises } = import.meta.require("node:dns"), {
   lookupService,
   resolve,
   resolve4,
+  resolve6,
   resolveAny,
   resolveCname,
   resolveCaa,
@@ -52,6 +55,7 @@ export {
   resolveCname,
   resolveCaa,
   resolveAny,
+  resolve6,
   resolve4,
   resolve,
   lookupService,

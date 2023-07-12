@@ -229,6 +229,10 @@ pub const NodeJSFS = struct {
     pub const lutimesSync = callSync(.lutimes);
     pub const rmSync = callSync(.rm);
     pub const rmdirSync = callSync(.rmdir);
+    pub const writev = call(.writev);
+    pub const writevSync = callSync(.writev);
+    pub const readv = call(.readv);
+    pub const readvSync = callSync(.readv);
 
     pub const fdatasyncSync = callSync(.fdatasync);
     pub const fdatasync = call(.fdatasync);
@@ -241,12 +245,10 @@ pub const NodeJSFS = struct {
         return JSC.Node.Stats.getConstructor(globalThis);
     }
 
+    pub const watch = callSync(.watch);
+
     // Not implemented yet:
     const notimpl = fdatasync;
     pub const opendir = notimpl;
     pub const opendirSync = notimpl;
-    pub const readv = notimpl;
-    pub const readvSync = notimpl;
-    pub const writev = notimpl;
-    pub const writevSync = notimpl;
 };

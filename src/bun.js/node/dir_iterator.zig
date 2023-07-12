@@ -78,15 +78,15 @@ pub const Iterator = switch (builtin.os.tag) {
                 }
 
                 const entry_kind = switch (darwin_entry.d_type) {
-                    os.DT.BLK => Entry.Kind.BlockDevice,
-                    os.DT.CHR => Entry.Kind.CharacterDevice,
-                    os.DT.DIR => Entry.Kind.Directory,
-                    os.DT.FIFO => Entry.Kind.NamedPipe,
-                    os.DT.LNK => Entry.Kind.SymLink,
-                    os.DT.REG => Entry.Kind.File,
-                    os.DT.SOCK => Entry.Kind.UnixDomainSocket,
-                    os.DT.WHT => Entry.Kind.Whiteout,
-                    else => Entry.Kind.Unknown,
+                    os.DT.BLK => Entry.Kind.block_device,
+                    os.DT.CHR => Entry.Kind.character_device,
+                    os.DT.DIR => Entry.Kind.directory,
+                    os.DT.FIFO => Entry.Kind.named_pipe,
+                    os.DT.LNK => Entry.Kind.sym_link,
+                    os.DT.REG => Entry.Kind.file,
+                    os.DT.SOCK => Entry.Kind.unix_domain_socket,
+                    os.DT.WHT => Entry.Kind.whiteout,
+                    else => Entry.Kind.unknown,
                 };
                 return .{
                     .result = IteratorResult{
@@ -134,14 +134,14 @@ pub const Iterator = switch (builtin.os.tag) {
                 }
 
                 const entry_kind = switch (linux_entry.d_type) {
-                    linux.DT.BLK => Entry.Kind.BlockDevice,
-                    linux.DT.CHR => Entry.Kind.CharacterDevice,
-                    linux.DT.DIR => Entry.Kind.Directory,
-                    linux.DT.FIFO => Entry.Kind.NamedPipe,
-                    linux.DT.LNK => Entry.Kind.SymLink,
-                    linux.DT.REG => Entry.Kind.File,
-                    linux.DT.SOCK => Entry.Kind.UnixDomainSocket,
-                    else => Entry.Kind.Unknown,
+                    linux.DT.BLK => Entry.Kind.block_device,
+                    linux.DT.CHR => Entry.Kind.character_device,
+                    linux.DT.DIR => Entry.Kind.directory,
+                    linux.DT.FIFO => Entry.Kind.named_pipe,
+                    linux.DT.LNK => Entry.Kind.sym_link,
+                    linux.DT.REG => Entry.Kind.file,
+                    linux.DT.SOCK => Entry.Kind.unix_domain_socket,
+                    else => Entry.Kind.unknown,
                 };
                 return .{
                     .result = IteratorResult{
@@ -213,9 +213,9 @@ pub const Iterator = switch (builtin.os.tag) {
                 const name_utf8 = self.name_data[0..name_utf8_len];
                 const kind = blk: {
                     const attrs = dir_info.FileAttributes;
-                    if (attrs & w.FILE_ATTRIBUTE_DIRECTORY != 0) break :blk Entry.Kind.Directory;
-                    if (attrs & w.FILE_ATTRIBUTE_REPARSE_POINT != 0) break :blk Entry.Kind.SymLink;
-                    break :blk Entry.Kind.File;
+                    if (attrs & w.FILE_ATTRIBUTE_DIRECTORY != 0) break :blk Entry.Kind.directory;
+                    if (attrs & w.FILE_ATTRIBUTE_REPARSE_POINT != 0) break :blk Entry.Kind.sym_link;
+                    break :blk Entry.Kind.file;
                 };
                 return .{
                     .result = IteratorResult{
@@ -275,13 +275,13 @@ pub const Iterator = switch (builtin.os.tag) {
                 }
 
                 const entry_kind = switch (entry.d_type) {
-                    .BLOCK_DEVICE => Entry.Kind.BlockDevice,
-                    .CHARACTER_DEVICE => Entry.Kind.CharacterDevice,
-                    .DIRECTORY => Entry.Kind.Directory,
-                    .SYMBOLIC_LINK => Entry.Kind.SymLink,
-                    .REGULAR_FILE => Entry.Kind.File,
-                    .SOCKET_STREAM, .SOCKET_DGRAM => Entry.Kind.UnixDomainSocket,
-                    else => Entry.Kind.Unknown,
+                    .BLOCK_DEVICE => Entry.Kind.block_device,
+                    .CHARACTER_DEVICE => Entry.Kind.character_device,
+                    .DIRECTORY => Entry.Kind.directory,
+                    .SYMBOLIC_LINK => Entry.Kind.sym_link,
+                    .REGULAR_FILE => Entry.Kind.file,
+                    .SOCKET_STREAM, .SOCKET_DGRAM => Entry.Kind.unix_domain_socket,
+                    else => Entry.Kind.unknown,
                 };
                 return IteratorResult{
                     .name = name,

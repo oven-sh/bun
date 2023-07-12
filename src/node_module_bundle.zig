@@ -107,7 +107,7 @@ pub const NodeModuleBundle = struct {
                 // This catches any issues with the sorting order, which would cause all sorts of weird bugs
                 // This also allows us to simply extend the length of the previous slice to the new length
                 // Saving us an allocation
-                if (@ptrToInt(prev_package_ids_for_name.ptr) != @ptrToInt(entry.value_ptr.ptr)) {
+                if (@intFromPtr(prev_package_ids_for_name.ptr) != @intFromPtr(entry.value_ptr.ptr)) {
                     Output.prettyErrorln(
                         \\<r><red>Fatal<r>: incorrect package sorting order detected in .bun file.\n
                         \\This is a bug! Please create an issue.\n
@@ -225,7 +225,7 @@ pub const NodeModuleBundle = struct {
                 const lhs_name = context.moduleName(&lhs);
                 const rhs_name = context.moduleName(&rhs);
 
-                const traversal_length = std.math.min(lhs_name.len, rhs_name.len);
+                const traversal_length = @min(lhs_name.len, rhs_name.len);
 
                 for (lhs_name[0..traversal_length], 0..) |char, i| {
                     switch (std.math.order(char, rhs_name[i])) {
@@ -283,7 +283,7 @@ pub const NodeModuleBundle = struct {
                 const lhs_name = context.moduleName(&lhs);
                 const rhs_name = context.moduleName(&rhs);
 
-                const traversal_length = std.math.min(lhs_name.len, rhs_name.len);
+                const traversal_length = @min(lhs_name.len, rhs_name.len);
 
                 for (lhs_name[0..traversal_length], 0..) |char, i| {
                     switch (std.math.order(char, rhs_name[i])) {
@@ -431,16 +431,16 @@ pub const NodeModuleBundle = struct {
         switch (size) {
             0...1024 * 1024 => {
                 switch (level) {
-                    .bad => Output.pretty("<red>{d: " ++ align_char ++ "6.2} KB</r>", .{@intToFloat(f64, size) / 1024.0}),
-                    .neutral => Output.pretty("{d: " ++ align_char ++ "6.2} KB</r>", .{@intToFloat(f64, size) / 1024.0}),
-                    .good => Output.pretty("<green>{d: " ++ align_char ++ "6.2} KB</r>", .{@intToFloat(f64, size) / 1024.0}),
+                    .bad => Output.pretty("<red>{d: " ++ align_char ++ "6.2} KB</r>", .{@floatFromInt(f64, size) / 1024.0}),
+                    .neutral => Output.pretty("{d: " ++ align_char ++ "6.2} KB</r>", .{@floatFromInt(f64, size) / 1024.0}),
+                    .good => Output.pretty("<green>{d: " ++ align_char ++ "6.2} KB</r>", .{@floatFromInt(f64, size) / 1024.0}),
                 }
             },
             else => {
                 switch (level) {
-                    .bad => Output.pretty("<red>{d: " ++ align_char ++ "6.2} MB</r>", .{@intToFloat(f64, size) / (1024 * 1024.0)}),
-                    .neutral => Output.pretty("{d: " ++ align_char ++ "6.2} MB</r>", .{@intToFloat(f64, size) / (1024 * 1024.0)}),
-                    .good => Output.pretty("<green>{d: " ++ align_char ++ "6.2} MB</r>", .{@intToFloat(f64, size) / (1024 * 1024.0)}),
+                    .bad => Output.pretty("<red>{d: " ++ align_char ++ "6.2} MB</r>", .{@floatFromInt(f64, size) / (1024 * 1024.0)}),
+                    .neutral => Output.pretty("{d: " ++ align_char ++ "6.2} MB</r>", .{@floatFromInt(f64, size) / (1024 * 1024.0)}),
+                    .good => Output.pretty("<green>{d: " ++ align_char ++ "6.2} MB</r>", .{@floatFromInt(f64, size) / (1024 * 1024.0)}),
                 }
             },
         }
@@ -459,7 +459,7 @@ pub const NodeModuleBundle = struct {
                 var read_amount: i64 = 99999;
                 while (remain > 0 and read_amount > 0) {
                     read_amount = @intCast(i64, in.read(&buf) catch 0);
-                    remain -= @intCast(i64, try out.write(buf[0..@intCast(usize, std.math.min(read_amount, remain))]));
+                    remain -= @intCast(i64, try out.write(buf[0..@intCast(usize, @min(read_amount, remain))]));
                 }
             }
         };

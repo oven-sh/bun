@@ -1,7 +1,8 @@
 // Reimplementation of https://nodejs.org/api/events.html
 // Reference: https://github.com/nodejs/node/blob/main/lib/events.js
 import { throwNotImplemented } from "../shared";
-var { isPromise, Array, Object } = import.meta.primordials;
+
+var { isPromise, Array, Object } = globalThis[Symbol.for("Bun.lazy")]("primordials");
 const SymbolFor = Symbol.for;
 const ObjectDefineProperty = Object.defineProperty;
 const kCapture = Symbol("kCapture");
@@ -386,8 +387,6 @@ Object.defineProperties(EventEmitter, {
 EventEmitter.init = EventEmitter;
 EventEmitter[Symbol.for("CommonJS")] = 0;
 
-export default EventEmitter;
-
 function eventTargetAgnosticRemoveListener(emitter, name, listener, flags) {
   if (typeof emitter.removeListener === "function") {
     emitter.removeListener(name, listener);
@@ -454,10 +453,24 @@ function checkListener(listener) {
   }
 }
 
-export class EventEmitterAsyncResource extends EventEmitter {
+class EventEmitterAsyncResource extends EventEmitter {
   constructor(options = undefined) {
     throwNotImplemented("EventEmitterAsyncResource", 1832);
   }
 }
-
-EventEmitter.EventEmitterAsyncResource = EventEmitterAsyncResource;
+const usingDomains = false;
+// EventEmitter[Symbol.for("CommonJS")] = 0;
+Object.assign(EventEmitter, { once, on, getEventListeners, setMaxListeners, listenerCount, EventEmitterAsyncResource });
+export {
+  EventEmitter,
+  captureRejectionSymbol,
+  kErrorMonitor as errorMonitor,
+  getEventListeners,
+  listenerCount,
+  on,
+  once,
+  setMaxListeners,
+  usingDomains,
+  EventEmitterAsyncResource,
+};
+export default EventEmitter;

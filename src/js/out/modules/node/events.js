@@ -123,7 +123,7 @@ var EventEmitter = function(opts) {
 }, checkListener = function(listener) {
   if (typeof listener !== "function")
     throw new TypeError("The listener must be a function");
-}, { isPromise, Array, Object: Object2 } = import.meta.primordials, SymbolFor = Symbol.for, ObjectDefineProperty = Object2.defineProperty, kCapture = Symbol("kCapture"), kErrorMonitor = SymbolFor("events.errorMonitor"), kMaxEventTargetListeners = Symbol("events.maxEventTargetListeners"), kMaxEventTargetListenersWarned = Symbol("events.maxEventTargetListenersWarned"), kWatermarkData = SymbolFor("nodejs.watermarkData"), kRejection = SymbolFor("nodejs.rejection"), captureRejectionSymbol = SymbolFor("nodejs.rejection"), ArrayPrototypeSlice = Array.prototype.slice, defaultMaxListeners = 10, EventEmitterPrototype = EventEmitter.prototype;
+}, { isPromise, Array, Object: Object2 } = globalThis[Symbol.for("Bun.lazy")]("primordials"), SymbolFor = Symbol.for, ObjectDefineProperty = Object2.defineProperty, kCapture = Symbol("kCapture"), kErrorMonitor = SymbolFor("events.errorMonitor"), kMaxEventTargetListeners = Symbol("events.maxEventTargetListeners"), kMaxEventTargetListenersWarned = Symbol("events.maxEventTargetListenersWarned"), kWatermarkData = SymbolFor("nodejs.watermarkData"), kRejection = SymbolFor("nodejs.rejection"), captureRejectionSymbol = SymbolFor("nodejs.rejection"), ArrayPrototypeSlice = Array.prototype.slice, defaultMaxListeners = 10, EventEmitterPrototype = EventEmitter.prototype;
 EventEmitterPrototype._events = void 0;
 EventEmitterPrototype._eventsCount = 0;
 EventEmitterPrototype._maxListeners = void 0;
@@ -318,7 +318,6 @@ Object2.defineProperties(EventEmitter, {
 });
 EventEmitter.init = EventEmitter;
 EventEmitter[Symbol.for("CommonJS")] = 0;
-var events_default = EventEmitter;
 
 class AbortError extends Error {
   constructor(message = "The operation was aborted", options = void 0) {
@@ -334,8 +333,19 @@ class EventEmitterAsyncResource extends EventEmitter {
     throwNotImplemented("EventEmitterAsyncResource", 1832);
   }
 }
-EventEmitter.EventEmitterAsyncResource = EventEmitterAsyncResource;
+var usingDomains = !1;
+Object2.assign(EventEmitter, { once, on, getEventListeners, setMaxListeners, listenerCount, EventEmitterAsyncResource });
+var events_default = EventEmitter;
 export {
+  usingDomains,
+  setMaxListeners,
+  once,
+  on,
+  listenerCount,
+  getEventListeners,
+  kErrorMonitor as errorMonitor,
   events_default as default,
-  EventEmitterAsyncResource
+  captureRejectionSymbol,
+  EventEmitterAsyncResource,
+  EventEmitter
 };

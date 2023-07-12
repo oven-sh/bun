@@ -49,6 +49,12 @@ To install in production mode (i.e. without `devDependencies`):
 $ bun install --production
 ```
 
+To install with reproducible dependencies, use `--frozen-lockfile`. If your `package.json` disagrees with `bun.lockb`, Bun will exit with an error. This is useful for production builds and CI environments.
+
+```bash
+$ bun install --frozen-lockfile
+```
+
 To perform a dry run (i.e. don't actually install anything):
 
 ```bash
@@ -79,6 +85,9 @@ peer = false
 
 # equivalent to `--production` flag
 production = false
+
+# equivalent to `--frozen-lockfile` flag
+frozenLockfile = false
 
 # equivalent to `--dry-run` flag
 dryRun = false
@@ -113,6 +122,26 @@ To add a package as an optional dependency (`"optionalDependencies"`):
 
 ```bash
 $ bun add --optional lodash
+```
+
+To add a package and pin to the resolved version, use `--exact`. This will resolve the version of the package and add it to your `package.json` with an exact version number instead of a version range.
+
+```bash
+$ bun add react --exact
+```
+
+This will add the following to your `package.json`:
+
+```jsonc
+{
+  "dependencies": {
+    // without --exact
+    "react": "^18.2.0", // this matches >= 18.2.0 < 19.0.0
+
+    // with --exact
+    "react": "18.2.0" // this matches only 18.2.0 exactly
+  }
+}
 ```
 
 To install a package globally:
@@ -196,6 +225,46 @@ In addition, the `--save` flag can be used to add `cool-pkg` to the `dependencie
     }
   }
 ```
+
+## Trusted dependencies
+
+Unlike other npm clients, Bun does not execute arbitrary lifecycle scripts for installed dependencies, such as `postinstall`. These scripts represent a potential security risk, as they can execute arbitrary code on your machine.
+
+<!-- Bun maintains an allow-list of popular packages containing `postinstall` scripts that are known to be safe. To run lifecycle scripts for packages that aren't on this list, add the package to `trustedDependencies` in your package.json. -->
+
+To tell Bun to allow lifecycle scripts for a particular package, add the package to `trustedDependencies` in your package.json.
+
+<!-- ```json-diff
+  {
+    "name": "my-app",
+    "version": "1.0.0",
++   "trustedDependencies": {
++     "my-trusted-package": "*"
++   }
+  }
+``` -->
+
+```json-diff
+  {
+    "name": "my-app",
+    "version": "1.0.0",
++   "trustedDependencies": ["my-trusted-package"]
+  }
+```
+
+Bun reads this field and will run lifecycle scripts for `my-trusted-package`.
+
+<!-- If you specify a version range, Bun will only execute lifecycle scripts if the resolved package version matches the range. -->
+<!--
+```json
+{
+  "name": "my-app",
+  "version": "1.0.0",
+  "trustedDependencies": {
+    "my-trusted-package": "^1.0.0"
+  }
+}
+``` -->
 
 ## Git dependencies
 

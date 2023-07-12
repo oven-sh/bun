@@ -1,5 +1,15 @@
 #pragma once
 
+
+#ifdef ASSERT_ENABLED
+#if ASSERT_ENABLED
+#define ORIGINAL_ASSERT_ENABLED 1
+#undef ASSERT_ENABLED
+#define ASSERT_ENABLED 0
+#endif
+#endif
+
+
 #include "JavaScriptCore/BuiltinUtils.h"
 #include "root.h"
 
@@ -27,6 +37,7 @@ using namespace JSC;
     macro(WritableStream) \
     macro(WritableStreamDefaultController) \
     macro(WritableStreamDefaultWriter) \
+    macro(__esModule) \
     macro(_events) \
     macro(abortAlgorithm) \
     macro(abortSteps) \
@@ -61,6 +72,7 @@ using namespace JSC;
     macro(controlledReadableStream) \
     macro(controller) \
     macro(cork) \
+    macro(createCommonJSModule) \
     macro(createEmptyReadableStream) \
     macro(createFIFO) \
     macro(createNativeReadableStream) \
@@ -83,6 +95,7 @@ using namespace JSC;
     macro(end) \
     macro(errno) \
     macro(errorSteps) \
+    macro(evaluateCommonJSModule) \
     macro(execArgv) \
     macro(exports) \
     macro(extname) \
@@ -93,13 +106,11 @@ using namespace JSC;
     macro(file) \
     macro(filePath) \
     macro(fillFromJS) \
-    macro(filter) \
     macro(finishConsumingStream) \
     macro(flush) \
     macro(flushAlgorithm) \
     macro(format) \
     macro(fulfillModuleSync) \
-    macro(get) \
     macro(getInternalWritableStream) \
     macro(handleEvent) \
     macro(hash) \
@@ -128,7 +139,6 @@ using namespace JSC;
     macro(lazyLoad) \
     macro(lazyStreamPrototypeMap) \
     macro(loadCJS2ESM) \
-    macro(loadModule) \
     macro(localStreams) \
     macro(main) \
     macro(makeDOMException) \
@@ -265,3 +275,9 @@ private:
 };
 
 } // namespace WebCore
+
+#ifdef ORIGINAL_ASSERT_ENABLED
+#undef ASSERT_ENABLED
+#define ASSERT_ENABLED 1
+#undef ORIGINAL_ASSERT_ENABLED
+#endif

@@ -1,4 +1,11 @@
 // Hardcoded module "node:util"
+import * as types from "node:util/types";
+export { default as types } from "node:util/types";
+
+var cjs_exports = {};
+
+export default cjs_exports;
+
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __commonJS = (cb, mod) =>
   function __require() {
@@ -15,6 +22,10 @@ export function isBuffer(value) {
     // incase it ends up as a browserify buffer
     (typeof value === "object" && isBufferInterface(value || {}))
   );
+}
+
+function isFunction(value) {
+  return typeof value === "function";
 }
 
 // node_modules/inherits/inherits_browser.js
@@ -35,9 +46,6 @@ var require_inherits_browser = __commonJS({
 });
 const deepEquals = Bun.deepEquals;
 const isDeepStrictEqual = (a, b) => deepEquals(a, b, true);
-const exports = {
-  isDeepStrictEqual,
-};
 var getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 var formatRegExp = /%[sdj%]/g;
 function format(f) {
@@ -78,21 +86,19 @@ function format(f) {
   }
   return str;
 }
-exports.format = format;
-function deprecate(fn, msg) {
-  if (typeof process !== "undefined" && process.noDeprecation === true) {
+
+function deprecate(fn, msg, code) {
+  if (process.noDeprecation === true) {
     return fn;
   }
-  if (typeof process === "undefined") {
-    return function () {
-      return exports.deprecate(fn, msg).apply(this, arguments);
-    };
-  }
+
   var warned = false;
   function deprecated() {
     if (!warned) {
       if (process.throwDeprecation) {
-        throw new Error(msg);
+        var err = new Error(msg);
+        if (code) err.code = code;
+        throw err;
       } else if (process.traceDeprecation) {
         console.trace(msg);
       } else {
@@ -104,7 +110,7 @@ function deprecate(fn, msg) {
   }
   return deprecated;
 }
-exports.deprecate = deprecate;
+
 var debugs = {};
 var debugEnvRegex = /^$/;
 if (process.env.NODE_DEBUG) {
@@ -123,7 +129,7 @@ function debuglog(set) {
     if (debugEnvRegex.test(set)) {
       var pid = process.pid;
       debugs[set] = function () {
-        var msg = exports.format.apply(exports, arguments);
+        var msg = format.apply(cjs_exports, arguments);
         console.error("%s %d: %s", set, pid, msg);
       };
     } else {
@@ -132,7 +138,6 @@ function debuglog(set) {
   }
   return debugs[set];
 }
-exports.debuglog = debuglog;
 function inspect(obj, opts) {
   var ctx = {
     seen: [],
@@ -143,7 +148,7 @@ function inspect(obj, opts) {
   if (isBoolean(opts)) {
     ctx.showHidden = opts;
   } else if (opts) {
-    exports._extend(ctx, opts);
+    _extend(ctx, opts);
   }
   if (isUndefined(ctx.showHidden)) ctx.showHidden = false;
   if (isUndefined(ctx.depth)) ctx.depth = 2;
@@ -152,7 +157,6 @@ function inspect(obj, opts) {
   if (ctx.colors) ctx.stylize = stylizeWithColor;
   return formatValue(ctx, obj, ctx.depth);
 }
-exports.inspect = inspect;
 inspect.colors = {
   bold: [1, 22],
   italic: [3, 23],
@@ -201,7 +205,7 @@ function formatValue(ctx, value, recurseTimes) {
     ctx.customInspect &&
     value &&
     isFunction(value.inspect) &&
-    value.inspect !== exports.inspect &&
+    value.inspect !== inspect &&
     !(value.constructor && value.constructor.prototype === value)
   ) {
     var ret = value.inspect(recurseTimes, ctx);
@@ -388,51 +392,42 @@ function reduceToSingleString(output, base, braces) {
   }
   return braces[0] + base + " " + output.join(", ") + " " + braces[1];
 }
-const types = import.meta.require("node:util/types");
-exports.types = types;
+
 function isArray(ar) {
   return Array.isArray(ar);
 }
-exports.isArray = isArray;
+
 function isBoolean(arg) {
   return typeof arg === "boolean";
 }
-exports.isBoolean = isBoolean;
+
 function isNull(arg) {
   return arg === null;
 }
-exports.isNull = isNull;
+
 function isNullOrUndefined(arg) {
   return arg == null;
 }
-exports.isNullOrUndefined = isNullOrUndefined;
+
 function isNumber(arg) {
   return typeof arg === "number";
 }
-exports.isNumber = isNumber;
+
 function isString(arg) {
   return typeof arg === "string";
 }
-exports.isString = isString;
 function isSymbol(arg) {
   return typeof arg === "symbol";
 }
-exports.isSymbol = isSymbol;
 function isUndefined(arg) {
   return arg === void 0;
 }
-exports.isUndefined = isUndefined;
-var isRegExp = (exports.isRegExp = exports.types.isRegExp);
+var isRegExp = types.isRegExp;
 function isObject(arg) {
   return typeof arg === "object" && arg !== null;
 }
-exports.isObject = isObject;
-var isDate = (exports.isDate = exports.types.isDate);
-var isError = (exports.isError = exports.types.isNativeError);
-function isFunction(arg) {
-  return typeof arg === "function";
-}
-var isFunction = (exports.isFunction = isFunction);
+var isDate = types.isDate;
+var isError = types.isNativeError;
 function isPrimitive(arg) {
   return (
     arg === null ||
@@ -443,8 +438,6 @@ function isPrimitive(arg) {
     typeof arg === "undefined"
   );
 }
-exports.isPrimitive = isPrimitive;
-exports.isBuffer = isBuffer;
 function pad(n) {
   return n < 10 ? "0" + n.toString(10) : n.toString(10);
 }
@@ -454,11 +447,11 @@ function timestamp() {
   var time = [pad(d.getHours()), pad(d.getMinutes()), pad(d.getSeconds())].join(":");
   return [d.getDate(), months[d.getMonth()], time].join(" ");
 }
-var log = (exports.log = function () {
-  console.log("%s - %s", timestamp(), exports.format.apply(exports, arguments));
-});
-var inherits = (exports.inherits = require_inherits_browser());
-var _extend = (exports._extend = function (origin, add) {
+var log = function log() {
+  console.log("%s - %s", timestamp(), format.apply(cjs_exports, arguments));
+};
+var inherits = (inherits = require_inherits_browser());
+var _extend = function (origin, add) {
   if (!add || !isObject(add)) return origin;
   var keys = Object.keys(add);
   var i = keys.length;
@@ -466,12 +459,12 @@ var _extend = (exports._extend = function (origin, add) {
     origin[keys[i]] = add[keys[i]];
   }
   return origin;
-});
+};
 function hasOwnProperty(obj, prop) {
   return Object.prototype.hasOwnProperty.call(obj, prop);
 }
 var kCustomPromisifiedSymbol = Symbol.for("util.promisify.custom");
-var promisify = (exports.promisify = function promisify(original) {
+var promisify = function promisify(original) {
   if (typeof original !== "function") throw new TypeError('The "original" argument must be of type Function');
   if (kCustomPromisifiedSymbol && original[kCustomPromisifiedSymbol]) {
     var fn = original[kCustomPromisifiedSymbol];
@@ -519,12 +512,13 @@ var promisify = (exports.promisify = function promisify(original) {
       configurable: true,
     });
   return Object.defineProperties(fn, getOwnPropertyDescriptors(original));
-});
-exports.promisify.custom = kCustomPromisifiedSymbol;
+};
+promisify.custom = kCustomPromisifiedSymbol;
 function callbackifyOnRejected(reason, cb) {
   if (!reason) {
     var newReason = new Error("Promise was rejected with a falsy value");
     newReason.reason = reason;
+    newReason.code = "ERR_FALSY_VALUE_REJECTION";
     reason = newReason;
   }
   return cb(reason);
@@ -545,10 +539,10 @@ function callbackify(original) {
     };
     original.apply(this, args).then(
       function (ret) {
-        process.nextTick(cb, null, null, ret);
+        process.nextTick(cb, null, ret);
       },
       function (rej) {
-        process.nextTick(callbackifyOnRejected, null, rej, cb);
+        process.nextTick(callbackifyOnRejected, rej, cb);
       },
     );
   }
@@ -556,11 +550,44 @@ function callbackify(original) {
   Object.defineProperties(callbackified, getOwnPropertyDescriptors(original));
   return callbackified;
 }
-exports.callbackify = callbackify;
-export var TextDecoder = (exports.TextDecoder = globalThis.TextDecoder);
-export var TextEncoder = (exports.TextEncoder = globalThis.TextEncoder);
-exports[Symbol.for("CommonJS")] = 0;
-export default exports;
+export var TextDecoder = globalThis.TextDecoder;
+export var TextEncoder = globalThis.TextEncoder;
+var toUSVString = input => {
+  return (input + "").toWellFormed();
+};
+
+Object.assign(cjs_exports, {
+  format,
+  deprecate,
+  debuglog,
+  _extend,
+  inspect,
+  types,
+  isArray,
+  isBoolean,
+  isNull,
+  isNullOrUndefined,
+  isNumber,
+  isString,
+  isSymbol,
+  isUndefined,
+  isRegExp,
+  isObject,
+  isDate,
+  isFunction,
+  isError,
+  isPrimitive,
+  isBuffer,
+  log,
+  inherits,
+  toUSVString,
+  promisify,
+  callbackify,
+  isDeepStrictEqual,
+  TextDecoder,
+  TextEncoder,
+  [Symbol.for("CommonJS")]: 0,
+});
 
 export {
   format,
@@ -586,4 +613,5 @@ export {
   promisify,
   callbackify,
   isDeepStrictEqual,
+  toUSVString,
 };

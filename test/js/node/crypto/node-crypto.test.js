@@ -8,6 +8,27 @@ it("crypto.randomBytes should return a Buffer", () => {
   expect(Buffer.isBuffer(crypto.randomBytes(1))).toBe(true);
 });
 
+it("crypto.randomInt should return a number", () => {
+  const result = crypto.randomInt(0, 10);
+  expect(typeof result).toBe("number");
+  expect(result).toBeGreaterThanOrEqual(0);
+  expect(result).toBeLessThanOrEqual(10);
+});
+
+it("crypto.randomInt with no arguments", () => {
+  const result = crypto.randomInt();
+  expect(typeof result).toBe("number");
+  expect(result).toBeGreaterThanOrEqual(0);
+  expect(result).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER);
+});
+
+it("crypto.randomInt with one argument", () => {
+  const result = crypto.randomInt(100);
+  expect(typeof result).toBe("number");
+  expect(result).toBeGreaterThanOrEqual(0);
+  expect(result).toBeLessThanOrEqual(100);
+});
+
 // https://github.com/oven-sh/bun/issues/1839
 describe("createHash", () => {
   it("update & digest", () => {
@@ -21,6 +42,50 @@ describe("createHash", () => {
     hash.update("some data to hash");
     expect(Buffer.isBuffer(hash.digest())).toBeTrue();
   });
+
+  const otherEncodings = {
+    ucs2: [
+      11626, 2466, 37699, 38942, 64564, 53010, 48101, 47943, 44761, 18499, 12442, 26994, 46434, 62582, 39395, 20542,
+    ],
+    latin1: [
+      106, 45, 162, 9, 67, 147, 30, 152, 52, 252, 18, 207, 229, 187, 71, 187, 217, 174, 67, 72, 154, 48, 114, 105, 98,
+      181, 118, 244, 227, 153, 62, 80,
+    ],
+    binary: [
+      106, 45, 162, 9, 67, 147, 30, 152, 52, 252, 18, 207, 229, 187, 71, 187, 217, 174, 67, 72, 154, 48, 114, 105, 98,
+      181, 118, 244, 227, 153, 62, 80,
+    ],
+    base64: [
+      97, 105, 50, 105, 67, 85, 79, 84, 72, 112, 103, 48, 47, 66, 76, 80, 53, 98, 116, 72, 117, 57, 109, 117, 81, 48,
+      105, 97, 77, 72, 74, 112, 89, 114, 86, 50, 57, 79, 79, 90, 80, 108, 65, 61,
+    ],
+    hex: [
+      54, 97, 50, 100, 97, 50, 48, 57, 52, 51, 57, 51, 49, 101, 57, 56, 51, 52, 102, 99, 49, 50, 99, 102, 101, 53, 98,
+      98, 52, 55, 98, 98, 100, 57, 97, 101, 52, 51, 52, 56, 57, 97, 51, 48, 55, 50, 54, 57, 54, 50, 98, 53, 55, 54, 102,
+      52, 101, 51, 57, 57, 51, 101, 53, 48,
+    ],
+    ascii: [
+      106, 45, 34, 9, 67, 19, 30, 24, 52, 124, 18, 79, 101, 59, 71, 59, 89, 46, 67, 72, 26, 48, 114, 105, 98, 53, 118,
+      116, 99, 25, 62, 80,
+    ],
+    utf8: [
+      106, 45, 65533, 9, 67, 65533, 30, 65533, 52, 65533, 18, 65533, 65533, 71, 65533, 1646, 67, 72, 65533, 48, 114,
+      105, 98, 65533, 118, 65533, 65533, 62, 80,
+    ],
+  };
+
+  for (let encoding in otherEncodings) {
+    it("digest " + encoding, () => {
+      const hash = crypto.createHash("sha256");
+      hash.update("some data to hash");
+      expect(
+        hash
+          .digest(encoding)
+          .split("")
+          .map(a => a.charCodeAt(0)),
+      ).toEqual(otherEncodings[encoding]);
+    });
+  }
 
   it("stream (sync)", () => {
     const hash = crypto.createHash("sha256");

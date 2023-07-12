@@ -590,6 +590,8 @@ message BunInstall {
   bool disable_manifest_cache = 16;
   string global_dir = 17;
   string global_bin_dir = 18;
+  bool frozen_lockfile = 19;
+  bool exact = 20;
 }
 
 struct ClientServerModule {

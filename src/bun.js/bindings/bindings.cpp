@@ -679,8 +679,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        JSC::PropertyNameArray a1(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Include);
-        JSC::PropertyNameArray a2(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Include);
+        JSC::PropertyNameArray a1(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
+        JSC::PropertyNameArray a2(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
         JSObject::getOwnPropertyNames(o1, globalObject, a1, DontEnumPropertiesMode::Exclude);
         JSObject::getOwnPropertyNames(o2, globalObject, a2, DontEnumPropertiesMode::Exclude);
 
@@ -753,7 +753,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             }
 
             o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-                if (entry.attributes() & PropertyAttribute::DontEnum) {
+                if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                     return true;
                 }
                 count1++;
@@ -787,7 +787,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             if (result && o2Structure->id() != o1Structure->id()) {
                 size_t remain = count1;
                 o2Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-                    if (entry.attributes() & PropertyAttribute::DontEnum) {
+                    if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                         return true;
                     }
 
@@ -815,8 +815,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
     }
 
-    JSC::PropertyNameArray a1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
-    JSC::PropertyNameArray a2(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+    JSC::PropertyNameArray a1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    JSC::PropertyNameArray a2(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     o1->getPropertyNames(globalObject, a1, DontEnumPropertiesMode::Exclude);
     o2->getPropertyNames(globalObject, a2, DontEnumPropertiesMode::Exclude);
 
@@ -1279,15 +1279,14 @@ JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
     JSC__JSGlobalObject* globalObject)
 {
 
-    static const char* system_error_name = "SystemError";
     SystemError err = *arg0;
 
     JSC::VM& vm = globalObject->vm();
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSValue message = JSC::jsUndefined();
-    if (err.message.len > 0) {
-        message = Zig::toJSString(err.message, globalObject);
+    if (err.message.tag != BunStringTag::Empty) {
+        message = Bun::toJS(globalObject, err.message);
     }
 
     JSC::JSValue options = JSC::jsUndefined();
@@ -1297,8 +1296,8 @@ JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
 
     auto clientData = WebCore::clientData(vm);
 
-    if (err.code.len > 0 && !(err.code.len == 1 and err.code.ptr[0] == 0)) {
-        JSC::JSValue code = Zig::toJSStringGC(err.code, globalObject);
+    if (err.code.tag != BunStringTag::Empty) {
+        JSC::JSValue code = Bun::toJS(globalObject, err.code);
         result->putDirect(vm, clientData->builtinNames().codePublicName(), code,
             JSC::PropertyAttribute::DontDelete | 0);
 
@@ -1307,13 +1306,12 @@ JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
 
         result->putDirect(
             vm, vm.propertyNames->name,
-            JSC::JSValue(JSC::jsOwnedString(
-                vm, WTF::String(WTF::StringImpl::createWithoutCopying(system_error_name, 11)))),
+            JSC::JSValue(jsString(vm, String("SystemError"_s))),
             JSC::PropertyAttribute::DontEnum | 0);
     }
 
-    if (err.path.len > 0) {
-        JSC::JSValue path = JSC::JSValue(Zig::toJSStringGC(err.path, globalObject));
+    if (err.path.tag != BunStringTag::Empty) {
+        JSC::JSValue path = Bun::toJS(globalObject, err.path);
         result->putDirect(vm, clientData->builtinNames().pathPublicName(), path,
             JSC::PropertyAttribute::DontDelete | 0);
     }
@@ -1324,8 +1322,8 @@ JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
             JSC::PropertyAttribute::DontDelete | 0);
     }
 
-    if (err.syscall.len > 0) {
-        JSC::JSValue syscall = JSC::JSValue(Zig::toJSString(err.syscall, globalObject));
+    if (err.syscall.tag != BunStringTag::Empty) {
+        JSC::JSValue syscall = Bun::toJS(globalObject, err.syscall);
         result->putDirect(vm, clientData->builtinNames().syscallPublicName(), syscall,
             JSC::PropertyAttribute::DontDelete | 0);
     }
@@ -2593,6 +2591,12 @@ bool JSC__JSPromise__isHandled(const JSC__JSPromise* arg0, JSC__VM* arg1)
 {
     return arg0->isHandled(reinterpret_cast<JSC::VM&>(arg1));
 }
+void JSC__JSPromise__setHandled(JSC__JSPromise* promise, JSC__VM* arg1)
+{
+    auto& vm = *arg1;
+    auto flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
+    promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isHandledFlag));
+}
 
 #pragma mark - JSC::JSInternalPromise
 
@@ -2665,6 +2669,12 @@ uint32_t JSC__JSInternalPromise__status(const JSC__JSInternalPromise* arg0, JSC_
 bool JSC__JSInternalPromise__isHandled(const JSC__JSInternalPromise* arg0, JSC__VM* arg1)
 {
     return arg0->isHandled(reinterpret_cast<JSC::VM&>(arg1));
+}
+void JSC__JSInternalPromise__setHandled(JSC__JSInternalPromise* promise, JSC__VM* arg1)
+{
+    auto& vm = *arg1;
+    auto flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
+    promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isHandledFlag));
 }
 
 #pragma mark - JSC::JSGlobalObject
@@ -2765,8 +2775,18 @@ void JSC__JSValue__put(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, const Z
 
 bool JSC__JSValue__isClass(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
 {
-    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    return value.isConstructor();
+    JSValue value = JSValue::decode(JSValue0);
+    auto callData = getCallData(value);
+
+    switch (callData.type) {
+    case CallData::Type::JS:
+        return callData.js.functionExecutable->isClassConstructorFunction();
+    case CallData::Type::Native:
+        if (callData.native.isBoundFunction)
+            return false;
+        return value.isConstructor();
+    }
+    return false;
 }
 bool JSC__JSValue__isCell(JSC__JSValue JSValue0) { return JSC::JSValue::decode(JSValue0).isCell(); }
 bool JSC__JSValue__isCustomGetterSetter(JSC__JSValue JSValue0)
@@ -3291,7 +3311,8 @@ bool JSC__JSValue__stringIncludes(JSC__JSValue value, JSC__JSGlobalObject* globa
 
 static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame* stackFrame, ZigStackFrame* frame)
 {
-    frame->source_url = Zig::toZigString(stackFrame->sourceURL(vm));
+
+    frame->source_url = Bun::toStringRef(stackFrame->sourceURL(vm));
 
     if (stackFrame->isWasmFrame()) {
         frame->code_type = ZigStackFrameCodeWasm;
@@ -3328,37 +3349,11 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame* stack
 
     JSC::JSObject* callee = JSC::jsCast<JSC::JSObject*>(calleeCell);
 
-    // Does the code block have a user-defined name property?
-    JSC::JSValue name = callee->getDirect(vm, vm.propertyNames->name);
-    if (name && name.isString()) {
-        auto str = name.toWTFString(m_codeBlock->globalObject());
-        frame->function_name = Zig::toZigString(str);
-        return;
-    }
-
-    /* For functions (either JSFunction or InternalFunction), fallback to their "native" name
-     * property. Based on JSC::getCalculatedDisplayName, "inlining" the
-     * JSFunction::calculatedDisplayName\InternalFunction::calculatedDisplayName calls */
-    if (JSC::JSFunction* function = JSC::jsDynamicCast<JSC::JSFunction*>(callee)) {
-
-        WTF::String actualName = function->name(vm);
-        if (!actualName.isEmpty() || function->isHostOrBuiltinFunction()) {
-            frame->function_name = Zig::toZigString(actualName);
-            return;
-        }
-
-        auto inferred_name = function->jsExecutable()->name();
-        frame->function_name = Zig::toZigString(inferred_name.string());
-    }
-
-    if (JSC::InternalFunction* function = JSC::jsDynamicCast<JSC::InternalFunction*>(callee)) {
-        // Based on JSC::InternalFunction::calculatedDisplayName, skipping the "displayName" property
-        frame->function_name = Zig::toZigString(function->name());
-    }
+    frame->function_name = Bun::toStringRef(JSC::getCalculatedDisplayName(vm, callee));
 }
 // Based on
 // https://github.com/mceSystems/node-jsc/blob/master/deps/jscshim/src/shim/JSCStackTrace.cpp#L298
-static void populateStackFramePosition(const JSC::StackFrame* stackFrame, ZigString* source_lines,
+static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunString* source_lines,
     int32_t* source_line_numbers, uint8_t source_lines_count,
     ZigStackFramePosition* position)
 {
@@ -3428,7 +3423,7 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, ZigStr
 
         // Most of the time, when you look at a stack trace, you want a couple lines above
 
-        source_lines[0] = { &chars[lineStart], lineStop - lineStart };
+        source_lines[0] = Bun::toStringRef(sourceString.substring(lineStart, lineStop - lineStart).toStringWithoutCopying());
         source_line_numbers[0] = line;
 
         if (lineStart > 0) {
@@ -3445,8 +3440,7 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, ZigStr
                 }
 
                 // We are at the beginning of the line
-                source_lines[source_line_i] = { &chars[byte_offset_in_source_string],
-                    end_of_line_offset - byte_offset_in_source_string + 1 };
+                source_lines[source_line_i] = Bun::toStringRef(sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1).toStringWithoutCopying());
 
                 source_line_numbers[source_line_i] = line - source_line_i;
                 source_line_i++;
@@ -3516,12 +3510,13 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     JSC::JSValue val)
 {
     JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(val);
+    JSC::VM& vm = global->vm();
 
     bool getFromSourceURL = false;
     if (stackTrace != nullptr && stackTrace->size() > 0) {
-        populateStackTrace(global->vm(), *stackTrace, &except->stack);
+        populateStackTrace(vm, *stackTrace, &except->stack);
     } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
-        populateStackTrace(global->vm(), *err->stackTrace(), &except->stack);
+        populateStackTrace(vm, *err->stackTrace(), &except->stack);
     } else {
         getFromSourceURL = true;
     }
@@ -3533,33 +3528,35 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
         except->code = 8;
     }
     if (except->code == SYNTAX_ERROR_CODE) {
-        except->message = Zig::toZigString(err->sanitizedMessageString(global));
-    } else if (JSC::JSValue message = obj->getIfPropertyExists(global, global->vm().propertyNames->message)) {
+        except->message = Bun::toStringRef(err->sanitizedMessageString(global));
+    } else if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
 
-        except->message = Zig::toZigString(message, global);
+        except->message = Bun::toStringRef(global, message);
 
     } else {
-        except->message = Zig::toZigString(err->sanitizedMessageString(global));
+        except->message = Bun::toStringRef(err->sanitizedMessageString(global));
     }
-    except->name = Zig::toZigString(err->sanitizedNameString(global));
+
+    except->name = Bun::toStringRef(err->sanitizedNameString(global));
+
     except->runtime_type = err->runtimeTypeForCause();
 
-    auto clientData = WebCore::clientData(global->vm());
+    auto clientData = WebCore::clientData(vm);
     if (except->code != SYNTAX_ERROR_CODE) {
 
         if (JSC::JSValue syscall = obj->getIfPropertyExists(global, clientData->builtinNames().syscallPublicName())) {
-            except->syscall = Zig::toZigString(syscall, global);
+            except->syscall = Bun::toStringRef(global, syscall);
         }
 
         if (JSC::JSValue code = obj->getIfPropertyExists(global, clientData->builtinNames().codePublicName())) {
-            except->code_ = Zig::toZigString(code, global);
+            except->code_ = Bun::toStringRef(global, code);
         }
 
         if (JSC::JSValue path = obj->getIfPropertyExists(global, clientData->builtinNames().pathPublicName())) {
-            except->path = Zig::toZigString(path, global);
+            except->path = Bun::toStringRef(global, path);
         }
 
-        if (JSC::JSValue fd = obj->getIfPropertyExists(global, Identifier::fromString(global->vm(), "fd"_s))) {
+        if (JSC::JSValue fd = obj->getIfPropertyExists(global, Identifier::fromString(vm, "fd"_s))) {
             if (fd.isAnyInt()) {
                 except->fd = fd.toInt32(global);
             }
@@ -3571,27 +3568,29 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     }
 
     if (getFromSourceURL) {
-        if (JSC::JSValue sourceURL = obj->getIfPropertyExists(global, global->vm().propertyNames->sourceURL)) {
-            except->stack.frames_ptr[0].source_url = Zig::toZigString(sourceURL, global);
+        if (JSC::JSValue sourceURL = obj->getIfPropertyExists(global, vm.propertyNames->sourceURL)) {
+            except->stack.frames_ptr[0].source_url = Bun::toStringRef(global, sourceURL);
 
-            if (JSC::JSValue column = obj->getIfPropertyExists(global, global->vm().propertyNames->column)) {
+            if (JSC::JSValue column = obj->getIfPropertyExists(global, vm.propertyNames->column)) {
                 except->stack.frames_ptr[0].position.column_start = column.toInt32(global);
             }
 
-            if (JSC::JSValue line = obj->getIfPropertyExists(global, global->vm().propertyNames->line)) {
+            if (JSC::JSValue line = obj->getIfPropertyExists(global, vm.propertyNames->line)) {
                 except->stack.frames_ptr[0].position.line = line.toInt32(global);
 
-                if (JSC::JSValue lineText = obj->getIfPropertyExists(global, JSC::Identifier::fromString(global->vm(), "lineText"_s))) {
+                if (JSC::JSValue lineText = obj->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "lineText"_s))) {
                     if (JSC::JSString* jsStr = lineText.toStringOrNull(global)) {
                         auto str = jsStr->value(global);
-                        except->stack.source_lines_ptr[0] = Zig::toZigString(str);
+                        except->stack.source_lines_ptr[0] = Bun::toStringRef(str);
                         except->stack.source_lines_numbers[0] = except->stack.frames_ptr[0].position.line;
                         except->stack.source_lines_len = 1;
                         except->remapped = true;
                     }
                 }
             }
+
             except->stack.frames_len = 1;
+            except->stack.frames_ptr[0].remapped = obj->hasProperty(global, JSC::Identifier::fromString(vm, "originalLine"_s));
         }
     }
 
@@ -3605,7 +3604,7 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
     if (JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(value)) {
         if (obj->hasProperty(global, global->vm().propertyNames->name)) {
             auto name_str = obj->getIfPropertyExists(global, global->vm().propertyNames->name).toWTFString(global);
-            except->name = Zig::toZigString(name_str);
+            except->name = Bun::toStringRef(name_str);
             if (name_str == "Error"_s) {
                 except->code = JSErrorCodeError;
             } else if (name_str == "EvalError"_s) {
@@ -3627,14 +3626,14 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
 
         if (JSC::JSValue message = obj->getIfPropertyExists(global, global->vm().propertyNames->message)) {
             if (message) {
-                except->message = Zig::toZigString(
+                except->message = Bun::toStringRef(
                     message.toWTFString(global));
             }
         }
 
         if (JSC::JSValue sourceURL = obj->getIfPropertyExists(global, global->vm().propertyNames->sourceURL)) {
             if (sourceURL) {
-                except->stack.frames_ptr[0].source_url = Zig::toZigString(
+                except->stack.frames_ptr[0].source_url = Bun::toStringRef(
                     sourceURL.toWTFString(global));
                 except->stack.frames_len = 1;
             }
@@ -3642,7 +3641,12 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
 
         if (JSC::JSValue line = obj->getIfPropertyExists(global, global->vm().propertyNames->line)) {
             if (line) {
-                except->stack.frames_ptr[0].position.line = line.toInt32(global);
+                // TODO: don't sourcemap it twice
+                if (auto originalLine = obj->getIfPropertyExists(global, JSC::Identifier::fromString(global->vm(), "originalLine"_s))) {
+                    except->stack.frames_ptr[0].position.line = originalLine.toInt32(global);
+                } else {
+                    except->stack.frames_ptr[0].position.line = line.toInt32(global);
+                }
                 except->stack.frames_len = 1;
             }
         }
@@ -3658,9 +3662,7 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
     }
     scope.release();
 
-    auto ref = OpaqueJSString::tryCreate(str);
-    except->message = ZigString { ref->characters8(), ref->length() };
-    ref->ref();
+    except->message = Bun::toStringRef(str);
 }
 
 void JSC__VM__releaseWeakRefs(JSC__VM* arg0)
@@ -3770,8 +3772,8 @@ void JSC__JSValue__toZigException(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     if (value == JSC::JSValue {}) {
         exception->code = JSErrorCodeError;
-        exception->name = Zig::toZigString("Error"_s);
-        exception->message = Zig::toZigString("Unknown error"_s);
+        exception->name = Bun::toStringRef("Error"_s);
+        exception->message = Bun::toStringRef("Unknown error"_s);
         return;
     }
 
@@ -3899,36 +3901,6 @@ void JSC__VM__throwError(JSC__VM* vm_, JSC__JSGlobalObject* arg1, JSC__JSValue v
     JSC::Exception* exception = JSC::Exception::create(vm, error);
     scope.throwException(arg1, exception);
 }
-
-#pragma mark - JSC::ThrowScope
-
-void JSC__ThrowScope__clearException(JSC__ThrowScope* arg0)
-{
-    arg0->clearException();
-};
-bJSC__ThrowScope JSC__ThrowScope__declare(JSC__VM* arg0, unsigned char* arg1, unsigned char* arg2,
-    size_t arg3)
-{
-    Wrap<JSC::ThrowScope, bJSC__ThrowScope> wrapped = Wrap<JSC::ThrowScope, bJSC__ThrowScope>();
-    wrapped.cpp = new (wrapped.alignedBuffer()) JSC::ThrowScope(reinterpret_cast<JSC::VM&>(arg0));
-    return wrapped.result;
-};
-JSC__Exception* JSC__ThrowScope__exception(JSC__ThrowScope* arg0) { return arg0->exception(); }
-void JSC__ThrowScope__release(JSC__ThrowScope* arg0) { arg0->release(); }
-
-#pragma mark - JSC::CatchScope
-
-void JSC__CatchScope__clearException(JSC__CatchScope* arg0)
-{
-    arg0->clearException();
-}
-bJSC__CatchScope JSC__CatchScope__declare(JSC__VM* arg0, unsigned char* arg1, unsigned char* arg2,
-    size_t arg3)
-{
-    JSC::CatchScope scope = JSC::CatchScope(reinterpret_cast<JSC::VM&>(arg0));
-    return cast<bJSC__CatchScope>(&scope);
-}
-JSC__Exception* JSC__CatchScope__exception(JSC__CatchScope* arg0) { return arg0->exception(); }
 
 JSC__JSValue JSC__JSPromise__rejectedPromiseValue(JSC__JSGlobalObject* arg0,
     JSC__JSValue JSValue1)
@@ -4091,9 +4063,18 @@ restart:
             if (key.len == 0)
                 return true;
 
-            JSC::JSValue propertyValue = objectToUse == object ? objectToUse->getDirect(entry.offset()) : JSValue();
+            JSC::JSValue propertyValue = JSValue();
+
+            if (objectToUse == object) {
+                propertyValue = objectToUse->getDirect(entry.offset());
+                if (!propertyValue) {
+                    scope.clearException();
+                    return true;
+                }
+            }
+
             if (!propertyValue || propertyValue.isGetterSetter() && !((entry.attributes() & PropertyAttribute::Accessor) != 0)) {
-                propertyValue = objectToUse->get(globalObject, prop);
+                propertyValue = objectToUse->getIfPropertyExists(globalObject, prop);
             }
 
             if (scope.exception())

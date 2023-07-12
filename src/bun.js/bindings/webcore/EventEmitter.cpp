@@ -35,6 +35,8 @@ bool EventEmitter::addListener(const Identifier& eventType, Ref<EventListener>&&
     }
 
     eventListenersDidChange();
+    if (this->onDidChangeListener)
+        this->onDidChangeListener(*this, eventType, true);
     return true;
 }
 
@@ -62,6 +64,9 @@ bool EventEmitter::removeListener(const Identifier& eventType, EventListener& li
 
     if (data->eventListenerMap.remove(eventType, listener)) {
         eventListenersDidChange();
+
+        if (this->onDidChangeListener)
+            this->onDidChangeListener(*this, eventType, false);
         return true;
     }
     return false;
@@ -93,6 +98,8 @@ bool EventEmitter::removeAllListeners(const Identifier& eventType)
 
     if (data->eventListenerMap.removeAll(eventType)) {
         eventListenersDidChange();
+        if (this->onDidChangeListener)
+            this->onDidChangeListener(*this, eventType, false);
         return true;
     }
     return false;

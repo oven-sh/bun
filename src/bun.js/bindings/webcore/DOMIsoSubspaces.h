@@ -30,6 +30,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForPendingVirtualModuleResult;
     std::unique_ptr<IsoSubspace> m_subspaceForCallSite;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiExternal;
+    std::unique_ptr<IsoSubspace> m_subspaceForImportMeta;
     std::unique_ptr<IsoSubspace> m_subspaceForRequireResolveFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForBundlerPlugin;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMScript;
@@ -37,6 +38,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSMockImplementation;
     std::unique_ptr<IsoSubspace> m_subspaceForJSMockFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForMockWithImplementationCleanupData;
+    std::unique_ptr<IsoSubspace> m_subspaceForProcessObject;
 
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/

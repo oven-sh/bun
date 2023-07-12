@@ -63,6 +63,21 @@ test("2 * 2", done => {
 });
 ```
 
+## Timeouts
+
+Optionally specify a per-test timeout in milliseconds by passing a number as the third argument to `test`.
+
+```ts
+import { test } from "bun:test";
+
+test.skip("wat", async () => {
+  const data = await slowOperation();
+  expect(data).toBe(42);
+}, 500); // test must run in <500ms
+```
+
+## `test.skip`
+
 Skip individual tests with `test.skip`. These tests will not be run.
 
 ```ts
@@ -74,6 +89,8 @@ test.skip("wat", () => {
 });
 ```
 
+## `test.todo`
+
 Mark a test as a todo with `test.todo`. These tests _will_ be run, and the test runner will expect them to fail. If they pass, you will be prompted to mark it as a regular test.
 
 ```ts
@@ -81,6 +98,71 @@ import { expect, test } from "bun:test";
 
 test.todo("fix this", () => {
   myTestFunction();
+});
+```
+
+To exlusively run tests marked as _todo_, use `bun test --todo`.
+
+```sh
+$ bun test --todo
+```
+
+## `test.only`
+
+To run a particular test or suite of tests use `test.only()` or `describe.only()`. Once declared, running `bun test --skip` will only execute tests/suites that have been marked with `.only()`.
+
+```ts
+import { test, describe } from "bun:test";
+
+test("test #1", () => {
+  // does not run
+});
+
+test.only("test #2", () => {
+  // runs
+});
+
+describe.only("only", () => {
+  test("test #3", () => {
+    // runs
+  });
+});
+```
+
+The following command will only execute tests #2 and #3.
+
+```sh
+$ bun test --only
+```
+
+## `test.if`
+
+To run a test conditionally, use `test.if()`. The test will run if the condition is truthy. This is particularly useful for tests that should only run on specific architectures or operating systems.
+
+```ts
+test.if(Math.random() > 0.5)("runs half the time", () => {
+  // ...
+});
+```
+
+```ts
+test.if(Math.random() > 0.5)("runs half the time", () => {
+  // ...
+});
+
+const macOS = process.arch === "darwin";
+test.if(macOS)("runs on macOS", () => {
+  // runs if macOS
+});
+```
+
+To instead skip a test based on some condition, use `test.skipIf()` or `describe.skipIf()`.
+
+```ts
+const macOS = process.arch === "darwin";
+
+test.skipIf(macOS)("runs on non-macOS", () => {
+  // runs if *not* macOS
 });
 ```
 
@@ -217,13 +299,13 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- 🔴
-- [`.resolves()`](https://jestjs.io/docs/expect#resolves)
+- 🟢
+- [`.resolves()`](https://jestjs.io/docs/expect#resolves) (since Bun v0.6.12+)
 
 ---
 
-- 🔴
-- [`.rejects()`](https://jestjs.io/docs/expect#rejects)
+- 🟢
+- [`.rejects()`](https://jestjs.io/docs/expect#rejects) (since Bun v0.6.12+)
 
 ---
 
@@ -277,7 +359,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- 🔴
+- 🟢
 - [`.toBeCloseTo()`](https://jestjs.io/docs/expect#tobeclosetonumber-numdigits)
 
 ---

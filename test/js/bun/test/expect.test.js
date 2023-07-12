@@ -6,6 +6,28 @@
 var { isBun, test, describe, expect, jest, vi, mock, bunTest, spyOn } = require("./test-interop.js")();
 
 describe("expect()", () => {
+  test("rejects", async () => {
+    await expect(Promise.reject(1)).rejects.toBe(1);
+
+    // Different task
+    await expect(
+      new Promise((_, reject) => {
+        setTimeout(() => reject(1), 0);
+      }),
+    ).rejects.toBe(1);
+  });
+
+  test("resolves", async () => {
+    await expect(Promise.resolve(1)).resolves.toBe(1);
+
+    // Different task
+    await expect(
+      new Promise(resolve => {
+        setTimeout(() => resolve(1), 0);
+      }),
+    ).resolves.toBe(1);
+  });
+
   test("can call without an argument", () => {
     expect().toBe(undefined);
   });
@@ -1311,6 +1333,62 @@ describe("expect()", () => {
   test("toEqual() - arrays", () => {
     expect([1, 2, 3]).toEqual([1, 2, 3]);
     expect([1, 2, 3, 4]).not.toEqual([1, 2, 3]);
+  });
+
+  test("toEqual() - private class fields", () => {
+    class A {
+      #three = 3;
+      set three(value) {
+        this.#three = value;
+      }
+
+      get three() {
+        return this.#three;
+      }
+    }
+
+    class B {
+      #three = 3;
+      set three(value) {
+        this.#three = value;
+      }
+
+      get three() {
+        return this.#three;
+      }
+    }
+
+    let a1 = new A();
+    let a2 = new A();
+    a1.three = 4;
+    expect(a1).toEqual(a2);
+    expect(a2).toEqual(a1);
+
+    let a3 = new A();
+    let a4 = new A();
+    a3.three = 4;
+    // use indexed properties for slow path
+    a3[1] = 2;
+    a4[1] = 2;
+    expect(a3).toEqual(a4);
+    expect(a4).toEqual(a3);
+
+    let b1 = new B();
+    let a5 = new A();
+    expect(b1).toEqual(a5);
+    expect(a5).toEqual(b1);
+
+    b1.three = 4;
+    expect(b1).toEqual(a5);
+    expect(a5).toEqual(b1);
+
+    b1[1] = 2;
+    expect(b1).not.toEqual(a5);
+    expect(a5).not.toEqual(b1);
+
+    a5[1] = 2;
+    expect(b1).toEqual(a5);
+    expect(a5).toEqual(b1);
   });
 
   test("properties with different circularity are not equal", () => {
@@ -2654,28 +2732,74 @@ describe("expect()", () => {
 
   describe("toBeEmpty()", () => {
     const values = [
-      "",
-      [],
-      {},
-      new Set(),
-      new Map(),
-      new String(),
-      new Array(),
-      new Uint8Array(),
-      new Object(),
-      Buffer.from(""),
-      ...(isBun ? [Bun.file("/tmp/empty.txt")] : []),
-      new Headers(),
-      new URLSearchParams(),
-      new FormData(),
-      (function* () {})(),
+      {
+        label: `""`,
+        value: "",
+      },
+      {
+        label: `[]`,
+        value: [],
+      },
+      {
+        label: `{}`,
+        value: {},
+      },
+      {
+        label: `new Set()`,
+        value: new Set(),
+      },
+      {
+        label: `new Map()`,
+        value: new Map(),
+      },
+      {
+        label: `new String()`,
+        value: new String(),
+      },
+      {
+        label: `new Array()`,
+        value: new Array(),
+      },
+      {
+        label: `new Uint8Array()`,
+        value: new Uint8Array(),
+      },
+      {
+        label: `new Object()`,
+        value: new Object(),
+      },
+      {
+        label: `Buffer.from("")`,
+        value: Buffer.from(""),
+      },
+      {
+        label: `new Headers()`,
+        value: new Headers(),
+      },
+      {
+        label: `new URLSearchParams()`,
+        value: new URLSearchParams(),
+      },
+      {
+        label: `new FormData()`,
+        value: new FormData(),
+      },
+      {
+        label: `(function* () {})()`,
+        value: (function* () {})(),
+      },
     ];
-    for (const value of values) {
-      test(label(value), () => {
-        if (value && typeof value === "object" && value instanceof Blob) {
+    if (isBun) {
+      values.push({
+        label: `Bun.file()`,
+        value: Bun.file("/tmp/empty.txt"),
+      });
+    }
+    for (const { label, value } of values) {
+      test(label, () => {
+        if (value instanceof Blob) {
           require("fs").writeFileSync("/tmp/empty.txt", "");
         }
-
         expect(value).toBeEmpty();
       });
     }
@@ -2683,34 +2807,81 @@ describe("expect()", () => {
 
   describe("not.toBeEmpty()", () => {
     const values = [
-      " ",
-      [""],
-      [undefined],
-      { "": "" },
-      new Set([""]),
-      new Map([["", ""]]),
-      new String(" "),
-      new Array(1),
-      new Uint8Array(1),
-      Buffer.from(" "),
-      ...(isBun ? [Bun.file(__filename)] : []),
-      new Headers({
-        a: "b",
-        c: "d",
-      }),
-      new URL("https://example.com?d=e&f=g").searchParams,
-      (() => {
-        var a = new FormData();
-        a.append("a", "b");
-        a.append("c", "d");
-        return a;
-      })(),
-      (function* () {
-        yield "123";
-      })(),
+      {
+        label: `" "`,
+        value: " ",
+      },
+      {
+        label: `[""]`,
+        value: [""],
+      },
+      {
+        label: `[undefined]`,
+        value: [undefined],
+      },
+      {
+        label: `{ "": "" }`,
+        value: { "": "" },
+      },
+      {
+        label: `new Set([""])`,
+        value: new Set([""]),
+      },
+      {
+        label: `new Map([["", ""]])`,
+        value: new Map([["", ""]]),
+      },
+      {
+        label: `new String(" ")`,
+        value: new String(" "),
+      },
+      {
+        label: `new Array(1)`,
+        value: new Array(1),
+      },
+      {
+        label: `new Uint8Array(1)`,
+        value: new Uint8Array(1),
+      },
+      {
+        label: `Buffer.from(" ")`,
+        value: Buffer.from(" "),
+      },
+      {
+        label: `new Headers({...})`,
+        value: new Headers({
+          a: "b",
+          c: "d",
+        }),
+      },
+      {
+        label: `URL.searchParams`,
+        value: new URL("https://example.com?d=e&f=g").searchParams,
+      },
+      {
+        label: `FormData`,
+        value: (() => {
+          var a = new FormData();
+          a.append("a", "b");
+          a.append("c", "d");
+          return a;
+        })(),
+      },
+      {
+        label: `generator function`,
+        value: (function* () {
+          yield "123";
+        })(),
+      },
     ];
-    for (const value of values) {
-      test(label(value), () => {
+    if (isBun) {
+      values.push({
+        label: `Bun.file()`,
+        value: Bun.file(__filename),
+      });
+    }
+    for (const { label, value } of values) {
+      test(label, () => {
         expect(value).not.toBeEmpty();
       });
     }
@@ -2743,7 +2914,7 @@ describe("expect()", () => {
     expect([]).toBeArrayOfSize(0);
     expect(new Array()).toBeArrayOfSize(0);
     expect([1, 2, 3, "🫓"]).toBeArrayOfSize(4);
-    expect((new Array() < string) | (number > (1, 2, 3, "🫓"))).toBeArrayOfSize(4);
+    expect(new Array(1, 2, 3, "🫓")).toBeArrayOfSize(4);
     expect({}).not.toBeArrayOfSize(1);
     expect("").not.toBeArrayOfSize(1);
     expect(0).not.toBeArrayOfSize(1);

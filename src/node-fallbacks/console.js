@@ -1,1 +1,1 @@
-module.exports = console;
+export default console;

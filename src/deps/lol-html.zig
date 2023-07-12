@@ -1,6 +1,6 @@
 pub const Error = error{Fail};
 const std = @import("std");
-
+const bun = @import("root").bun;
 pub const MemorySettings = extern struct {
     preallocated_parsing_buffer_size: usize,
     max_allowed_memory_usage: usize,
@@ -393,7 +393,8 @@ pub const Element = opaque {
     extern fn lol_html_element_is_removed(element: *const Element) bool;
     extern fn lol_html_element_user_data_set(element: *const Element, user_data: ?*anyopaque) void;
     extern fn lol_html_element_user_data_get(element: *const Element) ?*anyopaque;
-    extern fn lol_html_element_on_end_tag(element: *Element, end_tag_handler: lol_html_end_tag_handler_t, user_data: ?*anyopaque) c_int;
+    extern fn lol_html_element_add_end_tag_handler(element: *Element, end_tag_handler: lol_html_end_tag_handler_t, user_data: ?*anyopaque) c_int;
+    extern fn lol_html_element_clear_end_tag_handlers(element: *Element) void;
 
     pub fn getAttribute(element: *const Element, name: []const u8) HTMLString {
         auto_disable();
@@ -502,7 +503,10 @@ pub const Element = opaque {
     }
     pub fn onEndTag(element: *Element, end_tag_handler: lol_html_end_tag_handler_t, user_data: ?*anyopaque) Error!void {
         auto_disable();
-        return switch (lol_html_element_on_end_tag(element, end_tag_handler, user_data)) {
+
+        lol_html_element_clear_end_tag_handlers(element);
+
+        return switch (lol_html_element_add_end_tag_handler(element, end_tag_handler, user_data)) {
             0 => {},
             -1 => error.Fail,
             else => unreachable,
@@ -558,6 +562,27 @@ pub const HTMLString = extern struct {
         auto_disable();
         @setRuntimeSafety(false);
         return this.ptr[0..this.len];
+    }
+
+    fn deinit_external(ctx: *anyopaque, ptr: *anyopaque, len: u32) callconv(.C) void {
+        _ = ctx;
+        auto_disable();
+        lol_html_str_free(.{ .ptr = @ptrCast([*]const u8, ptr), .len = len });
+    }
+
+    pub fn toString(this: HTMLString) bun.String {
+        const bytes = this.slice();
+        if (bun.strings.isAllASCII(bytes)) {
+            return bun.String.createExternal(bytes, true, @constCast(bytes.ptr), &deinit_external);
+        }
+        defer this.deinit();
+        return bun.String.create(bytes);
+    }
+
+    pub fn toJS(this: HTMLString, globalThis: *bun.JSC.JSGlobalObject) bun.JSC.JSValue {
+        var str = this.toString();
+        defer str.deref();
+        return str.toJS(globalThis);
     }
 };
 
@@ -727,11 +752,11 @@ pub fn DirectiveHandler(comptime Container: type, comptime UserDataType: type, c
     return struct {
         pub fn callback(this: *Container, user_data: ?*anyopaque) callconv(.C) Directive {
             auto_disable();
-            return @intToEnum(
+            return @enumFromInt(
                 Directive,
                 @as(
                     c_uint,
-                    @boolToInt(
+                    @intFromBool(
                         Callback(
                             @ptrCast(
                                 *UserDataType,

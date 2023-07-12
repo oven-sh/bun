@@ -194,6 +194,51 @@ describe("dotenv priority", () => {
   });
 });
 
+test(".env colon assign", () => {
+  const dir = tempDirWithFiles("dotenv-colon", {
+    ".env": "FOO: foo",
+    "index.ts": "console.log(process.env.FOO);",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(stdout).toBe("foo");
+});
+
+test(".env export assign", () => {
+  const dir = tempDirWithFiles("dotenv-export", {
+    ".env": "export FOO = foo\nexport = bar",
+    "index.ts": "console.log(process.env.FOO, process.env.export);",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(stdout).toBe("foo bar");
+});
+
+test(".env value expansion", () => {
+  const dir = tempDirWithFiles("dotenv-expand", {
+    ".env": "FOO=foo\nBAR=$FOO bar\nMOO=${FOO} ${BAR:-fail} ${MOZ:-moo}",
+    "index.ts": "console.log([process.env.FOO, process.env.BAR, process.env.MOO].join('|'));",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(stdout).toBe("foo|foo bar|foo foo bar moo");
+});
+
+test(".env comments", () => {
+  const dir = tempDirWithFiles("dotenv-comments", {
+    ".env": "#FOZ\nFOO = foo#FAIL\nBAR='bar' #BAZ",
+    "index.ts": "console.log(process.env.FOO, process.env.BAR);",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(stdout).toBe("foo bar");
+});
+
+test(".env escaped dollar sign", () => {
+  const dir = tempDirWithFiles("dotenv-dollar", {
+    ".env": "FOO=foo\nBAR=\\$FOO",
+    "index.ts": "console.log(process.env.FOO, process.env.BAR);",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(stdout).toBe("foo $FOO");
+});
+
 test(".env doesnt crash with 159 bytes", () => {
   const dir = tempDirWithFiles("dotenv-159", {
     ".env":
@@ -217,28 +262,59 @@ test(".env doesnt crash with 159 bytes", () => {
   );
 });
 
-test.todo(".env space edgecase (issue #411)", () => {
+test(".env with >768 entries", () => {
+  const dir = tempDirWithFiles("dotenv-many-entries", {
+    ".env": new Array(2000)
+      .fill(null)
+      .map((_, i) => `TEST_VAR${i}=TEST_VAL${i}`)
+      .join("\n"),
+    "index.ts": "console.log(process.env.TEST_VAR47);",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(stdout).toBe("TEST_VAL47");
+});
+
+test(".env space edgecase (issue #411)", () => {
   const dir = tempDirWithFiles("dotenv-issue-411", {
     ".env": "VARNAME=A B",
-    "index.ts": "console.log('[' + process.env.VARNAME + ']'); ",
+    "index.ts": "console.log('[' + process.env.VARNAME + ']');",
   });
   const { stdout } = bunRun(`${dir}/index.ts`);
   expect(stdout).toBe("[A B]");
 });
 
-test.todo(".env special characters 1 (issue #2823)", () => {
-  const dir = tempDirWithFiles("dotenv-issue-411", {
-    ".env": 'A="a$t"\n',
-    "index.ts": "console.log('[' + process.env.A + ']'); ",
+test(".env special characters 1 (issue #2823)", () => {
+  const dir = tempDirWithFiles("dotenv-issue-2823", {
+    ".env": 'A="a$t"\nC=`c\\$v`',
+    "index.ts": "console.log('[' + process.env.A + ']', '[' + process.env.C + ']');",
   });
   const { stdout } = bunRun(`${dir}/index.ts`);
-  expect(stdout).toBe("[a$t]");
+  expect(stdout).toBe("[a] [c$v]");
 });
 
 test.todo("env escaped quote (issue #2484)", () => {
-  const dir = tempDirWithFiles("dotenv-issue-411", {
+  const dir = tempDirWithFiles("env-issue-2484", {
     "index.ts": "console.log(process.env.VALUE, process.env.VALUE2);",
   });
   const { stdout } = bunRun(`${dir}/index.ts`, { VALUE: `\\"`, VALUE2: `\\\\"` });
   expect(stdout).toBe('\\" \\\\"');
+});
+
+test(".env Windows-style newline (issue #3042)", () => {
+  const dir = tempDirWithFiles("dotenv-issue-3042", {
+    ".env": "FOO=\rBAR='bar\r\rbaz'\r\nMOO=moo\r",
+    "index.ts": "console.log([process.env.FOO, process.env.BAR, process.env.MOO].join('|'));",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(stdout).toBe("|bar\n\nbaz|moo");
+});
+
+test(".env with zero length strings", () => {
+  const dir = tempDirWithFiles("dotenv-issue-zerolength", {
+    ".env": "FOO=''\n",
+    "index.ts":
+      "function i(a){return a}\nconsole.log([process.env.FOO,i(process.env).FOO,process.env.FOO.length,i(process.env).FOO.length].join('|'));",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(stdout).toBe("||0|0");
 });

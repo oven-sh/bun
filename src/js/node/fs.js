@@ -1,12 +1,73 @@
-// Hardcoded module "node:fs"
-var { direct, isPromise, isCallable } = import.meta.primordials;
-var promises = import.meta.require("node:fs/promises");
+export var ReadStream;
+export var WriteStream;
 
-var { Readable, NativeWritable, _getNativeReadableStreamPrototype, eos: eos_ } = import.meta.require("node:stream");
-var NativeReadable = _getNativeReadableStreamPrototype(2, Readable); // 2 means native type is a file here
+import { EventEmitter } from "node:events";
+
+// Hardcoded module "node:fs"
+var { direct, isPromise, isCallable } = globalThis[Symbol.for("Bun.lazy")]("primordials");
+import promises from "node:fs/promises";
+export { default as promises } from "node:fs/promises";
+import * as Stream from "node:stream";
 
 var fs = Bun.fs();
 var debug = process.env.DEBUG ? console.log : () => {};
+
+class FSWatcher extends EventEmitter {
+  #watcher;
+  #listener;
+  constructor(path, options, listener) {
+    super();
+
+    if (typeof options === "function") {
+      listener = options;
+      options = {};
+    } else if (typeof options === "string") {
+      options = { encoding: options };
+    }
+
+    if (typeof listener !== "function") {
+      listener = () => {};
+    }
+
+    this.#listener = listener;
+    try {
+      this.#watcher = fs.watch(path, options || {}, this.#onEvent.bind(this));
+    } catch (e) {
+      if (!e.message?.startsWith("FileNotFound")) {
+        throw e;
+      }
+      const notFound = new Error(`ENOENT: no such file or directory, watch '${path}'`);
+      notFound.code = "ENOENT";
+      notFound.errno = -2;
+      notFound.path = path;
+      notFound.syscall = "watch";
+      notFound.filename = path;
+      throw notFound;
+    }
+  }
+
+  #onEvent(eventType, filenameOrError) {
+    if (eventType === "error" || eventType === "close") {
+      this.emit(eventType, filenameOrError);
+    } else {
+      this.emit("change", eventType, filenameOrError);
+      this.#listener(eventType, filenameOrError);
+    }
+  }
+
+  close() {
+    this.#watcher?.close();
+    this.#watcher = null;
+  }
+
+  ref() {
+    this.#watcher?.ref();
+  }
+
+  unref() {
+    this.#watcher?.unref();
+  }
+}
 export var access = function access(...args) {
     callbackify(fs.accessSync, args);
   },
@@ -151,9 +212,45 @@ export var access = function access(...args) {
   lutimesSync = fs.lutimesSync.bind(fs),
   rmSync = fs.rmSync.bind(fs),
   rmdirSync = fs.rmdirSync.bind(fs),
+  writev = (fd, buffers, position, callback) => {
+    if (typeof position === "function") {
+      callback = position;
+      position = null;
+    }
+
+    queueMicrotask(() => {
+      try {
+        var written = fs.writevSync(fd, buffers, position);
+      } catch (e) {
+        callback(e);
+      }
+
+      callback(null, written, buffers);
+    });
+  },
+  writevSync = fs.writevSync.bind(fs),
+  readv = (fd, buffers, position, callback) => {
+    if (typeof position === "function") {
+      callback = position;
+      position = null;
+    }
+
+    queueMicrotask(() => {
+      try {
+        var written = fs.readvSync(fd, buffers, position);
+      } catch (e) {
+        callback(e);
+      }
+
+      callback(null, written, buffers);
+    });
+  },
+  readvSync = fs.readvSync.bind(fs),
   Dirent = fs.Dirent,
   Stats = fs.Stats,
-  promises = import.meta.require("node:fs/promises");
+  watch = function watch(path, options, listener) {
+    return new FSWatcher(path, options, listener);
+  };
 
 function callbackify(fsFunction, args) {
   try {
@@ -222,7 +319,8 @@ var defaultReadStreamOptions = {
 };
 
 var ReadStreamClass;
-export var ReadStream = (function (InternalReadStream) {
+
+ReadStream = (function (InternalReadStream) {
   ReadStreamClass = InternalReadStream;
   Object.defineProperty(ReadStreamClass.prototype, Symbol.toStringTag, {
     value: "ReadStream",
@@ -241,7 +339,7 @@ export var ReadStream = (function (InternalReadStream) {
     },
   );
 })(
-  class ReadStream extends NativeReadable {
+  class ReadStream extends Stream._getNativeReadableStreamPrototype(2, Stream.Readable) {
     constructor(pathOrFd, options = defaultReadStreamOptions) {
       if (typeof options !== "object" || !options) {
         throw new TypeError("Expected options to be an object");
@@ -569,7 +667,7 @@ var defaultWriteStreamOptions = {
 };
 
 var WriteStreamClass;
-export var WriteStream = (function (InternalWriteStream) {
+WriteStream = (function (InternalWriteStream) {
   WriteStreamClass = InternalWriteStream;
   Object.defineProperty(WriteStreamClass.prototype, Symbol.toStringTag, {
     value: "WritesStream",
@@ -577,8 +675,8 @@ export var WriteStream = (function (InternalWriteStream) {
   });
 
   return Object.defineProperty(
-    function WriteStream(options) {
-      return new InternalWriteStream(options);
+    function WriteStream(path, options) {
+      return new InternalWriteStream(path, options);
     },
     Symbol.hasInstance,
     {
@@ -588,7 +686,7 @@ export var WriteStream = (function (InternalWriteStream) {
     },
   );
 })(
-  class WriteStream extends NativeWritable {
+  class WriteStream extends Stream.NativeWritable {
     constructor(path, options = defaultWriteStreamOptions) {
       if (!options) {
         throw new TypeError("Expected options to be an object");
@@ -877,7 +975,7 @@ export function createWriteStream(path, options) {
 }
 
 // NOTE: This was too smart and doesn't actually work
-// export var WriteStream = Object.defineProperty(
+// WriteStream = Object.defineProperty(
 //   function WriteStream(path, options) {
 //     var _InternalWriteStream = getLazyWriteStream();
 //     return new _InternalWriteStream(path, options);
@@ -886,7 +984,7 @@ export function createWriteStream(path, options) {
 //   { value: (instance) => instance[writeStreamSymbol] === true },
 // );
 
-// export var ReadStream = Object.defineProperty(
+// ReadStream = Object.defineProperty(
 //   function ReadStream(path, options) {
 //     var _InternalReadStream = getLazyReadStream();
 //     return new _InternalReadStream(path, options);
@@ -1002,7 +1100,12 @@ export default {
   writeSync,
   WriteStream,
   ReadStream,
-
+  watch,
+  FSWatcher,
+  writev,
+  writevSync,
+  readv,
+  readvSync,
   [Symbol.for("::bunternal::")]: {
     ReadStreamClass,
     WriteStreamClass,
@@ -1014,3 +1117,5 @@ export default {
   //   return getLazyReadStream();
   // },
 };
+
+export { constants } from "node:fs/promises";

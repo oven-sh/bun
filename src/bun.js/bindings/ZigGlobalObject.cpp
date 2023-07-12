@@ -336,9 +336,19 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 extern "C" void* Bun__getVM();
 extern "C" JSGlobalObject* Bun__getDefaultGlobal();
 
+// Error.captureStackTrace may cause computeErrorInfo to be called twice
+// Rather than figure out the plumbing in JSC, we just skip the next call
+// TODO: thread_local for workers
+static bool skipNextComputeErrorInfo = false;
+
+// error.stack calls this function
 static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSObject* errorInstance)
 {
     if (!errorInstance) {
+        return String();
+    }
+
+    if (skipNextComputeErrorInfo) {
         return String();
     }
 
@@ -414,6 +424,9 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
 
             if (!sourceURLForFrame.isEmpty()) {
                 remappedFrames[i].source_url = Bun::toString(sourceURLForFrame);
+            } else {
+                // https://github.com/oven-sh/bun/issues/3595
+                remappedFrames[i].source_url = BunStringEmpty;
             }
 
             // This ensures the lifetime of the sourceURL is accounted for correctly
@@ -423,7 +436,7 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<Stack
                 hasSet = true;
                 line = thisLine;
                 column = thisColumn;
-                sourceURL = frame.sourceURL(vm);
+                sourceURL = sourceURLForFrame;
 
                 if (errorInstance) {
                     if (remappedFrames[i].remapped) {
@@ -2867,9 +2880,14 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSC::JSValue formattedStackTrace = globalObject->formatStackTrace(vm, lexicalGlobalObject, errorObject, callSites);
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
 
+    bool orignialSkipNextComputeErrorInfo = skipNextComputeErrorInfo;
+    skipNextComputeErrorInfo = true;
     if (errorObject->hasProperty(lexicalGlobalObject, vm.propertyNames->stack)) {
+        skipNextComputeErrorInfo = true;
         errorObject->deleteProperty(lexicalGlobalObject, vm.propertyNames->stack);
     }
+    skipNextComputeErrorInfo = orignialSkipNextComputeErrorInfo;
+
     if (formattedStackTrace.isUndefinedOrNull()) {
         formattedStackTrace = JSC::jsUndefined();
     }

@@ -2,7 +2,6 @@ import { describe, it, expect, afterEach } from "bun:test";
 import type { Server, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
 import { bunEnv, bunExe, nodeExe } from "harness";
-import { drainMicrotasks, fullGC } from "bun:jsc";
 
 const strings = [
   {

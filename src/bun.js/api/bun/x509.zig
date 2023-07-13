@@ -305,13 +305,13 @@ fn x509InfoAccessPrint(out: *BoringSSL.BIO, ext: *BoringSSL.X509_EXTENSION) bool
             const gen = BoringSSL.sk_ACCESS_DESCRIPTION_value(descs, i);
             if (gen) |desc| {
                 if (i != 0) {
-                    _ = BoringSSL.BIO_write(out, ", ", 2);
+                    _ = BoringSSL.BIO_write(out, "\n", 1);
                 }
                 var tmp: [80]u8 = undefined;
                 _ = BoringSSL.i2t_ASN1_OBJECT(&tmp, @sizeOf(@TypeOf(tmp)), desc.method);
                 _ = BoringSSL.BIO_printf(out, "%s - ", &tmp);
 
-                if (x509PrintGeneralName(out, desc.location)) {
+                if (!x509PrintGeneralName(out, desc.location)) {
                     return false;
                 }
             }
@@ -336,7 +336,7 @@ fn x509SubjectAltNamePrint(out: *BoringSSL.BIO, ext: *BoringSSL.X509_EXTENSION) 
                     _ = BoringSSL.BIO_write(out, ", ", 2);
                 }
 
-                if (x509PrintGeneralName(out, gen_name)) {
+                if (!x509PrintGeneralName(out, gen_name)) {
                     return false;
                 }
             }
@@ -401,7 +401,7 @@ fn getFingerprintDigest(cert: *BoringSSL.X509, method: *const BoringSSL.EVP_MD, 
 
     if (BoringSSL.X509_digest(cert, method, @ptrCast([*c]u8, &md), &md_size) != 0) {
         addFingerprintDigest(&md, md_size, &fingerprint);
-        return JSC.ZigString.fromUTF8(fingerprint[0..bun.len(fingerprint)]).toValueGC(globalObject);
+        return JSC.ZigString.fromUTF8(fingerprint[0 .. bun.len(fingerprint) - 1]).toValueGC(globalObject);
     }
     return JSValue.jsUndefined();
 }

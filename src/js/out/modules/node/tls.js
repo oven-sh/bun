@@ -12,9 +12,11 @@ var parseCertString = function() {
     return !0;
   }
 }, unfqdn = function(host2) {
-  return RegExpPrototypeSymbolReplace(/[.]$/, host2, "");
+  return RegExpPrototypeSymbolReplace.call(/[.]$/, host2, "");
+}, toLowerCase = function(c) {
+  return StringFromCharCode.call(32 + StringPrototypeCharCodeAt.call(c, 0));
 }, splitHost = function(host2) {
-  return StringPrototypeSplit.call(RegExpPrototypeSymbolReplace(/[A-Z]/g, unfqdn(host2), toLowerCase), ".");
+  return StringPrototypeSplit.call(RegExpPrototypeSymbolReplace.call(/[A-Z]/g, unfqdn(host2), toLowerCase), ".");
 }, check = function(hostParts, pattern, wildcards) {
   if (!pattern)
     return !1;
@@ -87,7 +89,7 @@ var parseCertString = function() {
         reason = `Host: ${hostname}. is not in the cert's altnames: ${altNames}`;
     } else {
       const cn = subject.CN;
-      if (ArrayIsArray(cn))
+      if (Array.isArray(cn))
         valid = ArrayPrototypeSome.call(cn, wildcard);
       else if (cn)
         valid = wildcard(cn);
@@ -111,7 +113,7 @@ var parseCertString = function() {
     c.issuerCertificate = translatePeerCertificate(c.issuerCertificate);
   if (c.infoAccess != null) {
     const info = c.infoAccess;
-    c.infoAccess = { __proto__: null }, RegExpPrototypeSymbolReplace(/([^\n:]*):([^\n]*)(?:\n|$)/g, info, (all, key, val) => {
+    c.infoAccess = { __proto__: null }, RegExpPrototypeSymbolReplace.call(/([^\n:]*):([^\n]*)(?:\n|$)/g, info, (all, key, val) => {
       if (val.charCodeAt(0) === 34)
         val = JSONParse(val);
       if (key in c.infoAccess)
@@ -147,7 +149,7 @@ var parseCertString = function() {
     out.ALPNProtocols = Buffer.from(protocols.buffer.slice(protocols.byteOffset, protocols.byteOffset + protocols.byteLength));
   else if (Buffer.isBuffer(protocols))
     out.ALPNProtocols = protocols;
-}, InternalTCPSocket = net[Symbol.for("::bunternal::")], bunSocketInternal = Symbol.for("::bunnetsocketinternal::"), { RegExp, Array, String } = globalThis[Symbol.for("Bun.lazy")]("primordials"), SymbolReplace = Symbol.replace, RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace], RegExpPrototypeExec = RegExp.prototype.exec, StringPrototypeStartsWith = String.prototype.startsWith, StringPrototypeSlice = String.prototype.slice, StringPrototypeIncludes = String.prototype.includes, StringPrototypeSplit = String.prototype.split, StringPrototypeIndexOf = String.prototype.indexOf, StringPrototypeSubstring = String.prototype.substring, StringPrototypeEndsWith = String.prototype.endsWith, ArrayPrototypeIncludes = Array.prototype.includes, ArrayPrototypeJoin = Array.prototype.join, ArrayPrototypeForEach = Array.prototype.forEach, ArrayPrototypePush = Array.prototype.push, ArrayPrototypeSome = Array.prototype.some, ArrayPrototypeReduce = Array.prototype.reduce, jsonStringPattern = /^"(?:[^"\\\u0000-\u001f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"/, InternalSecureContext = class SecureContext2 {
+}, InternalTCPSocket = net[Symbol.for("::bunternal::")], bunSocketInternal = Symbol.for("::bunnetsocketinternal::"), { RegExp, Array, String } = globalThis[Symbol.for("Bun.lazy")]("primordials"), SymbolReplace = Symbol.replace, RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace], RegExpPrototypeExec = RegExp.prototype.exec, StringPrototypeStartsWith = String.prototype.startsWith, StringPrototypeSlice = String.prototype.slice, StringPrototypeIncludes = String.prototype.includes, StringPrototypeSplit = String.prototype.split, StringPrototypeIndexOf = String.prototype.indexOf, StringPrototypeSubstring = String.prototype.substring, StringPrototypeEndsWith = String.prototype.endsWith, StringFromCharCode = String.fromCharCode, StringPrototypeCharCodeAt = String.prototype.charCodeAt, ArrayPrototypeIncludes = Array.prototype.includes, ArrayPrototypeJoin = Array.prototype.join, ArrayPrototypeForEach = Array.prototype.forEach, ArrayPrototypePush = Array.prototype.push, ArrayPrototypeSome = Array.prototype.some, ArrayPrototypeReduce = Array.prototype.reduce, jsonStringPattern = /^"(?:[^"\\\u0000-\u001f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"/, InternalSecureContext = class SecureContext2 {
   context;
   constructor(options) {
     const context = {};
@@ -200,6 +202,7 @@ var parseCertString = function() {
   #secureContext;
   ALPNProtocols;
   #socket;
+  #checkServerIdentity;
   constructor(socket, options) {
     super(socket instanceof InternalTCPSocket ? options : options || socket);
     if (options = options || socket || {}, typeof options === "object") {
@@ -209,7 +212,7 @@ var parseCertString = function() {
       if (socket instanceof InternalTCPSocket)
         this.#socket = socket;
     }
-    this.#secureContext = options.secureContext || createSecureContext(options), this.authorized = !1, this.secureConnecting = !0, this._secureEstablished = !1, this._securePending = !0;
+    this.#secureContext = options.secureContext || createSecureContext(options), this.authorized = !1, this.secureConnecting = !0, this._secureEstablished = !1, this._securePending = !0, this.#checkServerIdentity = options.checkServerIdentity || checkServerIdentity;
   }
   _secureEstablished = !1;
   _securePending = !0;
@@ -264,6 +267,7 @@ var parseCertString = function() {
       socket: this.#socket,
       ALPNProtocols: this.ALPNProtocols,
       serverName: this.servername || host2 || "localhost",
+      checkServerIdentity: this.#checkServerIdentity,
       ...this.#secureContext
     };
   }

@@ -16,6 +16,8 @@ const StringPrototypeSplit = String.prototype.split;
 const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeSubstring = String.prototype.substring;
 const StringPrototypeEndsWith = String.prototype.endsWith;
+const StringFromCharCode = String.fromCharCode;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -40,11 +42,16 @@ function isValidTLSArray(obj) {
 }
 
 function unfqdn(host) {
-  return RegExpPrototypeSymbolReplace(/[.]$/, host, "");
+  return RegExpPrototypeSymbolReplace.call(/[.]$/, host, "");
+}
+// String#toLowerCase() is locale-sensitive so we use
+// a conservative version that only lowercases A-Z.
+function toLowerCase(c) {
+  return StringFromCharCode.call(32 + StringPrototypeCharCodeAt.call(c, 0));
 }
 
 function splitHost(host) {
-  return StringPrototypeSplit.call(RegExpPrototypeSymbolReplace(/[A-Z]/g, unfqdn(host), toLowerCase), ".");
+  return StringPrototypeSplit.call(RegExpPrototypeSymbolReplace.call(/[A-Z]/g, unfqdn(host), toLowerCase), ".");
 }
 
 function check(hostParts, pattern, wildcards) {
@@ -163,7 +170,6 @@ function checkServerIdentity(hostname, cert) {
   let reason = "Unknown reason";
 
   hostname = unfqdn(hostname); // Remove trailing dot for error messages.
-
   if (net.isIP(hostname)) {
     valid = ArrayPrototypeIncludes.call(ips, canonicalizeIP(hostname));
     if (!valid) reason = `IP: ${hostname} is not in the cert's list: ` + ArrayPrototypeJoin.call(ips, ", ");
@@ -178,7 +184,7 @@ function checkServerIdentity(hostname, cert) {
       // Match against Common Name only if no supported identifiers exist.
       const cn = subject.CN;
 
-      if (ArrayIsArray(cn)) valid = ArrayPrototypeSome.call(cn, wildcard);
+      if (Array.isArray(cn)) valid = ArrayPrototypeSome.call(cn, wildcard);
       else if (cn) valid = wildcard(cn);
 
       if (!valid) reason = `Host: ${hostname}. is not cert's CN: ${cn}`;
@@ -186,7 +192,6 @@ function checkServerIdentity(hostname, cert) {
   } else {
     reason = "Cert does not contain a DNS name";
   }
-
   if (!valid) {
     let error = new Error(`ERR_TLS_CERT_ALTNAME_INVALID: Hostname/IP does not match certificate's altnames: ${reason}`);
     error.name = "ERR_TLS_CERT_ALTNAME_INVALID";
@@ -274,9 +279,8 @@ function translatePeerCertificate(c) {
   if (c.infoAccess != null) {
     const info = c.infoAccess;
     c.infoAccess = { __proto__: null };
-
     // XXX: More key validation?
-    RegExpPrototypeSymbolReplace(/([^\n:]*):([^\n]*)(?:\n|$)/g, info, (all, key, val) => {
+    RegExpPrototypeSymbolReplace.call(/([^\n:]*):([^\n]*)(?:\n|$)/g, info, (all, key, val) => {
       if (val.charCodeAt(0) === 0x22) {
         // The translatePeerCertificate function is only
         // used on internally created legacy certificate
@@ -318,6 +322,7 @@ const TLSSocket = (function (InternalTLSSocket) {
     #secureContext;
     ALPNProtocols;
     #socket;
+    #checkServerIdentity;
 
     constructor(socket, options) {
       super(socket instanceof InternalTCPSocket ? options : options || socket);
@@ -337,6 +342,7 @@ const TLSSocket = (function (InternalTLSSocket) {
       this.secureConnecting = true;
       this._secureEstablished = false;
       this._securePending = true;
+      this.#checkServerIdentity = options.checkServerIdentity || checkServerIdentity;
     }
 
     _secureEstablished = false;
@@ -410,6 +416,7 @@ const TLSSocket = (function (InternalTLSSocket) {
         socket: this.#socket,
         ALPNProtocols: this.ALPNProtocols,
         serverName: this.servername || host || "localhost",
+        checkServerIdentity: this.#checkServerIdentity,
         ...this.#secureContext,
       };
     }

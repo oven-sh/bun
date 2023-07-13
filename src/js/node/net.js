@@ -65,6 +65,7 @@ const bunSocketServerHandlers = Symbol.for("::bunsocket_serverhandlers::");
 const bunSocketServerConnections = Symbol.for("::bunnetserverconnections::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
+const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
 var SocketClass;
 const Socket = (function (InternalSocket) {
@@ -139,15 +140,11 @@ const Socket = (function (InternalSocket) {
           self.emit("secure", self);
         }
 
-        // Needs getPeerCertificate support (not implemented yet)
-        // if (!verifyError && !this.isSessionReused()) {
-        //   const hostname = options.servername ||
-        //                  options.host ||
-        //                  (options.socket && options.socket._host) ||
-        //                  'localhost';
-        //   const cert = this.getPeerCertificate(true);
-        //   verifyError = options.checkServerIdentity(hostname, cert);
-        // }
+        const { checkServerIdentity } = self[bunTLSConnectOptions];
+        if (!verifyError && typeof checkServerIdentity === "function" && self.servername) {
+          const cert = self.getPeerCertificate(true);
+          verifyError = checkServerIdentity(self.servername, cert);
+        }
 
         if (self._requestCert || self._rejectUnauthorized) {
           if (verifyError) {
@@ -259,21 +256,12 @@ const Socket = (function (InternalSocket) {
         self._securePending = false;
         self.secureConnecting = false;
         self._secureEstablished = !!success;
-        // emmited before checking other handshake stuff (used on mysql2 and possible others)
-        // this is not documented, but is emmited on nodejs because of the deprecated tls.createSecurePair().
-        // so we only emit if the socket was upgraded
-        if (self.#upgraded) {
-          self.emit("secure", self);
+        const { servername, checkServerIdentity } = self[bunSocketServerOptions];
+
+        if (!verifyError && typeof checkServerIdentity === "function" && servername) {
+          const cert = self.getPeerCertificate(true);
+          verifyError = checkServerIdentity(servername, cert);
         }
-        // Needs getPeerCertificate support (not implemented yet)
-        // if (!verifyError && !this.isSessionReused()) {
-        //   const hostname = options.servername ||
-        //                  options.host ||
-        //                  (options.socket && options.socket._host) ||
-        //                  'localhost';
-        //   const cert = this.getPeerCertificate(true);
-        //   verifyError = options.checkServerIdentity(hostname, cert);
-        // }
 
         if (self._requestCert || self._rejectUnauthorized) {
           if (verifyError) {
@@ -307,6 +295,7 @@ const Socket = (function (InternalSocket) {
     #readQueue = createFIFO();
     remotePort;
     [bunSocketInternal] = null;
+    [bunTLSConnectOptions] = null;
     timeout = 0;
     #writeCallback;
     #writeChunk;
@@ -369,6 +358,7 @@ const Socket = (function (InternalSocket) {
     connect(port, host, connectListener) {
       var path;
       var connection = this.#socket;
+      var _checkServerIdentity = undefined;
       if (typeof port === "string") {
         path = port;
         port = undefined;
@@ -405,8 +395,9 @@ const Socket = (function (InternalSocket) {
           rejectUnauthorized,
           pauseOnConnect,
           servername,
+          checkServerIdentity,
         } = port;
-
+        _checkServerIdentity = checkServerIdentity;
         this.servername = servername;
         if (socket) {
           connection = socket;
@@ -429,18 +420,13 @@ const Socket = (function (InternalSocket) {
         this._rejectUnauthorized = rejectUnauthorized;
 
         if (tls) {
-          // TLS can true/false or options
-          if (typeof tls !== "object") {
-            tls = {
-              rejectUnauthorized: rejectUnauthorized,
-              requestCert: true,
-            };
-          } else {
-            tls.rejectUnauthorized = rejectUnauthorized;
-            tls.requestCert = true;
-            if (!connection && tls.socket) {
-              connection = tls.socket;
-            }
+          tls.rejectUnauthorized = rejectUnauthorized;
+          tls.requestCert = true;
+          this.servername = tls.servername;
+          tls.checkServerIdentity = _checkServerIdentity || tls.checkServerIdentity;
+          this[bunTLSConnectOptions] = tls;
+          if (!connection && tls.socket) {
+            connection = tls.socket;
           }
         }
         if (connection) {
@@ -456,6 +442,7 @@ const Socket = (function (InternalSocket) {
         this.secureConnecting = true;
         this._secureEstablished = false;
         this._securePending = true;
+
         if (connectListener) this.on("secureConnect", connectListener);
       } else if (connectListener) this.on("connect", connectListener);
       // start using existing connection
@@ -824,11 +811,16 @@ class Server extends EventEmitter {
       var tls = undefined;
       var TLSSocketClass = undefined;
       const bunTLS = this[bunTlsSymbol];
+      const options = this[bunSocketServerOptions];
+
       if (typeof bunTLS === "function") {
         [tls, TLSSocketClass] = bunTLS.call(this, port, hostname, false);
+        options.checkServerIdentity = tls.checkServerIdentity;
+        options.servername = tls.serverName;
+        options.InternalSocketClass = TLSSocketClass;
+      } else {
+        options.InternalSocketClass = SocketClass;
       }
-
-      this[bunSocketServerOptions].InternalSocketClass = TLSSocketClass || SocketClass;
 
       this.#server = Bun.listen(
         path

@@ -101,6 +101,33 @@ describe("structured clone", () => {
     }
   });
 
+  describe("bun blobs work", () => {
+    test("simple", () => {
+      const blob = new Blob(["hello"], { type: "application/octet-stream" });
+      const cloned = structuredClone(blob);
+      expect(cloned).toBeInstanceOf(Blob);
+      expect(cloned).not.toBe(blob);
+      expect(cloned.size).toBe(blob.size);
+      expect(cloned.type).toBe(blob.type);
+    });
+    test("empty", () => {
+      const emptyBlob = new Blob([], { type: "" });
+      const clonedEmpty = structuredClone(emptyBlob);
+      expect(clonedEmpty).toBeInstanceOf(Blob);
+      expect(clonedEmpty).not.toBe(emptyBlob);
+      expect(clonedEmpty.size).toBe(emptyBlob.size);
+      expect(clonedEmpty.type).toBe(emptyBlob.type);
+    });
+    test("unknown type", () => {
+      const blob = new Blob(["hello type"], { type: "this is type" });
+      const cloned = structuredClone(blob);
+      expect(cloned).toBeInstanceOf(Blob);
+      expect(cloned).not.toBe(blob);
+      expect(cloned.size).toBe(blob.size);
+      expect(cloned.type).toBe(blob.type);
+    });
+  });
+
   describe("transferrables", () => {
     test("ArrayBuffer", () => {
       const buffer = Uint8Array.from([1]).buffer;
@@ -109,10 +136,16 @@ describe("structured clone", () => {
       expect(cloned.byteLength).toBe(1);
     });
     test("A detached ArrayBuffer cannot be transferred", () => {
-      const buffer = new ArrayBuffer();
+      const buffer = new ArrayBuffer(2);
       const cloned = structuredClone(buffer, { transfer: [buffer] });
       expect(() => {
         structuredClone(buffer, { transfer: [buffer] });
+      }).toThrow(DOMException);
+    });
+    test("Transferring a non-transferable platform object fails", () => {
+      const blob = new Blob();
+      expect(() => {
+        structuredClone(blob, { transfer: [blob] });
       }).toThrow(DOMException);
     });
   });

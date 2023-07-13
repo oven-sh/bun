@@ -98,6 +98,14 @@ pub const JSBlob = struct {
     extern fn Blob__dangerouslySetPtr(JSC.JSValue, ?*Blob) bool;
 
     comptime {
+        if (@TypeOf(Blob.onStructuredCloneSerialize) != (fn (*Blob, globalThis: *JSC.JSGlobalObject, ctx: *anyopaque, writeBytes: *const fn (*anyopaque, ptr: [*]const u8, len: u32) callconv(.C) void) callconv(.C) void)) {
+            @compileLog("Blob.onStructuredCloneSerialize is not a structured clone serialize function");
+        }
+
+        if (@TypeOf(Blob.onStructuredCloneDeserialize) != (fn (globalThis: *JSC.JSGlobalObject, ptr: [*]u8, end: [*]u8) callconv(.C) JSC.JSValue)) {
+            @compileLog("Blob.onStructuredCloneDeserialize is not a structured clone deserialize function");
+        }
+
         if (@TypeOf(Blob.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Blob)) {
             @compileLog("Blob.constructor is not a constructor");
         }
@@ -149,6 +157,8 @@ pub const JSBlob = struct {
             @export(Blob.getText, .{ .name = "BlobPrototype__getText" });
             @export(Blob.getType, .{ .name = "BlobPrototype__getType" });
             @export(Blob.getWriter, .{ .name = "BlobPrototype__getWriter" });
+            @export(Blob.onStructuredCloneDeserialize, .{ .name = "Blob__onStructuredCloneDeserialize" });
+            @export(Blob.onStructuredCloneSerialize, .{ .name = "Blob__onStructuredCloneSerialize" });
         }
     }
 };

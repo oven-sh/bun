@@ -101,6 +101,9 @@
 #include <wtf/Vector.h>
 #include <wtf/threads/BinarySemaphore.h>
 
+#include "blob.h"
+#include "ZigGeneratedClasses.h"
+
 #if USE(CG)
 #include <CoreGraphics/CoreGraphics.h>
 #endif
@@ -223,6 +226,10 @@ enum SerializationTag {
     WebCodecsVideoFrameTag = 53,
 #endif
     ResizableArrayBufferTag = 54,
+
+    Bun__BlobTag = 254,
+    // bun types start at 254 and decrease with each addition
+
     ErrorTag = 255
 };
 
@@ -664,6 +671,12 @@ class CloneSerializer : CloneBase {
     WTF_FORBID_HEAP_ALLOCATION;
 
 public:
+    Vector<uint8_t>& m_buffer;
+
+    void write(const uint8_t* data, unsigned length)
+    {
+        writeLittleEndian(m_buffer, data, length);
+    }
     //     static SerializationReturnCode serialize(JSGlobalObject* lexicalGlobalObject, JSValue value, Vector<RefPtr<MessagePort>>& messagePorts, Vector<RefPtr<JSC::ArrayBuffer>>& arrayBuffers, const Vector<RefPtr<ImageBitmap>>& imageBitmaps,
     // #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
     //         const Vector<RefPtr<OffscreenCanvas>>& offscreenCanvases,
@@ -1446,6 +1459,15 @@ private:
             //         write(file.get());
             //     return true;
             // }
+
+            // write bun types
+            if (auto _cloneable = StructuredCloneableSerialize::fromJS(value)) {
+                StructuredCloneableSerialize cloneable = WTFMove(_cloneable.value());
+                write(cloneable.tag);
+                cloneable.write(this, m_lexicalGlobalObject);
+                return true;
+            }
+
             // if (auto* blob = JSBlob::toWrapped(vm, obj)) {
             //     write(BlobTag);
             //     m_blobHandles.append(blob->handle().isolatedCopy());
@@ -2135,13 +2157,6 @@ private:
         }
     }
 #endif
-
-    void write(const uint8_t* data, unsigned length)
-    {
-        m_buffer.append(data, length);
-    }
-
-    Vector<uint8_t>& m_buffer;
     // Vector<URLKeepingBlobAlive>& m_blobHandles;
     ObjectPool m_objectPool;
     ObjectPool m_transferredMessagePorts;
@@ -2168,6 +2183,12 @@ private:
 #endif
     SerializationForStorage m_forStorage;
 };
+
+void SerializedScriptValue::writeBytesForBun(CloneSerializer* ctx, const uint8_t* data, uint32_t size)
+{
+    writeLittleEndian(ctx->m_buffer, size);
+    ctx->write(data, size);
+}
 
 SerializationReturnCode CloneSerializer::serialize(JSValue in)
 {
@@ -4088,6 +4109,17 @@ private:
     JSValue readTerminal()
     {
         SerializationTag tag = readTag();
+
+        // read bun types
+        if (auto value = StructuredCloneableDeserialize::fromTagDeserialize(tag, m_lexicalGlobalObject, m_ptr, m_end)) {
+            JSValue deserialized = JSValue::decode(value.value());
+            if (deserialized.isEmpty()) {
+                fail();
+                return JSValue();
+            }
+            return deserialized;
+        }
+
         switch (tag) {
         case UndefinedTag:
             return jsUndefined();

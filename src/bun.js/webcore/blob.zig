@@ -208,6 +208,87 @@ pub const Blob = struct {
         return null;
     }
 
+    pub fn onStructuredCloneSerialize(
+        this: *Blob,
+        globalThis: *JSC.JSGlobalObject,
+        ctx: *anyopaque,
+        writeBytes: *const fn (*anyopaque, ptr: [*]const u8, len: u32) callconv(.C) void,
+    ) callconv(.C) void {
+        _ = globalThis;
+        this.resolveSize();
+        writeBytes(ctx, this.sharedView().ptr, @intCast(u32, this.sharedView().len));
+        writeBytes(ctx, this.content_type.ptr, @intCast(u32, this.content_type.len));
+    }
+
+    pub fn onStructuredCloneTransfer(
+        this: *Blob,
+        globalThis: *JSC.JSGlobalObject,
+        ctx: *anyopaque,
+        write: *const fn (*anyopaque, ptr: [*]const u8, len: usize) callconv(.C) void,
+    ) callconv(.C) void {
+        _ = write;
+        _ = ctx;
+        _ = this;
+        _ = globalThis;
+    }
+
+    pub fn onStructuredCloneDeserialize(
+        globalThis: *JSC.JSGlobalObject,
+        ptr: [*]u8,
+        end: [*]u8,
+    ) callconv(.C) JSValue {
+        const allocator = globalThis.allocator();
+
+        const total_length: usize = @intFromPtr(end) - @intFromPtr(ptr);
+        var slice = ptr[0..total_length];
+
+        var shared_view_len: u32 = 0;
+        if (slice.len < 4) return .zero;
+        shared_view_len |= @as(u32, slice[0]);
+        shared_view_len |= @as(u32, slice[1]) << 8;
+        shared_view_len |= @as(u32, slice[2]) << 16;
+        shared_view_len |= @as(u32, slice[3]) << 24;
+
+        slice = slice[4..];
+
+        if (slice.len < shared_view_len) return .zero;
+        const shared_view = slice[0..shared_view_len];
+        slice = slice[shared_view_len..];
+
+        var content_type_len: u32 = 0;
+        if (slice.len < 4) return .zero;
+        content_type_len |= @as(u32, slice[0]);
+        content_type_len |= @as(u32, slice[1]) << 8;
+        content_type_len |= @as(u32, slice[2]) << 16;
+        content_type_len |= @as(u32, slice[3]) << 24;
+
+        slice = slice[4..];
+
+        if (slice.len < content_type_len) return .zero;
+        const content_type = slice[0..content_type_len];
+        slice = slice[content_type_len..];
+
+        if (Environment.allow_assert) {
+            std.debug.assert(slice.len == 0);
+        }
+
+        var blob = Blob.create(shared_view, allocator, globalThis, false);
+        blob.content_type = brk: {
+            if (globalThis.bunVM().mimeType(content_type)) |mime| {
+                break :brk mime.value;
+            }
+
+            var content_type_buf = allocator.alloc(u8, content_type.len) catch return .zero;
+            blob.content_type_allocated = true;
+            break :brk strings.copyLowercase(content_type, content_type_buf);
+        };
+        var blob_ = allocator.create(Blob) catch return .zero;
+        blob_.* = blob;
+        blob_.*.allocator = allocator;
+
+        return blob_.toJS(globalThis);
+    }
+
     const URLSearchParamsConverter = struct {
         allocator: std.mem.Allocator,
         buf: []u8 = "",

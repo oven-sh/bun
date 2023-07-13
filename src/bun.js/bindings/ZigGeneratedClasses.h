@@ -10,6 +10,7 @@ namespace Zig {
 
 #include "JSDOMWrapper.h"
 #include <wtf/NeverDestroyed.h>
+#include "SerializedScriptValue.h"
 
 namespace WebCore {
 using namespace Zig;
@@ -1996,6 +1997,29 @@ public:
     }
 
     void finishCreation(JSC::VM&);
+};
+
+class StructuredCloneableSerialize {
+public:
+    void (*cppWriteBytes)(CloneSerializer*, const uint8_t*, uint32_t);
+
+    std::function<void(void*, JSC::JSGlobalObject*, void*, void (*)(CloneSerializer*, const uint8_t*, uint32_t))> zigFunction;
+
+    uint8_t tag;
+
+    // the type from zig
+    void* impl;
+
+    static std::optional<StructuredCloneableSerialize> fromJS(JSC::JSValue);
+    void write(CloneSerializer* serializer, JSC::JSGlobalObject* globalObject)
+    {
+        zigFunction(impl, globalObject, serializer, cppWriteBytes);
+    }
+};
+
+class StructuredCloneableDeserialize {
+public:
+    static std::optional<JSC::EncodedJSValue> fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject*, const uint8_t*, const uint8_t*);
 };
 
 }

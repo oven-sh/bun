@@ -91,7 +91,6 @@ const Socket = (function (InternalSocket) {
       close: Socket.#Close,
       connectError(socket, error) {
         const self = socket.data;
-
         self.emit("error", error);
       },
       data({ data: self }, buffer) {
@@ -122,7 +121,7 @@ const Socket = (function (InternalSocket) {
         self.connecting = false;
         if (!self.#upgraded) {
           // this is not actually emitted on nodejs when socket used on the connection
-          // this is already emmited on non-TLS socket and on TLS socket is emmited secureConnect on handshake
+          // this is already emmited on non-TLS socket and on TLS socket is emmited secureConnect after handshake
           self.emit("connect", self);
         }
         Socket.#Drain(socket);
@@ -133,6 +132,12 @@ const Socket = (function (InternalSocket) {
         self._securePending = false;
         self.secureConnecting = false;
         self._secureEstablished = !!success;
+        // emmited before checking other handshake stuff (used on mysql2 and possible others)
+        // this is not documented, but is emmited on nodejs because of the deprecated tls.createSecurePair().
+        // so we only emit if the socket was upgraded
+        if (self.#upgraded) {
+          self.emit("secure", self);
+        }
 
         // Needs getPeerCertificate support (not implemented yet)
         // if (!verifyError && !this.isSessionReused()) {
@@ -254,6 +259,12 @@ const Socket = (function (InternalSocket) {
         self._securePending = false;
         self.secureConnecting = false;
         self._secureEstablished = !!success;
+        // emmited before checking other handshake stuff (used on mysql2 and possible others)
+        // this is not documented, but is emmited on nodejs because of the deprecated tls.createSecurePair().
+        // so we only emit if the socket was upgraded
+        if (self.#upgraded) {
+          self.emit("secure", self);
+        }
         // Needs getPeerCertificate support (not implemented yet)
         // if (!verifyError && !this.isSessionReused()) {
         //   const hostname = options.servername ||
@@ -347,7 +358,11 @@ const Socket = (function (InternalSocket) {
       socket.ref();
       this[bunSocketInternal] = socket;
       this.connecting = false;
-      this.emit("connect", this);
+      if (!this.#upgraded) {
+        // this is not actually emitted on nodejs when socket used on the connection
+        // this is already emmited on non-TLS socket and on TLS socket is emmited secureConnect after handshake
+        this.emit("connect", this);
+      }
       Socket.#Drain(socket);
     }
 

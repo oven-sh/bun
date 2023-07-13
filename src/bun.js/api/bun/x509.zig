@@ -377,11 +377,11 @@ fn x509GetInfoAccessString(globalObject: *JSGlobalObject, bio: *BoringSSL.BIO, c
     return JSC.ZigString.fromUTF8(bio.slice()).toValueGC(globalObject);
 }
 
-fn addFingerprintDigest(md: []const u8, mdSize: u32, fingerprint: []u8) void {
+fn addFingerprintDigest(md: []const u8, mdSize: c_uint, fingerprint: []u8) void {
     const hex: []const u8 = "0123456789ABCDEF";
     var idx: usize = 0;
 
-    if (mdSize <= 0) {
+    if (mdSize == 0) {
         fingerprint[0] = 0;
     } else {
         for (md) |byte| {
@@ -394,13 +394,13 @@ fn addFingerprintDigest(md: []const u8, mdSize: u32, fingerprint: []u8) void {
     }
 }
 
-fn getFingerprintDigest(cert: *BoringSSL.X509, method: *BoringSSL.EVP_MD, globalObject: *JSGlobalObject) JSValue {
+fn getFingerprintDigest(cert: *BoringSSL.X509, method: *const BoringSSL.EVP_MD, globalObject: *JSGlobalObject) JSValue {
     var md: [BoringSSL.EVP_MAX_MD_SIZE]u8 = undefined;
-    var md_size: i32 = 0;
+    var md_size: c_uint = 0;
     var fingerprint: [BoringSSL.EVP_MAX_MD_SIZE * 3]u8 = undefined;
 
-    if (BoringSSL.X509_digest(cert, method, md, &md_size)) {
-        addFingerprintDigest(md, md_size, fingerprint);
+    if (BoringSSL.X509_digest(cert, method, @ptrCast([*c]u8, &md), &md_size) != 0) {
+        addFingerprintDigest(&md, md_size, &fingerprint);
         return JSC.ZigString.fromUTF8(fingerprint[0..bun.len(fingerprint)]).toValueGC(globalObject);
     }
     return JSValue.jsUndefined();
@@ -420,7 +420,7 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
     result.put(globalObject, ZigString.static("issuer"), x509GetNameObject(globalObject, issuer));
     result.put(globalObject, ZigString.static("subjectAltName"), x509GetSubjectAltNameString(globalObject, bio, cert));
     result.put(globalObject, ZigString.static("infoAccess"), x509GetInfoAccessString(globalObject, bio, cert));
-    result.put(globalObject, ZigString.static("ca"), JSC.jsBoolean(is_ca));
+    result.put(globalObject, ZigString.static("ca"), JSValue.jsBoolean(is_ca));
 
     const pkey = BoringSSL.X509_get_pubkey(cert);
 
@@ -428,9 +428,9 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
         BoringSSL.EVP_PKEY_RSA => {
             const rsa_key = BoringSSL.EVP_PKEY_get1_RSA(pkey);
             if (rsa_key) |rsa| {
-                var n: *BoringSSL.BIGNUM = undefined;
-                var e: *BoringSSL.BIGNUM = undefined;
-                BoringSSL.RSA_get0_key(rsa, &n, &e, null);
+                var n: [*c]const BoringSSL.BIGNUM = undefined;
+                var e: [*c]const BoringSSL.BIGNUM = undefined;
+                BoringSSL.RSA_get0_key(rsa, @ptrCast([*c][*c]const BoringSSL.BIGNUM, &n), @ptrCast([*c][*c]const BoringSSL.BIGNUM, &e), null);
                 _ = BoringSSL.BN_print(bio, n);
                 const modulus = JSC.ZigString.fromUTF8(bio.slice()).toValueGC(globalObject);
                 _ = BoringSSL.BIO_reset(bio);
@@ -443,9 +443,13 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
                 result.put(globalObject, ZigString.static("exoponent"), exponent);
 
                 const size = BoringSSL.i2d_RSA_PUBKEY(rsa, null);
-                const buffer = bun.default_allocator.alloc(u8, size);
+                if (size <= 0) {
+                    globalObject.throw("Failed to get public key length", .{});
+                    return .zero;
+                }
+                var buffer = bun.default_allocator.alloc(u8, @intCast(usize, size)) catch unreachable;
                 defer bun.default_allocator.free(buffer);
-                _ = BoringSSL.i2d_RSA_PUBKEY(rsa, &buffer);
+                _ = BoringSSL.i2d_RSA_PUBKEY(rsa, @ptrCast([*c][*c]u8, &buffer.ptr));
                 result.put(globalObject, ZigString.static("pubkey"), JSC.ArrayBuffer.createBuffer(globalObject, buffer));
             }
         },
@@ -453,11 +457,11 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
             const ec_key = BoringSSL.EVP_PKEY_get1_EC_KEY(pkey);
             if (ec_key) |ec| {
                 const group = BoringSSL.EC_KEY_get0_group(ec);
-                var bits = JSC.jsUndefined();
+                var bits = JSValue.jsUndefined();
                 if (group) |g| {
                     const bits_value = BoringSSL.EC_GROUP_order_bits(g);
                     if (bits_value > 0) {
-                        bits = JSC.jsNumber(bits_value);
+                        bits = JSValue.jsNumber(bits_value);
                     }
                 }
                 result.put(globalObject, ZigString.static("bits"), bits);
@@ -466,17 +470,17 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
                 if (ec_pubkey) |point| {
                     const form = BoringSSL.EC_KEY_get_conv_form(ec);
                     const size = BoringSSL.EC_POINT_point2oct(group, point, form, null, 0, null);
-                    if (size == 0) {
+                    if (size <= 0) {
                         globalObject.throw("Failed to get public key length", .{});
                         return .zero;
                     }
 
-                    const buffer = bun.default_allocator.alloc(u8, size);
+                    var buffer = bun.default_allocator.alloc(u8, size) catch unreachable;
                     defer bun.default_allocator.free(buffer);
-                    _ = BoringSSL.EC_POINT_point2oct(group, point, form, &buffer, size, null);
+                    _ = BoringSSL.EC_POINT_point2oct(group, point, form, @ptrCast([*c]u8, buffer.ptr), size, null);
                     result.put(globalObject, ZigString.static("pubkey"), JSC.ArrayBuffer.createBuffer(globalObject, buffer));
                 } else {
-                    result.put(globalObject, ZigString.static("pubkey"), JSC.jsUndefined());
+                    result.put(globalObject, ZigString.static("pubkey"), JSValue.jsUndefined());
                 }
                 const nid = BoringSSL.EC_GROUP_get_curve_name(group);
 

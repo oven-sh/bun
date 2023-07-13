@@ -104,8 +104,24 @@ var parseCertString = function() {
   return new InternalSecureContext(options);
 }, createSecureContext = function(options) {
   return new SecureContext(options);
-};
-var createServer = function(options, connectionListener) {
+}, translatePeerCertificate = function(c) {
+  if (!c)
+    return null;
+  if (c.issuerCertificate != null && c.issuerCertificate !== c)
+    c.issuerCertificate = translatePeerCertificate(c.issuerCertificate);
+  if (c.infoAccess != null) {
+    const info = c.infoAccess;
+    c.infoAccess = { __proto__: null }, RegExpPrototypeSymbolReplace(/([^\n:]*):([^\n]*)(?:\n|$)/g, info, (all, key, val) => {
+      if (val.charCodeAt(0) === 34)
+        val = JSONParse(val);
+      if (key in c.infoAccess)
+        ArrayPrototypePush.call(c.infoAccess[key], val);
+      else
+        c.infoAccess[key] = [val];
+    });
+  }
+  return c;
+}, createServer = function(options, connectionListener) {
   return new Server(options, connectionListener);
 }, getCiphers = function() {
   return DEFAULT_CIPHERS.split(":");
@@ -206,6 +222,7 @@ var createServer = function(options, connectionListener) {
   authorizationError;
   encrypted = !0;
   _start() {
+    this.connect();
   }
   exportKeyingMaterial(length, label, context) {
     throw Error("Not implented in Bun yet");
@@ -223,11 +240,15 @@ var createServer = function(options, connectionListener) {
   setSession() {
     throw Error("Not implented in Bun yet");
   }
-  getPeerCertificate() {
-    throw Error("Not implented in Bun yet");
+  getPeerCertificate(abbreviated) {
+    const cert = arguments.length < 1 ? this[bunSocketInternal]?.getPeerCertificate() : this[bunSocketInternal]?.getPeerCertificate(abbreviated);
+    if (cert)
+      return translatePeerCertificate(cert);
   }
   getCertificate() {
-    throw Error("Not implented in Bun yet");
+    const cert = this[bunSocketInternal]?.getCertificate();
+    if (cert)
+      return translatePeerCertificate(cert);
   }
   getPeerX509Certificate() {
     throw Error("Not implented in Bun yet");

@@ -1912,7 +1912,7 @@ fn NewSocket(comptime ssl: bool) type {
             return ZigString.fromUTF8(slice).toValueGC(globalObject);
         }
 
-        pub fn getPeerCertifficate(
+        pub fn getPeerCertificate(
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
@@ -1948,7 +1948,7 @@ fn NewSocket(comptime ssl: bool) type {
                 }
 
                 const cert_chain = BoringSSL.SSL_get_peer_cert_chain(ssl_ptr) orelse return JSValue.jsUndefined();
-                const cert = BoringSSL.sk_X509_value(cert_chain) orelse return JSValue.jsUndefined();
+                const cert = BoringSSL.sk_X509_value(cert_chain, 0) orelse return JSValue.jsUndefined();
                 return X509.toJS(cert, globalObject);
             }
             var cert: ?*BoringSSL.X509 = null;
@@ -1957,13 +1957,13 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             const cert_chain = BoringSSL.SSL_get_peer_cert_chain(ssl_ptr);
-            const first_cert = if (cert) |c| c else if (cert_chain) |cc| BoringSSL.sk_X509_value(cc) else null;
+            const first_cert = if (cert) |c| c else if (cert_chain) |cc| BoringSSL.sk_X509_value(cc, 0) else null;
 
             if (first_cert == null) {
                 return JSValue.jsUndefined();
             }
 
-            // TODO
+            // TODO: we need to support the non abbreviated version of this
             return JSValue.jsUndefined();
         }
 

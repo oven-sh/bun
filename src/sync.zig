@@ -571,7 +571,7 @@ pub const RwLock = if (@import("builtin").os.tag != .windows and @import("builti
         }
 
         const PTHREAD_RWLOCK_INITIALIZER = pthread_rwlock_t{};
-        const pthread_rwlock_t = switch (@import("builtin").os.tag) {
+        pub const pthread_rwlock_t = switch (@import("builtin").os.tag) {
             .macos, .ios, .watchos, .tvos => extern struct {
                 __sig: c_long = 0x2DA8B3B4,
                 __opaque: [192]u8 = [_]u8{0} ** 192,

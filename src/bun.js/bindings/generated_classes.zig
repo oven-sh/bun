@@ -4464,6 +4464,8 @@ pub const JSTCPSocket = struct {
             @compileLog("Expected TCPSocket.getAuthorizationError to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getAuthorizationError)));
         if (@TypeOf(TCPSocket.getCertificate) != CallbackType)
             @compileLog("Expected TCPSocket.getCertificate to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getCertificate)));
+        if (@TypeOf(TCPSocket.getPeerCertificate) != CallbackType)
+            @compileLog("Expected TCPSocket.getPeerCertificate to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getPeerCertificate)));
         if (@TypeOf(TCPSocket.getListener) != GetterType)
             @compileLog("Expected TCPSocket.getListener to be a getter");
 
@@ -4503,6 +4505,7 @@ pub const JSTCPSocket = struct {
             @export(TCPSocket.getData, .{ .name = "TCPSocketPrototype__getData" });
             @export(TCPSocket.getListener, .{ .name = "TCPSocketPrototype__getListener" });
             @export(TCPSocket.getLocalPort, .{ .name = "TCPSocketPrototype__getLocalPort" });
+            @export(TCPSocket.getPeerCertificate, .{ .name = "TCPSocketPrototype__getPeerCertificate" });
             @export(TCPSocket.getReadyState, .{ .name = "TCPSocketPrototype__getReadyState" });
             @export(TCPSocket.getRemoteAddress, .{ .name = "TCPSocketPrototype__getRemoteAddress" });
             @export(TCPSocket.hasPendingActivity, .{ .name = "TCPSocket__hasPendingActivity" });
@@ -4632,6 +4635,8 @@ pub const JSTLSSocket = struct {
             @compileLog("Expected TLSSocket.getAuthorizationError to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getAuthorizationError)));
         if (@TypeOf(TLSSocket.getCertificate) != CallbackType)
             @compileLog("Expected TLSSocket.getCertificate to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getCertificate)));
+        if (@TypeOf(TLSSocket.getPeerCertificate) != CallbackType)
+            @compileLog("Expected TLSSocket.getPeerCertificate to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getPeerCertificate)));
         if (@TypeOf(TLSSocket.getListener) != GetterType)
             @compileLog("Expected TLSSocket.getListener to be a getter");
 
@@ -4671,6 +4676,7 @@ pub const JSTLSSocket = struct {
             @export(TLSSocket.getData, .{ .name = "TLSSocketPrototype__getData" });
             @export(TLSSocket.getListener, .{ .name = "TLSSocketPrototype__getListener" });
             @export(TLSSocket.getLocalPort, .{ .name = "TLSSocketPrototype__getLocalPort" });
+            @export(TLSSocket.getPeerCertificate, .{ .name = "TLSSocketPrototype__getPeerCertificate" });
             @export(TLSSocket.getReadyState, .{ .name = "TLSSocketPrototype__getReadyState" });
             @export(TLSSocket.getRemoteAddress, .{ .name = "TLSSocketPrototype__getRemoteAddress" });
             @export(TLSSocket.hasPendingActivity, .{ .name = "TLSSocket__hasPendingActivity" });

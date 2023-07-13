@@ -2091,8 +2091,12 @@ fn NewSocket(comptime ssl: bool) type {
             // TODO: investigate better option or compatible way to get the key
             // this implementation follows nodejs but for BoringSSL SSL_get_server_tmp_key will always return 0
             // wich will result in a empty object
-            var raw_key: [*c]BoringSSL.EVP_PKEY = undefined;
-            if (BoringSSL.SSL_get_server_tmp_key(ssl_ptr, @ptrCast([*c][*c]BoringSSL.EVP_PKEY, &raw_key)) == 0) {
+            // var raw_key: [*c]BoringSSL.EVP_PKEY = undefined;
+            // if (BoringSSL.SSL_get_server_tmp_key(ssl_ptr, @ptrCast([*c][*c]BoringSSL.EVP_PKEY, &raw_key)) == 0) {
+            //     return result;
+            // }
+            var raw_key: [*c]BoringSSL.EVP_PKEY = BoringSSL.SSL_get_privatekey(ssl_ptr);
+            if (raw_key == null) {
                 return result;
             }
 

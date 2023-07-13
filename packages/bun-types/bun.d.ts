@@ -1284,17 +1284,28 @@ declare module "bun" {
   function build(config: BuildConfig): Promise<BuildOutput>;
 
   /**
-   * **0** means the message was **dropped**
+   * A status that represents the outcome of a sent message.
    *
-   * **-1** means **backpressure**
+   * - if **0**, the message was **dropped**.
+   * - if **-1**, there is **backpressure** of messages.
+   * - if **>0**, it represents the **number of bytes sent**.
    *
-   * **> 0** is the **number of bytes sent**
-   *
+   * @example
+   * ```js
+   * const status = ws.send("Hello!");
+   * if (status === 0) {
+   *   console.log("Message was dropped");
+   * } else if (status === -1) {
+   *   console.log("Backpressure was applied");
+   * } else {
+   *   console.log(`Success! Sent ${status} bytes`);
+   * }
+   * ```
    */
   type ServerWebSocketSendStatus = 0 | -1 | number;
 
   /**
-   * Fast WebSocket API designed for server environments.
+   * A fast WebSocket designed for servers.
    *
    * Features:
    * - **Message compression** - Messages can be compressed
@@ -1304,315 +1315,248 @@ declare module "bun" {
    *
    * This is slightly different than the browser {@link WebSocket} which Bun supports for clients.
    *
-   * Powered by [uWebSockets](https://github.com/uNetworking/uWebSockets)
+   * Powered by [uWebSockets](https://github.com/uNetworking/uWebSockets).
+   * 
+   * @example
+   * import { serve } from "bun";
+   *
+   * serve({
+   *   websocket: {
+   *     open(ws) {
+   *       console.log("Connected", ws.remoteAddress);
+   *     },
+   *     message(ws, data) {
+   *       console.log("Received", data);
+   *       ws.send(data);
+   *     },
+   *     close(ws, code, reason) {
+   *       console.log("Disconnected", code, reason);
+   *     },
+   *   }
+   * });
    */
   export interface ServerWebSocket<T = undefined> {
     /**
+     * Sends a message to the client.
      *
-     * Send a message to the client.
-     *
-     * @param data The message to send
-     * @param compress Should the data be compressed? Ignored if the client does not support compression.
-     *
-     * @returns 0 if the message was dropped, -1 if backpressure was applied, or the number of bytes sent.
-     *
+     * @param data The data to send.
+     * @param compress Should the data be compressed? If the client does not support compression, this is ignored.
      * @example
-     *
-     * ```js
-     * const status = ws.send("Hello World");
-     * if (status === 0) {
-     *   console.log("Message was dropped");
-     * } else if (status === -1) {
-     *   console.log("Backpressure was applied");
-     * } else {
-     *   console.log(`Message sent! ${status} bytes sent`);
-     * }
-     * ```
-     *
-     * @example
-     *
-     * ```js
-     * ws.send("Feeling very compressed", true);
-     * ```
-     *
-     * @example
-     *
-     * ```js
+     * ws.send("Hello!");
+     * ws.send("Compress this.", true);
      * ws.send(new Uint8Array([1, 2, 3, 4]));
-     * ```
-     *
-     * @example
-     *
-     * ```js
-     * ws.send(new ArrayBuffer(4));
-     * ```
-     *
-     * @example
-     *
-     * ```js
-     * ws.send(new DataView(new ArrayBuffer(4)));
-     * ```
-     *
      */
-    send(
-      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-      compress?: boolean,
-    ): ServerWebSocketSendStatus;
+    send(data: string | BufferSource, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
+     * Sends a text message to the client.
      *
-     * Send a message to the client.
-     *
-     * This function is the same as {@link ServerWebSocket.send} but it only accepts a string. This function includes a fast path.
-     *
-     * @param data The message to send
-     * @param compress Should the data be compressed? Ignored if the client does not support compression.
-     *
-     * @returns 0 if the message was dropped, -1 if backpressure was applied, or the number of bytes sent.
-     *
+     * @param data The data to send.
+     * @param compress Should the data be compressed? If the client does not support compression, this is ignored.
      * @example
-     *
-     * ```js
-     * const status = ws.send("Hello World");
-     * if (status === 0) {
-     *   console.log("Message was dropped");
-     * } else if (status === -1) {
-     *   console.log("Backpressure was applied");
-     * } else {
-     *   console.log(`Message sent! ${status} bytes sent`);
-     * }
-     * ```
-     *
-     * @example
-     *
-     * ```js
-     * ws.send("Feeling very compressed", true);
-     * ```
-     *
-     *
+     * ws.send("Hello!");
+     * ws.send("Compress this.", true);
      */
     sendText(data: string, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
+     * Sends a binary message to the client.
      *
-     * Send a message to the client.
-     *
-     * This function is the same as {@link ServerWebSocket.send} but it only accepts Uint8Array.
-     *
-     * @param data The message to send
-     * @param compress Should the data be compressed? Ignored if the client does not support compression.
-     *
-     * @returns 0 if the message was dropped, -1 if backpressure was applied, or the number of bytes sent.
-     *
-     *
-     * ```js
-     * ws.sendBinary(new Uint8Array([1, 2, 3, 4]));
-     * ```
-     *
+     * @param data The data to send.
+     * @param compress Should the data be compressed? If the client does not support compression, this is ignored.
      * @example
-     *
-     * ```js
-     * ws.sendBinary(new ArrayBuffer(4));
-     * ```
-     *
-     * @example
-     *
-     * ```js
-     * ws.sendBinary(new DataView(new ArrayBuffer(4)));
-     * ```
-     *
+     * ws.send(new TextEncoder().encode("Hello!"));
+     * ws.send(new Uint8Array([1, 2, 3, 4]), true);
      */
-    sendBinary(data: Uint8Array, compress?: boolean): ServerWebSocketSendStatus;
+    sendBinary(data: BufferSource, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
-     * Gently close the connection.
+     * Closes the connection.
      *
-     * @param code The close code
+     * Here is a list of close codes:
+     * - `1000` means "normal closure" **(default)**
+     * - `1009` means a message was too big and was rejected
+     * - `1011` means the server encountered an error
+     * - `1012` means the server is restarting
+     * - `1013` means the server is too busy or the client is rate-limited
+     * - `4000` through `4999` are reserved for applications (you can use it!)
      *
-     * @param reason The close reason
-     *
-     * To close the connection abruptly, use `close(0, "")`
+     * To close the connection abruptly, use `terminate()`.
+     * 
+     * @param code The close code to send
+     * @param reason The close reason to send   
      */
     close(code?: number, reason?: string): void;
 
     /**
-     * Send a message to all subscribers of a topic
+     * Abruptly close the connection.
      *
-     * @param topic The topic to publish to
+     * To gracefully close the connection, use `close()`.
+     */
+    terminate(): void;
+
+    /**
+     * Sends a ping.
+     *
      * @param data The data to send
-     * @param compress Should the data be compressed? Ignored if the client does not support compression.
+     */
+    ping(data?: string | BufferSource): ServerWebSocketSendStatus;
+
+    /**
+     * Sends a pong.
      *
-     * @returns 0 if the message was dropped, -1 if backpressure was applied, or the number of bytes sent.
+     * @param data The data to send
+     */
+    pong(data?: string | BufferSource): ServerWebSocketSendStatus;
+
+    /**
+     * Sends a message to subscribers of the topic.
      *
+     * @param topic The topic name.
+     * @param data The data to send.
+     * @param compress Should the data be compressed? If the client does not support compression, this is ignored.
      * @example
-     *
-     * ```js
-     * ws.publish("chat", "Hello World");
-     * ```
-     *
-     * @example
-     * ```js
+     * ws.publish("chat", "Hello!");
+     * ws.publish("chat", "Compress this.", true);
      * ws.publish("chat", new Uint8Array([1, 2, 3, 4]));
-     * ```
-     *
-     * @example
-     * ```js
-     * ws.publish("chat", new ArrayBuffer(4), true);
-     * ```
-     *
-     * @example
-     * ```js
-     * ws.publish("chat", new DataView(new ArrayBuffer(4)));
-     * ```
      */
-    publish(
-      topic: string,
-      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-      compress?: boolean,
-    ): ServerWebSocketSendStatus;
+    publish(topic: string, data: string | BufferSource, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
-     * Send a message to all subscribers of a topic
+     * Sends a text message to subscribers of the topic.
      *
-     * This function is the same as {@link publish} but only accepts string input. This function has a fast path.
-     *
-     * @param topic The topic to publish to
-     * @param data The data to send
-     * @param compress Should the data be compressed? Ignored if the client does not support compression.
-     *
-     * @returns 0 if the message was dropped, -1 if backpressure was applied, or the number of bytes sent.
-     *
+     * @param topic The topic name.
+     * @param data The data to send.
+     * @param compress Should the data be compressed? If the client does not support compression, this is ignored.
      * @example
-     *
-     * ```js
-     * ws.publishText("chat", "Hello World");
-     * ```
-     *
+     * ws.publish("chat", "Hello!");
+     * ws.publish("chat", "Compress this.", true);
      */
-    publishText(
-      topic: string,
-      data: string,
-      compress?: boolean,
-    ): ServerWebSocketSendStatus;
+    publishText(topic: string, data: string, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
-     * Send a message to all subscribers of a topic
+     * Sends a binary message to subscribers of the topic.
      *
-     * This function is the same as {@link publish} but only accepts a Uint8Array. This function has a fast path.
-     *
-     * @param topic The topic to publish to
-     * @param data The data to send
-     * @param compress Should the data be compressed? Ignored if the client does not support compression.
-     *
-     * @returns 0 if the message was dropped, -1 if backpressure was applied, or the number of bytes sent.
-     *
+     * @param topic The topic name.
+     * @param data The data to send.
+     * @param compress Should the data be compressed? If the client does not support compression, this is ignored.
      * @example
-     *
-     * ```js
-     * ws.publishBinary("chat", "Hello World");
-     * ```
-     *
-     * @example
-     * ```js
-     * ws.publishBinary("chat", new Uint8Array([1, 2, 3, 4]));
-     * ```
-     *
-     * @example
-     * ```js
-     * ws.publishBinary("chat", new ArrayBuffer(4), true);
-     * ```
-     *
-     * @example
-     * ```js
-     * ws.publishBinary("chat", new DataView(new ArrayBuffer(4)));
-     * ```
+     * ws.publish("chat", new TextEncoder().encode("Hello!"));
+     * ws.publish("chat", new Uint8Array([1, 2, 3, 4]), true);
      */
-    publishBinary(
-      topic: string,
-      data: Uint8Array,
-      compress?: boolean,
-    ): ServerWebSocketSendStatus;
+    publishBinary(topic: string, data: BufferSource, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
-     * Subscribe to a topic
-     * @param topic The topic to subscribe to
+     * Subscribes a client to the topic.
      *
+     * @param topic The topic name.
      * @example
-     * ```js
      * ws.subscribe("chat");
-     * ```
      */
     subscribe(topic: string): void;
 
     /**
-     * Unsubscribe from a topic
-     * @param topic The topic to unsubscribe from
+     * Unsubscribes a client to the topic.
      *
+     * @param topic The topic name.
      * @example
-     * ```js
      * ws.unsubscribe("chat");
-     * ```
-     *
      */
     unsubscribe(topic: string): void;
 
     /**
-     * Is the socket subscribed to a topic?
-     * @param topic The topic to check
+     * Is the client subscribed to a topic?
      *
-     * @returns `true` if the socket is subscribed to the topic, `false` otherwise
+     * @param topic The topic name.
+     * @example
+     * ws.subscribe("chat");
+     * console.log(ws.isSubscribed("chat")); // true
      */
     isSubscribed(topic: string): boolean;
 
     /**
-     * The remote address of the client
+     * Batches `send()` and `publish()` operations, which makes it faster to send data.
+     *
+     * The `message`, `open`, and `drain` callbacks are automatically corked, so
+     * you only need to call this if you are sending messages outside of those
+     * callbacks or in async functions.
+     *
+     * @param callback The callback to run.
      * @example
-     * ```js
+     * ws.cork((ctx) => {
+     *   ctx.send("These messages");
+     *   ctx.sendText("are sent");
+     *   ctx.sendBinary(new TextEncoder().encode("together!"));
+     * });
+     */
+    cork<T = unknown>(callback: (ws: ServerWebSocket<T>) => T): T;
+
+    /**
+     * The IP address of the client.
+     *
+     * @example
      * console.log(socket.remoteAddress); // "127.0.0.1"
-     * ```
      */
     readonly remoteAddress: string;
 
     /**
-     * Ready state of the socket
+     * The ready state of the client.
+     *
+     * - if `0`, the client is connecting.
+     * - if `1`, the client is connected.
+     * - if `2`, the client is closing.
+     * - if `3`, the client is closed.
      *
      * @example
-     * ```js
      * console.log(socket.readyState); // 1
-     * ```
      */
-    readonly readyState: -1 | 0 | 1 | 2 | 3;
+    readonly readyState: WebSocketReadyState
 
     /**
-     * The data from the {@link Server.upgrade} function
+     * Sets how binary data is returned in events.
      *
-     * Put any data you want to share between the `fetch` function and the websocket here.
+     * - if `nodebuffer`, binary data is returned as `Buffer` objects. **(default)**
+     * - if `arraybuffer`, binary data is returned as `ArrayBuffer` objects.
+     * - if `uint8array`, binary data is returned as `Uint8Array` objects.
      *
-     * You can read/write to this property at any time.
+     * @example
+     * let ws: WebSocket;
+     * ws.binaryType = "uint8array";
+     * ws.addEventListener("message", ({ data }) => {
+     *   console.log(data instanceof Uint8Array); // true
+     * });
+     */
+    binaryType?: "nodebuffer" | "arraybuffer" | "uint8array";
+
+    /**
+     * Custom data that you can assign to a client, can be read and written at any time.
+     *
+     * @example
+     * import { serve } from "bun";
+     * 
+     * serve({
+     *   fetch(request, server) {
+     *     const data = {
+     *       accessToken: request.headers.get("Authorization"),
+     *     };
+     *     if (server.upgrade(request, { data })) {
+     *       return;
+     *     }
+     *     return new Response();
+     *   },
+     *   websocket: {
+     *     open(ws) {
+     *       console.log(ws.data.accessToken);
+     *     }
+     *   }
+     * });
      */
     data: T;
-
-    /**
-     * Batch data sent to a {@link ServerWebSocket}
-     *
-     * This makes it significantly faster to {@link ServerWebSocket.send} or {@link ServerWebSocket.publish} multiple messages
-     *
-     * The `message`, `open`, and `drain` callbacks are automatically corked, so
-     * you only need to call this if you are sending messages outside of those
-     * callbacks or in async functions
-     */
-    cork: (callback: (ws: ServerWebSocket<T>) => any) => void | Promise<void>;
-
-    /**
-     * Configure the {@link WebSocketHandler.message} callback to return a {@link ArrayBuffer} or {@link Buffer} instead of a {@link Uint8Array}
-     *
-     * @default "nodebuffer"
-     *
-     * In Bun v0.6.2 and earlier, this defaulted to "uint8array"
-     */
-    binaryType?: "arraybuffer" | "uint8array" | "nodebuffer";
   }
 
+  /**
+   * Compression options for WebSocket messages.
+   */
   type WebSocketCompressor =
     | "disable"
     | "shared"
@@ -1664,112 +1608,120 @@ declare module "bun" {
    *  },
    * });
    */
-  export interface WebSocketHandler<T = undefined> {
+  export type WebSocketHandler<T = undefined> = {
     /**
-     * Handle an incoming message to a {@link ServerWebSocket}
+     * Called when the server receives an incoming message.
      *
-     * @param ws The {@link ServerWebSocket} that received the message
+     * If the message is not a `string`, its type is based on the value of `binaryType`.
+     * - if `nodebuffer`, then the message is a `Buffer`.
+     * - if `arraybuffer`, then the message is an `ArrayBuffer`.
+     * - if `uint8array`, then the message is a `Uint8Array`.
+     *
+     * @param ws The websocket that sent the message
      * @param message The message received
-     *
-     * To change `message` to be an `ArrayBuffer` instead of a `Uint8Array`, set `ws.binaryType = "arraybuffer"`
      */
-    message: (
-      ws: ServerWebSocket<T>,
-      message: string | Uint8Array,
-    ) => void | Promise<void>;
+    message(ws: ServerWebSocket<T>, message: string | Buffer): void | Promise<void>;
 
     /**
-     * The {@link ServerWebSocket} has been opened
+     * Called when a connection is opened.
      *
-     * @param ws The {@link ServerWebSocket} that was opened
+     * @param ws The websocket that was opened
      */
-    open?: (ws: ServerWebSocket<T>) => void | Promise<void>;
+    open?(ws: ServerWebSocket<T>): void | Promise<void>;
+
     /**
-     * The {@link ServerWebSocket} is ready for more data
+     * Called when a connection was previously under backpressure,
+     * meaning it had too many queued messages, but is now ready to receive more data.
      *
-     * @param ws The {@link ServerWebSocket} that is ready
+     * @param ws The websocket that is ready for more data
      */
-    drain?: (ws: ServerWebSocket<T>) => void | Promise<void>;
+    drain?(ws: ServerWebSocket<T>): void | Promise<void>;
+
     /**
-     * The {@link ServerWebSocket} is being closed
-     * @param ws The {@link ServerWebSocket} that was closed
+     * Called when a connection is closed.
+     *
+     * @param ws The websocket that was closed
      * @param code The close code
      * @param message The close message
      */
-    close?: (
-      ws: ServerWebSocket<T>,
-      code: number,
-      message: string,
-    ) => void | Promise<void>;
-    /**
-     * Enable compression for clients that support it. By default, compression is disabled.
-     *
-     * @default false
-     *
-     * `true` is equivalent to `"shared"
-     */
-    perMessageDeflate?:
-      | true
-      | false
-      | {
-          /**
-           * Enable compression on the {@link ServerWebSocket}
-           *
-           * @default false
-           *
-           * `true` is equivalent to `"shared"
-           */
-          compress?: WebSocketCompressor | false | true;
-          /**
-           * Configure decompression
-           *
-           * @default false
-           *
-           * `true` is equivalent to `"shared"
-           */
-          decompress?: WebSocketCompressor | false | true;
-        };
+    close?(ws: ServerWebSocket<T>, code: number, reason: string): void | Promise<void>;
 
     /**
-     * The maximum size of a message
+     * Called when a ping is sent.
+     *
+     * @param ws The websocket that received the ping
+     * @param data The data sent with the ping
+     */
+    ping?(ws: ServerWebSocket<T>, data: Buffer): void | Promise<void>;
+
+    /**
+     * Called when a pong is received.
+     *
+     * @param ws The websocket that received the ping
+     * @param data The data sent with the ping
+     */
+    pong?(ws: ServerWebSocket<T>, data: Buffer): void | Promise<void>;
+
+    /**
+     * Sets the maximum size of messages in bytes.
+     *
+     * Default is 16 MB, or `1024 * 1024 * 16` in bytes.
      */
     maxPayloadLength?: number;
+
     /**
-     * After a connection has not received a message for this many seconds, it will be closed.
-     * @default 120 (2 minutes)
-     */
-    idleTimeout?: number;
-    /**
-     * The maximum number of bytes that can be buffered for a single connection.
-     * @default 16MB
+     * Sets the maximum number of bytes that can be buffered on a single connection.
+     *
+     * Default is 16 MB, or `1024 * 1024 * 16` in bytes.
      */
     backpressureLimit?: number;
+
     /**
-     * Close the connection if the backpressure limit is reached.
-     * @default false
-     * @see {@link backpressureLimit}
-     * @see {@link ServerWebSocketSendStatus}
-     * @see {@link ServerWebSocket.send}
-     * @see {@link ServerWebSocket.publish}
+     * Sets if the connection should be closed if `backpressureLimit` is reached.
+     *
+     * Default is `false`.
      */
     closeOnBackpressureLimit?: boolean;
 
     /**
-     * Control whether or not ws.publish() should include the `ServerWebSocket`
-     * that published the message.
+     * Sets the the number of seconds to wait before timing out a connection
+     * due to no messages or pings.
      *
-     * As of Bun v0.6.3, this option defaults to `false`.
+     * Default is 2 minutes, or `120` in seconds.
+     */
+    idleTimeout?: number;
+
+    /**
+     * Should `ws.publish()` also send a message to `ws` (itself), if it is subscribed?
      *
-     * In Bun v0.6.2 and earlier, this option defaulted to `true`, but it was an API design mistake. A future version of Bun will eventually remove this option entirely. The better way to publish to all is to use {@link Server.publish}.
-     *
-     * if `true` {@link ServerWebSocket.publish} will publish to all subscribers, including the websocket publishing the message.
-     *
-     * if `false` or `undefined`, {@link ServerWebSocket.publish} will publish to all subscribers excluding the websocket publishing the message.
-     *
-     * @default false
-     *
+     * Default is `false`.
      */
     publishToSelf?: boolean;
+
+    /**
+     * Should the server automatically send and respond to pings to clients?
+     *
+     * Default is `true`.
+     */
+    sendPings?: boolean;
+
+    /**
+     * Sets the compression level for messages, for clients that supports it. By default, compression is disabled.
+     *
+     * Default is `false`.
+     */
+    perMessageDeflate?:
+      | boolean
+      | {
+          /**
+           * Sets the compression level.
+           */
+          compress?: WebSocketCompressor | boolean;
+          /**
+           * Sets the decompression level.
+           */
+          decompress?: WebSocketCompressor | boolean;
+        };
   }
 
   interface GenericServeOptions {

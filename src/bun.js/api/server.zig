@@ -2976,11 +2976,11 @@ pub const WebSocketServer = struct {
     globalObject: *JSC.JSGlobalObject = undefined,
     handler: WebSocketServer.Handler = .{},
 
-    maxPayloadLength: u32 = 1024 * 1024 * 16,
+    maxPayloadLength: u32 = 1024 * 1024 * 16, // 16MB
     maxLifetime: u16 = 0,
-    idleTimeout: u16 = 120,
+    idleTimeout: u16 = 120, // 2 minutes
     compression: i32 = 0,
-    backpressureLimit: u32 = 1024 * 1024 * 16,
+    backpressureLimit: u32 = 1024 * 1024 * 16, // 16MB
     sendPingsAutomatically: bool = true,
     resetIdleTimeoutOnSend: bool = true,
     closeOnBackpressureLimit: bool = false,
@@ -2991,6 +2991,8 @@ pub const WebSocketServer = struct {
         onClose: JSC.JSValue = .zero,
         onDrain: JSC.JSValue = .zero,
         onError: JSC.JSValue = .zero,
+        onPing: JSC.JSValue = .zero,
+        onPong: JSC.JSValue = .zero,
 
         app: ?*anyopaque = null,
 
@@ -3005,52 +3007,80 @@ pub const WebSocketServer = struct {
 
         pub fn fromJS(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue) ?Handler {
             var handler = Handler{ .globalObject = globalObject };
+            var vm = globalObject.vm();
+            var valid = false;
+
             if (object.getTruthy(globalObject, "message")) |message| {
-                if (!message.isCallable(globalObject.vm())) {
+                if (!message.isCallable(vm)) {
                     globalObject.throwInvalidArguments("websocket expects a function for the message option", .{});
                     return null;
                 }
                 handler.onMessage = message;
                 message.ensureStillAlive();
+                valid = true;
             }
 
             if (object.getTruthy(globalObject, "open")) |open| {
-                if (!open.isCallable(globalObject.vm())) {
+                if (!open.isCallable(vm)) {
                     globalObject.throwInvalidArguments("websocket expects a function for the open option", .{});
                     return null;
                 }
                 handler.onOpen = open;
                 open.ensureStillAlive();
+                valid = true;
             }
 
             if (object.getTruthy(globalObject, "close")) |close| {
-                if (!close.isCallable(globalObject.vm())) {
+                if (!close.isCallable(vm)) {
                     globalObject.throwInvalidArguments("websocket expects a function for the close option", .{});
                     return null;
                 }
                 handler.onClose = close;
                 close.ensureStillAlive();
+                valid = true;
             }
 
             if (object.getTruthy(globalObject, "drain")) |drain| {
-                if (!drain.isCallable(globalObject.vm())) {
+                if (!drain.isCallable(vm)) {
                     globalObject.throwInvalidArguments("websocket expects a function for the drain option", .{});
                     return null;
                 }
                 handler.onDrain = drain;
                 drain.ensureStillAlive();
+                valid = true;
             }
 
-            if (object.getTruthy(globalObject, "onError")) |onError| {
-                if (!onError.isCallable(globalObject.vm())) {
-                    globalObject.throwInvalidArguments("websocket expects a function for the onError option", .{});
+            if (object.getTruthy(globalObject, "error")) |cb| {
+                if (!cb.isCallable(vm)) {
+                    globalObject.throwInvalidArguments("websocket expects a function for the error option", .{});
                     return null;
                 }
-                handler.onError = onError;
-                onError.ensureStillAlive();
+                handler.onError = cb;
+                cb.ensureStillAlive();
+                valid = true;
             }
 
-            if (handler.onMessage != .zero or handler.onOpen != .zero)
+            if (object.getTruthy(globalObject, "ping")) |cb| {
+                if (!cb.isCallable(vm)) {
+                    globalObject.throwInvalidArguments("websocket expects a function for the ping option", .{});
+                    return null;
+                }
+                handler.onPing = cb;
+                cb.ensureStillAlive();
+                valid = true;
+            }
+
+            if (object.getTruthy(globalObject, "pong")) |cb| {
+                if (!cb.isCallable(vm)) {
+                    globalObject.throwInvalidArguments("websocket expects a function for the pong option", .{});
+                    return null;
+                }
+                handler.onPong = cb;
+                cb.ensureStillAlive();
+                valid = true;
+            }
+
+            if (valid)
                 return handler;
 
             return null;
@@ -3062,6 +3092,8 @@ pub const WebSocketServer = struct {
             this.onClose.protect();
             this.onDrain.protect();
             this.onError.protect();
+            this.onPing.protect();
+            this.onPong.protect();
         }
 
         pub fn unprotect(this: Handler) void {
@@ -3070,6 +3102,8 @@ pub const WebSocketServer = struct {
             this.onClose.unprotect();
             this.onDrain.unprotect();
             this.onError.unprotect();
+            this.onPing.unprotect();
+            this.onPong.unprotect();
         }
     };
 
@@ -3197,6 +3231,7 @@ pub const WebSocketServer = struct {
                 server.maxPayloadLength = @intCast(u32, @max(value.toInt64(), 0));
             }
         }
+
         if (object.get(globalObject, "idleTimeout")) |value| {
             if (!value.isUndefinedOrNull()) {
                 if (!value.isAnyInt()) {
@@ -3204,7 +3239,17 @@ pub const WebSocketServer = struct {
                     return null;
                 }
 
-                server.idleTimeout = value.to(u16);
+                var idleTimeout = @intCast(u16, @truncate(u32, @max(value.toInt64(), 0)));
+                if (idleTimeout > 960) {
+                    globalObject.throwInvalidArguments("websocket expects idleTimeout to be 960 or less", .{});
+                    return null;
+                } else if (idleTimeout > 0) {
+                    // uws does not allow idleTimeout to be between (0, 8],
+                    // since its timer is not that accurate, therefore round up.
+                    idleTimeout = @max(idleTimeout, 8);
+                }
+
+                server.idleTimeout = idleTimeout;
             }
         }
         if (object.get(globalObject, "backpressureLimit")) |value| {
@@ -3217,16 +3262,6 @@ pub const WebSocketServer = struct {
                 server.backpressureLimit = @intCast(u32, @max(value.toInt64(), 0));
             }
         }
-        // if (object.get(globalObject, "sendPings")) |value| {
-        //     if (!value.isUndefinedOrNull()) {
-        //         if (!value.isBoolean()) {
-        //             globalObject.throwInvalidArguments("websocket expects sendPings to be a boolean", .{});
-        //             return null;
-        //         }
-
-        //         server.sendPings = value.toBoolean();
-        //     }
-        // }
 
         if (object.get(globalObject, "closeOnBackpressureLimit")) |value| {
             if (!value.isUndefinedOrNull()) {
@@ -3236,6 +3271,17 @@ pub const WebSocketServer = struct {
                 }
 
                 server.closeOnBackpressureLimit = value.toBoolean();
+            }
+        }
+
+        if (object.get(globalObject, "sendPings")) |value| {
+            if (!value.isUndefinedOrNull()) {
+                if (!value.isBoolean()) {
+                    globalObject.throwInvalidArguments("websocket expects sendPings to be a boolean", .{});
+                    return null;
+                }
+
+                server.sendPingsAutomatically = value.toBoolean();
             }
         }
 
@@ -3466,12 +3512,79 @@ pub const ServerWebSocket = struct {
             }
         }
     }
-    pub fn onPing(_: *ServerWebSocket, _: uws.AnyWebSocket, _: []const u8) void {
-        log("onPing", .{});
+
+    pub fn onPing(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) void {
+        log("onPing: {s}", .{data});
+
+        var handler = this.handler;
+        var cb = handler.onPing;
+        if (cb.isEmptyOrUndefinedOrNull()) return;
+
+        var globalThis = handler.globalObject;
+        const result = cb.call(
+            globalThis,
+            &[_]JSC.JSValue{ this.this_value, if (this.binary_type == .Buffer)
+                JSC.ArrayBuffer.create(
+                    globalThis,
+                    data,
+                    .Buffer,
+                )
+            else if (this.binary_type == .Uint8Array)
+                JSC.ArrayBuffer.create(
+                    globalThis,
+                    data,
+                    .Uint8Array,
+                )
+            else
+                JSC.ArrayBuffer.create(
+                    globalThis,
+                    data,
+                    .ArrayBuffer,
+                ) },
+        );
+
+        if (result.toError()) |err| {
+            log("onPing error", .{});
+            handler.globalObject.bunVM().runErrorHandler(err, null);
+        }
     }
-    pub fn onPong(_: *ServerWebSocket, _: uws.AnyWebSocket, _: []const u8) void {
-        log("onPong", .{});
+
+    pub fn onPong(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) void {
+        log("onPong: {s}", .{data});
+
+        var handler = this.handler;
+        var cb = handler.onPong;
+        if (cb.isEmptyOrUndefinedOrNull()) return;
+
+        var globalThis = handler.globalObject;
+        const result = cb.call(
+            globalThis,
+            &[_]JSC.JSValue{ this.this_value, if (this.binary_type == .Buffer)
+                JSC.ArrayBuffer.create(
+                    globalThis,
+                    data,
+                    .Buffer,
+                )
+            else if (this.binary_type == .Uint8Array)
+                JSC.ArrayBuffer.create(
+                    globalThis,
+                    data,
+                    .Uint8Array,
+                )
+            else
+                JSC.ArrayBuffer.create(
+                    globalThis,
+                    data,
+                    .ArrayBuffer,
+                ) },
+        );
+
+        if (result.toError()) |err| {
+            log("onPong error", .{});
+            handler.globalObject.bunVM().runErrorHandler(err, null);
+        }
     }
+
     pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: []const u8) void {
         log("onClose", .{});
         var handler = this.handler;
@@ -3483,10 +3596,12 @@ pub const ServerWebSocket = struct {
             }
         }
 
-        if (handler.onClose != .zero) {
+        if (!handler.onClose.isEmptyOrUndefinedOrNull()) {
+            var str = ZigString.init(message);
+            str.markUTF8();
             const result = handler.onClose.call(
                 handler.globalObject,
-                &[_]JSC.JSValue{ this.this_value, JSValue.jsNumber(code), ZigString.init(message).toValueGC(handler.globalObject) },
+                &[_]JSC.JSValue{ this.this_value, JSValue.jsNumber(code), str.toValueGC(handler.globalObject) },
             );
 
             if (result.toError()) |err| {
@@ -4056,6 +4171,95 @@ pub const ServerWebSocket = struct {
         }
     }
 
+    pub fn ping(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        return sendPing(this, globalThis, callframe, "ping", .ping);
+    }
+
+    pub fn pong(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        return sendPing(this, globalThis, callframe, "pong", .pong);
+    }
+
+    inline fn sendPing(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+        comptime name: string,
+        comptime opcode: uws.Opcode,
+    ) JSValue {
+        const args = callframe.arguments(2);
+
+        if (this.closed) {
+            return JSValue.jsNumber(0);
+        }
+
+        if (args.len > 0) {
+            var value = args.ptr[0];
+            if (value.asArrayBuffer(globalThis)) |data| {
+                var buffer = data.slice();
+
+                switch (this.websocket.send(buffer, opcode, false, true)) {
+                    .backpressure => {
+                        log("{s}() backpressure ({d} bytes)", .{ name, buffer.len });
+                        return JSValue.jsNumber(-1);
+                    },
+                    .success => {
+                        log("{s}() success ({d} bytes)", .{ name, buffer.len });
+                        return JSValue.jsNumber(buffer.len);
+                    },
+                    .dropped => {
+                        log("{s}() dropped ({d} bytes)", .{ name, buffer.len });
+                        return JSValue.jsNumber(0);
+                    },
+                }
+            } else if (value.isString()) {
+                var string_value = value.toString(globalThis).toSlice(globalThis, bun.default_allocator);
+                defer string_value.deinit();
+                var buffer = string_value.slice();
+
+                switch (this.websocket.send(buffer, opcode, false, true)) {
+                    .backpressure => {
+                        log("{s}() backpressure ({d} bytes)", .{ name, buffer.len });
+                        return JSValue.jsNumber(-1);
+                    },
+                    .success => {
+                        log("{s}() success ({d} bytes)", .{ name, buffer.len });
+                        return JSValue.jsNumber(buffer.len);
+                    },
+                    .dropped => {
+                        log("{s}() dropped ({d} bytes)", .{ name, buffer.len });
+                        return JSValue.jsNumber(0);
+                    },
+                }
+            } else {
+                globalThis.throwPretty("{s} requires a string or BufferSource", .{name});
+                return .zero;
+            }
+        }
+
+        switch (this.websocket.send(&.{}, opcode, false, true)) {
+            .backpressure => {
+                log("{s}() backpressure ({d} bytes)", .{ name, 0 });
+                return JSValue.jsNumber(-1);
+            },
+            .success => {
+                log("{s}() success ({d} bytes)", .{ name, 0 });
+                return JSValue.jsNumber(0);
+            },
+            .dropped => {
+                log("{s}() dropped ({d} bytes)", .{ name, 0 });
+                return JSValue.jsNumber(0);
+            },
+        }
+    }
+
     pub fn getData(
         _: *ServerWebSocket,
         _: *JSC.JSGlobalObject,
@@ -4096,26 +4300,38 @@ pub const ServerWebSocket = struct {
         log("close()", .{});
 
         if (this.closed) {
-            return JSValue.jsUndefined();
+            return .undefined;
         }
 
-        if (!this.opened) {
-            globalThis.throw("Calling close() inside open() is not supported. Consider changing your upgrade() callback instead", .{});
-            return .zero;
-        }
         this.closed = true;
 
         const code = if (args.len > 0) args.ptr[0].toInt32() else @as(i32, 1000);
         var message_value = if (args.len > 1) args.ptr[1].toSlice(globalThis, bun.default_allocator) else ZigString.Slice.empty;
         defer message_value.deinit();
-        if (code > 1000 or message_value.len > 0) {
-            this.websocket.end(code, message_value.slice());
-        } else {
-            this.this_value.unprotect();
-            this.websocket.close();
+
+        this.websocket.end(code, message_value.slice());
+        return .undefined;
+    }
+
+    pub fn terminate(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        _ = globalThis;
+        const args = callframe.arguments(2);
+        _ = args;
+        log("terminate()", .{});
+
+        if (this.closed) {
+            return .undefined;
         }
 
-        return JSValue.jsUndefined();
+        this.closed = true;
+        this.this_value.unprotect();
+        this.websocket.close();
+
+        return .undefined;
     }
 
     pub fn getBinaryType(

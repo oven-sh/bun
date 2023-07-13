@@ -276,19 +276,19 @@ export function getStdioWriteStream(fd_) {
     }
 
     cursorTo(x, y, callback) {
-      return (readline ??= require("readline")).cursorTo(this, x, y, callback);
+      return (readline ??= require("node:readline")).cursorTo(this, x, y, callback);
     }
 
     moveCursor(dx, dy, callback) {
-      return (readline ??= require("readline")).moveCursor(this, dx, dy, callback);
+      return (readline ??= require("node:readline")).moveCursor(this, dx, dy, callback);
     }
 
     clearLine(dir, callback) {
-      return (readline ??= require("readline")).clearLine(this, dir, callback);
+      return (readline ??= require("node:readline")).clearLine(this, dir, callback);
     }
 
     clearScreenDown(callback) {
-      return (readline ??= require("readline")).clearScreenDown(this, callback);
+      return (readline ??= require("node:readline")).clearScreenDown(this, callback);
     }
 
     // TODO: once implemented this.columns and this.rows should be uncommented
@@ -502,7 +502,7 @@ export function getStdinStream(fd_) {
     #onDrain;
 
     get isTTY() {
-      return require("tty").isatty(fd_);
+      return require("node:tty").isatty(fd_);
     }
 
     get fd() {

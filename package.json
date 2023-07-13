@@ -24,7 +24,7 @@
     "@types/react": "^18.0.25",
     "@typescript-eslint/eslint-plugin": "^5.31.0",
     "@typescript-eslint/parser": "^5.31.0",
-    "bun-webkit": "0.0.1-26c819733315f0ab64ae8e8e65b77d77d31211e1"
+    "bun-webkit": "0.0.1-dcaa801946a9526c0c4a40dceb9168b81aeb7973"
   },
   "version": "0.0.0",
   "prettier": "./.prettierrc.cjs"

@@ -2087,10 +2087,12 @@ fn NewSocket(comptime ssl: bool) type {
             }
             var result = JSValue.createEmptyObject(globalObject, 3);
 
-            var raw_key: [*c]BoringSSL.EVP_PKEY = undefined;
             const ssl_ptr = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
-
-            if (BoringSSL.SSL_get_server_tmp_key(ssl_ptr, @ptrCast([*c][*c]BoringSSL.EVP_PKEY, raw_key)) == 0) {
+            // TODO: investigate better option or compatible way to get the key
+            // this implementation follows nodejs but for BoringSSL SSL_get_server_tmp_key will always return 0
+            // wich will result in a empty object
+            var raw_key: [*c]BoringSSL.EVP_PKEY = undefined;
+            if (BoringSSL.SSL_get_server_tmp_key(ssl_ptr, @ptrCast([*c][*c]BoringSSL.EVP_PKEY, &raw_key)) == 0) {
                 return result;
             }
 

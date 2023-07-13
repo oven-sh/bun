@@ -65,6 +65,10 @@ pub const Brotli = struct {
             }
 
             // chunkSize <integer> Default: 16 * 1024
+            var chunkSize_value = 16 * 1024;
+            if (try value.getOptional(globalObject, "chunkSize", u32)) |chunkSizey| {
+                chunkSize_value = chunkSizey;
+            }
 
             // params <Object> Key-value object containing indexed Brotli parameters.
 

@@ -163,6 +163,8 @@ pub const JSArrayBufferSink = JSC.WebCore.ArrayBufferSink.JSSink;
 pub const JSHTTPSResponseSink = JSC.WebCore.HTTPSResponseSink.JSSink;
 pub const JSHTTPResponseSink = JSC.WebCore.HTTPResponseSink.JSSink;
 pub const JSFileSink = JSC.WebCore.FileSink.JSSink;
+pub const JSBrotliDecompressorSink = JSC.WebCore.BrotliDecompressorSink.JSSink;
+pub const JSBrotliCompressorSink = JSC.WebCore.BrotliCompressorSink.JSSink;
 
 // WebSocket
 pub const WebSocketHTTPClient = @import("../../http/websocket_http_client.zig").WebSocketHTTPClient;
@@ -3404,6 +3406,8 @@ comptime {
         JSReadableStreamBlob.shim.ref();
         JSArrayBufferSink.shim.ref();
         JSHTTPResponseSink.shim.ref();
+        JSBrotliDecompressorSink.shim.ref();
+        JSBrotliCompressorSink.shim.ref();
         JSHTTPSResponseSink.shim.ref();
         JSFileSink.shim.ref();
         JSReadableStreamBytes.shim.ref();

@@ -1,4 +1,4 @@
-// Automatically generated from src/bun.js/bindings/JSSink.cpp using /Users/ashcon/Desktop/code/bun/src/bun.js/WebKit/Source/JavaScriptCore/create_hash_table. DO NOT EDIT!
+// Automatically generated from src/bun.js/bindings/JSSink.cpp using /Users/jarred/Code/bun/src/bun.js/WebKit/Source/JavaScriptCore/create_hash_table. DO NOT EDIT!
 
 
 
@@ -317,5 +317,165 @@ static const struct HashTableValue JSReadableHTTPSResponseSinkControllerPrototyp
 
 static const struct HashTable JSReadableHTTPSResponseSinkControllerPrototypeTable =
     { 5, 15, false, nullptr, JSReadableHTTPSResponseSinkControllerPrototypeTableValues, JSReadableHTTPSResponseSinkControllerPrototypeTableIndex };
+
+
+
+
+
+
+
+static const struct CompactHashIndex JSBrotliDecompressorSinkPrototypeTableIndex[19] = {
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { 6, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { 0, 16 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { 5, -1 },
+    { 4, -1 },
+    { 1, 17 },
+    { 2, 18 },
+    { 3, -1 },
+};
+
+static const struct HashTableValue JSBrotliDecompressorSinkPrototypeTableValues[7] = {
+   { "close"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BrotliDecompressorSink__doClose, 0 } },
+   { "flush"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BrotliDecompressorSink__flush, 1 } },
+   { "end"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BrotliDecompressorSink__end, 0 } },
+   { "start"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BrotliDecompressorSink__start, 1 } },
+   { "write"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BrotliDecompressorSink__write, 1 } },
+   { "ref"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BrotliDecompressorSink__ref, 0 } },
+   { "unref"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BrotliDecompressorSink__unref, 0 } },
+};
+
+static const struct HashTable JSBrotliDecompressorSinkPrototypeTable =
+    { 7, 15, false, nullptr, JSBrotliDecompressorSinkPrototypeTableValues, JSBrotliDecompressorSinkPrototypeTableIndex };
+
+
+
+
+
+
+
+static const struct CompactHashIndex JSReadableBrotliDecompressorSinkControllerPrototypeTableIndex[19] = {
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { 0, 16 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { 4, -1 },
+    { 1, 17 },
+    { 2, 18 },
+    { 3, -1 },
+};
+
+static const struct HashTableValue JSReadableBrotliDecompressorSinkControllerPrototypeTableValues[5] = {
+   { "close"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, JSReadableBrotliDecompressorSinkController__close, 0 } },
+   { "flush"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BrotliDecompressorSink__flush, 1 } },
+   { "end"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, JSReadableBrotliDecompressorSinkController__end, 0 } },
+   { "start"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BrotliDecompressorSink__start, 1 } },
+   { "write"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BrotliDecompressorSink__write, 1 } },
+};
+
+static const struct HashTable JSReadableBrotliDecompressorSinkControllerPrototypeTable =
+    { 5, 15, false, nullptr, JSReadableBrotliDecompressorSinkControllerPrototypeTableValues, JSReadableBrotliDecompressorSinkControllerPrototypeTableIndex };
+
+
+
+
+
+
+
+static const struct CompactHashIndex JSBrotliCompressorSinkPrototypeTableIndex[19] = {
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { 6, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { 0, 16 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { 5, -1 },
+    { 4, -1 },
+    { 1, 17 },
+    { 2, 18 },
+    { 3, -1 },
+};
+
+static const struct HashTableValue JSBrotliCompressorSinkPrototypeTableValues[7] = {
+   { "close"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BrotliCompressorSink__doClose, 0 } },
+   { "flush"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BrotliCompressorSink__flush, 1 } },
+   { "end"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BrotliCompressorSink__end, 0 } },
+   { "start"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BrotliCompressorSink__start, 1 } },
+   { "write"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BrotliCompressorSink__write, 1 } },
+   { "ref"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BrotliCompressorSink__ref, 0 } },
+   { "unref"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BrotliCompressorSink__unref, 0 } },
+};
+
+static const struct HashTable JSBrotliCompressorSinkPrototypeTable =
+    { 7, 15, false, nullptr, JSBrotliCompressorSinkPrototypeTableValues, JSBrotliCompressorSinkPrototypeTableIndex };
+
+
+
+
+
+
+
+static const struct CompactHashIndex JSReadableBrotliCompressorSinkControllerPrototypeTableIndex[19] = {
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { 0, 16 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { 4, -1 },
+    { 1, 17 },
+    { 2, 18 },
+    { 3, -1 },
+};
+
+static const struct HashTableValue JSReadableBrotliCompressorSinkControllerPrototypeTableValues[5] = {
+   { "close"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, JSReadableBrotliCompressorSinkController__close, 0 } },
+   { "flush"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BrotliCompressorSink__flush, 1 } },
+   { "end"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, JSReadableBrotliCompressorSinkController__end, 0 } },
+   { "start"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BrotliCompressorSink__start, 1 } },
+   { "write"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BrotliCompressorSink__write, 1 } },
+};
+
+static const struct HashTable JSReadableBrotliCompressorSinkControllerPrototypeTable =
+    { 5, 15, false, nullptr, JSReadableBrotliCompressorSinkControllerPrototypeTableValues, JSReadableBrotliCompressorSinkControllerPrototypeTableIndex };
 
 

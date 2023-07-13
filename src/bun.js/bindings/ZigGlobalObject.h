@@ -205,6 +205,16 @@ public:
     JSC::Structure* FFIFunctionStructure() { return m_JSFFIFunctionStructure.getInitializedOnMainThread(this); }
     JSC::Structure* NapiClassStructure() { return m_NapiClassStructure.getInitializedOnMainThread(this); }
 
+    JSC::Structure* BrotliDecompressorSinkStructure() { return m_JSBrotliDecompressorSinkClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* BrotliDecompressorSink() { return m_JSBrotliDecompressorSinkClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue BrotliDecompressorSinkPrototype() { return m_JSBrotliDecompressorSinkClassStructure.prototypeInitializedOnMainThread(this); }
+    JSC::JSValue JSReadableBrotliDecompressorSinkControllerPrototype() { return m_JSBrotliDecompressorSinkControllerPrototype.getInitializedOnMainThread(this); }
+
+    JSC::Structure* BrotliCompressorSinkStructure() { return m_JSBrotliCompressorSinkClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* BrotliCompressorSink() { return m_JSBrotliCompressorSinkClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue BrotliCompressorSinkPrototype() { return m_JSBrotliCompressorSinkClassStructure.prototypeInitializedOnMainThread(this); }
+    JSC::JSValue JSReadableBrotliCompressorSinkControllerPrototype() { return m_JSBrotliCompressorSinkControllerPrototype.getInitializedOnMainThread(this); }
+
     JSC::Structure* FileSinkStructure() { return m_JSFileSinkClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* FileSink() { return m_JSFileSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue FileSinkPrototype() { return m_JSFileSinkClassStructure.prototypeInitializedOnMainThread(this); }
@@ -470,6 +480,8 @@ private:
     LazyClassStructure m_JSFileSinkClassStructure;
     LazyClassStructure m_JSHTTPResponseSinkClassStructure;
     LazyClassStructure m_JSHTTPSResponseSinkClassStructure;
+    LazyClassStructure m_JSBrotliDecompressorSinkClassStructure;
+    LazyClassStructure m_JSBrotliCompressorSinkClassStructure;
     LazyClassStructure m_JSReadableStateClassStructure;
     LazyClassStructure m_JSStringDecoderClassStructure;
     LazyClassStructure m_NapiClassStructure;
@@ -498,6 +510,8 @@ private:
     LazyProperty<JSGlobalObject, JSObject> m_JSArrayBufferControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_JSFileSinkControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_JSHTTPSResponseControllerPrototype;
+    LazyProperty<JSGlobalObject, JSObject> m_JSBrotliCompressorSinkControllerPrototype;
+    LazyProperty<JSGlobalObject, JSObject> m_JSBrotliDecompressorSinkControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
     LazyProperty<JSGlobalObject, JSObject> m_primordialsObject;

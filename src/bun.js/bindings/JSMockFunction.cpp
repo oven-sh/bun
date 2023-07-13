@@ -20,6 +20,7 @@
 #include <JavaScriptCore/WeakMapImplInlines.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/DateInstance.h>
+#include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
 
 namespace Bun {
 
@@ -1437,19 +1438,3 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject 
     return JSC::JSValue::encode(jsUndefined());
 }
 } // namespace Bun
-
-namespace JSC {
-
-template<unsigned passedNumberOfInternalFields>
-template<typename Visitor>
-void JSInternalFieldObjectImpl<passedNumberOfInternalFields>::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = jsCast<JSInternalFieldObjectImpl*>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.appendValues(thisObject->m_internalFields, numberOfInternalFields);
-}
-
-DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<unsigned passedNumberOfInternalFields>, JSInternalFieldObjectImpl<passedNumberOfInternalFields>);
-
-} // namespace JSC

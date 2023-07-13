@@ -54,6 +54,98 @@ pub const BrotliDecoderState = opaque {
         return BrotliDecoderGetErrorCode(self);
     }
 };
+
+pub const BrotliEncoderState = opaque {
+    pub fn init() *BrotliEncoderState {
+        return BrotliEncoderCreateInstance(default_brotli_alloc_fn, default_brotli_free_fn, null);
+    }
+
+    pub fn deinit(self: *BrotliEncoderState) void {
+        BrotliEncoderDestroyInstance(self);
+    }
+
+    pub fn setParameter(self: *BrotliEncoderState, param: BrotliEncoderParameter, value: u32) bool {
+        return BrotliEncoderSetParameter(self, param, value) == BROTLI_TRUE;
+    }
+
+    pub fn isFinished(self: *BrotliEncoderState) bool {
+        return BrotliEncoderIsFinished(self) == BROTLI_TRUE;
+    }
+
+    pub fn hasMoreOutput(self: *BrotliEncoderState) bool {
+        return BrotliEncoderHasMoreOutput(self) == BROTLI_TRUE;
+    }
+
+    /// Compresses input stream to output stream.
+    ///
+    /// The values *available_in and *available_out must specify the number of
+    /// bytes addressable at *next_in and *next_out respectively. When
+    /// *available_out is 0, next_out is allowed to be NULL.
+    ///
+    /// After each call, *available_in will be decremented by the amount of
+    /// input bytes consumed, and the *next_in pointer will be incremented by that
+    /// amount. Similarly, *available_out will be decremented by the amount of
+    /// output bytes written, and the *next_out pointer will be incremented by
+    /// that amount.
+    ///
+    /// total_out, if it is not a null-pointer, will be set to the number of
+    /// bytes decompressed since the last state initialization.
+    ///
+    /// Internally workflow consists of 3 tasks:
+    ///
+    /// (optionally) copy input data to internal buffer / actually compress data
+    /// and (optionally) store it to internal buffer / (optionally) copy
+    /// compressed bytes from internal buffer to output stream / Whenever all 3
+    /// tasks can't move forward anymore, or error occurs, this method returns the
+    /// control flow to caller.
+    ///
+    /// op is used to perform flush, finish the stream, or inject metadata
+    /// block. See BrotliEncoderOperation for more information.
+    ///
+    /// Flushing the stream means forcing encoding of all input passed to /
+    /// encoder and completing the current output block, so it could be fully /
+    /// decoded by stream decoder. To perform flush set op to /
+    /// BROTLI_OPERATION_FLUSH. Under some circumstances (e.g. lack of output /
+    /// stream capacity) this operation would require several calls to /
+    /// BrotliEncoderCompressStream. The method must be called again until both /
+    /// input stream is depleted and encoder has no more output (see /
+    /// BrotliEncoderHasMoreOutput) after the method is called.
+    ///
+    /// Finishing the stream means encoding of all input passed to encoder and /
+    /// adding specific "final" marks, so stream decoder could determine that /
+    /// stream is complete. To perform finish set op to BROTLI_OPERATION_FINISH. /
+    /// Under some circumstances (e.g. lack of output stream capacity) this /
+    /// operation would require several calls to BrotliEncoderCompressStream. The
+    /// method must be called again until both input stream is depleted and /
+    /// encoder has no more output (see BrotliEncoderHasMoreOutput) after the /
+    /// method is called.
+    ///
+    /// Warning
+    /// When flushing and finishing, op should not change until operation is complete; input stream should not be swapped, reduced or extended as well.
+    pub fn compress(self: *BrotliEncoderState, op: BrotliEncoderOperation, input: *[]const u8, output: *[]u8, encoded_size: ?*usize) bool {
+        var out: ?[*]u8 = output.ptr;
+        var len = output.len;
+        defer {
+            output.len = len;
+            if (out != null)
+                output.ptr = out.?;
+        }
+        return BrotliEncoderCompressStream(self, op, &input.len, &input.ptr, &len, &out, encoded_size) == BROTLI_TRUE;
+    }
+
+    pub fn write(self: *BrotliEncoderState, input: *[]const u8, output: *[]u8) bool {
+        return compress(self, .process, input, output, null);
+    }
+
+    pub fn flush(self: *BrotliEncoderState, input: *[]const u8, output: *[]u8) bool {
+        return compress(self, .flush, input, output, null);
+    }
+
+    pub fn finish(self: *BrotliEncoderState, input: *[]const u8, output: *[]u8) bool {
+        return compress(self, .finish, input, output, null);
+    }
+};
+
 pub const BROTLI_DECODER_RESULT_ERROR: u32 = 0;
 pub const BROTLI_DECODER_RESULT_SUCCESS: u32 = 1;
 pub const BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT: u32 = 2;
@@ -134,7 +226,7 @@ pub const BrotliDecoderParameter = enum(u32) {
 };
 pub extern fn BrotliDecoderSetParameter(state: ?*BrotliDecoderState, param: BrotliEncoderParameter, value: u32) c_int;
 pub extern fn BrotliDecoderAttachDictionary(state: ?*BrotliDecoderState, @"type": BrotliSharedDictionaryType, data_size: usize, data: [*c]const u8) c_int;
-pub extern fn BrotliDecoderCreateInstance(alloc_func: brotli_alloc_func, free_func: brotli_free_func, @"opaque": ?*anyopaque) ?*BrotliDecoderState;
+pub extern fn BrotliDecoderCreateInstance(alloc_func: brotli_alloc_func, free_func: brotli_free_func, @"opaque": ?*anyopaque) *BrotliDecoderState;
 pub extern fn BrotliDecoderDestroyInstance(state: ?*BrotliDecoderState) void;
 pub extern fn BrotliDecoderDecompress(encoded_size: usize, encoded_buffer: [*]const u8, decoded_size: *usize, decoded_buffer: [*]u8) BrotliDecoderResult;
 pub extern fn BrotliDecoderDecompressStream(state: *BrotliDecoderState, available_in: *usize, next_in: *[*]const u8, available_out: *usize, next_out: *[*]u8, total_out: ?*usize) BrotliDecoderResult;
@@ -202,10 +294,9 @@ pub const BrotliEncoderParameter = enum(u32) {
     stream_offset = BROTLI_PARAM_STREAM_OFFSET,
     _,
 };
-pub const struct_BrotliEncoderStateStruct = opaque {};
-pub const BrotliEncoderState = struct_BrotliEncoderStateStruct;
+
 pub extern fn BrotliEncoderSetParameter(state: ?*BrotliEncoderState, param: BrotliEncoderParameter, value: u32) c_int;
-pub extern fn BrotliEncoderCreateInstance(alloc_func: brotli_alloc_func, free_func: brotli_free_func, ctx: ?*anyopaque) ?*BrotliEncoderState;
+pub extern fn BrotliEncoderCreateInstance(alloc_func: brotli_alloc_func, free_func: brotli_free_func, ctx: ?*anyopaque) *BrotliEncoderState;
 pub extern fn BrotliEncoderDestroyInstance(state: ?*BrotliEncoderState) void;
 pub const struct_BrotliEncoderPreparedDictionaryStruct = opaque {};
 pub const BrotliEncoderPreparedDictionary = struct_BrotliEncoderPreparedDictionaryStruct;
@@ -214,10 +305,10 @@ pub extern fn BrotliEncoderDestroyPreparedDictionary(dictionary: ?*BrotliEncoder
 pub extern fn BrotliEncoderAttachPreparedDictionary(state: ?*BrotliEncoderState, dictionary: ?*const BrotliEncoderPreparedDictionary) c_int;
 pub extern fn BrotliEncoderMaxCompressedSize(input_size: usize) usize;
 pub extern fn BrotliEncoderCompress(quality: c_int, lgwin: c_int, mode: BrotliEncoderMode, input_size: usize, input_buffer: [*]const u8, encoded_size: *usize, encoded_buffer: [*]u8) c_int;
-pub extern fn BrotliEncoderCompressStream(state: *BrotliEncoderState, op: BrotliEncoderOperation, available_in: *usize, next_in: *[*]const u8, available_out: *usize, next_out: *?[*]u8, total_out: *usize) c_int;
+pub extern fn BrotliEncoderCompressStream(state: *BrotliEncoderState, op: BrotliEncoderOperation, available_in: *usize, next_in: *[*]const u8, available_out: *usize, next_out: *?[*]u8, total_out: ?*usize) c_int;
 pub extern fn BrotliEncoderIsFinished(state: *BrotliEncoderState) c_int;
 pub extern fn BrotliEncoderHasMoreOutput(state: *BrotliEncoderState) c_int;
-pub extern fn BrotliEncoderTakeOutput(state: *BrotliEncoderState, size: [*c]usize) [*c]const u8;
+pub extern fn BrotliEncoderTakeOutput(state: *BrotliEncoderState, size: *usize) ?[*]const u8;
 pub extern fn BrotliEncoderEstimatePeakMemoryUsage(quality: c_int, lgwin: c_int, input_size: usize) usize;
 pub extern fn BrotliEncoderGetPreparedDictionarySize(dictionary: ?*const BrotliEncoderPreparedDictionary) usize;
 pub extern fn BrotliEncoderVersion() u32;
@@ -232,5 +323,4 @@ pub const BROTLI_MAX_QUALITY = @as(c_int, 11);
 pub const BROTLI_DEFAULT_QUALITY = @as(c_int, 11);
 pub const BROTLI_DEFAULT_WINDOW = @as(c_int, 22);
 pub const BROTLI_DEFAULT_MODE = BROTLI_MODE_GENERIC;
-pub const BrotliEncoderStateStruct = struct_BrotliEncoderStateStruct;
 pub const BrotliEncoderPreparedDictionaryStruct = struct_BrotliEncoderPreparedDictionaryStruct;

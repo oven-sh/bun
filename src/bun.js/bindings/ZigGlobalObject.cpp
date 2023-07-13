@@ -3292,6 +3292,26 @@ void GlobalObject::finishCreation(VM& vm)
             init.setConstructor(constructor);
         });
 
+    m_JSBrotliDecompressorSinkClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::BrotliDecompressorSink);
+            auto* structure = JSBrotliDecompressorSink::createStructure(init.vm, init.global, prototype);
+            auto* constructor = JSBrotliDecompressorSinkConstructor::create(init.vm, init.global, JSBrotliDecompressorSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<JSObject*>(prototype));
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
+    m_JSBrotliCompressorSinkClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::BrotliCompressorSink);
+            auto* structure = JSBrotliCompressorSink::createStructure(init.vm, init.global, prototype);
+            auto* constructor = JSBrotliCompressorSinkConstructor::create(init.vm, init.global, JSBrotliCompressorSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<JSObject*>(prototype));
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
     m_JSArrayBufferSinkClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::ArrayBufferSink);
@@ -4216,6 +4236,19 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         }
 
         {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "BrotliDecompressorSink"_s);
+            object->putDirectCustomAccessor(vm, identifier, JSC::CustomGetterSetter::create(vm, functionBrotliDecompressorSink__getter, nullptr),
+                JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+        }
+
+
+        {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "BrotliCompressorSink"_s);
+            object->putDirectCustomAccessor(vm, identifier, JSC::CustomGetterSetter::create(vm, functionBrotliCompressorSink__getter, nullptr),
+                JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+        }
+
+        {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "nanoseconds"_s);
             object->putDirectNativeFunction(vm, this, identifier, 1, functionBunNanoseconds, ImplementationVisibility::Public, NoIntrinsic,
                 JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
@@ -4415,6 +4448,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSFileSinkClassStructure.visit(visitor);
     thisObject->m_JSHTTPResponseSinkClassStructure.visit(visitor);
     thisObject->m_JSHTTPSResponseSinkClassStructure.visit(visitor);
+    thisObject->m_JSBrotliDecompressorSinkClassStructure.visit(visitor);
+    thisObject->m_JSBrotliCompressorSinkClassStructure.visit(visitor);
     thisObject->m_JSReadableStateClassStructure.visit(visitor);
     thisObject->m_JSStringDecoderClassStructure.visit(visitor);
     thisObject->m_NapiClassStructure.visit(visitor);
@@ -4430,6 +4465,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSArrayBufferControllerPrototype.visit(visitor);
     thisObject->m_JSFileSinkControllerPrototype.visit(visitor);
     thisObject->m_JSHTTPSResponseControllerPrototype.visit(visitor);
+    thisObject->m_JSBrotliDecompressorSinkControllerPrototype.visit(visitor);
+    thisObject->m_JSBrotliCompressorSinkControllerPrototype.visit(visitor);
     thisObject->m_navigatorObject.visit(visitor);
     thisObject->m_nativeMicrotaskTrampoline.visit(visitor);
     thisObject->m_performanceObject.visit(visitor);

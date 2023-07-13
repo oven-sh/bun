@@ -1539,3 +1539,5 @@ pub const WTF = struct {
 pub const ArenaAllocator = @import("./ArenaAllocator.zig").ArenaAllocator;
 
 pub const Wyhash = @import("./wyhash.zig").Wyhash;
+
+pub const brotli = @import("./deps/brotli.zig");

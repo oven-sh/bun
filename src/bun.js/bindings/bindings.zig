@@ -4426,6 +4426,14 @@ pub const JSValue = enum(JSValueReprInt) {
                     globalThis.throwInvalidArguments(property_name ++ " must be a boolean", .{});
                     return error.JSError;
                 },
+                u32 => {
+                    if (prop.isNumber()) {
+                        return prop.to(u32);
+                    }
+
+                    globalThis.throwInvalidArguments(property_name ++ " must be a number", .{});
+                    return error.JSError;
+                },
                 ZigString.Slice => {
                     if (prop.isString()) {
                         if (return prop.toSliceOrNull(globalThis)) |str| {

@@ -55,6 +55,31 @@ function isIP(s) {
   if (isIPv6(s)) return 6;
   return 0;
 }
+function translatePeerCertificate(c) {
+  if (!c) return null;
+
+  if (c.issuerCertificate != null && c.issuerCertificate !== c) {
+    c.issuerCertificate = translatePeerCertificate(c.issuerCertificate);
+  }
+  if (c.infoAccess != null) {
+    const info = c.infoAccess;
+    c.infoAccess = { __proto__: null };
+    // XXX: More key validation?
+    RegExpPrototypeSymbolReplace.call(/([^\n:]*):([^\n]*)(?:\n|$)/g, info, (all, key, val) => {
+      if (val.charCodeAt(0) === 0x22) {
+        // The translatePeerCertificate function is only
+        // used on internally created legacy certificate
+        // objects, and any value that contains a quote
+        // will always be a valid JSON string literal,
+        // so this should never throw.
+        val = JSONParse(val);
+      }
+      if (key in c.infoAccess) ArrayPrototypePush.call(c.infoAccess[key], val);
+      else c.infoAccess[key] = [val];
+    });
+  }
+  return c;
+}
 
 const { Bun, createFIFO, Object } = $lazy("primordials");
 const { connect: bunConnect } = Bun;
@@ -252,16 +277,12 @@ const Socket = (function (InternalSocket) {
 
         self.emit("connection", _socket);
       },
-      handshake({ data: self }, success, verifyError) {
+      handshake(socket, success, verifyError) {
+        const { data: self } = socket;
+
         self._securePending = false;
         self.secureConnecting = false;
         self._secureEstablished = !!success;
-        const { servername, checkServerIdentity } = self[bunSocketServerOptions];
-
-        if (!verifyError && typeof checkServerIdentity === "function" && servername) {
-          const cert = self.getPeerCertificate(true);
-          verifyError = checkServerIdentity(servername, cert);
-        }
 
         if (self._requestCert || self._rejectUnauthorized) {
           if (verifyError) {
@@ -275,7 +296,7 @@ const Socket = (function (InternalSocket) {
         } else {
           self.authorized = true;
         }
-        self.emit("secureConnect", verifyError);
+        self.emit("secureConnection", verifyError);
       },
       error(socket, error) {
         Socket.#Handlers.error(socket, error);
@@ -815,7 +836,6 @@ class Server extends EventEmitter {
 
       if (typeof bunTLS === "function") {
         [tls, TLSSocketClass] = bunTLS.call(this, port, hostname, false);
-        options.checkServerIdentity = tls.checkServerIdentity;
         options.servername = tls.serverName;
         options.InternalSocketClass = TLSSocketClass;
       } else {

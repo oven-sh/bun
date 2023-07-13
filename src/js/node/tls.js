@@ -433,22 +433,10 @@ class Server extends NetServer {
   _requestCert;
   servername;
   ALPNProtocols;
-  #checkServerIdentity;
 
   constructor(options, secureConnectionListener) {
     super(options, secureConnectionListener);
-    this.#checkServerIdentity = options?.checkServerIdentity || checkServerIdentity;
     this.setSecureContext(options);
-  }
-  emit(event, args) {
-    super.emit(event, args);
-
-    if (event === "connection") {
-      // grabs secureConnect to emit secureConnection
-      args.once("secureConnect", () => {
-        super.emit("secureConnection", args);
-      });
-    }
   }
   setSecureContext(options) {
     if (options instanceof InternalSecureContext) {
@@ -542,7 +530,6 @@ class Server extends NetServer {
         rejectUnauthorized: isClient ? false : this._rejectUnauthorized,
         requestCert: isClient ? false : this._requestCert,
         ALPNProtocols: this.ALPNProtocols,
-        checkServerIdentity: this.#checkServerIdentity,
       },
       SocketClass,
     ];

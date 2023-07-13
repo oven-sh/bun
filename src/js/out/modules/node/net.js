@@ -258,7 +258,7 @@ var createConnection = function(port, host, connectListener) {
     var tls = void 0;
     if (typeof bunTLS === "function") {
       if (tls = bunTLS.call(this, port, host, !0), this._requestCert = !0, this._rejectUnauthorized = rejectUnauthorized, tls) {
-        if (tls.rejectUnauthorized = rejectUnauthorized, tls.requestCert = !0, this.servername = tls.servername, tls.checkServerIdentity = _checkServerIdentity || tls.checkServerIdentity, this[bunTLSConnectOptions] = tls, !connection && tls.socket)
+        if (tls.rejectUnauthorized = rejectUnauthorized, tls.requestCert = !0, tls.session = session || tls.session, this.servername = tls.servername, tls.checkServerIdentity = _checkServerIdentity || tls.checkServerIdentity, this[bunTLSConnectOptions] = tls, !connection && tls.socket)
           connection = tls.socket;
       }
       if (connection) {

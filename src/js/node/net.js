@@ -450,6 +450,7 @@ const Socket = (function (InternalSocket) {
         if (tls) {
           tls.rejectUnauthorized = rejectUnauthorized;
           tls.requestCert = true;
+          tls.session = session || tls.session;
           this.servername = tls.servername;
           tls.checkServerIdentity = _checkServerIdentity || tls.checkServerIdentity;
           this[bunTLSConnectOptions] = tls;

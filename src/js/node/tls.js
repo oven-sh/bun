@@ -394,7 +394,7 @@ const TLSSocket = (function (InternalTLSSocket) {
     }
 
     isSessionReused() {
-      return false;
+      return !!this.#session;
     }
 
     renegotiate() {
@@ -434,6 +434,7 @@ const TLSSocket = (function (InternalTLSSocket) {
       this[bunSocketInternal]?.setServername(name);
     }
     setSession(session) {
+      this.#session = session;
       if (typeof session === "string") session = Buffer.from(session, "latin1");
       return this[bunSocketInternal]?.setSession(session);
     }

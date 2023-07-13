@@ -251,7 +251,7 @@ var parseCertString = function() {
     return this[bunSocketInternal]?.getTLSPeerFinishedMessage() || void 0;
   }
   isSessionReused() {
-    return !1;
+    return !!this.#session;
   }
   renegotiate() {
     if (this.#renegotiationDisabled) {
@@ -282,7 +282,7 @@ var parseCertString = function() {
     this.servername = name, this[bunSocketInternal]?.setServername(name);
   }
   setSession(session) {
-    if (typeof session === "string")
+    if (this.#session = session, typeof session === "string")
       session = Buffer.from(session, "latin1");
     return this[bunSocketInternal]?.setSession(session);
   }

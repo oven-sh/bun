@@ -84,9 +84,16 @@ export function hideFromStackTrace(block: CallableFunction) {
   });
 }
 
-export function tempDirWithFiles(basename: string, files: Record<string, string>) {
+export function tempDirWithFiles(basename: string, files: Record<string, string | Record<string, string>>) {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), basename + "_"));
   for (const [name, contents] of Object.entries(files)) {
+    if (typeof contents === "object") {
+      fs.mkdirSync(path.join(dir, name));
+      for (const [_name, _contents] of Object.entries(contents)) {
+        fs.writeFileSync(path.join(dir, name, _name), _contents);
+      }
+      continue;
+    }
     fs.writeFileSync(path.join(dir, name), contents);
   }
   return dir;

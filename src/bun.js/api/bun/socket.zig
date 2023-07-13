@@ -2925,9 +2925,8 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
             if (comptime tls) {
                 TLSSocket.onData(this.tls, socket, data);
             } else {
-                // looks like node disconnects this
-                // https://github.com/sidorares/node-mysql2/pull/2119
-                // TLSSocket.onData(this.tcp, socket, data);
+                // tedius use this
+                TLSSocket.onData(this.tcp, socket, data);
             }
         }
 

@@ -15019,6 +15019,7 @@ pub const OBJ_id_HMACGostR3411_94 = blk: {
 pub const SN_id_GostR3410_2001 = "gost2001";
 pub const LN_id_GostR3410_2001 = "GOST R 34.10-2001";
 pub const NID_id_GostR3410_2001 = @as(c_int, 811);
+
 pub const OBJ_id_GostR3410_2001 = blk: {
     _ = @as(c_long, 1);
     _ = @as(c_long, 2);
@@ -15027,6 +15028,9 @@ pub const OBJ_id_GostR3410_2001 = blk: {
     _ = @as(c_long, 2);
     break :blk @as(c_long, 19);
 };
+
+pub const NID_id_GostR3410_2012_256 = @as(c_int, 979);
+pub const NID_id_GostR3410_2012_512 = @as(c_int, 980);
 pub const SN_id_GostR3410_94 = "gost94";
 pub const LN_id_GostR3410_94 = "GOST R 34.10-94";
 pub const NID_id_GostR3410_94 = @as(c_int, 812);

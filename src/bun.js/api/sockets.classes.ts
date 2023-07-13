@@ -12,6 +12,39 @@ function generate(ssl) {
         fn: "getAuthorizationError",
         length: 0,
       },
+
+      getTLSFinishedMessage: {
+        fn: "getTLSFinishedMessage",
+        length: 0,
+      },
+      getTLSPeerFinishedMessage: {
+        fn: "getTLSPeerFinishedMessage",
+        length: 0,
+      },
+      getEphemeralKeyInfo: {
+        fn: "getEphemeralKeyInfo",
+        length: 0,
+      },
+      getCipher: {
+        fn: "getCipher",
+        length: 0,
+      },
+      exportKeyingMaterial: {
+        fn: "exportKeyingMaterial",
+        length: 3,
+      },
+      setMaxSendFragment: {
+        fn: "setMaxSendFragment",
+        length: 1,
+      },
+      getSharedSigalgs: {
+        fn: "getSharedSigalgs",
+        length: 0,
+      },
+      getTLSVersion: {
+        fn: "getTLSVersion",
+        length: 0,
+      },
       getPeerCertificate: {
         fn: "getPeerCertificate",
         length: 1,

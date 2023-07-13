@@ -58,6 +58,79 @@ const X509 = @import("./x509.zig");
 //     }
 // };
 
+noinline fn getSSLException(globalThis: *JSC.JSGlobalObject, defaultMessage: []const u8) JSValue {
+    var zig_str: ZigString = ZigString.init("");
+    var output_buf: [4096]u8 = undefined;
+
+    output_buf[0] = 0;
+    var written: usize = 0;
+    var ssl_error = BoringSSL.ERR_get_error();
+    while (ssl_error != 0 and written < output_buf.len) : (ssl_error = BoringSSL.ERR_get_error()) {
+        if (written > 0) {
+            output_buf[written] = '\n';
+            written += 1;
+        }
+
+        if (BoringSSL.ERR_reason_error_string(
+            ssl_error,
+        )) |reason_ptr| {
+            const reason = std.mem.span(reason_ptr);
+            if (reason.len == 0) {
+                break;
+            }
+            @memcpy(output_buf[written..][0..reason.len], reason);
+            written += reason.len;
+        }
+
+        if (BoringSSL.ERR_func_error_string(
+            ssl_error,
+        )) |reason_ptr| {
+            const reason = std.mem.span(reason_ptr);
+            if (reason.len > 0) {
+                output_buf[written..][0.." via ".len].* = " via ".*;
+                written += " via ".len;
+                @memcpy(output_buf[written..][0..reason.len], reason);
+                written += reason.len;
+            }
+        }
+
+        if (BoringSSL.ERR_lib_error_string(
+            ssl_error,
+        )) |reason_ptr| {
+            const reason = std.mem.span(reason_ptr);
+            if (reason.len > 0) {
+                output_buf[written..][0] = ' ';
+                written += 1;
+                @memcpy(output_buf[written..][0..reason.len], reason);
+                written += reason.len;
+            }
+        }
+    }
+
+    if (written > 0) {
+        var message = output_buf[0..written];
+        zig_str = ZigString.init(std.fmt.allocPrint(bun.default_allocator, "OpenSSL {s}", .{message}) catch unreachable);
+        var encoded_str = zig_str.withEncoding();
+        encoded_str.mark();
+
+        // We shouldn't *need* to do this but it's not entirely clear.
+        BoringSSL.ERR_clear_error();
+    }
+
+    if (zig_str.len == 0) {
+        zig_str = ZigString.init(defaultMessage);
+    }
+
+    // store the exception in here
+    // toErrorInstance clones the string
+    const exception = zig_str.toErrorInstance(globalThis);
+
+    // reference it in stack memory
+    exception.ensureStillAlive();
+
+    return exception;
+}
+
 fn normalizeHost(input: anytype) @TypeOf(input) {
     if (input.len == 0) {
         return "localhost";
@@ -1911,7 +1984,413 @@ fn NewSocket(comptime ssl: bool) type {
             }
             return ZigString.fromUTF8(slice).toValueGC(globalObject);
         }
+        pub fn exportKeyingMaterial(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
 
+            if (this.detached) {
+                return JSValue.jsUndefined();
+            }
+
+            const args = callframe.arguments(3);
+            if (args.len < 2) {
+                globalObject.throw("Expected length and label to be provided", .{});
+                return .zero;
+            }
+            const length_arg = args.ptr[0];
+            if (!length_arg.isNumber()) {
+                globalObject.throw("Expected length to be a number", .{});
+                return .zero;
+            }
+
+            const length = length_arg.coerceToInt64(globalObject);
+            if (length < 0) {
+                globalObject.throw("Expected length to be a positive number", .{});
+                return .zero;
+            }
+
+            const label_arg = args.ptr[1];
+            if (!label_arg.isString()) {
+                globalObject.throw("Expected label to be a string", .{});
+                return .zero;
+            }
+
+            var label = label_arg.toSliceOrNull(globalObject) orelse {
+                globalObject.throw("Expected label to be a string", .{});
+                return .zero;
+            };
+
+            defer label.deinit();
+            const label_slice = label.slice();
+            const ssl_ptr = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+
+            if (args.len > 2) {
+                const context_arg = args.ptr[2];
+
+                var arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator);
+                defer arena.deinit();
+
+                var exception_ref = [_]JSC.C.JSValueRef{null};
+                var exception: JSC.C.ExceptionRef = &exception_ref;
+                if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), context_arg, exception)) |sb| {
+                    const context_slice = sb.slice();
+
+                    var buffer = bun.default_allocator.alloc(u8, @intCast(usize, length)) catch unreachable;
+                    defer bun.default_allocator.free(buffer);
+
+                    const result = BoringSSL.SSL_export_keying_material(ssl_ptr, @ptrCast([*c]u8, &buffer), buffer.len, @ptrCast([*c]const u8, &label_slice), label_slice.len, @ptrCast([*c]const u8, &context_slice), context_slice.len, 1);
+                    if (result != -1) {
+                        globalObject.throwValue(getSSLException(globalObject, "Failed to export keying material"));
+                        return .zero;
+                    }
+                    return JSC.ArrayBuffer.createBuffer(globalObject, buffer);
+                } else if (exception.* != null) {
+                    globalObject.throwValue(JSC.JSValue.c(exception.*));
+                    return .zero;
+                } else {
+                    globalObject.throw("Expected context to be a string, Buffer or TypedArray", .{});
+                    return .zero;
+                }
+            } else {
+                var buffer = bun.default_allocator.alloc(u8, @intCast(usize, length)) catch unreachable;
+                defer bun.default_allocator.free(buffer);
+                const result = BoringSSL.SSL_export_keying_material(ssl_ptr, @ptrCast([*c]u8, &buffer), buffer.len, @ptrCast([*c]const u8, &label_slice), label_slice.len, null, 0, 0);
+                if (result != -1) {
+                    globalObject.throwValue(getSSLException(globalObject, "Failed to export keying material"));
+                    return .zero;
+                }
+                return JSC.ArrayBuffer.createBuffer(globalObject, buffer);
+            }
+        }
+
+        pub fn getEphemeralKeyInfo(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsNull();
+            }
+
+            if (this.detached) {
+                return JSValue.jsNull();
+            }
+
+            // only available for clients
+            if (this.handlers.is_server) {
+                return JSValue.jsNull();
+            }
+            var result = JSValue.createEmptyObject(globalObject, 3);
+
+            var raw_key: [*c]BoringSSL.EVP_PKEY = undefined;
+            const ssl_ptr = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+
+            if (BoringSSL.SSL_get_server_tmp_key(ssl_ptr, @ptrCast([*c][*c]BoringSSL.EVP_PKEY, raw_key)) == 0) {
+                return result;
+            }
+
+            const kid = BoringSSL.EVP_PKEY_id(raw_key);
+            const bits = BoringSSL.EVP_PKEY_bits(raw_key);
+
+            switch (kid) {
+                BoringSSL.EVP_PKEY_DH => {
+                    result.put(globalObject, ZigString.static("type"), ZigString.static("DH").toValue(globalObject));
+                    result.put(globalObject, ZigString.static("size"), JSValue.jsNumber(bits));
+                },
+
+                BoringSSL.EVP_PKEY_EC, BoringSSL.EVP_PKEY_X25519, BoringSSL.EVP_PKEY_X448 => {
+                    var curve_name: []const u8 = undefined;
+                    if (kid == BoringSSL.EVP_PKEY_EC) {
+                        const ec = BoringSSL.EVP_PKEY_get1_EC_KEY(raw_key);
+                        const nid = BoringSSL.EC_GROUP_get_curve_name(BoringSSL.EC_KEY_get0_group(ec));
+                        const nid_str = BoringSSL.OBJ_nid2sn(nid);
+                        if (nid_str != null) {
+                            curve_name = nid_str[0..bun.len(nid_str)];
+                        } else {
+                            curve_name = "";
+                        }
+                    } else {
+                        const kid_str = BoringSSL.OBJ_nid2sn(kid);
+                        if (kid_str != null) {
+                            curve_name = kid_str[0..bun.len(kid_str)];
+                        } else {
+                            curve_name = "";
+                        }
+                    }
+                    result.put(globalObject, ZigString.static("type"), ZigString.static("ECDH").toValue(globalObject));
+                    result.put(globalObject, ZigString.static("name"), ZigString.fromUTF8(curve_name).toValueGC(globalObject));
+                    result.put(globalObject, ZigString.static("size"), JSValue.jsNumber(bits));
+                },
+                else => {},
+            }
+            return result;
+        }
+
+        pub fn getCipher(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+
+            if (this.detached) {
+                return JSValue.jsUndefined();
+            }
+            var result = JSValue.createEmptyObject(globalObject, 3);
+
+            const ssl_ptr = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+            const cipher = BoringSSL.SSL_get_current_cipher(ssl_ptr);
+            if (cipher == null) {
+                result.put(globalObject, ZigString.static("name"), JSValue.jsNull());
+                result.put(globalObject, ZigString.static("standardName"), JSValue.jsNull());
+                result.put(globalObject, ZigString.static("version"), JSValue.jsNull());
+                return result;
+            }
+
+            const name = BoringSSL.SSL_CIPHER_get_name(cipher);
+            if (name == null) {
+                result.put(globalObject, ZigString.static("name"), JSValue.jsNull());
+            } else {
+                result.put(globalObject, ZigString.static("name"), ZigString.fromUTF8(name[0..bun.len(name)]).toValueGC(globalObject));
+            }
+
+            const standard_name = BoringSSL.SSL_CIPHER_standard_name(cipher);
+            if (standard_name == null) {
+                result.put(globalObject, ZigString.static("standardName"), JSValue.jsNull());
+            } else {
+                result.put(globalObject, ZigString.static("standardName"), ZigString.fromUTF8(standard_name[0..bun.len(standard_name)]).toValueGC(globalObject));
+            }
+
+            const version = BoringSSL.SSL_CIPHER_get_version(cipher);
+            if (version == null) {
+                result.put(globalObject, ZigString.static("version"), JSValue.jsNull());
+            } else {
+                result.put(globalObject, ZigString.static("version"), ZigString.fromUTF8(version[0..bun.len(version)]).toValueGC(globalObject));
+            }
+
+            return result;
+        }
+
+        pub fn getTLSPeerFinishedMessage(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+
+            if (this.detached) {
+                return JSValue.jsUndefined();
+            }
+
+            const ssl_ptr = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+            // We cannot just pass nullptr to SSL_get_peer_finished()
+            // because it would further be propagated to memcpy(),
+            // where the standard requirements as described in ISO/IEC 9899:2011
+            // sections 7.21.2.1, 7.21.1.2, and 7.1.4, would be violated.
+            // Thus, we use a dummy byte.
+            var dummy: [1]u8 = undefined;
+            const size = BoringSSL.SSL_get_peer_finished(ssl_ptr, @ptrCast(*anyopaque, &dummy), @sizeOf(@TypeOf(dummy)));
+            if (size == 0) return JSValue.jsUndefined();
+
+            var buffer = bun.default_allocator.alloc(u8, @intCast(usize, size)) catch unreachable;
+            defer bun.default_allocator.free(buffer);
+
+            _ = BoringSSL.SSL_get_peer_finished(ssl_ptr, @ptrCast(*anyopaque, &buffer), buffer.len);
+            return JSC.ArrayBuffer.createBuffer(globalObject, buffer);
+        }
+
+        pub fn getTLSFinishedMessage(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+
+            if (this.detached) {
+                return JSValue.jsUndefined();
+            }
+
+            const ssl_ptr = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+            // We cannot just pass nullptr to SSL_get_finished()
+            // because it would further be propagated to memcpy(),
+            // where the standard requirements as described in ISO/IEC 9899:2011
+            // sections 7.21.2.1, 7.21.1.2, and 7.1.4, would be violated.
+            // Thus, we use a dummy byte.
+            var dummy: [1]u8 = undefined;
+            const size = BoringSSL.SSL_get_finished(ssl_ptr, @ptrCast(*anyopaque, &dummy), @sizeOf(@TypeOf(dummy)));
+            if (size == 0) return JSValue.jsUndefined();
+
+            var buffer = bun.default_allocator.alloc(u8, @intCast(usize, size)) catch unreachable;
+            defer bun.default_allocator.free(buffer);
+
+            _ = BoringSSL.SSL_get_finished(ssl_ptr, @ptrCast(*anyopaque, &buffer), buffer.len);
+            return JSC.ArrayBuffer.createBuffer(globalObject, buffer);
+        }
+
+        pub fn getSharedSigalgs(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            JSC.markBinding(@src());
+            if (comptime ssl == false) {
+                return JSValue.jsNull();
+            }
+
+            if (this.detached) {
+                return JSValue.jsNull();
+            }
+            const ssl_ptr = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+
+            const nsig = BoringSSL.SSL_get_shared_sigalgs(ssl_ptr, 0, null, null, null, null, null);
+
+            const array = JSC.JSValue.createEmptyArray(globalObject, @intCast(usize, nsig));
+
+            for (0..@intCast(usize, nsig)) |i| {
+                var hash_nid: c_int = 0;
+                var sign_nid: c_int = 0;
+                var sig_with_md: []const u8 = "";
+
+                _ = BoringSSL.SSL_get_shared_sigalgs(ssl_ptr, @intCast(c_int, i), &sign_nid, &hash_nid, null, null, null);
+                switch (sign_nid) {
+                    BoringSSL.EVP_PKEY_RSA => {
+                        sig_with_md = "RSA";
+                    },
+                    BoringSSL.EVP_PKEY_RSA_PSS => {
+                        sig_with_md = "RSA-PSS";
+                    },
+
+                    BoringSSL.EVP_PKEY_DSA => {
+                        sig_with_md = "DSA";
+                    },
+
+                    BoringSSL.EVP_PKEY_EC => {
+                        sig_with_md = "ECDSA";
+                    },
+
+                    BoringSSL.NID_ED25519 => {
+                        sig_with_md = "Ed25519";
+                    },
+
+                    BoringSSL.NID_ED448 => {
+                        sig_with_md = "Ed448";
+                    },
+                    BoringSSL.NID_id_GostR3410_2001 => {
+                        sig_with_md = "gost2001";
+                    },
+
+                    BoringSSL.NID_id_GostR3410_2012_256 => {
+                        sig_with_md = "gost2012_256";
+                    },
+                    BoringSSL.NID_id_GostR3410_2012_512 => {
+                        sig_with_md = "gost2012_512";
+                    },
+                    else => {
+                        const sn_str = BoringSSL.OBJ_nid2sn(sign_nid);
+                        if (sn_str != null) {
+                            sig_with_md = sn_str[0..bun.len(sn_str)];
+                        } else {
+                            sig_with_md = "UNDEF";
+                        }
+                    },
+                }
+
+                const hash_str = BoringSSL.OBJ_nid2sn(hash_nid);
+                if (hash_str != null) {
+                    const hash_str_len = bun.len(hash_str);
+                    const hash_slice = hash_str[0..hash_str_len];
+                    const buffer = bun.default_allocator.alloc(u8, sig_with_md.len + hash_str_len + 1) catch unreachable;
+                    defer bun.default_allocator.free(buffer);
+
+                    bun.copy(u8, buffer, sig_with_md);
+                    buffer[sig_with_md.len] = '+';
+                    bun.copy(u8, buffer[sig_with_md.len + 1 ..], hash_slice);
+                    array.putIndex(globalObject, @intCast(u32, i), JSC.ZigString.fromUTF8(buffer).toValueGC(globalObject));
+                } else {
+                    const buffer = bun.default_allocator.alloc(u8, sig_with_md.len + 6) catch unreachable;
+                    defer bun.default_allocator.free(buffer);
+
+                    bun.copy(u8, buffer, sig_with_md);
+                    bun.copy(u8, buffer[sig_with_md.len..], "+UNDEF");
+                    array.putIndex(globalObject, @intCast(u32, i), JSC.ZigString.fromUTF8(buffer).toValueGC(globalObject));
+                }
+            }
+            return array;
+        }
+
+        pub fn getTLSVersion(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            JSC.markBinding(@src());
+            if (comptime ssl == false) {
+                return JSValue.jsNull();
+            }
+
+            if (this.detached) {
+                return JSValue.jsNull();
+            }
+
+            const ssl_ptr = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+            const version = BoringSSL.SSL_get_version(ssl_ptr);
+            if (version == null) return JSValue.jsNull();
+            const version_len = bun.len(version);
+            if (version_len == 0) return JSValue.jsNull();
+            const slice = version[0..version_len];
+            return ZigString.fromUTF8(slice).toValueGC(globalObject);
+        }
+
+        pub fn setMaxSendFragment(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            JSC.markBinding(@src());
+            if (comptime ssl == false) {
+                return JSValue.jsBoolean(false);
+            }
+
+            if (this.detached) {
+                return JSValue.jsBoolean(false);
+            }
+
+            const args = callframe.arguments(1);
+
+            if (args.len < 1) {
+                globalObject.throw("Expected size to be a number", .{});
+                return .zero;
+            }
+
+            const arg = args.ptr[0];
+            if (!arg.isNumber()) {
+                globalObject.throw("Expected size to be a number", .{});
+                return .zero;
+            }
+            const size = args.ptr[0].coerceToInt64(globalObject);
+            if (size < 1) {
+                globalObject.throw("Expected size to be greater than 1", .{});
+                return .zero;
+            }
+            if (size > 16384) {
+                globalObject.throw("Expected size to be less than 16385", .{});
+                return .zero;
+            }
+
+            const ssl_ptr = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+            return JSValue.jsBoolean(BoringSSL.SSL_set_max_send_fragment(ssl_ptr, @intCast(usize, size)) == 1);
+        }
         pub fn getPeerCertificate(
             this: *This,
             globalObject: *JSC.JSGlobalObject,
@@ -2299,7 +2778,9 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
             if (comptime tls) {
                 TLSSocket.onData(this.tls, socket, data);
             } else {
-                TLSSocket.onData(this.tcp, socket, data);
+                // looks like node disconnects this
+                // https://github.com/sidorares/node-mysql2/pull/2119
+                // TLSSocket.onData(this.tcp, socket, data);
             }
         }
 

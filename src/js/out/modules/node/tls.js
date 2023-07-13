@@ -223,15 +223,55 @@ var parseCertString = function() {
   servername;
   authorized = !1;
   authorizationError;
+  #renegotiationDisabled = !1;
   encrypted = !0;
   _start() {
     this.connect();
   }
-  exportKeyingMaterial(length, label, context) {
+  getSession() {
     throw Error("Not implented in Bun yet");
   }
-  setMaxSendFragment(size) {
+  getEphemeralKeyInfo() {
+    return this[bunSocketInternal]?.getEphemeralKeyInfo();
+  }
+  getCipher() {
+    return this[bunSocketInternal]?.getCipher();
+  }
+  getSharedSigalgs() {
+    return this[bunSocketInternal]?.getSharedSigalgs();
+  }
+  getProtocol() {
+    return this[bunSocketInternal]?.getTLSVersion();
+  }
+  getFinished() {
+    return this[bunSocketInternal]?.getTLSFinishedMessage() || void 0;
+  }
+  getPeerFinished() {
+    return this[bunSocketInternal]?.getTLSPeerFinishedMessage() || void 0;
+  }
+  isSessionReused() {
+    return !1;
+  }
+  renegotiate() {
+    if (this.#renegotiationDisabled) {
+      const error = new Error("ERR_TLS_RENEGOTIATION_DISABLED: TLS session renegotiation disabled for this socket");
+      throw error.name = "ERR_TLS_RENEGOTIATION_DISABLED", error;
+    }
     throw Error("Not implented in Bun yet");
+  }
+  disableRenegotiation() {
+    this.#renegotiationDisabled = !0;
+  }
+  getTLSTicket() {
+    throw Error("Not implented in Bun yet");
+  }
+  exportKeyingMaterial(length, label, context) {
+    return this[bunSocketInternal]?.exportKeyingMaterial(length, label, context);
+  }
+  setMaxSendFragment(size) {
+    return this[bunSocketInternal]?.setMaxSendFragment(size) || !1;
+  }
+  enableTrace() {
   }
   setServername(name) {
     if (this.isServer) {
@@ -283,16 +323,9 @@ class Server extends NetServer {
   _requestCert;
   servername;
   ALPNProtocols;
-  #checkServerIdentity;
   constructor(options, secureConnectionListener) {
     super(options, secureConnectionListener);
-    this.#checkServerIdentity = options?.checkServerIdentity || checkServerIdentity, this.setSecureContext(options);
-  }
-  emit(event, args) {
-    if (super.emit(event, args), event === "connection")
-      args.once("secureConnect", () => {
-        super.emit("secureConnection", args);
-      });
+    this.setSecureContext(options);
   }
   setSecureContext(options) {
     if (options instanceof InternalSecureContext)
@@ -360,8 +393,7 @@ class Server extends NetServer {
         secureOptions: this.secureOptions,
         rejectUnauthorized: isClient ? !1 : this._rejectUnauthorized,
         requestCert: isClient ? !1 : this._requestCert,
-        ALPNProtocols: this.ALPNProtocols,
-        checkServerIdentity: this.#checkServerIdentity
+        ALPNProtocols: this.ALPNProtocols
       },
       SocketClass
     ];

@@ -354,6 +354,7 @@ const TLSSocket = (function (InternalTLSSocket) {
     servername;
     authorized = false;
     authorizationError;
+    #renegotiationDisabled = false;
 
     encrypted = true;
 
@@ -362,14 +363,64 @@ const TLSSocket = (function (InternalTLSSocket) {
       this.connect();
     }
 
+    getSession() {
+      throw Error("Not implented in Bun yet");
+    }
+
+    getEphemeralKeyInfo() {
+      return this[bunSocketInternal]?.getEphemeralKeyInfo();
+    }
+
+    getCipher() {
+      return this[bunSocketInternal]?.getCipher();
+    }
+
+    getSharedSigalgs() {
+      return this[bunSocketInternal]?.getSharedSigalgs();
+    }
+
+    getProtocol() {
+      return this[bunSocketInternal]?.getTLSVersion();
+    }
+
+    getFinished() {
+      return this[bunSocketInternal]?.getTLSFinishedMessage() || undefined;
+    }
+
+    getPeerFinished() {
+      return this[bunSocketInternal]?.getTLSPeerFinishedMessage() || undefined;
+    }
+
+    isSessionReused() {
+      return false;
+    }
+
+    renegotiate() {
+      if (this.#renegotiationDisabled) {
+        const error = new Error("ERR_TLS_RENEGOTIATION_DISABLED: TLS session renegotiation disabled for this socket");
+        error.name = "ERR_TLS_RENEGOTIATION_DISABLED";
+        throw error;
+      }
+
+      throw Error("Not implented in Bun yet");
+    }
+    disableRenegotiation() {
+      this.#renegotiationDisabled = true;
+    }
+    getTLSTicket() {
+      throw Error("Not implented in Bun yet");
+    }
     exportKeyingMaterial(length, label, context) {
-      //SSL_export_keying_material
-      throw Error("Not implented in Bun yet");
+      return this[bunSocketInternal]?.exportKeyingMaterial(length, label, context);
     }
+
     setMaxSendFragment(size) {
-      // SSL_set_max_send_fragment
-      throw Error("Not implented in Bun yet");
+      return this[bunSocketInternal]?.setMaxSendFragment(size) || false;
     }
+
+    // only for debug purposes so we just mock for now
+    enableTrace() {}
+
     setServername(name) {
       if (this.isServer) {
         let error = new Error("ERR_TLS_SNI_FROM_SERVER: Cannot issue SNI from a TLS server-side socket");

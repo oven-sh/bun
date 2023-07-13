@@ -323,6 +323,7 @@ const TLSSocket = (function (InternalTLSSocket) {
     ALPNProtocols;
     #socket;
     #checkServerIdentity;
+    #session;
 
     constructor(socket, options) {
       super(socket instanceof InternalTCPSocket ? options : options || socket);
@@ -343,6 +344,7 @@ const TLSSocket = (function (InternalTLSSocket) {
       this._secureEstablished = false;
       this._securePending = true;
       this.#checkServerIdentity = options.checkServerIdentity || checkServerIdentity;
+      this.#session = options.session || null;
     }
 
     _secureEstablished = false;
@@ -364,7 +366,7 @@ const TLSSocket = (function (InternalTLSSocket) {
     }
 
     getSession() {
-      throw Error("Not implented in Bun yet");
+      return this[bunSocketInternal]?.getSession();
     }
 
     getEphemeralKeyInfo() {
@@ -408,7 +410,7 @@ const TLSSocket = (function (InternalTLSSocket) {
       this.#renegotiationDisabled = true;
     }
     getTLSTicket() {
-      throw Error("Not implented in Bun yet");
+      return this[bunSocketInternal]?.getTLSTicket();
     }
     exportKeyingMaterial(length, label, context) {
       return this[bunSocketInternal]?.exportKeyingMaterial(length, label, context);
@@ -431,8 +433,9 @@ const TLSSocket = (function (InternalTLSSocket) {
       this.servername = name;
       this[bunSocketInternal]?.setServername(name);
     }
-    setSession() {
-      throw Error("Not implented in Bun yet");
+    setSession(session) {
+      if (typeof session === "string") session = Buffer.from(session, "latin1");
+      return this[bunSocketInternal]?.setSession(session);
     }
     getPeerCertificate(abbreviated) {
       const cert =
@@ -468,6 +471,7 @@ const TLSSocket = (function (InternalTLSSocket) {
         ALPNProtocols: this.ALPNProtocols,
         serverName: this.servername || host || "localhost",
         checkServerIdentity: this.#checkServerIdentity,
+        session: this.#session,
         ...this.#secureContext,
       };
     }

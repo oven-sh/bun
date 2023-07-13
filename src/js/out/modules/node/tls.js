@@ -203,6 +203,7 @@ var parseCertString = function() {
   ALPNProtocols;
   #socket;
   #checkServerIdentity;
+  #session;
   constructor(socket, options) {
     super(socket instanceof InternalTCPSocket ? options : options || socket);
     if (options = options || socket || {}, typeof options === "object") {
@@ -212,7 +213,7 @@ var parseCertString = function() {
       if (socket instanceof InternalTCPSocket)
         this.#socket = socket;
     }
-    this.#secureContext = options.secureContext || createSecureContext(options), this.authorized = !1, this.secureConnecting = !0, this._secureEstablished = !1, this._securePending = !0, this.#checkServerIdentity = options.checkServerIdentity || checkServerIdentity;
+    this.#secureContext = options.secureContext || createSecureContext(options), this.authorized = !1, this.secureConnecting = !0, this._secureEstablished = !1, this._securePending = !0, this.#checkServerIdentity = options.checkServerIdentity || checkServerIdentity, this.#session = options.session || null;
   }
   _secureEstablished = !1;
   _securePending = !0;
@@ -229,7 +230,7 @@ var parseCertString = function() {
     this.connect();
   }
   getSession() {
-    throw Error("Not implented in Bun yet");
+    return this[bunSocketInternal]?.getSession();
   }
   getEphemeralKeyInfo() {
     return this[bunSocketInternal]?.getEphemeralKeyInfo();
@@ -263,7 +264,7 @@ var parseCertString = function() {
     this.#renegotiationDisabled = !0;
   }
   getTLSTicket() {
-    throw Error("Not implented in Bun yet");
+    return this[bunSocketInternal]?.getTLSTicket();
   }
   exportKeyingMaterial(length, label, context) {
     return this[bunSocketInternal]?.exportKeyingMaterial(length, label, context);
@@ -280,8 +281,10 @@ var parseCertString = function() {
     }
     this.servername = name, this[bunSocketInternal]?.setServername(name);
   }
-  setSession() {
-    throw Error("Not implented in Bun yet");
+  setSession(session) {
+    if (typeof session === "string")
+      session = Buffer.from(session, "latin1");
+    return this[bunSocketInternal]?.setSession(session);
   }
   getPeerCertificate(abbreviated) {
     const cert = arguments.length < 1 ? this[bunSocketInternal]?.getPeerCertificate() : this[bunSocketInternal]?.getPeerCertificate(abbreviated);
@@ -308,6 +311,7 @@ var parseCertString = function() {
       ALPNProtocols: this.ALPNProtocols,
       serverName: this.servername || host2 || "localhost",
       checkServerIdentity: this.#checkServerIdentity,
+      session: this.#session,
       ...this.#secureContext
     };
   }

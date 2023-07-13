@@ -29,6 +29,18 @@ function generate(ssl) {
         fn: "getCipher",
         length: 0,
       },
+      getSession: {
+        fn: "getSession",
+        length: 0,
+      },
+      setSession: {
+        fn: "setSession",
+        length: 0,
+      },
+      getTLSTicket: {
+        fn: "getTLSTicket",
+        length: 0,
+      },
       exportKeyingMaterial: {
         fn: "exportKeyingMaterial",
         length: 3,

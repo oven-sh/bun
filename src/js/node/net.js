@@ -145,11 +145,17 @@ const Socket = (function (InternalSocket) {
         socket.ref();
         self[bunSocketInternal] = socket;
         self.connecting = false;
+        const { session } = self[bunTLSConnectOptions];
+        if (session) {
+          self.setSession(session);
+        }
+
         if (!self.#upgraded) {
           // this is not actually emitted on nodejs when socket used on the connection
           // this is already emmited on non-TLS socket and on TLS socket is emmited secureConnect after handshake
           self.emit("connect", self);
         }
+
         Socket.#Drain(socket);
       },
       handshake(socket, success, verifyError) {
@@ -417,6 +423,7 @@ const Socket = (function (InternalSocket) {
           pauseOnConnect,
           servername,
           checkServerIdentity,
+          session,
         } = port;
         _checkServerIdentity = checkServerIdentity;
         this.servername = servername;

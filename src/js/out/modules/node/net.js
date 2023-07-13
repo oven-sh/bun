@@ -63,7 +63,11 @@ var createConnection = function(port, host, connectListener) {
     },
     open(socket) {
       const self = socket.data;
-      if (socket.timeout(self.timeout), socket.ref(), self[bunSocketInternal] = socket, self.connecting = !1, !self.#upgraded)
+      socket.timeout(self.timeout), socket.ref(), self[bunSocketInternal] = socket, self.connecting = !1;
+      const { session } = self[bunTLSConnectOptions];
+      if (session)
+        self.setSession(session);
+      if (!self.#upgraded)
         self.emit("connect", self);
       Socket2.#Drain(socket);
     },
@@ -241,7 +245,8 @@ var createConnection = function(port, host, connectListener) {
         rejectUnauthorized,
         pauseOnConnect,
         servername,
-        checkServerIdentity
+        checkServerIdentity,
+        session
       } = port;
       if (_checkServerIdentity = checkServerIdentity, this.servername = servername, socket)
         connection = socket;

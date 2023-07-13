@@ -1954,6 +1954,147 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
+        pub fn getTLSTicket(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+
+            if (this.detached) {
+                return JSValue.jsUndefined();
+            }
+
+            var ssl_ptr: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+            const session = BoringSSL.SSL_get_session(ssl_ptr) orelse return JSValue.jsUndefined();
+            var ticket: [*c]const u8 = undefined;
+            var length: usize = 0;
+            BoringSSL.SSL_SESSION_get0_ticket(session, @ptrCast([*c][*c]const u8, &ticket), &length);
+
+            if (ticket == null or length == 0) {
+                return JSValue.jsUndefined();
+            }
+
+            return JSC.ArrayBuffer.createBuffer(globalObject, ticket[0..length]);
+        }
+
+        pub fn setSession(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+
+            if (this.detached) {
+                return JSValue.jsUndefined();
+            }
+
+            const args = callframe.arguments(1);
+
+            if (args.len < 1) {
+                globalObject.throw("Expected session to be a string, Buffer or TypedArray", .{});
+                return .zero;
+            }
+
+            const session_arg = args.ptr[0];
+            var arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator);
+            defer arena.deinit();
+
+            var exception_ref = [_]JSC.C.JSValueRef{null};
+            var exception: JSC.C.ExceptionRef = &exception_ref;
+            if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), session_arg, exception)) |sb| {
+                var session_slice = sb.slice();
+                var ssl_ptr: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+                const session = BoringSSL.d2i_SSL_SESSION(null, @ptrCast([*c][*c]u8, &session_slice.ptr), @intCast(c_long, session_slice.len)) orelse return JSValue.jsUndefined();
+                if (BoringSSL.SSL_set_session(ssl_ptr, session) != 1) {
+                    globalObject.throwValue(getSSLException(globalObject, "SSL_set_session error"));
+                    return .zero;
+                }
+                return JSValue.jsUndefined();
+            } else if (exception.* != null) {
+                globalObject.throwValue(JSC.JSValue.c(exception.*));
+                return .zero;
+            } else {
+                globalObject.throw("Expected session to be a string, Buffer or TypedArray", .{});
+                return .zero;
+            }
+        }
+
+        pub fn getSession(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            if (comptime ssl == false) {
+                return JSValue.jsUndefined();
+            }
+
+            if (this.detached) {
+                return JSValue.jsUndefined();
+            }
+
+            var ssl_ptr: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+            const session = BoringSSL.SSL_get_session(ssl_ptr) orelse return JSValue.jsUndefined();
+            const size = BoringSSL.i2d_SSL_SESSION(session, null);
+            if (size <= 0) {
+                return JSValue.jsUndefined();
+            }
+            var buffer = bun.default_allocator.alloc(u8, @intCast(usize, size)) catch unreachable;
+            defer bun.default_allocator.free(buffer);
+            _ = BoringSSL.i2d_SSL_SESSION(session, @ptrCast([*c][*c]u8, &buffer.ptr));
+            const result = JSC.ArrayBuffer.createBuffer(globalObject, buffer);
+            return result;
+        }
+
+        // pub fn renegociateTLS(this: *This,
+        //                      globalObject: *JSC.JSGlobalObject,
+        //                      callframe: *JSC.CallFrame,)
+        //                      callconv(.C) JSValue {
+
+        //     if (comptime ssl == false) {
+        //         return JSValue.jsBoolean(false);
+        //     }
+
+        //     if (this.detached) {
+        //         return JSValue.jsBoolean(false);
+        //     }
+        //     const args = callframe.arguments(1);
+
+        //     if (args.len < 1) {
+        //         globalObject.throw("Expected 1 arguments", .{});
+        //         return .zero;
+        //     }
+        //     const opts = args.ptr[0];
+        //     if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
+        //         globalObject.throw("Expected options object", .{});
+        //         return .zero;
+        //     }
+
+        //     var ssl_ptr: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+        //     var ssl_context = BoringSSL.SSL_get_SSL_CTX(ssl_ptr);
+        //     if(reject_unauthorized) {
+        //         BoringSSL.SSL_CTX_set_verify(ssl_context, BoringSSL.SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, null);
+        //     } else if(request_cert) {
+        //         BoringSSL.SSL_CTX_set_verify(ssl_context, BoringSSL.SSL_VERIFY_PEER, null);
+        //     } else {
+        //         BoringSSL.SSL_CTX_set_verify(ssl_context, BoringSSL.SSL_VERIFY_NONE, null);
+        //     }
+
+        //     if (BoringSSL.SSL_renegotiate(ssl_ptr) != 1) {
+        //         globalObject.throwValue(getSSLException(globalObject, "Failed to renegotiate TLS"));
+        //         return .zero;
+        //     }
+        //     this.renegociating = true;
+        //     we need to check onData and onWritable to call handshake and call onHandshake callback when finished
+        //     _ = BoringSSL.SSL_do_handshake(ssl_ptr);
+
+        //     return JSValue.jsBoolean(true);
+        // }
+
         pub fn getALPNProtocol(
             this: *This,
             globalObject: *JSC.JSGlobalObject,

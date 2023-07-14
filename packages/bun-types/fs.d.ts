@@ -3999,7 +3999,7 @@ declare module "fs" {
     recursive?: boolean;
     signal?: AbortSignal;
   };
-  type WatchEventType = "rename" | "change" | "error" | "close";
+  export type WatchEventType = "rename" | "change" | "error" | "close";
   type WatchListener<T> = (
     event: WatchEventType,
     filename: T | Error | undefined,

@@ -380,6 +380,7 @@ declare module "bun:ffi" {
     [FFIType.cstring]: CString;
     [FFIType.i64_fast]: number | bigint;
     [FFIType.u64_fast]: number | bigint;
+    [FFIType.function]: (...args: any[]) => any;
   }
   interface FFITypeStringToType {
     ["char"]: FFIType.char;

@@ -2597,7 +2597,7 @@ pub const EventListenerMixin = struct {
 
         for (listeners.items) |listener_ref| {
             vm.tick();
-            var result = js.JSObjectCallAsFunctionReturnValue(vm.global, listener_ref, null, 1, &fetch_args);
+            var result = js.JSObjectCallAsFunctionReturnValue(vm.global, JSValue.fromRef(listener_ref), JSValue.zero, 1, &fetch_args);
             vm.tick();
             var promise = JSInternalPromise.resolvedPromise(vm.global, result);
 

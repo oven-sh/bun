@@ -17,6 +17,7 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static AsyncBoundFunction* create(VM& vm, JSC::Structure* structure, JSValue callback, JSValue context);
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
     static JSValue snapshotCallback(JSGlobalObject* globalObject, JSValue callback);
 
     DECLARE_INFO;

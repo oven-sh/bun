@@ -62,21 +62,18 @@ class AsyncLocalStorage {
     } catch (e) {
       throw e;
     } finally {
-      if (this.#disableCalled) {
-        // was already deleted
-        this.#disableCalled = false;
+      var context2 = get()!;
+      if (context2 === context && contextWasInit) {
+        set(undefined);
       } else {
-        var context2 = get()!;
-        if (context2 === context && contextWasInit) {
-          return set(undefined);
-        }
         context2 = context2.slice();
         if (hasPrevious) {
           context2[i + 1] = previous;
+          set(context2);
         } else {
           context2.splice(i, 2);
+          set(context2.length ? context2 : undefined);
         }
-        set(context2);
       }
     }
   }

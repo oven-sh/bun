@@ -3472,8 +3472,8 @@ pub const JSValue = enum(JSValueReprInt) {
         JSC.markBinding(@src());
         return JSC.C.JSObjectCallAsFunctionReturnValue(
             globalThis,
-            this.asObjectRef(),
-            @as(JSC.C.JSValueRef, @ptrCast(globalThis)),
+            this,
+            @enumFromInt(JSValue, @bitCast(JSValue.Type, @intFromPtr(globalThis))),
             args.len,
             @as(?[*]const JSC.C.JSValueRef, @ptrCast(args.ptr)),
         );
@@ -3483,8 +3483,8 @@ pub const JSValue = enum(JSValueReprInt) {
         JSC.markBinding(@src());
         return JSC.C.JSObjectCallAsFunctionReturnValue(
             globalThis,
-            this.asObjectRef(),
-            @as(JSC.C.JSValueRef, @ptrCast(thisValue.asNullableVoid())),
+            this,
+            thisValue,
             args.len,
             @as(?[*]const JSC.C.JSValueRef, @ptrCast(args.ptr)),
         );
@@ -4874,7 +4874,20 @@ pub const JSValue = enum(JSValueReprInt) {
         "jestStrictDeepEquals",
         "jestDeepMatch",
     };
+
+    // For any callback JSValue created in JS that you will not call *immediatly*, you must wrap it
+    // in an AsyncBoundFunction with this function. This allows AsyncLocalStorage to work by
+    // snapshotting it's state and restoring it when called.
+    // - If there is no current context, this returns the callback as-is.
+    // - It is safe to run .call() on the resulting JSValue. This includes automatic unwrapping.
+    // - Do not pass the callback as-is to JS; The wrapped object is NOT a function.
+    // - If passed to C++, call it with AsyncBoundFunction::call() instead of JSC::call()
+    pub fn snapshotAsyncCallback(this: JSValue, global: *JSGlobalObject) JSValue {
+        return AsyncBoundFunction__snapshotCallback(global, this);
+    }
 };
+
+extern "c" fn AsyncBoundFunction__snapshotCallback(global: *JSGlobalObject, callback: JSValue) JSValue;
 
 extern "c" fn Microtask__run(*Microtask, *JSGlobalObject) void;
 extern "c" fn Microtask__run_default(*MicrotaskForDefaultGlobalObject, *JSGlobalObject) void;
@@ -4990,6 +5003,7 @@ pub const VM = extern struct {
         }
 
         const callback_ = callback;
+        _ = callback_;
         const Wrapper = struct {
             pub fn run(ptr_: *anyopaque) callconv(.C) void {
                 var ptr__ = @as(*Ptr, @ptrCast(@alignCast(ptr_)));

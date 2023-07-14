@@ -1737,18 +1737,18 @@ bool JSC__JSValue__jestDeepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, J
 
 // This is the same as the C API version, except it returns a JSValue which may be a *Exception
 // We want that so we can return stack traces.
-extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSObjectRef object,
-    JSObjectRef thisObject, size_t argumentCount,
+extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSC__JSValue object,
+    JSC__JSValue thisObject, size_t argumentCount,
     const JSValueRef* arguments)
 {
     JSC::JSGlobalObject* globalObject = toJS(ctx);
     JSC::VM& vm = globalObject->vm();
 
-    if (!object)
+    if (UNLIKELY(!object))
         return JSC::JSValue::encode(JSC::JSValue());
 
-    JSC::JSObject* jsObject = toJS(object);
-    JSC::JSObject* jsThisObject = toJS(thisObject);
+    JSC::JSValue jsObject = JSValue::decode(object);
+    JSC::JSValue jsThisObject = JSValue::decode(thisObject);
 
     JSValue restoreAsyncContext;
     AsyncContextData* asyncContextData = nullptr;
@@ -1772,6 +1772,10 @@ extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSOb
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
     auto result = JSC::call(globalObject, jsObject, callData, jsThisObject, argList, returnedException);
+
+    if (asyncContextData) {
+        asyncContextData->setInternalValue(vm, restoreAsyncContext);
+    }
 
     if (asyncContextData) {
         asyncContextData->setInternalValue(vm, restoreAsyncContext);

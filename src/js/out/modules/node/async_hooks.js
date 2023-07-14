@@ -71,18 +71,13 @@ class AsyncLocalStorage {
     } catch (e) {
       throw e;
     } finally {
-      if (this.#disableCalled)
-        this.#disableCalled = !1;
-      else {
-        var context2 = get();
-        if (context2 === context && contextWasInit)
-          return set(void 0);
-        if (context2 = context2.slice(), hasPrevious)
-          context2[i + 1] = previous;
-        else
-          context2.splice(i, 2);
-        set(context2);
-      }
+      var context2 = get();
+      if (context2 === context && contextWasInit)
+        set(void 0);
+      else if (context2 = context2.slice(), hasPrevious)
+        context2[i + 1] = previous, set(context2);
+      else
+        context2.splice(i, 2), set(context2.length ? context2 : void 0);
     }
   }
   disable() {

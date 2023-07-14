@@ -22,6 +22,11 @@ AsyncBoundFunction* AsyncBoundFunction::create(VM& vm, JSC::Structure* structure
     return asyncContextData;
 }
 
+JSC::Structure* AsyncBoundFunction::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    return Structure::create(vm, globalObject, jsNull(), TypeInfo(ObjectType, StructureFlags), info());
+}
+
 JSValue AsyncBoundFunction::snapshotCallback(JSGlobalObject* globalObject, JSValue callback)
 {
     JSValue context = globalObject->m_asyncContextData.get()->internalValue();
@@ -35,7 +40,7 @@ JSValue AsyncBoundFunction::snapshotCallback(JSGlobalObject* globalObject, JSVal
     auto& vm = globalObject->vm();
     return AsyncBoundFunction::create(
         vm,
-        globalObject->nullPrototypeObjectStructure(),
+        static_cast<Zig::GlobalObject*>(globalObject)->AsyncBoundFunctionStructure(),
         callback,
         context);
 }

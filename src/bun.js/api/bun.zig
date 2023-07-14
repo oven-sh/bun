@@ -4197,10 +4197,12 @@ pub const Timer = struct {
             0,
         );
 
-        Timer.set(id, globalThis, callback, interval, arguments, false) catch
+        const wrappedCallback = callback.snapshotAsyncCallback(globalThis);
+
+        Timer.set(id, globalThis, wrappedCallback, interval, arguments, false) catch
             return JSValue.jsUndefined();
 
-        return TimerObject.init(globalThis, id, .setTimeout, interval, callback, arguments);
+        return TimerObject.init(globalThis, id, .setTimeout, interval, wrappedCallback, arguments);
     }
     pub fn setInterval(
         globalThis: *JSGlobalObject,
@@ -4212,16 +4214,18 @@ pub const Timer = struct {
         const id = globalThis.bunVM().timer.last_id;
         globalThis.bunVM().timer.last_id +%= 1;
 
+        const wrappedCallback = callback.snapshotAsyncCallback(globalThis);
+
         // We don't deal with nesting levels directly
         // but we do set the minimum timeout to be 1ms for repeating timers
         const interval: i32 = @max(
             countdown.coerce(i32, globalThis),
             1,
         );
-        Timer.set(id, globalThis, callback, interval, arguments, true) catch
+        Timer.set(id, globalThis, wrappedCallback, interval, arguments, true) catch
             return JSValue.jsUndefined();
 
-        return TimerObject.init(globalThis, id, .setInterval, interval, callback, arguments);
+        return TimerObject.init(globalThis, id, .setInterval, interval, wrappedCallback, arguments);
     }
 
     pub fn clearTimer(timer_id_value: JSValue, globalThis: *JSGlobalObject, repeats: bool) void {

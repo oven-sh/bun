@@ -510,7 +510,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 - {% anchor id="node_process" %} [`process`](https://nodejs.org/api/process.html) {% /anchor %}
 - 🟡
-- Missing `process.allowedNodeEnvironmentFlags` `process.getActiveResourcesInfo()` `process.channel()` `process.connected` `process.constrainedMemory()` `process.disconnect()` `process.{get|set}ActiveResourcesInfo()` `process.set{uid|gid|egid|euid|groups}()` `process.hasUncaughtExceptionCaptureCallback` `process.initGroups()` `process.report` `process.resourceUsage()` `process.setSourceMapsEnabled()` `process.send()`.
+- Missing `process.allowedNodeEnvironmentFlags` `process.channel()` `process.connected` `process.constrainedMemory()` `process.disconnect()` `process.getActiveResourcesInfo/setActiveResourcesInfo()` `process.setuid/setgid/setegid/seteuid/setgroups()` `process.hasUncaughtExceptionCaptureCallback` `process.initGroups()` `process.report` `process.resourceUsage()` `process.send()`.
 
 ---
 

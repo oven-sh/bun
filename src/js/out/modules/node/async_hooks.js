@@ -1,59 +1,103 @@
-import {drainMicrotasks} from "bun:jsc";
-var createHook = function() {
+var createWarning = function(message) {
+  let warned = !1;
+  return function() {
+    if (warned)
+      return;
+    warned = !0, process.emitWarning(message);
+  };
+}, createHook = function(callbacks) {
   return {
     enable() {
-      notImplemented();
+      createHookNotImpl();
     },
     disable() {
-      notImplemented();
+      createHookNotImpl();
     }
   };
 }, executionAsyncId = function() {
-  return 0;
+  return executionAsyncIdNotImpl(), 0;
 }, triggerAsyncId = function() {
   return 0;
 }, executionAsyncResource = function() {
-  return null;
-}, notImplemented = () => {
-  console.warn("[bun] Warning: async_hooks has not been implemented yet. See https://github.com/oven-sh/bun/issues/1832"), notImplemented = () => {
-  };
-};
+  return executionAsyncResourceWarning(), stubAsyncResource;
+}, { get, set } = globalThis[Symbol.for("Bun.lazy")]("async_hooks");
 
 class AsyncLocalStorage {
-  #store;
-  _enabled;
+  #disableCalled = !1;
   constructor() {
-    this._enabled = !1, this.#store = null;
+  }
+  static bind(fn) {
+    return this.snapshot().bind(fn);
+  }
+  static snapshot() {
+    var context = get();
+    if (context)
+      context = context.slice();
+    return (fn, ...args) => {
+      var prev = get();
+      set(context);
+      try {
+        return fn(...args);
+      } catch (error) {
+        throw error;
+      } finally {
+        set(prev);
+      }
+    };
   }
   enterWith(store) {
-    return this.#store = store, notImplemented(), this;
   }
   exit(cb, ...args) {
-    this.#store = null, notImplemented(), typeof cb === "function" && cb(...args);
+    return this.run(void 0, cb, ...args);
   }
   run(store, callback, ...args) {
-    if (typeof callback !== "function")
-      throw new TypeError("ERR_INVALID_CALLBACK");
-    var result, err;
-    if (process.nextTick((store2) => {
-      const prev = this.#store;
-      this.enterWith(store2);
-      try {
-        result = callback(...args);
-      } catch (e) {
-        err = e;
-      } finally {
-        this.#store = prev;
+    var context = get(), hasPrevious = !1, previous, i, contextWasInit = !context;
+    if (contextWasInit)
+      i = 0, set(context = [this, store]);
+    else {
+      context = context.slice();
+      var length = context.length;
+      for (i = 0;i < length; i += 2)
+        if (context[i] === this) {
+          hasPrevious = !0, previous = context[i + 1], context[i + 1] = store;
+          break;
+        }
+      if (!hasPrevious)
+        context.push(this, store);
+      set(context);
+    }
+    try {
+      return callback(...args);
+    } catch (e) {
+      throw e;
+    } finally {
+      if (this.#disableCalled)
+        this.#disableCalled = !1;
+      else {
+        var context2 = get();
+        if (context2 === context && contextWasInit)
+          return set(void 0);
+        if (context2 = context2.slice(), hasPrevious)
+          context2[i + 1] = previous;
+        else
+          context2.splice(i, 2);
+        set(context2);
       }
-    }, store), drainMicrotasks(), typeof err !== "undefined")
-      throw err;
-    return result;
+    }
+  }
+  disable() {
   }
   getStore() {
-    return this.#store;
+    var context = get();
+    if (!context)
+      return;
+    var { length } = context;
+    for (var i = 0;i < length; i += 2)
+      if (context[i] === this)
+        return context[i + 1];
   }
 }
-var asyncWrapProviders = {
+var createHookNotImpl = createWarning("async_hooks.createHook is not implemented in Bun. Hooks can still be created but will never be called."), executionAsyncIdNotImpl = createWarning("async_hooks.executionAsyncId/triggerAsyncId are not implemented in Bun. It returns 0 every time."), executionAsyncResourceWarning = createWarning("async_hooks.executionAsyncResource is not implemented in Bun."), stubAsyncResource = {}, asyncWrapProviders = {
   NONE: 0,
   DIRHANDLE: 1,
   DNSCHANNEL: 2,
@@ -113,40 +157,6 @@ var asyncWrapProviders = {
   VERIFYREQUEST: 56,
   INSPECTORJSBINDING: 57
 };
-
-class AsyncResource {
-  constructor(type, triggerAsyncId2) {
-    if (this.type = type, this.triggerAsyncId = triggerAsyncId2, AsyncResource.allowedRunInAsyncScope.has(type))
-      this.runInAsyncScope = this.#runInAsyncScope;
-  }
-  static allowedRunInAsyncScope = new Set(["prisma-client-request"]);
-  type;
-  triggerAsyncId;
-  emitBefore() {
-    return !0;
-  }
-  emitAfter() {
-    return !0;
-  }
-  emitDestroy() {
-  }
-  runInAsyncScope;
-  #runInAsyncScope(fn, ...args) {
-    var result, err;
-    if (process.nextTick((fn2) => {
-      try {
-        result = fn2(...args);
-      } catch (err2) {
-        err = err2;
-      }
-    }, fn), drainMicrotasks(), err)
-      throw err;
-    return result;
-  }
-  asyncId() {
-    return 0;
-  }
-}
 var async_hooks_default = {
   AsyncLocalStorage,
   createHook,
@@ -154,8 +164,6 @@ var async_hooks_default = {
   triggerAsyncId,
   executionAsyncResource,
   asyncWrapProviders,
-  AsyncResource,
-  [Symbol.toStringTag]: "Module (not implemented yet)",
   [Symbol.for("CommonJS")]: 0
 };
 export {
@@ -165,6 +173,5 @@ export {
   async_hooks_default as default,
   createHook,
   asyncWrapProviders,
-  AsyncResource,
   AsyncLocalStorage
 };

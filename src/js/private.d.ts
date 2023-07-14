@@ -187,6 +187,10 @@ interface BunLazyModules {
     functionRegular: any;
     callback: any;
   };
+  "async_hooks": {
+    get: typeof import("./builtins/AsyncContext").getAsyncContext;
+    set: typeof import("./builtins/AsyncContext").setAsyncContext;
+  };
 
   // ReadableStream related
   [1]: any;

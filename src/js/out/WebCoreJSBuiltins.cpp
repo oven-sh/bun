@@ -1929,6 +1929,32 @@ JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
 WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 #undef DEFINE_BUILTIN_GENERATOR
 
+/* AsyncContext.ts */
+// getAsyncContext
+const JSC::ConstructAbility s_asyncContextGetAsyncContextCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_asyncContextGetAsyncContextCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_asyncContextGetAsyncContextCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_asyncContextGetAsyncContextCodeLength = 70;
+static const JSC::Intrinsic s_asyncContextGetAsyncContextCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_asyncContextGetAsyncContextCode = "(function (){\"use strict\";return @getInternalField(@asyncContext,0)})\n";
+
+// setAsyncContext
+const JSC::ConstructAbility s_asyncContextSetAsyncContextCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_asyncContextSetAsyncContextCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_asyncContextSetAsyncContextCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_asyncContextSetAsyncContextCodeLength = 73;
+static const JSC::Intrinsic s_asyncContextSetAsyncContextCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_asyncContextSetAsyncContextCode = "(function (r){\"use strict\";return @putInternalField(@asyncContext,0,r)})\n";
+
+#define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
+JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
+{\
+    JSVMClientData* clientData = static_cast<JSVMClientData*>(vm.clientData); \
+    return clientData->builtinFunctions().asyncContextBuiltins().codeName##Executable()->link(vm, nullptr, clientData->builtinFunctions().asyncContextBuiltins().codeName##Source(), std::nullopt, s_##codeName##Intrinsic); \
+}
+WEBCORE_FOREACH_ASYNCCONTEXT_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
+#undef DEFINE_BUILTIN_GENERATOR
+
 /* ReadableStreamBYOBReader.ts */
 // initializeReadableStreamBYOBReader
 const JSC::ConstructAbility s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;

@@ -95,6 +95,9 @@
 #include <JavaScriptCore/JSWeakMap.h>
 #include "JSURLSearchParams.h"
 
+#include "AsyncBoundFunction.h"
+#include "JavaScriptCore/AsyncContextData.h"
+
 template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
 {
@@ -1734,11 +1737,7 @@ bool JSC__JSValue__jestDeepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, J
 
 // This is the same as the C API version, except it returns a JSValue which may be a *Exception
 // We want that so we can return stack traces.
-JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSObjectRef object,
-    JSObjectRef thisObject, size_t argumentCount,
-    const JSValueRef* arguments);
-
-JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSObjectRef object,
+extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSObjectRef object,
     JSObjectRef thisObject, size_t argumentCount,
     const JSValueRef* arguments)
 {
@@ -1771,11 +1770,6 @@ JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSObjectRef obj
 
     return JSC::JSValue::encode(result);
 }
-
-JSC__JSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef ctx, JSObjectRef object,
-    JSObjectRef thisObject,
-    size_t argumentCount,
-    const JSValueRef* arguments);
 
 JSC__JSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef ctx, JSObjectRef object,
     JSObjectRef thisObject,

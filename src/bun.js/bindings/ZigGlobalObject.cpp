@@ -92,6 +92,7 @@
 #include "JSReadableState.h"
 #include "JSReadableHelper.h"
 #include "Process.h"
+#include "AsyncBoundFunction.h"
 
 #include "WebCoreJSBuiltins.h"
 #include "JSBuffer.h"
@@ -1566,15 +1567,6 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 //     }
 // }
 
-JSC_DEFINE_HOST_FUNCTION(asyncHooksInject, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = globalObject->vm();
-    globalObject->putDirect(vm, vm.propertyNames->builtinNames().pushAsyncContextFramePrivateName(), callFrame->argument(0), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
-    globalObject->putDirect(vm, vm.propertyNames->builtinNames().popAsyncContextFramePrivateName(), callFrame->argument(1), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
-    globalObject->putDirect(vm, vm.propertyNames->builtinNames().getAsyncContextFramePrivateName(), callFrame->argument(2), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
-    return JSC::JSValue::encode(JSC::jsUndefined());
-}
-
 JSC_DEFINE_CUSTOM_GETTER(noop_getter, (JSGlobalObject*, EncodedJSValue, PropertyName))
 {
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -1776,21 +1768,11 @@ JSC:
         if (string == "async_hooks"_s) {
             auto* obj = constructEmptyObject(globalObject);
             obj->putDirect(
-                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "inject"_s)),
-                JSFunction::create(vm, globalObject, 1, "inject"_s, asyncHooksInject, ImplementationVisibility::Public, NoIntrinsic),
-                0);
-            // obj->putDirect(
-            //     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "getContextInit"_s)),
-            //     JSFunction::create(vm, globalObject, 1, "getContextInit"_s, asyncHooksGetContextInit, ImplementationVisibility::Public, NoIntrinsic),
-            //     0);
-            // obj->putDirect(
-            //     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "copyContext"_s)),
-            //     JSFunction::create(vm, globalObject, 1, "copyContext"_s, asyncHooksCopyContext, ImplementationVisibility::Public, NoIntrinsic),
-            //     0);
-            // obj->putDirect(
-            //     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "runInContext"_s)),
-            //     JSFunction::create(vm, globalObject, 1, "runInContext"_s, asyncHooksRunInContext, ImplementationVisibility::Public, NoIntrinsic),
-            //     0);
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "get"_s)),
+                JSC::JSFunction::create(vm, asyncContextGetAsyncContextCodeGenerator(vm), globalObject), 0);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "set"_s)),
+                JSC::JSFunction::create(vm, asyncContextSetAsyncContextCodeGenerator(vm), globalObject), 0);
             return JSValue::encode(obj);
         }
 
@@ -4652,7 +4634,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_dnsObject.visit(visitor);
     thisObject->m_lazyRequireCacheObject.visit(visitor);
     thisObject->m_vmModuleContextMap.visit(visitor);
-    // thisObject->m_asyncHooksContext.visit(visitor);
     thisObject->m_bunSleepThenCallback.visit(visitor);
     thisObject->m_lazyTestModuleObject.visit(visitor);
     thisObject->m_lazyPreloadTestModuleObject.visit(visitor);

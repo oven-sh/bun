@@ -1,22 +1,5 @@
 // Hardcoded module "node:async_hooks"
-const { inject } = globalThis[Symbol.for("Bun.lazy")]("async_hooks");
-
-let current = undefined;
-function getAsyncContextFrame(jscContext) {
-  return current ? [jscContext, new Map(current)] : jscContext;
-}
-
-function pushAsyncContextFrame(param) {
-  let last = current;
-  current = param;
-  return last;
-}
-
-function popAsyncContextFrame(param) {
-  current = param;
-}
-
-inject(pushAsyncContextFrame, popAsyncContextFrame, getAsyncContextFrame);
+const { get, set } = $lazy("async_hooks");
 
 class AsyncLocalStorage {
   #disableCalled = false;
@@ -28,54 +11,88 @@ class AsyncLocalStorage {
   }
 
   static snapshot() {
-    // const context = copyContext();
-    // return (fn, ...args) => runWithContext(context, fn, ...args);
+    var context = get();
+    if (context) context = context.slice();
+    return (fn, ...args) => {
+      var prev = get();
+      set(context);
+      try {
+        return fn(...args);
+      } catch (error) {
+        throw error;
+      } finally {
+        set(prev);
+      }
+    };
   }
 
-  enterWith(store) {
-    // this.#disableCalled = false;
-    // getContextInit().set(this, store);
-  }
+  enterWith(store) {}
 
   exit(cb, ...args) {
     return this.run(undefined, cb, ...args);
   }
 
   run(store, callback, ...args) {
-    if (!current) current = new Map();
-    var hasPrevious = current.has(this);
-    var previous = hasPrevious ? current.get(this) : undefined;
-    current.set(this, store);
+    var context = get();
+    var hasPrevious = false;
+    var previous;
+    var i;
+    var contextWasInit = !context;
+    if (contextWasInit) {
+      i = 0;
+      set((context = [this, store]));
+    } else {
+      context = context!.slice();
+      var length = context.length;
+      for (i = 0; i < length; i += 2) {
+        if (context[i] === this) {
+          hasPrevious = true;
+          previous = context[i + 1];
+          context[i + 1] = store;
+          break;
+        }
+      }
+      if (!hasPrevious) {
+        context.push(this, store);
+      }
+      set(context);
+    }
     try {
       return callback(...args);
     } catch (e) {
       throw e;
     } finally {
       if (this.#disableCalled) {
-        this.#disableCalled = false;
         // was already deleted
+        this.#disableCalled = false;
       } else {
-        if (hasPrevious) {
-          current.set(this, previous);
-        } else {
-          current.delete(this);
-          if (current.size === 0) current = undefined;
+        var context2 = get()!;
+        if (context2 === context && contextWasInit) {
+          return set(undefined);
         }
+        context2 = context2.slice();
+        if (hasPrevious) {
+          context2[i + 1] = previous;
+        } else {
+          context2.splice(i, 2);
+        }
+        set(context2);
       }
     }
   }
 
   disable() {
-    // TODO: i dont think this will work correctly
-    this.#disableCalled = true;
-    if (current) {
-      current.delete(this);
-      if (current.size === 0) current = undefined;
-    }
+    // // TODO: i dont think this will work correctly
+    // this.#disableCalled = true;
   }
 
   getStore() {
-    return current ? current.get(this) : undefined;
+    var context = get();
+    if (!context) return;
+    var { length } = context;
+    for (var i = 0; i < length; i += 2) {
+      if (context[i] === this) return context[i + 1];
+    }
   }
 }
 

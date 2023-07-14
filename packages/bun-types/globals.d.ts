@@ -75,6 +75,34 @@ interface ArrayConstructor {
   ): Promise<Array<T>>;
 }
 
+type UncaughtExceptionOrigin = "uncaughtException" | "unhandledRejection";
+type MultipleResolveType = "resolve" | "reject";
+type BeforeExitListener = (code: number) => void;
+type DisconnectListener = () => void;
+type ExitListener = (code: number) => void;
+type RejectionHandledListener = (promise: Promise<unknown>) => void;
+type UncaughtExceptionListener = (
+  error: Error,
+  origin: UncaughtExceptionOrigin,
+) => void;
+/**
+ * Most of the time the unhandledRejection will be an Error, but this should not be relied upon
+ * as *anything* can be thrown/rejected, it is therefore unsafe to assume that the value is an Error.
+ */
+type UnhandledRejectionListener = (
+  reason: unknown,
+  promise: Promise<unknown>,
+) => void;
+type WarningListener = (warning: Error) => void;
+type MessageListener = (message: unknown, sendHandle: unknown) => void;
+type SignalsListener = (signal: Signals) => void;
+type MultipleResolveListener = (
+  type: MultipleResolveType,
+  promise: Promise<unknown>,
+  value: unknown,
+) => void;
+// type WorkerListener = (worker: Worker) => void;
+
 interface Console {
   /**
    * Asynchronously read lines from standard input (fd 0)
@@ -369,6 +397,8 @@ interface Process {
   argv: string[];
   execArgv: string[];
   env: import("bun").Env;
+  allowedNodeEnvironmentFlags: Set<string>;
+  debugPort: number;
 
   /** Whether you are using Bun */
   isBun: 1; // FIXME: this should actually return a boolean
@@ -377,14 +407,27 @@ interface Process {
   chdir(directory: string): void;
   cwd(): string;
   exit(code?: number): never;
+  reallyExit(code?: number): never;
   getgid(): number;
-  setgid(id: number | string): void;
+  // setgid(id: number | string): void;
   getuid(): number;
-  setuid(id: number | string): void;
+  // setuid(id: number | string): void;
+  geteuid: () => number;
+  // seteuid: (id: number | string) => void;
+  getegid: () => number;
+  // setegid: (id: number | string) => void;
+  getgroups: () => number[];
+  // setgroups?: (groups: ReadonlyArray<string | number>) => void;
   dlopen(module: { exports: any }, filename: string, flags?: number): void;
   stdin: import("stream").Duplex & { isTTY: boolean };
   stdout: import("stream").Writable & { isTTY: boolean };
   stderr: import("stream").Writable & { isTTY: boolean };
+
+  /**
+   *
+   * @deprecated This is deprecated; use the "node:assert" module instead.
+   */
+  assert(value: unknown, message?: string | Error): asserts value;
 
   /**
    * exit the process with a fatal exception, sending SIGABRT
@@ -435,6 +478,49 @@ interface Process {
   setSourceMapsEnabled(enabled: boolean): void;
 
   kill(pid: number, signal?: string | number): void;
+
+  on(event: "beforeExit", listener: BeforeExitListener): this;
+  // on(event: "disconnect", listener: DisconnectListener): this;
+  on(event: "exit", listener: ExitListener): this;
+  // on(event: "rejectionHandled", listener: RejectionHandledListener): this;
+  // on(event: "uncaughtException", listener: UncaughtExceptionListener): this;
+  // on(
+  //   event: "uncaughtExceptionMonitor",
+  //   listener: UncaughtExceptionListener,
+  // ): this;
+  // on(event: "unhandledRejection", listener: UnhandledRejectionListener): this;
+  // on(event: "warning", listener: WarningListener): this;
+  // on(event: "message", listener: MessageListener): this;
+  on(event: Signals, listener: SignalsListener): this;
+  // on(event: "multipleResolves", listener: MultipleResolveListener): this;
+  // on(event: "worker", listener: WorkerListener): this;
+  on(event: string | symbol, listener: (...args: any[]) => void): this;
+  once(event: "beforeExit", listener: BeforeExitListener): this;
+  // once(event: "disconnect", listener: DisconnectListener): this;
+  once(event: "exit", listener: ExitListener): this;
+  // once(event: "rejectionHandled", listener: RejectionHandledListener): this;
+  // once(event: "uncaughtException", listener: UncaughtExceptionListener): this;
+  // once(
+  //   event: "uncaughtExceptionMonitor",
+  //   listener: UncaughtExceptionListener,
+  // ): this;
+  // once(event: "unhandledRejection", listener: UnhandledRejectionListener): this;
+  // once(event: "warning", listener: WarningListener): this;
+  // once(event: "message", listener: MessageListener): this;
+  once(event: Signals, listener: SignalsListener): this;
+  // once(event: "multipleResolves", listener: MultipleResolveListener): this;
+  // once(event: "worker", listener: WorkerListener): this;
+  once(event: string | symbol, listener: (...args: any[]) => void): this;
+
+  /**
+   * Returns the number of listeners listening for the event named `eventName`.
+   * If `listener` is provided, it will return how many times the listener is found
+   * in the list of the listeners of the event.
+   * @since v3.2.0
+   * @param eventName The name of the event being listened for
+   * @param listener The event handler function
+   */
+  listenerCount(eventName: string | symbol, listener?: Function): number;
 }
 
 interface MemoryUsageObject {

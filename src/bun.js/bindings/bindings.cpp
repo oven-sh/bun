@@ -1750,6 +1750,15 @@ extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSOb
     JSC::JSObject* jsObject = toJS(object);
     JSC::JSObject* jsThisObject = toJS(thisObject);
 
+    JSValue restoreAsyncContext;
+    AsyncContextData* asyncContextData = nullptr;
+    if (auto* wrapper = jsDynamicCast<Bun::AsyncBoundFunction*>(jsObject)) {
+        jsObject = jsCast<JSC::JSObject*>(wrapper->callback.get());
+        asyncContextData = globalObject->m_asyncContextData.get();
+        restoreAsyncContext = asyncContextData->internalValue();
+        asyncContextData->setInternalValue(vm, wrapper->context.get());
+    }
+
     if (!jsThisObject)
         jsThisObject = globalObject->globalThis();
 
@@ -1763,6 +1772,10 @@ extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSOb
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
     auto result = JSC::call(globalObject, jsObject, callData, jsThisObject, argList, returnedException);
+
+    if (asyncContextData) {
+        asyncContextData->setInternalValue(vm, restoreAsyncContext);
+    }
 
     if (returnedException.get()) {
         return JSC::JSValue::encode(JSC::JSValue(returnedException.get()));

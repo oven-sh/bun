@@ -38,20 +38,20 @@ pub const BrotliDecoderState = opaque {
         return BrotliDecoderIsUsed(self) == BROTLI_TRUE;
     }
 
-    pub fn hasMore(self: *const BrotliDecoderState) bool {
-        return BrotliDecoderHasMoreOutput(self) == BROTLI_TRUE;
-    }
-
     pub fn setParameter(self: *BrotliDecoderState, param: BrotliDecoderParameter, value: u32) bool {
         return BrotliDecoderSetParameter(self, param, value) == BROTLI_TRUE;
     }
 
-    pub fn write(self: *BrotliDecoderState, input: *[]const u8, output: *[]u8) BrotliDecoderResult {
-        return BrotliDecoderDecompressStream(self, &input.len, &input.ptr, &output.len, &output.ptr, null);
+    pub fn write(self: *BrotliDecoderState, input: *[]const u8, output: *[]u8, total_size: ?*usize) BrotliDecoderResult {
+        return BrotliDecoderDecompressStream(self, &input.len, &input.ptr, &output.len, &output.ptr, total_size);
     }
 
     pub fn getErrorCode(self: *const BrotliDecoderState) BrotliDecoderErrorCode {
         return BrotliDecoderGetErrorCode(self);
+    }
+
+    pub fn hasMoreOutput(self: *BrotliEncoderState) bool {
+        return BrotliEncoderHasMoreOutput(self) == BROTLI_TRUE;
     }
 };
 
@@ -74,6 +74,12 @@ pub const BrotliEncoderState = opaque {
 
     pub fn hasMoreOutput(self: *BrotliEncoderState) bool {
         return BrotliEncoderHasMoreOutput(self) == BROTLI_TRUE;
+    }
+
+    pub fn take(self: *BrotliEncoderState, size: usize) []const u8 {
+        var output_len = size;
+        var ptr = BrotliEncoderTakeOutput(self, &output_len) orelse return "";
+        return ptr[0..output_len];
     }
 
     /// Compresses input stream to output stream.
@@ -122,27 +128,46 @@ pub const BrotliEncoderState = opaque {
     ///
     /// Warning
     /// When flushing and finishing, op should not change until operation is complete; input stream should not be swapped, reduced or extended as well.
-    pub fn compress(self: *BrotliEncoderState, op: BrotliEncoderOperation, input: *[]const u8, output: *[]u8, encoded_size: ?*usize) bool {
-        var out: ?[*]u8 = output.ptr;
-        var len = output.len;
-        defer {
-            output.len = len;
-            if (out != null)
-                output.ptr = out.?;
+    pub fn compress(self: *BrotliEncoderState, op: BrotliEncoderOperation, input: ?*[]const u8, output: ?*[]u8, encoded_size: ?*usize) bool {
+        var input_ptr: ?[*]const u8 = null;
+        var input_len: usize = 0;
+        var output_ptr: ?[*]u8 = null;
+        var output_len: usize = 0;
+        if (input) |in| {
+            input_ptr = in.ptr;
+            input_len = in.len;
         }
-        return BrotliEncoderCompressStream(self, op, &input.len, &input.ptr, &len, &out, encoded_size) == BROTLI_TRUE;
+
+        if (output) |out| {
+            output_ptr = out.ptr;
+            output_len = out.len;
+        }
+        defer {
+            if (output) |out| {
+                if (output_ptr) |a|
+                    out.ptr = a;
+                out.len = output_len;
+            }
+
+            if (input) |in| {
+                if (input_ptr) |a|
+                    in.ptr = a;
+                in.len = input_len;
+            }
+        }
+        return BrotliEncoderCompressStream(self, op, &input_len, &input_ptr, &output_len, &output_ptr, encoded_size) == BROTLI_TRUE;
     }
 
-    pub fn write(self: *BrotliEncoderState, input: *[]const u8, output: *[]u8) bool {
-        return compress(self, .process, input, output, null);
+    pub fn write(self: *BrotliEncoderState, input: ?*[]const u8, output: ?*[]u8, total_size: ?*usize) bool {
+        return compress(self, .process, input, output, total_size);
     }
 
-    pub fn flush(self: *BrotliEncoderState, input: *[]const u8, output: *[]u8) bool {
-        return compress(self, .flush, input, output, null);
+    pub fn flush(self: *BrotliEncoderState, input: ?*[]const u8, output: ?*[]u8, total_size: ?*usize) bool {
+        return compress(self, .flush, input, output, total_size);
     }
 
-    pub fn finish(self: *BrotliEncoderState, input: *[]const u8, output: *[]u8) bool {
-        return compress(self, .finish, input, output, null);
+    pub fn finish(self: *BrotliEncoderState, input: ?*[]const u8, output: ?*[]u8, total_size: ?*usize) bool {
+        return compress(self, .finish, input, output, total_size);
     }
 };
 
@@ -217,6 +242,43 @@ pub const BrotliDecoderErrorCode = enum(c_int) {
     error_alloc_ring_buffer_2 = BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2,
     error_alloc_block_type_trees = BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES,
     error_unreachable = BROTLI_DECODER_ERROR_UNREACHABLE,
+    _,
+
+    pub fn code(this: @This()) []const u8 {
+        return switch (this) {
+            .error_format_exuberant_nibble => "BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_NIBBLE",
+            .error_format_reserved => "BROTLI_DECODER_ERROR_FORMAT_RESERVED",
+            .error_format_exuberant_meta_nibble => "BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_META_NIBBLE",
+            .error_format_simple_huffman_alphabet => "BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET",
+            .error_format_simple_huffman_same => "BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_SAME",
+            .error_format_cl_space => "BROTLI_DECODER_ERROR_FORMAT_CL_SPACE",
+            .error_format_huffman_space => "BROTLI_DECODER_ERROR_FORMAT_HUFFMAN_SPACE",
+            .error_format_context_map_repeat => "BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT",
+            .error_format_block_length_1 => "BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1",
+            .error_format_block_length_2 => "BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2",
+            .error_format_transform => "BROTLI_DECODER_ERROR_FORMAT_TRANSFORM",
+            .error_format_dictionary => "BROTLI_DECODER_ERROR_FORMAT_DICTIONARY",
+            .error_format_window_bits => "BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS",
+            .error_format_padding_1 => "BROTLI_DECODER_ERROR_FORMAT_PADDING_1",
+            .error_format_padding_2 => "BROTLI_DECODER_ERROR_FORMAT_PADDING_2",
+            .error_format_distance => "BROTLI_DECODER_ERROR_FORMAT_DISTANCE",
+            .error_compound_dictionary => "BROTLI_DECODER_ERROR_COMPOUND_DICTIONARY",
+            .error_dictionary_not_set => "BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET",
+            .error_invalid_arguments => "BROTLI_DECODER_ERROR_INVALID_ARGUMENTS",
+            .error_alloc_context_modes => "BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES",
+            .error_alloc_tree_groups => "BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS",
+            .error_alloc_context_map => "BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP",
+            .error_alloc_ring_buffer_1 => "BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1",
+            .error_alloc_ring_buffer_2 => "BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2",
+            .error_alloc_block_type_trees => "BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES",
+            .error_unreachable => "BROTLI_DECODER_ERROR_UNREACHABLE",
+            else => "unknown Brotli decoder error",
+        };
+    }
+
+    pub fn message(this: @This()) []const u8 {
+        return bun.sliceTo(BrotliDecoderErrorString(this) orelse return "", 0)[0..];
+    }
 };
 pub const BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION: u32 = 0;
 pub const BROTLI_DECODER_PARAM_LARGE_WINDOW: u32 = 1;
@@ -235,7 +297,7 @@ pub extern fn BrotliDecoderTakeOutput(state: *BrotliDecoderState, size: *usize) 
 pub extern fn BrotliDecoderIsUsed(state: ?*const BrotliDecoderState) c_int;
 pub extern fn BrotliDecoderIsFinished(state: ?*const BrotliDecoderState) c_int;
 pub extern fn BrotliDecoderGetErrorCode(state: ?*const BrotliDecoderState) BrotliDecoderErrorCode;
-pub extern fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) [*c]const u8;
+pub extern fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) ?[*:0]const u8;
 pub extern fn BrotliDecoderVersion() u32;
 pub const brotli_decoder_metadata_start_func = ?*const fn (?*anyopaque, usize) callconv(.C) void;
 pub const brotli_decoder_metadata_chunk_func = ?*const fn (?*anyopaque, [*c]const u8, usize) callconv(.C) void;
@@ -305,7 +367,7 @@ pub extern fn BrotliEncoderDestroyPreparedDictionary(dictionary: ?*BrotliEncoder
 pub extern fn BrotliEncoderAttachPreparedDictionary(state: ?*BrotliEncoderState, dictionary: ?*const BrotliEncoderPreparedDictionary) c_int;
 pub extern fn BrotliEncoderMaxCompressedSize(input_size: usize) usize;
 pub extern fn BrotliEncoderCompress(quality: c_int, lgwin: c_int, mode: BrotliEncoderMode, input_size: usize, input_buffer: [*]const u8, encoded_size: *usize, encoded_buffer: [*]u8) c_int;
-pub extern fn BrotliEncoderCompressStream(state: *BrotliEncoderState, op: BrotliEncoderOperation, available_in: *usize, next_in: *[*]const u8, available_out: *usize, next_out: *?[*]u8, total_out: ?*usize) c_int;
+pub extern fn BrotliEncoderCompressStream(state: *BrotliEncoderState, op: BrotliEncoderOperation, available_in: *usize, next_in: *?[*]const u8, available_out: *usize, next_out: *?[*]u8, total_out: ?*usize) c_int;
 pub extern fn BrotliEncoderIsFinished(state: *BrotliEncoderState) c_int;
 pub extern fn BrotliEncoderHasMoreOutput(state: *BrotliEncoderState) c_int;
 pub extern fn BrotliEncoderTakeOutput(state: *BrotliEncoderState, size: *usize) ?[*]const u8;

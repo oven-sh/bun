@@ -299,24 +299,19 @@ pub const Blob = struct {
 
         const store_tag = try reader.readEnum(Store.SerializeTag, .Little);
 
-        switch (store_tag) {
-            .bytes => {
+        const blob: *Blob = switch (store_tag) {
+            .bytes => brk: {
                 const bytes_len = try reader.readIntNative(u32);
                 var bytes = try allocator.alloc(u8, bytes_len);
                 _ = try reader.read(bytes);
 
                 var blob = Blob.init(bytes, allocator, globalThis);
-                blob.content_type = content_type;
-                if (blob.content_type.len > 0) {
-                    blob.content_type_allocated = true;
-                    blob.content_type_was_set = content_type_was_set;
-                }
                 var blob_ = try allocator.create(Blob);
                 blob_.* = blob;
 
-                return blob_.toJS(globalThis);
+                break :brk blob_;
             },
-            .file => {
+            .file => brk: {
                 const pathlike_tag = try reader.readEnum(JSC.Node.PathOrFileDescriptor.SerializeTag, .Little);
 
                 switch (pathlike_tag) {
@@ -331,14 +326,7 @@ pub const Blob = struct {
                             globalThis,
                         );
 
-                        blob.allocator = allocator;
-                        blob.content_type = content_type;
-                        if (blob.content_type.len > 0) {
-                            blob.content_type_allocated = true;
-                            blob.content_type_was_set = content_type_was_set;
-                        }
-
-                        return blob.toJS(globalThis);
+                        break :brk blob;
                     },
                     .path => {
                         const path_len = try reader.readIntNative(u32);
@@ -355,33 +343,27 @@ pub const Blob = struct {
                             },
                             globalThis,
                         );
-                        blob.allocator = allocator;
-                        blob.content_type = content_type;
-                        if (blob.content_type.len > 0) {
-                            blob.content_type_allocated = true;
-                            blob.content_type_was_set = content_type_was_set;
-                        }
 
-                        return blob.toJS(globalThis);
+                        break :brk blob;
                     },
                 }
 
                 return .zero;
             },
-            .empty => {
+            .empty => brk: {
                 var blob = try allocator.create(Blob);
                 blob.* = Blob.initEmpty(globalThis);
-                blob.content_type = content_type;
-                if (blob.content_type.len > 0) {
-                    blob.content_type_allocated = true;
-                    blob.content_type_was_set = content_type_was_set;
-                }
-
-                return blob.toJS(globalThis);
+                break :brk blob;
             },
+        };
+        blob.allocator = allocator;
+        if (content_type.len > 0) {
+            blob.content_type = content_type;
+            blob.content_type_allocated = true;
+            blob.content_type_was_set = content_type_was_set;
         }
 
-        return .zero;
+        return blob.toJS(globalThis);
     }
 
     pub fn onStructuredCloneDeserialize(

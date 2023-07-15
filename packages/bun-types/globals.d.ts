@@ -1,7 +1,7 @@
 /**
  * "blob" is not supported yet
  */
-type BinaryType = "arraybuffer" | "nodebuffer" | "blob";
+type BinaryType = "nodebuffer" | "arraybuffer" | "blob";
 type Transferable = ArrayBuffer;
 type MessageEventSource = undefined;
 type Encoding = "utf-8" | "windows-1252" | "utf-16";
@@ -74,6 +74,34 @@ interface ArrayConstructor {
     thisArg?: any,
   ): Promise<Array<T>>;
 }
+
+type UncaughtExceptionOrigin = "uncaughtException" | "unhandledRejection";
+type MultipleResolveType = "resolve" | "reject";
+type BeforeExitListener = (code: number) => void;
+type DisconnectListener = () => void;
+type ExitListener = (code: number) => void;
+type RejectionHandledListener = (promise: Promise<unknown>) => void;
+type UncaughtExceptionListener = (
+  error: Error,
+  origin: UncaughtExceptionOrigin,
+) => void;
+/**
+ * Most of the time the unhandledRejection will be an Error, but this should not be relied upon
+ * as *anything* can be thrown/rejected, it is therefore unsafe to assume that the value is an Error.
+ */
+type UnhandledRejectionListener = (
+  reason: unknown,
+  promise: Promise<unknown>,
+) => void;
+type WarningListener = (warning: Error) => void;
+type MessageListener = (message: unknown, sendHandle: unknown) => void;
+type SignalsListener = (signal: Signals) => void;
+type MultipleResolveListener = (
+  type: MultipleResolveType,
+  promise: Promise<unknown>,
+  value: unknown,
+) => void;
+// type WorkerListener = (worker: Worker) => void;
 
 interface Console {
   /**
@@ -369,6 +397,8 @@ interface Process {
   argv: string[];
   execArgv: string[];
   env: import("bun").Env;
+  allowedNodeEnvironmentFlags: Set<string>;
+  debugPort: number;
 
   /** Whether you are using Bun */
   isBun: 1; // FIXME: this should actually return a boolean
@@ -377,14 +407,27 @@ interface Process {
   chdir(directory: string): void;
   cwd(): string;
   exit(code?: number): never;
+  reallyExit(code?: number): never;
   getgid(): number;
-  setgid(id: number | string): void;
+  // setgid(id: number | string): void;
   getuid(): number;
-  setuid(id: number | string): void;
+  // setuid(id: number | string): void;
+  geteuid: () => number;
+  // seteuid: (id: number | string) => void;
+  getegid: () => number;
+  // setegid: (id: number | string) => void;
+  getgroups: () => number[];
+  // setgroups?: (groups: ReadonlyArray<string | number>) => void;
   dlopen(module: { exports: any }, filename: string, flags?: number): void;
   stdin: import("stream").Duplex & { isTTY: boolean };
   stdout: import("stream").Writable & { isTTY: boolean };
   stderr: import("stream").Writable & { isTTY: boolean };
+
+  /**
+   *
+   * @deprecated This is deprecated; use the "node:assert" module instead.
+   */
+  assert(value: unknown, message?: string | Error): asserts value;
 
   /**
    * exit the process with a fatal exception, sending SIGABRT
@@ -433,6 +476,51 @@ interface Process {
    * Does nothing in Bun
    */
   setSourceMapsEnabled(enabled: boolean): void;
+
+  kill(pid: number, signal?: string | number): void;
+
+  on(event: "beforeExit", listener: BeforeExitListener): this;
+  // on(event: "disconnect", listener: DisconnectListener): this;
+  on(event: "exit", listener: ExitListener): this;
+  // on(event: "rejectionHandled", listener: RejectionHandledListener): this;
+  // on(event: "uncaughtException", listener: UncaughtExceptionListener): this;
+  // on(
+  //   event: "uncaughtExceptionMonitor",
+  //   listener: UncaughtExceptionListener,
+  // ): this;
+  // on(event: "unhandledRejection", listener: UnhandledRejectionListener): this;
+  // on(event: "warning", listener: WarningListener): this;
+  // on(event: "message", listener: MessageListener): this;
+  on(event: Signals, listener: SignalsListener): this;
+  // on(event: "multipleResolves", listener: MultipleResolveListener): this;
+  // on(event: "worker", listener: WorkerListener): this;
+  on(event: string | symbol, listener: (...args: any[]) => void): this;
+  once(event: "beforeExit", listener: BeforeExitListener): this;
+  // once(event: "disconnect", listener: DisconnectListener): this;
+  once(event: "exit", listener: ExitListener): this;
+  // once(event: "rejectionHandled", listener: RejectionHandledListener): this;
+  // once(event: "uncaughtException", listener: UncaughtExceptionListener): this;
+  // once(
+  //   event: "uncaughtExceptionMonitor",
+  //   listener: UncaughtExceptionListener,
+  // ): this;
+  // once(event: "unhandledRejection", listener: UnhandledRejectionListener): this;
+  // once(event: "warning", listener: WarningListener): this;
+  // once(event: "message", listener: MessageListener): this;
+  once(event: Signals, listener: SignalsListener): this;
+  // once(event: "multipleResolves", listener: MultipleResolveListener): this;
+  // once(event: "worker", listener: WorkerListener): this;
+  once(event: string | symbol, listener: (...args: any[]) => void): this;
+
+  /**
+   * Returns the number of listeners listening for the event named `eventName`.
+   * If `listener` is provided, it will return how many times the listener is found
+   * in the list of the listeners of the event.
+   * @since v3.2.0
+   * @param eventName The name of the event being listened for
+   * @param listener The event handler function
+   */
+  listenerCount(eventName: string | symbol, listener?: Function): number;
 }
 
 interface MemoryUsageObject {
@@ -1833,101 +1921,268 @@ declare var CustomEvent: {
 };
 
 /**
- * An implementation of the [WebSocket API](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket)
+ * A map of WebSocket event names to event types.
  */
-interface WebSocketEventMap {
-  close: CloseEvent;
-  error: Event;
-  message: MessageEvent<Buffer | ArrayBuffer | string>;
+type WebSocketEventMap = {
   open: Event;
+  message: MessageEvent<string | Buffer>;
+  close: CloseEvent;
+  ping: MessageEvent<Buffer>;
+  pong: MessageEvent<Buffer>;
+  error: Event;
 }
 
-/** Provides the API for creating and managing a WebSocket connection to a server, as well as for sending and receiving data on the connection. */
+/**
+ * A state that represents if a WebSocket is connected.
+ *
+ * - `WebSocket.CONNECTING` is `0`, the connection is pending.
+ * - `WebSocket.OPEN` is `1`, the connection is established and `send()` is possible.
+ * - `WebSocket.CLOSING` is `2`, the connection is closing.
+ * - `WebSocket.CLOSED` is `3`, the connection is closed or couldn't be opened.
+ *
+ * @link https://developer.mozilla.org/en-US/docs/Web/API/WebSocket/readyState
+ */
+type WebSocketReadyState = 0 | 1 | 2 | 3;
+
+/**
+ * A client that makes an outgoing WebSocket connection.
+ *
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/WebSocket
+ * @example
+ * const ws = new WebSocket("wss://ws.postman-echo.com/raw");
+ * 
+ * ws.addEventListener("open", () => {
+ *   console.log("Connected");
+ * });
+ * ws.addEventListener("message", ({ data }) => {
+ *   console.log("Received:", data); // string or Buffer
+ * });
+ * ws.addEventListener("close", ({ code, reason }) => {
+ *   console.log("Disconnected:", code, reason);
+ * });
+ */
 interface WebSocket extends EventTarget {
   /**
-   * Returns a string that indicates how binary data from the WebSocket object is exposed to scripts:
+   * Sends a message.
    *
-   * Can be set, to change how binary data is returned. The default is `"arraybuffer"`.
+   * @param data the string, ArrayBuffer, or ArrayBufferView to send
+   * @example
+   * let ws: WebSocket;
+   * ws.send("Hello!");
+   * ws.send(new TextEncoder().encode("Hello?"));
+   */
+  send(data: string | BufferSource): void;
+
+  /**
+   * Closes the connection.
    *
-   * Unlike in browsers, you can also set `binaryType` to `"nodebuffer"` to receive a {@link Buffer} object.
+   * Here is a list of close codes:
+   * - `1000` means "normal closure" **(default)**
+   * - `1001` means the client is "going away"
+   * - `1009` means a message was too big and was rejected
+   * - `1011` means the server encountered an error
+   * - `1012` means the server is restarting
+   * - `1013` means the server is too busy or the client is rate-limited
+   * - `4000` through `4999` are reserved for applications (you can use it!)
+   *
+   * To abruptly close the connection without a code, use `terminate()` instead.
+   * 
+   * @param code the close code
+   * @param reason the close reason
+   * @example
+   * let ws: WebSocket;
+   * ws.close(1013, "Exceeded the rate limit of 100 messages per minute.");
+   */
+  close(code?: number, reason?: string): void;
+
+  /**
+   * Closes the connection, abruptly.
+   *
+   * To gracefuly close the connection, use `close()` instead.
+   */
+  terminate(): void;
+
+  /**
+   * Sends a ping.
+   *
+   * @param data the string, ArrayBuffer, or ArrayBufferView to send
+   */
+  ping(data?: string | BufferSource): void;
+
+  /**
+   * Sends a pong.
+   *
+   * @param data the string, ArrayBuffer, or ArrayBufferView to send
+   */
+  pong(data?: string | BufferSource): void;
+
+  /**
+   * Sets how binary data is returned in events.
+   *
+   * - if `nodebuffer`, binary data is returned as `Buffer` objects. **(default)**
+   * - if `arraybuffer`, binary data is returned as `ArrayBuffer` objects.
+   * - if `blob`, binary data is returned as `Blob` objects. **(not supported)**
+   *
+   * In browsers, the default is `blob`, however in Bun, the default is `nodebuffer`.
+   *
+   * @example
+   * let ws: WebSocket;
+   * ws.binaryType = "arraybuffer";
+   * ws.addEventListener("message", ({ data }) => {
+   *   console.log(data instanceof ArrayBuffer); // true
+   * });
    */
   binaryType: BinaryType;
+
   /**
-   * Returns the number of bytes of application data (UTF-8 text and binary data) that have been queued using send() but not yet been transmitted to the network.
+   * The ready state of the connection.
    *
-   * If the WebSocket connection is closed, this attribute's value will only increase with each call to the send() method. (The number does not reset to zero once the connection closes.)
+   * - `WebSocket.CONNECTING` is `0`, the connection is pending.
+   * - `WebSocket.OPEN` is `1`, the connection is established and `send()` is possible.
+   * - `WebSocket.CLOSING` is `2`, the connection is closing.
+   * - `WebSocket.CLOSED` is `3`, the connection is closed or couldn't be opened.
+   */
+  readonly readyState: WebSocketReadyState;
+
+  /**
+   * The resolved URL that established the connection.
+   */
+  readonly url: string;
+
+  /**
+   * The number of bytes that are queued, but not yet sent.
+   *
+   * When the connection is closed, the value is not reset to zero.
    */
   readonly bufferedAmount: number;
-  /** Returns the extensions selected by the server, if any. */
-  readonly extensions: string;
-  onclose: ((this: WebSocket, ev: CloseEvent) => any) | null;
-  onerror: ((this: WebSocket, ev: Event) => any) | null;
-  onmessage:
-    | ((this: WebSocket, ev: WebSocketEventMap["message"]) => any)
-    | null;
-  onopen: ((this: WebSocket, ev: Event) => any) | null;
-  /** Returns the subprotocol selected by the server, if any. It can be used in conjunction with the array form of the constructor's second argument to perform subprotocol negotiation. */
+
+  /**
+   * The protocol selected by the server, if any, otherwise empty.
+   */
   readonly protocol: string;
-  /** Returns the state of the WebSocket object's connection. It can have the values described below. */
-  readonly readyState: number;
-  /** Returns the URL that was used to establish the WebSocket connection. */
-  readonly url: string;
-  /** Closes the WebSocket connection, optionally using code as the the WebSocket connection close code and reason as the the WebSocket connection close reason. */
-  close(code?: number, reason?: string): void;
-  /** Transmits data using the WebSocket connection. data can be a string, an ArrayBuffer, or an BufferSource. */
-  send(data: string | ArrayBufferLike | BufferSource): void;
-  readonly CLOSED: number;
-  readonly CLOSING: number;
-  readonly CONNECTING: number;
-  readonly OPEN: number;
-  addEventListener<K extends keyof WebSocketEventMap>(
-    type: K,
-    listener: (this: WebSocket, ev: WebSocketEventMap[K]) => any,
+
+  /**
+   * The extensions selected by the server, if any, otherwise empty.
+   */
+  readonly extensions: string;
+
+  /**
+   * Sets the event handler for `open` events.
+   *
+   * If you need multiple event handlers, use `addEventListener("open")` instead.
+   */
+  onopen: ((this: WebSocket, ev: Event) => unknown) | null;
+
+  /**
+   * Sets the event handler for `close` events.
+   *
+   * If you need multiple event handlers, use `addEventListener("close")` instead.
+   */
+  onclose: ((this: WebSocket, event: CloseEvent) => unknown) | null;
+
+  /**
+   * Sets the event handler for `message` events.
+   *
+   * If you need multiple event handlers, use `addEventListener("message")` instead.
+   */
+  onmessage:
+    | ((this: WebSocket, event: MessageEvent<string | Buffer>) => unknown)
+    | null;
+
+  /**
+   * Sets the event handler for `error` events.
+   *
+   * If you need multiple event handlers, use `addEventListener("error")` instead.
+   */
+  onerror: ((this: WebSocket, event: Event) => unknown) | null;
+
+  addEventListener<T extends keyof WebSocketEventMap>(
+    type: T,
+    listener: (this: WebSocket, event: WebSocketEventMap[T]) => unknown,
     options?: boolean | AddEventListenerOptions,
   ): void;
+
   addEventListener(
     type: string,
-    listener: EventListenerOrEventListenerObject,
+    listener: (this: WebSocket, event: Event) => unknown,
     options?: boolean | AddEventListenerOptions,
   ): void;
-  removeEventListener<K extends keyof WebSocketEventMap>(
-    type: K,
-    listener: (this: WebSocket, ev: WebSocketEventMap[K]) => any,
+
+  removeEventListener<T extends keyof WebSocketEventMap>(
+    type: T,
+    listener: (this: WebSocket, event: WebSocketEventMap[T]) => unknown,
     options?: boolean | EventListenerOptions,
   ): void;
+
   removeEventListener(
     type: string,
-    listener: EventListenerOrEventListenerObject,
+    listener: (this: WebSocket, event: Event) => unknown,
     options?: boolean | EventListenerOptions,
   ): void;
 }
 
+/**
+ * A client that makes an outgoing WebSocket connection.
+ *
+ * @see https://developer.mozilla.org/en-US/docs/Web/API/WebSocket
+ * @example
+ * const ws = new WebSocket("wss://ws.postman-echo.com/raw");
+ * 
+ * ws.addEventListener("open", () => {
+ *   console.log("Connected");
+ * });
+ * ws.addEventListener("message", ({ data }) => {
+ *   console.log("Received:", data); // string or Buffer
+ * });
+ * ws.addEventListener("close", ({ code, reason }) => {
+ *   console.log("Disconnected:", code, reason);
+ * });
+ */
 declare var WebSocket: {
   prototype: WebSocket;
-  new (url: string | URL, protocols?: string | string[]): WebSocket;
+
+  new (
+    url: string | URL,
+    protocols?: string | string[],
+  ): WebSocket;
+
   new (
     url: string | URL,
     options: {
       /**
-       * An object specifying connection headers
-       *
-       * This is a Bun-specific extension.
+       * Sets the headers when establishing a connection.
        */
       headers?: HeadersInit;
       /**
-       * A string specifying the subprotocols the server is willing to accept.
+       * Sets the sub-protocol the client is willing to accept.
        */
       protocol?: string;
       /**
-       * A string array specifying the subprotocols the server is willing to accept.
+       * Sets the sub-protocols the client is willing to accept.
        */
       protocols?: string[];
     },
   ): WebSocket;
-  readonly CLOSED: number;
-  readonly CLOSING: number;
-  readonly CONNECTING: number;
-  readonly OPEN: number;
+
+  /**
+   * The connection is pending.
+   */
+  readonly CONNECTING: 0;
+
+  /**
+   * The connection is established and `send()` is possible.
+   */
+  readonly OPEN: 1;
+
+  /**
+   * The connection is closing.
+   */
+  readonly CLOSING: 2;
+
+  /**
+   * The connection is closed or couldn't be opened.
+   */
+  readonly CLOSED: 3;
 };
 
 /**

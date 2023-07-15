@@ -1,4 +1,6 @@
 Hello World!
+0
+-0
 123
 -123
 123.567
@@ -7,6 +9,8 @@ true
 false
 null
 undefined
+Infinity
+-Infinity
 Symbol(Symbol Description)
 2000-06-27T02:24:34.304Z
 [ 123, 456, 789 ]
@@ -29,7 +33,9 @@ Symbol(Symbol Description)
 }
 Promise { <pending> }
 [Function]
-[Function: Foo]
+[Function]
+[class Foo]
+[class]
 {}
 [Function: foooo]
 /FooRegex/

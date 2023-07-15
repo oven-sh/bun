@@ -3649,7 +3649,7 @@ declare module "fs" {
     // prependOnceListener(event: 'unpipe', listener: (src: stream.Readable) => void): this;
     // prependOnceListener(event: string | symbol, listener: (...args: any[]) => void): this;
   }
-  function fdatasync(fd: number, callback: NoParamCallback): void;
+  // function fdatasync(fd: number, callback: NoParamCallback): void;
   // namespace fdatasync {
   //   /**
   //    * Asynchronous fdatasync(2) - synchronize a file's in-core state with storage device.
@@ -3662,7 +3662,7 @@ declare module "fs" {
    * operating system's synchronized I/O completion state. Refer to the POSIX [`fdatasync(2)`](http://man7.org/linux/man-pages/man2/fdatasync.2.html) documentation for details. Returns `undefined`.
    * @since v0.0.67
    */
-  function fdatasyncSync(fd: number): void;
+  // function fdatasyncSync(fd: number): void;
   /**
    * Asynchronously copies `src` to `dest`. By default, `dest` is overwritten if it
    * already exists. No arguments other than a possible exception are given to the
@@ -3999,7 +3999,7 @@ declare module "fs" {
     recursive?: boolean;
     signal?: AbortSignal;
   };
-  type WatchEventType = "rename" | "change" | "error" | "close";
+  export type WatchEventType = "rename" | "change" | "error" | "close";
   type WatchListener<T> = (
     event: WatchEventType,
     filename: T | Error | undefined,

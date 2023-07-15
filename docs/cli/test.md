@@ -69,7 +69,7 @@ See [Test > Lifecycle](/docs/test/lifecycle) for complete documentation.
 
 Create mocks with the `mock` function. Mocks are automatically reset between tests.
 
-```
+```ts
 import { test, expect, mock } from "bun:test";
 const random = mock(() => Math.random());
 

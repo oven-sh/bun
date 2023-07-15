@@ -149,7 +149,9 @@ test("peek", () => {
   // If we peek a rejected promise, it:
   // - returns the error
   // - does not mark the promise as handled
-  const rejected = Promise.reject(new Error("Successfully tested promise rejection"));
+  const rejected = Promise.reject(
+    new Error("Successfully tested promise rejection"),
+  );
   expect(peek(rejected).message).toBe("Successfully tested promise rejection");
 });
 ```
@@ -283,7 +285,7 @@ console.log(url); // "file:///foo/bar.txt"
 
 ## `Bun.gzipSync()`
 
-Compresses a `Uint8Array` using zlib's DEFLATE algorithm.
+Compresses a `Uint8Array` using zlib's GZIP algorithm.
 
 ```ts
 const buf = Buffer.from("hello".repeat(100)); // Buffer extends Uint8Array
@@ -372,7 +374,7 @@ export type ZlibCompressionOptions = {
 
 ## `Bun.gunzipSync()`
 
-Uncompresses a `Uint8Array` using zlib's INFLATE algorithm.
+Decompresses a `Uint8Array` using zlib's GUNZIP algorithm.
 
 ```ts
 const buf = Buffer.from("hello".repeat(100)); // Buffer extends Uint8Array
@@ -400,15 +402,15 @@ The second argument supports the same set of configuration options as [`Bun.gzip
 
 ## `Bun.inflateSync()`
 
-Uncompresses a `Uint8Array` using zlib's INFLATE algorithm.
+DEcompresses a `Uint8Array` using zlib's INFLATE algorithm.
 
 ```ts
 const buf = Buffer.from("hello".repeat(100));
 const compressed = Bun.deflateSync(buf);
 
 const dec = new TextDecoder();
-const uncompressed = Bun.inflateSync(compressed);
-dec.decode(uncompressed);
+const decompressed = Bun.inflateSync(compressed);
+dec.decode(decompressed);
 // => "hellohellohello..."
 ```
 

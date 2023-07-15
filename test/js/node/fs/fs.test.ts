@@ -159,6 +159,18 @@ it("readdirSync on import.meta.dir", () => {
   expect(match).toBe(true);
 });
 
+it("statSync throwIfNoEntry", () => {
+  expect(statSync("/tmp/404/not-found/ok", { throwIfNoEntry: false })).toBeUndefined();
+  expect(lstatSync("/tmp/404/not-found/ok", { throwIfNoEntry: false })).toBeUndefined();
+});
+
+it("statSync throwIfNoEntry: true", () => {
+  expect(() => statSync("/tmp/404/not-found/ok", { throwIfNoEntry: true })).toThrow("No such file or directory");
+  expect(() => statSync("/tmp/404/not-found/ok")).toThrow("No such file or directory");
+  expect(() => lstatSync("/tmp/404/not-found/ok", { throwIfNoEntry: true })).toThrow("No such file or directory");
+  expect(() => lstatSync("/tmp/404/not-found/ok")).toThrow("No such file or directory");
+});
+
 // https://github.com/oven-sh/bun/issues/1887
 it("mkdtempSync, readdirSync, rmdirSync and unlinkSync with non-ascii", () => {
   const tempdir = mkdtempSync(`${tmpdir()}/emoji-fruit-🍇 🍈 🍉 🍊 🍋`);
@@ -1446,5 +1458,28 @@ describe("utimesSync", () => {
 
     expect(finalStats.mtime).toEqual(prevModifiedTime);
     expect(finalStats.atime).toEqual(prevAccessTime);
+  });
+});
+
+it("createReadStream on a large file emits readable event correctly", () => {
+  return new Promise<void>((resolve, reject) => {
+    const tmp = mkdtempSync(`${tmpdir()}/readable`);
+    // write a 10mb file
+    writeFileSync(`${tmp}/large.txt`, "a".repeat(10 * 1024 * 1024));
+    var stream = createReadStream(`${tmp}/large.txt`);
+    var ended = false;
+    var timer: Timer;
+    stream.on("readable", () => {
+      const v = stream.read();
+      if (ended) {
+        clearTimeout(timer);
+        reject(new Error("readable emitted after end"));
+      } else if (v == null) {
+        ended = true;
+        timer = setTimeout(() => {
+          resolve();
+        }, 20);
+      }
+    });
   });
 });

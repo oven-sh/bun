@@ -978,7 +978,7 @@ pub const RunCommand = struct {
         var ORIGINAL_PATH: string = "";
         var this_bundler: bundler.Bundler = undefined;
         var root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, &ORIGINAL_PATH, log_errors, force_using_bun);
-        this_bundler.env.map.putDefault("npm_lifecycle_event", script_name_to_search) catch unreachable;
+        this_bundler.env.map.put("npm_lifecycle_event", script_name_to_search) catch unreachable;
         if (root_dir_info.enclosing_package_json) |package_json| {
             if (package_json.scripts) |scripts| {
                 switch (script_name_to_search.len) {

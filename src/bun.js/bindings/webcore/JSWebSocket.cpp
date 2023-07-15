@@ -71,6 +71,9 @@ using namespace JSC;
 
 static JSC_DECLARE_HOST_FUNCTION(jsWebSocketPrototypeFunction_send);
 static JSC_DECLARE_HOST_FUNCTION(jsWebSocketPrototypeFunction_close);
+static JSC_DECLARE_HOST_FUNCTION(jsWebSocketPrototypeFunction_ping);
+static JSC_DECLARE_HOST_FUNCTION(jsWebSocketPrototypeFunction_pong);
+static JSC_DECLARE_HOST_FUNCTION(jsWebSocketPrototypeFunction_terminate);
 
 // Attributes
 
@@ -293,7 +296,7 @@ template<> void JSWebSocketDOMConstructor::initializeProperties(VM& vm, JSDOMGlo
 
 static const HashTableValue JSWebSocketPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocketConstructor, 0 } },
-    { "URL"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_URL, 0 } },
+    { "URL"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_URL, 0 } },
     { "url"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_url, 0 } },
     { "readyState"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_readyState, 0 } },
     { "bufferedAmount"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_bufferedAmount, 0 } },
@@ -306,6 +309,9 @@ static const HashTableValue JSWebSocketPrototypeTableValues[] = {
     { "binaryType"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_binaryType, setJSWebSocket_binaryType } },
     { "send"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebSocketPrototypeFunction_send, 1 } },
     { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebSocketPrototypeFunction_close, 0 } },
+    { "ping"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebSocketPrototypeFunction_ping, 1 } },
+    { "pong"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebSocketPrototypeFunction_pong, 1 } },
+    { "terminate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebSocketPrototypeFunction_terminate, 0 } },
     { "CONNECTING"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 0 } },
     { "OPEN"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 1 } },
     { "CLOSING"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 2 } },
@@ -670,6 +676,199 @@ static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_closeBody(JSC::JS
 JSC_DEFINE_HOST_FUNCTION(jsWebSocketPrototypeFunction_close, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSWebSocket>::call<jsWebSocketPrototypeFunction_closeBody>(*lexicalGlobalObject, *callFrame, "close");
+}
+
+static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_ping1Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWebSocket>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->wrapped();
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.ping(); })));
+}
+
+static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_ping2Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWebSocket>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->wrapped();
+    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+    auto data = convert<IDLArrayBuffer>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "data", "WebSocket", "ping", "ArrayBuffer"); });
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.ping(*data); })));
+}
+
+static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_ping3Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWebSocket>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->wrapped();
+    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+    auto data = convert<IDLArrayBufferView>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "data", "WebSocket", "ping", "ArrayBufferView"); });
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.ping(data.releaseNonNull()); })));
+}
+
+// static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_ping4Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWebSocket>::ClassParameter castedThis)
+// {
+//     auto& vm = JSC::getVM(lexicalGlobalObject);
+//     auto throwScope = DECLARE_THROW_SCOPE(vm);
+//     UNUSED_PARAM(throwScope);
+//     UNUSED_PARAM(callFrame);
+//     auto& impl = castedThis->wrapped();
+//     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+//     auto data = convert<IDLInterface<Blob>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "data", "WebSocket", "ping", "Blob"); });
+//     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+//     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.ping(*data); })));
+// }
+
+static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_ping5Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWebSocket>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->wrapped();
+    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+    auto data = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.ping(WTFMove(data)); })));
+}
+
+static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_pingOverloadDispatcher(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWebSocket>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    size_t argsCount = std::min<size_t>(1, callFrame->argumentCount());
+    if (argsCount == 0) {
+        RELEASE_AND_RETURN(throwScope, (jsWebSocketPrototypeFunction_ping1Body(lexicalGlobalObject, callFrame, castedThis)));
+    } else if (argsCount == 1) {
+        JSValue distinguishingArg = callFrame->uncheckedArgument(0);
+        if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSArrayBuffer>())
+            RELEASE_AND_RETURN(throwScope, (jsWebSocketPrototypeFunction_ping2Body(lexicalGlobalObject, callFrame, castedThis)));
+        if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSArrayBufferView>())
+            RELEASE_AND_RETURN(throwScope, (jsWebSocketPrototypeFunction_ping3Body(lexicalGlobalObject, callFrame, castedThis)));
+        // if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSBlob>())
+        //     RELEASE_AND_RETURN(throwScope, (jsWebSocketPrototypeFunction_ping4Body(lexicalGlobalObject, callFrame, castedThis)));
+        RELEASE_AND_RETURN(throwScope, (jsWebSocketPrototypeFunction_ping5Body(lexicalGlobalObject, callFrame, castedThis)));
+    }
+    return throwVMTypeError(lexicalGlobalObject, throwScope);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebSocketPrototypeFunction_ping, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSWebSocket>::call<jsWebSocketPrototypeFunction_pingOverloadDispatcher>(*lexicalGlobalObject, *callFrame, "ping");
+}
+
+static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_pong1Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWebSocket>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->wrapped();
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.pong(); })));
+}
+
+static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_pong2Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWebSocket>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->wrapped();
+    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+    auto data = convert<IDLArrayBuffer>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "data", "WebSocket", "pong", "ArrayBuffer"); });
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.pong(*data); })));
+}
+
+static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_pong3Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWebSocket>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->wrapped();
+    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+    auto data = convert<IDLArrayBufferView>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "data", "WebSocket", "pong", "ArrayBufferView"); });
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.pong(data.releaseNonNull()); })));
+}
+
+// static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_pong4Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWebSocket>::ClassParameter castedThis)
+// {
+//     auto& vm = JSC::getVM(lexicalGlobalObject);
+//     auto throwScope = DECLARE_THROW_SCOPE(vm);
+//     UNUSED_PARAM(throwScope);
+//     UNUSED_PARAM(callFrame);
+//     auto& impl = castedThis->wrapped();
+//     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+//     auto data = convert<IDLInterface<Blob>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "data", "WebSocket", "pong", "Blob"); });
+//     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+//     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.pong(*data); })));
+// }
+
+static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_pong5Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWebSocket>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->wrapped();
+    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+    auto data = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.pong(WTFMove(data)); })));
+}
+
+static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_pongOverloadDispatcher(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWebSocket>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    size_t argsCount = std::min<size_t>(1, callFrame->argumentCount());
+    if (argsCount == 0) {
+        RELEASE_AND_RETURN(throwScope, (jsWebSocketPrototypeFunction_pong1Body(lexicalGlobalObject, callFrame, castedThis)));
+    } else if (argsCount == 1) {
+        JSValue distinguishingArg = callFrame->uncheckedArgument(0);
+        if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSArrayBuffer>())
+            RELEASE_AND_RETURN(throwScope, (jsWebSocketPrototypeFunction_pong2Body(lexicalGlobalObject, callFrame, castedThis)));
+        if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSArrayBufferView>())
+            RELEASE_AND_RETURN(throwScope, (jsWebSocketPrototypeFunction_pong3Body(lexicalGlobalObject, callFrame, castedThis)));
+        // if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSBlob>())
+        //     RELEASE_AND_RETURN(throwScope, (jsWebSocketPrototypeFunction_pong4Body(lexicalGlobalObject, callFrame, castedThis)));
+        RELEASE_AND_RETURN(throwScope, (jsWebSocketPrototypeFunction_pong5Body(lexicalGlobalObject, callFrame, castedThis)));
+    }
+    return throwVMTypeError(lexicalGlobalObject, throwScope);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebSocketPrototypeFunction_pong, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSWebSocket>::call<jsWebSocketPrototypeFunction_pongOverloadDispatcher>(*lexicalGlobalObject, *callFrame, "pong");
+}
+
+static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_terminateBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWebSocket>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->wrapped();
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.terminate(); })));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebSocketPrototypeFunction_terminate, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSWebSocket>::call<jsWebSocketPrototypeFunction_terminateBody>(*lexicalGlobalObject, *callFrame, "terminate");
 }
 
 JSC::GCClient::IsoSubspace* JSWebSocket::subspaceForImpl(JSC::VM& vm)

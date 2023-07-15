@@ -1,10 +1,5 @@
 // Hardcoded module "sqlite"
-var symbolFor = Symbol.for;
-
-const lazy = globalThis[symbolFor("Bun.lazy")];
-if (!lazy || typeof lazy !== "function") {
-  throw new Error("Something went wrong while loading Bun. Expected 'Bun.lazy' to be defined.");
-}
+const lazy = $lazy;
 
 var defineProperties = Object.defineProperties;
 
@@ -171,7 +166,7 @@ export class Statement {
   }
 }
 
-var cachedCount = symbolFor("Bun.Database.cache.count");
+var cachedCount = Symbol.for("Bun.Database.cache.count");
 export class Database {
   constructor(filenameGiven, options) {
     if (typeof filenameGiven === "undefined") {

@@ -437,91 +437,220 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir,
     return JSC::JSValue::encode(result);
 }
 
-// static const NeverDestroyed<String> signalNames[] = {
-//     MAKE_STATIC_STRING_IMPL("SIGHUP"),
-//     MAKE_STATIC_STRING_IMPL("SIGINT"),
-//     MAKE_STATIC_STRING_IMPL("SIGQUIT"),
-//     MAKE_STATIC_STRING_IMPL("SIGILL"),
-//     MAKE_STATIC_STRING_IMPL("SIGTRAP"),
-//     MAKE_STATIC_STRING_IMPL("SIGABRT"),
-//     MAKE_STATIC_STRING_IMPL("SIGIOT"),
-//     MAKE_STATIC_STRING_IMPL("SIGBUS"),
-//     MAKE_STATIC_STRING_IMPL("SIGFPE"),
-//     MAKE_STATIC_STRING_IMPL("SIGKILL"),
-//     MAKE_STATIC_STRING_IMPL("SIGUSR1"),
-//     MAKE_STATIC_STRING_IMPL("SIGSEGV"),
-//     MAKE_STATIC_STRING_IMPL("SIGUSR2"),
-//     MAKE_STATIC_STRING_IMPL("SIGPIPE"),
-//     MAKE_STATIC_STRING_IMPL("SIGALRM"),
-//     MAKE_STATIC_STRING_IMPL("SIGTERM"),
-//     MAKE_STATIC_STRING_IMPL("SIGCHLD"),
-//     MAKE_STATIC_STRING_IMPL("SIGCONT"),
-//     MAKE_STATIC_STRING_IMPL("SIGSTOP"),
-//     MAKE_STATIC_STRING_IMPL("SIGTSTP"),
-//     MAKE_STATIC_STRING_IMPL("SIGTTIN"),
-//     MAKE_STATIC_STRING_IMPL("SIGTTOU"),
-//     MAKE_STATIC_STRING_IMPL("SIGURG"),
-//     MAKE_STATIC_STRING_IMPL("SIGXCPU"),
-//     MAKE_STATIC_STRING_IMPL("SIGXFSZ"),
-//     MAKE_STATIC_STRING_IMPL("SIGVTALRM"),
-//     MAKE_STATIC_STRING_IMPL("SIGPROF"),
-//     MAKE_STATIC_STRING_IMPL("SIGWINCH"),
-//     MAKE_STATIC_STRING_IMPL("SIGIO"),
-//     MAKE_STATIC_STRING_IMPL("SIGINFO"),
-//     MAKE_STATIC_STRING_IMPL("SIGSYS"),
-// };
-// static const int signalNumbers[] = {
-//     SIGHUP,
-//     SIGINT,
-//     SIGQUIT,
-//     SIGILL,
-//     SIGTRAP,
-//     SIGABRT,
-//     SIGIOT,
-//     SIGBUS,
-//     SIGFPE,
-//     SIGKILL,
-//     SIGUSR1,
-//     SIGSEGV,
-//     SIGUSR2,
-//     SIGPIPE,
-//     SIGALRM,
-//     SIGTERM,
-//     SIGCHLD,
-//     SIGCONT,
-//     SIGSTOP,
-//     SIGTSTP,
-//     SIGTTIN,
-//     SIGTTOU,
-//     SIGURG,
-//     SIGXCPU,
-//     SIGXFSZ,
-//     SIGVTALRM,
-//     SIGPROF,
-//     SIGWINCH,
-//     SIGIO,
-//     SIGINFO,
-//     SIGSYS,
-// };
+static HashMap<String, int>* signalNameToNumberMap = nullptr;
+static HashMap<int, String>* signalNumberToNameMap = nullptr;
 
-// JSC_DEFINE_HOST_FUNCTION(jsFunctionProcessOn, (JSGlobalObject * globalObject, CallFrame* callFrame))
-// {
-//     VM& vm = globalObject->vm();
-//     auto scope = DECLARE_THROW_SCOPE(vm);
+// signal number to array of script execution context ids that care about the signal
+static HashMap<int, HashSet<uint32_t>>* signalToContextIdsMap = nullptr;
+static Lock signalToContextIdsMapLock;
 
-//     if (callFrame->argumentCount() < 2) {
-//         throwVMError(globalObject, scope, "Not enough arguments"_s);
-//         return JSValue::encode(jsUndefined());
-//     }
+static const NeverDestroyed<String> signalNames[] = {
+    MAKE_STATIC_STRING_IMPL("SIGHUP"),
+    MAKE_STATIC_STRING_IMPL("SIGINT"),
+    MAKE_STATIC_STRING_IMPL("SIGQUIT"),
+    MAKE_STATIC_STRING_IMPL("SIGILL"),
+    MAKE_STATIC_STRING_IMPL("SIGTRAP"),
+    MAKE_STATIC_STRING_IMPL("SIGABRT"),
+    MAKE_STATIC_STRING_IMPL("SIGIOT"),
+    MAKE_STATIC_STRING_IMPL("SIGBUS"),
+    MAKE_STATIC_STRING_IMPL("SIGFPE"),
+    MAKE_STATIC_STRING_IMPL("SIGKILL"),
+    MAKE_STATIC_STRING_IMPL("SIGUSR1"),
+    MAKE_STATIC_STRING_IMPL("SIGSEGV"),
+    MAKE_STATIC_STRING_IMPL("SIGUSR2"),
+    MAKE_STATIC_STRING_IMPL("SIGPIPE"),
+    MAKE_STATIC_STRING_IMPL("SIGALRM"),
+    MAKE_STATIC_STRING_IMPL("SIGTERM"),
+    MAKE_STATIC_STRING_IMPL("SIGCHLD"),
+    MAKE_STATIC_STRING_IMPL("SIGCONT"),
+    MAKE_STATIC_STRING_IMPL("SIGSTOP"),
+    MAKE_STATIC_STRING_IMPL("SIGTSTP"),
+    MAKE_STATIC_STRING_IMPL("SIGTTIN"),
+    MAKE_STATIC_STRING_IMPL("SIGTTOU"),
+    MAKE_STATIC_STRING_IMPL("SIGURG"),
+    MAKE_STATIC_STRING_IMPL("SIGXCPU"),
+    MAKE_STATIC_STRING_IMPL("SIGXFSZ"),
+    MAKE_STATIC_STRING_IMPL("SIGVTALRM"),
+    MAKE_STATIC_STRING_IMPL("SIGPROF"),
+    MAKE_STATIC_STRING_IMPL("SIGWINCH"),
+    MAKE_STATIC_STRING_IMPL("SIGIO"),
+    MAKE_STATIC_STRING_IMPL("SIGINFO"),
+    MAKE_STATIC_STRING_IMPL("SIGSYS"),
+};
 
-//     String eventName = callFrame->uncheckedArgument(0).toWTFString(globalObject);
-//     RETURN_IF_EXCEPTION(scope, encodedJSValue());
-// }
+static void loadSignalNumberMap()
+{
+
+    static std::once_flag signalNameToNumberMapOnceFlag;
+    std::call_once(signalNameToNumberMapOnceFlag, [] {
+        signalNameToNumberMap = new HashMap<String, int>();
+        signalNameToNumberMap->reserveInitialCapacity(31);
+        signalNameToNumberMap->add(signalNames[0], SIGHUP);
+        signalNameToNumberMap->add(signalNames[1], SIGINT);
+        signalNameToNumberMap->add(signalNames[2], SIGQUIT);
+        signalNameToNumberMap->add(signalNames[3], SIGILL);
+        signalNameToNumberMap->add(signalNames[4], SIGTRAP);
+        signalNameToNumberMap->add(signalNames[5], SIGABRT);
+        signalNameToNumberMap->add(signalNames[6], SIGIOT);
+        signalNameToNumberMap->add(signalNames[7], SIGBUS);
+        signalNameToNumberMap->add(signalNames[8], SIGFPE);
+        // signalNameToNumberMap->add(signalNames[9], SIGKILL);
+        signalNameToNumberMap->add(signalNames[10], SIGUSR1);
+        signalNameToNumberMap->add(signalNames[11], SIGSEGV);
+        signalNameToNumberMap->add(signalNames[12], SIGUSR2);
+        signalNameToNumberMap->add(signalNames[13], SIGPIPE);
+        signalNameToNumberMap->add(signalNames[14], SIGALRM);
+        signalNameToNumberMap->add(signalNames[15], SIGTERM);
+        signalNameToNumberMap->add(signalNames[16], SIGCHLD);
+        signalNameToNumberMap->add(signalNames[17], SIGCONT);
+        // signalNameToNumberMap->add(signalNames[18], SIGSTOP);
+        signalNameToNumberMap->add(signalNames[19], SIGTSTP);
+        signalNameToNumberMap->add(signalNames[20], SIGTTIN);
+        signalNameToNumberMap->add(signalNames[21], SIGTTOU);
+        signalNameToNumberMap->add(signalNames[22], SIGURG);
+        signalNameToNumberMap->add(signalNames[23], SIGXCPU);
+        signalNameToNumberMap->add(signalNames[24], SIGXFSZ);
+        signalNameToNumberMap->add(signalNames[25], SIGVTALRM);
+        signalNameToNumberMap->add(signalNames[26], SIGPROF);
+        signalNameToNumberMap->add(signalNames[27], SIGWINCH);
+        signalNameToNumberMap->add(signalNames[28], SIGIO);
+#ifdef SIGINFO
+        signalNameToNumberMap->add(signalNames[29], SIGINFO);
+#endif
+
+#ifndef SIGINFO
+        signalNameToNumberMap->add(signalNames[29], 255);
+#endif
+        signalNameToNumberMap->add(signalNames[30], SIGSYS);
+    });
+}
+
+static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
+{
+    loadSignalNumberMap();
+
+    static std::once_flag signalNumberToNameMapOnceFlag;
+    std::call_once(signalNumberToNameMapOnceFlag, [] {
+        signalNumberToNameMap = new HashMap<int, String>();
+        signalNumberToNameMap->reserveInitialCapacity(31);
+        signalNumberToNameMap->add(SIGHUP, signalNames[0]);
+        signalNumberToNameMap->add(SIGINT, signalNames[1]);
+        signalNumberToNameMap->add(SIGQUIT, signalNames[2]);
+        signalNumberToNameMap->add(SIGILL, signalNames[3]);
+        signalNumberToNameMap->add(SIGTRAP, signalNames[4]);
+        signalNumberToNameMap->add(SIGABRT, signalNames[5]);
+        signalNumberToNameMap->add(SIGIOT, signalNames[6]);
+        signalNumberToNameMap->add(SIGBUS, signalNames[7]);
+        signalNumberToNameMap->add(SIGFPE, signalNames[8]);
+        // signalNumberToNameMap->add(SIGKILL, signalNames[9]);
+        signalNumberToNameMap->add(SIGUSR1, signalNames[10]);
+        signalNumberToNameMap->add(SIGSEGV, signalNames[11]);
+        signalNumberToNameMap->add(SIGUSR2, signalNames[12]);
+        signalNumberToNameMap->add(SIGPIPE, signalNames[13]);
+        signalNumberToNameMap->add(SIGALRM, signalNames[14]);
+        signalNumberToNameMap->add(SIGTERM, signalNames[15]);
+        signalNumberToNameMap->add(SIGCHLD, signalNames[16]);
+        signalNumberToNameMap->add(SIGCONT, signalNames[17]);
+        // signalNumberToNameMap->add(SIGSTOP, signalNames[18]);
+        signalNumberToNameMap->add(SIGTSTP, signalNames[19]);
+        signalNumberToNameMap->add(SIGTTIN, signalNames[20]);
+        signalNumberToNameMap->add(SIGTTOU, signalNames[21]);
+        signalNumberToNameMap->add(SIGURG, signalNames[22]);
+        signalNumberToNameMap->add(SIGXCPU, signalNames[23]);
+        signalNumberToNameMap->add(SIGXFSZ, signalNames[24]);
+        signalNumberToNameMap->add(SIGVTALRM, signalNames[25]);
+        signalNumberToNameMap->add(SIGPROF, signalNames[26]);
+        signalNumberToNameMap->add(SIGWINCH, signalNames[27]);
+        signalNumberToNameMap->add(SIGIO, signalNames[28]);
+#ifdef SIGINFO
+        signalNameToNumberMap->add(signalNames[29], SIGINFO);
+#endif
+        signalNumberToNameMap->add(SIGSYS, signalNames[30]);
+    });
+
+    if (!signalToContextIdsMap) {
+        signalToContextIdsMap = new HashMap<int, HashSet<uint32_t>>();
+    }
+
+    if (isAdded) {
+        if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
+            uint32_t contextId = eventEmitter.scriptExecutionContext()->identifier();
+            Locker lock { signalToContextIdsMapLock };
+            if (!signalToContextIdsMap->contains(signalNumber)) {
+                HashSet<uint32_t> contextIds;
+                contextIds.add(contextId);
+                signalToContextIdsMap->set(signalNumber, contextIds);
+
+                lock.unlockEarly();
+
+                struct sigaction action;
+                memset(&action, 0, sizeof(struct sigaction));
+
+                // Set the handler in the action struct
+                action.sa_handler = [](int signalNumber) {
+                    if (UNLIKELY(signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()))
+                        return;
+
+                    Locker lock { signalToContextIdsMapLock };
+                    if (UNLIKELY(signalToContextIdsMap->find(signalNumber) == signalToContextIdsMap->end()))
+                        return;
+                    auto contextIds = signalToContextIdsMap->get(signalNumber);
+
+                    for (int contextId : contextIds) {
+                        auto* context = ScriptExecutionContext::getScriptExecutionContext(contextId);
+                        if (UNLIKELY(!context))
+                            continue;
+
+                        JSGlobalObject* lexicalGlobalObject = context->jsGlobalObject();
+                        Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+
+                        Process* process = jsCast<Process*>(globalObject->processObject());
+
+                        context->postCrossThreadTask(*process, &Process::emitSignalEvent, signalNumber);
+                    }
+                };
+
+                // Clear the sa_mask
+                sigemptyset(&action.sa_mask);
+                sigaddset(&action.sa_mask, signalNumber);
+                action.sa_flags = SA_RESTART;
+
+                sigaction(signalNumber, &action, nullptr);
+            } else {
+                auto contextIds = signalToContextIdsMap->get(signalNumber);
+                contextIds.add(contextId);
+                signalToContextIdsMap->set(signalNumber, contextIds);
+            }
+        }
+    } else {
+        if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
+            uint32_t contextId = eventEmitter.scriptExecutionContext()->identifier();
+            Locker lock { signalToContextIdsMapLock };
+            if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end()) {
+                HashSet<uint32_t> contextIds = signalToContextIdsMap->get(signalNumber);
+                contextIds.remove(contextId);
+                if (contextIds.isEmpty()) {
+                    signal(signalNumber, SIG_DFL);
+                    signalToContextIdsMap->remove(signalNumber);
+                } else {
+                    signalToContextIdsMap->set(signalNumber, contextIds);
+                }
+            }
+        }
+    }
+}
+
+void Process::emitSignalEvent(int signalNumber)
+{
+    String signalName = signalNumberToNameMap->get(signalNumber);
+    Identifier signalNameIdentifier = Identifier::fromString(vm(), signalName);
+    MarkedArgumentBuffer args;
+    args.append(jsNumber(signalNumber));
+    wrapped().emitForBindings(signalNameIdentifier, args);
+}
 
 Process::~Process()
 {
-    for (auto& listener : this->wrapped().eventListenerMap().entries()) {
-    }
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, CallFrame*))
@@ -893,10 +1022,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObje
     int ngroups = getgroups(0, nullptr);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (ngroups == -1) {
-        SystemError error;
-        error.errno_ = errno;
-        error.syscall = Bun::toString("getgroups"_s);
-        throwException(globalObject, throwScope, JSValue::decode(SystemError__toErrorInstance(&error, globalObject)));
+        throwSystemError(throwScope, globalObject, "getgroups"_s, errno);
         return JSValue::encode(jsUndefined());
     }
 
@@ -1071,11 +1197,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     struct rusage rusage;
     if (getrusage(RUSAGE_SELF, &rusage) != 0) {
-        SystemError error;
-        error.errno_ = errno;
-        error.syscall = Bun::toString("getrusage"_s);
-        error.message = Bun::toString("Failed to get CPU usage"_s);
-        throwException(globalObject, throwScope, JSValue::decode(SystemError__toErrorInstance(&error, globalObject)));
+        throwSystemError(throwScope, globalObject, "Failed to get CPU usage"_s, "getrusage"_s, errno);
         return JSValue::encode(jsUndefined());
     }
 
@@ -1230,11 +1352,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage,
 
     size_t current_rss = 0;
     if (getRSS(&current_rss) != 0) {
-        SystemError error;
-        error.errno_ = errno;
-        error.syscall = Bun::toString("memoryUsage"_s);
-        error.message = Bun::toString("Failed to get memory usage"_s);
-        throwException(globalObject, throwScope, JSValue::decode(SystemError__toErrorInstance(&error, globalObject)));
+        throwSystemError(throwScope, globalObject, "Failed to get memory usage"_s, "memoryUsage"_s, errno);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
@@ -1277,11 +1395,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsageRSS,
 
     size_t current_rss = 0;
     if (getRSS(&current_rss) != 0) {
-        SystemError error;
-        error.errno_ = errno;
-        error.syscall = Bun::toString("memoryUsage"_s);
-        error.message = Bun::toString("Failed to get memory usage"_s);
-        throwException(globalObject, throwScope, JSValue::decode(SystemError__toErrorInstance(&error, globalObject)));
+        throwSystemError(throwScope, globalObject, "Failed to get memory usage"_s, "memoryUsage"_s, errno);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
@@ -1477,6 +1591,69 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd,
     return JSC::JSValue::encode(result);
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    int pid = callFrame->argument(0).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    int signal = callFrame->argument(1).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    int result = kill(pid, signal);
+    if (result < 0) {
+        throwSystemError(scope, globalObject, "kill"_s, errno);
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+}
+JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    int pid = callFrame->argument(0).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (pid < 0) {
+        throwRangeError(globalObject, scope, "pid must be a positive integer"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSC::JSValue signalValue = callFrame->argument(1);
+
+    int signal = SIGTERM;
+
+    if (signalValue.isNumber()) {
+        signal = signalValue.toInt32(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    } else if (signalValue.isString()) {
+        loadSignalNumberMap();
+        if (auto num = signalNameToNumberMap->get(signalValue.toWTFString(globalObject))) {
+            signal = num;
+            RETURN_IF_EXCEPTION(scope, {});
+        } else {
+            throwRangeError(globalObject, scope, "Unknown signal name"_s);
+            return JSValue::encode(jsUndefined());
+        }
+
+        RETURN_IF_EXCEPTION(scope, {});
+    } else if (!signalValue.isUndefinedOrNull()) {
+        throwTypeError(globalObject, scope, "signal must be a string or number"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    int result = kill(pid, signal);
+
+    if (result < 0) {
+        throwSystemError(scope, globalObject, "kill"_s, errno);
+        return JSValue::encode(jsUndefined());
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
 /* Source for Process.lut.h
 @begin processObjectTable
   abort                            Process_functionAbort                    Function 1
@@ -1508,6 +1685,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd,
   getuid                           Process_functiongetuid                   Function 0
   hrtime                           constructProcessHrtimeObject             PropertyCallback
   isBun                            constructIsBun                           PropertyCallback
+  kill                             Process_functionKill                     Function 2
   mainModule                       JSBuiltin                                ReadOnly|Builtin|Accessor|Function 0
   memoryUsage                      constructMemoryUsage                     PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                   PropertyCallback
@@ -1539,6 +1717,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd,
   _startProfilerIdleNotifier       Process_stubEmptyFunction                Function 0
   _stopProfilerIdleNotifier        Process_stubEmptyFunction                Function 0
   _tickCallback                    Process_stubEmptyFunction                Function 0
+  _kill                            Process_functionReallyKill               Function 2
 @end
 */
 
@@ -1549,6 +1728,8 @@ const JSC::ClassInfo Process::s_info = { "Process"_s, &Base::s_info, &processObj
 void Process::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
+
+    this->wrapped().onDidChangeListener = &onDidChangeListeners;
 
     this->cpuUsageStructure.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::Structure>::Initializer& init) {
         init.set(constructCPUUsageStructure(init.vm, init.owner->globalObject()));

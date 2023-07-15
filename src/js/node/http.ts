@@ -57,7 +57,7 @@ function isIPv6(input) {
 // Importing from node:url is unnecessary
 const { URL } = globalThis;
 
-const { newArrayWithSize, String, Object, Array } = globalThis[Symbol.for("Bun.lazy")]("primordials");
+const { newArrayWithSize, String, Object, Array } = $lazy("primordials");
 
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
@@ -957,6 +957,7 @@ export class OutgoingMessage extends Writable {
   }
 }
 
+let OriginalWriteHeadFn, OriginalImplicitHeadFn;
 export class ServerResponse extends Writable {
   declare _writableState: any;
 
@@ -972,6 +973,10 @@ export class ServerResponse extends Writable {
     this.#firstWrite = undefined;
     this._writableState.decodeStrings = false;
     this.#deferred = undefined;
+
+    // this is matching node's behaviour
+    // https://github.com/nodejs/node/blob/cf8c6994e0f764af02da4fa70bc5962142181bf3/lib/_http_server.js#L192
+    if (req.method === "HEAD") this._hasBody = false;
   }
 
   req;
@@ -987,11 +992,14 @@ export class ServerResponse extends Writable {
   _defaultKeepAlive = false;
   _removedConnection = false;
   _removedContLen = false;
+  _hasBody = true;
   #deferred: (() => void) | undefined = undefined;
   #finished = false;
-
   // Express "compress" package uses this
-  _implicitHeader() {}
+  _implicitHeader() {
+    // @ts-ignore
+    this.writeHead(this.statusCode);
+  }
 
   _write(chunk, encoding, callback) {
     if (!this.#firstWrite && !this.headersSent) {
@@ -1053,11 +1061,20 @@ export class ServerResponse extends Writable {
     );
   }
 
+  #drainHeadersIfObservable() {
+    if (this._implicitHeader === OriginalImplicitHeadFn && this.writeHead === OriginalWriteHeadFn) {
+      return;
+    }
+
+    this._implicitHeader();
+  }
+
   _final(callback) {
     if (!this.headersSent) {
       var data = this.#firstWrite || "";
       this.#firstWrite = undefined;
       this.#finished = true;
+      this.#drainHeadersIfObservable();
       this._reply(
         new Response(data, {
           headers: this.#headers,
@@ -1175,6 +1192,9 @@ export class ServerResponse extends Writable {
     return this;
   }
 }
+
+OriginalWriteHeadFn = ServerResponse.prototype.writeHead;
+OriginalImplicitHeadFn = ServerResponse.prototype._implicitHeader;
 
 export class ClientRequest extends OutgoingMessage {
   #timeout;
@@ -1819,6 +1839,20 @@ function _writeHead(statusCode, reason, obj, response) {
         if (k) response.setHeader(k, obj[k]);
       }
     }
+  }
+
+  if (statusCode === 204 || statusCode === 304 || (statusCode >= 100 && statusCode <= 199)) {
+    // RFC 2616, 10.2.5:
+    // The 204 response MUST NOT include a message-body, and thus is always
+    // terminated by the first empty line after the header fields.
+    // RFC 2616, 10.3.5:
+    // The 304 response MUST NOT contain a message-body, and thus is always
+    // terminated by the first empty line after the header fields.
+    // RFC 2616, 10.1 Informational 1xx:
+    // This class of status code indicates a provisional response,
+    // consisting only of the Status-Line and optional headers, and is
+    // terminated by an empty line.
+    response._hasBody = false;
   }
 }
 

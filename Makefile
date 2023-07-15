@@ -684,8 +684,19 @@ require:
 	@which pkg-config > /dev/null || (echo -e "ERROR: pkg-config is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install pkg-config"; exit 1)
 	@echo "You have the dependencies installed! Woo"
 
-init-submodules:
-	git submodule update --init --recursive --progress --depth=1 --checkout
+# the following allows you to run `make submodule` to update or init submodules. but we will exclude webkit
+# unless you explicity clone it yourself (a huge download)
+SUBMODULE_NAMES=$(shell cat .gitmodules | grep 'path = ' | awk '{print $$3}')
+ifeq ("$(wildcard src/bun.js/WebKit/.git)", "")
+	SUBMODULE_NAMES := $(filter-out src/bun.js/WebKit, $(SUBMODULE_NAMES))
+endif
+
+.PHONY: init-submodules
+init-submodules: submodule # (backwards-compatibility alias)
+
+.PHONY: submodule
+submodule: ## to init or update all submodules
+	git submodule update --init --recursive --progress --depth=1 --checkout $(SUBMODULE_NAMES)
 
 .PHONY: build-obj
 build-obj:
@@ -1089,7 +1100,7 @@ dev-obj-linux:
 	$(ZIG) build obj -Dtarget=x86_64-linux-gnu -Dcpu="$(CPU_TARGET)"
 
 .PHONY: dev
-dev: mkdir-dev esm dev-obj link
+dev: mkdir-dev esm dev-obj link ## compile zig changes + link bun
 
 mkdir-dev:
 	mkdir -p $(DEBUG_PACKAGE_DIR)
@@ -1364,9 +1375,8 @@ mimalloc-wasm:
 .PHONY: bun-link-lld-debug
 bun-link-lld-debug: link
 
-# link a debug build of bun
 .PHONY: link
-link:
+link: ## link a debug build of bun
 	$(CXX) $(BUN_LLD_FLAGS_DEBUG) $(DEBUG_FLAGS) $(SYMBOLS) \
 		-g \
 		$(DEBUG_BIN)/bun-debug.o \
@@ -1791,7 +1801,7 @@ endif
 endif
 
 .PHONY: build-unit
-build-unit: ## to build your unit tests
+build-unit: # to build your unit tests
 	@rm -rf zig-out/bin/$(testname)
 	@mkdir -p zig-out/bin
 	zig test  $(realpath $(testpath)) \
@@ -1809,7 +1819,7 @@ build-unit: ## to build your unit tests
 	cp zig-out/bin/$(testname) $(testbinpath)
 
 .PHONY: run-all-unit-tests
-run-all-unit-tests: ## to run your unit tests
+run-all-unit-tests: # to run your unit tests
 	@rm -rf zig-out/bin/__main_test
 	@mkdir -p zig-out/bin
 	zig test src/main.zig \
@@ -1829,15 +1839,11 @@ run-all-unit-tests: ## to run your unit tests
 run-unit:
 	@zig-out/bin/$(testname) $(ZIG)
 
-.PHONY: help
-help: ## to print this help
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {gsub("\\\\n",sprintf("\n%22c",""), $$2);printf "\033[36m%-20s\033[0m \t\t%s\n", $$1, $$2}' $(MAKEFILE_LIST)
-
 .PHONY: test
 test: build-unit run-unit
 
 .PHONY: integration-test-dev
-integration-test-dev: ## to run integration tests
+integration-test-dev: # to run integration tests
 	USE_EXISTING_PROCESS=true TEST_SERVER_URL=http://localhost:3000 node test/scripts/browser.js
 
 copy-install:
@@ -1880,16 +1886,16 @@ vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimallo
 vendor-without-check: npm-install vendor-without-npm
 
 .PHONY: vendor
-vendor: require init-submodules vendor-without-check
+vendor: require submodule vendor-without-check
 
 .PHONY: vendor-dev
-vendor-dev: require init-submodules npm-install-dev vendor-without-npm
+vendor-dev: require submodule npm-install-dev vendor-without-npm
 
 .PHONY: bun
 bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local
 
 .PHONY: regenerate-bindings
-regenerate-bindings:
+regenerate-bindings: ## compile src/js/builtins + all c++ code, does not link
 	@make clean-bindings builtins
 	@make bindings -j$(CPU_COUNT)
 
@@ -1901,3 +1907,8 @@ setup: vendor-dev identifier-cache clean-bindings
 	@echo "Development environment setup complete"
 	@echo "Run \`make dev\` to build \`bun-debug\`"
 	@echo ""
+
+.PHONY: help
+help: ## to print this help
+	@echo "For detailed build instructions, see https://bun.sh/docs/project/development"
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {gsub("\\\\n",sprintf("\n%22c",""), $$2);printf "\033[36m%-20s\033[0m \t\t%s\n", $$1, $$2}' $(MAKEFILE_LIST)

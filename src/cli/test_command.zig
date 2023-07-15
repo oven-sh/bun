@@ -92,6 +92,7 @@ pub const CommandLineReporter = struct {
         skip: u32 = 0,
         todo: u32 = 0,
         fail: u32 = 0,
+        files: u32 = 0,
     };
 
     const DotColorMap = std.EnumMap(TestRunner.Test.Status, string);
@@ -200,6 +201,12 @@ pub const CommandLineReporter = struct {
         this.summary.fail += 1;
         this.summary.expectations += expectations;
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.fail;
+
+        if (this.jest.bail == this.summary.fail) {
+            this.printSummary();
+            Output.prettyError("\nBailed out after {d} failures<r>\n", .{this.jest.bail});
+            Global.exit(1);
+        }
     }
 
     pub fn handleTestSkip(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
@@ -245,6 +252,14 @@ pub const CommandLineReporter = struct {
         this.summary.todo += 1;
         this.summary.expectations += expectations;
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.todo;
+    }
+
+    pub fn printSummary(this: *CommandLineReporter) void {
+        const tests = this.summary.fail + this.summary.pass + this.summary.skip + this.summary.todo;
+        const files = this.summary.files;
+
+        Output.prettyError("Ran {d} tests across {d} files. ", .{ tests, files });
+        Output.printStartEnd(bun.start_time, std.time.nanoTimestamp());
     }
 };
 
@@ -441,6 +456,7 @@ pub const TestCommand = struct {
                 .default_timeout_ms = ctx.test_options.default_timeout_ms,
                 .run_todo = ctx.test_options.run_todo,
                 .only = ctx.test_options.only,
+                .bail = ctx.test_options.bail,
                 .snapshots = Snapshots{
                     .allocator = ctx.allocator,
                     .update_snapshots = ctx.test_options.update_snapshots,
@@ -650,9 +666,7 @@ pub const TestCommand = struct {
                 Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary.expectations});
             }
 
-            const total_tests = reporter.summary.fail + reporter.summary.pass + reporter.summary.skip + reporter.summary.todo;
-            Output.prettyError("Ran {d} tests across {d} files. <d>{d} total<r> ", .{ reporter.summary.fail + reporter.summary.pass, test_files.len, total_tests });
-            Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
+            reporter.printSummary();
         }
 
         Output.prettyError("\n", .{});
@@ -763,12 +777,20 @@ pub const TestCommand = struct {
             Output.flush();
 
             var promise = try vm.loadEntryPoint(file_path);
+            reporter.summary.files += 1;
 
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
                     var result = promise.result(vm.global.vm());
                     vm.runErrorHandler(result, null);
                     reporter.summary.fail += 1;
+
+                    if (reporter.jest.bail == reporter.summary.fail) {
+                        reporter.printSummary();
+                        Output.prettyError("\nBailed out after {d} failures<r>\n", .{reporter.jest.bail});
+                        Global.exit(1);
+                    }
+
                     return;
                 },
                 else => {},

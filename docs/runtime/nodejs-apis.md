@@ -51,7 +51,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_crypto" %} [`node:crypto`](https://nodejs.org/api/crypto.html) {% /anchor %}
 - 🟡
-- Missing `crypto.Certificate` `crypto.ECDH` `crypto.KeyObject` `crypto.X509Certificate` `crypto.checkPrime{Sync}` `crypto.createPrivateKey` `crypto.createPublicKey` `crypto.createSecretKey` `crypto.diffieHellman` `crypto.generateKey{Sync}` `crypto.generateKeyPair{Sync}` `crypto.generatePrime{Sync}` `crypto.getCipherInfo` `crypto.getCurves` `crypto.{get|set}Fips` `crypto.hkdf` `crypto.hkdfSync` `crypto.secureHeapUsed` `crypto.setEngine` `crypto.sign` `crypto.verify`
+- Missing `crypto.Certificate` `crypto.ECDH` `crypto.KeyObject` `crypto.X509Certificate` `crypto.checkPrime{Sync}` `crypto.createPrivateKey` `crypto.createPublicKey` `crypto.createSecretKey` `crypto.diffieHellman` `crypto.generateKey{Sync}` `crypto.generateKeyPair{Sync}` `crypto.generatePrime{Sync}` `crypto.getCipherInfo` `crypto.{get|set}Fips` `crypto.hkdf` `crypto.hkdfSync` `crypto.secureHeapUsed` `crypto.setEngine` `crypto.sign` `crypto.verify`
 
 ---
 
@@ -510,7 +510,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 - {% anchor id="node_process" %} [`process`](https://nodejs.org/api/process.html) {% /anchor %}
 - 🟡
-- Missing `process.allowedNodeEnvironmentFlags` `process.channel()` `process.connected` `process.constrainedMemory()` `process.cpuUsage()` `process.debugPort` `process.disconnect()` `process.{get|set}ActiveResourcesInfo()` `process.{get|set}{uid|gid|egid|euid|groups}()` `process.hasUncaughtExceptionCaptureCallback` `process.initGroups()` `process.kill()` `process.listenerCount` `process.memoryUsage()` `process.report` `process.resourceUsage()` `process.setSourceMapsEnabled()` `process.send()`.
+- Missing `process.allowedNodeEnvironmentFlags` `process.channel()` `process.connected` `process.constrainedMemory()` `process.disconnect()` `process.getActiveResourcesInfo/setActiveResourcesInfo()` `process.setuid/setgid/setegid/seteuid/setgroups()` `process.hasUncaughtExceptionCaptureCallback` `process.initGroups()` `process.report` `process.resourceUsage()` `process.send()`.
 
 ---
 

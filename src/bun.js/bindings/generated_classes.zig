@@ -3844,6 +3844,10 @@ pub const JSServerWebSocket = struct {
             @compileLog("Expected ServerWebSocket.getBufferedAmount to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.getBufferedAmount)));
         if (@TypeOf(ServerWebSocket.isSubscribed) != CallbackType)
             @compileLog("Expected ServerWebSocket.isSubscribed to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.isSubscribed)));
+        if (@TypeOf(ServerWebSocket.ping) != CallbackType)
+            @compileLog("Expected ServerWebSocket.ping to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.ping)));
+        if (@TypeOf(ServerWebSocket.pong) != CallbackType)
+            @compileLog("Expected ServerWebSocket.pong to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.pong)));
         if (@TypeOf(ServerWebSocket.publish) != CallbackType)
             @compileLog("Expected ServerWebSocket.publish to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.publish)));
         if (@TypeOf(ServerWebSocket.publishBinaryWithoutTypeChecks) != fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.JSString, *JSC.JSUint8Array) callconv(.C) JSC.JSValue)
@@ -3872,6 +3876,8 @@ pub const JSServerWebSocket = struct {
             @compileLog("Expected ServerWebSocket.sendText to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.sendText)));
         if (@TypeOf(ServerWebSocket.subscribe) != CallbackType)
             @compileLog("Expected ServerWebSocket.subscribe to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.subscribe)));
+        if (@TypeOf(ServerWebSocket.terminate) != CallbackType)
+            @compileLog("Expected ServerWebSocket.terminate to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.terminate)));
         if (@TypeOf(ServerWebSocket.unsubscribe) != CallbackType)
             @compileLog("Expected ServerWebSocket.unsubscribe to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.unsubscribe)));
         if (!JSC.is_bindgen) {
@@ -3885,6 +3891,8 @@ pub const JSServerWebSocket = struct {
             @export(ServerWebSocket.getReadyState, .{ .name = "ServerWebSocketPrototype__getReadyState" });
             @export(ServerWebSocket.getRemoteAddress, .{ .name = "ServerWebSocketPrototype__getRemoteAddress" });
             @export(ServerWebSocket.isSubscribed, .{ .name = "ServerWebSocketPrototype__isSubscribed" });
+            @export(ServerWebSocket.ping, .{ .name = "ServerWebSocketPrototype__ping" });
+            @export(ServerWebSocket.pong, .{ .name = "ServerWebSocketPrototype__pong" });
             @export(ServerWebSocket.publish, .{ .name = "ServerWebSocketPrototype__publish" });
             @export(ServerWebSocket.publishBinary, .{ .name = "ServerWebSocketPrototype__publishBinary" });
             @export(ServerWebSocket.publishBinaryWithoutTypeChecks, .{ .name = "ServerWebSocketPrototype__publishBinaryWithoutTypeChecks" });
@@ -3898,6 +3906,7 @@ pub const JSServerWebSocket = struct {
             @export(ServerWebSocket.setBinaryType, .{ .name = "ServerWebSocketPrototype__setBinaryType" });
             @export(ServerWebSocket.setData, .{ .name = "ServerWebSocketPrototype__setData" });
             @export(ServerWebSocket.subscribe, .{ .name = "ServerWebSocketPrototype__subscribe" });
+            @export(ServerWebSocket.terminate, .{ .name = "ServerWebSocketPrototype__terminate" });
             @export(ServerWebSocket.unsubscribe, .{ .name = "ServerWebSocketPrototype__unsubscribe" });
         }
     }

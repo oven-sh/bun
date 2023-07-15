@@ -99,6 +99,8 @@ var _writeHead = function(statusCode, reason, obj, response) {
           response.setHeader(k, obj[k]);
     }
   }
+  if (statusCode === 204 || statusCode === 304 || statusCode >= 100 && statusCode <= 199)
+    response._hasBody = !1;
 };
 function request(url, options, cb) {
   return new ClientRequest(url, options, cb);
@@ -626,11 +628,13 @@ class OutgoingMessage extends Writable {
     return this;
   }
 }
+var OriginalWriteHeadFn, OriginalImplicitHeadFn;
 
 class ServerResponse extends Writable {
   constructor({ req, reply }) {
     super();
-    this.req = req, this._reply = reply, this.sendDate = !0, this.statusCode = 200, this.headersSent = !1, this.statusMessage = void 0, this.#controller = void 0, this.#firstWrite = void 0, this._writableState.decodeStrings = !1, this.#deferred = void 0;
+    if (this.req = req, this._reply = reply, this.sendDate = !0, this.statusCode = 200, this.headersSent = !1, this.statusMessage = void 0, this.#controller = void 0, this.#firstWrite = void 0, this._writableState.decodeStrings = !1, this.#deferred = void 0, req.method === "HEAD")
+      this._hasBody = !1;
   }
   req;
   _reply;
@@ -645,9 +649,11 @@ class ServerResponse extends Writable {
   _defaultKeepAlive = !1;
   _removedConnection = !1;
   _removedContLen = !1;
+  _hasBody = !0;
   #deferred = void 0;
   #finished = !1;
   _implicitHeader() {
+    this.writeHead(this.statusCode);
   }
   _write(chunk, encoding, callback) {
     if (!this.#firstWrite && !this.headersSent) {
@@ -691,10 +697,15 @@ class ServerResponse extends Writable {
       statusText: this.statusMessage ?? STATUS_CODES[this.statusCode]
     }));
   }
+  #drainHeadersIfObservable() {
+    if (this._implicitHeader === OriginalImplicitHeadFn && this.writeHead === OriginalWriteHeadFn)
+      return;
+    this._implicitHeader();
+  }
   _final(callback) {
     if (!this.headersSent) {
       var data = this.#firstWrite || "";
-      this.#firstWrite = void 0, this.#finished = !0, this._reply(new Response(data, {
+      this.#firstWrite = void 0, this.#finished = !0, this.#drainHeadersIfObservable(), this._reply(new Response(data, {
         headers: this.#headers,
         status: this.statusCode,
         statusText: this.statusMessage ?? STATUS_CODES[this.statusCode]
@@ -780,6 +791,8 @@ class ServerResponse extends Writable {
     return _writeHead(statusCode, statusMessage, headers, this), this;
   }
 }
+OriginalWriteHeadFn = ServerResponse.prototype.writeHead;
+OriginalImplicitHeadFn = ServerResponse.prototype._implicitHeader;
 
 class ClientRequest extends OutgoingMessage {
   #timeout;

@@ -382,6 +382,19 @@ pub fn build(b: *Build) !void {
     }
 
     {
+        const headers_step = b.step("stream-tester-obj", "Build stream-tester (object files)");
+        var headers_obj = b.addObject(.{
+            .name = "stream-tester",
+            .root_source_file = FileSource.relative("src/stream_tester.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        defer headers_step.dependOn(&headers_obj.step);
+        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
+        headers_obj.addOptions("build_options", default_build_options.step(b));
+    }
+
+    {
         const headers_step = b.step("string-bench", "Build string bench");
         var headers_obj = b.addExecutable(.{
             .name = "string-bench",

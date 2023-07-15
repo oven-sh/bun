@@ -664,7 +664,7 @@ extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* g
 
 String GlobalObject::defaultAgentClusterID()
 {
-    return makeString(ProcessIdent::identifier().toUInt64(), "-default");
+    return makeString(ProcessIdent::identifier().toUInt64(), "-default"_s);
 }
 
 String GlobalObject::agentClusterID() const
@@ -1247,8 +1247,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStructuredClone,
         JSC::JSValue transferListValue = optionsObject->get(globalObject, vm.propertyNames->transfer);
         if (transferListValue.isObject()) {
             JSC::JSObject* transferListObject = transferListValue.getObject();
-            if (transferListObject->inherits<JSC::JSArray>()) {
-                JSC::JSArray* transferListArray = JSC::jsCast<JSC::JSArray*>(transferListObject);
+            if (auto* transferListArray = jsDynamicCast<JSC::JSArray*>(transferListObject)) {
                 for (unsigned i = 0; i < transferListArray->length(); i++) {
                     JSC::JSValue transferListValue = transferListArray->get(globalObject, i);
                     if (transferListValue.isObject()) {
@@ -1266,7 +1265,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStructuredClone,
         return JSValue::encode(jsUndefined());
     }
 
-    JSValue deserialized = serialized.returnValue()->deserialize(*globalObject, globalObject);
+    JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject);
 
     return JSValue::encode(deserialized);
 }

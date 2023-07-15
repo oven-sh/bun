@@ -229,6 +229,8 @@ pub const Blob = struct {
     ) !void {
         try writer.writeIntNative(u8, serialization_version);
 
+        try writer.writeIntNative(u64, @intCast(u64, this.offset));
+
         try writer.writeIntNative(u32, @truncate(u32, this.content_type.len));
         _ = try writer.write(this.content_type);
         try writer.writeIntNative(u8, @intFromBool(this.content_type_was_set));
@@ -289,6 +291,8 @@ pub const Blob = struct {
 
         const version = try reader.readIntNative(u8);
         _ = version;
+
+        const offset = try reader.readIntNative(u64);
 
         const content_type_len = try reader.readIntNative(u32);
 
@@ -357,6 +361,7 @@ pub const Blob = struct {
             },
         };
         blob.allocator = allocator;
+        blob.offset = @intCast(u52, offset);
         if (content_type.len > 0) {
             blob.content_type = content_type;
             blob.content_type_allocated = true;

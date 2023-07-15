@@ -15,15 +15,14 @@ describe("process.env", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/3589
-  test('npm_lifecycle_event should have the value of the last call', () => {
+  test("npm_lifecycle_event should have the value of the last call", () => {
     const dir = tempDirWithFiles("processenv_ls_call", {
       "package.json": `{"scripts": { "first": "${bunExe()} run --cwd lsc second" } }`,
       "lsc": {
         "package.json": `{"scripts": { "second": "${bunExe()} run index.ts" } }`,
         "index.ts": "console.log(process.env.npm_lifecycle_event);",
-      }
+      },
     });
-
 
     const { stdout } = bunRunAsScript(dir, "first");
     expect(stdout).toBe("second");

@@ -1,3 +1,6 @@
+import { join } from "path";
+import { openSync } from "fs";
+
 describe("structured clone", () => {
   let primitives_tests = [
     { description: "primitive undefined", value: undefined },
@@ -102,29 +105,53 @@ describe("structured clone", () => {
   });
 
   describe("bun blobs work", () => {
-    test("simple", () => {
+    test("simple", async () => {
       const blob = new Blob(["hello"], { type: "application/octet-stream" });
       const cloned = structuredClone(blob);
-      expect(cloned).toBeInstanceOf(Blob);
-      expect(cloned).not.toBe(blob);
-      expect(cloned.size).toBe(blob.size);
-      expect(cloned.type).toBe(blob.type);
+      await compareBlobs(blob, cloned);
     });
-    test("empty", () => {
+    test("empty", async () => {
       const emptyBlob = new Blob([], { type: "" });
       const clonedEmpty = structuredClone(emptyBlob);
-      expect(clonedEmpty).toBeInstanceOf(Blob);
-      expect(clonedEmpty).not.toBe(emptyBlob);
-      expect(clonedEmpty.size).toBe(emptyBlob.size);
-      expect(clonedEmpty.type).toBe(emptyBlob.type);
+      await compareBlobs(emptyBlob, clonedEmpty);
     });
-    test("unknown type", () => {
+    test("empty with type", async () => {
+      const emptyBlob = new Blob([], { type: "application/octet-stream" });
+      const clonedEmpty = structuredClone(emptyBlob);
+      await compareBlobs(emptyBlob, clonedEmpty);
+    });
+    test("unknown type", async () => {
       const blob = new Blob(["hello type"], { type: "this is type" });
       const cloned = structuredClone(blob);
-      expect(cloned).toBeInstanceOf(Blob);
-      expect(cloned).not.toBe(blob);
-      expect(cloned.size).toBe(blob.size);
-      expect(cloned.type).toBe(blob.type);
+      await compareBlobs(blob, cloned);
+    });
+    test("file from path", async () => {
+      const blob = Bun.file(join(import.meta.dir, "example.txt"));
+      const cloned = structuredClone(blob);
+      expect(cloned.lastModified).toBe(blob.lastModified);
+      expect(cloned.name).toBe(blob.name);
+    });
+    test("file from fd", async () => {
+      const fd = openSync(join(import.meta.dir, "example.txt"), "r");
+      const blob = Bun.file(fd);
+      const cloned = structuredClone(blob);
+      expect(cloned.lastModified).toBe(blob.lastModified);
+      expect(cloned.name).toBe(blob.name);
+    });
+    test("unpaired high surrogate (invalid utf-8)", async () => {
+      const blob = createBlob(encode_cesu8([0xd800]));
+      const cloned = structuredClone(blob);
+      await compareBlobs(blob, cloned);
+    });
+    test("unpaired low surrogate (invalid utf-8)", async () => {
+      const blob = createBlob(encode_cesu8([0xdc00]));
+      const cloned = structuredClone(blob);
+      await compareBlobs(blob, cloned);
+    });
+    test("paired surrogates (invalid utf-8)", async () => {
+      const blob = createBlob(encode_cesu8([0xd800, 0xdc00]));
+      const cloned = structuredClone(blob);
+      await compareBlobs(blob, cloned);
     });
   });
 
@@ -150,3 +177,44 @@ describe("structured clone", () => {
     });
   });
 });
+
+async function compareBlobs(original: Blob, cloned: Blob) {
+  expect(cloned).toBeInstanceOf(Blob);
+  expect(cloned).not.toBe(original);
+  expect(cloned.size).toBe(original.size);
+  expect(cloned.type).toBe(original.type);
+  const ab1 = await new Response(cloned).arrayBuffer();
+  const ab2 = await new Response(original).arrayBuffer();
+  expect(ab1.byteLength).toBe(ab2.byteLength);
+  const ta1 = new Uint8Array(ab1);
+  const ta2 = new Uint8Array(ab2);
+  for (let i = 0; i < ta1.length; i++) {
+    expect(ta1[i]).toBe(ta2[i]);
+  }
+}
+
+function encode_cesu8(codeunits: number[]): number[] {
+  // http://www.unicode.org/reports/tr26/ section 2.2
+  // only the 3-byte form is supported
+  const rv: number[] = [];
+  codeunits.forEach(function (codeunit) {
+    rv.push(b("11100000") + ((codeunit & b("1111000000000000")) >> 12));
+    rv.push(b("10000000") + ((codeunit & b("0000111111000000")) >> 6));
+    rv.push(b("10000000") + (codeunit & b("0000000000111111")));
+  });
+  return rv;
+}
+
+function b(s: string): number {
+  return parseInt(s, 2);
+}
+
+function createBlob(arr: number[]): Blob {
+  const buffer = new ArrayBuffer(arr.length);
+  const view = new DataView(buffer);
+  for (let i = 0; i < arr.length; i++) {
+    view.setUint8(i, arr[i]);
+  }
+
+  return new Blob([view]);
+}

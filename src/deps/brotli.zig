@@ -42,16 +42,51 @@ pub const BrotliDecoderState = opaque {
         return BrotliDecoderSetParameter(self, param, value) == BROTLI_TRUE;
     }
 
-    pub fn write(self: *BrotliDecoderState, input: *[]const u8, output: *[]u8, total_size: ?*usize) BrotliDecoderResult {
-        return BrotliDecoderDecompressStream(self, &input.len, &input.ptr, &output.len, &output.ptr, total_size);
+    pub fn write(self: *BrotliDecoderState, input: ?*[]const u8, output: ?*[]u8, total_size: ?*usize) BrotliDecoderResult {
+        var input_len: usize = 0;
+        var input_ptr: ?[*]const u8 = null;
+
+        var output_len: usize = 0;
+        var output_ptr: ?[*]u8 = null;
+
+        if (input) |in| {
+            input_len = in.len;
+            input_ptr = in.ptr;
+        }
+
+        if (output) |out| {
+            output_len = out.len;
+            output_ptr = out.ptr;
+        }
+
+        defer {
+            if (input) |in| {
+                in.len = input_len;
+                if (input_ptr != null)
+                    in.ptr = input_ptr.?;
+            }
+
+            if (output) |out| {
+                out.len = output_len;
+                if (output_ptr != null)
+                    out.ptr = output_ptr.?;
+            }
+        }
+        return BrotliDecoderDecompressStream(self, &input_len, &input_ptr, &output_len, &output_ptr, total_size);
     }
 
     pub fn getErrorCode(self: *const BrotliDecoderState) BrotliDecoderErrorCode {
         return BrotliDecoderGetErrorCode(self);
     }
 
-    pub fn hasMoreOutput(self: *BrotliEncoderState) bool {
-        return BrotliEncoderHasMoreOutput(self) == BROTLI_TRUE;
+    pub fn hasMoreOutput(self: *const BrotliDecoderState) bool {
+        return BrotliDecoderHasMoreOutput(self) == BROTLI_TRUE;
+    }
+
+    pub fn take(self: *BrotliDecoderState, requested: usize) []const u8 {
+        var size: usize = requested;
+        var ptr = BrotliDecoderTakeOutput(self, &size) orelse return "";
+        return ptr[0..size];
     }
 };
 
@@ -291,7 +326,7 @@ pub extern fn BrotliDecoderAttachDictionary(state: ?*BrotliDecoderState, @"type"
 pub extern fn BrotliDecoderCreateInstance(alloc_func: brotli_alloc_func, free_func: brotli_free_func, @"opaque": ?*anyopaque) *BrotliDecoderState;
 pub extern fn BrotliDecoderDestroyInstance(state: ?*BrotliDecoderState) void;
 pub extern fn BrotliDecoderDecompress(encoded_size: usize, encoded_buffer: [*]const u8, decoded_size: *usize, decoded_buffer: [*]u8) BrotliDecoderResult;
-pub extern fn BrotliDecoderDecompressStream(state: *BrotliDecoderState, available_in: *usize, next_in: *[*]const u8, available_out: *usize, next_out: *[*]u8, total_out: ?*usize) BrotliDecoderResult;
+pub extern fn BrotliDecoderDecompressStream(state: *BrotliDecoderState, available_in: *usize, next_in: *?[*]const u8, available_out: *usize, next_out: *?[*]u8, total_out: ?*usize) BrotliDecoderResult;
 pub extern fn BrotliDecoderHasMoreOutput(state: *const BrotliDecoderState) c_int;
 pub extern fn BrotliDecoderTakeOutput(state: *BrotliDecoderState, size: *usize) ?[*]const u8;
 pub extern fn BrotliDecoderIsUsed(state: ?*const BrotliDecoderState) c_int;

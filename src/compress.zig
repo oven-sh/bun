@@ -3,9 +3,12 @@ const std = @import("std");
 const zlib = @import("./zlib.zig");
 const brotli = bun.brotli;
 
+const String = bun.String;
+
 pub const Error = struct {
-    code: bun.String = bun.String.empty,
-    message: bun.String = bun.String.empty,
+    // To workaround a zig compiler bug, we avoid using String here.
+    code: []const u8,
+    message: []const u8,
 };
 
 pub const Ownership = enum { transfer, must_copy };
@@ -31,65 +34,15 @@ pub const Controller = struct {
         this.pull_fn(this.ctx);
     }
 
-    pub fn init(comptime Context: type, context: Context) Controller {
+    pub fn init(comptime ContextType: type, context: ContextType) Controller {
+        const Context = std.meta.Child(ContextType);
         return Controller{
             .ctx = @ptrCast(*anyopaque, context),
             .closed = @ptrCast(*bool, &context.closed),
-            .receive_data_fn = @ptrCast(*const fn (*anyopaque, []const u8, Ownership, Completion) void, Context.onData),
-            .receive_error_fn = @ptrCast(*const fn (*anyopaque, Error) void, Context.onError),
-            .pull_fn = @ptrCast(*const fn (*anyopaque) void, Context.onPull),
+            .receive_data_fn = @ptrCast(*const fn (*anyopaque, []const u8, Ownership, Completion) void, &Context.onData),
+            .receive_error_fn = @ptrCast(*const fn (*anyopaque, Error) void, &Context.onError),
+            .pull_fn = @ptrCast(*const fn (*anyopaque) void, &Context.onPull),
         };
-    }
-};
-
-pub const CLIFileStreamCompressor = struct {
-    input: std.fs.File,
-    output: std.fs.File,
-    closed: bool = false,
-
-    ready_for_more: bool = false,
-    has_more_output: bool = true,
-
-    pub fn controller(this: *CLIFileStreamCompressor) Controller {
-        return Controller.init(*CLIFileStreamCompressor, this);
-    }
-
-    pub fn onData(this: *CLIFileStreamCompressor, bytes: []const u8, _: Ownership, completion: Completion) void {
-        std.debug.assert(!this.closed);
-        this.output.writeAll(bytes) catch @panic("failed to write to file");
-        if (completion == Completion.last) {
-            this.ready_for_more = false;
-        }
-    }
-
-    pub fn onError(this: *CLIFileStreamCompressor, err: Error) void {
-        std.debug.assert(!this.closed);
-        std.debug.panic("Error: {}\n{}", .{ err.code, err.message });
-    }
-
-    pub fn onPull(this: *CLIFileStreamCompressor) void {
-        this.ready_for_more = true;
-    }
-
-    pub fn init(path: []const u8) !CLIFileStreamCompressor {
-        var file = try std.fs.cwd().openFile(path, .{ .mode = .read_write });
-        return CLIFileStreamCompressor{ .input = file, .output = std.io.getStdOut() };
-    }
-
-    pub fn run(this: *CLIFileStreamCompressor, stream: *Compressor) !void {
-        this.ready_for_more = true;
-        const ctrl = this.controller();
-
-        while (this.has_more_output) {
-            var buffer: [64 * 1024]u8 = undefined;
-            var to_read: []u8 = buffer[0..try this.input.readAll(&buffer)];
-            this.has_more_output = to_read.len != 0;
-            if (this.has_more_output) {
-                stream.write(to_read, ctrl);
-            }
-        }
-
-        stream.end(ctrl);
     }
 };
 
@@ -98,17 +51,25 @@ pub const Compressor = union(enum) {
     BrotliDecoder: Brotli.Decoder,
 
     pub fn write(this: *Compressor, data: []const u8, controller: Controller) void {
-        return switch (this) {
-            .BrotliEncoder => this.BrotliEncoder.write(data, controller),
-            .BrotliDecoder => this.BrotliDecoder.write(data, controller),
-        };
+        switch (this.*) {
+            .BrotliEncoder => {
+                this.BrotliEncoder.write(data, controller);
+            },
+            .BrotliDecoder => {
+                this.BrotliDecoder.write(data, controller);
+            },
+        }
     }
 
-    pub fn end(this: *Compressor) void {
-        return switch (this) {
-            .BrotliEncoder => this.BrotliEncoder.end(),
-            .BrotliDecoder => this.BrotliDecoder.end(),
-        };
+    pub fn end(this: *Compressor, controller: Controller) void {
+        switch (this.*) {
+            .BrotliEncoder => {
+                this.BrotliEncoder.end(controller);
+            },
+            .BrotliDecoder => {
+                this.BrotliDecoder.end(controller);
+            },
+        }
     }
 
     pub fn initWithType(comptime Type: type, value: Type) !*Compressor {
@@ -157,7 +118,7 @@ pub const Brotli = struct {
                 controller.enqueue(
                     taken,
                     .must_copy,
-                    false,
+                    .not_last,
                 );
 
                 if (!state.hasMoreOutput())
@@ -195,8 +156,8 @@ pub const Brotli = struct {
                     .@"error" => {
                         const code = state.getErrorCode();
                         controller.fail(Error{
-                            .code = bun.String.static(code.code()),
-                            .message = bun.String.static(code.message()),
+                            .code = code.code(),
+                            .message = code.message(),
                         });
                         return;
                     },
@@ -233,9 +194,7 @@ pub const Brotli = struct {
         pub fn end(this: *Decoder, controller: Controller) void {
             var state = this.state orelse return;
             this.state = null;
-            consume(state, controller);
-            std.debug.assert(state.finish(null, null, null));
-            consume(state, controller);
+            consume(state, controller, true);
             state.deinit();
         }
     };

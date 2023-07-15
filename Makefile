@@ -867,10 +867,16 @@ fetch: $(IO_FILES)
 	rm -rf $(PACKAGE_DIR)/fetch.o
 
 .PHONY: stream-tester
-stream-tester: $(IO_FILES)
+stream-tester: 
 	$(ZIG) build -Doptimize=ReleaseFast stream-tester-obj
-	$(CXX) $(PACKAGE_DIR)/stream_tester.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/stream_tester $(IO_FILES)  $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES) $(ICU_FLAGS) $(JSC_FILES) $(JSC_BINDINGS)
-	rm -rf $(PACKAGE_DIR)/stream_tester.o
+	$(CXX) $(PACKAGE_DIR)/stream-tester.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/stream-tester $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES) $(ICU_FLAGS)
+	rm -rf $(PACKAGE_DIR)/stream-tester.o
+
+.PHONY: stream-tester-debug
+stream-tester-debug:
+	$(ZIG) build stream-tester-obj -Doptimize=Debug
+	$(CXX) $(DEBUG_PACKAGE_DIR)/stream-tester.o -g3 -o ./misctools/stream-tester $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES) $(ICU_FLAGS)
+
 
 .PHONY: sha
 sha:

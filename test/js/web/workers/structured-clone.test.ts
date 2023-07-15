@@ -104,6 +104,34 @@ describe("structured clone", () => {
     }
   });
 
+  test("map", () => {
+    var input = new Map();
+    input.set("a", 1);
+    input.set("b", 2);
+    input.set("c", 3);
+    var cloned = structuredClone(input);
+    expect(cloned).toBeInstanceOf(Map);
+    expect(cloned).not.toBe(input);
+    expect(cloned.size).toEqual(input.size);
+    for (const [key, value] of input) {
+      expect(cloned.get(key)).toBe(value);
+    }
+  });
+
+  test("set", () => {
+    var input = new Set();
+    input.add("a");
+    input.add("b");
+    input.add("c");
+    var cloned = structuredClone(input);
+    expect(cloned).toBeInstanceOf(Set);
+    expect(cloned).not.toBe(input);
+    expect(cloned.size).toEqual(input.size);
+    for (const value of input) {
+      expect(cloned.has(value)).toBe(true);
+    }
+  });
+
   describe("bun blobs work", () => {
     test("simple", async () => {
       const blob = new Blob(["hello"], { type: "application/octet-stream" });

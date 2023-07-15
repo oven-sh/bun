@@ -106,7 +106,7 @@ pub const Blob = struct {
     pub const init_timestamp = std.math.maxInt(JSTimeType);
 
     const serialization_version: u8 = 1;
-    const reserved_space_for_serialization: u32 = 512;
+    const reserved_space_for_serialization: u32 = 128;
 
     pub fn getFormDataEncoding(this: *Blob) ?*bun.FormData.AsyncFormData {
         var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
@@ -282,6 +282,17 @@ pub const Blob = struct {
         _ = globalThis;
     }
 
+    fn readSlice(
+        reader: anytype,
+        len: usize,
+        allocator: std.mem.Allocator,
+    ) ![]u8 {
+        var slice = try allocator.alloc(u8, len);
+        slice = slice[0..try reader.read(slice)];
+        if (slice.len != len) return error.TooSmall;
+        return slice;
+    }
+
     fn _onStructuredCloneDeserialize(
         globalThis: *JSC.JSGlobalObject,
         comptime Reader: type,
@@ -296,8 +307,7 @@ pub const Blob = struct {
 
         const content_type_len = try reader.readIntNative(u32);
 
-        var content_type = try allocator.alloc(u8, content_type_len);
-        _ = try reader.read(content_type);
+        const content_type = try readSlice(reader, content_type_len, allocator);
 
         const content_type_was_set: bool = try reader.readIntNative(u8) != 0;
 
@@ -306,8 +316,7 @@ pub const Blob = struct {
         const blob: *Blob = switch (store_tag) {
             .bytes => brk: {
                 const bytes_len = try reader.readIntNative(u32);
-                var bytes = try allocator.alloc(u8, bytes_len);
-                _ = try reader.read(bytes);
+                const bytes = try readSlice(reader, bytes_len, allocator);
 
                 var blob = Blob.init(bytes, allocator, globalThis);
                 var blob_ = try allocator.create(Blob);
@@ -335,8 +344,7 @@ pub const Blob = struct {
                     .path => {
                         const path_len = try reader.readIntNative(u32);
 
-                        const path = try default_allocator.alloc(u8, path_len);
-                        _ = try reader.read(path);
+                        const path = try readSlice(reader, path_len, default_allocator);
 
                         var blob = try allocator.create(Blob);
                         blob.* = Blob.findOrCreateFileFromPath(

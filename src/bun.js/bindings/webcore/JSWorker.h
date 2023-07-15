@@ -62,6 +62,7 @@ public:
     {
         return static_cast<Worker&>(Base::wrapped());
     }
+
 protected:
     JSWorker(JSC::Structure*, JSDOMGlobalObject&, Ref<Worker>&&);
 

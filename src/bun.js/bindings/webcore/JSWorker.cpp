@@ -56,7 +56,6 @@
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -128,13 +127,13 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::const
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     auto object = Worker::create(*context, castedThis->globalObject()->runtimeFlags(), WTFMove(scriptUrl), WTFMove(options));
     if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
     auto jsValue = toJSNewlyCreated<IDLInterface<Worker>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
     if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<Worker>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSWorkerDOMConstructorConstruct, JSWorkerDOMConstructor::construct);
@@ -157,8 +156,7 @@ template<> void JSWorkerDOMConstructor::initializeProperties(VM& vm, JSDOMGlobal
 
 /* Hash table for prototype */
 
-static const HashTableValue JSWorkerPrototypeTableValues[] =
-{
+static const HashTableValue JSWorkerPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsWorkerConstructor, 0 } },
     { "onmessage"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_onmessage, setJSWorker_onmessage } },
     { "onmessageerror"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_onmessageerror, setJSWorker_onmessageerror } },
@@ -202,7 +200,7 @@ JSValue JSWorker::getConstructor(VM& vm, const JSGlobalObject* globalObject)
     return getDOMConstructor<JSWorkerDOMConstructor, DOMConstructorID::Worker>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWorkerConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsWorkerConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -218,7 +216,7 @@ static inline JSValue jsWorker_onmessageGetter(JSGlobalObject& lexicalGlobalObje
     return eventHandlerAttribute(thisObject.wrapped(), eventNames().messageEvent, worldForDOMObject(thisObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWorker_onmessage, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsWorker_onmessage, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWorker>::get<jsWorker_onmessageGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -234,7 +232,7 @@ static inline bool setJSWorker_onmessageSetter(JSGlobalObject& lexicalGlobalObje
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSWorker_onmessage, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSWorker_onmessage, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWorker>::set<setJSWorker_onmessageSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
@@ -245,7 +243,7 @@ static inline JSValue jsWorker_onmessageerrorGetter(JSGlobalObject& lexicalGloba
     return eventHandlerAttribute(thisObject.wrapped(), eventNames().messageerrorEvent, worldForDOMObject(thisObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWorker_onmessageerror, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsWorker_onmessageerror, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWorker>::get<jsWorker_onmessageerrorGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -261,7 +259,7 @@ static inline bool setJSWorker_onmessageerrorSetter(JSGlobalObject& lexicalGloba
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSWorker_onmessageerror, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSWorker_onmessageerror, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWorker>::set<setJSWorker_onmessageerrorSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
@@ -272,7 +270,7 @@ static inline JSValue jsWorker_onerrorGetter(JSGlobalObject& lexicalGlobalObject
     return eventHandlerAttribute(thisObject.wrapped(), eventNames().errorEvent, worldForDOMObject(thisObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWorker_onerror, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsWorker_onerror, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWorker>::get<jsWorker_onerrorGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -288,7 +286,7 @@ static inline bool setJSWorker_onerrorSetter(JSGlobalObject& lexicalGlobalObject
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSWorker_onerror, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSWorker_onerror, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWorker>::set<setJSWorker_onerrorSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
@@ -303,7 +301,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_terminateBody(JSC::J
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.terminate(); })));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_terminate, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_terminate, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_terminateBody>(*lexicalGlobalObject, *callFrame, "terminate");
 }
@@ -358,7 +356,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_postMessageOverloadD
             RELEASE_AND_RETURN(throwScope, (jsWorkerPrototypeFunction_postMessage2Body(lexicalGlobalObject, callFrame, castedThis)));
         {
             bool success = hasIteratorMethod(lexicalGlobalObject, distinguishingArg);
-            RETURN_IF_EXCEPTION(throwScope, { });
+            RETURN_IF_EXCEPTION(throwScope, {});
             if (success)
                 RELEASE_AND_RETURN(throwScope, (jsWorkerPrototypeFunction_postMessage1Body(lexicalGlobalObject, callFrame, castedThis)));
         }
@@ -368,19 +366,19 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_postMessageOverloadD
     return argsCount < 1 ? throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject)) : throwVMTypeError(lexicalGlobalObject, throwScope);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_postMessage, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_postMessage, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_postMessageOverloadDispatcher>(*lexicalGlobalObject, *callFrame, "postMessage");
 }
 
 JSC::GCClient::IsoSubspace* JSWorker::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSWorker, UseCustomHeapCellType::No>(vm,
-        [] (auto& spaces) { return spaces.m_clientSubspaceForWorker.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForWorker = std::forward<decltype(space)>(space); },
-        [] (auto& spaces) { return spaces.m_subspaceForWorker.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForWorker = std::forward<decltype(space)>(space); }
-    );
+    return WebCore::subspaceForImpl<JSWorker, UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForWorker.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWorker = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForWorker.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForWorker = std::forward<decltype(space)>(space); });
 }
 
 void JSWorker::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -400,7 +398,7 @@ bool JSWorkerOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle,
         if (UNLIKELY(reason))
             *reason = "ActiveDOMObject with pending activity";
         return true;
-     }
+    }
     UNUSED_PARAM(visitor);
     UNUSED_PARAM(reason);
     return false;
@@ -415,10 +413,14 @@ void JSWorkerOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
-#pragma warning(disable: 4483)
-extern "C" { extern void (*const __identifier("??_7Worker@WebCore@@6B@")[])(); }
+#pragma warning(disable : 4483)
+extern "C" {
+extern void (*const __identifier("??_7Worker@WebCore@@6B@")[])();
+}
 #else
-extern "C" { extern void* _ZTVN7WebCore6WorkerE[]; }
+extern "C" {
+extern void* _ZTVN7WebCore6WorkerE[];
+}
 #endif
 #endif
 

@@ -21,7 +21,7 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include "config.h"
@@ -146,7 +146,7 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
         return channels.releaseException();
 
     m_contextProxy.postMessageToWorkerGlobalScope({ message.releaseReturnValue(), channels.releaseReturnValue() });
-    return { };
+    return {};
 }
 
 void Worker::terminate()
@@ -219,12 +219,13 @@ void Worker::notifyFinished()
         referrerPolicy = *policy;
 
     m_didStartWorkerGlobalScope = true;
-    WorkerInitializationData initializationData {
+    WorkerInitializationData initializationData
+    {
 #if ENABLE(SERVICE_WORKER)
         m_scriptLoader->takeServiceWorkerData(),
 #endif
-        m_clientIdentifier,
-        context->userAgent(m_scriptLoader->responseURL())
+            m_clientIdentifier,
+            context->userAgent(m_scriptLoader->responseURL())
     };
     m_contextProxy.startWorkerGlobalScope(m_scriptLoader->responseURL(), *sessionID, m_options.name, WTFMove(initializationData), m_scriptLoader->script(), contentSecurityPolicyResponseHeaders, m_shouldBypassMainWorldContentSecurityPolicy, m_scriptLoader->crossOriginEmbedderPolicy(), m_workerCreationTime, referrerPolicy, m_options.type, m_options.credentials, m_runtimeFlags);
     InspectorInstrumentation::scriptImported(*context, m_scriptLoader->identifier(), m_scriptLoader->script().toString());
@@ -252,7 +253,6 @@ void Worker::createRTCRtpScriptTransformer(RTCRtpScriptTransform& transform, Mes
         if (auto transformer = downcast<DedicatedWorkerGlobalScope>(context).createRTCRtpScriptTransformer(WTFMove(options)))
             transform->setTransformer(*transformer);
     });
-
 }
 #endif
 

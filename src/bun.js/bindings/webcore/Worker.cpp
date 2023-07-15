@@ -27,25 +27,25 @@
 #include "config.h"
 #include "Worker.h"
 
-#include "ContentSecurityPolicy.h"
-#include "DedicatedWorkerGlobalScope.h"
+// #include "ContentSecurityPolicy.h"
+// #include "DedicatedWorkerGlobalScope.h"
 #include "ErrorEvent.h"
 #include "Event.h"
 #include "EventNames.h"
-#include "InspectorInstrumentation.h"
-#include "LoaderStrategy.h"
-#include "PlatformStrategies.h"
+// #include "InspectorInstrumentation.h"
+// #include "LoaderStrategy.h"
+// #include "PlatformStrategies.h"
 #if ENABLE(WEB_RTC)
 #include "RTCRtpScriptTransform.h"
 #include "RTCRtpScriptTransformer.h"
 #endif
-#include "ResourceResponse.h"
-#include "SecurityOrigin.h"
+// #include "ResourceResponse.h"
+// #include "SecurityOrigin.h"
 #include "StructuredSerializeOptions.h"
-#include "WorkerGlobalScopeProxy.h"
-#include "WorkerInitializationData.h"
-#include "WorkerScriptLoader.h"
-#include "WorkerThread.h"
+// #include "WorkerGlobalScopeProxy.h"
+// #include "WorkerInitializationData.h"
+// #include "WorkerScriptLoader.h"
+// #include "WorkerThread.h"
 #include <JavaScriptCore/IdentifiersFactory.h>
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <wtf/HashSet.h>
@@ -53,6 +53,8 @@
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Scope.h>
+#include "SerializedScriptValue.h"
+#include "ScriptExecutionContext.h"
 
 namespace WebCore {
 
@@ -67,59 +69,58 @@ static HashMap<ScriptExecutionContextIdentifier, Worker*>& allWorkers() WTF_REQU
 
 void Worker::networkStateChanged(bool isOnline)
 {
-    Locker locker { allWorkersLock };
-    for (auto& contextIdentifier : allWorkers().keys()) {
-        ScriptExecutionContext::postTaskTo(contextIdentifier, [isOnline](auto& context) {
-            auto& globalScope = downcast<WorkerGlobalScope>(context);
-            globalScope.setIsOnline(isOnline);
-            globalScope.dispatchEvent(Event::create(isOnline ? eventNames().onlineEvent : eventNames().offlineEvent, Event::CanBubble::No, Event::IsCancelable::No));
-        });
-    }
+    // Locker locker { allWorkersLock };
+    // for (auto& contextIdentifier : allWorkers().keys()) {
+    //     ScriptExecutionContext::postTaskTo(contextIdentifier, [isOnline](auto& context) {
+    //         auto& globalScope = downcast<WorkerGlobalScope>(context);
+    //         globalScope.setIsOnline(isOnline);
+    //         globalScope.dispatchEvent(Event::create(isOnline ? eventNames().onlineEvent : eventNames().offlineEvent, Event::CanBubble::No, Event::IsCancelable::No));
+    //     });
+    // }
 }
 
-Worker::Worker(ScriptExecutionContext& context, JSC::RuntimeFlags runtimeFlags, WorkerOptions&& options)
-    : ActiveDOMObject(&context)
+Worker::Worker(ScriptExecutionContext& context, WorkerOptions&& options)
+    : EventTargetWithInlineData()
+    , ContextDestructionObserver(&context)
     , m_options(WTFMove(options))
     , m_identifier("worker:" + Inspector::IdentifiersFactory::createIdentifier())
-    , m_contextProxy(WorkerGlobalScopeProxy::create(*this))
-    , m_runtimeFlags(runtimeFlags)
-    , m_clientIdentifier(ScriptExecutionContextIdentifier::generate())
+    , m_clientIdentifier(ScriptExecutionContext::generateIdentifier())
 {
-    static bool addedListener;
-    if (!addedListener) {
-        platformStrategies()->loaderStrategy()->addOnlineStateChangeListener(&networkStateChanged);
-        addedListener = true;
-    }
+    // static bool addedListener;
+    // if (!addedListener) {
+    //     platformStrategies()->loaderStrategy()->addOnlineStateChangeListener(&networkStateChanged);
+    //     addedListener = true;
+    // }
 
     Locker locker { allWorkersLock };
     auto addResult = allWorkers().add(m_clientIdentifier, this);
     ASSERT_UNUSED(addResult, addResult.isNewEntry);
 }
 
-ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, JSC::RuntimeFlags runtimeFlags, const String& url, WorkerOptions&& options)
+ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const String& url, WorkerOptions&& options)
 {
-    auto worker = adoptRef(*new Worker(context, runtimeFlags, WTFMove(options)));
+    auto worker = adoptRef(*new Worker(context, WTFMove(options)));
 
-    worker->suspendIfNeeded();
+    // worker->suspendIfNeeded();
 
-    auto scriptURL = worker->resolveURL(url);
-    if (scriptURL.hasException())
-        return scriptURL.releaseException();
+    // auto scriptURL = worker->resolveURL(url);
+    // if (scriptURL.hasException())
+    //     return scriptURL.releaseException();
 
-    bool shouldBypassMainWorldContentSecurityPolicy = context.shouldBypassMainWorldContentSecurityPolicy();
-    worker->m_shouldBypassMainWorldContentSecurityPolicy = shouldBypassMainWorldContentSecurityPolicy;
+    // bool shouldBypassMainWorldContentSecurityPolicy = context.shouldBypassMainWorldContentSecurityPolicy();
+    // worker->m_shouldBypassMainWorldContentSecurityPolicy = shouldBypassMainWorldContentSecurityPolicy;
 
-    // https://html.spec.whatwg.org/multipage/workers.html#official-moment-of-creation
-    worker->m_workerCreationTime = MonotonicTime::now();
+    // // https://html.spec.whatwg.org/multipage/workers.html#official-moment-of-creation
+    // worker->m_workerCreationTime = MonotonicTime::now();
 
-    worker->m_scriptLoader = WorkerScriptLoader::create();
-    auto contentSecurityPolicyEnforcement = shouldBypassMainWorldContentSecurityPolicy ? ContentSecurityPolicyEnforcement::DoNotEnforce : ContentSecurityPolicyEnforcement::EnforceWorkerSrcDirective;
+    // worker->m_scriptLoader = WorkerScriptLoader::create();
+    // auto contentSecurityPolicyEnforcement = shouldBypassMainWorldContentSecurityPolicy ? ContentSecurityPolicyEnforcement::DoNotEnforce : ContentSecurityPolicyEnforcement::EnforceWorkerSrcDirective;
 
-    ResourceRequest request { scriptURL.releaseReturnValue() };
-    request.setInitiatorIdentifier(worker->m_identifier);
+    // ResourceRequest request { scriptURL.releaseReturnValue() };
+    // request.setInitiatorIdentifier(worker->m_identifier);
 
-    auto source = options.type == WorkerType::Module ? WorkerScriptLoader::Source::ModuleScript : WorkerScriptLoader::Source::ClassicWorkerScript;
-    worker->m_scriptLoader->loadAsynchronously(context, WTFMove(request), source, workerFetchOptions(worker->m_options, FetchOptions::Destination::Worker), contentSecurityPolicyEnforcement, ServiceWorkersMode::All, worker.get(), WorkerRunLoop::defaultMode(), worker->m_clientIdentifier);
+    // auto source = options.type == WorkerType::Module ? WorkerScriptLoader::Source::ModuleScript : WorkerScriptLoader::Source::ClassicWorkerScript;
+    // worker->m_scriptLoader->loadAsynchronously(context, WTFMove(request), source, workerFetchOptions(worker->m_options, FetchOptions::Destination::Worker), contentSecurityPolicyEnforcement, ServiceWorkersMode::All, worker.get(), WorkerRunLoop::defaultMode(), worker->m_clientIdentifier);
 
     return worker;
 }
@@ -130,105 +131,55 @@ Worker::~Worker()
         Locker locker { allWorkersLock };
         allWorkers().remove(m_clientIdentifier);
     }
-    m_contextProxy.workerObjectDestroyed();
+    // m_contextProxy.workerObjectDestroyed();
 }
 
 ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
 {
-    Vector<RefPtr<MessagePort>> ports;
-    auto message = SerializedScriptValue::create(state, messageValue, WTFMove(options.transfer), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
+    auto message = SerializedScriptValue::create(state, messageValue, WTFMove(options.transfer), SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (message.hasException())
         return message.releaseException();
 
-    // Disentangle the port in preparation for sending it to the remote context.
-    auto channels = MessagePort::disentanglePorts(WTFMove(ports));
-    if (channels.hasException())
-        return channels.releaseException();
-
-    m_contextProxy.postMessageToWorkerGlobalScope({ message.releaseReturnValue(), channels.releaseReturnValue() });
+    // m_contextProxy.postMessageToWorkerGlobalScope({ message.releaseReturnValue(), channels.releaseReturnValue() });
     return {};
 }
 
 void Worker::terminate()
 {
-    m_contextProxy.terminateWorkerGlobalScope();
+    // m_contextProxy.terminateWorkerGlobalScope();
     m_wasTerminated = true;
 }
 
-const char* Worker::activeDOMObjectName() const
+// const char* Worker::activeDOMObjectName() const
+// {
+//     return "Worker";
+// }
+
+// void Worker::stop()
+// {
+//     terminate();
+// }
+
+// void Worker::suspend(ReasonForSuspension reason)
+// {
+//     if (reason == ReasonForSuspension::BackForwardCache) {
+//         m_contextProxy.suspendForBackForwardCache();
+//         m_isSuspendedForBackForwardCache = true;
+//     }
+// }
+
+// void Worker::resume()
+// {
+//     if (m_isSuspendedForBackForwardCache) {
+//         m_contextProxy.resumeForBackForwardCache();
+//         m_isSuspendedForBackForwardCache = false;
+//     }
+// }
+
+bool Worker::hasPendingActivity() const
 {
-    return "Worker";
-}
-
-void Worker::stop()
-{
-    terminate();
-}
-
-void Worker::suspend(ReasonForSuspension reason)
-{
-    if (reason == ReasonForSuspension::BackForwardCache) {
-        m_contextProxy.suspendForBackForwardCache();
-        m_isSuspendedForBackForwardCache = true;
-    }
-}
-
-void Worker::resume()
-{
-    if (m_isSuspendedForBackForwardCache) {
-        m_contextProxy.resumeForBackForwardCache();
-        m_isSuspendedForBackForwardCache = false;
-    }
-}
-
-bool Worker::virtualHasPendingActivity() const
-{
-    return m_scriptLoader || (m_didStartWorkerGlobalScope && !m_contextProxy.askedToTerminate());
-}
-
-void Worker::didReceiveResponse(ResourceLoaderIdentifier identifier, const ResourceResponse& response)
-{
-    const URL& responseURL = response.url();
-    if (!responseURL.protocolIsBlob() && !responseURL.protocolIs("file"_s) && !SecurityOrigin::create(responseURL)->isOpaque())
-        m_contentSecurityPolicyResponseHeaders = ContentSecurityPolicyResponseHeaders(response);
-    InspectorInstrumentation::didReceiveScriptResponse(scriptExecutionContext(), identifier);
-}
-
-void Worker::notifyFinished()
-{
-    auto clearLoader = makeScopeExit([this] {
-        m_scriptLoader = nullptr;
-    });
-
-    auto* context = scriptExecutionContext();
-    if (!context)
-        return;
-
-    auto sessionID = context->sessionID();
-    if (!sessionID)
-        return;
-
-    if (m_scriptLoader->failed()) {
-        queueTaskToDispatchEvent(*this, TaskSource::DOMManipulation, Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::Yes));
-        return;
-    }
-
-    const ContentSecurityPolicyResponseHeaders& contentSecurityPolicyResponseHeaders = m_contentSecurityPolicyResponseHeaders ? m_contentSecurityPolicyResponseHeaders.value() : context->contentSecurityPolicy()->responseHeaders();
-    ReferrerPolicy referrerPolicy = ReferrerPolicy::EmptyString;
-    if (auto policy = parseReferrerPolicy(m_scriptLoader->referrerPolicy(), ReferrerPolicySource::HTTPHeader))
-        referrerPolicy = *policy;
-
-    m_didStartWorkerGlobalScope = true;
-    WorkerInitializationData initializationData
-    {
-#if ENABLE(SERVICE_WORKER)
-        m_scriptLoader->takeServiceWorkerData(),
-#endif
-            m_clientIdentifier,
-            context->userAgent(m_scriptLoader->responseURL())
-    };
-    m_contextProxy.startWorkerGlobalScope(m_scriptLoader->responseURL(), *sessionID, m_options.name, WTFMove(initializationData), m_scriptLoader->script(), contentSecurityPolicyResponseHeaders, m_shouldBypassMainWorldContentSecurityPolicy, m_scriptLoader->crossOriginEmbedderPolicy(), m_workerCreationTime, referrerPolicy, m_options.type, m_options.credentials, m_runtimeFlags);
-    InspectorInstrumentation::scriptImported(*context, m_scriptLoader->identifier(), m_scriptLoader->script().toString());
+    // return (m_didStartWorkerGlobalScope && !m_contextProxy.askedToTerminate());
+    return true;
 }
 
 void Worker::dispatchEvent(Event& event)
@@ -236,11 +187,11 @@ void Worker::dispatchEvent(Event& event)
     if (m_wasTerminated)
         return;
 
-    AbstractWorker::dispatchEvent(event);
-    if (is<ErrorEvent>(event) && !event.defaultPrevented() && event.isTrusted() && scriptExecutionContext()) {
-        auto& errorEvent = downcast<ErrorEvent>(event);
-        scriptExecutionContext()->reportException(errorEvent.message(), errorEvent.lineno(), errorEvent.colno(), errorEvent.filename(), nullptr, nullptr);
-    }
+    // AbstractWorker::dispatchEvent(event);
+    // if (is<ErrorEvent>(event) && !event.defaultPrevented() && event.isTrusted() && scriptExecutionContext()) {
+    //     auto& errorEvent = downcast<ErrorEvent>(event);
+    //     scriptExecutionContext()->reportException(errorEvent.message(), errorEvent.lineno(), errorEvent.colno(), errorEvent.filename(), nullptr, nullptr);
+    // }
 }
 
 #if ENABLE(WEB_RTC)
@@ -258,7 +209,7 @@ void Worker::createRTCRtpScriptTransformer(RTCRtpScriptTransform& transform, Mes
 
 void Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&& task)
 {
-    m_contextProxy.postTaskToWorkerGlobalScope(WTFMove(task));
+    // m_contextProxy.postTaskToWorkerGlobalScope(WTFMove(task));
 }
 
 void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)>()>& callback)

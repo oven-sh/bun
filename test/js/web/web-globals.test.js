@@ -19,7 +19,58 @@ test("exists", () => {
   expect(typeof WebSocket !== "undefined").toBe(true);
   expect(typeof Blob !== "undefined").toBe(true);
   expect(typeof FormData !== "undefined").toBe(true);
+  expect(typeof Worker !== "undefined").toBe(true);
 });
+
+const globalSetters = [
+  [ErrorEvent, "onerror", "error", "error"],
+  [MessageEvent, "onmessage", "message", "data"],
+];
+
+for (const [Constructor, name, eventName, prop] of globalSetters) {
+  test(`self.${name}`, () => {
+    var called = false;
+
+    const callback = ({ [prop]: data }) => {
+      expect(data).toBe("hello");
+      called = true;
+    };
+
+    try {
+      globalThis[name] = callback;
+      expect(globalThis[name]).toBe(callback);
+      dispatchEvent(new Constructor(eventName, { data: "hello", error: "hello" }));
+      expect(called).toBe(true);
+    } finally {
+      globalThis[name] = null;
+
+      called = false;
+      dispatchEvent(new Constructor(eventName, { data: "hello", error: "hello" }));
+      expect(called).toBe(false);
+    }
+  });
+
+  test(`self.addEventListener(${name})`, () => {
+    var called = false;
+
+    const callback = ({ [prop]: data }) => {
+      expect(data).toBe("hello");
+      called = true;
+    };
+
+    try {
+      addEventListener(eventName, callback);
+      dispatchEvent(new Constructor(eventName, { data: "hello", error: "hello" }));
+      expect(called).toBe(true);
+    } finally {
+      globalThis[name] = null;
+      removeEventListener(eventName, callback);
+      called = false;
+      dispatchEvent(new Constructor(eventName, { data: "hello", error: "hello" }));
+      expect(called).toBe(false);
+    }
+  });
+}
 
 test("CloseEvent", () => {
   var event = new CloseEvent("close", { reason: "world" });

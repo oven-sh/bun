@@ -81,6 +81,15 @@ public:
         regenerateIdentifier();
     }
 
+    ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject, ScriptExecutionContextIdentifier identifier)
+        : m_vm(vm)
+        , m_globalObject(globalObject)
+        , m_identifier(identifier)
+    {
+    }
+
+    static ScriptExecutionContextIdentifier generateIdentifier();
+
     JSC::JSGlobalObject* jsGlobalObject()
     {
         return m_globalObject;

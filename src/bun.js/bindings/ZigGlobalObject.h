@@ -43,8 +43,13 @@ class DOMWrapperWorld;
 #include "BunPlugin.h"
 #include "JSMockFunction.h"
 
+namespace Bun {
+class GlobalScope;
+}
+
 namespace WebCore {
 class SubtleCrypto;
+class EventTarget;
 }
 
 extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
@@ -124,6 +129,13 @@ public:
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure)
     {
         GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure);
+        ptr->finishCreation(vm);
+        return ptr;
+    }
+
+    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, WebCore::ScriptExecutionContext* scriptExecutionContext)
+    {
+        GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, scriptExecutionContext);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -298,6 +310,9 @@ public:
 
     EncodedJSValue assignToStream(JSValue stream, JSValue controller);
 
+    Ref<WebCore::EventTarget> eventTarget();
+    Ref<Bun::GlobalScope> globalScope;
+
     enum class PromiseFunctions : uint8_t {
         Bun__HTTPRequestContext__onReject,
         Bun__HTTPRequestContext__onRejectStream,
@@ -366,6 +381,7 @@ public:
     mutable WriteBarrier<Unknown> m_JSURLSearchParamsSetterValue;
     mutable WriteBarrier<Unknown> m_JSWebSocketSetterValue;
     mutable WriteBarrier<Unknown> m_JSDOMFormDataSetterValue;
+    mutable WriteBarrier<Unknown> m_JSWorkerSetterValue;
     mutable WriteBarrier<Unknown> m_BunCommonJSModuleValue;
 
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
@@ -430,6 +446,7 @@ private:
     friend void WebCore::JSBuiltinInternalFunctions::initialize(Zig::GlobalObject&);
     WebCore::JSBuiltinInternalFunctions m_builtinInternalFunctions;
     GlobalObject(JSC::VM& vm, JSC::Structure* structure);
+    GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::ScriptExecutionContext*);
     std::unique_ptr<WebCore::DOMConstructors> m_constructors;
     uint8_t m_worldIsNormal;
     JSDOMStructureMap m_structures WTF_GUARDED_BY_LOCK(m_gcLock);

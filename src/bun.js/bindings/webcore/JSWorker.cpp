@@ -41,7 +41,7 @@
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
 #include "JSEventListener.h"
-#include "JSStructuredSerializeOptions.h"
+#include "StructuredSerializeOptions.h"
 #include "JSWorkerOptions.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
@@ -125,7 +125,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::const
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto options = convert<IDLDictionary<WorkerOptions>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    auto object = Worker::create(*context, castedThis->globalObject()->runtimeFlags(), WTFMove(scriptUrl), WTFMove(options));
+    auto object = Worker::create(*context, WTFMove(scriptUrl), WTFMove(options));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
@@ -181,7 +181,7 @@ JSWorker::JSWorker(Structure* structure, JSDOMGlobalObject& globalObject, Ref<Wo
 {
 }
 
-static_assert(std::is_base_of<ActiveDOMObject, Worker>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
+// static_assert(std::is_base_of<ActiveDOMObject, Worker>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
 
 JSObject* JSWorker::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
@@ -333,7 +333,17 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_postMessage2Body(JSC
     auto message = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->argument(1);
-    auto options = convert<IDLDictionary<StructuredSerializeOptions>>(*lexicalGlobalObject, argument1.value());
+    JSValue optionsValue = argument1.value();
+    StructuredSerializeOptions options;
+    if (optionsValue.isObject()) {
+        JSObject* optionsObject = asObject(optionsValue);
+        if (auto transferListValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "transfer"_s))) {
+            auto transferList = convert<IDLSequence<IDLObject>>(*lexicalGlobalObject, transferListValue);
+            RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+            options.transfer = WTFMove(transferList);
+        }
+    }
+
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTFMove(message), WTFMove(options)); })));
 }
@@ -394,7 +404,7 @@ bool JSWorkerOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle,
 {
     auto* jsWorker = jsCast<JSWorker*>(handle.slot()->asCell());
     auto& wrapped = jsWorker->wrapped();
-    if (!wrapped.isContextStopped() && wrapped.hasPendingActivity()) {
+    if (wrapped.hasPendingActivity()) {
         if (UNLIKELY(reason))
             *reason = "ActiveDOMObject with pending activity";
         return true;
@@ -457,5 +467,4 @@ Worker* JSWorker::toWrapped(JSC::VM&, JSC::JSValue value)
         return &wrapper->wrapped();
     return nullptr;
 }
-
 }

@@ -96,7 +96,7 @@ pub const GlobalConstructors = [_]type{
 pub const GlobalClasses = [_]type{
     Bun.Class,
     WebCore.Crypto.Class,
-    EventListenerMixin.addEventListener(VirtualMachine),
+    // EventListenerMixin.addEventListener(VirtualMachine),
 
     // Fetch.Class,
     js_ast.Macro.JSNode.BunJSXCallbackFunction,
@@ -363,6 +363,8 @@ pub const ExitHandler = struct {
     }
 };
 
+pub const WebWorker = @import("./web_worker.zig").WebWorker;
+
 /// TODO: rename this to ScriptExecutionContext
 /// This is the shared global state for a single JS instance execution
 /// Today, Bun is one VM per thread, so the name "VirtualMachine" sort of makes sense
@@ -482,6 +484,7 @@ pub const VirtualMachine = struct {
     parser_arena: ?@import("root").bun.ArenaAllocator = null,
 
     gc_controller: JSC.GarbageCollectionController = .{},
+    parent: ?*JSC.WebWorker = null,
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 

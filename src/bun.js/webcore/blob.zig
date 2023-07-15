@@ -105,6 +105,9 @@ pub const Blob = struct {
     pub const JSTimeType = u52;
     pub const init_timestamp = std.math.maxInt(JSTimeType);
 
+    const serialization_version: u8 = 1;
+    const reserved_space_for_serialization: u32 = 512;
+
     pub fn getFormDataEncoding(this: *Blob) ?*bun.FormData.AsyncFormData {
         var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
         defer content_type_slice.deinit();
@@ -208,6 +211,44 @@ pub const Blob = struct {
         return null;
     }
 
+    const StructuredCloneWriter = struct {
+        ctx: *anyopaque,
+        impl: *const fn (*anyopaque, ptr: [*]const u8, len: u32) callconv(.C) void,
+
+        pub const WriteError = error{};
+        pub fn write(this: StructuredCloneWriter, bytes: []const u8) WriteError!usize {
+            this.impl(this.ctx, bytes.ptr, @truncate(u32, bytes.len));
+            return bytes.len;
+        }
+    };
+
+    fn _onStructuredCloneSerialize(
+        this: *Blob,
+        comptime Writer: type,
+        writer: Writer,
+    ) !void {
+        try writer.writeIntNative(u8, serialization_version);
+
+        try writer.writeIntNative(u32, @truncate(u32, this.content_type.len));
+        _ = try writer.write(this.content_type);
+        try writer.writeIntNative(u8, @intFromBool(this.content_type_was_set));
+
+        const store_tag: Store.SerializeTag = if (this.store) |store|
+            if (store.data == .file) .file else .bytes
+        else
+            .empty;
+
+        try writer.writeIntNative(u8, @intFromEnum(store_tag));
+
+        this.resolveSize();
+        if (this.store) |store| {
+            try store.serialize(Writer, writer);
+        }
+
+        // reserved space for future use
+        _ = try writer.write(&[_]u8{0} ** reserved_space_for_serialization);
+    }
+
     pub fn onStructuredCloneSerialize(
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
@@ -215,9 +256,16 @@ pub const Blob = struct {
         writeBytes: *const fn (*anyopaque, ptr: [*]const u8, len: u32) callconv(.C) void,
     ) callconv(.C) void {
         _ = globalThis;
-        this.resolveSize();
-        writeBytes(ctx, this.sharedView().ptr, @intCast(u32, this.sharedView().len));
-        writeBytes(ctx, this.content_type.ptr, @intCast(u32, this.content_type.len));
+
+        const Writer = std.io.Writer(StructuredCloneWriter, StructuredCloneWriter.WriteError, StructuredCloneWriter.write);
+        var writer = Writer{
+            .context = .{
+                .ctx = ctx,
+                .impl = writeBytes,
+            },
+        };
+
+        _onStructuredCloneSerialize(this, Writer, writer) catch return .zero;
     }
 
     pub fn onStructuredCloneTransfer(
@@ -232,61 +280,126 @@ pub const Blob = struct {
         _ = globalThis;
     }
 
+    fn _onStructuredCloneDeserialize(
+        globalThis: *JSC.JSGlobalObject,
+        comptime Reader: type,
+        reader: Reader,
+    ) !JSValue {
+        const allocator = globalThis.allocator();
+
+        const version = try reader.readIntNative(u8);
+        _ = version;
+
+        const content_type_len = try reader.readIntNative(u32);
+
+        var content_type = try allocator.alloc(u8, content_type_len);
+        _ = try reader.read(content_type);
+
+        const content_type_was_set: bool = try reader.readIntNative(u8) != 0;
+
+        const store_tag = try reader.readEnum(Store.SerializeTag, .Little);
+
+        switch (store_tag) {
+            .bytes => {
+                const bytes_len = try reader.readIntNative(u32);
+                var bytes = try allocator.alloc(u8, bytes_len);
+                _ = try reader.read(bytes);
+
+                var blob = Blob.init(bytes, allocator, globalThis);
+                blob.content_type = content_type;
+                if (blob.content_type.len > 0) {
+                    blob.content_type_allocated = true;
+                    blob.content_type_was_set = content_type_was_set;
+                }
+                var blob_ = try allocator.create(Blob);
+                blob_.* = blob;
+
+                return blob_.toJS(globalThis);
+            },
+            .file => {
+                const pathlike_tag = try reader.readEnum(JSC.Node.PathOrFileDescriptor.SerializeTag, .Little);
+
+                switch (pathlike_tag) {
+                    .fd => {
+                        const fd = @intCast(i32, try reader.readIntNative(u32));
+
+                        var blob = try allocator.create(Blob);
+                        blob.* = Blob.findOrCreateFileFromPath(
+                            JSC.Node.PathOrFileDescriptor{
+                                .fd = fd,
+                            },
+                            globalThis,
+                        );
+
+                        blob.allocator = allocator;
+                        blob.content_type = content_type;
+                        if (blob.content_type.len > 0) {
+                            blob.content_type_allocated = true;
+                            blob.content_type_was_set = content_type_was_set;
+                        }
+
+                        return blob.toJS(globalThis);
+                    },
+                    .path => {
+                        const path_len = try reader.readIntNative(u32);
+
+                        const path = try default_allocator.alloc(u8, path_len);
+                        _ = try reader.read(path);
+
+                        var blob = try allocator.create(Blob);
+                        blob.* = Blob.findOrCreateFileFromPath(
+                            JSC.Node.PathOrFileDescriptor{
+                                .path = .{
+                                    .string = bun.PathString.init(path),
+                                },
+                            },
+                            globalThis,
+                        );
+                        blob.allocator = allocator;
+                        blob.content_type = content_type;
+                        if (blob.content_type.len > 0) {
+                            blob.content_type_allocated = true;
+                            blob.content_type_was_set = content_type_was_set;
+                        }
+
+                        return blob.toJS(globalThis);
+                    },
+                }
+
+                return .zero;
+            },
+            .empty => {
+                var blob = try allocator.create(Blob);
+                blob.* = Blob.initEmpty(globalThis);
+                blob.content_type = content_type;
+                if (blob.content_type.len > 0) {
+                    blob.content_type_allocated = true;
+                    blob.content_type_was_set = content_type_was_set;
+                }
+
+                return blob.toJS(globalThis);
+            },
+        }
+
+        return .zero;
+    }
+
     pub fn onStructuredCloneDeserialize(
         globalThis: *JSC.JSGlobalObject,
         ptr: [*]u8,
         end: [*]u8,
     ) callconv(.C) JSValue {
-        const allocator = globalThis.allocator();
-
         const total_length: usize = @intFromPtr(end) - @intFromPtr(ptr);
-        var slice = ptr[0..total_length];
+        var buffer_stream = std.io.fixedBufferStream(ptr[0..total_length]);
+        var reader = buffer_stream.reader();
 
-        var shared_view_len: u32 = 0;
-        if (slice.len < 4) return .zero;
-        shared_view_len |= @as(u32, slice[0]);
-        shared_view_len |= @as(u32, slice[1]) << 8;
-        shared_view_len |= @as(u32, slice[2]) << 16;
-        shared_view_len |= @as(u32, slice[3]) << 24;
-
-        slice = slice[4..];
-
-        if (slice.len < shared_view_len) return .zero;
-        const shared_view = slice[0..shared_view_len];
-        slice = slice[shared_view_len..];
-
-        var content_type_len: u32 = 0;
-        if (slice.len < 4) return .zero;
-        content_type_len |= @as(u32, slice[0]);
-        content_type_len |= @as(u32, slice[1]) << 8;
-        content_type_len |= @as(u32, slice[2]) << 16;
-        content_type_len |= @as(u32, slice[3]) << 24;
-
-        slice = slice[4..];
-
-        if (slice.len < content_type_len) return .zero;
-        const content_type = slice[0..content_type_len];
-        slice = slice[content_type_len..];
+        const blob = _onStructuredCloneDeserialize(globalThis, @TypeOf(reader), reader) catch return .zero;
 
         if (Environment.allow_assert) {
-            std.debug.assert(slice.len == 0);
+            std.debug.assert(total_length - reader.context.pos == reserved_space_for_serialization);
         }
 
-        var blob = Blob.create(shared_view, allocator, globalThis, false);
-        blob.content_type = brk: {
-            if (globalThis.bunVM().mimeType(content_type)) |mime| {
-                break :brk mime.value;
-            }
-
-            var content_type_buf = allocator.alloc(u8, content_type.len) catch return .zero;
-            blob.content_type_allocated = true;
-            break :brk strings.copyLowercase(content_type, content_type_buf);
-        };
-        var blob_ = allocator.create(Blob) catch return .zero;
-        blob_.* = blob;
-        blob_.*.allocator = allocator;
-
-        return blob_.toJS(globalThis);
+        return blob;
     }
 
     const URLSearchParamsConverter = struct {
@@ -1174,6 +1287,37 @@ pub const Blob = struct {
             }
 
             allocator.destroy(this);
+        }
+
+        const SerializeTag = enum(u8) {
+            file = 0,
+            bytes = 1,
+            empty = 2,
+        };
+
+        pub fn serialize(this: *Store, comptime Writer: type, writer: Writer) !void {
+            switch (this.data) {
+                .file => |file| {
+                    const pathlike_tag: JSC.Node.PathOrFileDescriptor.SerializeTag = if (file.pathlike == .fd) .fd else .path;
+                    try writer.writeIntNative(u8, @intFromEnum(pathlike_tag));
+
+                    switch (file.pathlike) {
+                        .fd => |fd| {
+                            try writer.writeIntNative(u32, @intCast(u32, fd));
+                        },
+                        .path => |path| {
+                            const path_slice = path.slice();
+                            try writer.writeIntNative(u32, @truncate(u32, path_slice.len));
+                            _ = try writer.write(path_slice);
+                        },
+                    }
+                },
+                .bytes => |bytes| {
+                    const slice = bytes.slice();
+                    try writer.writeIntNative(u32, @truncate(u32, slice.len));
+                    _ = try writer.write(slice);
+                },
+            }
         }
 
         pub fn fromArrayList(list: std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator) !*Blob.Store {

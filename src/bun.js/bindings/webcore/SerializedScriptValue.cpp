@@ -2186,7 +2186,6 @@ private:
 
 void SerializedScriptValue::writeBytesForBun(CloneSerializer* ctx, const uint8_t* data, uint32_t size)
 {
-    writeLittleEndian(ctx->m_buffer, size);
     ctx->write(data, size);
 }
 

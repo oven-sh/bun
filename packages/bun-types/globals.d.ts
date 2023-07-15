@@ -356,6 +356,16 @@ interface StructuredSerializeOptions {
   transfer?: Transferable[];
 }
 
+/**
+ * Creates a deep clone of an object.
+ *
+ * [MDN Reference](https://developer.mozilla.org/docs/Web/API/structuredClone)
+ */
+declare function structuredClone<T>(
+  value: T,
+  options?: StructuredSerializeOptions,
+): T;
+
 interface EncodeIntoResult {
   /**
    * The read Unicode code units of input.
@@ -1930,7 +1940,7 @@ type WebSocketEventMap = {
   ping: MessageEvent<Buffer>;
   pong: MessageEvent<Buffer>;
   error: Event;
-}
+};
 
 /**
  * A state that represents if a WebSocket is connected.
@@ -1950,7 +1960,7 @@ type WebSocketReadyState = 0 | 1 | 2 | 3;
  * @see https://developer.mozilla.org/en-US/docs/Web/API/WebSocket
  * @example
  * const ws = new WebSocket("wss://ws.postman-echo.com/raw");
- * 
+ *
  * ws.addEventListener("open", () => {
  *   console.log("Connected");
  * });
@@ -1986,7 +1996,7 @@ interface WebSocket extends EventTarget {
    * - `4000` through `4999` are reserved for applications (you can use it!)
    *
    * To abruptly close the connection without a code, use `terminate()` instead.
-   * 
+   *
    * @param code the close code
    * @param reason the close reason
    * @example
@@ -2127,7 +2137,7 @@ interface WebSocket extends EventTarget {
  * @see https://developer.mozilla.org/en-US/docs/Web/API/WebSocket
  * @example
  * const ws = new WebSocket("wss://ws.postman-echo.com/raw");
- * 
+ *
  * ws.addEventListener("open", () => {
  *   console.log("Connected");
  * });
@@ -2141,10 +2151,7 @@ interface WebSocket extends EventTarget {
 declare var WebSocket: {
   prototype: WebSocket;
 
-  new (
-    url: string | URL,
-    protocols?: string | string[],
-  ): WebSocket;
+  new (url: string | URL, protocols?: string | string[]): WebSocket;
 
   new (
     url: string | URL,

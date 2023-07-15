@@ -715,6 +715,46 @@ ZIG_DECL void FileSink__updateRef(void* arg0, bool arg1);
 ZIG_DECL JSC__JSValue FileSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
 
 #endif
+CPP_DECL JSC__JSValue BrotliDecompressorSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
+CPP_DECL JSC__JSValue BrotliDecompressorSink__createObject(JSC__JSGlobalObject* arg0, void* arg1);
+CPP_DECL void BrotliDecompressorSink__detachPtr(JSC__JSValue JSValue0);
+CPP_DECL void* BrotliDecompressorSink__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
+CPP_DECL void BrotliDecompressorSink__onClose(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
+CPP_DECL void BrotliDecompressorSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSValue JSValue2);
+
+#ifdef __cplusplus
+
+ZIG_DECL JSC__JSValue BrotliDecompressorSink__close(JSC__JSGlobalObject* arg0, void* arg1);
+ZIG_DECL JSC__JSValue BrotliDecompressorSink__construct(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL JSC__JSValue BrotliDecompressorSink__end(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL JSC__JSValue BrotliDecompressorSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
+ZIG_DECL void BrotliDecompressorSink__finalize(void* arg0);
+ZIG_DECL JSC__JSValue BrotliDecompressorSink__flush(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL JSC__JSValue BrotliDecompressorSink__start(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL void BrotliDecompressorSink__updateRef(void* arg0, bool arg1);
+ZIG_DECL JSC__JSValue BrotliDecompressorSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+
+#endif
+CPP_DECL JSC__JSValue BrotliCompressorSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
+CPP_DECL JSC__JSValue BrotliCompressorSink__createObject(JSC__JSGlobalObject* arg0, void* arg1);
+CPP_DECL void BrotliCompressorSink__detachPtr(JSC__JSValue JSValue0);
+CPP_DECL void* BrotliCompressorSink__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
+CPP_DECL void BrotliCompressorSink__onClose(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
+CPP_DECL void BrotliCompressorSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSValue JSValue2);
+
+#ifdef __cplusplus
+
+ZIG_DECL JSC__JSValue BrotliCompressorSink__close(JSC__JSGlobalObject* arg0, void* arg1);
+ZIG_DECL JSC__JSValue BrotliCompressorSink__construct(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL JSC__JSValue BrotliCompressorSink__end(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL JSC__JSValue BrotliCompressorSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
+ZIG_DECL void BrotliCompressorSink__finalize(void* arg0);
+ZIG_DECL JSC__JSValue BrotliCompressorSink__flush(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL JSC__JSValue BrotliCompressorSink__start(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL void BrotliCompressorSink__updateRef(void* arg0, bool arg1);
+ZIG_DECL JSC__JSValue BrotliCompressorSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+
+#endif
 
 #ifdef __cplusplus
 

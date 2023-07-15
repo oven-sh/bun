@@ -1390,7 +1390,7 @@ extern "C" JSC__JSValue Bun__createArrayBufferForCopy(JSC::JSGlobalObject* globa
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    if (len > 0)
+    if (len > 0 && ptr)
         memcpy(arrayBuffer->data(), ptr, len);
 
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSArrayBuffer::create(globalObject->vm(), globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTFMove(arrayBuffer))));
@@ -1409,7 +1409,7 @@ extern "C" JSC__JSValue Bun__createUint8ArrayForCopy(JSC::JSGlobalObject* global
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    if (len > 0)
+    if (len > 0 && ptr)
         memcpy(array->vector(), ptr, len);
 
     RELEASE_AND_RETURN(scope, JSValue::encode(array));
@@ -4240,7 +4240,6 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
             object->putDirectCustomAccessor(vm, identifier, JSC::CustomGetterSetter::create(vm, functionBrotliDecompressorSink__getter, nullptr),
                 JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
         }
-
 
         {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "BrotliCompressorSink"_s);

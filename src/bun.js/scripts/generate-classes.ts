@@ -345,6 +345,25 @@ ${
 JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);`
     : ""
 }
+
+${
+  obj.structuredClone
+    ? `extern "C" void ${symbolName(
+        typeName,
+        "onStructuredCloneSerialize",
+      )}(void*, JSC::JSGlobalObject*, void*, void (*) (CloneSerializer*, const uint8_t*, uint32_t));`
+    : ""
+}
+
+${
+  obj.structuredClone
+    ? `extern "C" JSC::EncodedJSValue ${symbolName(
+        typeName,
+        "onStructuredCloneDeserialize",
+      )}(JSC::JSGlobalObject*, const uint8_t*, const uint8_t*);`
+    : ""
+}
+
 ${"finalize" in obj ? `extern "C" void ${classSymbolName(typeName, "finalize")}(void*);` : ""}
 ${obj.call ? `extern "C" JSC_DECLARE_HOST_FUNCTION(${classSymbolName(typeName, "call")});` : ""}
 
@@ -1200,6 +1219,7 @@ function generateZig(
     call = false,
     values = [],
     hasPendingActivity = false,
+    structuredClone = false,
   } = {} as ClassDefinition,
 ) {
   const exports = new Map<string, string>();
@@ -1225,6 +1245,16 @@ function generateZig(
   }
   Object.values(klass).map(a => appendSymbols(exports, name => classSymbolName(typeName, name), a));
   Object.values(proto).map(a => appendSymbols(exports, name => protoSymbolName(typeName, name), a));
+
+  if (structuredClone) {
+    exports.set("onStructuredCloneSerialize", symbolName(typeName, "onStructuredCloneSerialize"));
+
+    if (structuredClone === "transferrable") {
+      exports.set("onStructuredCloneTransfer", symbolName(typeName, "onStructuredCloneTransfer"));
+    }
+
+    exports.set("onStructuredCloneDeserialize", symbolName(typeName, "onStructuredCloneDeserialize"));
+  }
 
   const externs = Object.entries({
     ...proto,
@@ -1266,6 +1296,29 @@ function generateZig(
         if (@TypeOf(${typeName}.estimatedSize) != (fn(*${typeName}) callconv(.C) usize)) {
            @compileLog("${typeName}.estimatedSize is not a size function");
         }
+      `;
+    }
+
+    if (structuredClone) {
+      output += `
+      if (@TypeOf(${typeName}.onStructuredCloneSerialize) != (fn(*${typeName}, globalThis: *JSC.JSGlobalObject, ctx: *anyopaque, writeBytes: *const fn(*anyopaque, ptr: [*]const u8, len: u32) callconv(.C) void) callconv(.C) void)) {
+        @compileLog("${typeName}.onStructuredCloneSerialize is not a structured clone serialize function");
+      }
+      `;
+
+      if (structuredClone === "transferrable") {
+        exports.set("structuredClone", symbolName(typeName, "onTransferrableStructuredClone"));
+        output += `
+        if (@TypeOf(${typeName}.onStructuredCloneTransfer) != (fn(*${typeName}, globalThis: *JSC.JSGlobalObject, ctx: *anyopaque, write: *const fn(*anyopaque, ptr: [*]const u8, len: usize) callconv(.C) void) callconv(.C) void)) {
+          @compileLog("${typeName}.onStructuredCloneTransfer is not a structured clone transfer function");
+        }
+        `;
+      }
+
+      output += `
+      if (@TypeOf(${typeName}.onStructuredCloneDeserialize) != (fn(globalThis: *JSC.JSGlobalObject, ptr: [*]u8, end: [*]u8) callconv(.C) JSC.JSValue)) {
+        @compileLog("${typeName}.onStructuredCloneDeserialize is not a structured clone deserialize function");
+      }
       `;
     }
 
@@ -1532,6 +1585,7 @@ namespace Zig {
 
 #include "JSDOMWrapper.h"
 #include <wtf/NeverDestroyed.h>
+#include "SerializedScriptValue.h"
 `,
 
   `
@@ -1542,11 +1596,6 @@ using namespace JSC;
 
 `,
 ];
-
-const GENERATED_CLASSES_FOOTER = `
-}
-
-`;
 
 const GENERATED_CLASSES_IMPL_HEADER = `
 // GENERATED CODE - DO NOT MODIFY BY HAND
@@ -1676,6 +1725,84 @@ function writeAndUnlink(path, content) {
   return Bun.write(path, content);
 }
 
+const GENERATED_CLASSES_FOOTER = `
+
+class StructuredCloneableSerialize {
+  public:
+
+    void (*cppWriteBytes)(CloneSerializer*, const uint8_t*, uint32_t);
+
+    std::function<void(void*, JSC::JSGlobalObject*, void*, void (*)(CloneSerializer*, const uint8_t*, uint32_t))> zigFunction;
+
+    uint8_t tag;
+
+    // the type from zig
+    void* impl;
+
+    static std::optional<StructuredCloneableSerialize> fromJS(JSC::JSValue);
+    void write(CloneSerializer* serializer, JSC::JSGlobalObject* globalObject)
+    {
+      zigFunction(impl, globalObject, serializer, cppWriteBytes);
+    }
+};
+
+class StructuredCloneableDeserialize {
+  public:
+    static std::optional<JSC::EncodedJSValue> fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject*, const uint8_t*, const uint8_t*);
+};
+
+}
+
+`;
+
+function writeCppSerializers() {
+  var output = ``;
+
+  var structuredClonable = classes
+    .filter(a => a.structuredClone)
+    .sort((a, b) => a.structuredClone.tag < b.structuredClone.tag);
+
+  function fromJSForEachClass(klass) {
+    return `
+    if (auto* result = jsDynamicCast<${className(klass.name)}*>(value)) {
+      return StructuredCloneableSerialize { .cppWriteBytes = SerializedScriptValue::writeBytesForBun, .zigFunction = ${symbolName(
+        klass.name,
+        "onStructuredCloneSerialize",
+      )}, .tag = ${klass.structuredClone.tag}, .impl = result->wrapped() };
+    }
+    `;
+  }
+
+  function fromTagDeserializeForEachClass(klass) {
+    return `
+    if (tag == ${klass.structuredClone.tag}) {
+      return ${symbolName(klass.name, "onStructuredCloneDeserialize")}(globalObject, ptr, end);
+    }
+    `;
+  }
+
+  output += `  
+  std::optional<StructuredCloneableSerialize> StructuredCloneableSerialize::fromJS(JSC::JSValue value)
+  {
+    ${structuredClonable.map(fromJSForEachClass).join("\n").trim()}
+    return std::nullopt;
+  }
+  `;
+
+  output += `
+  std::optional<JSC::EncodedJSValue> StructuredCloneableDeserialize::fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject* globalObject, const uint8_t* ptr, const uint8_t* end)
+  {
+    ${structuredClonable.map(fromTagDeserializeForEachClass).join("\n").trim()}
+    return std::nullopt;
+  }
+  `;
+
+  for (let klass of classes) {
+  }
+
+  return output;
+}
+
 await writeAndUnlink(`${import.meta.dir}/../bindings/generated_classes.zig`, [
   ZIG_GENERATED_CLASSES_HEADER,
 
@@ -1699,6 +1826,7 @@ await writeAndUnlink(`${import.meta.dir}/../bindings/ZigGeneratedClasses.h`, [
 await writeAndUnlink(`${import.meta.dir}/../bindings/ZigGeneratedClasses.cpp`, [
   GENERATED_CLASSES_IMPL_HEADER,
   ...classes.map(a => generateImpl(a.name, a)),
+  writeCppSerializers(classes),
   GENERATED_CLASSES_IMPL_FOOTER,
 ]);
 await writeAndUnlink(

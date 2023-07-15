@@ -115,6 +115,18 @@ public:
     // {
     // }
 
+#if ENABLE(WEB_CRYPTO)
+    // These two methods are used when CryptoKeys are serialized into IndexedDB. As a side effect, it is also
+    // used for things that utilize the same structure clone algorithm, for example, message passing between
+    // worker and document.
+
+    // For now these will return false. In the future, we will want to implement these similar to how WorkerGlobalScope.cpp does.
+    // virtual bool wrapCryptoKey(const Vector<uint8_t>& key, Vector<uint8_t>& wrappedKey) = 0;
+    // virtual bool unwrapCryptoKey(const Vector<uint8_t>& wrappedKey, Vector<uint8_t>& key) = 0;
+    bool wrapCryptoKey(const Vector<uint8_t>& key, Vector<uint8_t>& wrappedKey) { return false; }
+    bool unwrapCryptoKey(const Vector<uint8_t>& wrappedKey, Vector<uint8_t>& key) { return false; }
+#endif
+
     static bool postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task);
 
     void regenerateIdentifier();
@@ -194,4 +206,7 @@ public:
         }
     }
 };
+
+ScriptExecutionContext* executionContext(JSC::JSGlobalObject*);
+
 }

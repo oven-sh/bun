@@ -79,7 +79,7 @@ class BunWebSocket extends EventEmitter {
           }
         });
       } else if (event === "error") {
-        this.#ws.addEventListener("error", (err) => {
+        this.#ws.addEventListener("error", err => {
           this.emit("error", err);
         });
       } else if (event === "ping") {

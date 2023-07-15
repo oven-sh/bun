@@ -125,6 +125,7 @@ export default [
     JSType: "0b11101110",
     klass: {},
     configurable: false,
+    structuredClone: { transferrable: false, tag: 254 },
     proto: {
       text: { fn: "getText" },
       json: { fn: "getJSON" },

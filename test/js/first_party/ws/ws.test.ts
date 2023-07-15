@@ -110,11 +110,11 @@ describe("WebSocket", () => {
           expect(isBinary).toBeTrue();
           ws.ping();
         });
-        ws.on("ping", (data) => {
+        ws.on("ping", data => {
           expect(data).toBeInstanceOf(type);
           ws.pong();
         });
-        ws.on("pong", (data) => {
+        ws.on("pong", data => {
           expect(data).toBeInstanceOf(type);
           done();
         });
@@ -145,7 +145,7 @@ describe("WebSocket", () => {
       ws.on("open", () => {
         ws.ping();
       });
-      ws.on("ping", (data) => {
+      ws.on("ping", data => {
         expect(data).toBeInstanceOf(Buffer);
         done();
       });
@@ -155,7 +155,7 @@ describe("WebSocket", () => {
         ws.on("open", () => {
           ws.ping(message);
         });
-        ws.on("ping", (data) => {
+        ws.on("ping", data => {
           expect(data).toEqual(Buffer.from(bytes));
           done();
         });
@@ -167,7 +167,7 @@ describe("WebSocket", () => {
       ws.on("open", () => {
         ws.pong();
       });
-      ws.on("pong", (data) => {
+      ws.on("pong", data => {
         expect(data).toBeInstanceOf(Buffer);
         done();
       });
@@ -177,7 +177,7 @@ describe("WebSocket", () => {
         ws.on("open", () => {
           ws.pong(message);
         });
-        ws.on("pong", (data) => {
+        ws.on("pong", data => {
           expect(data).toEqual(Buffer.from(bytes));
           done();
         });

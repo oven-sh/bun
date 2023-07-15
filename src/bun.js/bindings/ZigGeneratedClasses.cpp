@@ -98,6 +98,11 @@ private:
 
 extern "C" void* BlobClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsBlobConstructor);
+
+extern "C" void Blob__onStructuredCloneSerialize(void*, JSC::JSGlobalObject*, void*, void (*)(CloneSerializer*, const uint8_t*, uint32_t));
+
+extern "C" JSC::EncodedJSValue Blob__onStructuredCloneDeserialize(JSC::JSGlobalObject*, const uint8_t*, const uint8_t*);
+
 extern "C" void BlobClass__finalize(void*);
 
 extern "C" EncodedJSValue BlobPrototype__getArrayBuffer(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
@@ -1250,6 +1255,7 @@ private:
 
 extern "C" void* BuildMessageClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsBuildMessageConstructor);
+
 extern "C" void BuildMessageClass__finalize(void*);
 
 extern "C" EncodedJSValue BuildMessagePrototype__toPrimitive(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
@@ -1727,6 +1733,7 @@ private:
 
 extern "C" void* CryptoHasherClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsCryptoHasherConstructor);
+
 extern "C" void CryptoHasherClass__finalize(void*);
 
 extern "C" JSC::EncodedJSValue CryptoHasherPrototype__getAlgorithm(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
@@ -2155,6 +2162,7 @@ private:
 
 extern "C" void* DirentClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsDirentConstructor);
+
 extern "C" void DirentClass__finalize(void*);
 
 extern "C" EncodedJSValue DirentPrototype__isBlockDevice(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
@@ -2681,6 +2689,7 @@ private:
 
 extern "C" void* ExpectClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsExpectConstructor);
+
 extern "C" void ExpectClass__finalize(void*);
 extern "C" JSC_DECLARE_HOST_FUNCTION(ExpectClass__call);
 
@@ -5783,6 +5792,7 @@ private:
 
 extern "C" void* FileSystemRouterClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsFileSystemRouterConstructor);
+
 extern "C" void FileSystemRouterClass__finalize(void*);
 
 extern "C" EncodedJSValue FileSystemRouterPrototype__match(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
@@ -6191,6 +6201,7 @@ private:
 
 extern "C" void* ListenerClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsListenerConstructor);
+
 extern "C" void ListenerClass__finalize(void*);
 
 extern "C" JSC::EncodedJSValue ListenerPrototype__getData(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
@@ -6640,6 +6651,7 @@ private:
 
 extern "C" void* MD4Class__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsMD4Constructor);
+
 extern "C" void MD4Class__finalize(void*);
 
 extern "C" JSC::EncodedJSValue MD4Prototype__getByteLength(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
@@ -6967,6 +6979,7 @@ private:
 
 extern "C" void* MD5Class__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsMD5Constructor);
+
 extern "C" void MD5Class__finalize(void*);
 
 extern "C" JSC::EncodedJSValue MD5Prototype__getByteLength(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
@@ -7257,6 +7270,7 @@ private:
 
 extern "C" void* MatchedRouteClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsMatchedRouteConstructor);
+
 extern "C" void MatchedRouteClass__finalize(void*);
 
 extern "C" JSC::EncodedJSValue MatchedRoutePrototype__getFilePath(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
@@ -7756,6 +7770,7 @@ private:
 
 extern "C" void* NodeJSFSClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeJSFSConstructor);
+
 extern "C" void NodeJSFSClass__finalize(void*);
 
 extern "C" EncodedJSValue NodeJSFSPrototype__access(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
@@ -10537,6 +10552,7 @@ private:
 
 extern "C" void* RequestClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsRequestConstructor);
+
 extern "C" void RequestClass__finalize(void*);
 
 extern "C" EncodedJSValue RequestPrototype__getArrayBuffer(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
@@ -11309,6 +11325,7 @@ private:
 
 extern "C" void* ResolveMessageClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsResolveMessageConstructor);
+
 extern "C" void ResolveMessageClass__finalize(void*);
 
 extern "C" EncodedJSValue ResolveMessagePrototype__toPrimitive(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
@@ -11898,6 +11915,7 @@ private:
 
 extern "C" void* ResponseClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsResponseConstructor);
+
 extern "C" void ResponseClass__finalize(void*);
 
 extern "C" EncodedJSValue ResponsePrototype__getArrayBuffer(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
@@ -12599,6 +12617,7 @@ private:
 
 extern "C" void* SHA1Class__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsSHA1Constructor);
+
 extern "C" void SHA1Class__finalize(void*);
 
 extern "C" JSC::EncodedJSValue SHA1Prototype__getByteLength(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
@@ -12926,6 +12945,7 @@ private:
 
 extern "C" void* SHA224Class__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsSHA224Constructor);
+
 extern "C" void SHA224Class__finalize(void*);
 
 extern "C" JSC::EncodedJSValue SHA224Prototype__getByteLength(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
@@ -13253,6 +13273,7 @@ private:
 
 extern "C" void* SHA256Class__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsSHA256Constructor);
+
 extern "C" void SHA256Class__finalize(void*);
 
 extern "C" JSC::EncodedJSValue SHA256Prototype__getByteLength(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
@@ -13580,6 +13601,7 @@ private:
 
 extern "C" void* SHA384Class__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsSHA384Constructor);
+
 extern "C" void SHA384Class__finalize(void*);
 
 extern "C" JSC::EncodedJSValue SHA384Prototype__getByteLength(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
@@ -13907,6 +13929,7 @@ private:
 
 extern "C" void* SHA512Class__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsSHA512Constructor);
+
 extern "C" void SHA512Class__finalize(void*);
 
 extern "C" JSC::EncodedJSValue SHA512Prototype__getByteLength(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
@@ -14234,6 +14257,7 @@ private:
 
 extern "C" void* SHA512_256Class__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsSHA512_256Constructor);
+
 extern "C" void SHA512_256Class__finalize(void*);
 
 extern "C" JSC::EncodedJSValue SHA512_256Prototype__getByteLength(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
@@ -14561,6 +14585,7 @@ private:
 
 extern "C" void* ServerWebSocketClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsServerWebSocketConstructor);
+
 extern "C" void ServerWebSocketClass__finalize(void*);
 
 extern "C" JSC::EncodedJSValue ServerWebSocketPrototype__getBinaryType(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
@@ -15504,6 +15529,7 @@ private:
 
 extern "C" void* StatsClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsStatsConstructor);
+
 extern "C" void StatsClass__finalize(void*);
 
 extern "C" JSC::EncodedJSValue StatsPrototype__atime(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
@@ -16433,6 +16459,7 @@ private:
 
 extern "C" void* SubprocessClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsSubprocessConstructor);
+
 extern "C" void SubprocessClass__finalize(void*);
 
 extern "C" JSC::EncodedJSValue SubprocessPrototype__getExitCode(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
@@ -16963,6 +16990,7 @@ private:
 
 extern "C" void* TCPSocketClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsTCPSocketConstructor);
+
 extern "C" void TCPSocketClass__finalize(void*);
 
 extern "C" JSC::EncodedJSValue TCPSocketPrototype__getALPNProtocol(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
@@ -17648,6 +17676,7 @@ private:
 
 extern "C" void* TLSSocketClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsTLSSocketConstructor);
+
 extern "C" void TLSSocketClass__finalize(void*);
 
 extern "C" JSC::EncodedJSValue TLSSocketPrototype__getALPNProtocol(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
@@ -18370,6 +18399,7 @@ private:
 
 extern "C" void* TextDecoderClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsTextDecoderConstructor);
+
 extern "C" void TextDecoderClass__finalize(void*);
 
 extern "C" EncodedJSValue TextDecoderPrototype__decode(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
@@ -19081,6 +19111,7 @@ private:
 
 extern "C" void* TranspilerClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsTranspilerConstructor);
+
 extern "C" void TranspilerClass__finalize(void*);
 
 extern "C" EncodedJSValue TranspilerPrototype__scan(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
@@ -19375,6 +19406,21 @@ extern "C" EncodedJSValue Transpiler__create(Zig::GlobalObject* globalObject, vo
     JSTranspiler* instance = JSTranspiler::create(vm, globalObject, structure, ptr);
 
     return JSValue::encode(instance);
+}
+std::optional<StructuredCloneableSerialize> StructuredCloneableSerialize::fromJS(JSC::JSValue value)
+{
+    if (auto* result = jsDynamicCast<JSBlob*>(value)) {
+        return StructuredCloneableSerialize { .cppWriteBytes = SerializedScriptValue::writeBytesForBun, .zigFunction = Blob__onStructuredCloneSerialize, .tag = 254, .impl = result->wrapped() };
+    }
+    return std::nullopt;
+}
+
+std::optional<JSC::EncodedJSValue> StructuredCloneableDeserialize::fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject* globalObject, const uint8_t* ptr, const uint8_t* end)
+{
+    if (tag == 254) {
+        return Blob__onStructuredCloneDeserialize(globalObject, ptr, end);
+    }
+    return std::nullopt;
 }
 
 } // namespace WebCore

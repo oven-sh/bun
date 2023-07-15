@@ -312,9 +312,6 @@ pub const Expect = struct {
 
         const not = this.flags.not;
         var pass = right.isSameValue(left, globalObject);
-        if (comptime Environment.allow_assert) {
-            std.debug.assert(pass == JSC.C.JSValueIsStrictEqual(globalObject, right.asObjectRef(), left.asObjectRef()));
-        }
 
         if (not) pass = !pass;
         if (pass) return thisValue;

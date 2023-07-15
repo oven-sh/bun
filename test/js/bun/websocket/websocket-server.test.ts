@@ -107,7 +107,8 @@ describe("Server", () => {
         const data = new Uint8Array(1 * 1024 * 1024);
         // send data until backpressure is triggered
         for (let i = 0; i < 10; i++) {
-          if (ws.send(data) < 1) { // backpressure or dropped
+          if (ws.send(data) < 1) {
+            // backpressure or dropped
             break;
           }
         }

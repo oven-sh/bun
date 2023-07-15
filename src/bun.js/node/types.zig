@@ -1024,6 +1024,8 @@ pub const PathOrFileDescriptor = union(Tag) {
 
     pub const Tag = enum { fd, path };
 
+    pub const SerializeTag = enum(u8) { fd, path };
+
     /// This will unref() the path string if it is a PathLike.
     /// Does nothing for file descriptors, **does not** close file descriptors.
     pub fn deinit(this: PathOrFileDescriptor) void {

@@ -20,9 +20,10 @@ pub const WebWorker = struct {
     arena: bun.MimallocArena = undefined,
     name: [:0]const u8 = "Worker",
     cpp_worker: *void,
-    allowed_to_exit: bool = true,
+    allowed_to_exit: bool = false,
     mini: bool = false,
     parent_poll_ref: JSC.PollRef = .{},
+    initial_poll_ref: JSC.PollRef = .{},
 
     extern fn WebWorker__dispatchExit(?*JSC.JSGlobalObject, *void, i32) void;
     extern fn WebWorker__dispatchOnline(this: *void, *JSC.JSGlobalObject) void;
@@ -57,6 +58,7 @@ pub const WebWorker = struct {
         parent_context_id: u32,
         this_context_id: u32,
         mini: bool,
+        default_unref: bool,
     ) callconv(.C) ?*WebWorker {
         JSC.markBinding(@src());
         var spec_slice = specifier_str.toUTF8(bun.default_allocator);
@@ -96,14 +98,41 @@ pub const WebWorker = struct {
             },
         };
 
-        var thread = std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, startWithErrorHandling, .{worker}) catch {
-            error_message.* = bun.String.static("Failed to create worker thread");
-            bun.default_allocator.destroy(worker);
+        worker.initial_poll_ref.ref(parent);
+
+        if (!default_unref) {
+            worker.allowed_to_exit = false;
+            worker.parent_poll_ref.ref(parent);
+        }
+
+        var thread = std.Thread.spawn(
+            .{ .stack_size = 2 * 1024 * 1024 },
+            startWithErrorHandling,
+            .{worker},
+        ) catch {
+            worker.deinit();
+            worker.requested_terminate = true;
+            worker.parent_poll_ref.unref(worker.parent);
+            worker.initial_poll_ref.unref(worker.parent);
             return null;
         };
         thread.detach();
 
         return worker;
+    }
+
+    fn queueInitialTask(this: *WebWorker) void {
+        const Unref = struct {
+            pub fn unref(worker: *WebWorker) void {
+                worker.initial_poll_ref.unref(worker.parent);
+            }
+        };
+
+        const AnyTask = JSC.AnyTask.New(WebWorker, Unref.unref);
+        var any_task = bun.default_allocator.create(JSC.AnyTask) catch @panic("OOM");
+        any_task.* = AnyTask.init(this);
+        var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch @panic("OOM");
+        this.parent.eventLoop().enqueueTaskConcurrent(concurrent_task.from(any_task));
     }
 
     pub fn startWithErrorHandling(
@@ -124,6 +153,7 @@ pub const WebWorker = struct {
         }
 
         if (this.requested_terminate) {
+            this.queueInitialTask();
             this.deinit();
             return;
         }
@@ -232,6 +262,8 @@ pub const WebWorker = struct {
             return;
         };
 
+        this.queueInitialTask();
+
         if (promise.status(vm.global.vm()) == .Rejected) {
             vm.onUnhandledError(vm.global, promise.result(vm.global.vm()));
 
@@ -272,6 +304,11 @@ pub const WebWorker = struct {
                     vm.eventLoop().tickPossiblyForever();
                     continue;
                 }
+
+                vm.onBeforeExit();
+
+                if (!this.allowed_to_exit)
+                    continue;
 
                 break;
             }

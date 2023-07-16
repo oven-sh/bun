@@ -113,7 +113,8 @@ extern "C" void* WebWorker__create(
     BunString* errorMessage,
     uint32_t parentContextId,
     uint32_t contextId,
-    bool miniMode);
+    bool miniMode,
+    bool unrefByDefault);
 extern "C" void WebWorker__setRef(
     void* worker,
     bool ref);
@@ -136,6 +137,7 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
     BunString nameStr = Bun::toString(worker->m_options.name);
 
     bool miniMode = worker->m_options.bun.mini;
+    bool unrefByDefault = worker->m_options.bun.unref;
 
     void* impl = WebWorker__create(
         worker.ptr(),
@@ -144,7 +146,7 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         urlStr,
         &errorMessage,
         static_cast<uint32_t>(context.identifier()),
-        static_cast<uint32_t>(worker->m_clientIdentifier), miniMode);
+        static_cast<uint32_t>(worker->m_clientIdentifier), miniMode, unrefByDefault);
 
     if (!impl) {
         return Exception { TypeError, Bun::toWTFString(errorMessage) };
@@ -264,8 +266,6 @@ void Worker::drainEvents()
 
 void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
 {
-    this->m_isOnline = true;
-    auto tasks = std::exchange(this->m_pendingTasks, {});
 
     auto* ctx = scriptExecutionContext();
     if (ctx) {
@@ -277,14 +277,26 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
         });
     }
 
+    this->m_isOnline = true;
     auto* thisContext = workerGlobalObject->scriptExecutionContext();
-    if (!thisContext)
+    if (!thisContext) {
         return;
-
-    for (auto& task : tasks) {
-        task(*thisContext);
     }
-    tasks.clear();
+
+    if (workerGlobalObject->eventTarget()->hasActiveEventListeners(eventNames().messageEvent)) {
+        auto tasks = std::exchange(this->m_pendingTasks, {});
+        for (auto& task : tasks) {
+            task(*thisContext);
+        }
+    } else {
+        auto tasks = std::exchange(this->m_pendingTasks, {});
+        thisContext->postTask([tasks = WTFMove(tasks)](auto& ctx) mutable {
+            for (auto& task : tasks) {
+                task(ctx);
+            }
+            tasks.clear();
+        });
+    }
 }
 void Worker::dispatchError(WTF::String message)
 {

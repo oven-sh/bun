@@ -4,6 +4,7 @@ test("worker", done => {
   const worker = new Worker(new URL("worker-fixture.js", import.meta.url).href, {
     bun: {
       mini: true,
+      ref: true,
     },
   });
   worker.postMessage("hello");

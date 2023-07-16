@@ -6,6 +6,7 @@ namespace WebCore {
 
 struct BunOptions {
     bool mini { false };
+    bool unref { false };
 };
 
 struct WorkerOptions {

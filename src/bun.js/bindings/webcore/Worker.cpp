@@ -294,8 +294,6 @@ void Worker::dispatchError(WTF::String message)
         return;
 
     ScriptExecutionContext::postTaskTo(ctx->identifier(), [protectedThis = Ref { *this }, message = message.isolatedCopy()](ScriptExecutionContext& context) -> void {
-        protectedThis->drainEvents();
-
         ErrorEvent::Init init;
         init.message = message;
 
@@ -312,6 +310,7 @@ void Worker::dispatchExit()
     ScriptExecutionContext::postTaskTo(ctx->identifier(), [protectedThis = Ref { *this }](ScriptExecutionContext& context) -> void {
         protectedThis->m_isOnline = false;
         protectedThis->m_isClosing = true;
+        protectedThis->setKeepAlive(false);
 
         if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
             auto event = Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No);

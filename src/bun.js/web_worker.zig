@@ -298,6 +298,11 @@ pub const WebWorker = struct {
     }
 
     pub fn setRef(this: *WebWorker, value: bool) callconv(.C) void {
+        if (this.requested_terminate and value) {
+            this.parent_poll_ref.unref(this.parent);
+            return;
+        }
+
         this.allowed_to_exit = value;
         if (value) {
             this.parent_poll_ref.ref(this.parent);

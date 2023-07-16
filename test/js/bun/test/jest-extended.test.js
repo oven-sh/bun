@@ -105,7 +105,37 @@ describe("jest-extended", () => {
     expect({}).not.toBeNil();
   });
 
-  // test('toSatisfy()')
+  test("toSatisfy()", () => {
+    // Arrow functions
+    const isOdd = value => value % 2 === 1;
+    const hasLetterH = (value) => value.includes("H");
+
+    expect(1).toSatisfy(isOdd);
+    expect("Hello").toSatisfy(hasLetterH);
+
+    // Function expressions
+    function hasBunInAnArray(value) { return value.includes("bun"); }
+
+    expect(["bun", "cheese", "patty"]).toSatisfy(hasBunInAnArray);
+    expect(["cheese", "patty"]).not.toSatisfy(hasBunInAnArray);
+
+    // Inline functions
+    expect([]).toSatisfy((value) => value.length === 0);
+    expect([]).not.toSatisfy(value => value.length > 0);
+
+    // Some other types
+    const fooIsBar = (value) => value?.foo === "bar";
+
+    expect({ foo: "bar" }).toSatisfy(fooIsBar);
+    expect({ foo: "bun" }).not.toSatisfy(fooIsBar);
+    expect({ bar: "foo" }).not.toSatisfy(fooIsBar);
+
+    // Test errors
+    // @ts-expect-error
+    expect(() => expect(1).toSatisfy(() => new Error('Bun!'))).toThrow('predicate threw an exception');
+    // @ts-expect-error
+    expect(() => expect(1).not.toSatisfy(() => new Error('Bun!'))).toThrow('predicate threw an exception');
+  });
 
   // Array
 
@@ -484,7 +514,49 @@ describe("jest-extended", () => {
     expect("bob").not.toInclude("alice");
   });
 
-  // test("toIncludeRepeated()")
+  test("toIncludeRepeated()", () => {
+      // 0
+      expect("a").toIncludeRepeated("b", 0)
+      expect("b").not.toIncludeRepeated("b", 0);
+
+      // 1
+      expect("abc").toIncludeRepeated("a", 1);
+      expect("abc").not.toIncludeRepeated("d", 1);
+
+      // Any other number
+      expect("abc abc abc").toIncludeRepeated("abc", 1);
+      expect("abc abc abc").toIncludeRepeated("abc", 2);
+      expect("abc abc abc").toIncludeRepeated("abc", 3);
+      expect("abc abc abc").not.toIncludeRepeated("abc", 4);
+
+      // Emojis/Unicode
+      expect("😘🥳😤😘🥳").toIncludeRepeated("😘", 1);
+      expect("😘🥳😤😘🥳").toIncludeRepeated("🥳", 2);
+      expect("😘🥳😤😘🥳").not.toIncludeRepeated("😘", 3);
+      expect("😘🥳😤😘🥳").not.toIncludeRepeated("😶‍🌫️", 1);
+
+      // Empty string
+      expect("").not.toIncludeRepeated("a", 1);
+
+      // if toIncludeRepeated() is called with a empty string, it should throw an error or else it segfaults
+      expect(() => expect("a").not.toIncludeRepeated("", 1)).toThrow()
+
+      // Just to make sure it doesn't throw an error
+      expect("").not.toIncludeRepeated("a", 1)
+      expect("").not.toIncludeRepeated("😶‍🌫️", 1)
+
+      // Expect them to throw an error
+      const tstErr = (y) => { return expect("").toIncludeRepeated("a", y) };
+
+      expect(() => tstErr(1.23)).toThrow();
+      expect(() => tstErr(Infinity)).toThrow();
+      expect(() => tstErr(NaN)).toThrow();
+      expect(() => tstErr(-0)).toThrow(); // -0 and below (-1, -2, ...)
+      expect(() => tstErr(null)).toThrow();
+      expect(() => tstErr(undefined)).toThrow();
+      expect(() => tstErr({})).toThrow();
+  }) ;
+
   // test("toIncludeMultiple()")
   // test("toEqualIgnoringWhitespace()")
 

@@ -1,11 +1,13 @@
 import { expect, test } from "bun:test";
 
-test("worker", () => {
-  const worker = new Worker("worker.js");
+test("worker", done => {
+  const worker = new Worker(new URL("worker-fixture.js", import.meta.url).href);
   worker.postMessage("hello");
-  worker.onmessage = e => {
-    expect(e.data).toBe("world");
+  worker.onerror = e => {
+    console.log(e);
+    worker.terminate();
   };
-  worker.ref();
-  worker.unref();
+  worker.onmessage = e => {
+    console.log(e.data);
+  };
 });

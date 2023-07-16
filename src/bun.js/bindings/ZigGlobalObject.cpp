@@ -478,7 +478,7 @@ static String computeErrorInfo(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsi
 }
 
 extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObjectClass, int count,
-    void* console_client)
+    void* console_client, int32_t executionContextId)
 {
     auto heapSize = JSC::HeapType::Large;
 
@@ -490,7 +490,21 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObje
     WebCore::JSVMClientData::create(&vm);
 
     JSC::JSLockHolder locker(vm);
-    Zig::GlobalObject* globalObject = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::JSGlobalObject::create(vm, JSC::JSGlobalObject::createStructure(vm, JSC::jsNull())), JSC::jsNull()));
+    Zig::GlobalObject* globalObject;
+
+    if (UNLIKELY(executionContextId > -1)) {
+        ScriptExecutionContext* context = new WebCore::ScriptExecutionContext(&vm, nullptr, static_cast<ScriptExecutionContextIdentifier>(executionContextId));
+        globalObject = Zig::GlobalObject::create(
+            vm,
+            Zig::GlobalObject::createStructure(vm, JSC::JSGlobalObject::create(vm, JSC::JSGlobalObject::createStructure(vm, JSC::jsNull())), JSC::jsNull()),
+            context);
+    } else {
+        globalObject = Zig::GlobalObject::create(
+            vm,
+            Zig::GlobalObject::createStructure(vm, JSC::JSGlobalObject::create(vm, JSC::JSGlobalObject::createStructure(vm, JSC::jsNull())),
+                JSC::jsNull()));
+    }
+
     globalObject->setConsole(globalObject);
     globalObject->isThreadLocalDefaultGlobalObject = true;
     globalObject->setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT); // Node.js defaults to 10
@@ -755,11 +769,11 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure)
     , m_world(WebCore::DOMWrapperWorld::create(vm, WebCore::DOMWrapperWorld::Type::Normal))
     , m_worldIsNormal(true)
     , m_builtinInternalFunctions(vm)
-    , globalScope(Bun::GlobalScope::create(nullptr))
+    , globalEventScope(Bun::GlobalScope::create(nullptr))
 
 {
     m_scriptExecutionContext = new WebCore::ScriptExecutionContext(&vm, this);
-    globalScope->m_context = m_scriptExecutionContext;
+    globalEventScope->m_context = m_scriptExecutionContext;
     mockModule = Bun::JSMockModule::create(this);
 }
 
@@ -770,10 +784,11 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
     , m_world(WebCore::DOMWrapperWorld::create(vm, WebCore::DOMWrapperWorld::Type::Normal))
     , m_worldIsNormal(true)
     , m_builtinInternalFunctions(vm)
-    , globalScope(Bun::GlobalScope::create(context))
+    , globalEventScope(Bun::GlobalScope::create(context))
 {
     mockModule = Bun::JSMockModule::create(this);
     m_scriptExecutionContext = context;
+    context->setGlobalObject(this);
 }
 
 GlobalObject::~GlobalObject()
@@ -882,7 +897,7 @@ JSC_DEFINE_CUSTOM_SETTER(globalSetterOnError,
 
 Ref<WebCore::EventTarget> GlobalObject::eventTarget()
 {
-    return globalScope;
+    return globalEventScope;
 }
 
 JSC_DECLARE_CUSTOM_GETTER(functionLazyLoadStreamPrototypeMap_getter);
@@ -3467,14 +3482,71 @@ void GlobalObject::finishCreation(VM& vm)
     consoleObject->putDirectBuiltinFunction(vm, this, clientData->builtinNames().writePublicName(), consoleObjectWriteCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
 }
 
+extern "C" WebCore::Worker* WebWorker__getParentWorker(void*);
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+    (JSC::JSGlobalObject * leixcalGlobalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    JSC::VM& vm = leixcalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue messageValue = callFrame->argument(0);
-    JSValue transferListValue = callFrame->argument(1);
+    Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(leixcalGlobalObject);
+    if (UNLIKELY(!globalObject))
+        return JSValue::encode(jsUndefined());
+
+    Worker* worker = WebWorker__getParentWorker(globalObject->bunVM());
+    if (worker == nullptr)
+        return JSValue::encode(jsUndefined());
+
+    ScriptExecutionContext* context = worker->scriptExecutionContext();
+
+    if (!context)
+        return JSValue::encode(jsUndefined());
+
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue value = callFrame->argument(0);
+    JSC::JSValue options = callFrame->argument(1);
+
+    Vector<JSC::Strong<JSC::JSObject>> transferList;
+
+    if (options.isObject()) {
+        JSC::JSObject* optionsObject = options.getObject();
+        JSC::JSValue transferListValue = optionsObject->get(globalObject, vm.propertyNames->transfer);
+        if (transferListValue.isObject()) {
+            JSC::JSObject* transferListObject = transferListValue.getObject();
+            if (auto* transferListArray = jsDynamicCast<JSC::JSArray*>(transferListObject)) {
+                for (unsigned i = 0; i < transferListArray->length(); i++) {
+                    JSC::JSValue transferListValue = transferListArray->get(globalObject, i);
+                    if (transferListValue.isObject()) {
+                        JSC::JSObject* transferListObject = transferListValue.getObject();
+                        transferList.append(JSC::Strong<JSC::JSObject>(vm, transferListObject));
+                    }
+                }
+            }
+        }
+    }
+
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList));
+    if (serialized.hasException()) {
+        WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
+        return JSValue::encode(jsUndefined());
+    }
+
+    ScriptExecutionContext::postTaskTo(context->identifier(), [message = serialized.releaseReturnValue(), protectedThis = Ref { *worker }](ScriptExecutionContext& context) {
+        Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(context.jsGlobalObject());
+        bool didFail = false;
+        JSValue value = message->deserialize(*globalObject, globalObject, SerializationErrorMode::NonThrowing, &didFail);
+        message->deref();
+
+        if (didFail) {
+            protectedThis->dispatchEvent(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init {}, MessageEvent::IsTrusted::Yes));
+            return;
+        }
+
+        WebCore::MessageEvent::Init init;
+        init.data = value;
+        protectedThis->dispatchEvent(MessageEvent::create(eventNames().messageEvent, WTFMove(init), MessageEvent::IsTrusted::Yes));
+    });
 
     return JSValue::encode(jsUndefined());
 }

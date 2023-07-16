@@ -353,7 +353,8 @@ pub const ExitHandler = struct {
         JSC.markBinding(@src());
         var vm = @fieldParentPtr(VirtualMachine, "exit_handler", this);
         Process__dispatchOnExit(vm.global, this.exit_code);
-        Bun__closeAllSQLiteDatabasesForTermination();
+        if (vm.isMainThread())
+            Bun__closeAllSQLiteDatabasesForTermination();
     }
 
     pub fn dispatchOnBeforeExit(this: *ExitHandler) void {
@@ -484,11 +485,15 @@ pub const VirtualMachine = struct {
     parser_arena: ?@import("root").bun.ArenaAllocator = null,
 
     gc_controller: JSC.GarbageCollectionController = .{},
-    parent: ?*JSC.WebWorker = null,
+    worker: ?*JSC.WebWorker = null,
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
     pub const OnException = fn (*ZigException) void;
+
+    pub fn isMainThread(this: *const VirtualMachine) bool {
+        return this.worker == null;
+    }
 
     pub fn setOnException(this: *VirtualMachine, callback: *const OnException) void {
         this.on_exception = callback;
@@ -880,6 +885,7 @@ pub const VirtualMachine = struct {
             &global_classes,
             @intCast(i32, global_classes.len),
             vm.console,
+            -1,
         );
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;
@@ -979,6 +985,108 @@ pub const VirtualMachine = struct {
             &global_classes,
             @intCast(i32, global_classes.len),
             vm.console,
+            -1,
+        );
+        vm.regular_event_loop.global = vm.global;
+        vm.regular_event_loop.virtual_machine = vm;
+
+        if (source_code_printer == null) {
+            var writer = try js_printer.BufferWriter.init(allocator);
+            source_code_printer = allocator.create(js_printer.BufferPrinter) catch unreachable;
+            source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
+            source_code_printer.?.ctx.append_null_byte = false;
+        }
+
+        return vm;
+    }
+
+    pub fn initWorker(
+        allocator: std.mem.Allocator,
+        _args: Api.TransformOptions,
+        _log: ?*logger.Log,
+        env_loader: ?*DotEnv.Loader,
+        store_fd: bool,
+        worker: *WebWorker,
+    ) anyerror!*VirtualMachine {
+        var log: *logger.Log = undefined;
+        if (_log) |__log| {
+            log = __log;
+        } else {
+            log = try allocator.create(logger.Log);
+            log.* = logger.Log.init(allocator);
+        }
+
+        VMHolder.vm = try allocator.create(VirtualMachine);
+        var console = try allocator.create(ZigConsoleClient);
+        console.* = ZigConsoleClient.init(Output.errorWriter(), Output.writer());
+        const bundler = try Bundler.init(
+            allocator,
+            log,
+            try Config.configureTransformOptionsForBunVM(allocator, _args),
+            null,
+            env_loader,
+        );
+        var vm = VMHolder.vm.?;
+
+        vm.* = VirtualMachine{
+            .global = undefined,
+            .allocator = allocator,
+            .entry_point = ServerEntryPoint{},
+            .event_listeners = EventListenerMixin.Map.init(allocator),
+            .bundler = bundler,
+            .console = console,
+            .node_modules = bundler.options.node_modules_bundle,
+            .log = log,
+            .flush_list = std.ArrayList(string).init(allocator),
+            .blobs = if (_args.serve orelse false) try Blob.Group.init(allocator) else null,
+            .origin = bundler.options.origin,
+            .saved_source_map_table = SavedSourceMap.HashTable.init(allocator),
+            .source_mappings = undefined,
+            .macros = MacroMap.init(allocator),
+            .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
+            .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
+            .origin_timestamp = getOriginTimestamp(),
+            .ref_strings = JSC.RefString.Map.init(allocator),
+            .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
+            .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
+            .standalone_module_graph = worker.parent.standalone_module_graph,
+            .worker = worker,
+        };
+        vm.source_mappings = .{ .map = &vm.saved_source_map_table };
+        vm.regular_event_loop.tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
+        vm.regular_event_loop.concurrent_tasks = .{};
+        vm.event_loop = &vm.regular_event_loop;
+        vm.hot_reload = worker.parent.hot_reload;
+        vm.bundler.macro_context = null;
+        vm.bundler.resolver.store_fd = store_fd;
+        vm.bundler.resolver.prefer_module_field = false;
+        vm.bundler.resolver.onWakePackageManager = .{
+            .context = &vm.modules,
+            .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
+            .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
+        };
+
+        vm.bundler.configureLinker();
+        try vm.bundler.configureFramework(false);
+
+        vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
+
+        if (_args.serve orelse false) {
+            vm.bundler.linker.onImportCSS = Bun.onImportCSS;
+        }
+
+        var global_classes: [GlobalClasses.len]js.JSClassRef = undefined;
+        inline for (GlobalClasses, 0..) |Class, i| {
+            global_classes[i] = Class.get().*;
+        }
+        vm.global = ZigGlobalObject.create(
+            &global_classes,
+            @intCast(i32, global_classes.len),
+            vm.console,
+            @intCast(i32, worker.execution_context_id),
         );
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;
@@ -1756,7 +1864,7 @@ pub const VirtualMachine = struct {
         return promise;
     }
 
-    pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) !*JSInternalPromise {
+    pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
         var promise = try this.reloadEntryPoint(entry_path);
 
         // pending_internal_promise can change if hot module reloading is enabled

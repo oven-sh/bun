@@ -89,6 +89,12 @@ public:
 
     static void forEachWorker(const Function<Function<void(ScriptExecutionContext&)>()>&);
 
+    void drainEvents();
+    void dispatchOnline(Zig::GlobalObject* workerGlobalObject);
+    void dispatchError(WTF::String message);
+    void dispatchExit();
+    ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
+
 private:
     Worker(ScriptExecutionContext&, WorkerOptions&&);
 
@@ -108,7 +114,6 @@ private:
     // bool virtualHasPendingActivity() const final;
 
     static void networkStateChanged(bool isOnLine);
-    ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
 
     // RefPtr<WorkerScriptLoader> m_scriptLoader;
     const WorkerOptions m_options;
@@ -120,9 +125,14 @@ private:
     // bool m_isSuspendedForBackForwardCache { false };
     // JSC::RuntimeFlags m_runtimeFlags;
     Deque<RefPtr<Event>> m_pendingEvents;
+    Deque<Function<void(ScriptExecutionContext&)>> m_pendingTasks;
     bool m_wasTerminated { false };
     bool m_didStartWorkerGlobalScope { false };
+    bool m_isOnline { false };
+    bool m_isClosing { false };
     const ScriptExecutionContextIdentifier m_clientIdentifier;
+    void* impl_ { nullptr };
+    size_t m_pendingActivityCount { 0 };
 };
 
 } // namespace WebCore

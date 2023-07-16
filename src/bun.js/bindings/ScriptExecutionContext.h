@@ -179,6 +179,12 @@ public:
     JSC::VM& vm() { return *m_vm; }
     ScriptExecutionContextIdentifier identifier() const { return m_identifier; }
 
+    bool isWorker = false;
+    void setGlobalObject(JSC::JSGlobalObject* globalObject)
+    {
+        m_globalObject = globalObject;
+    }
+
 private:
     JSC::VM* m_vm = nullptr;
     JSC::JSGlobalObject* m_globalObject = nullptr;

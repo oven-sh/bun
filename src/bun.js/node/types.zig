@@ -2223,8 +2223,14 @@ pub const Process = struct {
     }
 
     pub fn exit(globalObject: *JSC.JSGlobalObject, code: i32) callconv(.C) void {
-        globalObject.bunVM().onExit();
+        var vm = globalObject.bunVM();
+        if (vm.worker) |worker| {
+            vm.exit_handler.exit_code = @truncate(u8, @max(code, 0));
+            worker.terminate();
+            return;
+        }
 
+        vm.onExit();
         std.os.exit(@truncate(u8, @intCast(u32, @max(code, 0))));
     }
 

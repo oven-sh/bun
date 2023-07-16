@@ -311,7 +311,7 @@ public:
     EncodedJSValue assignToStream(JSValue stream, JSValue controller);
 
     Ref<WebCore::EventTarget> eventTarget();
-    Ref<Bun::GlobalScope> globalScope;
+    Ref<Bun::GlobalScope> globalEventScope;
 
     enum class PromiseFunctions : uint8_t {
         Bun__HTTPRequestContext__onReject,

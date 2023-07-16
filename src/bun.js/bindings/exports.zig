@@ -40,8 +40,8 @@ pub const ZigGlobalObject = extern struct {
     pub const namespace = shim.namespace;
     pub const Interface: type = NewGlobalObject(JS.VirtualMachine);
 
-    pub fn create(class_ref: [*]CAPI.JSClassRef, count: i32, console: *anyopaque) *JSGlobalObject {
-        var global = shim.cppFn("create", .{ class_ref, count, console });
+    pub fn create(class_ref: [*]CAPI.JSClassRef, count: i32, console: *anyopaque, context_id: i32) *JSGlobalObject {
+        var global = shim.cppFn("create", .{ class_ref, count, console, context_id });
         Backtrace.reloadHandlers() catch unreachable;
         return global;
     }
@@ -2505,14 +2505,30 @@ pub const ZigConsoleClient = struct {
                                 }
                             },
                             .ErrorEvent => {
-                                writer.print(
-                                    comptime Output.prettyFmt("<r><blue>error<d>:<r>\n", enable_ansi_colors),
-                                    .{},
-                                );
+                                {
+                                    const error_value = value.get(this.globalThis, "error").?;
 
-                                const data = value.get(this.globalThis, "error").?;
-                                const tag = Tag.getAdvanced(data, this.globalThis, .{ .hide_global = true });
-                                this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
+                                    if (!error_value.isEmptyOrUndefinedOrNull()) {
+                                        writer.print(
+                                            comptime Output.prettyFmt("<r><blue>error<d>:<r> ", enable_ansi_colors),
+                                            .{},
+                                        );
+
+                                        const tag = Tag.getAdvanced(error_value, this.globalThis, .{ .hide_global = true });
+                                        this.format(tag, Writer, writer_, error_value, this.globalThis, enable_ansi_colors);
+                                    }
+                                }
+
+                                const message_value = value.get(this.globalThis, "message").?;
+                                if (message_value.isString()) {
+                                    writer.print(
+                                        comptime Output.prettyFmt("<r><blue>message<d>:<r> ", enable_ansi_colors),
+                                        .{},
+                                    );
+
+                                    const tag = Tag.getAdvanced(message_value, this.globalThis, .{ .hide_global = true });
+                                    this.format(tag, Writer, writer_, message_value, this.globalThis, enable_ansi_colors);
+                                }
                             },
                             else => unreachable,
                         }

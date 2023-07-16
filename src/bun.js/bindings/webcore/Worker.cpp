@@ -55,10 +55,18 @@
 #include <wtf/Scope.h>
 #include "SerializedScriptValue.h"
 #include "ScriptExecutionContext.h"
+#include "JavaScriptCore/JSMap.h"
+#include "JavaScriptCore/JSModuleLoader.h"
+#include "JavaScriptCore/DeferredWorkTimer.h"
+#include "MessageEvent.h"
+#include <JavaScriptCore/HashMapImplInlines.h>
 
 namespace WebCore {
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(Worker);
+
+extern "C" void WebWorker__terminate(
+    void* worker);
 
 static Lock allWorkersLock;
 static HashMap<ScriptExecutionContextIdentifier, Worker*>& allWorkers() WTF_REQUIRES_LOCK(allWorkersLock)
@@ -97,30 +105,42 @@ Worker::Worker(ScriptExecutionContext& context, WorkerOptions&& options)
     ASSERT_UNUSED(addResult, addResult.isNewEntry);
 }
 
-ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const String& url, WorkerOptions&& options)
+extern "C" void* WebWorker__create(
+    Worker* worker,
+    void* parent,
+    BunString name,
+    BunString url,
+    BunString* errorMessage,
+    uint32_t parentContextId,
+    uint32_t contextId);
+
+ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const String& urlInit, WorkerOptions&& options)
 {
     auto worker = adoptRef(*new Worker(context, WTFMove(options)));
 
-    // worker->suspendIfNeeded();
+    WTF::String url = urlInit;
+    if (url.startsWith("file://"_s)) {
+        url = WTF::URL(url).fileSystemPath();
+    }
+    BunString urlStr = Bun::toString(url);
+    BunString errorMessage = BunStringEmpty;
+    BunString nameStr = Bun::toString(options.name);
 
-    // auto scriptURL = worker->resolveURL(url);
-    // if (scriptURL.hasException())
-    //     return scriptURL.releaseException();
+    void* impl = WebWorker__create(
+        worker.ptr(),
+        jsCast<Zig::GlobalObject*>(context.jsGlobalObject())->bunVM(),
+        nameStr,
+        urlStr,
+        &errorMessage,
+        static_cast<uint32_t>(context.identifier()),
+        static_cast<uint32_t>(worker->m_clientIdentifier));
 
-    // bool shouldBypassMainWorldContentSecurityPolicy = context.shouldBypassMainWorldContentSecurityPolicy();
-    // worker->m_shouldBypassMainWorldContentSecurityPolicy = shouldBypassMainWorldContentSecurityPolicy;
+    if (!impl) {
+        return Exception { TypeError, Bun::toWTFString(errorMessage) };
+    }
 
-    // // https://html.spec.whatwg.org/multipage/workers.html#official-moment-of-creation
-    // worker->m_workerCreationTime = MonotonicTime::now();
-
-    // worker->m_scriptLoader = WorkerScriptLoader::create();
-    // auto contentSecurityPolicyEnforcement = shouldBypassMainWorldContentSecurityPolicy ? ContentSecurityPolicyEnforcement::DoNotEnforce : ContentSecurityPolicyEnforcement::EnforceWorkerSrcDirective;
-
-    // ResourceRequest request { scriptURL.releaseReturnValue() };
-    // request.setInitiatorIdentifier(worker->m_identifier);
-
-    // auto source = options.type == WorkerType::Module ? WorkerScriptLoader::Source::ModuleScript : WorkerScriptLoader::Source::ClassicWorkerScript;
-    // worker->m_scriptLoader->loadAsynchronously(context, WTFMove(request), source, workerFetchOptions(worker->m_options, FetchOptions::Destination::Worker), contentSecurityPolicyEnforcement, ServiceWorkersMode::All, worker.get(), WorkerRunLoop::defaultMode(), worker->m_clientIdentifier);
+    worker->impl_ = impl;
+    worker->m_workerCreationTime = MonotonicTime::now();
 
     return worker;
 }
@@ -136,11 +156,28 @@ Worker::~Worker()
 
 ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
 {
+    if (m_wasTerminated)
+        return Exception { InvalidStateError, "Worker has been terminated"_s };
+
     auto message = SerializedScriptValue::create(state, messageValue, WTFMove(options.transfer), SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (message.hasException())
         return message.releaseException();
 
-    // m_contextProxy.postMessageToWorkerGlobalScope({ message.releaseReturnValue(), channels.releaseReturnValue() });
+    this->postTaskToWorkerGlobalScope([message = message.releaseReturnValue()](auto& context) {
+        Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(context.jsGlobalObject());
+        bool didFail = false;
+        JSValue value = message->deserialize(*globalObject, globalObject, SerializationErrorMode::NonThrowing, &didFail);
+        message->deref();
+
+        if (didFail) {
+            globalObject->eventTarget()->dispatchEvent(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init {}, MessageEvent::IsTrusted::Yes));
+            return;
+        }
+
+        WebCore::MessageEvent::Init init;
+        init.data = value;
+        globalObject->eventTarget()->dispatchEvent(MessageEvent::create(eventNames().messageEvent, WTFMove(init), MessageEvent::IsTrusted::Yes));
+    });
     return {};
 }
 
@@ -148,6 +185,7 @@ void Worker::terminate()
 {
     // m_contextProxy.terminateWorkerGlobalScope();
     m_wasTerminated = true;
+    WebWorker__terminate(impl_);
 }
 
 // const char* Worker::activeDOMObjectName() const
@@ -178,8 +216,11 @@ void Worker::terminate()
 
 bool Worker::hasPendingActivity() const
 {
-    // return (m_didStartWorkerGlobalScope && !m_contextProxy.askedToTerminate());
-    return true;
+    if (this->m_isOnline) {
+        return !this->m_isClosing;
+    }
+
+    return !this->m_wasTerminated;
 }
 
 void Worker::dispatchEvent(Event& event)
@@ -187,11 +228,7 @@ void Worker::dispatchEvent(Event& event)
     if (m_wasTerminated)
         return;
 
-    // AbstractWorker::dispatchEvent(event);
-    // if (is<ErrorEvent>(event) && !event.defaultPrevented() && event.isTrusted() && scriptExecutionContext()) {
-    //     auto& errorEvent = downcast<ErrorEvent>(event);
-    //     scriptExecutionContext()->reportException(errorEvent.message(), errorEvent.lineno(), errorEvent.colno(), errorEvent.filename(), nullptr, nullptr);
-    // }
+    EventTarget::dispatchEvent(event);
 }
 
 #if ENABLE(WEB_RTC)
@@ -207,9 +244,79 @@ void Worker::createRTCRtpScriptTransformer(RTCRtpScriptTransform& transform, Mes
 }
 #endif
 
+void Worker::drainEvents()
+{
+    for (auto& task : m_pendingTasks)
+        postTaskToWorkerGlobalScope(WTFMove(task));
+    m_pendingTasks.clear();
+}
+
+void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
+{
+    this->m_isOnline = true;
+    auto tasks = std::exchange(this->m_pendingTasks, {});
+
+    auto* ctx = scriptExecutionContext();
+    if (ctx) {
+        ScriptExecutionContext::postTaskTo(ctx->identifier(), [protectedThis = Ref { *this }](ScriptExecutionContext& context) -> void {
+            if (protectedThis->hasEventListeners(eventNames().openEvent)) {
+                auto event = Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No);
+                protectedThis->dispatchEvent(event);
+            }
+        });
+    }
+
+    auto* thisContext = workerGlobalObject->scriptExecutionContext();
+    if (!thisContext)
+        return;
+
+    for (auto& task : tasks) {
+        task(*thisContext);
+    }
+    tasks.clear();
+}
+void Worker::dispatchError(WTF::String message)
+{
+
+    auto* ctx = scriptExecutionContext();
+    if (!ctx)
+        return;
+
+    ScriptExecutionContext::postTaskTo(ctx->identifier(), [protectedThis = Ref { *this }, message = message.isolatedCopy()](ScriptExecutionContext& context) -> void {
+        protectedThis->drainEvents();
+
+        ErrorEvent::Init init;
+        init.message = message;
+
+        auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
+        protectedThis->dispatchEvent(event);
+    });
+}
+void Worker::dispatchExit()
+{
+    auto* ctx = scriptExecutionContext();
+    if (!ctx)
+        return;
+
+    ScriptExecutionContext::postTaskTo(ctx->identifier(), [protectedThis = Ref { *this }](ScriptExecutionContext& context) -> void {
+        protectedThis->m_isOnline = false;
+        protectedThis->m_isClosing = true;
+
+        if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
+            auto event = Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No);
+            protectedThis->dispatchEvent(event);
+        }
+    });
+}
+
 void Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&& task)
 {
-    // m_contextProxy.postTaskToWorkerGlobalScope(WTFMove(task));
+    if (!this->m_isOnline) {
+        this->m_pendingTasks.append(WTFMove(task));
+        return;
+    }
+
+    ScriptExecutionContext::postTaskTo(m_clientIdentifier, WTFMove(task));
 }
 
 void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)>()>& callback)
@@ -217,6 +324,45 @@ void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)
     Locker locker { allWorkersLock };
     for (auto& contextIdentifier : allWorkers().keys())
         ScriptExecutionContext::postTaskTo(contextIdentifier, callback());
+}
+
+extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker* worker, int32_t exitCode)
+{
+    if (globalObject) {
+        auto& vm = globalObject->vm();
+
+        if (JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(globalObject->moduleLoader())) {
+            auto id = JSC::Identifier::fromString(globalObject->vm(), "registry"_s);
+            if (auto* registry = JSC::jsDynamicCast<JSC::JSMap*>(obj->getIfPropertyExists(globalObject, id))) {
+                registry->clear(vm);
+            }
+        }
+        gcUnprotect(globalObject);
+        vm.deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
+        vm.heap.reportAbandonedObjectGraph();
+        WTF::releaseFastMallocFreeMemoryForThisThread();
+        vm.notifyNeedTermination();
+        vm.deferredWorkTimer->doWork(vm);
+    }
+
+    worker->dispatchExit();
+}
+extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)
+{
+    worker->dispatchOnline(globalObject);
+}
+
+extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString message, EncodedJSValue errorValue)
+{
+    JSValue error = JSC::JSValue::decode(errorValue);
+    ErrorEvent::Init init;
+    init.message = Bun::toWTFString(message).isolatedCopy();
+    init.error = error;
+    init.cancelable = false;
+    init.bubbles = false;
+
+    globalObject->eventTarget()->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    worker->dispatchError(Bun::toWTFString(message));
 }
 
 } // namespace WebCore

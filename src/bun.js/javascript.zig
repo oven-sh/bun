@@ -886,6 +886,7 @@ pub const VirtualMachine = struct {
             @intCast(i32, global_classes.len),
             vm.console,
             -1,
+            false,
         );
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;
@@ -986,6 +987,7 @@ pub const VirtualMachine = struct {
             @intCast(i32, global_classes.len),
             vm.console,
             -1,
+            false,
         );
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;
@@ -1087,6 +1089,7 @@ pub const VirtualMachine = struct {
             @intCast(i32, global_classes.len),
             vm.console,
             @intCast(i32, worker.execution_context_id),
+            worker.mini,
         );
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;

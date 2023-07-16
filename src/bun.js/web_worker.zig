@@ -20,6 +20,8 @@ pub const WebWorker = struct {
     arena: bun.MimallocArena = undefined,
     name: [:0]const u8 = "Worker",
     cpp_worker: *void,
+    allowed_to_exit: bool = false,
+    mini: bool = false,
 
     extern fn WebWorker__dispatchExit(?*JSC.JSGlobalObject, *void, i32) void;
     extern fn WebWorker__dispatchOnline(this: *void, *JSC.JSGlobalObject) void;
@@ -47,6 +49,7 @@ pub const WebWorker = struct {
         error_message: *bun.String,
         parent_context_id: u32,
         this_context_id: u32,
+        mini: bool,
     ) callconv(.C) ?*WebWorker {
         JSC.markBinding(@src());
         var spec_slice = specifier_str.toUTF8(bun.default_allocator);
@@ -75,6 +78,7 @@ pub const WebWorker = struct {
             .parent = parent,
             .parent_context_id = parent_context_id,
             .execution_context_id = this_context_id,
+            .mini = mini,
             .specifier = bun.default_allocator.dupe(u8, path.text) catch @panic("OOM"),
             .store_fd = parent.bundler.resolver.store_fd,
             .name = brk: {
@@ -251,9 +255,19 @@ pub const WebWorker = struct {
         }
 
         {
-            while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
-                vm.tick();
-                vm.eventLoop().autoTickActive();
+            while (true) {
+                while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
+                    vm.tick();
+
+                    vm.eventLoop().autoTickActive();
+                }
+
+                if (!this.allowed_to_exit) {
+                    vm.eventLoop().tickPossiblyForever();
+                    continue;
+                }
+
+                break;
             }
 
             this.flushLogs();
@@ -275,6 +289,10 @@ pub const WebWorker = struct {
         }
 
         _ = this.requestTerminate();
+    }
+
+    pub fn setRef(this: *WebWorker, value: bool) callconv(.C) void {
+        this.allowed_to_exit = value;
     }
 
     fn onTerminate(this: *WebWorker) void {
@@ -303,6 +321,7 @@ pub const WebWorker = struct {
         var exit_code: i32 = 0;
         var globalObject: ?*JSC.JSGlobalObject = null;
         if (this.vm) |vm| {
+            this.vm = null;
             vm.onExit();
             exit_code = vm.exit_handler.exit_code;
             globalObject = vm.global;

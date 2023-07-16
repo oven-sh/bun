@@ -125,7 +125,29 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::const
     auto scriptUrl = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->argument(1);
-    auto options = convert<IDLDictionary<WorkerOptions>>(*lexicalGlobalObject, argument1.value());
+
+    auto options = WorkerOptions {};
+
+    if (JSObject* optionsObject = JSC::jsDynamicCast<JSC::JSObject*>(argument1.value())) {
+        if (auto nameValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "name"_s))) {
+            if (nameValue.isString()) {
+                options.name = nameValue.toWTFString(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+            }
+        }
+
+        if (auto bunValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "bun"_s))) {
+            if (bunValue.isObject()) {
+                if (auto* bunObject = bunValue.getObject()) {
+                    if (auto miniModeValue = bunObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "mini"_s))) {
+                        options.bun.mini = miniModeValue.toBoolean(lexicalGlobalObject);
+                        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+                    }
+                }
+            }
+        }
+    }
+
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     auto object = Worker::create(*context, WTFMove(scriptUrl), WTFMove(options));
     if constexpr (IsExceptionOr<decltype(object)>)

@@ -1,1 +1,6 @@
-throw new Error("line 59: Unexpected identifier");
+postMessage("initial message");
+onmessage = ({ data }) => {
+  postMessage({
+    received: data,
+  });
+};

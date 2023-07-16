@@ -40,8 +40,14 @@ pub const ZigGlobalObject = extern struct {
     pub const namespace = shim.namespace;
     pub const Interface: type = NewGlobalObject(JS.VirtualMachine);
 
-    pub fn create(class_ref: [*]CAPI.JSClassRef, count: i32, console: *anyopaque, context_id: i32) *JSGlobalObject {
-        var global = shim.cppFn("create", .{ class_ref, count, console, context_id });
+    pub fn create(
+        class_ref: [*]CAPI.JSClassRef,
+        count: i32,
+        console: *anyopaque,
+        context_id: i32,
+        mini_mode: bool,
+    ) *JSGlobalObject {
+        var global = shim.cppFn("create", .{ class_ref, count, console, context_id, mini_mode });
         Backtrace.reloadHandlers() catch unreachable;
         return global;
     }

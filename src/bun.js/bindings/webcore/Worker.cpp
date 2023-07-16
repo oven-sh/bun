@@ -112,7 +112,8 @@ extern "C" void* WebWorker__create(
     BunString url,
     BunString* errorMessage,
     uint32_t parentContextId,
-    uint32_t contextId);
+    uint32_t contextId,
+    bool miniMode);
 
 ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const String& urlInit, WorkerOptions&& options)
 {
@@ -124,7 +125,9 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
     }
     BunString urlStr = Bun::toString(url);
     BunString errorMessage = BunStringEmpty;
-    BunString nameStr = Bun::toString(options.name);
+    BunString nameStr = Bun::toString(worker->m_options.name);
+
+    bool miniMode = worker->m_options.bun.mini;
 
     void* impl = WebWorker__create(
         worker.ptr(),
@@ -133,7 +136,7 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         urlStr,
         &errorMessage,
         static_cast<uint32_t>(context.identifier()),
-        static_cast<uint32_t>(worker->m_clientIdentifier));
+        static_cast<uint32_t>(worker->m_clientIdentifier), miniMode);
 
     if (!impl) {
         return Exception { TypeError, Bun::toWTFString(errorMessage) };

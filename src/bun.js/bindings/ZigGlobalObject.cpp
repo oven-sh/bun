@@ -478,9 +478,9 @@ static String computeErrorInfo(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsi
 }
 
 extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObjectClass, int count,
-    void* console_client, int32_t executionContextId)
+    void* console_client, int32_t executionContextId, bool miniMode)
 {
-    auto heapSize = JSC::HeapType::Large;
+    auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
 
     JSC::VM& vm = JSC::VM::create(heapSize).leakRef();
 

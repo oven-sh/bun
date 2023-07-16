@@ -2754,7 +2754,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        const not = this.op.contains(.not);
+        const not = this.flags.not;
         var pass = false;
 
         const _expectStringAsStr = expect_string.toSliceOrNull(globalThis) orelse return .zero;
@@ -2869,7 +2869,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        const not = this.op.contains(.not);
+        const not = this.flags.not;
         const pass = (result.isBoolean() and result.toBoolean()) != not;
 
         if (pass) return thisValue;

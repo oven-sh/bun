@@ -20,8 +20,9 @@ pub const WebWorker = struct {
     arena: bun.MimallocArena = undefined,
     name: [:0]const u8 = "Worker",
     cpp_worker: *void,
-    allowed_to_exit: bool = false,
+    allowed_to_exit: bool = true,
     mini: bool = false,
+    parent_poll_ref: JSC.PollRef = .{},
 
     extern fn WebWorker__dispatchExit(?*JSC.JSGlobalObject, *void, i32) void;
     extern fn WebWorker__dispatchOnline(this: *void, *JSC.JSGlobalObject) void;
@@ -33,11 +34,17 @@ pub const WebWorker = struct {
 
     pub fn hasPendingActivity(this: *WebWorker) callconv(.C) bool {
         JSC.markBinding(@src());
+
         if (this.vm == null) {
             return !this.requested_terminate;
         }
 
+        if (!this.allowed_to_exit) {
+            return true;
+        }
+
         var vm = this.vm.?;
+
         return vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0;
     }
 
@@ -118,7 +125,6 @@ pub const WebWorker = struct {
 
         if (this.requested_terminate) {
             this.deinit();
-            bun.default_allocator.destroy(this);
             return;
         }
 
@@ -161,7 +167,6 @@ pub const WebWorker = struct {
     }
 
     fn deinit(this: *WebWorker) void {
-        this.arena.deinit();
         bun.default_allocator.free(this.specifier);
     }
 
@@ -263,6 +268,7 @@ pub const WebWorker = struct {
                 }
 
                 if (!this.allowed_to_exit) {
+                    this.flushLogs();
                     vm.eventLoop().tickPossiblyForever();
                     continue;
                 }
@@ -271,7 +277,6 @@ pub const WebWorker = struct {
             }
 
             this.flushLogs();
-
             this.onTerminate();
         }
     }
@@ -288,11 +293,21 @@ pub const WebWorker = struct {
             return;
         }
 
+        this.allowed_to_exit = false;
         _ = this.requestTerminate();
     }
 
     pub fn setRef(this: *WebWorker, value: bool) callconv(.C) void {
         this.allowed_to_exit = value;
+        if (value) {
+            this.parent_poll_ref.ref(this.parent);
+        } else {
+            this.parent_poll_ref.unref(this.parent);
+        }
+
+        if (this.vm) |vm| {
+            vm.eventLoop().wakeup();
+        }
     }
 
     fn onTerminate(this: *WebWorker) void {
@@ -306,6 +321,7 @@ pub const WebWorker = struct {
             @export(hasPendingActivity, .{ .name = "WebWorker__hasPendingActivity" });
             @export(create, .{ .name = "WebWorker__create" });
             @export(terminate, .{ .name = "WebWorker__terminate" });
+            @export(setRef, .{ .name = "WebWorker__setRef" });
         }
     }
 
@@ -325,9 +341,11 @@ pub const WebWorker = struct {
             vm.onExit();
             exit_code = vm.exit_handler.exit_code;
             globalObject = vm.global;
+            this.arena.deinit();
         }
+        WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
 
-        defer WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
+        this.deinit();
     }
 
     fn requestTerminate(this: *WebWorker) bool {
@@ -335,6 +353,7 @@ pub const WebWorker = struct {
             this.requested_terminate = true;
             return false;
         };
+        this.allowed_to_exit = true;
         log("requesting terminate", .{});
         var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch @panic("OOM");
         var task = bun.default_allocator.create(JSC.AnyTask) catch @panic("OOM");

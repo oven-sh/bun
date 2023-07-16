@@ -75,6 +75,7 @@ public:
     const String& name() const { return m_options.name; }
 
     void dispatchEvent(Event&);
+    void setKeepAlive(bool);
 
 #if ENABLE(WEB_RTC)
     void createRTCRtpScriptTransformer(RTCRtpScriptTransform&, MessageWithMessagePorts&&);

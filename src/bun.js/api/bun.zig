@@ -4101,10 +4101,9 @@ pub const Timer = struct {
             this.poll_ref.unref(vm);
 
             this.timer.deinit();
-            if (this.did_unref_timer) {
-                // balance double-unrefing
-                vm.uws_event_loop.?.num_polls += 1;
-            }
+
+            // balance double unreffing in doUnref
+            vm.uws_event_loop.?.num_polls += @as(i32, @intFromBool(this.did_unref_timer));
 
             this.callback.deinit();
             this.arguments.deinit();

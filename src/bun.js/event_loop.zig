@@ -746,14 +746,16 @@ pub const EventLoop = struct {
         this.virtual_machine.gc_controller.performGC();
     }
 
+    pub fn wakeup(this: *EventLoop) void {
+        if (this.virtual_machine.uws_event_loop) |loop| {
+            loop.wakeup();
+        }
+    }
     pub fn enqueueTaskConcurrent(this: *EventLoop, task: *ConcurrentTask) void {
         JSC.markBinding(@src());
 
         this.concurrent_tasks.push(task);
-
-        if (this.virtual_machine.uws_event_loop) |loop| {
-            loop.wakeup();
-        }
+        this.wakeup();
     }
 };
 

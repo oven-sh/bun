@@ -11,7 +11,10 @@ test("worker", done => {
     console.log(e);
     worker.terminate();
   };
+  worker.ref();
   worker.onmessage = e => {
     console.log(e.data);
+    worker.unref();
+    done();
   };
 });

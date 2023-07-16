@@ -114,6 +114,14 @@ extern "C" void* WebWorker__create(
     uint32_t parentContextId,
     uint32_t contextId,
     bool miniMode);
+extern "C" void WebWorker__setRef(
+    void* worker,
+    bool ref);
+
+void Worker::setKeepAlive(bool keepAlive)
+{
+    WebWorker__setRef(impl_, keepAlive);
+}
 
 ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const String& urlInit, WorkerOptions&& options)
 {

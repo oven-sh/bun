@@ -409,7 +409,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_postMessage, (JSGlobalObject 
 
 static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_refBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
+    castedThis->wrapped().setKeepAlive(true);
     return JSValue::encode(jsUndefined());
 }
 
@@ -420,6 +420,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_ref, (JSGlobalObject * lexica
 
 static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_unrefBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
 {
+    castedThis->wrapped().setKeepAlive(false);
     return JSValue::encode(jsUndefined());
 }
 

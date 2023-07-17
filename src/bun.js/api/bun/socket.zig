@@ -2009,7 +2009,8 @@ fn NewSocket(comptime ssl: bool) type {
             if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), session_arg, exception)) |sb| {
                 var session_slice = sb.slice();
                 var ssl_ptr: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
-                const session = BoringSSL.d2i_SSL_SESSION(null, @ptrCast([*c][*c]u8, &session_slice.ptr), @intCast(c_long, session_slice.len)) orelse return JSValue.jsUndefined();
+                var tmp = @ptrCast([*c]const u8, session_slice.ptr);
+                const session = BoringSSL.d2i_SSL_SESSION(null, &tmp, @intCast(c_long, session_slice.len)) orelse return JSValue.jsUndefined();
                 if (BoringSSL.SSL_set_session(ssl_ptr, session) != 1) {
                     globalObject.throwValue(getSSLException(globalObject, "SSL_set_session error"));
                     return .zero;
@@ -2045,55 +2046,11 @@ fn NewSocket(comptime ssl: bool) type {
             }
             var buffer = bun.default_allocator.alloc(u8, @intCast(usize, size)) catch unreachable;
             defer bun.default_allocator.free(buffer);
-            _ = BoringSSL.i2d_SSL_SESSION(session, @ptrCast([*c][*c]u8, &buffer.ptr));
+            var tmp = @ptrCast([*c]u8, buffer.ptr);
+            _ = BoringSSL.i2d_SSL_SESSION(session, &tmp);
             const result = JSC.ArrayBuffer.createBuffer(globalObject, buffer);
             return result;
         }
-
-        // pub fn renegociateTLS(this: *This,
-        //                      globalObject: *JSC.JSGlobalObject,
-        //                      callframe: *JSC.CallFrame,)
-        //                      callconv(.C) JSValue {
-
-        //     if (comptime ssl == false) {
-        //         return JSValue.jsBoolean(false);
-        //     }
-
-        //     if (this.detached) {
-        //         return JSValue.jsBoolean(false);
-        //     }
-        //     const args = callframe.arguments(1);
-
-        //     if (args.len < 1) {
-        //         globalObject.throw("Expected 1 arguments", .{});
-        //         return .zero;
-        //     }
-        //     const opts = args.ptr[0];
-        //     if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
-        //         globalObject.throw("Expected options object", .{});
-        //         return .zero;
-        //     }
-
-        //     var ssl_ptr: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
-        //     var ssl_context = BoringSSL.SSL_get_SSL_CTX(ssl_ptr);
-        //     if(reject_unauthorized) {
-        //         BoringSSL.SSL_CTX_set_verify(ssl_context, BoringSSL.SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, null);
-        //     } else if(request_cert) {
-        //         BoringSSL.SSL_CTX_set_verify(ssl_context, BoringSSL.SSL_VERIFY_PEER, null);
-        //     } else {
-        //         BoringSSL.SSL_CTX_set_verify(ssl_context, BoringSSL.SSL_VERIFY_NONE, null);
-        //     }
-
-        //     if (BoringSSL.SSL_renegotiate(ssl_ptr) != 1) {
-        //         globalObject.throwValue(getSSLException(globalObject, "Failed to renegotiate TLS"));
-        //         return .zero;
-        //     }
-        //     this.renegociating = true;
-        //     we need to check onData and onWritable to call handshake and call onHandshake callback when finished
-        //     _ = BoringSSL.SSL_do_handshake(ssl_ptr);
-
-        //     return JSValue.jsBoolean(true);
-        // }
 
         pub fn getALPNProtocol(
             this: *This,

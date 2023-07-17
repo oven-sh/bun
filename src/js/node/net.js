@@ -164,12 +164,7 @@ const Socket = (function (InternalSocket) {
         self._securePending = false;
         self.secureConnecting = false;
         self._secureEstablished = !!success;
-        // emmited before checking other handshake stuff (used on mysql2 and possible others)
-        // this is not documented, but is emmited on nodejs because of the deprecated tls.createSecurePair().
-        // so we only emit if the socket was upgraded
-        if (self.#upgraded) {
-          self.emit("secure", self);
-        }
+        self.emit("secure", self);
 
         const { checkServerIdentity } = self[bunTLSConnectOptions];
         if (!verifyError && typeof checkServerIdentity === "function" && self.servername) {
@@ -285,6 +280,7 @@ const Socket = (function (InternalSocket) {
       },
       handshake(socket, success, verifyError) {
         const { data: self } = socket;
+        self.emit("secure", self);
 
         self._securePending = false;
         self.secureConnecting = false;

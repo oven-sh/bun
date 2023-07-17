@@ -1,4 +1,5 @@
-import { createServer, Server, TLSSocket } from "tls";
+import { connect, createServer, Server, TLSSocket } from "tls";
+import type { PeerCertificate } from "tls";
 import { realpathSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -340,6 +341,69 @@ describe("tls.createServer events", () => {
     );
   });
 
+  it("should work with getCertificate", done => {
+    let timeout: Timer;
+    let client: TLSSocket | null = null;
+    const server: Server = createServer(COMMON_CERT, socket => {
+      socket.on("secure", () => {
+        try {
+          expect(socket).toBeDefined();
+          const cert = socket.getCertificate() as PeerCertificate;
+          expect(cert).toBeDefined();
+          expect(cert.subject).toBeDefined();
+          expect(cert.subject).toMatchObject({
+            C: "AU",
+            ST: "Some-State",
+            O: "Internet Widgits Pty Ltd",
+          });
+
+          expect(cert.issuer).toBeDefined();
+          expect(cert.issuer).toMatchObject({
+            C: "AU",
+            ST: "Some-State",
+            O: "Internet Widgits Pty Ltd",
+          });
+
+          expect(cert.ca).toBeTrue();
+          expect(cert.bits).toBeNumber();
+          expect(typeof cert.modulus).toBe("string");
+          expect(typeof cert.exponent).toBe("string");
+          expect(cert.pubkey).toBeInstanceOf(Buffer);
+          expect(typeof cert.valid_from).toBe("string");
+          expect(typeof cert.valid_to).toBe("string");
+          expect(typeof cert.fingerprint).toBe("string");
+          expect(typeof cert.fingerprint256).toBe("string");
+          expect(typeof cert.fingerprint512).toBe("string");
+          expect(typeof cert.serialNumber).toBe("string");
+          expect(cert.raw).toBeInstanceOf(Buffer);
+          client?.end();
+          server.close();
+          done();
+        } catch (err) {
+          client?.end();
+          server.close();
+          done(err);
+        }
+      });
+    });
+
+    const closeAndFail = (err: any) => {
+      clearTimeout(timeout);
+      server.close();
+      client?.end();
+      done(err || "Timeout");
+    };
+    server.on("error", closeAndFail);
+    timeout = setTimeout(closeAndFail, 1000);
+
+    server.listen(0, () => {
+      const address = server.address() as AddressInfo;
+      client = connect({
+        port: address.port,
+        host: address.address,
+      });
+    });
+  });
   it("should call end", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
     let timeout: Timer;

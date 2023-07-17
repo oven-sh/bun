@@ -413,7 +413,7 @@ const TLSSocket = (function (InternalTLSSocket) {
       return this[bunSocketInternal]?.getTLSTicket();
     }
     exportKeyingMaterial(length, label, context) {
-      if (context){
+      if (context) {
         return this[bunSocketInternal]?.exportKeyingMaterial(length, label, context);
       }
       return this[bunSocketInternal]?.exportKeyingMaterial(length, label);

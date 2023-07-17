@@ -73,8 +73,7 @@ var createConnection = function(port, host, connectListener) {
     },
     handshake(socket, success, verifyError) {
       const { data: self } = socket;
-      if (self._securePending = !1, self.secureConnecting = !1, self._secureEstablished = !!success, self.#upgraded)
-        self.emit("secure", self);
+      self._securePending = !1, self.secureConnecting = !1, self._secureEstablished = !!success, self.emit("secure", self);
       const { checkServerIdentity } = self[bunTLSConnectOptions];
       if (!verifyError && typeof checkServerIdentity === "function" && self.servername) {
         const cert = self.getPeerCertificate(!0);
@@ -152,7 +151,7 @@ var createConnection = function(port, host, connectListener) {
     },
     handshake(socket, success, verifyError) {
       const { data: self } = socket;
-      if (self._securePending = !1, self.secureConnecting = !1, self._secureEstablished = !!success, self._requestCert || self._rejectUnauthorized) {
+      if (self.emit("secure", self), self._securePending = !1, self.secureConnecting = !1, self._secureEstablished = !!success, self._requestCert || self._rejectUnauthorized) {
         if (verifyError) {
           if (self.authorized = !1, self.authorizationError = verifyError.code || verifyError.message, self._rejectUnauthorized) {
             self.destroy(verifyError);

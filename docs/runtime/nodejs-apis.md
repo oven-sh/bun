@@ -27,7 +27,6 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_buffer" %} [`node:buffer`](https://nodejs.org/api/buffer.html) {% /anchor %}
 - 🟢
-- Incomplete implementation of `base64` and `base64url` encodings.
 
 ---
 

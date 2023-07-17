@@ -1,6 +1,7 @@
 // Hardcoded module "node:v8"
 // This is a stub! None of this is actually implemented yet.
 import { hideFromStack, throwNotImplemented } from "../shared";
+import { serialize as jscSerialize, deserialize as jscDeserialize } from "bun:jsc";
 
 function notimpl(message) {
   throwNotImplemented("node:v8 " + message);
@@ -42,8 +43,8 @@ function getHeapCodeStatistics() {
 function setFlagsFromString() {
   notimpl("setFlagsFromString");
 }
-function deserialize() {
-  notimpl("deserialize");
+function deserialize(value) {
+  return jscDeserialize(value);
 }
 function takeCoverage() {
   notimpl("takeCoverage");
@@ -51,8 +52,8 @@ function takeCoverage() {
 function stopCoverage() {
   notimpl("stopCoverage");
 }
-function serialize() {
-  notimpl("serialize");
+function serialize(arg1) {
+  return jscSerialize(arg1, { binaryType: "nodebuffer" });
 }
 function writeHeapSnapshot() {
   notimpl("writeHeapSnapshot");

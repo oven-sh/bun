@@ -859,7 +859,7 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWebFakeXRInputController;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWebXRTest;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDedicatedWorkerGlobalScope;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWorker;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWorker;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWorkerGlobalScope;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWorkerLocation;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExtendableEvent;

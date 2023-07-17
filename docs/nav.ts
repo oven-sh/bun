@@ -242,6 +242,9 @@ export default {
     page("api/websockets", "WebSockets", {
       description: `Bun supports server-side WebSockets with on-the-fly compression, TLS support, and a Bun-native pubsub API.`,
     }), // "`Bun.serve`"),
+    page("api/workers", "Workers", {
+      description: `Run code in a separate thread with Bun's native Worker API.`,
+    }), // "`Worker`"),
     page("api/binary-data", "Binary data", {
       description: `How to represent and manipulate binary data in Bun.`,
     }), // "`Bun.serve`"),

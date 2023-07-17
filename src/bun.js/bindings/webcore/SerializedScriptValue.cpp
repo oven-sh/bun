@@ -74,6 +74,7 @@
 #include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/IterationKind.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
+#include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSDataView.h>
@@ -2527,7 +2528,7 @@ public:
         Vector<std::unique_ptr<DetachedRTCDataChannel>>&& detachedRTCDataChannels
 #endif
         ,
-        ArrayBufferContentsArray* arrayBufferContentsArray, const Vector<uint8_t>& buffer, const Vector<String>& blobURLs, const Vector<String> blobFilePaths, ArrayBufferContentsArray* sharedBuffers
+        ArrayBufferContentsArray* arrayBufferContentsArray, const Span<uint8_t>& buffer, const Vector<String>& blobURLs, const Vector<String> blobFilePaths, ArrayBufferContentsArray* sharedBuffers
 #if ENABLE(WEBASSEMBLY)
         ,
         WasmModuleArray* wasmModules, WasmMemoryHandleArray* wasmMemoryHandles
@@ -2540,7 +2541,7 @@ public:
     {
         if (!buffer.size())
             return std::make_pair(jsNull(), SerializationReturnCode::UnspecifiedError);
-        CloneDeserializer deserializer(lexicalGlobalObject, globalObject, arrayBufferContentsArray, buffer, blobURLs, blobFilePaths, sharedBuffers
+        CloneDeserializer deserializer(lexicalGlobalObject, globalObject, arrayBufferContentsArray, Span<uint8_t> { buffer.begin(), buffer.end() }, blobURLs, blobFilePaths, sharedBuffers
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
             ,
             WTFMove(detachedOffscreenCanvases)
@@ -2570,6 +2571,19 @@ private:
         {
         }
 
+        CachedString(const Identifier& identifier)
+            : m_identifier(identifier)
+            , m_string(identifier.string())
+        {
+        }
+
+        Identifier identifier(JSC::VM& vm)
+        {
+            if (m_identifier.isEmpty())
+                m_identifier = Identifier::fromString(vm, string());
+            return m_identifier;
+        }
+
         JSValue jsString(JSGlobalObject* lexicalGlobalObject)
         {
             if (!m_jsString)
@@ -2582,6 +2596,7 @@ private:
     private:
         String m_string;
         JSValue m_jsString;
+        Identifier m_identifier;
     };
 
     struct CachedStringRef {
@@ -2660,7 +2675,7 @@ private:
     //             m_version = 0xFFFFFFFF;
     //     }
 
-    CloneDeserializer(JSGlobalObject* lexicalGlobalObject, JSGlobalObject* globalObject, ArrayBufferContentsArray* arrayBufferContents, const Vector<uint8_t>& buffer
+    CloneDeserializer(JSGlobalObject* lexicalGlobalObject, JSGlobalObject* globalObject, ArrayBufferContentsArray* arrayBufferContents, const Span<uint8_t>& buffer
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
         ,
         Vector<std::unique_ptr<DetachedOffscreenCanvas>>&& detachedOffscreenCanvases = {}
@@ -2766,7 +2781,7 @@ private:
     //             m_version = 0xFFFFFFFF;
     //     }
 
-    CloneDeserializer(JSGlobalObject* lexicalGlobalObject, JSGlobalObject* globalObject, ArrayBufferContentsArray* arrayBufferContents, const Vector<uint8_t>& buffer, const Vector<String>& blobURLs, const Vector<String> blobFilePaths, ArrayBufferContentsArray* sharedBuffers
+    CloneDeserializer(JSGlobalObject* lexicalGlobalObject, JSGlobalObject* globalObject, ArrayBufferContentsArray* arrayBufferContents, const Span<uint8_t>& buffer, const Vector<String>& blobURLs, const Vector<String> blobFilePaths, ArrayBufferContentsArray* sharedBuffers
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
         ,
         Vector<std::unique_ptr<DetachedOffscreenCanvas>>&& detachedOffscreenCanvases
@@ -2955,6 +2970,38 @@ private:
         return true;
     }
 
+    static bool readIdentifier(JSC::VM& vm, const uint8_t*& ptr, const uint8_t* end, Identifier& str, unsigned length, bool is8Bit)
+    {
+        if (length >= std::numeric_limits<int32_t>::max() / sizeof(UChar))
+            return false;
+
+        if (is8Bit) {
+            if ((end - ptr) < static_cast<int>(length))
+                return false;
+            str = Identifier::fromString(vm, reinterpret_cast<const LChar*>(ptr), length);
+            ptr += length;
+            return true;
+        }
+
+        unsigned size = length * sizeof(UChar);
+        if ((end - ptr) < static_cast<int>(size))
+            return false;
+
+#if ASSUME_LITTLE_ENDIAN
+        str = Identifier::fromString(vm, reinterpret_cast<const UChar*>(ptr), length);
+        ptr += length * sizeof(UChar);
+#else
+        UChar* characters;
+        str = String::createUninitialized(length, characters);
+        for (unsigned i = 0; i < length; ++i) {
+            uint16_t c;
+            readLittleEndian(ptr, end, c);
+            characters[i] = c;
+        }
+#endif
+        return true;
+    }
+
     bool readStringData(CachedStringRef& cachedString)
     {
         bool scratch;
@@ -2993,6 +3040,42 @@ private:
             return false;
         }
         m_constantPool.append(str);
+        cachedString = CachedStringRef(&m_constantPool, m_constantPool.size() - 1);
+        return true;
+    }
+
+    bool readIdentifierData(JSC::VM& vm, CachedStringRef& cachedString, bool& wasTerminator)
+    {
+        if (m_failed)
+            return false;
+        uint32_t length = 0;
+        if (!read(length))
+            return false;
+        if (length == TerminatorTag) {
+            wasTerminator = true;
+            return false;
+        }
+        if (length == StringPoolTag) {
+            unsigned index = 0;
+            if (!readStringIndex(index)) {
+                fail();
+                return false;
+            }
+            if (index >= m_constantPool.size()) {
+                fail();
+                return false;
+            }
+            cachedString = CachedStringRef(&m_constantPool, index);
+            return true;
+        }
+        bool is8Bit = length & StringDataIs8BitFlag;
+        length &= ~StringDataIs8BitFlag;
+        Identifier identifier;
+        if (!readIdentifier(vm, m_ptr, m_end, identifier, length, is8Bit)) {
+            fail();
+            return false;
+        }
+        m_constantPool.append(identifier);
         cachedString = CachedStringRef(&m_constantPool, m_constantPool.size() - 1);
         return true;
     }
@@ -4657,7 +4740,7 @@ DeserializationResult CloneDeserializer::deserialize()
         case ObjectStartVisitMember: {
             CachedStringRef cachedString;
             bool wasTerminator = false;
-            if (!readStringData(cachedString, wasTerminator)) {
+            if (!readIdentifierData(vm, cachedString, wasTerminator)) {
                 if (!wasTerminator)
                     goto error;
 
@@ -4668,11 +4751,11 @@ DeserializationResult CloneDeserializer::deserialize()
             }
 
             if (JSValue terminal = readTerminal()) {
-                putProperty(outputObjectStack.last(), Identifier::fromString(vm, cachedString->string()), terminal);
+                putProperty(outputObjectStack.last(), cachedString->identifier(vm), terminal);
                 goto objectStartVisitMember;
             }
             stateStack.append(ObjectEndVisitMember);
-            propertyNameStack.append(Identifier::fromString(vm, cachedString->string()));
+            propertyNameStack.append(cachedString->identifier(vm));
             goto stateUnknown;
         }
         case ObjectEndVisitMember: {
@@ -5282,6 +5365,73 @@ String SerializedScriptValue::toString() const
     return CloneDeserializer::deserializeString(m_data);
 }
 
+Ref<JSC::ArrayBuffer> SerializedScriptValue::toArrayBuffer()
+{
+    if (this->m_data.size() == 0) {
+        return ArrayBuffer::create(static_cast<size_t>(0), static_cast<unsigned>(1));
+    }
+
+    this->ref();
+    auto arrayBuffer = ArrayBuffer::createFromBytes(
+        this->m_data.data(), this->m_data.size(), createSharedTask<void(void*)>([protectedThis = Ref { *this }](void* p) {
+            protectedThis->deref();
+        }));
+
+    // Note: using the SharedArrayBufferContents::create function directly didn't work.
+    arrayBuffer->makeShared();
+
+    return arrayBuffer;
+}
+
+JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlobal, JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer* arrayBuffer, size_t byteOffset, size_t maxByteLength, SerializationErrorMode throwExceptions, bool* didFail)
+{
+    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    if (!arrayBuffer || arrayBuffer->isDetached()) {
+        if (didFail)
+            *didFail = true;
+
+        if (throwExceptions == SerializationErrorMode::Throwing)
+            throwTypeError(globalObject, throwScope, "Cannot deserialize a detached ArrayBuffer"_s);
+
+        return JSC::jsUndefined();
+    }
+    auto blobURLs = Vector<String> {};
+    auto blobFiles = Vector<String> {};
+
+    if (arrayBuffer->isShared()) {
+        // prevent detaching while in-use
+        arrayBuffer->pin();
+    }
+
+    auto* data = static_cast<uint8_t*>(arrayBuffer->data()) + byteOffset;
+    auto size = std::min(arrayBuffer->byteLength(), maxByteLength);
+    auto span = Span<uint8_t> { data, size };
+
+    auto result = CloneDeserializer::deserialize(&domGlobal, globalObject, nullptr, span, blobURLs, blobFiles, nullptr
+#if ENABLE(WEBASSEMBLY)
+        ,
+        nullptr, nullptr
+#endif
+#if ENABLE(WEB_CODECS)
+        ,
+        WTFMove(m_serializedVideoChunks), WTFMove(m_serializedVideoFrames)
+#endif
+    );
+
+    if (arrayBuffer->isShared()) {
+        arrayBuffer->unpin();
+    }
+
+    if (didFail) {
+        *didFail = result.second != SerializationReturnCode::SuccessfullyCompleted;
+    }
+    if (throwExceptions == SerializationErrorMode::Throwing)
+        maybeThrowExceptionIfSerializationFailed(*globalObject, result.second);
+
+    return result.first ? result.first : jsNull();
+}
+
 // JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, JSGlobalObject* globalObject, SerializationErrorMode throwExceptions, bool* didFail)
 // {
 //     return deserialize(lexicalGlobalObject, globalObject, {}, throwExceptions, didFail);
@@ -5396,7 +5546,8 @@ JSValueRef SerializedScriptValue::deserialize(JSContextRef destinationContext, J
     return toRef(lexicalGlobalObject, value);
 }
 
-Ref<SerializedScriptValue> SerializedScriptValue::nullValue()
+Ref<SerializedScriptValue>
+SerializedScriptValue::nullValue()
 {
     return adoptRef(*new SerializedScriptValue(Vector<uint8_t>()));
 }

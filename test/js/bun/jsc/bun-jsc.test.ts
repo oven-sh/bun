@@ -2,6 +2,8 @@ import { describe, expect, it } from "bun:test";
 import {
   describe as jscDescribe,
   describeArray,
+  serialize,
+  deserialize,
   gcAndSweep,
   fullGC,
   edenGC,
@@ -139,5 +141,29 @@ describe("bun:jsc", () => {
     setTimeZone(realOrigTimezone);
 
     expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(origTimezone);
+  });
+
+  it("serialize", () => {
+    const serialized = serialize({ a: 1 });
+    expect(serialized).toBeInstanceOf(SharedArrayBuffer);
+    expect(deserialize(serialized)).toStrictEqual({ a: 1 });
+    const nested = serialize(serialized);
+    expect(deserialize(deserialize(nested))).toStrictEqual({ a: 1 });
+  });
+
+  it("serialize (binaryMode: 'nodebuffer')", () => {
+    const serialized = serialize({ a: 1 }, { binaryMode: "nodebuffer" });
+    expect(serialized).toBeInstanceOf(Buffer);
+    expect(serialized.buffer).toBeInstanceOf(SharedArrayBuffer);
+    expect(deserialize(serialized)).toStrictEqual({ a: 1 });
+    const nested = serialize(serialized);
+    expect(deserialize(deserialize(nested))).toStrictEqual({ a: 1 });
+  });
+
+  it("serialize GC test", () => {
+    for (let i = 0; i < 1000; i++) {
+      serialize({ a: 1 });
+    }
+    Bun.gc(true);
   });
 });

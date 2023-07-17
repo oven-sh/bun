@@ -17,6 +17,7 @@ class NotImplementedError extends Error {
 }
 
 // src/js/node/v8.ts
+import {serialize as jscSerialize, deserialize as jscDeserialize} from "bun:jsc";
 var notimpl = function(message) {
   throwNotImplemented("node:v8 " + message);
 }, cachedDataVersionTag = function() {
@@ -31,14 +32,14 @@ var notimpl = function(message) {
   notimpl("getHeapCodeStatistics");
 }, setFlagsFromString = function() {
   notimpl("setFlagsFromString");
-}, deserialize = function() {
-  notimpl("deserialize");
+}, deserialize = function(value) {
+  return jscDeserialize(value);
 }, takeCoverage = function() {
   notimpl("takeCoverage");
 }, stopCoverage = function() {
   notimpl("stopCoverage");
-}, serialize = function() {
-  notimpl("serialize");
+}, serialize = function(arg1) {
+  return jscSerialize(arg1, { binaryType: "nodebuffer" });
 }, writeHeapSnapshot = function() {
   notimpl("writeHeapSnapshot");
 }, setHeapSnapshotNearHeapLimit = function() {

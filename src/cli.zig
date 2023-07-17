@@ -153,6 +153,7 @@ pub const Arguments = struct {
         clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi") catch unreachable,
         clap.parseParam("-u, --origin <STR>                Rewrite import URLs to start with --origin. Default: \"\"") catch unreachable,
         clap.parseParam("-p, --port <STR>                  Port to serve bun's dev server on. Default: \"3000\"") catch unreachable,
+        clap.parseParam("--smol                            Use less memory, but run garbage collection more often") catch unreachable,
         clap.parseParam("--minify                          Minify (experimental)") catch unreachable,
         clap.parseParam("--minify-syntax                   Minify syntax and inline data (experimental)") catch unreachable,
         clap.parseParam("--minify-whitespace               Minify whitespace (experimental)") catch unreachable,
@@ -479,6 +480,8 @@ pub const Arguments = struct {
             } else if (preloads.len > 0) {
                 ctx.preloads = preloads;
             }
+
+            ctx.runtime_options.smol = args.flag("--smol");
         }
 
         if (opts.port != null and opts.origin == null) {
@@ -960,9 +963,14 @@ pub const Command = struct {
         debug: DebugOptions = DebugOptions{},
         test_options: TestOptions = TestOptions{},
         bundler_options: BundlerOptions = BundlerOptions{},
+        runtime_options: RuntimeOptions = RuntimeOptions{},
 
         preloads: []const string = &[_]string{},
         has_loaded_global_config: bool = false,
+
+        pub const RuntimeOptions = struct {
+            smol: bool = false,
+        };
 
         pub const BundlerOptions = struct {
             compile: bool = false,

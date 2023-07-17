@@ -486,3 +486,17 @@ To resolve relative to the directory containing the current file, pass `import.m
 ```ts
 Bun.resolveSync("./foo.ts", import.meta.dir);
 ```
+
+## `serialize` & `deserialize` in `bun:jsc`
+
+To save a JavaScript value into an ArrayBuffer & back, use `serialize` and `deserialize` from the `"bun:jsc"` module.
+
+```js
+import { serialize, deserialize } from "bun:jsc";
+
+const buf = serialize({ foo: "bar" });
+const obj = deserialize(buf);
+console.log(obj); // => { foo: "bar" }
+```
+
+Internally, [`structuredClone`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone) and [`postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage) serialize and deserialize the same way. This exposes the underlying [HTML Structured Clone Algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm) to JavaScript as an ArrayBuffer.

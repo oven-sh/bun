@@ -20,31 +20,27 @@
 
 #pragma once
 
-#include "root.h"
-#include "EventTarget.h"
 #include "JSDOMWrapper.h"
+#include "JSEventTarget.h"
+#include "Worker.h"
 #include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 
-JSC_DECLARE_HOST_FUNCTION(jsEventTargetPrototypeFunction_addEventListener);
-JSC_DECLARE_HOST_FUNCTION(jsEventTargetPrototypeFunction_removeEventListener);
-JSC_DECLARE_HOST_FUNCTION(jsEventTargetPrototypeFunction_dispatchEvent);
-
-class JSEventTarget : public JSDOMWrapper<EventTarget> {
+class JSWorker : public JSEventTarget {
 public:
-    using Base = JSDOMWrapper<EventTarget>;
-    static JSEventTarget* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<EventTarget>&& impl)
+    using Base = JSEventTarget;
+    using DOMWrapped = Worker;
+    static JSWorker* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<Worker>&& impl)
     {
-        JSEventTarget* ptr = new (NotNull, JSC::allocateCell<JSEventTarget>(globalObject->vm())) JSEventTarget(structure, *globalObject, WTFMove(impl));
+        JSWorker* ptr = new (NotNull, JSC::allocateCell<JSWorker>(globalObject->vm())) JSWorker(structure, *globalObject, WTFMove(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static EventTarget* toWrapped(JSC::VM&, JSC::JSValue);
-    static void destroy(JSC::JSCell*);
+    static Worker* toWrapped(JSC::VM&, JSC::JSValue);
 
     DECLARE_INFO;
 
@@ -61,44 +57,43 @@ public:
         return subspaceForImpl(vm);
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
-    DECLARE_VISIT_CHILDREN;
-    template<typename Visitor> void visitAdditionalChildren(Visitor&);
-
-    template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+    Worker& wrapped() const
+    {
+        return static_cast<Worker&>(Base::wrapped());
+    }
 
 protected:
-    JSEventTarget(JSC::Structure*, JSDOMGlobalObject&, Ref<EventTarget>&&);
+    JSWorker(JSC::Structure*, JSDOMGlobalObject&, Ref<Worker>&&);
 
-    void finishCreation(JSC::VM&);
+    DECLARE_DEFAULT_FINISH_CREATION;
 };
 
-class JSEventTargetOwner final : public JSC::WeakHandleOwner {
+class JSWorkerOwner final : public JSC::WeakHandleOwner {
 public:
     bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, const char**) final;
     void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
 };
 
-inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, EventTarget*)
+inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, Worker*)
 {
-    static NeverDestroyed<JSEventTargetOwner> owner;
+    static NeverDestroyed<JSWorkerOwner> owner;
     return &owner.get();
 }
 
-inline void* wrapperKey(EventTarget* wrappableObject)
+inline void* wrapperKey(Worker* wrappableObject)
 {
     return wrappableObject;
 }
 
-JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, EventTarget&);
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, EventTarget* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<EventTarget>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<EventTarget>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
+JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, Worker&);
+inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Worker* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
+JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<Worker>&&);
+inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<Worker>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
-template<> struct JSDOMWrapperConverterTraits<EventTarget> {
-    using WrapperClass = JSEventTarget;
-    using ToWrappedReturnType = EventTarget*;
+template<> struct JSDOMWrapperConverterTraits<Worker> {
+    using WrapperClass = JSWorker;
+    using ToWrappedReturnType = Worker*;
 };
 
 } // namespace WebCore
-#include "JSEventTargetCustom.h"

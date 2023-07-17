@@ -40,6 +40,42 @@ declare module "bun:jsc" {
   export function drainMicrotasks(): void;
 
   /**
+   * Convert a JavaScript value to a binary representation that can be sent to another Bun instance.
+   *
+   * Internally, this uses the serialization format from WebKit/Safari.
+   *
+   * @param value A JavaScript value, usually an object or array, to be converted.
+   * @returns A SharedArrayBuffer that can be sent to another Bun instance.
+   *
+   */
+  export function serialize(
+    value: any,
+    options?: { binaryMode?: "arraybuffer" },
+  ): SharedArrayBuffer;
+
+  /**
+   * Convert a JavaScript value to a binary representation that can be sent to another Bun instance.
+   *
+   * Internally, this uses the serialization format from WebKit/Safari.
+   *
+   * @param value A JavaScript value, usually an object or array, to be converted.
+   * @returns A Buffer that can be sent to another Bun instance.
+   */
+  export function serialize(
+    value: any,
+    options?: { binaryMode: "nodebuffer" },
+  ): Buffer;
+
+  /**
+   * Convert an ArrayBuffer or Buffer to a JavaScript value compatible with the HTML Structured Clone Algorithm.
+   *
+   * @param value A serialized value, usually an ArrayBuffer or Buffer, to be converted.
+   */
+  export function deserialize(
+    value: ArrayBufferLike | TypedArray | Buffer,
+  ): any;
+
+  /**
    * Set the timezone used by Intl, Date, etc.
    *
    * @param timeZone A string representing the time zone to use, such as "America/Los_Angeles"

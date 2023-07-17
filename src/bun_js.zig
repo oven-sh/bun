@@ -151,6 +151,7 @@ pub const Run = struct {
                 ctx.log,
                 null,
                 ctx.debug.hot_reload != .none,
+                ctx.runtime_options.smol,
             ),
             .arena = arena,
             .ctx = ctx,

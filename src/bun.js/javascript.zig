@@ -908,6 +908,7 @@ pub const VirtualMachine = struct {
         _log: ?*logger.Log,
         env_loader: ?*DotEnv.Loader,
         store_fd: bool,
+        smol: bool,
     ) !*VirtualMachine {
         var log: *logger.Log = undefined;
         if (_log) |__log| {
@@ -987,7 +988,7 @@ pub const VirtualMachine = struct {
             @intCast(i32, global_classes.len),
             vm.console,
             -1,
-            false,
+            smol,
         );
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;

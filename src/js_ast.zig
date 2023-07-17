@@ -9627,6 +9627,7 @@ pub const Macro = struct {
                 log,
                 env,
                 false,
+                false,
             );
 
             _vm.enableMacroMode();

@@ -493,6 +493,7 @@ pub const TestCommand = struct {
             // in the future we should investigate if refactoring this to not
             // rely on the dir fd yields a performance improvement
             true,
+            ctx.runtime_options.smol,
         );
         vm.argv = ctx.passthrough;
         vm.preload = ctx.preloads;

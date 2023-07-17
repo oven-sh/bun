@@ -277,7 +277,7 @@ pub extern fn JSC__JSValue__jsNumberFromChar(arg0: u8) JSC__JSValue;
 pub extern fn JSC__JSValue__jsNumberFromDouble(arg0: f64) JSC__JSValue;
 pub extern fn JSC__JSValue__jsNumberFromInt64(arg0: i64) JSC__JSValue;
 pub extern fn JSC__JSValue__jsNumberFromU16(arg0: u16) JSC__JSValue;
-pub extern fn JSC__JSValue__jsonStringify(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: u32, arg3: [*c]ZigString) void;
+pub extern fn JSC__JSValue__jsonStringify(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: u32, arg3: [*c]BunString) void;
 pub extern fn JSC__JSValue__jsTDZValue(...) JSC__JSValue;
 pub extern fn JSC__JSValue__jsType(JSValue0: JSC__JSValue) u8;
 pub extern fn JSC__JSValue__jsUndefined(...) JSC__JSValue;

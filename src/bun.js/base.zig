@@ -1854,6 +1854,8 @@ pub const ArrayBuffer = extern struct {
         ));
     }
 
+    const log = Output.scoped(.ArrayBuffer, false);
+
     pub fn toJS(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
         if (!this.value.isEmpty()) {
             return this.value;
@@ -1861,6 +1863,8 @@ pub const ArrayBuffer = extern struct {
 
         // If it's not a mimalloc heap buffer, we're not going to call a deallocator
         if (this.len > 0 and !bun.Mimalloc.mi_is_in_heap_region(this.ptr)) {
+            log("toJS but will never free: {d} bytes", .{this.len});
+
             if (this.typed_array_type == .ArrayBuffer) {
                 return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(
                     ctx,

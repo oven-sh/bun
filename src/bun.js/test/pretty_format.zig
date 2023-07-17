@@ -1403,9 +1403,11 @@ pub const JestPrettyFormat = struct {
                     writer.writeAll("\n");
                 },
                 .JSON => {
-                    var str = ZigString.init("");
+                    var str = bun.String.empty;
+                    defer str.deref();
+
                     value.jsonStringify(this.globalThis, this.indent, &str);
-                    this.addForNewLine(str.len);
+                    this.addForNewLine(str.length());
                     if (jsType == JSValue.JSType.JSDate) {
                         // in the code for printing dates, it never exceeds this amount
                         var iso_string_buf: [36]u8 = undefined;

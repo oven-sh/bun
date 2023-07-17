@@ -128,6 +128,22 @@ pub const WTFStringImplStruct = extern struct {
         return .{};
     }
 
+    pub fn toUTF8WithoutRef(this: WTFStringImpl, allocator: std.mem.Allocator) ZigString.Slice {
+        if (this.is8Bit()) {
+            if (bun.strings.toUTF8FromLatin1(allocator, this.latin1Slice()) catch null) |utf8| {
+                return ZigString.Slice.init(allocator, utf8.items);
+            }
+
+            return ZigString.Slice.fromUTF8NeverFree(this.latin1Slice());
+        }
+
+        if (bun.strings.toUTF8Alloc(allocator, this.utf16Slice()) catch null) |utf8| {
+            return ZigString.Slice.init(allocator, utf8);
+        }
+
+        return .{};
+    }
+
     pub fn toUTF8IfNeeded(this: WTFStringImpl, allocator: std.mem.Allocator) ?ZigString.Slice {
         if (this.is8Bit()) {
             if (bun.strings.toUTF8FromLatin1(allocator, this.latin1Slice()) catch null) |utf8| {
@@ -533,6 +549,16 @@ pub const String = extern struct {
         return false;
     }
 
+    extern fn BunString__toJSON(
+        globalObject: *bun.JSC.JSGlobalObject,
+        this: *String,
+    ) JSC.JSValue;
+
+    pub fn toJSForParseJSON(self: *String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return BunString__toJSON(globalObject, self);
+    }
+
     pub fn encodeInto(self: String, out: []u8, comptime enc: JSC.Node.Encoding) !usize {
         if (self.isUTF16()) {
             return JSC.WebCore.Encoder.encodeIntoFrom16(self.utf16(), out, enc, true);
@@ -568,6 +594,23 @@ pub const String = extern struct {
     pub fn toUTF8(this: String, allocator: std.mem.Allocator) ZigString.Slice {
         if (this.tag == .WTFStringImpl) {
             return this.value.WTFStringImpl.toUTF8(allocator);
+        }
+
+        if (this.tag == .ZigString) {
+            return this.value.ZigString.toSlice(allocator);
+        }
+
+        if (this.tag == .StaticZigString) {
+            return ZigString.Slice.fromUTF8NeverFree(this.value.StaticZigString.slice());
+        }
+
+        return ZigString.Slice.empty;
+    }
+
+    /// This is the same as toUTF8, but it doesn't increment the reference count for latin1 strings
+    pub fn toUTF8WithoutRef(this: String, allocator: std.mem.Allocator) ZigString.Slice {
+        if (this.tag == .WTFStringImpl) {
+            return this.value.WTFStringImpl.toUTF8WithoutRef(allocator);
         }
 
         if (this.tag == .ZigString) {

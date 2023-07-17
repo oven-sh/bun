@@ -387,22 +387,23 @@ pub const Response = struct {
         const json_value = args.nextEat() orelse JSC.JSValue.zero;
 
         if (@intFromEnum(json_value) != 0) {
-            var zig_str = JSC.ZigString.init("");
+            var str = bun.String.empty;
             // calling JSON.stringify on an empty string adds extra quotes
             // so this is correct
-            json_value.jsonStringify(globalThis.ptr(), 0, &zig_str);
+            json_value.jsonStringify(globalThis, 0, &str);
 
-            if (zig_str.len > 0) {
-                const allocator = getAllocator(globalThis);
-                var zig_str_slice = zig_str.toSlice(allocator);
-
-                if (zig_str_slice.isAllocated()) {
+            if (!str.isEmpty()) {
+                if (str.value.WTFStringImpl.toUTF8IfNeeded(bun.default_allocator)) |bytes| {
+                    defer str.deref();
                     response.body.value = .{
-                        .Blob = Blob.initWithAllASCII(zig_str_slice.mut(), allocator, globalThis.ptr(), false),
+                        .InternalBlob = InternalBlob{
+                            .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(bytes.slice())),
+                            .was_string = true,
+                        },
                     };
                 } else {
-                    response.body.value = .{
-                        .Blob = Blob.initWithAllASCII(allocator.dupe(u8, zig_str_slice.slice()) catch unreachable, allocator, globalThis.ptr(), true),
+                    response.body.value = Body.Value{
+                        .WTFStringImpl = str.value.WTFStringImpl,
                     };
                 }
             }

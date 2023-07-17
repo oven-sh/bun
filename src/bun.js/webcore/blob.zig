@@ -3798,7 +3798,7 @@ pub const AnyBlob = union(enum) {
                     return JSValue.jsNull();
                 }
 
-                return str.toJS(global).parseJSON(global);
+                return str.toJSForParseJSON(global);
             },
         }
     }
@@ -3867,7 +3867,7 @@ pub const AnyBlob = union(enum) {
                 this.* = .{ .Blob = .{} };
                 defer str.deref();
 
-                const out_bytes = str.toUTF8(bun.default_allocator);
+                const out_bytes = str.toUTF8WithoutRef(bun.default_allocator);
                 if (out_bytes.isAllocated()) {
                     const value = JSC.ArrayBuffer.fromBytes(
                         @constCast(out_bytes.slice()),

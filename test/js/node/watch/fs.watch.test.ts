@@ -70,11 +70,16 @@ describe("fs.watch", () => {
     } catch {}
     let err: Error | undefined = undefined;
     const watcher = fs.watch(root, { signal: AbortSignal.timeout(3000) });
+
     watcher.on("change", (event, filename) => {
       count++;
       try {
-        expect(event).toBe("rename");
-        expect(["new-file.txt", "new-folder.txt"]).toContain(filename);
+        expect(["rename", "change"]).toContain(event);
+        if (event == "rename") {
+          expect(["new-file.txt", "new-folder.txt"]).toContain(filename);
+        } else {
+          expect(filename).toBe("new-file.txt");
+        }
         if (count >= 2) {
           watcher.close();
         }
@@ -94,6 +99,61 @@ describe("fs.watch", () => {
       fs.writeFileSync(path.join(root, "new-file.txt"), "hello");
       fs.mkdirSync(path.join(root, "new-folder.txt"));
       fs.rmdirSync(path.join(root, "new-folder.txt"));
+    });
+  });
+
+  test("should watch new-created files", done => {
+    let count = 0;
+    const root = path.join(testDir, "add-directory");
+    try {
+      fs.mkdirSync(root);
+    } catch {}
+    let err: Error | undefined = undefined;
+    const watcher = fs.watch(root, { signal: AbortSignal.timeout(3000) });
+    let ready = false;
+    watcher.on("change", (event, filename) => {
+      count++;
+      try {
+        if (count == 1) {
+          ready = true;
+        } else if (count == 2) {
+          expect(event).toBe("rename");
+          expect(filename).toBe("new-file2.txt");
+        } else if (count == 3) {
+          expect(event).toBe("change");
+          expect(filename).toBe("new-file2.txt");
+        } else if (count == 4) {
+          expect(event).toBe("change");
+          expect(filename).toBe("new-file2.txt");
+          watcher.close();
+        }
+      } catch (e: any) {
+        err = e;
+        watcher.close();
+      }
+    });
+
+    watcher.on("error", e => (err = e));
+    watcher.on("close", () => {
+      try {
+        expect(count).toBe(4);
+      } catch (e: any) {
+        err = e;
+      }
+      clearInterval(interval);
+      done(err);
+    });
+
+    const interval = repeat(() => {
+      // Use this event to test if the watcher has been started.
+      if (!ready) {
+        fs.writeFileSync(path.join(root, "new-file.txt"), "hello");
+        return;
+      }
+      const fd = fs.openSync(path.join(root, "new-file2.txt"), "w");
+      fs.writeSync(fd, "hello");
+      fs.writeSync(fd, "hello");
+      fs.closeSync(fd);
     });
   });
 

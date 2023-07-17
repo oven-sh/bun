@@ -10,8 +10,7 @@ var isIPv4 = function(s) {
   if (isIPv6(s))
     return 6;
   return 0;
-};
-var createConnection = function(port, host, connectListener) {
+}, createConnection = function(port, host, connectListener) {
   if (typeof port === "object")
     return new Socket(port).connect(port, host, connectListener);
   return new Socket().connect(port, host, connectListener);
@@ -64,9 +63,12 @@ var createConnection = function(port, host, connectListener) {
     open(socket) {
       const self = socket.data;
       socket.timeout(self.timeout), socket.ref(), self[bunSocketInternal] = socket, self.connecting = !1;
-      const { session } = self[bunTLSConnectOptions];
-      if (session)
-        self.setSession(session);
+      const options = self[bunTLSConnectOptions];
+      if (options) {
+        const { session } = options;
+        if (session)
+          self.setSession(session);
+      }
       if (!self.#upgraded)
         self.emit("connect", self);
       Socket2.#Drain(socket);

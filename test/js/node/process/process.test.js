@@ -317,7 +317,8 @@ describe("process.cpuUsage", () => {
 
   it("works with diff", () => {
     const init = process.cpuUsage();
-    for (let i = 0; i < 1000; i++) {}
+    init.system = 1;
+    init.user = 1;
     const delta = process.cpuUsage(init);
     expect(delta.user).toBeGreaterThan(0);
     expect(delta.system).toBeGreaterThan(0);
@@ -328,7 +329,6 @@ describe("process.cpuUsage", () => {
       user: 0,
       system: 0,
     };
-    for (let i = 0; i < 1000; i++) {}
     const delta = process.cpuUsage(init);
     expect(delta.user).toBeGreaterThan(0);
     expect(delta.system).toBeGreaterThan(0);

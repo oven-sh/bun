@@ -50,7 +50,7 @@ declare module "bun:jsc" {
    */
   export function serialize(
     value: any,
-    options?: { binaryMode?: "arraybuffer" },
+    options?: { binaryType?: "arraybuffer" },
   ): SharedArrayBuffer;
 
   /**
@@ -63,7 +63,7 @@ declare module "bun:jsc" {
    */
   export function serialize(
     value: any,
-    options?: { binaryMode: "nodebuffer" },
+    options?: { binaryType: "nodebuffer" },
   ): Buffer;
 
   /**

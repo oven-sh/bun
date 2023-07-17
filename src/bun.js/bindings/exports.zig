@@ -965,6 +965,9 @@ pub const ZigConsoleClient = struct {
         _,
     };
 
+    var stderr_mutex: bun.Lock = bun.Lock.init();
+    var stdout_mutex: bun.Lock = bun.Lock.init();
+
     /// https://console.spec.whatwg.org/#formatter
     pub fn messageWithTypeAndLevel(
         //console_: ZigConsoleClient.Type,
@@ -981,6 +984,21 @@ pub const ZigConsoleClient = struct {
         }
 
         var console = global.bunVM().console;
+
+        // Lock/unlock a mutex incase two JS threads are console.log'ing at the same time
+        // We do this the slightly annoying way to avoid assigning a pointer
+        if (level == .Warning or level == .Error or message_type == .Assert) {
+            stderr_mutex.lock();
+        } else {
+            stdout_mutex.lock();
+        }
+        defer {
+            if (level == .Warning or level == .Error or message_type == .Assert) {
+                stderr_mutex.unlock();
+            } else {
+                stdout_mutex.unlock();
+            }
+        }
 
         if (message_type == .Clear) {
             Output.resetTerminal();

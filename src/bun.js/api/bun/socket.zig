@@ -2184,8 +2184,8 @@ fn NewSocket(comptime ssl: bool) type {
                     var buffer = bun.default_allocator.alloc(u8, @intCast(usize, length)) catch unreachable;
                     defer bun.default_allocator.free(buffer);
 
-                    const result = BoringSSL.SSL_export_keying_material(ssl_ptr, @ptrCast([*c]u8, &buffer), buffer.len, @ptrCast([*c]const u8, &label_slice), label_slice.len, @ptrCast([*c]const u8, &context_slice), context_slice.len, 1);
-                    if (result != -1) {
+                    const result = BoringSSL.SSL_export_keying_material(ssl_ptr, @ptrCast([*c]u8, buffer.ptr), buffer.len, @ptrCast([*c]const u8, label_slice.ptr), label_slice.len, @ptrCast([*c]const u8, context_slice.ptr), context_slice.len, 1);
+                    if (result != 1) {
                         globalObject.throwValue(getSSLException(globalObject, "Failed to export keying material"));
                         return .zero;
                     }
@@ -2200,8 +2200,8 @@ fn NewSocket(comptime ssl: bool) type {
             } else {
                 var buffer = bun.default_allocator.alloc(u8, @intCast(usize, length)) catch unreachable;
                 defer bun.default_allocator.free(buffer);
-                const result = BoringSSL.SSL_export_keying_material(ssl_ptr, @ptrCast([*c]u8, &buffer), buffer.len, @ptrCast([*c]const u8, &label_slice), label_slice.len, null, 0, 0);
-                if (result != -1) {
+                const result = BoringSSL.SSL_export_keying_material(ssl_ptr, @ptrCast([*c]u8, buffer.ptr), buffer.len, @ptrCast([*c]const u8, label_slice.ptr), label_slice.len, null, 0, 0);
+                if (result != 1) {
                     globalObject.throwValue(getSSLException(globalObject, "Failed to export keying material"));
                     return .zero;
                 }
@@ -2351,7 +2351,7 @@ fn NewSocket(comptime ssl: bool) type {
             var buffer = bun.default_allocator.alloc(u8, @intCast(usize, size)) catch unreachable;
             defer bun.default_allocator.free(buffer);
 
-            _ = BoringSSL.SSL_get_peer_finished(ssl_ptr, @ptrCast(*anyopaque, &buffer), buffer.len);
+            _ = BoringSSL.SSL_get_peer_finished(ssl_ptr, @ptrCast(*anyopaque, buffer.ptr), buffer.len);
             return JSC.ArrayBuffer.createBuffer(globalObject, buffer);
         }
 
@@ -2381,7 +2381,7 @@ fn NewSocket(comptime ssl: bool) type {
             var buffer = bun.default_allocator.alloc(u8, @intCast(usize, size)) catch unreachable;
             defer bun.default_allocator.free(buffer);
 
-            _ = BoringSSL.SSL_get_finished(ssl_ptr, @ptrCast(*anyopaque, &buffer), buffer.len);
+            _ = BoringSSL.SSL_get_finished(ssl_ptr, @ptrCast(*anyopaque, buffer.ptr), buffer.len);
             return JSC.ArrayBuffer.createBuffer(globalObject, buffer);
         }
 

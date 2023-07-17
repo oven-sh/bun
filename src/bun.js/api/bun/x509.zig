@@ -42,12 +42,13 @@ fn x509GetNameObject(globalObject: *JSGlobalObject, name: ?*BoringSSL.X509_NAME)
 
         const value_data = BoringSSL.X509_NAME_ENTRY_get_data(entry);
 
-        var value_str: []const u8 = undefined;
-        const value_str_len = BoringSSL.ASN1_STRING_to_UTF8(@ptrCast([*c][*c]u8, &value_str.ptr), value_data);
+        var value_str: [*c]u8 = undefined;
+        const value_str_len = BoringSSL.ASN1_STRING_to_UTF8(&value_str, value_data);
         if (value_str_len < 0) {
             continue;
         }
-        const value_slice = value_str.ptr[0..@intCast(usize, value_str_len)];
+        const value_slice = value_str[0..@intCast(usize, value_str_len)];
+        defer BoringSSL.OPENSSL_free(value_str);
         // For backward compatibility, we only create arrays if multiple values
         // exist for the same key. That is not great but there is not much we can
         // change here without breaking things. Note that this creates nested data
@@ -405,6 +406,32 @@ fn getFingerprintDigest(cert: *BoringSSL.X509, method: *const BoringSSL.EVP_MD, 
     }
     return JSValue.jsUndefined();
 }
+
+fn getSerialNumber(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
+    const serial_number = BoringSSL.X509_get_serialNumber(cert);
+    if(serial_number != null) {
+        const bignum = BoringSSL.ASN1_INTEGER_to_BN(serial_number, null);
+        if(bignum != null) {
+            const data = BoringSSL.BN_bn2hex(bignum);
+            if(data != null) {
+                return JSC.ZigString.fromUTF8(data[0..bun.len(data)]).toValueGC(globalObject);
+            }
+
+        }
+    }
+    return JSValue.jsUndefined();
+}
+
+fn getRawDERCertificate(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
+    const size = BoringSSL.i2d_X509(cert, null);
+    var buffer = bun.default_allocator.alloc(u8, @intCast(usize, size)) catch unreachable;
+    defer bun.default_allocator.free(buffer);
+    var tmp = @ptrCast([*c]u8, buffer.ptr);
+    _ = BoringSSL.i2d_X509(cert, &tmp);
+    return JSC.ArrayBuffer.createBuffer(globalObject, buffer);
+}
+
+
 pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
     const bio = BoringSSL.BIO_new(BoringSSL.BIO_s_mem()) orelse {
         globalObject.throw("Failed to create BIO", .{});
@@ -418,7 +445,7 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
     result.put(globalObject, ZigString.static("subject"), x509GetNameObject(globalObject, subject));
     const issuer = BoringSSL.X509_get_issuer_name(cert);
     result.put(globalObject, ZigString.static("issuer"), x509GetNameObject(globalObject, issuer));
-    result.put(globalObject, ZigString.static("subjectAltName"), x509GetSubjectAltNameString(globalObject, bio, cert));
+    result.put(globalObject, ZigString.static("subjectaltname"), x509GetSubjectAltNameString(globalObject, bio, cert));
     result.put(globalObject, ZigString.static("infoAccess"), x509GetInfoAccessString(globalObject, bio, cert));
     result.put(globalObject, ZigString.static("ca"), JSValue.jsBoolean(is_ca));
 
@@ -432,15 +459,25 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
                 var e: [*c]const BoringSSL.BIGNUM = undefined;
                 BoringSSL.RSA_get0_key(rsa, @ptrCast([*c][*c]const BoringSSL.BIGNUM, &n), @ptrCast([*c][*c]const BoringSSL.BIGNUM, &e), null);
                 _ = BoringSSL.BN_print(bio, n);
+
+                var bits = JSValue.jsUndefined();
+                
+                const bits_value = BoringSSL.BN_num_bits(n);
+                if (bits_value > 0) {
+                    bits = JSValue.jsNumber(bits_value);
+                }
+            
+                result.put(globalObject, ZigString.static("bits"), bits);
+                
                 const modulus = JSC.ZigString.fromUTF8(bio.slice()).toValueGC(globalObject);
                 _ = BoringSSL.BIO_reset(bio);
                 result.put(globalObject, ZigString.static("modulus"), modulus);
 
                 const exponent_word = BoringSSL.BN_get_word(e);
-                _ = BoringSSL.BIO_printf(bio, "0x%", exponent_word);
+                _ = BoringSSL.BIO_printf(bio, "0x" ++ BoringSSL.BN_HEX_FMT1, exponent_word);
                 const exponent = JSC.ZigString.fromUTF8(bio.slice()).toValueGC(globalObject);
                 _ = BoringSSL.BIO_reset(bio);
-                result.put(globalObject, ZigString.static("exoponent"), exponent);
+                result.put(globalObject, ZigString.static("exponent"), exponent);
 
                 const size = BoringSSL.i2d_RSA_PUBKEY(rsa, null);
                 if (size <= 0) {
@@ -449,7 +486,9 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
                 }
                 var buffer = bun.default_allocator.alloc(u8, @intCast(usize, size)) catch unreachable;
                 defer bun.default_allocator.free(buffer);
-                _ = BoringSSL.i2d_RSA_PUBKEY(rsa, @ptrCast([*c][*c]u8, &buffer.ptr));
+                var tmp = @ptrCast([*c]u8, buffer.ptr);
+                _ = BoringSSL.i2d_RSA_PUBKEY(rsa, &tmp);
+
                 result.put(globalObject, ZigString.static("pubkey"), JSC.ArrayBuffer.createBuffer(globalObject, buffer));
             }
         },
@@ -510,6 +549,7 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
     result.put(globalObject, ZigString.static("fingerprint"), getFingerprintDigest(cert, BoringSSL.EVP_sha1(), globalObject));
     result.put(globalObject, ZigString.static("fingerprint256"), getFingerprintDigest(cert, BoringSSL.EVP_sha256(), globalObject));
     result.put(globalObject, ZigString.static("fingerprint512"), getFingerprintDigest(cert, BoringSSL.EVP_sha512(), globalObject));
-
+    result.put(globalObject, ZigString.static("serialNumber"), getSerialNumber(cert, globalObject));
+    result.put(globalObject, ZigString.static("raw"), getRawDERCertificate(cert, globalObject));
     return result;
 }

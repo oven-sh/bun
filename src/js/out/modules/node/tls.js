@@ -267,7 +267,9 @@ var parseCertString = function() {
     return this[bunSocketInternal]?.getTLSTicket();
   }
   exportKeyingMaterial(length, label, context) {
-    return this[bunSocketInternal]?.exportKeyingMaterial(length, label, context);
+    if (context)
+      return this[bunSocketInternal]?.exportKeyingMaterial(length, label, context);
+    return this[bunSocketInternal]?.exportKeyingMaterial(length, label);
   }
   setMaxSendFragment(size) {
     return this[bunSocketInternal]?.setMaxSendFragment(size) || !1;

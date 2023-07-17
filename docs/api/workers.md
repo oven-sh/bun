@@ -118,7 +118,7 @@ const worker = new Worker("./i-am-smol.ts", {
 
 It sets ` JSC::HeapSize` to be `Small` instead of the default `Large`
 
-### Modules work
+### Worker supports ES Modules, CommonJS, TypeScript, JSX, etc
 
 Like the rest of Bun, `Worker` in Bun support CommonJS, ES Modules, TypeScript, JSX, TSX and more out of the box. No extra build steps are necessary. You can use `import` and `export` in your worker code. This is different than browsers, where `"type": "module"` is necessary to use ES Modules.
 

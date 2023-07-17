@@ -2204,9 +2204,11 @@ pub const HardcodedModule = enum {
             .{ "path/win32", .{ .path = "node:path/win32" } },
             .{ "perf_hooks", .{ .path = "node:perf_hooks" } },
             .{ "process", .{ .path = "node:process" } },
-            .{ "readable-stream", .{ .path = "node:stream" } },
-            .{ "readable-stream/consumer", .{ .path = "node:stream/consumers" } },
-            .{ "readable-stream/web", .{ .path = "node:stream/web" } },
+            // Older versions of `readable-stream` is incompatible with latest
+            // version of Node.js Stream API, which `bun` implements
+            // .{ "readable-stream", .{ .path = "node:stream" } },
+            // .{ "readable-stream/consumer", .{ .path = "node:stream/consumers" } },
+            // .{ "readable-stream/web", .{ .path = "node:stream/web" } },
             .{ "readline", .{ .path = "node:readline" } },
             .{ "readline/promises", .{ .path = "node:readline/promises" } },
             .{ "stream", .{ .path = "node:stream" } },

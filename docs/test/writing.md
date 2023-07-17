@@ -70,7 +70,7 @@ Optionally specify a per-test timeout in milliseconds by passing a number as the
 ```ts
 import { test } from "bun:test";
 
-test.skip("wat", async () => {
+test("wat", async () => {
   const data = await slowOperation();
   expect(data).toBe(42);
 }, 500); // test must run in <500ms

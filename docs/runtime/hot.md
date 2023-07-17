@@ -7,7 +7,6 @@ Bun supports two kinds of automatic reloading via CLI flags:
 
 Watch mode can be used with `bun test` or when running TypeScript, JSX, and JavaScript files.
 
-
 To run a file in `--watch` mode:
 
 ```bash
@@ -17,7 +16,7 @@ $ bun --watch index.tsx
 To run your tests in `--watch` mode:
 
 ```bash
-$ bun --watch test 
+$ bun --watch test
 ```
 
 In `--watch` mode, Bun keeps track of all imported files and watches them for changes. When a change is detected, Bun restarts the process, preserving the same set of CLI arguments and environment variables used in the initial run. If Bun crashes, `--watch` will attempt to automatically restart the process.
@@ -58,7 +57,7 @@ serve({
 Running `bun test` in watch mode and `save-on-keypress` enabled:
 
 ```bash
-$ bun --watch test 
+$ bun --watch test
 ```
 
 ![bun test gif](https://user-images.githubusercontent.com/709451/228396976-38a23864-4a1d-4c96-87cc-04e5181bf459.gif)

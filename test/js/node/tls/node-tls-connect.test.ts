@@ -108,8 +108,9 @@ it("getCipher, getProtocol, getEphemeralKeyInfo, getSharedSigalgs, getSession, e
     expect(socket.exportKeyingMaterial(512, "client finished")).toBeInstanceOf(Buffer);
     expect(socket.isSessionReused()).toBe(false);
 
-    // expect(socket.getFinished()).toBeInstanceOf(Buffer);
-    // expect(socket.getPeerFinished()).toBeInstanceOf(Buffer);
+    // BoringSSL does not support these methods for >= TLSv1.3
+    expect(socket.getFinished()).toBeUndefined();
+    expect(socket.getPeerFinished()).toBeUndefined();
   } finally {
     socket.end();
   }

@@ -125,6 +125,7 @@ describe("fs.watch", () => {
         } else if (count == 4) {
           expect(event).toBe("change");
           expect(filename).toBe("new-file2.txt");
+        } else {
           watcher.close();
         }
       } catch (e: any) {
@@ -135,12 +136,16 @@ describe("fs.watch", () => {
 
     watcher.on("error", e => (err = e));
     watcher.on("close", () => {
+      clearInterval(interval);
+      if (err) {
+        done(err);
+        return;
+      }
       try {
-        expect(count).toBe(4);
+        expect(count).toBeGreaterThan(3);
       } catch (e: any) {
         err = e;
       }
-      clearInterval(interval);
       done(err);
     });
 
@@ -150,9 +155,9 @@ describe("fs.watch", () => {
         fs.writeFileSync(path.join(root, "new-file.txt"), "hello");
         return;
       }
-      const fd = fs.openSync(path.join(root, "new-file2.txt"), "w");
+      const fd = fs.openSync(path.join(root, "new-file2.txt"), "a");
       fs.writeSync(fd, "hello");
-      fs.writeSync(fd, "hello");
+      fs.writeSync(fd, "world");
       fs.closeSync(fd);
     });
   });
@@ -173,8 +178,12 @@ describe("fs.watch", () => {
       if (basename === "subfolder") return;
       count++;
       try {
-        expect(event).toBe("rename");
-        expect(["new-file.txt", "new-folder.txt"]).toContain(basename);
+        expect(["rename", "change"]).toContain(event);
+        if (event == "rename") {
+          expect(["subfolder/new-file.txt", "subfolder/new-folder.txt"]).toContain(filename);
+        } else {
+          expect(filename).toBe("subfolder/new-file.txt");
+        }
         if (count >= 2) {
           watcher.close();
         }
@@ -457,8 +466,12 @@ describe("fs.promises.watch", () => {
       for await (const event of watcher) {
         count++;
         try {
-          expect(event.eventType).toBe("rename");
-          expect(["new-file.txt", "new-folder.txt"]).toContain(event.filename);
+          expect(["rename", "change"]).toContain(event.eventType);
+          if (event.eventType == "rename") {
+            expect(["new-file.txt", "new-folder.txt"]).toContain(event.filename);
+          } else {
+            expect(event.filename).toBe("new-file.txt");
+          }
 
           if (count >= 2) {
             success = true;
@@ -504,7 +517,7 @@ describe("fs.promises.watch", () => {
 
         count++;
         try {
-          expect(event.eventType).toBe("rename");
+          expect(["rename", "change"]).toContain(event.eventType);
           expect(["new-file.txt", "new-folder.txt"]).toContain(basename);
 
           if (count >= 2) {

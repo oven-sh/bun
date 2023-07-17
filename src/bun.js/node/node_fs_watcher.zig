@@ -404,10 +404,11 @@ pub const FSWatcher = struct {
 
                             current_task.append(relative_path, event_type, .destroy);
 
-                            const full_path = bun.default_allocator.dupeZ(u8, path_slice) catch unreachable;
+                            _on_file_update_path_buf[path_slice.len] = 0;
+                            const full_path = _on_file_update_path_buf[0..path_slice.len :0];
                             const is_watched = blk: {
                                 for (this.file_paths.slice()) |path| {
-                                    if (std.mem.eql(u8, path, full_path)) {
+                                    if (bun.strings.eql(path, full_path)) {
                                         break :blk true;
                                     }
                                 }
@@ -420,11 +421,12 @@ pub const FSWatcher = struct {
                                 const fs_info = fdFromAbsolutePathZ(full_path) catch null;
                                 if (fs_info) |info| {
                                     if (info.is_file) {
-                                        this.default_watcher.?.addFileAssumeLocked(info.fd, full_path, file_hash, options.Loader.file, 0, null, false) catch unreachable;
-                                        current_task.append(relative_path, .change, .destroy);
+                                        this.default_watcher.?.addFileAssumeLocked(info.fd, full_path, file_hash, options.Loader.file, 0, null, true) catch unreachable;
+                                        const relative_path_clone = bun.default_allocator.dupe(u8, relative_path) catch unreachable;
+                                        current_task.append(relative_path_clone, .change, .destroy);
                                     } else {
                                         if (this.recursive) {
-                                            this.default_watcher.?.addDirectoryAssumeLocked(info.fd, full_path, file_hash, false) catch unreachable;
+                                            this.default_watcher.?.addDirectoryAssumeLocked(info.fd, full_path, file_hash, true) catch unreachable;
                                         }
                                     }
                                 }

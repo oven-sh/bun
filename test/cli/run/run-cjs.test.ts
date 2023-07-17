@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { mkdirSync, realpathSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, bunTempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -37,4 +37,21 @@ export default Foo
     env: bunEnv,
   });
   expect(stdout.toString("utf8")).toEqual("");
+});
+
+test("npm_package_config", () => {
+   const dir = tempDirWithFiles("npmpkgcfg", {
+      "package.json": JSON.stringify({
+      "name": "bun_npm_package_config",
+      "config": {
+        "a": "echo 'b'"
+      },
+      "scripts": {
+        "c": "$npm_package_config_a",
+      }
+    })
+  });
+  
+  const { stdout } = bunRunAsScript(dir, "c");
+  expect(stdout).toBe("b");
 });

@@ -2359,7 +2359,24 @@ pub const E = struct {
         }
 
         pub fn toJS(s: *String, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-            return s.toZigString(allocator).toValueGC(globalObject);
+            s.resolveRopeIfNeeded(allocator);
+            if (!s.isPresent()) {
+                var emp = bun.String.empty;
+                return emp.toJS(globalObject);
+            }
+
+            if (s.is_utf16) {
+                var out = bun.String.createUninitializedUTF16(s.len());
+                defer out.deref();
+                @memcpy(@constCast(out.utf16()), s.slice16());
+                return out.toJS(globalObject);
+            }
+
+            {
+                var out = bun.String.create(s.slice(allocator));
+                defer out.deref();
+                return out.toJS(globalObject);
+            }
         }
 
         pub fn toZigString(s: *String, allocator: std.mem.Allocator) JSC.ZigString {
@@ -9933,8 +9950,16 @@ pub const Macro = struct {
                             return Expr.init(E.Number, E.Number{ .value = value.asNumber() }, this.caller.loc);
                         },
                         .String => {
-                            var sliced = value.toSlice(this.global, this.allocator).cloneIfNeeded(this.allocator) catch unreachable;
-                            return Expr.init(E.String, E.String.init(sliced.slice()), this.caller.loc);
+                            var bun_str = value.toBunString(this.global);
+                            if (bun_str.is8Bit()) {
+                                if (strings.isAllASCII(bun_str.latin1())) {
+                                    return Expr.init(E.String, E.String.init(this.allocator.dupe(u8, bun_str.latin1()) catch unreachable), this.caller.loc);
+                                }
+                            }
+
+                            var utf16_bytes = this.allocator.alloc(u16, bun_str.length()) catch unreachable;
+                            var out_slice = utf16_bytes[0 .. (bun_str.encodeInto(std.mem.sliceAsBytes(utf16_bytes), .utf16le) catch 0) / 2];
+                            return Expr.init(E.String, E.String.init(out_slice), this.caller.loc);
                         },
                         .Promise => {
                             var _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;

@@ -528,12 +528,10 @@ pub const Encoding = enum(u8) {
                 return JSC.ZigString.init(base64[0..len]).toValueGC(globalThis);
             },
             .base64url => {
-                var buf: [std.base64.url_safe.Encoder.calcSize(size) + "data:;base64,".len]u8 = undefined;
-                var encoded = std.base64.url_safe.Encoder.encode(buf["data:;base64,".len..], input);
-                buf[0.."data:;base64,".len].* = "data:;base64,".*;
+                var buf: [std.base64.url_safe_no_pad.Encoder.calcSize(size)]u8 = undefined;
+                var encoded = std.base64.url_safe_no_pad.Encoder.encode(&buf, input);
 
-                const result = JSC.ZigString.init(buf[0 .. "data:;base64,".len + encoded.len]).toValueGC(globalThis);
-                return result;
+                return JSC.ZigString.init(buf[0..encoded.len]).toValueGC(globalThis);
             },
             .hex => {
                 var buf: [size * 4]u8 = undefined;
@@ -566,13 +564,10 @@ pub const Encoding = enum(u8) {
                 return result;
             },
             .base64url => {
-                var buf_: [std.base64.url_safe.Encoder.calcSize(max_size) + "data:;base64,".len]u8 = undefined;
-                var buf = buf_[0 .. std.base64.url_safe.Encoder.calcSize(size) + "data:;base64,".len];
-                var encoded = std.base64.url_safe.Encoder.encode(buf["data:;base64,".len..], input);
-                buf[0.."data:;base64,".len].* = "data:;base64,".*;
+                var buf: [std.base64.url_safe_no_pad.Encoder.calcSize(max_size)]u8 = undefined;
+                var encoded = std.base64.url_safe_no_pad.Encoder.encode(&buf, input);
 
-                const result = JSC.ZigString.init(buf[0 .. "data:;base64,".len + encoded.len]).toValueGC(globalThis);
-                return result;
+                return JSC.ZigString.init(buf[0..encoded.len]).toValueGC(globalThis);
             },
             .hex => {
                 var buf: [max_size * 4]u8 = undefined;

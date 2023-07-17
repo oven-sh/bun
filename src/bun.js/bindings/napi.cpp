@@ -555,13 +555,18 @@ extern "C" napi_status napi_wrap(napi_env env,
     auto* globalObject = toJS(env);
     auto& vm = globalObject->vm();
 
-    auto* val = jsDynamicCast<NapiPrototype*>(value);
+    NapiRef** refPtr = nullptr;
+    if (auto* val = jsDynamicCast<NapiPrototype*>(value)) {
+        refPtr = &val->napiRef;
+    } else if (auto* val = jsDynamicCast<NapiClass*>(value)) {
+        refPtr = &val->napiRef;
+    }
 
-    if (!val) {
+    if (!refPtr) {
         return napi_object_expected;
     }
 
-    if (val->napiRef) {
+    if (*refPtr) {
         // Calling napi_wrap() a second time on an object will return an error.
         // To associate another native instance with the object, use
         // napi_remove_wrap() first.
@@ -582,7 +587,7 @@ extern "C" napi_status napi_wrap(napi_env env,
         ref->data = native_object;
     }
 
-    val->napiRef = ref;
+    *refPtr = ref;
 
     if (result) {
         *result = toNapi(ref);
@@ -601,21 +606,28 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
 
     auto* globalObject = toJS(env);
     auto& vm = globalObject->vm();
-    auto* val = jsDynamicCast<NapiPrototype*>(value);
+    NapiRef** refPtr = nullptr;
+    if (auto* val = jsDynamicCast<NapiPrototype*>(value)) {
+        refPtr = &val->napiRef;
+    } else if (auto* val = jsDynamicCast<NapiClass*>(value)) {
+        refPtr = &val->napiRef;
+    }
 
-    if (!val) {
+    if (!refPtr) {
         return napi_object_expected;
     }
 
-    if (!val->napiRef) {
+    if (!(*refPtr)) {
         // not sure if this should succeed or return an error
         return napi_ok;
     }
 
-    *result = val->napiRef->data;
+    auto* ref = *refPtr;
+    *refPtr = nullptr;
 
-    auto* ref = val->napiRef;
-    val->napiRef = nullptr;
+    if (result) {
+        *result = ref->data;
+    }
     delete ref;
 
     return napi_ok;
@@ -631,11 +643,17 @@ extern "C" napi_status napi_unwrap(napi_env env, napi_value js_object,
     }
     auto* globalObject = toJS(env);
     auto& vm = globalObject->vm();
-    auto* object = JSC::jsDynamicCast<NapiPrototype*>(value);
     auto clientData = WebCore::clientData(vm);
 
-    if (object) {
-        *result = object->napiRef ? object->napiRef->data : nullptr;
+    NapiRef* ref = nullptr;
+    if (auto* val = jsDynamicCast<NapiPrototype*>(value)) {
+        ref = val->napiRef;
+    } else if (auto* val = jsDynamicCast<NapiClass*>(value)) {
+        ref = val->napiRef;
+    }
+
+    if (ref && result) {
+        *result = ref ? ref->data : nullptr;
     }
 
     return napi_ok;
@@ -714,16 +732,39 @@ extern "C" napi_status napi_get_cb_info(
 
     if (data != nullptr) {
         JSC::JSValue callee = JSC::JSValue(callFrame->jsCallee());
+
         if (Zig::JSFFIFunction* ffiFunction = JSC::jsDynamicCast<Zig::JSFFIFunction*>(callee)) {
-            *data = reinterpret_cast<void*>(ffiFunction->dataPtr);
+            *data = ffiFunction->dataPtr;
         } else if (auto* proto = JSC::jsDynamicCast<NapiPrototype*>(callee)) {
-            *data = proto->napiRef ? proto->napiRef->data : nullptr;
+            NapiRef* ref = proto->napiRef;
+            if (ref) {
+                *data = ref->data;
+            }
         } else if (auto* proto = JSC::jsDynamicCast<NapiClass*>(callee)) {
-            *data = proto->dataPtr;
+            void* local = proto->dataPtr;
+            if (!local) {
+                NapiRef* ref = nullptr;
+                if (ref) {
+                    *data = ref->data;
+                }
+            } else {
+                *data = local;
+            }
         } else if (auto* proto = JSC::jsDynamicCast<NapiPrototype*>(thisValue)) {
-            *data = proto->napiRef ? proto->napiRef->data : nullptr;
+            NapiRef* ref = proto->napiRef;
+            if (ref) {
+                *data = ref->data;
+            }
         } else if (auto* proto = JSC::jsDynamicCast<NapiClass*>(thisValue)) {
-            *data = proto->dataPtr;
+            void* local = proto->dataPtr;
+            if (!local) {
+                NapiRef* ref = nullptr;
+                if (ref) {
+                    *data = ref->data;
+                }
+            } else {
+                *data = local;
+            }
         } else if (auto* proto = JSC::jsDynamicCast<Bun::NapiExternal*>(thisValue)) {
             *data = proto->value();
         } else {

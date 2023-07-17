@@ -34,3 +34,5 @@ export const profile = jsc.profile;
 export default jsc;
 export const setTimeZone = jsc.setTimeZone;
 export const setTimezone = setTimeZone;
+export const serialize = jsc.serialize;
+export const deserialize = jsc.deserialize;

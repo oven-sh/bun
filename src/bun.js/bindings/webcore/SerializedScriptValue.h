@@ -108,6 +108,9 @@ public:
 
     WEBCORE_EXPORT String toString() const;
 
+    WEBCORE_EXPORT Ref<JSC::ArrayBuffer> toArrayBuffer();
+    static JSC::JSValue fromArrayBuffer(JSC::JSGlobalObject&, JSC::JSGlobalObject*, JSC::ArrayBuffer* arrayBuffer, size_t byteOffset = 0, size_t maxByteLength = 0, SerializationErrorMode = SerializationErrorMode::Throwing, bool* didFail = nullptr);
+
     // API implementation helpers. These don't expose special behavior for ArrayBuffers or MessagePorts.
     WEBCORE_EXPORT static RefPtr<SerializedScriptValue> create(JSContextRef, JSValueRef, JSValueRef* exception);
     WEBCORE_EXPORT JSValueRef deserialize(JSContextRef, JSValueRef* exception);

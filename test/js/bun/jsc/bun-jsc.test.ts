@@ -151,8 +151,8 @@ describe("bun:jsc", () => {
     expect(deserialize(deserialize(nested))).toStrictEqual({ a: 1 });
   });
 
-  it("serialize (binaryType: 'nodebuffer')", () => {
-    const serialized = serialize({ a: 1 }, { binaryType: "nodebuffer" });
+  it("serialize (binaryMode: 'nodebuffer')", () => {
+    const serialized = serialize({ a: 1 }, { binaryMode: "nodebuffer" });
     expect(serialized).toBeInstanceOf(Buffer);
     expect(serialized.buffer).toBeInstanceOf(SharedArrayBuffer);
     expect(deserialize(serialized)).toStrictEqual({ a: 1 });

@@ -2283,6 +2283,8 @@ interface FetchEvent extends Event {
 
 interface EventMap {
   fetch: FetchEvent;
+  message: MessageEvent;
+  messageerror: MessageEvent;
   // exit: Event;
 }
 
@@ -3529,6 +3531,13 @@ interface Worker extends EventTarget {
   unref(): void;
 }
 
+/**
+ * Post a message to the parent thread.
+ *
+ * Only useful in a worker thread; calling this from the main thread does nothing.
+ */
+declare function postMessage(message: any, transfer?: Transferable[]): void;
+
 declare var Worker: {
   prototype: Worker;
   new (stringUrl: string | URL, options?: WorkerOptions): Worker;
@@ -3551,7 +3560,7 @@ interface WorkerOptions {
      *
      * By default, this is `false`.
      */
-    ref: boolean;
+    ref?: boolean;
   };
 }
 

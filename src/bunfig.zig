@@ -201,6 +201,13 @@ pub const Bunfig = struct {
                 }
             }
 
+            if (comptime cmd == .RunCommand or cmd == .AutoCommand) {
+                if (json.get("smol")) |expr| {
+                    try this.expect(expr, .e_boolean);
+                    this.ctx.runtime_options.smol = expr.data.e_boolean.value;
+                }
+            }
+
             if (comptime cmd == .DevCommand or cmd == .AutoCommand) {
                 if (json.get("dev")) |expr| {
                     if (expr.get("disableBunJS")) |disable| {
@@ -229,6 +236,11 @@ pub const Bunfig = struct {
 
                     if (test_.get("preload")) |expr| {
                         try this.loadPreload(allocator, expr);
+                    }
+
+                    if (test_.get("smol")) |expr| {
+                        try this.expect(expr, .e_boolean);
+                        this.ctx.runtime_options.smol = expr.data.e_boolean.value;
                     }
                 }
             }

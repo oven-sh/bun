@@ -409,14 +409,13 @@ fn getFingerprintDigest(cert: *BoringSSL.X509, method: *const BoringSSL.EVP_MD, 
 
 fn getSerialNumber(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
     const serial_number = BoringSSL.X509_get_serialNumber(cert);
-    if(serial_number != null) {
+    if (serial_number != null) {
         const bignum = BoringSSL.ASN1_INTEGER_to_BN(serial_number, null);
-        if(bignum != null) {
+        if (bignum != null) {
             const data = BoringSSL.BN_bn2hex(bignum);
-            if(data != null) {
+            if (data != null) {
                 return JSC.ZigString.fromUTF8(data[0..bun.len(data)]).toValueGC(globalObject);
             }
-
         }
     }
     return JSValue.jsUndefined();
@@ -430,7 +429,6 @@ fn getRawDERCertificate(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JS
     _ = BoringSSL.i2d_X509(cert, &tmp);
     return JSC.ArrayBuffer.createBuffer(globalObject, buffer);
 }
-
 
 pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
     const bio = BoringSSL.BIO_new(BoringSSL.BIO_s_mem()) orelse {
@@ -461,14 +459,14 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
                 _ = BoringSSL.BN_print(bio, n);
 
                 var bits = JSValue.jsUndefined();
-                
+
                 const bits_value = BoringSSL.BN_num_bits(n);
                 if (bits_value > 0) {
                     bits = JSValue.jsNumber(bits_value);
                 }
-            
+
                 result.put(globalObject, ZigString.static("bits"), bits);
-                
+
                 const modulus = JSC.ZigString.fromUTF8(bio.slice()).toValueGC(globalObject);
                 _ = BoringSSL.BIO_reset(bio);
                 result.put(globalObject, ZigString.static("modulus"), modulus);

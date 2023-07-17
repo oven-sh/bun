@@ -200,7 +200,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_tls" %} [`node:tls`](https://nodejs.org/api/tls.html) {% /anchor %}
 - 🟡
-- Missing `tls.createSecurePair` `tls.checkServerIdentity` `tls.rootCertificates`
+- Missing `tls.createSecurePair` `tls.rootCertificates`
 
 ---
 

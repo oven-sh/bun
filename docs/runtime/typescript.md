@@ -76,6 +76,7 @@ These are the recommended `compilerOptions` for a Bun project.
 
     // if TS 5.x+
     "moduleResolution": "bundler",
+    "noEmit": true,
     "allowImportingTsExtensions": true,
     "moduleDetection": "force",
     // if TS 4.x or earlier

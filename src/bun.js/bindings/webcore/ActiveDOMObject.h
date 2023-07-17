@@ -100,7 +100,7 @@
 //         return adoptRef(*new PendingActivity<T>(thisObject));
 //     }
 
-//     bool isContextStopped() const;
+// bool isContextStopped() const;
 //     bool isAllowedToRunScript() const;
 
 //     template<typename T>

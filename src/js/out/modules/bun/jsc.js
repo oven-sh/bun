@@ -1,4 +1,4 @@
-var jsc = globalThis[Symbol.for("Bun.lazy")]("bun:jsc"), callerSourceOrigin = jsc.callerSourceOrigin, jscDescribe = jsc.describe, jscDescribeArray = jsc.describeArray, describe = jscDescribe, describeArray = jscDescribeArray, drainMicrotasks = jsc.drainMicrotasks, edenGC = jsc.edenGC, fullGC = jsc.fullGC, gcAndSweep = jsc.gcAndSweep, getRandomSeed = jsc.getRandomSeed, heapSize = jsc.heapSize, heapStats = jsc.heapStats, startSamplingProfiler = jsc.startSamplingProfiler, samplingProfilerStackTraces = jsc.samplingProfilerStackTraces, isRope = jsc.isRope, memoryUsage = jsc.memoryUsage, noInline = jsc.noInline, noFTL = jsc.noFTL, noOSRExitFuzzing = jsc.noOSRExitFuzzing, numberOfDFGCompiles = jsc.numberOfDFGCompiles, optimizeNextInvocation = jsc.optimizeNextInvocation, releaseWeakRefs = jsc.releaseWeakRefs, reoptimizationRetryCount = jsc.reoptimizationRetryCount, setRandomSeed = jsc.setRandomSeed, startRemoteDebugger = jsc.startRemoteDebugger, totalCompileTime = jsc.totalCompileTime, getProtectedObjects = jsc.getProtectedObjects, generateHeapSnapshotForDebugging = jsc.generateHeapSnapshotForDebugging, profile = jsc.profile, jsc_default = jsc, setTimeZone = jsc.setTimeZone, setTimezone = setTimeZone;
+var jsc = globalThis[Symbol.for("Bun.lazy")]("bun:jsc"), callerSourceOrigin = jsc.callerSourceOrigin, jscDescribe = jsc.describe, jscDescribeArray = jsc.describeArray, describe = jscDescribe, describeArray = jscDescribeArray, drainMicrotasks = jsc.drainMicrotasks, edenGC = jsc.edenGC, fullGC = jsc.fullGC, gcAndSweep = jsc.gcAndSweep, getRandomSeed = jsc.getRandomSeed, heapSize = jsc.heapSize, heapStats = jsc.heapStats, startSamplingProfiler = jsc.startSamplingProfiler, samplingProfilerStackTraces = jsc.samplingProfilerStackTraces, isRope = jsc.isRope, memoryUsage = jsc.memoryUsage, noInline = jsc.noInline, noFTL = jsc.noFTL, noOSRExitFuzzing = jsc.noOSRExitFuzzing, numberOfDFGCompiles = jsc.numberOfDFGCompiles, optimizeNextInvocation = jsc.optimizeNextInvocation, releaseWeakRefs = jsc.releaseWeakRefs, reoptimizationRetryCount = jsc.reoptimizationRetryCount, setRandomSeed = jsc.setRandomSeed, startRemoteDebugger = jsc.startRemoteDebugger, totalCompileTime = jsc.totalCompileTime, getProtectedObjects = jsc.getProtectedObjects, generateHeapSnapshotForDebugging = jsc.generateHeapSnapshotForDebugging, profile = jsc.profile, jsc_default = jsc, setTimeZone = jsc.setTimeZone, setTimezone = setTimeZone, serialize = jsc.serialize, deserialize = jsc.deserialize;
 export {
   totalCompileTime,
   startSamplingProfiler,
@@ -6,6 +6,7 @@ export {
   setTimezone,
   setTimeZone,
   setRandomSeed,
+  serialize,
   samplingProfilerStackTraces,
   reoptimizationRetryCount,
   releaseWeakRefs,
@@ -28,6 +29,7 @@ export {
   fullGC,
   edenGC,
   drainMicrotasks,
+  deserialize,
   describeArray,
   describe,
   jsc_default as default,

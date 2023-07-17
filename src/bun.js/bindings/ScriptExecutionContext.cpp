@@ -110,6 +110,16 @@ us_socket_context_t* ScriptExecutionContext::connectedWebSocketKindClientSSL()
     return registerWebSocketClientContext<true>(this, webSocketContextSSL());
 }
 
+ScriptExecutionContextIdentifier ScriptExecutionContext::generateIdentifier()
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+
+    // ASSERT(allScriptExecutionContextsMap().contains(m_identifier));
+    // allScriptExecutionContextsMap().remove(m_identifier);
+
+    return ++lastUniqueIdentifier;
+}
+
 void ScriptExecutionContext::regenerateIdentifier()
 {
     Locker locker { allScriptExecutionContextsMapLock };

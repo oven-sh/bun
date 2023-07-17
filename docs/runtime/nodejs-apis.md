@@ -231,7 +231,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_v8" %} [`node:v8`](https://nodejs.org/api/v8.html) {% /anchor %}
 - 🔴
-- Not implemented or planned. For profiling, use [`bun:jsc`](/docs/project/benchmarking#bunjsc) instead.
+- `serialize` and `deserialize` use JavaScriptCore's wire format instead of V8's. Otherwise, not implemented. For profiling, use [`bun:jsc`](/docs/project/benchmarking#bunjsc) instead.
 
 ---
 

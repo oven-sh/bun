@@ -59,12 +59,6 @@
 namespace WebCore {
 using namespace JSC;
 
-// Functions
-
-static JSC_DECLARE_HOST_FUNCTION(jsEventTargetPrototypeFunction_addEventListener);
-static JSC_DECLARE_HOST_FUNCTION(jsEventTargetPrototypeFunction_removeEventListener);
-static JSC_DECLARE_HOST_FUNCTION(jsEventTargetPrototypeFunction_dispatchEvent);
-
 // Attributes
 
 static JSC_DECLARE_CUSTOM_GETTER(jsEventTargetConstructor);

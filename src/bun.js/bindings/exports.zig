@@ -40,8 +40,14 @@ pub const ZigGlobalObject = extern struct {
     pub const namespace = shim.namespace;
     pub const Interface: type = NewGlobalObject(JS.VirtualMachine);
 
-    pub fn create(class_ref: [*]CAPI.JSClassRef, count: i32, console: *anyopaque) *JSGlobalObject {
-        var global = shim.cppFn("create", .{ class_ref, count, console });
+    pub fn create(
+        class_ref: [*]CAPI.JSClassRef,
+        count: i32,
+        console: *anyopaque,
+        context_id: i32,
+        mini_mode: bool,
+    ) *JSGlobalObject {
+        var global = shim.cppFn("create", .{ class_ref, count, console, context_id, mini_mode });
         Backtrace.reloadHandlers() catch unreachable;
         return global;
     }
@@ -959,6 +965,9 @@ pub const ZigConsoleClient = struct {
         _,
     };
 
+    var stderr_mutex: bun.Lock = bun.Lock.init();
+    var stdout_mutex: bun.Lock = bun.Lock.init();
+
     /// https://console.spec.whatwg.org/#formatter
     pub fn messageWithTypeAndLevel(
         //console_: ZigConsoleClient.Type,
@@ -975,6 +984,21 @@ pub const ZigConsoleClient = struct {
         }
 
         var console = global.bunVM().console;
+
+        // Lock/unlock a mutex incase two JS threads are console.log'ing at the same time
+        // We do this the slightly annoying way to avoid assigning a pointer
+        if (level == .Warning or level == .Error or message_type == .Assert) {
+            stderr_mutex.lock();
+        } else {
+            stdout_mutex.lock();
+        }
+        defer {
+            if (level == .Warning or level == .Error or message_type == .Assert) {
+                stderr_mutex.unlock();
+            } else {
+                stdout_mutex.unlock();
+            }
+        }
 
         if (message_type == .Clear) {
             Output.resetTerminal();
@@ -2505,14 +2529,30 @@ pub const ZigConsoleClient = struct {
                                 }
                             },
                             .ErrorEvent => {
-                                writer.print(
-                                    comptime Output.prettyFmt("<r><blue>error<d>:<r>\n", enable_ansi_colors),
-                                    .{},
-                                );
+                                {
+                                    const error_value = value.get(this.globalThis, "error").?;
 
-                                const data = value.get(this.globalThis, "error").?;
-                                const tag = Tag.getAdvanced(data, this.globalThis, .{ .hide_global = true });
-                                this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
+                                    if (!error_value.isEmptyOrUndefinedOrNull()) {
+                                        writer.print(
+                                            comptime Output.prettyFmt("<r><blue>error<d>:<r> ", enable_ansi_colors),
+                                            .{},
+                                        );
+
+                                        const tag = Tag.getAdvanced(error_value, this.globalThis, .{ .hide_global = true });
+                                        this.format(tag, Writer, writer_, error_value, this.globalThis, enable_ansi_colors);
+                                    }
+                                }
+
+                                const message_value = value.get(this.globalThis, "message").?;
+                                if (message_value.isString()) {
+                                    writer.print(
+                                        comptime Output.prettyFmt("<r><blue>message<d>:<r> ", enable_ansi_colors),
+                                        .{},
+                                    );
+
+                                    const tag = Tag.getAdvanced(message_value, this.globalThis, .{ .hide_global = true });
+                                    this.format(tag, Writer, writer_, message_value, this.globalThis, enable_ansi_colors);
+                                }
                             },
                             else => unreachable,
                         }

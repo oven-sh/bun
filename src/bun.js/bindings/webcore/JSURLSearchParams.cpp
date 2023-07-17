@@ -405,7 +405,13 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_toJSONBody(
     auto& impl = castedThis->wrapped();
     auto iter = impl.createIterator();
 
-    auto* obj = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), impl.size() + 1);
+    JSObject* obj;
+    if (impl.size() + 1 < 64) {
+        obj = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), impl.size() + 1);
+    } else {
+        obj = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype());
+    }
+
     obj->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(lexicalGlobalObject->vm(), "URLSearchParams"_s), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | 0);
 
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
@@ -417,6 +423,9 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_toJSONBody(
         if (seenKeys.contains(key)) {
             JSValue jsValue = obj->getDirect(vm, ident);
             if (jsValue.isString()) {
+                JSValue stringResult = jsString(vm, value);
+                ensureStillAliveHere(stringResult);
+
                 GCDeferralContext deferralContext(lexicalGlobalObject->vm());
                 JSC::ObjectInitializationScope initializationScope(lexicalGlobalObject->vm());
 
@@ -426,13 +435,12 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_toJSONBody(
                     2);
 
                 array->initializeIndex(initializationScope, 0, jsValue);
-                array->initializeIndex(initializationScope, 1, jsString(vm, value));
+                array->initializeIndex(initializationScope, 1, stringResult);
                 obj->putDirect(vm, ident, array, 0);
-            } else if (jsValue.isObject() && jsValue.getObject()->inherits<JSC::JSArray>()) {
+            } else if (jsValue.isCell() && jsValue.asCell()->type() == ArrayType) {
                 JSC::JSArray* array = jsCast<JSC::JSArray*>(jsValue.getObject());
                 array->push(lexicalGlobalObject, jsString(vm, value));
                 RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-
             } else {
                 RELEASE_ASSERT_NOT_REACHED();
             }

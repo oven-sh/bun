@@ -254,6 +254,9 @@ export default {
     page("api/import-meta", "import.meta", {
       description: `Module-scoped metadata and utilities`,
     }), // "`bun:sqlite`"),
+    page("api/workers", "Workers", {
+      description: `Run code in a separate thread with Bun's native Worker API.`,
+    }), // "`Worker`"),
     page("api/sqlite", "SQLite", {
       description: `The fastest SQLite driver for JavaScript is baked directly into Bun.`,
     }), // "`bun:sqlite`"),

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { mkdirSync, realpathSync } from "fs";
-import { bunEnv, bunExe, bunTempDirWithFiles, bunRunAsScript } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles, bunRunAsScript } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 

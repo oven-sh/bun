@@ -416,31 +416,15 @@ static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_toJSONBody(JSC
         size_t count = values.size();
 
         if (count > 0) {
-            JSC::JSArray* array = nullptr;
-            GCDeferralContext deferralContext(lexicalGlobalObject->vm());
-            JSC::ObjectInitializationScope initializationScope(lexicalGlobalObject->vm());
-            if ((array = JSC::JSArray::tryCreateUninitializedRestricted(
-                     initializationScope, &deferralContext,
-                     lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
-                     count))) {
-                for (unsigned i = 0; i < count; ++i) {
-                    array->initializeIndex(initializationScope, i, jsString(vm, values[i]));
-                    RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
-                }
-            } else {
-                array = constructEmptyArray(lexicalGlobalObject, nullptr, count);
-                RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
-                if (!array) {
-                    throwOutOfMemoryError(lexicalGlobalObject, throwScope);
-                    return JSValue::encode(jsUndefined());
-                }
-                for (unsigned i = 0; i < count; ++i) {
-                    array->putDirectIndex(lexicalGlobalObject, i, jsString(vm, values[i]));
-                    RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
-                }
+            JSC::JSArray* array = constructEmptyArray(lexicalGlobalObject, nullptr, count);
+            RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+
+            for (size_t i = 0; i < count; ++i) {
+                array->putDirectIndex(lexicalGlobalObject, i, jsString(vm, values[i]));
                 RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
             }
 
+            RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
             obj->putDirect(vm, JSC::Identifier::fromString(vm, httpHeaderNameString(HTTPHeaderName::SetCookie).toStringWithoutCopying()), array, 0);
         }
     }

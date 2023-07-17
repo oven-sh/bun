@@ -533,16 +533,26 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_toJSONBody(JSC:
         if (seenKeys.contains(key)) {
             JSValue jsValue = obj->getDirect(vm, ident);
             if (jsValue.isString() || jsValue.inherits<JSBlob>()) {
-                GCDeferralContext deferralContext(lexicalGlobalObject->vm());
-                JSC::ObjectInitializationScope initializationScope(lexicalGlobalObject->vm());
+                // Make sure this runs before the deferral scope is called.
+                JSValue resultValue = toJSValue(value);
+                ensureStillAliveHere(resultValue);
 
-                JSC::JSArray* array = JSC::JSArray::tryCreateUninitializedRestricted(
-                    initializationScope, &deferralContext,
-                    lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
-                    2);
+                JSC::JSArray* array = nullptr;
 
-                array->initializeIndex(initializationScope, 0, jsValue);
-                array->initializeIndex(initializationScope, 1, toJSValue(value));
+                {
+                    GCDeferralContext deferralContext(lexicalGlobalObject->vm());
+                    JSC::ObjectInitializationScope initializationScope(lexicalGlobalObject->vm());
+
+                    array = JSC::JSArray::tryCreateUninitializedRestricted(
+                        initializationScope, &deferralContext,
+                        lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
+                        2);
+                    RELEASE_ASSERT(array);
+
+                    array->initializeIndex(initializationScope, 0, jsValue);
+                    array->initializeIndex(initializationScope, 1, resultValue);
+                }
+
                 obj->putDirect(vm, ident, array, 0);
             } else if (jsValue.isObject() && jsValue.getObject()->inherits<JSC::JSArray>()) {
                 JSC::JSArray* array = jsCast<JSC::JSArray*>(jsValue.getObject());

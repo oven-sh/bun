@@ -42,16 +42,33 @@ export default Foo
 test("npm_package_config", () => {
    const dir = tempDirWithFiles("npmpkgcfg", {
       "package.json": JSON.stringify({
-      "name": "bun_npm_package_config",
-      "config": {
-        "a": "echo 'b'"
-      },
-      "scripts": {
-        "c": "$npm_package_config_a",
-      }
-    })
+        "name": "bun_npm_package_config",
+        "config": {
+          "a": "echo Hello, Bun!"
+        },
+        "scripts": {
+          "c": "$npm_package_config_a",
+        }
+      })
   });
   
   const { stdout } = bunRunAsScript(dir, "c");
-  expect(stdout).toBe("b");
+  expect(stdout.toString()).toBe("Hello, Bun!");
+
+  // test multiple config values
+  const dir2 = tempDirWithFiles("npmpkgcfg2", {
+    "package.json": JSON.stringify({
+      "name": "bun_npm_package_config",
+      "config": {
+        "a": "Bun!",
+        "b": "Hello,"
+      },
+      "scripts": {
+        "c": "echo $npm_package_config_b $npm_package_config_a",
+      }
+    })
+  });
+
+  const { stdout: stdout2 } = bunRunAsScript(dir2, "c");
+  expect(stdout2.toString()).toBe("Hello, Bun!");
 });

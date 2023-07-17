@@ -23,6 +23,7 @@ const resolve_path = @import("./resolve_path.zig");
 // Assume they're not going to have hundreds of main fields or browser map
 // so use an array-backed hash table instead of bucketed
 const MainFieldMap = bun.StringMap;
+const NpmCfgMap = bun.StringMap;
 pub const BrowserMap = bun.StringMap;
 pub const MacroImportReplacementMap = bun.StringArrayHashMap(string);
 pub const MacroMap = bun.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
@@ -144,7 +145,7 @@ pub const PackageJSON = struct {
     //   should match and the query "./ext" should ALSO match.
     //
     browser_map: BrowserMap,
-
+    npm_cfg_map: NpmCfgMap,
     exports: ?ExportsMap = null,
     imports: ?ExportsMap = null,
 
@@ -644,6 +645,7 @@ pub const PackageJSON = struct {
             .module_type = .unknown,
             .browser_map = BrowserMap.init(allocator, false),
             .main_fields = MainFieldMap.init(allocator, false),
+            .npm_cfg_map = NpmCfgMap.init(allocator, false),
         };
 
         // Note: we tried rewriting this to be fewer loops over all the properties (asProperty loops over each)
@@ -664,6 +666,22 @@ pub const PackageJSON = struct {
                 if (version_str.len > 0) {
                     package_json.name = allocator.dupe(u8, version_str) catch unreachable;
                 }
+            }
+        }
+
+        if (json.asProperty("config")) |npm_pkg_cfg| {
+            switch (npm_pkg_cfg.expr.data) {
+                .e_object => |obj| {
+                    for (obj.properties.slice()) |*prop| {
+                        const key = prop.key.?.asString(allocator) orelse continue;
+                        const value = prop.value.?.asString(allocator) orelse continue;
+
+                        if (!(key.len > 0 and value.len > 0)) continue;
+
+                        package_json.npm_cfg_map.put(key, value) catch unreachable;
+                    }
+                },
+                else => r.log.addWarning(&json_source, npm_pkg_cfg.loc, "The \"config\" field must be an object") catch unreachable,
             }
         }
 

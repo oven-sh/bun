@@ -680,6 +680,19 @@ pub fn NewWatcher(comptime ContextType: type) type {
             this.mutex.lock();
             defer this.mutex.unlock();
 
+            return try this.addFileAssumeLocked(fd, file_path, hash, loader, dir_fd, package_json, copy_file_path);
+        }
+
+        pub fn addFileAssumeLocked(
+            this: *Watcher,
+            fd: StoredFileDescriptorType,
+            file_path: string,
+            hash: HashType,
+            loader: options.Loader,
+            dir_fd: StoredFileDescriptorType,
+            package_json: ?*PackageJSON,
+            comptime copy_file_path: bool,
+        ) !void {
             if (this.indexOf(hash)) |index| {
                 if (comptime FeatureFlags.atomic_file_watcher) {
                     // On Linux, the file descriptor might be out of date.
@@ -862,6 +875,16 @@ pub fn NewWatcher(comptime ContextType: type) type {
             this.mutex.lock();
             defer this.mutex.unlock();
 
+            try this.addDirectoryAssumeLocked(fd, file_path, hash, copy_file_path);
+        }
+
+        pub fn addDirectoryAssumeLocked(
+            this: *Watcher,
+            fd: StoredFileDescriptorType,
+            file_path: string,
+            hash: HashType,
+            comptime copy_file_path: bool,
+        ) !void {
             if (this.indexOf(hash) != null) {
                 return;
             }

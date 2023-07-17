@@ -36,6 +36,7 @@ pub const FSWatcher = struct {
     entry_path: ?string = null,
     entry_dir: string = "",
     last_change_event: ChangeEvent = .{},
+    recursive: bool = false,
 
     // JSObject
     mutex: Mutex,
@@ -376,7 +377,7 @@ pub const FSWatcher = struct {
                         if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
 
                         var file_hash: FSWatcher.Watcher.HashType = 0;
-                        const relative_slice: string = brk: {
+                        const path_slice: string = blk: {
                             var file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
 
                             @memcpy(_on_file_update_path_buf[0..file_path_without_trailing_slash.len], file_path_without_trailing_slash);
@@ -387,10 +388,10 @@ pub const FSWatcher = struct {
                             const path_slice = _on_file_update_path_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
                             file_hash = FSWatcher.Watcher.getHash(path_slice);
 
-                            const relative = fs.relative(this.entry_dir, path_slice);
-
-                            break :brk relative;
+                            break :blk path_slice;
                         };
+
+                        const relative_slice = fs.relative(this.entry_dir, path_slice);
 
                         // skip consecutive duplicates
                         const event_type: FSWatchTask.EventType = .rename; // renaming folders, creating folder or files will be always be rename
@@ -402,6 +403,32 @@ pub const FSWatcher = struct {
                             this.last_change_event.hash = file_hash;
 
                             current_task.append(relative_path, event_type, .destroy);
+
+                            const full_path = bun.default_allocator.dupeZ(u8, path_slice) catch unreachable;
+                            const is_watched = blk: {
+                                for (this.file_paths.slice()) |path| {
+                                    if (std.mem.eql(u8, path, full_path)) {
+                                        break :blk true;
+                                    }
+                                }
+                                break :blk false;
+                            };
+
+                            // Add new files or directories to the watch list.
+                            if (!is_watched) {
+                                this.file_paths.push(bun.default_allocator, full_path) catch unreachable;
+                                const fs_info = fdFromAbsolutePathZ(full_path) catch null;
+                                if (fs_info) |info| {
+                                    if (info.is_file) {
+                                        this.default_watcher.?.addFileAssumeLocked(info.fd, full_path, file_hash, options.Loader.file, 0, null, false) catch unreachable;
+                                        current_task.append(relative_path, .change, .destroy);
+                                    } else {
+                                        if (this.recursive) {
+                                            this.default_watcher.?.addDirectoryAssumeLocked(info.fd, full_path, file_hash, false) catch unreachable;
+                                        }
+                                    }
+                                }
+                            }
 
                             if (this.verbose)
                                 Output.prettyErrorln("<r> <d>Dir change: {s}<r>", .{relative_path});
@@ -858,6 +885,7 @@ pub const FSWatcher = struct {
             .task_count = 0,
             .has_pending_activity = std.atomic.Atomic(bool).init(true),
             .verbose = args.verbose,
+            .recursive = args.recursive,
             .file_paths = bun.BabyList(string).initCapacity(bun.default_allocator, 1) catch |err| {
                 ctx.deinit();
                 return err;

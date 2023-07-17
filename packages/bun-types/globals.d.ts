@@ -3498,6 +3498,63 @@ interface EventSourceEventMap {
   open: Event;
 }
 
+interface Worker extends EventTarget {
+  onerror: ((this: Worker, ev: ErrorEvent) => any) | null;
+  onmessage: ((this: Worker, ev: MessageEvent) => any) | null;
+  onmessageerror: ((this: Worker, ev: MessageEvent) => any) | null;
+
+  addEventListener<K extends keyof WorkerEventMap>(
+    type: K,
+    listener: (this: Worker, ev: WorkerEventMap[K]) => any,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+
+  removeEventListener<K extends keyof WorkerEventMap>(
+    type: K,
+    listener: (this: Worker, ev: WorkerEventMap[K]) => any,
+    options?: boolean | EventListenerOptions,
+  ): void;
+
+  terminate(): void;
+
+  postMessage(message: any, transfer?: Transferable[]): void;
+
+  /**
+   * Keep the process alive until the worker is terminated or `unref`'d
+   */
+  ref(): void;
+  /**
+   * Undo a previous `ref()`
+   */
+  unref(): void;
+}
+
+declare var Worker: {
+  prototype: Worker;
+  new (stringUrl: string | URL, options?: WorkerOptions): Worker;
+};
+
+interface WorkerOptions {
+  name?: string;
+  bun?: {
+    /**
+     * Use less memory, but make the worker slower.
+     *
+     * Internally, this sets the heap size configuration in JavaScriptCore to be
+     * the small heap instead of the large heap.
+     */
+    smol?: boolean;
+  };
+}
+
+interface WorkerEventMap {
+  message: MessageEvent;
+  messageerror: MessageEvent;
+  error: ErrorEvent;
+  open: Event;
+  close: Event;
+}
+
 interface EventSource extends EventTarget {
   onerror: ((this: EventSource, ev: ErrorEvent) => any) | null;
   onmessage: ((this: EventSource, ev: MessageEvent) => any) | null;

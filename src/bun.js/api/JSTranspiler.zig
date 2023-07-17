@@ -442,7 +442,8 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         tsconfig: {
             if (tsconfig.isUndefinedOrNull()) break :tsconfig;
             const kind = tsconfig.jsType();
-            var out = JSC.ZigString.init("");
+            var out = bun.String.empty;
+            defer out.deref();
 
             if (kind.isArray()) {
                 JSC.throwInvalidArguments("tsconfig must be a string or object", .{}, globalObject, exception);
@@ -452,11 +453,11 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             if (!kind.isStringLike()) {
                 tsconfig.jsonStringify(globalThis, 0, &out);
             } else {
-                tsconfig.toZigString(&out, globalThis);
+                out = tsconfig.toBunString(globalThis);
             }
 
-            if (out.len == 0) break :tsconfig;
-            transpiler.tsconfig_buf = std.fmt.allocPrint(allocator, "{}", .{out}) catch unreachable;
+            if (out.isEmpty()) break :tsconfig;
+            transpiler.tsconfig_buf = out.toOwnedSlice(allocator) catch @panic("OOM");
 
             // TODO: JSC -> Ast conversion
             if (TSConfigJSON.parse(
@@ -490,16 +491,17 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 return transpiler;
             }
 
-            var out: ZigString = ZigString.init("");
+            var out = bun.String.empty;
+            defer out.deref();
             // TODO: write a converter between JSC types and Bun AST types
             if (is_object) {
                 macros.jsonStringify(globalThis, 0, &out);
             } else {
-                macros.toZigString(&out, globalThis);
+                out = macros.toBunString(globalThis);
             }
 
-            if (out.len == 0) break :macros;
-            transpiler.macros_buf = std.fmt.allocPrint(allocator, "{}", .{out}) catch unreachable;
+            if (out.isEmpty()) break :macros;
+            transpiler.macros_buf = out.toOwnedSlice(allocator) catch @panic("OOM");
             const source = logger.Source.initPathString("macros.json", transpiler.macros_buf);
             const json = (VirtualMachine.get().bundler.resolver.caches.json.parseJSON(
                 &transpiler.log,

@@ -1542,11 +1542,11 @@ void JSC__JSFunction__optimizeSoon(JSC__JSValue JSValue0)
 }
 
 void JSC__JSValue__jsonStringify(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, uint32_t arg2,
-    ZigString* arg3)
+    BunString* arg3)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     WTF::String str = JSC::JSONStringify(arg1, value, (unsigned)arg2);
-    *arg3 = Zig::toZigString(str);
+    *arg3 = Bun::toStringRef(str);
 }
 unsigned char JSC__JSValue__jsType(JSC__JSValue JSValue0)
 {

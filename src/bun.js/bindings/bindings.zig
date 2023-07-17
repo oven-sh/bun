@@ -4164,7 +4164,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("toString", .{ this, globalThis });
     }
 
-    pub fn jsonStringify(this: JSValue, globalThis: *JSGlobalObject, indent: u32, out: *ZigString) void {
+    pub fn jsonStringify(this: JSValue, globalThis: *JSGlobalObject, indent: u32, out: *bun.String) void {
         return cppFn("jsonStringify", .{ this, globalThis, indent, out });
     }
 

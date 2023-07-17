@@ -5,6 +5,8 @@
 #include "simdutf.h"
 #include "wtf/text/ExternalStringImpl.h"
 #include "GCDefferalContext.h"
+#include <JavaScriptCore/JSONObject.h>
+
 using namespace JSC;
 
 extern "C" bool Bun__WTFStringImpl__hasPrefix(const WTF::StringImpl* impl, const char* bytes, size_t length)
@@ -229,6 +231,19 @@ extern "C" BunString BunString__createExternal(const char* bytes, size_t length,
                                                  WTF::ExternalStringImpl::create(reinterpret_cast<const UChar*>(bytes), length, ctx, callback);
 
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
+}
+
+extern "C" EncodedJSValue BunString__toJSON(
+    JSC::JSGlobalObject* globalObject,
+    BunString* bunString)
+{
+    JSC::JSValue result = JSC::JSONParse(globalObject, Bun::toWTFString(*bunString));
+
+    if (!result) {
+        result = JSC::JSValue(JSC::createSyntaxError(globalObject, "Failed to parse JSON"_s));
+    }
+
+    return JSC::JSValue::encode(result);
 }
 
 extern "C" EncodedJSValue BunString__createArray(

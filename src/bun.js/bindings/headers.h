@@ -377,7 +377,7 @@ CPP_DECL JSC__JSValue JSC__JSValue__jsNumberFromChar(unsigned char arg0);
 CPP_DECL JSC__JSValue JSC__JSValue__jsNumberFromDouble(double arg0);
 CPP_DECL JSC__JSValue JSC__JSValue__jsNumberFromInt64(int64_t arg0);
 CPP_DECL JSC__JSValue JSC__JSValue__jsNumberFromU16(uint16_t arg0);
-CPP_DECL void JSC__JSValue__jsonStringify(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, uint32_t arg2, ZigString* arg3);
+CPP_DECL void JSC__JSValue__jsonStringify(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, uint32_t arg2, BunString* arg3);
 CPP_DECL JSC__JSValue JSC__JSValue__jsTDZValue();
 CPP_DECL unsigned char JSC__JSValue__jsType(JSC__JSValue JSValue0);
 CPP_DECL JSC__JSValue JSC__JSValue__jsUndefined();

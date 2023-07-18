@@ -5369,8 +5369,8 @@ pub const PackageManager = struct {
                     0,
                 )),
             )),
-        // When using "bun install", we check for updates with a 300 second cache.
-        // When using bun, we only do staleness checks once per day
+            // When using "bun install", we check for updates with a 300 second cache.
+            // When using bun, we only do staleness checks once per day
         ) -| std.time.s_per_day;
 
         if (root_dir.entries.hasComptimeQuery("bun.lockb")) {

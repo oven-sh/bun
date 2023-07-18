@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { AsyncResource, AsyncLocalStorage } from "async_hooks";
 import * as worker_threads from "worker_threads";
 import worker_threads_default from "worker_threads";
 

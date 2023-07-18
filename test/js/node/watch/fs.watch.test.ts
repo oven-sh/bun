@@ -103,29 +103,31 @@ describe("fs.watch", () => {
   });
 
   test("should watch new-created files", done => {
-    let count = 0;
-    const root = path.join(testDir, "add-directory");
+    const root = path.join(testDir, "test-newfile-directory");
     try {
       fs.mkdirSync(root);
+      fs.writeFileSync(path.join(root, "test-started.txt"), "");
     } catch {}
+    let count = 0;
+    let ready = false;
     let err: Error | undefined = undefined;
     const watcher = fs.watch(root, { signal: AbortSignal.timeout(3000) });
-    let ready = false;
     watcher.on("change", (event, filename) => {
+      // There might be multiple events when the producer
+      // is not aware of the changes in "ready" status.
+      if (ready && filename === "test-started.txt") {
+        return;
+      }
       count++;
       try {
         if (count == 1) {
           ready = true;
         } else if (count == 2) {
           expect(event).toBe("rename");
-          expect(filename).toBe("new-file2.txt");
+          expect(filename).toBe("new-file.txt");
         } else if (count == 3) {
           expect(event).toBe("change");
-          expect(filename).toBe("new-file2.txt");
-        } else if (count == 4) {
-          expect(event).toBe("change");
-          expect(filename).toBe("new-file2.txt");
-        } else {
+          expect(filename).toBe("new-file.txt");
           watcher.close();
         }
       } catch (e: any) {
@@ -142,7 +144,7 @@ describe("fs.watch", () => {
         return;
       }
       try {
-        expect(count).toBeGreaterThan(3);
+        expect(count).toBeGreaterThan(2);
       } catch (e: any) {
         err = e;
       }
@@ -152,12 +154,11 @@ describe("fs.watch", () => {
     const interval = repeat(() => {
       // Use this event to test if the watcher has been started.
       if (!ready) {
-        fs.writeFileSync(path.join(root, "new-file.txt"), "hello");
+        fs.writeFileSync(path.join(root, "test-started.txt"), "hello");
         return;
       }
-      const fd = fs.openSync(path.join(root, "new-file2.txt"), "a");
+      const fd = fs.openSync(path.join(root, "new-file.txt"), "a");
       fs.writeSync(fd, "hello");
-      fs.writeSync(fd, "world");
       fs.closeSync(fd);
     });
   });

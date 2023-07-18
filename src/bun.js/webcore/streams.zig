@@ -2025,10 +2025,10 @@ pub const BrotliCompressorSink = struct {
             slice = initial_slice;
             std.debug.assert(state.flush(&slice, &output_slice, &this.total_size));
 
-            this.output_buffer.len = @truncate(u32, this.total_size);
+            this.output_buffer.len = @as(u32, @truncate(this.total_size));
         }
 
-        return .{ .owned = @truncate(Blob.SizeType, initial_slice.len - slice.len) };
+        return .{ .owned = @as(Blob.SizeType, @truncate(initial_slice.len - slice.len)) };
     }
     pub const writeBytes = write;
     pub fn writeLatin1(this: *@This(), data: StreamResult) StreamResult.Writable {
@@ -2046,7 +2046,7 @@ pub const BrotliCompressorSink = struct {
         if (this.next) |*next| {
             return next.writeUTF16(data);
         }
-        var bytes = strings.toUTF8Alloc(bun.default_allocator, @ptrCast([*]const u16, @alignCast(@alignOf(u16), data.slice().ptr))[0..std.mem.bytesAsSlice(u16, data.slice()).len]) catch {
+        var bytes = strings.toUTF8Alloc(bun.default_allocator, @alignCast(std.mem.bytesAsSlice(u16, data.slice()))) catch {
             return .{ .err = Syscall.Error.oom };
         };
         defer bun.default_allocator.free(bytes);
@@ -2201,7 +2201,7 @@ pub const BrotliDecompressorSink = struct {
             }
             var output_slice = this.output_buffer.ptr[this.output_buffer.len..this.output_buffer.cap];
             const res = state.write(&slice, &output_slice, &this.total_size);
-            this.output_buffer.len += @truncate(u32, this.total_size);
+            this.output_buffer.len += @as(u32, @truncate(this.total_size));
 
             switch (res) {
                 .success => {
@@ -2211,7 +2211,7 @@ pub const BrotliDecompressorSink = struct {
                         return next.writeBytes(.{ .owned_and_done = output_buffer });
                     }
                     this.signal.ready(null, null);
-                    return .{ .owned_and_done = @truncate(Blob.SizeType, initial_slice.len - slice.len) };
+                    return .{ .owned_and_done = @as(Blob.SizeType, @truncate(initial_slice.len - slice.len)) };
                 },
                 .@"error" => {
                     const code = state.getErrorCode();
@@ -2224,7 +2224,7 @@ pub const BrotliDecompressorSink = struct {
                 },
                 .needs_more_input => {
                     this.signal.ready(null, null);
-                    return .{ .owned = @truncate(Blob.SizeType, initial_slice.len - slice.len) };
+                    return .{ .owned = @as(Blob.SizeType, @truncate(initial_slice.len - slice.len)) };
                 },
 
                 .needs_more_output => {
@@ -2257,7 +2257,7 @@ pub const BrotliDecompressorSink = struct {
         if (this.next) |*next| {
             return next.writeUTF16(data);
         }
-        var bytes = strings.toUTF8Alloc(bun.default_allocator, @ptrCast([*]const u16, @alignCast(@alignOf(u16), data.slice().ptr))[0..std.mem.bytesAsSlice(u16, data.slice()).len]) catch {
+        var bytes = strings.toUTF8Alloc(bun.default_allocator, @alignCast(std.mem.bytesAsSlice(u16, data.slice()))) catch {
             return .{ .err = Syscall.Error.oom };
         };
         defer bun.default_allocator.free(bytes);

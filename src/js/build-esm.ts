@@ -10,7 +10,7 @@ const TMP_DIR = path.join(import.meta.dir, "out/tmp");
 const minifyList = [
   "node/stream.js",
   "node/crypto.js",
-
+  "node/constants.js",
   "node/assert.js",
   "node/assert.strict.js",
   "node/fs.promises.ts",

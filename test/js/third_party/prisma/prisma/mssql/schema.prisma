@@ -7,12 +7,12 @@ generator client {
 }
 
 datasource db {
-  provider = "mongodb"
-  url      = env("TLS_MONGODB_DATABASE_URL")
+  provider = "sqlserver"
+  url      = env("TLS_MSSQL_DATABASE_URL")
 }
 
 model User {
-  id String @id @default(auto()) @map("_id") @db.ObjectId
+  id    Int     @id @default(autoincrement())
   testId Int
   email String 
   name  String?
@@ -20,11 +20,11 @@ model User {
 }
 
 model Post {
-  id String @id @default(auto()) @map("_id") @db.ObjectId
+  id        Int     @id @default(autoincrement())
   testId    Int
   title     String
   content   String?
   published Boolean @default(false)
   author    User    @relation(fields: [authorId], references: [id])
-  authorId  String @db.ObjectId
+  authorId  Int
 }

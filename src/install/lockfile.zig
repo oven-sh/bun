@@ -2533,7 +2533,7 @@ pub const Package = extern struct {
                 dependency_version.value.workspace = path;
             } else {
                 const workspace = dependency_version.value.workspace.slice(buf);
-                const path = string_builder.append(
+                var path = string_builder.append(
                     String,
                     if (strings.eqlComptime(workspace, "*")) "*" else Path.relative(
                         FileSystem.instance.top_level_dir,
@@ -2547,13 +2547,32 @@ pub const Package = extern struct {
                         ),
                     ),
                 );
-                dependency_version.value.workspace = path;
+                defer dependency_version.value.workspace = path;
                 var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, @truncate(u32, external_name.hash));
                 if (workspace_entry.found_existing) {
-                    log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Workspace name \"{s}\" already exists", .{
-                        external_name.slice(buf),
-                    }) catch {};
-                    return error.InstallFailed;
+                    const old_path = workspace_entry.value_ptr.*;
+
+                    if (strings.eqlComptime(workspace, "*")) {
+                        path = old_path;
+                        return null;
+                    } else if (strings.eqlComptime(old_path.slice(buf), "*")) brk: {
+                        workspace_entry.value_ptr.* = path;
+                        for (package_dependencies[0..dependencies_count]) |*package_dep| {
+                            if (package_dep.name_hash == external_name.hash) {
+                                if (package_dep.version.tag != .workspace) break :brk;
+                                package_dep.version.value.workspace = path;
+                                return null;
+                            }
+                        }
+                        return error.InstallFailed;
+                    } else if (strings.eql(old_path.slice(buf), path.slice(buf))) {
+                        return null;
+                    } else {
+                        log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Workspace name \"{s}\" already exists", .{
+                            external_name.slice(buf),
+                        }) catch {};
+                        return error.InstallFailed;
+                    }
                 }
                 workspace_entry.value_ptr.* = path;
             },

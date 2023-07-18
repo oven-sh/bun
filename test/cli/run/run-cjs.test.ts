@@ -40,58 +40,46 @@ export default Foo
 });
 
 test("npm_package_config", () => {
-   const dir = tempDirWithFiles("npmpkgcfg", {
-      "package.json": JSON.stringify({
-        "name": "bun_npm_package_config",
-        "config": {
-          "a": "echo Hello, Bun!"
-        },
-        "scripts": {
-          "c": "$npm_package_config_a",
-        }
-      })
-  });
-  
-  const { stdout } = bunRunAsScript(dir, "c");
-  expect(stdout.toString()).toBe("Hello, Bun!");
+  const vals = {
+    "port": 8000,
+    "password": "hello world",
+    "isDev": true,
+    "isProd": false,
+    "piNum": 3.14,
+    "emptyStr": "",
+  //  "emptyStr2": " ", TODO: fix this being "" in bun
+  /*  "foo": {
+      "bar": "baz"
+    }, TODO: Support objects */
+    "why": 0,
+    "none": null,
+    "emoji": "🍕"
+  };
 
-  // test multiple config values
-  const dir2 = tempDirWithFiles("npmpkgcfg2", {
+  const dir = tempDirWithFiles("npmpkgcfg", {
     "package.json": JSON.stringify({
-      "name": "bun_npm_package_config",
-      "config": {
-        "a": "Bun!",
-        "b": "Hello,"
-      },
+      config: vals,
       "scripts": {
-        "c": "echo $npm_package_config_b $npm_package_config_a",
+        "dev": bunExe() + " run index.js"
       }
-    })
+    }),
+    "index.js": "console.log(JSON.stringify(process.env))"
   });
 
-  const { stdout: stdout2 } = bunRunAsScript(dir2, "c");
-  expect(stdout2.toString()).toBe("Hello, Bun!");
+  const { stdout } = bunRunAsScript(dir, "dev");
+  const jsStd = JSON.parse(stdout.toString())
 
-  // test env in file
-  const dir3 = tempDirWithFiles("npmpkgcfg3", {
-      "package.json": JSON.stringify({
-        "name": "bun_npm_package_config",
-        "config": {
-          "port": 8080,
-          "somebool": true
-        },
-        "scripts": {
-          "c": bunExe() + " run index.js",
-        }
-      }),
-      "index.js": `
-        console.log(JSON.stringify({
-          port: process.env.npm_package_config_port,
-          somebool: process.env.npm_package_config_somebool
-        }))
-      `
-  });
+  for (const [key, val] of Object.entries(vals)) {
+    const jsVl = jsStd[`npm_package_config_${key}`];
+    console.log(key, jsVl, val)
 
-  const { stdout: stdout3 } = bunRunAsScript(dir3, "c");
-  expect(JSON.parse(stdout3)).toEqual({ port: '8080', somebool: 'true' });
+    expect(jsVl).toBeTypeOf("string");
+
+    if (val === false || val === null) {
+      expect(jsVl).toEqual("");
+      continue;
+    }
+
+    expect(jsVl).toEqual(String(val));
+  }
 });

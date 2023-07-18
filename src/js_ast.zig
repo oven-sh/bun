@@ -1701,6 +1701,14 @@ pub const E = struct {
             return toStringFromF64Safe(this.value, allocator);
         }
 
+        pub fn toStringSafelyWithDecimalPlaces(this: Number, allocator: std.mem.Allocator) ?string {
+            if (this.value == @trunc(this.value)) {
+                return toStringFromF64Safe(this.value, allocator);
+            }
+
+            return std.fmt.allocPrint(allocator, "{d}", .{this.value}) catch return null;
+        }
+
         pub fn toStringFromF64Safe(value: f64, allocator: std.mem.Allocator) ?string {
             if (value == @trunc(value) and (value < std.math.maxInt(i32) and value > std.math.minInt(i32))) {
                 const int_value = @as(i64, @intFromFloat(value));

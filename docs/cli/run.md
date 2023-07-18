@@ -42,6 +42,10 @@ $ bun --watch run index.tsx
 
 ### `--smol`
 
+{% callout %}
+Added in Bun v0.7.0.
+{% /callout %}
+
 In memory-constrained environments, use the `--smol` flag to reduce memory usage at a cost to performance.
 
 ```bash

@@ -21,7 +21,7 @@
 // AsyncContextFrame is an immutable array managed in here, formatted [key, value, key, value] where
 // each key is an AsyncLocalStorage object and the value is the associated value.
 //
-const { get, set } = $lazy("async_hooks");
+const { get, set, cleanupLater } = $lazy("async_hooks");
 
 class AsyncLocalStorage {
   #disableCalled = false;
@@ -50,6 +50,7 @@ class AsyncLocalStorage {
   // enterWith should be considered deprecated. It's a bad API
   // with .run() the state is always going to be reset, but this explicitly does not do such.
   enterWith(store) {
+    cleanupLater();
     var context = get();
     if (!context) {
       set([this, store]);
@@ -295,9 +296,7 @@ export {
   triggerAsyncId,
   executionAsyncResource,
   asyncWrapProviders,
-  // AsyncResource,
-  // TODO: move to node:events
-  // EventEmitterAsyncResource,
+  AsyncResource,
 };
 
 export default {
@@ -307,8 +306,6 @@ export default {
   triggerAsyncId,
   executionAsyncResource,
   asyncWrapProviders,
-  // AsyncResource,
-  // TODO: move to node:events
-  // EventEmitterAsyncResource,
+  AsyncResource,
   [Symbol.for("CommonJS")]: 0,
 };

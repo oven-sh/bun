@@ -208,6 +208,7 @@ var async_hooks_default = {
   triggerAsyncId,
   executionAsyncResource,
   asyncWrapProviders,
+  AsyncResource,
   [Symbol.for("CommonJS")]: 0
 };
 export {
@@ -217,5 +218,6 @@ export {
   async_hooks_default as default,
   createHook,
   asyncWrapProviders,
+  AsyncResource,
   AsyncLocalStorage
 };

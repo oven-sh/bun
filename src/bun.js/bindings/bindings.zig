@@ -4995,33 +4995,6 @@ pub const VM = extern struct {
         return cppFn("deleteAllCode", .{ vm, global_object });
     }
 
-    extern fn Bun__setOnEachMicrotaskTick(vm: *VM, ptr: ?*anyopaque, callback: ?*const fn (*anyopaque) callconv(.C) void) void;
-
-    pub fn onEachMicrotask(vm: *VM, comptime Ptr: type, ptr: *Ptr, comptime callback: *const fn (*Ptr) void) void {
-        if (comptime is_bindgen) {
-            return;
-        }
-
-        const callback_ = callback;
-        _ = callback_;
-        const Wrapper = struct {
-            pub fn run(ptr_: *anyopaque) callconv(.C) void {
-                var ptr__ = @as(*Ptr, @ptrCast(@alignCast(ptr_)));
-                callback_(ptr__);
-            }
-        };
-
-        Bun__setOnEachMicrotaskTick(vm, ptr, Wrapper.run);
-    }
-
-    pub fn clearMicrotaskCallback(vm: *VM) void {
-        if (comptime is_bindgen) {
-            return;
-        }
-
-        Bun__setOnEachMicrotaskTick(vm, null, null);
-    }
-
     pub fn whenIdle(
         vm: *VM,
         callback: *const fn (...) callconv(.C) void,

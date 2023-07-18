@@ -1502,72 +1502,19 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     return JSC::JSValue::encode(JSC::jsString(vm, url.fileSystemPath()));
 }
 
-// JSC_DEFINE_HOST_FUNCTION(asyncHooksGetContext, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-// {
-//     auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-//     if (zigGlobalObject->m_asyncHooksContext.isInitialized()) {
-//         return JSC::JSValue::encode(zigGlobalObject->asyncHooksContext());
-//     }
-//     return JSC::JSValue::encode(JSC::jsUndefined());
-// }
-
-// JSC_DEFINE_HOST_FUNCTION(asyncHooksGetContextInit, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-// {
-//     auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-//     return JSC::JSValue::encode(zigGlobalObject->asyncHooksContext());
-// }
-
-// JSC_DEFINE_HOST_FUNCTION(asyncHooksCopyContext, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-// {
-//     auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-//     if (!zigGlobalObject->m_asyncHooksContext.isInitialized()) {
-//         return JSC::JSValue::encode(JSC::jsUndefined());
-//     }
-
-//     JSMap* map = zigGlobalObject->asyncHooksContext();
-//     if (map->size() == 0) return JSC::JSValue::encode(JSC::jsUndefined());
-
-//     return JSC::JSValue::encode(map);
-// }
-
-// JSC_DEFINE_HOST_FUNCTION(asyncHooksRunInContext, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-// {
-//     auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-
-//     auto newContext = callFrame->getArgumentUnsafe(0);
-
-//     JSC::JSFunction* fn = JSC::jsDynamicCast<JSC::JSFunction*>(callFrame->getArgumentUnsafe(1));
-//     JSC::CallData callData = JSC::getCallData(fn);
-
-//     JSC::MarkedArgumentBuffer arguments;
-//     size_t argCount = callFrame->argumentCount();
-//     for (size_t i = 2; i < argCount; ++i) {
-//         arguments.append(callFrame->getArgumentUnsafe(i));
-//     }
-
-//     // fast path for when both contexts are empty.
-//     if (
-//         newContext.isUndefinedOrNull()
-//         && (
-//             !zigGlobalObject->m_asyncHooksContext.isInitialized()
-//             || zigGlobalObject->asyncHooksContext()->size() == 0
-//         )
-//     ) {
-//         return JSC::JSValue::encode(JSC::call(globalObject, fn, callData, JSC::jsUndefined(), arguments));
-//     } else {
-//         auto newContextMap = JSC::jsDynamicCast<JSC::JSMap*>(newContext);
-//         auto& vm = globalObject->vm();
-
-//         JSC::JSMap* prevContext = zigGlobalObject->asyncHooksContext();
-//         zigGlobalObject->m_asyncHooksContext.set(vm, globalObject, newContext);
-
-//         JSC::JSValue ret = JSC::call(globalObject, fn, callData, JSC::jsUndefined(), arguments);
-
-//         zigGlobalObject->m_asyncHooksContext.set(vm, globalObject, prevContext);
-
-//         return JSC::JSValue::encode(ret);
-//     }
-// }
+// $lazy("async_hooks").cleanupLater
+JSC_DEFINE_HOST_FUNCTION(asyncHooksCleanupLater, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    // assumptions and notes:
+    // - nobody else uses setOnEachMicrotaskTick
+    // - this is called by js if we set async context in a way we may not clear it
+    // - AsyncLocalStorage.prototype.run cleans up after itself and does not call this cb
+    vm->setOnEachMicrotaskTick([=](JSC::VM& vm) {
+        vm.setOnEachMicrotaskTick(nullptr);
+        globalObject->m_asyncContextData.get()->setInternalField(0, jsUndefined());
+    });
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
 
 JSC_DEFINE_CUSTOM_GETTER(noop_getter, (JSGlobalObject*, EncodedJSValue, PropertyName))
 {
@@ -1775,6 +1722,9 @@ JSC:
             obj->putDirect(
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "set"_s)),
                 JSC::JSFunction::create(vm, asyncContextSetAsyncContextCodeGenerator(vm), globalObject), 0);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "cleanupLater"_s)),
+                JSC::JSFunction::create(vm, globalObject, 0, "cleanupLater"_s, asyncHooksCleanupLater, ImplementationVisibility::Public), 0);
             return JSValue::encode(obj);
         }
 
@@ -3765,18 +3715,6 @@ JSC_DEFINE_HOST_FUNCTION(functionBunPeekStatus,
     }
 
     return JSValue::encode(jsUndefined());
-}
-
-extern "C" void Bun__setOnEachMicrotaskTick(JSC::VM* vm, void* ptr, void (*callback)(void* ptr))
-{
-    if (callback == nullptr) {
-        vm->setOnEachMicrotaskTick(nullptr);
-        return;
-    }
-
-    vm->setOnEachMicrotaskTick([=](JSC::VM& vm) {
-        callback(ptr);
-    });
 }
 
 JSC_DEFINE_CUSTOM_GETTER(BunCommonJSModule_getter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))

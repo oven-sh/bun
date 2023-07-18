@@ -2190,6 +2190,14 @@ CPP_DECL void JSC__JSValue__putIndex(JSC__JSValue JSValue0, JSC__JSGlobalObject*
     array->putDirectIndex(arg1, arg2, value2);
 }
 
+CPP_DECL void JSC__JSValue__push(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue3)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    JSC::JSValue value2 = JSC::JSValue::decode(JSValue3);
+    JSC::JSArray* array = JSC::jsCast<JSC::JSArray*>(value);
+    array->push(arg1, value2);
+}
+
 JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject* globalObject, const ZigString* arg1,
     size_t arg2, bool clone)
 {

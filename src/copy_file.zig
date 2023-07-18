@@ -88,12 +88,12 @@ fn canUseCopyFileRangeSyscall() bool {
 const fd_t = std.os.fd_t;
 pub fn copyFileRange(fd_in: fd_t, off_in: u64, fd_out: fd_t, off_out: u64, len: usize, flags: u32) CopyFileRangeError!usize {
     if (canUseCopyFileRangeSyscall()) {
-        var off_in_copy = @bitCast(i64, off_in);
-        var off_out_copy = @bitCast(i64, off_out);
+        var off_in_copy = @as(i64, @bitCast(off_in));
+        var off_out_copy = @as(i64, @bitCast(off_out));
 
         const rc = std.os.linux.copy_file_range(fd_in, &off_in_copy, fd_out, &off_out_copy, len, flags);
         switch (std.os.linux.getErrno(rc)) {
-            .SUCCESS => return @intCast(usize, rc),
+            .SUCCESS => return @as(usize, @intCast(rc)),
             .BADF => return error.FilesOpenedWithWrongFlags,
             .FBIG => return error.FileTooBig,
             .IO => return error.InputOutput,

@@ -163,7 +163,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
             if (comptime isNullableType(ExpectedReturnType) != isNullableType(ExternReturnType)) {
                 return value.?;
             } else if (comptime (@typeInfo(ExpectedReturnType) == .Enum) and (@typeInfo(ExternReturnType) != .Enum)) {
-                return @enumFromInt(ExpectedReturnType, value);
+                return @as(ExpectedReturnType, @enumFromInt(value));
             } else {
                 return value;
             }

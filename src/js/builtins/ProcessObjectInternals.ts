@@ -47,7 +47,7 @@ export function binding(bindingName) {
   return constants;
 }
 
-export function getStdioWriteStream(fd_) {
+export function getStdioWriteStream(fd_, getWindowSize) {
   var require = path => {
     var existing = $requireMap.get(path);
     if (existing) return existing.exports;
@@ -223,8 +223,9 @@ export function getStdioWriteStream(fd_) {
   }
 
   var readline;
+  var windowSizeArray = [0, 0];
 
-  var FastStdioWriteStream = class StdioWriteStream extends EventEmitter {
+  var FastStdioWriteStreamInternal = class StdioWriteStream extends EventEmitter {
     #fd;
     #innerStream;
     #writer;
@@ -270,31 +271,6 @@ export function getStdioWriteStream(fd_) {
     get fd() {
       return this.#fd;
     }
-
-    get isTTY() {
-      return (this.#isTTY ??= require("node:tty").isatty(this.#fd));
-    }
-
-    cursorTo(x, y, callback) {
-      return (readline ??= require("node:readline")).cursorTo(this, x, y, callback);
-    }
-
-    moveCursor(dx, dy, callback) {
-      return (readline ??= require("node:readline")).moveCursor(this, dx, dy, callback);
-    }
-
-    clearLine(dir, callback) {
-      return (readline ??= require("node:readline")).clearLine(this, dir, callback);
-    }
-
-    clearScreenDown(callback) {
-      return (readline ??= require("node:readline")).clearScreenDown(this, callback);
-    }
-
-    // TODO: once implemented this.columns and this.rows should be uncommented
-    // getWindowSize() {
-    //   return [this.columns, this.rows];
-    // }
 
     ref() {
       this.#getWriter().ref();
@@ -408,6 +384,10 @@ export function getStdioWriteStream(fd_) {
       return !!(writeResult || flushResult);
     }
 
+    get isTTY() {
+      return false;
+    }
+
     write(chunk, encoding, callback) {
       const result = this._write(chunk, encoding, callback);
 
@@ -471,8 +451,51 @@ export function getStdioWriteStream(fd_) {
       return this;
     }
   };
+  if (getWindowSize(fd_, windowSizeArray)) {
+    var WriteStream = class WriteStream extends FastStdioWriteStreamInternal {
+      get isTTY() {
+        return true;
+      }
 
-  return new FastStdioWriteStream(fd_);
+      cursorTo(x, y, callback) {
+        return (readline ??= require("node:readline")).cursorTo(this, x, y, callback);
+      }
+
+      moveCursor(dx, dy, callback) {
+        return (readline ??= require("node:readline")).moveCursor(this, dx, dy, callback);
+      }
+
+      clearLine(dir, callback) {
+        return (readline ??= require("node:readline")).clearLine(this, dir, callback);
+      }
+
+      clearScreenDown(callback) {
+        return (readline ??= require("node:readline")).clearScreenDown(this, callback);
+      }
+
+      getWindowSize() {
+        if (getWindowSize(fd_, windowSizeArray) === true) {
+          return [windowSizeArray[0], windowSizeArray[1]];
+        }
+      }
+
+      get columns() {
+        if (getWindowSize(fd_, windowSizeArray) === true) {
+          return windowSizeArray[0];
+        }
+      }
+
+      get rows() {
+        if (getWindowSize(fd_, windowSizeArray) === true) {
+          return windowSizeArray[1];
+        }
+      }
+    };
+
+    return new WriteStream(fd_);
+  }
+
+  return new FastStdioWriteStreamInternal(fd_);
 }
 
 export function getStdinStream(fd_) {

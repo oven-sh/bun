@@ -1874,7 +1874,7 @@ pub const Element = struct {
                 AttributeIterator.getAttributeIteratorJSClass(globalObject).asObjectRef(),
                 null,
                 1,
-                @ptrCast([*]JSC.C.JSObjectRef, &attr),
+                @as([*]JSC.C.JSObjectRef, @ptrCast(&attr)),
                 null,
             ),
         );

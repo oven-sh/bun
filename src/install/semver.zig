@@ -65,7 +65,7 @@ pub const String = extern struct {
             if (out.isInline()) {
                 out.assertDefined();
             } else {
-                std.debug.assert(@bitCast(u64, out.slice(buf)[0..8].*) != undefined);
+                std.debug.assert(@as(u64, @bitCast(out.slice(buf)[0..8].*)) != undefined);
             }
 
             return out;
@@ -76,8 +76,8 @@ pub const String = extern struct {
 
     pub fn isUndefined(this: *const String) bool {
         var num: u64 = undefined;
-        var bytes = @bitCast(u64, this.bytes);
-        return @truncate(u63, bytes) == @truncate(u63, num);
+        var bytes = @as(u64, @bitCast(this.bytes));
+        return @as(u63, @truncate(bytes)) == @as(u63, @truncate(num));
     }
 
     pub const Formatter = struct {
@@ -153,7 +153,7 @@ pub const String = extern struct {
 
         pub fn hash(ctx: ArrayHashContext, a: String) u32 {
             const str = a.slice(ctx.a_buf);
-            return @truncate(u32, bun.hash(str));
+            return @as(u32, @truncate(bun.hash(str)));
         }
     };
 
@@ -175,44 +175,44 @@ pub const String = extern struct {
             // This should only happen for non-ascii strings that are exactly 8 bytes.
             // so that's an edge-case
             if ((in[max_inline_len - 1]) >= 128)
-                @bitCast(String, (@as(
+                @as(String, @bitCast((@as(
                     u64,
                     0,
                 ) | @as(
                     u64,
-                    @truncate(
+                    @as(
                         max_addressable_space,
-                        @bitCast(
+                        @truncate(@as(
                             u64,
-                            Pointer.init(buf, in),
-                        ),
+                            @bitCast(Pointer.init(buf, in)),
+                        )),
                     ),
-                )) | 1 << 63)
+                )) | 1 << 63))
             else
                 String{ .bytes = .{ in[0], in[1], in[2], in[3], in[4], in[5], in[6], in[7] } },
 
-            else => @bitCast(
+            else => @as(
                 String,
-                (@as(
+                @bitCast((@as(
                     u64,
                     0,
                 ) | @as(
                     u64,
-                    @truncate(
+                    @as(
                         max_addressable_space,
-                        @bitCast(
+                        @truncate(@as(
                             u64,
-                            Pointer.init(buf, in),
-                        ),
+                            @bitCast(Pointer.init(buf, in)),
+                        )),
                     ),
-                )) | 1 << 63,
+                )) | 1 << 63),
             ),
         };
     }
 
     pub fn eql(this: String, that: String, this_buf: []const u8, that_buf: []const u8) bool {
         if (this.isInline() and that.isInline()) {
-            return @bitCast(u64, this.bytes) == @bitCast(u64, that.bytes);
+            return @as(u64, @bitCast(this.bytes)) == @as(u64, @bitCast(that.bytes));
         } else if (this.isInline() != that.isInline()) {
             return false;
         } else {
@@ -223,7 +223,7 @@ pub const String = extern struct {
     }
 
     pub inline fn isEmpty(this: String) bool {
-        return @bitCast(u64, this.bytes) == @as(u64, 0);
+        return @as(u64, @bitCast(this.bytes)) == @as(u64, 0);
     }
 
     pub fn len(this: String) usize {
@@ -263,14 +263,14 @@ pub const String = extern struct {
             std.debug.assert(bun.isSliceInBuffer(in, buf));
 
             return Pointer{
-                .off = @truncate(u32, @intFromPtr(in.ptr) - @intFromPtr(buf.ptr)),
-                .len = @truncate(u32, in.len),
+                .off = @as(u32, @truncate(@intFromPtr(in.ptr) - @intFromPtr(buf.ptr))),
+                .len = @as(u32, @truncate(in.len)),
             };
         }
     };
 
     pub inline fn ptr(this: String) Pointer {
-        return @bitCast(Pointer, @as(u64, @truncate(u63, @bitCast(u64, this))));
+        return @as(Pointer, @bitCast(@as(u64, @as(u63, @truncate(@as(u64, @bitCast(this)))))));
     }
 
     // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
@@ -483,7 +483,7 @@ test "String works" {
             world,
         );
         try std.testing.expectEqualStrings("hello", str.slice(buf));
-        try std.testing.expectEqual(@bitCast(u64, str), @bitCast(u64, [8]u8{ 'h', 'e', 'l', 'l', 'o', 0, 0, 0 }));
+        try std.testing.expectEqual(@as(u64, @bitCast(str)), @as(u64, @bitCast([8]u8{ 'h', 'e', 'l', 'l', 'o', 0, 0, 0 })));
     }
 
     {
@@ -551,7 +551,7 @@ pub const BigExternalString = extern struct {
     pub fn from(in: string) BigExternalString {
         return BigExternalString{
             .off = 0,
-            .len = @truncate(u32, in.len),
+            .len = @as(u32, @truncate(in.len)),
             .hash = bun.Wyhash.hash(0, in),
         };
     }
@@ -560,8 +560,8 @@ pub const BigExternalString = extern struct {
         std.debug.assert(@intFromPtr(buf.ptr) <= @intFromPtr(in.ptr) and ((@intFromPtr(in.ptr) + in.len) <= (@intFromPtr(buf.ptr) + buf.len)));
 
         return BigExternalString{
-            .off = @truncate(u32, @intFromPtr(in.ptr) - @intFromPtr(buf.ptr)),
-            .len = @truncate(u32, in.len),
+            .off = @as(u32, @truncate(@intFromPtr(in.ptr) - @intFromPtr(buf.ptr))),
+            .len = @as(u32, @truncate(in.len)),
             .hash = hash,
         };
     }
@@ -709,7 +709,7 @@ pub const Version = extern struct {
 
     pub const HashContext = struct {
         pub fn hash(_: @This(), lhs: Version) u32 {
-            return @truncate(u32, lhs.hash());
+            return @as(u32, @truncate(lhs.hash()));
         }
 
         pub fn eql(_: @This(), lhs: Version, rhs: Version) bool {
@@ -871,7 +871,7 @@ pub const Version = extern struct {
                                 state = State.none;
                             },
                         }
-                        result.len = @truncate(u32, i);
+                        result.len = @as(u32, @truncate(i));
                         break;
                     },
                     '+' => {
@@ -919,7 +919,7 @@ pub const Version = extern struct {
                     state = State.none;
                 },
             }
-            result.len = @truncate(u32, i);
+            result.len = @as(u32, @truncate(i));
 
             return result;
         }
@@ -955,7 +955,7 @@ pub const Version = extern struct {
                 break;
             }
 
-            stopped_at = @intCast(i32, i);
+            stopped_at = @as(i32, @intCast(i));
             switch (input[i]) {
                 ' ' => {
                     is_done = true;
@@ -1104,7 +1104,7 @@ pub const Version = extern struct {
             }
         }
 
-        result.stopped_at = @intCast(u32, i);
+        result.stopped_at = @as(u32, @intCast(i));
 
         if (comptime RawType != void) {
             result.version.raw = sliced_string.sub(input[0..i]).external();

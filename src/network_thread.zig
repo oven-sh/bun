@@ -144,7 +144,7 @@ fn processEvents_(this: *@This()) !void {
         this.io.wait(this, queueEvents);
         if (comptime Environment.isDebug) {
             var end = std.time.nanoTimestamp();
-            log("Waited {any}\n", .{std.fmt.fmtDurationSigned(@truncate(i64, end - start))});
+            log("Waited {any}\n", .{std.fmt.fmtDurationSigned(@as(i64, @truncate(end - start)))});
             Output.flush();
         }
     }
@@ -161,7 +161,7 @@ pub fn schedule(this: *@This(), batch: Batch) void {
     }
 
     if (comptime Environment.isLinux) {
-        const one = @bitCast([8]u8, @as(usize, batch.len));
+        const one = @as([8]u8, @bitCast(@as(usize, batch.len)));
         _ = std.os.write(this.waker.fd, &one) catch @panic("Failed to write to eventfd");
     } else {
         this.waker.wake() catch @panic("Failed to wake");

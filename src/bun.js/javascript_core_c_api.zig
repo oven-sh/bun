@@ -9,7 +9,7 @@ const std = @import("std");
 const cpp = @import("./bindings/bindings.zig");
 const generic = opaque {
     pub fn value(this: *const @This()) cpp.JSValue {
-        return @enumFromInt(cpp.JSValue, @bitCast(cpp.JSValue.Type, @intFromPtr(this)));
+        return @as(cpp.JSValue, @enumFromInt(@as(cpp.JSValue.Type, @bitCast(@intFromPtr(this)))));
     }
 
     pub inline fn bunVM(this: *@This()) *@import("root").bun.JSC.VirtualMachine {

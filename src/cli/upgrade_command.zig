@@ -116,7 +116,7 @@ pub const UpgradeCheckerThread = struct {
     }
 
     fn _run(env_loader: *DotEnv.Loader) anyerror!void {
-        var rand = std.rand.DefaultPrng.init(@intCast(u64, @max(std.time.milliTimestamp(), 0)));
+        var rand = std.rand.DefaultPrng.init(@as(u64, @intCast(@max(std.time.milliTimestamp(), 0))));
         const delay = rand.random().intRangeAtMost(u64, 100, 10000);
         std.time.sleep(std.time.ns_per_ms * delay);
 
@@ -174,8 +174,8 @@ pub const UpgradeCommand = struct {
 
         var header_entries: Headers.Entries = .{};
         const accept = Headers.Kv{
-            .name = Api.StringPointer{ .offset = 0, .length = @intCast(u32, "Accept".len) },
-            .value = Api.StringPointer{ .offset = @intCast(u32, "Accept".len), .length = @intCast(u32, "application/vnd.github.v3+json".len) },
+            .name = Api.StringPointer{ .offset = 0, .length = @as(u32, @intCast("Accept".len)) },
+            .value = Api.StringPointer{ .offset = @as(u32, @intCast("Accept".len)), .length = @as(u32, @intCast("application/vnd.github.v3+json".len)) },
         };
         try header_entries.append(allocator, accept);
         defer if (comptime silent) header_entries.deinit(allocator);
@@ -206,11 +206,11 @@ pub const UpgradeCommand = struct {
                     Headers.Kv{
                         .name = Api.StringPointer{
                             .offset = accept.value.length + accept.value.offset,
-                            .length = @intCast(u32, "Access-Token".len),
+                            .length = @as(u32, @intCast("Access-Token".len)),
                         },
                         .value = Api.StringPointer{
-                            .offset = @intCast(u32, accept.value.length + accept.value.offset + "Access-Token".len),
-                            .length = @intCast(u32, access_token.len),
+                            .offset = @as(u32, @intCast(accept.value.length + accept.value.offset + "Access-Token".len)),
+                            .length = @as(u32, @intCast(access_token.len)),
                         },
                     },
                 );
@@ -344,7 +344,7 @@ pub const UpgradeCommand = struct {
 
                         if (asset.asProperty("size")) |size_| {
                             if (size_.expr.data == .e_number) {
-                                version.size = @intCast(u32, @max(@intFromFloat(i32, std.math.ceil(size_.expr.data.e_number.value)), 0));
+                                version.size = @as(u32, @intCast(@max(@as(i32, @intFromFloat(std.math.ceil(size_.expr.data.e_number.value))), 0)));
                             }
                         }
                         return version;

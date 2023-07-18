@@ -264,13 +264,13 @@ pub const MacroEntryPoint = struct {
         const fmt = bun.fmt.hexIntLower(hash);
 
         const specifier = std.fmt.bufPrint(buf, js_ast.Macro.namespaceWithColon ++ "//{any}.js", .{fmt}) catch unreachable;
-        len.* = @truncate(u32, specifier.len);
+        len.* = @as(u32, @truncate(specifier.len));
 
         return generateIDFromSpecifier(specifier);
     }
 
     pub fn generateIDFromSpecifier(specifier: string) i32 {
-        return @bitCast(i32, @truncate(u32, bun.hash(specifier)));
+        return @as(i32, @bitCast(@as(u32, @truncate(bun.hash(specifier)))));
     }
 
     pub fn generate(

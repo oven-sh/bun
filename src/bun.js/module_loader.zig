@@ -826,7 +826,7 @@ pub const ModuleLoader = struct {
                 else
                     null;
                 resolved_source.commonjs_exports_len = if (commonjs_exports.len > 0)
-                    @truncate(u32, commonjs_exports.len)
+                    @as(u32, @truncate(commonjs_exports.len))
                 else if (parse_result.ast.exports_kind == .cjs)
                     std.math.maxInt(u32)
                 else
@@ -845,7 +845,7 @@ pub const ModuleLoader = struct {
                 else
                     null,
                 .commonjs_exports_len = if (commonjs_exports.len > 0)
-                    @truncate(u32, commonjs_exports.len)
+                    @as(u32, @truncate(commonjs_exports.len))
                 else if (parse_result.ast.exports_kind == .cjs)
                     std.math.maxInt(u32)
                 else
@@ -1228,7 +1228,7 @@ pub const ModuleLoader = struct {
                     else
                         null;
                     resolved_source.commonjs_exports_len = if (commonjs_exports.len > 0)
-                        @truncate(u32, commonjs_exports.len)
+                        @as(u32, @truncate(commonjs_exports.len))
                     else if (parse_result.ast.exports_kind == .cjs)
                         std.math.maxInt(u32)
                     else
@@ -1265,7 +1265,7 @@ pub const ModuleLoader = struct {
                     else
                         null,
                     .commonjs_exports_len = if (commonjs_exports.len > 0)
-                        @truncate(u32, commonjs_exports.len)
+                        @as(u32, @truncate(commonjs_exports.len))
                     else if (parse_result.ast.exports_kind == .cjs)
                         std.math.maxInt(u32)
                     else
@@ -1330,7 +1330,7 @@ pub const ModuleLoader = struct {
                             var encoded = JSC.EncodedJSValue{
                                 .asPtr = globalThis,
                             };
-                            const globalValue = @enumFromInt(JSC.JSValue, encoded.asInt64);
+                            const globalValue = @as(JSC.JSValue, @enumFromInt(encoded.asInt64));
                             globalValue.put(
                                 globalThis,
                                 JSC.ZigString.static("wasmSourceBytes"),
@@ -2204,9 +2204,11 @@ pub const HardcodedModule = enum {
             .{ "path/win32", .{ .path = "node:path/win32" } },
             .{ "perf_hooks", .{ .path = "node:perf_hooks" } },
             .{ "process", .{ .path = "node:process" } },
-            .{ "readable-stream", .{ .path = "node:stream" } },
-            .{ "readable-stream/consumer", .{ .path = "node:stream/consumers" } },
-            .{ "readable-stream/web", .{ .path = "node:stream/web" } },
+            // Older versions of `readable-stream` is incompatible with latest
+            // version of Node.js Stream API, which `bun` implements
+            // .{ "readable-stream", .{ .path = "node:stream" } },
+            // .{ "readable-stream/consumer", .{ .path = "node:stream/consumers" } },
+            // .{ "readable-stream/web", .{ .path = "node:stream/web" } },
             .{ "readline", .{ .path = "node:readline" } },
             .{ "readline/promises", .{ .path = "node:readline/promises" } },
             .{ "stream", .{ .path = "node:stream" } },

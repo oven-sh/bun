@@ -93,7 +93,7 @@ pub const Reader = struct {
                     },
                     .Enum => |type_info| {
                         const enum_values = try this.read(length * @sizeOf(type_info.tag_type));
-                        return @ptrCast([*]T, enum_values.ptr)[0..length];
+                        return @as([*]T, @ptrCast(enum_values.ptr))[0..length];
                     },
                     else => {},
                 }
@@ -156,7 +156,7 @@ pub const Reader = struct {
                             .Packed => {
                                 const sizeof = @sizeOf(T);
                                 var slice = try this.read(sizeof);
-                                return @ptrCast(*align(1) T, slice[0..sizeof]).*;
+                                return @as(*align(1) T, @ptrCast(slice[0..sizeof])).*;
                             },
                             else => {},
                         }
@@ -264,7 +264,7 @@ pub fn Writer(comptime WritableStream: type) type {
         }
 
         pub fn writeArray(this: *Self, comptime T: type, slice: anytype) !void {
-            try this.writeInt(@truncate(u32, slice.len));
+            try this.writeInt(@as(u32, @truncate(slice.len)));
 
             switch (T) {
                 u8 => {

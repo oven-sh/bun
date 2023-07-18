@@ -170,7 +170,7 @@ pub const ServerConfig = struct {
 
         pub fn asUSockets(this_: ?SSLConfig) uws.us_bun_socket_context_options_t {
             var ctx_opts: uws.us_bun_socket_context_options_t = undefined;
-            @memset(@ptrCast([*]u8, &ctx_opts)[0..@sizeOf(uws.us_bun_socket_context_options_t)], 0);
+            @memset(@as([*]u8, @ptrCast(&ctx_opts))[0..@sizeOf(uws.us_bun_socket_context_options_t)], 0);
 
             if (this_) |ssl_config| {
                 if (ssl_config.key_file_name != null)
@@ -714,12 +714,12 @@ pub const ServerConfig = struct {
             }
 
             if (arg.getTruthy(global, "port")) |port_| {
-                args.port = @intCast(
+                args.port = @as(
                     u16,
-                    @min(
+                    @intCast(@min(
                         @max(0, port_.coerce(i32, global)),
                         std.math.maxInt(u16),
-                    ),
+                    )),
                 );
             }
 
@@ -783,7 +783,7 @@ pub const ServerConfig = struct {
 
             if (arg.getTruthy(global, "maxRequestBodySize")) |max_request_body_size| {
                 if (max_request_body_size.isNumber()) {
-                    args.max_request_body_size = @intCast(u64, @max(0, max_request_body_size.toInt64()));
+                    args.max_request_body_size = @as(u64, @intCast(@max(0, max_request_body_size.toInt64())));
                 }
             }
 
@@ -1239,7 +1239,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 .reason = .fetch_event_handler,
                 .cwd = VirtualMachine.get().bundler.fs.top_level_dir,
                 .problems = Api.Problems{
-                    .code = @truncate(u16, @intFromError(err)),
+                    .code = @as(u16, @truncate(@intFromError(err))),
                     .name = @errorName(err),
                     .exceptions = exceptions,
                     .build = log.toAPI(allocator) catch unreachable,
@@ -1641,19 +1641,19 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             const adjusted_count_temporary = @min(@as(u64, this.sendfile.remain), @as(u63, std.math.maxInt(u63)));
             // TODO we should not need this int cast; improve the return type of `@min`
-            const adjusted_count = @intCast(u63, adjusted_count_temporary);
+            const adjusted_count = @as(u63, @intCast(adjusted_count_temporary));
 
             if (Environment.isLinux) {
-                var signed_offset = @intCast(i64, this.sendfile.offset);
+                var signed_offset = @as(i64, @intCast(this.sendfile.offset));
                 const start = this.sendfile.offset;
                 const val =
                     // this does the syscall directly, without libc
                     linux.sendfile(this.sendfile.socket_fd, this.sendfile.fd, &signed_offset, this.sendfile.remain);
-                this.sendfile.offset = @intCast(Blob.SizeType, signed_offset);
+                this.sendfile.offset = @as(Blob.SizeType, @intCast(signed_offset));
 
                 const errcode = linux.getErrno(val);
 
-                this.sendfile.remain -|= @intCast(Blob.SizeType, this.sendfile.offset -| start);
+                this.sendfile.remain -|= @as(Blob.SizeType, @intCast(this.sendfile.offset -| start));
 
                 if (errcode != .SUCCESS or this.flags.aborted or this.sendfile.remain == 0 or val == 0) {
                     if (errcode != .AGAIN and errcode != .SUCCESS and errcode != .PIPE) {
@@ -1665,7 +1665,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
             } else {
                 var sbytes: std.os.off_t = adjusted_count;
-                const signed_offset = @bitCast(i64, @as(u64, this.sendfile.offset));
+                const signed_offset = @as(i64, @bitCast(@as(u64, this.sendfile.offset)));
                 const errcode = std.c.getErrno(std.c.sendfile(
                     this.sendfile.fd,
                     this.sendfile.socket_fd,
@@ -1675,7 +1675,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     null,
                     0,
                 ));
-                const wrote = @intCast(Blob.SizeType, sbytes);
+                const wrote = @as(Blob.SizeType, @intCast(sbytes));
                 this.sendfile.offset +|= wrote;
                 this.sendfile.remain -|= wrote;
                 if (errcode != .AGAIN or this.flags.aborted or this.sendfile.remain == 0 or sbytes == 0) {
@@ -1718,7 +1718,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn sendWritableBytesForBlob(this: *RequestContext, bytes_: []const u8, write_offset: c_ulong, resp: *App.Response) bool {
             std.debug.assert(this.resp == resp);
 
-            var bytes = bytes_[@min(bytes_.len, @truncate(usize, write_offset))..];
+            var bytes = bytes_[@min(bytes_.len, @as(usize, @truncate(write_offset)))..];
             if (resp.tryEnd(bytes, bytes_.len, this.shouldCloseConnection())) {
                 this.finalize();
                 return true;
@@ -1732,7 +1732,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn sendWritableBytesForCompleteResponseBuffer(this: *RequestContext, bytes_: []const u8, write_offset: c_ulong, resp: *App.Response) bool {
             std.debug.assert(this.resp == resp);
 
-            var bytes = bytes_[@min(bytes_.len, @truncate(usize, write_offset))..];
+            var bytes = bytes_[@min(bytes_.len, @as(usize, @truncate(write_offset)))..];
             if (resp.tryEnd(bytes, bytes_.len, this.shouldCloseConnection())) {
                 this.response_buf_owned.items.len = 0;
                 this.finalize();
@@ -1788,7 +1788,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     }
 
                     var err = JSC.Node.Syscall.Error{
-                        .errno = @intCast(JSC.Node.Syscall.Error.Int, @intFromEnum(std.os.E.INVAL)),
+                        .errno = @as(JSC.Node.Syscall.Error.Int, @intCast(@intFromEnum(std.os.E.INVAL))),
                         .syscall = .sendfile,
                     };
                     var sys = err.withPathLike(file.pathlike).toSystemError();
@@ -1807,7 +1807,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     }
 
                     var err = JSC.Node.Syscall.Error{
-                        .errno = @intCast(JSC.Node.Syscall.Error.Int, @intFromEnum(std.os.E.INVAL)),
+                        .errno = @as(JSC.Node.Syscall.Error.Int, @intCast(@intFromEnum(std.os.E.INVAL))),
                         .syscall = .sendfile,
                     };
                     var sys = err.withPathLike(file.pathlike).toSystemError();
@@ -1820,7 +1820,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             const original_size = this.blob.Blob.size;
-            const stat_size = @intCast(Blob.SizeType, stat.size);
+            const stat_size = @as(Blob.SizeType, @intCast(stat.size));
             this.blob.Blob.size = if (std.os.S.ISREG(stat.mode))
                 stat_size
             else
@@ -1900,7 +1900,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.blob.Blob.resolveSize();
                 this.doRenderBlob();
             } else {
-                const stat_size = @intCast(Blob.SizeType, result.result.total_size);
+                const stat_size = @as(Blob.SizeType, @intCast(result.result.total_size));
                 const original_size = this.blob.Blob.size;
 
                 this.blob.Blob.size = if (original_size == 0 or original_size == Blob.max_size)
@@ -1913,8 +1913,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                 // this is used by content-range
                 this.sendfile = .{
-                    .fd = @truncate(i32, bun.invalid_fd),
-                    .remain = @truncate(Blob.SizeType, result.result.buf.len),
+                    .fd = @as(i32, @truncate(bun.invalid_fd)),
+                    .remain = @as(Blob.SizeType, @truncate(result.result.buf.len)),
                     .offset = this.blob.Blob.offset,
                     .auto_close = false,
                     .socket_fd = -999,
@@ -1988,7 +1988,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.server.globalThis,
                 stream.value,
                 response_stream,
-                @ptrCast(**anyopaque, &signal.ptr),
+                @as(**anyopaque, @ptrCast(&signal.ptr)),
             );
 
             assignment_result.ensureStillAlive();
@@ -3228,7 +3228,7 @@ pub const WebSocketServer = struct {
                     globalObject.throwInvalidArguments("websocket expects maxPayloadLength to be an integer", .{});
                     return null;
                 }
-                server.maxPayloadLength = @intCast(u32, @max(value.toInt64(), 0));
+                server.maxPayloadLength = @as(u32, @intCast(@max(value.toInt64(), 0)));
             }
         }
 
@@ -3239,7 +3239,7 @@ pub const WebSocketServer = struct {
                     return null;
                 }
 
-                var idleTimeout = @intCast(u16, @truncate(u32, @max(value.toInt64(), 0)));
+                var idleTimeout = @as(u16, @intCast(@as(u32, @truncate(@max(value.toInt64(), 0)))));
                 if (idleTimeout > 960) {
                     globalObject.throwInvalidArguments("websocket expects idleTimeout to be 960 or less", .{});
                     return null;
@@ -3259,7 +3259,7 @@ pub const WebSocketServer = struct {
                     return null;
                 }
 
-                server.backpressureLimit = @intCast(u32, @max(value.toInt64(), 0));
+                server.backpressureLimit = @as(u32, @intCast(@max(value.toInt64(), 0)));
             }
         }
 
@@ -3683,7 +3683,7 @@ pub const ServerWebSocket = struct {
             return JSValue.jsNumber(
                 // if 0, return 0
                 // else return number of bytes sent
-                if (result) @intCast(i32, @truncate(u31, buffer.len)) else @as(i32, 0),
+                if (result) @as(i32, @intCast(@as(u31, @truncate(buffer.len)))) else @as(i32, 0),
             );
         }
 
@@ -3701,7 +3701,7 @@ pub const ServerWebSocket = struct {
             return JSValue.jsNumber(
                 // if 0, return 0
                 // else return number of bytes sent
-                if (result) @intCast(i32, @truncate(u31, buffer.len)) else @as(i32, 0),
+                if (result) @as(i32, @intCast(@as(u31, @truncate(buffer.len)))) else @as(i32, 0),
             );
         }
 
@@ -3762,7 +3762,7 @@ pub const ServerWebSocket = struct {
         return JSValue.jsNumber(
             // if 0, return 0
             // else return number of bytes sent
-            if (result) @intCast(i32, @truncate(u31, buffer.len)) else @as(i32, 0),
+            if (result) @as(i32, @intCast(@as(u31, @truncate(buffer.len)))) else @as(i32, 0),
         );
     }
 
@@ -3823,7 +3823,7 @@ pub const ServerWebSocket = struct {
         return JSValue.jsNumber(
             // if 0, return 0
             // else return number of bytes sent
-            if (result) @intCast(i32, @truncate(u31, buffer.len)) else @as(i32, 0),
+            if (result) @as(i32, @intCast(@as(u31, @truncate(buffer.len)))) else @as(i32, 0),
         );
     }
 
@@ -3863,7 +3863,7 @@ pub const ServerWebSocket = struct {
         return JSValue.jsNumber(
             // if 0, return 0
             // else return number of bytes sent
-            if (result) @intCast(i32, @truncate(u31, buffer.len)) else @as(i32, 0),
+            if (result) @as(i32, @intCast(@as(u31, @truncate(buffer.len)))) else @as(i32, 0),
         );
     }
 
@@ -3905,7 +3905,7 @@ pub const ServerWebSocket = struct {
         return JSValue.jsNumber(
             // if 0, return 0
             // else return number of bytes sent
-            if (result) @intCast(i32, @truncate(u31, buffer.len)) else @as(i32, 0),
+            if (result) @as(i32, @intCast(@as(u31, @truncate(buffer.len)))) else @as(i32, 0),
         );
     }
 
@@ -4596,7 +4596,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 return JSValue.jsNumber(
                     // if 0, return 0
                     // else return number of bytes sent
-                    @as(i32, @intFromBool(uws.AnyWebSocket.publishWithOptions(ssl_enabled, app, topic_slice.slice(), buffer.slice(), .binary, compress))) * @intCast(i32, @truncate(u31, buffer.len)),
+                    @as(i32, @intFromBool(uws.AnyWebSocket.publishWithOptions(ssl_enabled, app, topic_slice.slice(), buffer.slice(), .binary, compress))) * @as(i32, @intCast(@as(u31, @truncate(buffer.len)))),
                 );
             }
 
@@ -4608,7 +4608,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 return JSValue.jsNumber(
                     // if 0, return 0
                     // else return number of bytes sent
-                    @as(i32, @intFromBool(uws.AnyWebSocket.publishWithOptions(ssl_enabled, app, topic_slice.slice(), buffer, .text, compress))) * @intCast(i32, @truncate(u31, buffer.len)),
+                    @as(i32, @intFromBool(uws.AnyWebSocket.publishWithOptions(ssl_enabled, app, topic_slice.slice(), buffer, .text, compress))) * @as(i32, @intCast(@as(u31, @truncate(buffer.len)))),
                 );
             }
 
@@ -4739,7 +4739,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             // See https://github.com/oven-sh/bun/issues/1339
 
             // obviously invalid pointer marks it as used
-            upgrader.upgrade_context = @ptrFromInt(*uws.uws_socket_context_s, std.math.maxInt(usize));
+            upgrader.upgrade_context = @as(*uws.uws_socket_context_s, @ptrFromInt(std.math.maxInt(usize)));
             request.upgrader = null;
 
             resp.clearAborted();
@@ -4961,11 +4961,11 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn getPendingRequests(this: *ThisServer) JSC.JSValue {
-            return JSC.JSValue.jsNumber(@intCast(i32, @truncate(u31, this.pending_requests)));
+            return JSC.JSValue.jsNumber(@as(i32, @intCast(@as(u31, @truncate(this.pending_requests)))));
         }
 
         pub fn getPendingWebSockets(this: *ThisServer) JSC.JSValue {
-            return JSC.JSValue.jsNumber(@intCast(i32, @truncate(u31, this.activeSocketsCount())));
+            return JSC.JSValue.jsNumber(@as(i32, @intCast(@as(u31, @truncate(this.activeSocketsCount())))));
         }
 
         pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
@@ -5001,7 +5001,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
         pub fn activeSocketsCount(this: *const ThisServer) u32 {
             const websocket = &(this.config.websocket orelse return 0);
-            return @truncate(u32, websocket.handler.active_connections);
+            return @as(u32, @truncate(websocket.handler.active_connections));
         }
 
         pub fn hasActiveWebSockets(this: *const ThisServer) bool {

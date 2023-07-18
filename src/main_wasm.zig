@@ -30,15 +30,15 @@ pub const Uint8Array = extern struct {
     len: usize = 0,
 
     pub fn fromSlice(slice: []const u8) u64 {
-        return @bitCast(u64, [2]u32{
+        return @as(u64, @bitCast([2]u32{
             @intFromPtr(slice.ptr),
             slice.len,
-        });
+        }));
     }
 
     pub fn fromJS(data: u64) []u8 {
-        const ptrs = @bitCast([2]u32, data);
-        return @ptrFromInt([*]u8, ptrs[0])[0..ptrs[1]];
+        const ptrs = @as([2]u32, @bitCast(data));
+        return @as([*]u8, @ptrFromInt(ptrs[0]))[0..ptrs[1]];
     }
 };
 
@@ -166,10 +166,10 @@ var buffer_writer: JSPrinter.BufferWriter = undefined;
 var writer: JSPrinter.BufferPrinter = undefined;
 var define: *Define.Define = undefined;
 export fn bun_malloc(size: usize) u64 {
-    return @bitCast(u64, [2]u32{
+    return @as(u64, @bitCast([2]u32{
         @intFromPtr((default_allocator.alloc(u8, size) catch unreachable).ptr),
         size,
-    });
+    }));
 }
 
 export fn bun_free(bytes: u64) void {
@@ -270,7 +270,7 @@ export fn transform(opts_array: u64) u64 {
     const Encoder = ApiWriter(@TypeOf(output_writer));
     var encoder = Encoder.init(output_writer);
     transform_response.encode(&encoder) catch unreachable;
-    return @bitCast(u64, [2]u32{ @intFromPtr(output.items.ptr), output.items.len });
+    return @as(u64, @bitCast([2]u32{ @intFromPtr(output.items.ptr), output.items.len }));
 }
 
 export fn scan(opts_array: u64) u64 {
@@ -325,7 +325,7 @@ export fn scan(opts_array: u64) u64 {
 
     var encoder = Encoder.init(output_writer);
     scan_result.encode(&encoder) catch unreachable;
-    return @bitCast(u64, [2]u32{ @intFromPtr(output.items.ptr), output.items.len });
+    return @as(u64, @bitCast([2]u32{ @intFromPtr(output.items.ptr), output.items.len }));
 }
 
 // pub fn main() anyerror!void {}

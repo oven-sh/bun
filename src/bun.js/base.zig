@@ -272,7 +272,7 @@ pub const To = struct {
                         if (value.len <= prefill) {
                             var array: [prefill]JSC.C.JSValueRef = undefined;
                             var i: u8 = 0;
-                            const len = @min(@intCast(u8, value.len), prefill);
+                            const len = @min(@as(u8, @intCast(value.len)), prefill);
                             while (i < len and exception.* == null) : (i += 1) {
                                 array[i] = if (comptime Child == JSC.C.JSValueRef)
                                     value[i]
@@ -1294,7 +1294,7 @@ pub fn NewClassWithInstanceType(
             @memset(
                 &props,
                 js.JSStaticValue{
-                    .name = @ptrFromInt([*c]const u8, 0),
+                    .name = @as([*c]const u8, @ptrFromInt(0)),
                     .getProperty = null,
                     .setProperty = null,
                     .attributes = js.JSPropertyAttributes.kJSPropertyAttributeNone,
@@ -1311,7 +1311,7 @@ pub fn NewClassWithInstanceType(
                         .name = lit ++ .{0},
                         .getProperty = null,
                         .setProperty = null,
-                        .attributes = @enumFromInt(js.JSPropertyAttributes, 0),
+                        .attributes = @as(js.JSPropertyAttributes, @enumFromInt(0)),
                     };
                     static_prop.getProperty = StaticProperty(i).getter;
 
@@ -1423,7 +1423,7 @@ pub fn NewClassWithInstanceType(
                                     PointerType,
                                     if (@typeInfo(@TypeOf(ctxfn)) == .Pointer) ctxfn.* else ctxfn,
                                 ).rfn,
-                                .attributes = @enumFromInt(js.JSPropertyAttributes, attributes),
+                                .attributes = @as(js.JSPropertyAttributes, @enumFromInt(attributes)),
                             };
 
                             count += 1;
@@ -1447,7 +1447,7 @@ pub fn NewClassWithInstanceType(
                                 if (is_read_only)
                                     base |= @intFromEnum(js.JSPropertyAttributes.kJSPropertyAttributeReadOnly);
 
-                                break :brk @enumFromInt(js.JSPropertyAttributes, base);
+                                break :brk @as(js.JSPropertyAttributes, @enumFromInt(base));
                             };
 
                             __static_functions[count] = js.JSStaticFunction{
@@ -1820,7 +1820,7 @@ pub const ArrayBuffer = extern struct {
     }
 
     pub fn fromBytes(bytes: []u8, typed_array_type: JSC.JSValue.JSType) ArrayBuffer {
-        return ArrayBuffer{ .offset = 0, .len = @intCast(u32, bytes.len), .byte_len = @intCast(u32, bytes.len), .typed_array_type = typed_array_type, .ptr = bytes.ptr };
+        return ArrayBuffer{ .offset = 0, .len = @as(u32, @intCast(bytes.len)), .byte_len = @as(u32, @intCast(bytes.len)), .typed_array_type = typed_array_type, .ptr = bytes.ptr };
     }
 
     pub fn toJSUnchecked(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
@@ -1848,7 +1848,7 @@ pub const ArrayBuffer = extern struct {
                 this.ptr,
                 this.byte_len,
                 MarkedArrayBuffer_deallocator,
-                @ptrFromInt(*anyopaque, @intFromPtr(&bun.default_allocator)),
+                @as(*anyopaque, @ptrFromInt(@intFromPtr(&bun.default_allocator))),
                 exception,
             ));
         }
@@ -1859,7 +1859,7 @@ pub const ArrayBuffer = extern struct {
             this.ptr,
             this.byte_len,
             MarkedArrayBuffer_deallocator,
-            @ptrFromInt(*anyopaque, @intFromPtr(&bun.default_allocator)),
+            @as(*anyopaque, @ptrFromInt(@intFromPtr(&bun.default_allocator))),
             exception,
         ));
     }
@@ -1952,15 +1952,15 @@ pub const ArrayBuffer = extern struct {
     pub const slice = byteSlice;
 
     pub inline fn asU16(this: *const @This()) []u16 {
-        return std.mem.bytesAsSlice(u16, @alignCast(@alignOf([*]u16), this.ptr[this.offset..this.byte_len]));
+        return std.mem.bytesAsSlice(u16, @as([*]u16, @alignCast(this.ptr))[this.offset..this.byte_len]);
     }
 
     pub inline fn asU16Unaligned(this: *const @This()) []align(1) u16 {
-        return std.mem.bytesAsSlice(u16, @alignCast(@alignOf([*]align(1) u16), this.ptr[this.offset..this.byte_len]));
+        return std.mem.bytesAsSlice(u16, @as([*]align(1) u16, @alignCast(this.ptr))[this.offset..this.byte_len]);
     }
 
     pub inline fn asU32(this: *const @This()) []u32 {
-        return std.mem.bytesAsSlice(u32, @alignCast(@alignOf([*]u32), this.ptr)[this.offset..this.byte_len]);
+        return std.mem.bytesAsSlice(u32, @as([*]u32, @alignCast(this.ptr))[this.offset..this.byte_len]);
     }
 };
 
@@ -3373,7 +3373,7 @@ pub const FilePoll = struct {
     const DNSResolver = JSC.DNS.DNSResolver;
     const GetAddrInfoRequest = JSC.DNS.GetAddrInfoRequest;
     const Deactivated = opaque {
-        pub var owner: Owner = Owner.init(@ptrFromInt(*Deactivated, @as(usize, 0xDEADBEEF)));
+        pub var owner: Owner = Owner.init(@as(*Deactivated, @ptrFromInt(@as(usize, 0xDEADBEEF))));
     };
 
     pub const Owner = bun.TaggedPointerUnion(.{
@@ -3666,7 +3666,7 @@ pub const FilePoll = struct {
 
     pub fn initWithOwner(vm: *JSC.VirtualMachine, fd: bun.FileDescriptor, flags: Flags.Struct, owner: Owner) *FilePoll {
         var poll = vm.rareData().filePolls(vm).get();
-        poll.fd = @intCast(u32, fd);
+        poll.fd = @as(u32, @intCast(fd));
         poll.flags = Flags.Set.init(flags);
         poll.owner = owner;
         if (KQueueGenerationNumber != u0) {
@@ -3711,9 +3711,9 @@ pub const FilePoll = struct {
 
         var file_poll = tag.as(FilePoll);
         if (comptime Environment.isMac)
-            onKQueueEvent(file_poll, loop, &loop.ready_polls[@intCast(usize, loop.current_ready_poll)])
+            onKQueueEvent(file_poll, loop, &loop.ready_polls[@as(usize, @intCast(loop.current_ready_poll))])
         else if (comptime Environment.isLinux)
-            onEpollEvent(file_poll, loop, &loop.ready_polls[@intCast(usize, loop.current_ready_poll)]);
+            onEpollEvent(file_poll, loop, &loop.ready_polls[@as(usize, @intCast(loop.current_ready_poll))]);
     }
 
     const Pollable = bun.TaggedPointerUnion(
@@ -3761,7 +3761,7 @@ pub const FilePoll = struct {
             const ctl = linux.epoll_ctl(
                 watcher_fd,
                 if (this.isRegistered() or this.flags.contains(.needs_rearm)) linux.EPOLL.CTL_MOD else linux.EPOLL.CTL_ADD,
-                @intCast(std.os.fd_t, fd),
+                @as(std.os.fd_t, @intCast(fd)),
                 &event,
             );
 
@@ -3773,7 +3773,7 @@ pub const FilePoll = struct {
             const one_shot_flag: u16 = if (!this.flags.contains(.one_shot)) 0 else std.c.EV_ONESHOT;
             changelist[0] = switch (flag) {
                 .readable => .{
-                    .ident = @intCast(u64, fd),
+                    .ident = @as(u64, @intCast(fd)),
                     .filter = std.os.system.EVFILT_READ,
                     .data = 0,
                     .fflags = 0,
@@ -3782,7 +3782,7 @@ pub const FilePoll = struct {
                     .ext = .{ this.generation_number, 0 },
                 },
                 .writable => .{
-                    .ident = @intCast(u64, fd),
+                    .ident = @as(u64, @intCast(fd)),
                     .filter = std.os.system.EVFILT_WRITE,
                     .data = 0,
                     .fflags = 0,
@@ -3791,7 +3791,7 @@ pub const FilePoll = struct {
                     .ext = .{ this.generation_number, 0 },
                 },
                 .process => .{
-                    .ident = @intCast(u64, fd),
+                    .ident = @as(u64, @intCast(fd)),
                     .filter = std.os.system.EVFILT_PROC,
                     .data = 0,
                     .fflags = std.c.NOTE_EXIT,
@@ -3800,7 +3800,7 @@ pub const FilePoll = struct {
                     .ext = .{ this.generation_number, 0 },
                 },
                 .machport => .{
-                    .ident = @intCast(u64, fd),
+                    .ident = @as(u64, @intCast(fd)),
                     .filter = std.os.system.EVFILT_MACHPORT,
                     .data = 0,
                     .fflags = 0,
@@ -3913,7 +3913,7 @@ pub const FilePoll = struct {
             const ctl = linux.epoll_ctl(
                 watcher_fd,
                 linux.EPOLL.CTL_DEL,
-                @intCast(std.os.fd_t, fd),
+                @as(std.os.fd_t, @intCast(fd)),
                 null,
             );
 
@@ -3925,7 +3925,7 @@ pub const FilePoll = struct {
 
             changelist[0] = switch (flag) {
                 .readable => .{
-                    .ident = @intCast(u64, fd),
+                    .ident = @as(u64, @intCast(fd)),
                     .filter = std.os.system.EVFILT_READ,
                     .data = 0,
                     .fflags = 0,
@@ -3934,7 +3934,7 @@ pub const FilePoll = struct {
                     .ext = .{ 0, 0 },
                 },
                 .machport => .{
-                    .ident = @intCast(u64, fd),
+                    .ident = @as(u64, @intCast(fd)),
                     .filter = std.os.system.EVFILT_MACHPORT,
                     .data = 0,
                     .fflags = 0,
@@ -3943,7 +3943,7 @@ pub const FilePoll = struct {
                     .ext = .{ 0, 0 },
                 },
                 .writable => .{
-                    .ident = @intCast(u64, fd),
+                    .ident = @as(u64, @intCast(fd)),
                     .filter = std.os.system.EVFILT_WRITE,
                     .data = 0,
                     .fflags = 0,
@@ -3952,7 +3952,7 @@ pub const FilePoll = struct {
                     .ext = .{ 0, 0 },
                 },
                 .process => .{
-                    .ident = @intCast(u64, fd),
+                    .ident = @as(u64, @intCast(fd)),
                     .filter = std.os.system.EVFILT_PROC,
                     .data = 0,
                     .fflags = std.c.NOTE_EXIT,

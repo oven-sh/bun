@@ -119,7 +119,7 @@ pub const ErrorCode = enum(ErrorCodeInt) {
     _,
 
     pub inline fn from(code: anyerror) ErrorCode {
-        return @enumFromInt(ErrorCode, @intFromError(code));
+        return @as(ErrorCode, @enumFromInt(@intFromError(code)));
     }
 
     pub const ParserError = @intFromEnum(ErrorCode.from(error.ParserError));
@@ -243,7 +243,7 @@ pub const ResolvedSource = extern struct {
 const Mimalloc = @import("../../allocators/mimalloc.zig");
 
 export fn ZigString__free(raw: [*]const u8, len: usize, allocator_: ?*anyopaque) void {
-    var allocator: std.mem.Allocator = @ptrCast(*std.mem.Allocator, @alignCast(@alignOf(*std.mem.Allocator), allocator_ orelse return)).*;
+    var allocator: std.mem.Allocator = @as(*std.mem.Allocator, @ptrCast(@alignCast(allocator_ orelse return))).*;
     var ptr = ZigString.init(raw[0..len]).slice().ptr;
     if (comptime Environment.allow_assert) {
         std.debug.assert(Mimalloc.mi_is_in_heap_region(ptr));
@@ -254,7 +254,7 @@ export fn ZigString__free(raw: [*]const u8, len: usize, allocator_: ?*anyopaque)
 }
 
 export fn ZigString__free_global(ptr: [*]const u8, len: usize) void {
-    var untagged = @ptrFromInt(*anyopaque, @intFromPtr(ZigString.init(ptr[0..len]).slice().ptr));
+    var untagged = @as(*anyopaque, @ptrFromInt(@intFromPtr(ZigString.init(ptr[0..len]).slice().ptr)));
     if (comptime Environment.allow_assert) {
         std.debug.assert(Mimalloc.mi_is_in_heap_region(ptr));
     }
@@ -468,7 +468,7 @@ pub const ZigStackTrace = extern struct {
             var source_line_len = source_lines_iter.getLength();
 
             if (source_line_len > 0) {
-                var source_lines = try allocator.alloc(Api.SourceLine, @intCast(usize, @max(source_lines_iter.i + 1, 0)));
+                var source_lines = try allocator.alloc(Api.SourceLine, @as(usize, @intCast(@max(source_lines_iter.i + 1, 0))));
                 var source_line_buf = try allocator.alloc(u8, source_line_len);
                 source_lines_iter = this.sourceLineIterator();
                 var remain_buf = source_line_buf[0..];
@@ -523,7 +523,7 @@ pub const ZigStackTrace = extern struct {
 
         pub fn getLength(this: *SourceLineIterator) usize {
             var count: usize = 0;
-            for (this.trace.source_lines_ptr[0..@intCast(usize, this.i + 1)]) |*line| {
+            for (this.trace.source_lines_ptr[0..@as(usize, @intCast(this.i + 1))]) |*line| {
                 count += line.length();
             }
 
@@ -538,9 +538,9 @@ pub const ZigStackTrace = extern struct {
         pub fn next(this: *SourceLineIterator) ?SourceLine {
             if (this.i < 0) return null;
 
-            const source_line = this.trace.source_lines_ptr[@intCast(usize, this.i)];
+            const source_line = this.trace.source_lines_ptr[@as(usize, @intCast(this.i))];
             const result = SourceLine{
-                .line = this.trace.source_lines_numbers[@intCast(usize, this.i)],
+                .line = this.trace.source_lines_numbers[@as(usize, @intCast(this.i))],
                 .text = source_line.toUTF8(bun.default_allocator),
             };
             this.i -= 1;
@@ -555,7 +555,7 @@ pub const ZigStackTrace = extern struct {
                 i = j;
             }
         }
-        return SourceLineIterator{ .trace = this, .i = @intCast(i16, i) };
+        return SourceLineIterator{ .trace = this, .i = @as(i16, @intCast(i)) };
     }
 };
 
@@ -596,7 +596,7 @@ pub const ZigStackFrame = extern struct {
         frame.position.column_stop = this.position.column_stop;
         frame.position.expression_start = this.position.expression_start;
         frame.position.expression_stop = this.position.expression_stop;
-        frame.scope = @enumFromInt(Api.StackFrameScope, @intFromEnum(this.code_type));
+        frame.scope = @as(Api.StackFrameScope, @enumFromInt(@intFromEnum(this.code_type)));
 
         return frame;
     }
@@ -846,7 +846,7 @@ pub const ZigException = extern struct {
         pub fn zigException(this: *Holder) *ZigException {
             if (!this.loaded) {
                 this.zig_exception = ZigException{
-                    .code = @enumFromInt(JSErrorCode, 255),
+                    .code = @as(JSErrorCode, @enumFromInt(255)),
                     .runtime_type = JSRuntimeType.Nothing,
                     .name = String.empty,
                     .message = String.empty,
@@ -1581,7 +1581,7 @@ pub const ZigConsoleClient = struct {
             var writer = WrappedWriter(Writer){ .ctx = writer_ };
             var slice = slice_;
             var i: u32 = 0;
-            var len: u32 = @truncate(u32, slice.len);
+            var len: u32 = @as(u32, @truncate(slice.len));
             var any_non_ascii = false;
             while (i < len) : (i += 1) {
                 switch (slice[i]) {
@@ -1608,7 +1608,7 @@ pub const ZigConsoleClient = struct {
                         any_non_ascii = false;
                         slice = slice[@min(slice.len, i + 1)..];
                         i = 0;
-                        len = @truncate(u32, slice.len);
+                        len = @as(u32, @truncate(slice.len));
                         const next_value = this.remaining_values[0];
                         this.remaining_values = this.remaining_values[1..];
                         switch (token) {
@@ -2025,7 +2025,7 @@ pub const ZigConsoleClient = struct {
                             i = -i;
                         }
                         const digits = if (i != 0)
-                            bun.fmt.fastDigitCount(@intCast(usize, i)) + @as(usize, @intFromBool(is_negative))
+                            bun.fmt.fastDigitCount(@as(usize, @intCast(i))) + @as(usize, @intFromBool(is_negative))
                         else
                             1;
                         this.addForNewLine(digits);
@@ -2136,7 +2136,7 @@ pub const ZigConsoleClient = struct {
                     writer.print(comptime Output.prettyFmt("<cyan>[Getter]<r>", enable_ansi_colors), .{});
                 },
                 .Array => {
-                    const len = @truncate(u32, value.getLength(this.globalThis));
+                    const len = @as(u32, @truncate(value.getLength(this.globalThis)));
                     if (len == 0) {
                         writer.writeAll("[]");
                         this.addForNewLine(2);
@@ -2267,9 +2267,9 @@ pub const ZigConsoleClient = struct {
                         // this case should never happen
                         return this.printAs(.Undefined, Writer, writer_, .undefined, .Cell, enable_ansi_colors);
                     } else if (value.as(JSC.API.Bun.Timer.TimerObject)) |timer| {
-                        this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@intCast(u64, @max(timer.id, 0))));
+                        this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.id, 0)))));
                         if (timer.kind == .setInterval) {
-                            this.addForNewLine("repeats ".len + bun.fmt.fastDigitCount(@intCast(u64, @max(timer.id, 0))));
+                            this.addForNewLine("repeats ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.id, 0)))));
                             writer.print(comptime Output.prettyFmt("<r><blue>Timeout<r> <d>(#<yellow>{d}<r><d>, repeats)<r>", enable_ansi_colors), .{
                                 timer.id,
                             });
@@ -2344,7 +2344,7 @@ pub const ZigConsoleClient = struct {
 
                     writer.writeAll("Promise { " ++ comptime Output.prettyFmt("<r><cyan>", enable_ansi_colors));
 
-                    switch (JSPromise.status(@ptrCast(*JSPromise, value.asObjectRef().?), this.globalThis.vm())) {
+                    switch (JSPromise.status(@as(*JSPromise, @ptrCast(value.asObjectRef().?)), this.globalThis.vm())) {
                         JSPromise.Status.Pending => {
                             writer.writeAll("<pending>");
                         },
@@ -2753,7 +2753,7 @@ pub const ZigConsoleClient = struct {
 
                                                     var j: usize = 0;
                                                     while (j < length) : (j += 1) {
-                                                        const child = JSC.JSObject.getIndex(children, this.globalThis, @intCast(u32, j));
+                                                        const child = JSC.JSObject.getIndex(children, this.globalThis, @as(u32, @intCast(j)));
                                                         this.format(Tag.getAdvanced(child, this.globalThis, .{ .hide_global = true }), Writer, writer_, child, this.globalThis, enable_ansi_colors);
                                                         if (j + 1 < length) {
                                                             writer.writeAll("\n");
@@ -2883,56 +2883,56 @@ pub const ZigConsoleClient = struct {
                                 *@TypeOf(writer),
                                 &writer,
                                 i8,
-                                @alignCast(std.meta.alignment([]i8), std.mem.bytesAsSlice(i8, slice)),
+                                @as([]align(std.meta.alignment([]i8)) i8, @alignCast(std.mem.bytesAsSlice(i8, slice))),
                                 enable_ansi_colors,
                             ),
                             .Int16Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 i16,
-                                @alignCast(std.meta.alignment([]i16), std.mem.bytesAsSlice(i16, slice)),
+                                @as([]align(std.meta.alignment([]i16)) i16, @alignCast(std.mem.bytesAsSlice(i16, slice))),
                                 enable_ansi_colors,
                             ),
                             .Uint16Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 u16,
-                                @alignCast(std.meta.alignment([]u16), std.mem.bytesAsSlice(u16, slice)),
+                                @as([]align(std.meta.alignment([]u16)) u16, @alignCast(std.mem.bytesAsSlice(u16, slice))),
                                 enable_ansi_colors,
                             ),
                             .Int32Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 i32,
-                                @alignCast(std.meta.alignment([]i32), std.mem.bytesAsSlice(i32, slice)),
+                                @as([]align(std.meta.alignment([]i32)) i32, @alignCast(std.mem.bytesAsSlice(i32, slice))),
                                 enable_ansi_colors,
                             ),
                             .Uint32Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 u32,
-                                @alignCast(std.meta.alignment([]u32), std.mem.bytesAsSlice(u32, slice)),
+                                @as([]align(std.meta.alignment([]u32)) u32, @alignCast(std.mem.bytesAsSlice(u32, slice))),
                                 enable_ansi_colors,
                             ),
                             .Float32Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 f32,
-                                @alignCast(std.meta.alignment([]f32), std.mem.bytesAsSlice(f32, slice)),
+                                @as([]align(std.meta.alignment([]f32)) f32, @alignCast(std.mem.bytesAsSlice(f32, slice))),
                                 enable_ansi_colors,
                             ),
                             .Float64Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 f64,
-                                @alignCast(std.meta.alignment([]f64), std.mem.bytesAsSlice(f64, slice)),
+                                @as([]align(std.meta.alignment([]f64)) f64, @alignCast(std.mem.bytesAsSlice(f64, slice))),
                                 enable_ansi_colors,
                             ),
                             .BigInt64Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 i64,
-                                @alignCast(std.meta.alignment([]i64), std.mem.bytesAsSlice(i64, slice)),
+                                @as([]align(std.meta.alignment([]i64)) i64, @alignCast(std.mem.bytesAsSlice(i64, slice))),
                                 enable_ansi_colors,
                             ),
                             .BigUint64Array => {
@@ -2940,7 +2940,7 @@ pub const ZigConsoleClient = struct {
                                     *@TypeOf(writer),
                                     &writer,
                                     u64,
-                                    @alignCast(std.meta.alignment([]u64), std.mem.bytesAsSlice(u64, slice)),
+                                    @as([]align(std.meta.alignment([]u64)) u64, @alignCast(std.mem.bytesAsSlice(u64, slice))),
                                     enable_ansi_colors,
                                 );
                             },
@@ -3115,7 +3115,7 @@ pub const ZigConsoleClient = struct {
         var value: std.time.Timer = result.value orelse return;
         // get the duration in microseconds
         // then display it in milliseconds
-        Output.printElapsed(@floatFromInt(f64, value.read() / std.time.ns_per_us) / std.time.us_per_ms);
+        Output.printElapsed(@as(f64, @floatFromInt(value.read() / std.time.ns_per_us)) / std.time.us_per_ms);
         switch (len) {
             0 => Output.printErrorln("\n", .{}),
             else => Output.printErrorln(" {s}", .{chars[0..len]}),
@@ -3144,7 +3144,7 @@ pub const ZigConsoleClient = struct {
         var value: std.time.Timer = (pending_time_logs.get(id) orelse return) orelse return;
         // get the duration in microseconds
         // then display it in milliseconds
-        Output.printElapsed(@floatFromInt(f64, value.read() / std.time.ns_per_us) / std.time.us_per_ms);
+        Output.printElapsed(@as(f64, @floatFromInt(value.read() / std.time.ns_per_us)) / std.time.us_per_ms);
         switch (len) {
             0 => Output.printErrorln("\n", .{}),
             else => Output.printErrorln(" {s}", .{chars[0..len]}),
@@ -3369,7 +3369,7 @@ pub const ZigConsoleClient = struct {
 // };
 
 pub inline fn toGlobalContextRef(ptr: *JSGlobalObject) CAPI.JSGlobalContextRef {
-    return @ptrCast(CAPI.JSGlobalContextRef, ptr);
+    return @as(CAPI.JSGlobalContextRef, @ptrCast(ptr));
 }
 
 comptime {

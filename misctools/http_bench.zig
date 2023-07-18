@@ -95,7 +95,7 @@ pub const Arguments = struct {
         var raw_args: std.ArrayListUnmanaged(string) = undefined;
 
         if (positionals.len > 0) {
-            raw_args = .{ .capacity = positionals.len, .items = @ptrFromInt([*][]const u8, @intFromPtr(positionals.ptr))[0..positionals.len] };
+            raw_args = .{ .capacity = positionals.len, .items = @as([*][]const u8, @ptrFromInt(@intFromPtr(positionals.ptr)))[0..positionals.len] };
         } else {
             raw_args = .{};
         }
@@ -244,7 +244,7 @@ pub fn main() anyerror!void {
             const http = channel.readItem() catch continue;
             read_count += 1;
 
-            Output.printElapsed(@floatCast(f64, @floatFromInt(f128, http.elapsed) / std.time.ns_per_ms));
+            Output.printElapsed(@as(f64, @floatCast(@as(f128, @floatFromInt(http.elapsed)) / std.time.ns_per_ms)));
             if (http.response) |resp| {
                 if (resp.status_code == 200) {
                     success_count += 1;
@@ -270,7 +270,7 @@ pub fn main() anyerror!void {
                         http.client.url.href,
                         http.response_buffer.list.items.len,
                     });
-                    Output.printElapsed(@floatCast(f64, @floatFromInt(f128, http.gzip_elapsed) / std.time.ns_per_ms));
+                    Output.printElapsed(@as(f64, @floatCast(@as(f128, @floatFromInt(http.gzip_elapsed)) / std.time.ns_per_ms)));
                     Output.prettyError("<d> gzip)<r>\n", .{});
                 } else {
                     Output.prettyError(" <d>{s}<r><d> - {s}<r> <d>({d} bytes)<r>\n", .{
@@ -295,7 +295,7 @@ pub fn main() anyerror!void {
             fail_count,
         });
 
-        Output.printElapsed(@floatCast(f64, @floatFromInt(f128, timer.read()) / std.time.ns_per_ms));
+        Output.printElapsed(@as(f64, @floatCast(@as(f128, @floatFromInt(timer.read())) / std.time.ns_per_ms)));
         Output.prettyErrorln(" {d} requests", .{
             read_count,
         });

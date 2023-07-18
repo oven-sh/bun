@@ -341,7 +341,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     if (switch (this.resolution.tag) {
         // TODO remove extracted files not matching any globs under "files"
         .github, .local_tarball, .remote_tarball => true,
-        else => this.package_manager.lockfile.trusted_dependencies.contains(@truncate(u32, Semver.String.Builder.stringHash(name))),
+        else => this.package_manager.lockfile.trusted_dependencies.contains(@as(u32, @truncate(Semver.String.Builder.stringHash(name)))),
     }) {
         const json_file = final_dir.openFileZ("package.json", .{ .mode = .read_only }) catch |err| {
             this.package_manager.log.addErrorFmt(

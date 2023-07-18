@@ -201,7 +201,7 @@ pub const Subprocess = struct {
                     };
                 },
                 .path => Readable{ .ignore = {} },
-                .blob, .fd => Readable{ .fd = @intCast(bun.FileDescriptor, fd) },
+                .blob, .fd => Readable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) },
                 .array_buffer => Readable{
                     .pipe = .{
                         .buffer = BufferedOutput.initWithSlice(fd, stdio.array_buffer.slice()),
@@ -360,7 +360,7 @@ pub const Subprocess = struct {
             }
 
             // first appeared in Linux 5.1
-            const rc = std.os.linux.pidfd_send_signal(this.pidfd, @intCast(u8, sig), null, 0);
+            const rc = std.os.linux.pidfd_send_signal(this.pidfd, @as(u8, @intCast(sig)), null, 0);
 
             if (rc != 0) {
                 const errno = std.os.linux.getErrno(rc);
@@ -628,7 +628,7 @@ pub const Subprocess = struct {
                 },
                 else => {
                     const slice = result.slice();
-                    this.internal_buffer.len += @truncate(u32, slice.len);
+                    this.internal_buffer.len += @as(u32, @truncate(slice.len));
                     if (slice.len > 0)
                         std.debug.assert(this.internal_buffer.contains(slice));
 
@@ -673,7 +673,7 @@ pub const Subprocess = struct {
                             if (slice.ptr == stack_buf.ptr) {
                                 this.internal_buffer.append(auto_sizer.allocator, slice) catch @panic("out of memory");
                             } else {
-                                this.internal_buffer.len += @truncate(u32, slice.len);
+                                this.internal_buffer.len += @as(u32, @truncate(slice.len));
                             }
 
                             if (slice.len < buf_to_use.len) {
@@ -706,7 +706,7 @@ pub const Subprocess = struct {
                             return;
                         },
                         .read => |slice| {
-                            this.internal_buffer.len += @truncate(u32, slice.len);
+                            this.internal_buffer.len += @as(u32, @truncate(slice.len));
 
                             if (slice.len < buf_to_use.len) {
                                 this.watch();
@@ -881,7 +881,7 @@ pub const Subprocess = struct {
                     return Writable{ .buffered_input = buffered_input };
                 },
                 .fd => {
-                    return Writable{ .fd = @intCast(bun.FileDescriptor, fd) };
+                    return Writable{ .fd = @as(bun.FileDescriptor, @intCast(fd)) };
                 },
                 .inherit => {
                     return Writable{ .inherit = {} };
@@ -1303,7 +1303,7 @@ pub const Subprocess = struct {
                 globalThis.throw("out of memory", .{});
                 return .zero;
             };
-            env = @ptrCast(@TypeOf(env), env_array.items.ptr);
+            env = @as(@TypeOf(env), @ptrCast(env_array.items.ptr));
         }
 
         const pid = brk: {
@@ -1321,7 +1321,7 @@ pub const Subprocess = struct {
                 }
             }
 
-            break :brk switch (PosixSpawn.spawnZ(argv.items[0].?, actions, attr, @ptrCast([*:null]?[*:0]const u8, argv.items[0..].ptr), env)) {
+            break :brk switch (PosixSpawn.spawnZ(argv.items[0].?, actions, attr, @as([*:null]?[*:0]const u8, @ptrCast(argv.items[0..].ptr)), env)) {
                 .err => |err| return err.toJSC(globalThis),
                 .result => |pid_| pid_,
             };
@@ -1329,7 +1329,7 @@ pub const Subprocess = struct {
 
         const pidfd: std.os.fd_t = brk: {
             if (Environment.isMac) {
-                break :brk @intCast(std.os.fd_t, pid);
+                break :brk @as(std.os.fd_t, @intCast(pid));
             }
 
             const kernel = @import("../../../analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
@@ -1346,7 +1346,7 @@ pub const Subprocess = struct {
             );
 
             switch (std.os.linux.getErrno(fd)) {
-                .SUCCESS => break :brk @intCast(std.os.fd_t, fd),
+                .SUCCESS => break :brk @as(std.os.fd_t, @intCast(fd)),
                 else => |err| {
                     globalThis.throwValue(JSC.Node.Syscall.Error.fromCode(err, .open).toJSC(globalThis));
                     var status: u32 = 0;
@@ -1484,7 +1484,7 @@ pub const Subprocess = struct {
         subprocess.finalizeSync();
 
         const sync_value = JSC.JSValue.createEmptyObject(globalThis, 4);
-        sync_value.put(globalThis, JSC.ZigString.static("exitCode"), JSValue.jsNumber(@intCast(i32, exitCode)));
+        sync_value.put(globalThis, JSC.ZigString.static("exitCode"), JSValue.jsNumber(@as(i32, @intCast(exitCode))));
         sync_value.put(globalThis, JSC.ZigString.static("stdout"), stdout);
         sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);
         sync_value.put(globalThis, JSC.ZigString.static("success"), JSValue.jsBoolean(exitCode == 0));
@@ -1531,13 +1531,13 @@ pub const Subprocess = struct {
             },
             .result => |result| {
                 if (std.os.W.IFEXITED(result.status)) {
-                    this.exit_code = @truncate(u8, std.os.W.EXITSTATUS(result.status));
+                    this.exit_code = @as(u8, @truncate(std.os.W.EXITSTATUS(result.status)));
                 }
 
                 if (std.os.W.IFSIGNALED(result.status)) {
-                    this.signal_code = @enumFromInt(SignalCode, @truncate(u8, std.os.W.TERMSIG(result.status)));
+                    this.signal_code = @as(SignalCode, @enumFromInt(@as(u8, @truncate(std.os.W.TERMSIG(result.status)))));
                 } else if (std.os.W.IFSTOPPED(result.status)) {
-                    this.signal_code = @enumFromInt(SignalCode, @truncate(u8, std.os.W.STOPSIG(result.status)));
+                    this.signal_code = @as(SignalCode, @enumFromInt(@as(u8, @truncate(std.os.W.STOPSIG(result.status)))));
                 }
 
                 if (!this.hasExited()) {
@@ -1688,10 +1688,10 @@ pub const Subprocess = struct {
         if (blob.needsToReadFile()) {
             if (blob.store()) |store| {
                 if (store.data.file.pathlike == .fd) {
-                    if (store.data.file.pathlike.fd == @intCast(bun.FileDescriptor, i)) {
+                    if (store.data.file.pathlike.fd == @as(bun.FileDescriptor, @intCast(i))) {
                         stdio_array[i] = Stdio{ .inherit = {} };
                     } else {
-                        switch (@intCast(std.os.fd_t, i)) {
+                        switch (@as(std.os.fd_t, @intCast(i))) {
                             std.os.STDIN_FILENO => {
                                 if (i == std.os.STDERR_FILENO or i == std.os.STDOUT_FILENO) {
                                     globalThis.throwInvalidArguments("stdin cannot be used for stdout or stderr", .{});
@@ -1754,9 +1754,9 @@ pub const Subprocess = struct {
                 return false;
             }
 
-            const fd = @intCast(bun.FileDescriptor, fd_);
+            const fd = @as(bun.FileDescriptor, @intCast(fd_));
 
-            switch (@intCast(std.os.fd_t, i)) {
+            switch (@as(std.os.fd_t, @intCast(i))) {
                 std.os.STDIN_FILENO => {
                     if (i == std.os.STDERR_FILENO or i == std.os.STDOUT_FILENO) {
                         globalThis.throwInvalidArguments("stdin cannot be used for stdout or stderr", .{});

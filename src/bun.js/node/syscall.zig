@@ -182,7 +182,7 @@ pub fn mkdir(file_path: [:0]const u8, flags: JSC.Node.Mode) Maybe(void) {
 pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: usize) Maybe(usize) {
     const result = fcntl_symbol(fd, cmd, arg);
     if (Maybe(usize).errnoSys(result, .fcntl)) |err| return err;
-    return .{ .result = @intCast(usize, result) };
+    return .{ .result = @as(usize, @intCast(result)) };
 }
 
 pub fn getErrno(rc: anytype) std.os.E {
@@ -191,7 +191,7 @@ pub fn getErrno(rc: anytype) std.os.E {
 
     return switch (Type) {
         comptime_int, usize => std.os.linux.getErrno(@as(usize, rc)),
-        i32, c_int, isize => std.os.linux.getErrno(@bitCast(usize, @as(isize, rc))),
+        i32, c_int, isize => std.os.linux.getErrno(@as(usize, @bitCast(@as(isize, rc)))),
         else => @compileError("Not implemented yet for type " ++ @typeName(Type)),
     };
 }
@@ -199,14 +199,14 @@ pub fn getErrno(rc: anytype) std.os.E {
 pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: JSC.Node.Mode, perm: JSC.Node.Mode) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isMac) {
         // https://opensource.apple.com/source/xnu/xnu-7195.81.3/libsyscall/wrappers/open-base.c
-        const rc = bun.AsyncIO.darwin.@"openat$NOCANCEL"(dirfd, file_path.ptr, @intCast(c_uint, flags), @intCast(c_int, perm));
+        const rc = bun.AsyncIO.darwin.@"openat$NOCANCEL"(dirfd, file_path.ptr, @as(c_uint, @intCast(flags)), @as(c_int, @intCast(perm)));
         log("openat({d}, {s}) = {d}", .{ dirfd, file_path, rc });
 
         return switch (Syscall.getErrno(rc)) {
-            .SUCCESS => .{ .result = @intCast(bun.FileDescriptor, rc) },
+            .SUCCESS => .{ .result = @as(bun.FileDescriptor, @intCast(rc)) },
             else => |err| .{
                 .err = .{
-                    .errno = @truncate(Syscall.Error.Int, @intFromEnum(err)),
+                    .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(err))),
                     .syscall = .open,
                 },
             },
@@ -214,15 +214,15 @@ pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: JSC.Nod
     }
 
     while (true) {
-        const rc = Syscall.system.openat(@intCast(Syscall.system.fd_t, dirfd), file_path, flags, perm);
+        const rc = Syscall.system.openat(@as(Syscall.system.fd_t, @intCast(dirfd)), file_path, flags, perm);
         log("openat({d}, {s}) = {d}", .{ dirfd, file_path, rc });
         return switch (Syscall.getErrno(rc)) {
-            .SUCCESS => .{ .result = @intCast(bun.FileDescriptor, rc) },
+            .SUCCESS => .{ .result = @as(bun.FileDescriptor, @intCast(rc)) },
             .INTR => continue,
             else => |err| {
                 return Maybe(std.os.fd_t){
                     .err = .{
-                        .errno = @truncate(Syscall.Error.Int, @intFromEnum(err)),
+                        .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(err))),
                         .syscall = .open,
                     },
                 };
@@ -235,7 +235,7 @@ pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: JSC.Nod
 
 pub fn open(file_path: [:0]const u8, flags: JSC.Node.Mode, perm: JSC.Node.Mode) Maybe(bun.FileDescriptor) {
     // this is what open() does anyway.
-    return openat(@intCast(bun.FileDescriptor, std.fs.cwd().fd), file_path, flags, perm);
+    return openat(@as(bun.FileDescriptor, @intCast(std.fs.cwd().fd)), file_path, flags, perm);
 }
 
 /// This function will prevent stdout and stderr from being closed.
@@ -289,7 +289,7 @@ pub fn write(fd: os.fd_t, bytes: []const u8) Maybe(usize) {
             return err;
         }
 
-        return Maybe(usize){ .result = @intCast(usize, rc) };
+        return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
             const rc = sys.write(fd, bytes.ptr, adjusted_len);
@@ -300,7 +300,7 @@ pub fn write(fd: os.fd_t, bytes: []const u8) Maybe(usize) {
                 return err;
             }
 
-            return Maybe(usize){ .result = @intCast(usize, rc) };
+            return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
         unreachable;
     }
@@ -316,7 +316,7 @@ fn veclen(buffers: anytype) usize {
 
 pub fn writev(fd: os.fd_t, buffers: []std.os.iovec) Maybe(usize) {
     if (comptime Environment.isMac) {
-        const rc = writev_sym(fd, @ptrCast([*]std.os.iovec_const, buffers.ptr), @intCast(i32, buffers.len));
+        const rc = writev_sym(fd, @as([*]std.os.iovec_const, @ptrCast(buffers.ptr)), @as(i32, @intCast(buffers.len)));
         if (comptime Environment.allow_assert)
             log("writev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -324,10 +324,10 @@ pub fn writev(fd: os.fd_t, buffers: []std.os.iovec) Maybe(usize) {
             return err;
         }
 
-        return Maybe(usize){ .result = @intCast(usize, rc) };
+        return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = writev_sym(fd, @ptrCast([*]std.os.iovec_const, buffers.ptr), buffers.len);
+            const rc = writev_sym(fd, @as([*]std.os.iovec_const, @ptrCast(buffers.ptr)), buffers.len);
             if (comptime Environment.allow_assert)
                 log("writev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -336,7 +336,7 @@ pub fn writev(fd: os.fd_t, buffers: []std.os.iovec) Maybe(usize) {
                 return err;
             }
 
-            return Maybe(usize){ .result = @intCast(usize, rc) };
+            return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
         unreachable;
     }
@@ -344,7 +344,7 @@ pub fn writev(fd: os.fd_t, buffers: []std.os.iovec) Maybe(usize) {
 
 pub fn pwritev(fd: os.fd_t, buffers: []std.os.iovec, position: isize) Maybe(usize) {
     if (comptime Environment.isMac) {
-        const rc = pwritev_sym(fd, @ptrCast([*]std.os.iovec_const, buffers.ptr), @intCast(i32, buffers.len), position);
+        const rc = pwritev_sym(fd, @as([*]std.os.iovec_const, @ptrCast(buffers.ptr)), @as(i32, @intCast(buffers.len)), position);
         if (comptime Environment.allow_assert)
             log("pwritev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -352,10 +352,10 @@ pub fn pwritev(fd: os.fd_t, buffers: []std.os.iovec, position: isize) Maybe(usiz
             return err;
         }
 
-        return Maybe(usize){ .result = @intCast(usize, rc) };
+        return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = pwritev_sym(fd, @ptrCast([*]std.os.iovec_const, buffers.ptr), buffers.len, position);
+            const rc = pwritev_sym(fd, @as([*]std.os.iovec_const, @ptrCast(buffers.ptr)), buffers.len, position);
             if (comptime Environment.allow_assert)
                 log("pwritev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -364,7 +364,7 @@ pub fn pwritev(fd: os.fd_t, buffers: []std.os.iovec, position: isize) Maybe(usiz
                 return err;
             }
 
-            return Maybe(usize){ .result = @intCast(usize, rc) };
+            return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
         unreachable;
     }
@@ -372,7 +372,7 @@ pub fn pwritev(fd: os.fd_t, buffers: []std.os.iovec, position: isize) Maybe(usiz
 
 pub fn readv(fd: os.fd_t, buffers: []std.os.iovec) Maybe(usize) {
     if (comptime Environment.isMac) {
-        const rc = readv_sym(fd, buffers.ptr, @intCast(i32, buffers.len));
+        const rc = readv_sym(fd, buffers.ptr, @as(i32, @intCast(buffers.len)));
         if (comptime Environment.allow_assert)
             log("readv({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -380,7 +380,7 @@ pub fn readv(fd: os.fd_t, buffers: []std.os.iovec) Maybe(usize) {
             return err;
         }
 
-        return Maybe(usize){ .result = @intCast(usize, rc) };
+        return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
             const rc = readv_sym(fd, buffers.ptr, buffers.len);
@@ -392,7 +392,7 @@ pub fn readv(fd: os.fd_t, buffers: []std.os.iovec) Maybe(usize) {
                 return err;
             }
 
-            return Maybe(usize){ .result = @intCast(usize, rc) };
+            return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
         unreachable;
     }
@@ -400,7 +400,7 @@ pub fn readv(fd: os.fd_t, buffers: []std.os.iovec) Maybe(usize) {
 
 pub fn preadv(fd: os.fd_t, buffers: []std.os.iovec, position: isize) Maybe(usize) {
     if (comptime Environment.isMac) {
-        const rc = preadv_sym(fd, buffers.ptr, @intCast(i32, buffers.len), position);
+        const rc = preadv_sym(fd, buffers.ptr, @as(i32, @intCast(buffers.len)), position);
         if (comptime Environment.allow_assert)
             log("preadv({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -408,7 +408,7 @@ pub fn preadv(fd: os.fd_t, buffers: []std.os.iovec, position: isize) Maybe(usize
             return err;
         }
 
-        return Maybe(usize){ .result = @intCast(usize, rc) };
+        return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
             const rc = preadv_sym(fd, buffers.ptr, buffers.len, position);
@@ -420,7 +420,7 @@ pub fn preadv(fd: os.fd_t, buffers: []std.os.iovec, position: isize) Maybe(usize
                 return err;
             }
 
-            return Maybe(usize){ .result = @intCast(usize, rc) };
+            return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
         unreachable;
     }
@@ -465,14 +465,14 @@ const fcntl_symbol = system.fcntl;
 
 pub fn pread(fd: os.fd_t, buf: []u8, offset: i64) Maybe(usize) {
     const adjusted_len = @min(buf.len, max_count);
-    const ioffset = @bitCast(i64, offset); // the OS treats this as unsigned
+    const ioffset = @as(i64, @bitCast(offset)); // the OS treats this as unsigned
     while (true) {
         const rc = pread_sym(fd, buf.ptr, adjusted_len, ioffset);
         if (Maybe(usize).errnoSys(rc, .pread)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
-        return Maybe(usize){ .result = @intCast(usize, rc) };
+        return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     }
     unreachable;
 }
@@ -485,7 +485,7 @@ else
 pub fn pwrite(fd: os.fd_t, bytes: []const u8, offset: i64) Maybe(usize) {
     const adjusted_len = @min(bytes.len, max_count);
 
-    const ioffset = @bitCast(i64, offset); // the OS treats this as unsigned
+    const ioffset = @as(i64, @bitCast(offset)); // the OS treats this as unsigned
     while (true) {
         const rc = pwrite_sym(fd, bytes.ptr, adjusted_len, ioffset);
         return if (Maybe(usize).errnoSysFd(rc, .pwrite, fd)) |err| {
@@ -493,7 +493,7 @@ pub fn pwrite(fd: os.fd_t, bytes: []const u8, offset: i64) Maybe(usize) {
                 .INTR => continue,
                 else => return err,
             }
-        } else Maybe(usize){ .result = @intCast(usize, rc) };
+        } else Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     }
 
     unreachable;
@@ -510,7 +510,7 @@ pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
         if (Maybe(usize).errnoSys(rc, .read)) |err| {
             return err;
         }
-        return Maybe(usize){ .result = @intCast(usize, rc) };
+        return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
             const rc = sys.read(fd, buf.ptr, adjusted_len);
@@ -520,7 +520,7 @@ pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
                 if (err.getErrno() == .INTR) continue;
                 return err;
             }
-            return Maybe(usize){ .result = @intCast(usize, rc) };
+            return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
     }
     unreachable;
@@ -537,7 +537,7 @@ pub fn recv(fd: os.fd_t, buf: []u8, flag: u32) Maybe(usize) {
             return err;
         }
 
-        return Maybe(usize){ .result = @intCast(usize, rc) };
+        return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
             const rc = linux.recvfrom(fd, buf.ptr, adjusted_len, flag | os.SOCK.CLOEXEC | linux.MSG.CMSG_CLOEXEC, null, null);
@@ -547,7 +547,7 @@ pub fn recv(fd: os.fd_t, buf: []u8, flag: u32) Maybe(usize) {
                 if (err.getErrno() == .INTR) continue;
                 return err;
             }
-            return Maybe(usize){ .result = @intCast(usize, rc) };
+            return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
     }
     unreachable;
@@ -559,7 +559,7 @@ pub fn send(fd: os.fd_t, buf: []const u8, flag: u32) Maybe(usize) {
         if (Maybe(usize).errnoSys(rc, .send)) |err| {
             return err;
         }
-        return Maybe(usize){ .result = @intCast(usize, rc) };
+        return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
             const rc = linux.sendto(fd, buf.ptr, buf.len, flag | os.SOCK.CLOEXEC | os.MSG.NOSIGNAL, null, 0);
@@ -569,7 +569,7 @@ pub fn send(fd: os.fd_t, buf: []const u8, flag: u32) Maybe(usize) {
                 return err;
             }
 
-            return Maybe(usize){ .result = @intCast(usize, rc) };
+            return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
     }
     unreachable;
@@ -583,7 +583,7 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
-        return Maybe(usize){ .result = @intCast(usize, rc) };
+        return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     }
     unreachable;
 }
@@ -741,16 +741,16 @@ fn mmap(
     fd: os.fd_t,
     offset: u64,
 ) Maybe([]align(mem.page_size) u8) {
-    const ioffset = @bitCast(i64, offset); // the OS treats this as unsigned
+    const ioffset = @as(i64, @bitCast(offset)); // the OS treats this as unsigned
     const rc = std.c.mmap(ptr, length, prot, flags, fd, ioffset);
     const fail = std.c.MAP.FAILED;
     if (rc == fail) {
         return Maybe([]align(mem.page_size) u8){
-            .err = .{ .errno = @truncate(Syscall.Error.Int, @intFromEnum(std.c.getErrno(@bitCast(i64, @intFromPtr(fail))))), .syscall = .mmap },
+            .err = .{ .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(std.c.getErrno(@as(i64, @bitCast(@intFromPtr(fail))))))), .syscall = .mmap },
         };
     }
 
-    return Maybe([]align(mem.page_size) u8){ .result = @ptrCast([*]align(mem.page_size) u8, @alignCast(mem.page_size, rc))[0..length] };
+    return Maybe([]align(mem.page_size) u8){ .result = @as([*]align(mem.page_size) u8, @ptrCast(@alignCast(rc)))[0..length] };
 }
 
 pub fn mmapFile(path: [:0]const u8, flags: u32, wanted_size: ?usize, offset: usize) Maybe([]align(mem.page_size) u8) {
@@ -759,13 +759,13 @@ pub fn mmapFile(path: [:0]const u8, flags: u32, wanted_size: ?usize, offset: usi
         .err => |err| return .{ .err = err },
     };
 
-    var size = std.math.sub(usize, @intCast(usize, switch (fstat(fd)) {
+    var size = std.math.sub(usize, @as(usize, @intCast(switch (fstat(fd)) {
         .result => |result| result.size,
         .err => |err| {
             _ = close(fd);
             return .{ .err = err };
         },
-    }), offset) catch 0;
+    })), offset) catch 0;
 
     if (wanted_size) |size_| size = @min(size, size_);
 
@@ -804,7 +804,7 @@ pub const Error = struct {
     pub const Int: type = std.math.IntFittingRange(0, max_errno_value + 5);
 
     errno: Int,
-    syscall: Syscall.Tag = @enumFromInt(Syscall.Tag, 0),
+    syscall: Syscall.Tag = @as(Syscall.Tag, @enumFromInt(0)),
     path: []const u8 = "",
     fd: i32 = -1,
 
@@ -813,7 +813,7 @@ pub const Error = struct {
     }
 
     pub fn fromCode(errno: os.E, syscall: Syscall.Tag) Error {
-        return .{ .errno = @truncate(Int, @intFromEnum(errno)), .syscall = syscall };
+        return .{ .errno = @as(Int, @truncate(@intFromEnum(errno))), .syscall = syscall };
     }
 
     pub fn format(self: Error, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
@@ -824,16 +824,16 @@ pub const Error = struct {
 
     pub const retry = Error{
         .errno = if (Environment.isLinux)
-            @intCast(Int, @intFromEnum(os.E.AGAIN))
+            @as(Int, @intCast(@intFromEnum(os.E.AGAIN)))
         else if (Environment.isMac)
-            @intCast(Int, @intFromEnum(os.E.WOULDBLOCK))
+            @as(Int, @intCast(@intFromEnum(os.E.WOULDBLOCK)))
         else
-            @intCast(Int, @intFromEnum(os.E.INTR)),
+            @as(Int, @intCast(@intFromEnum(os.E.INTR))),
         .syscall = .retry,
     };
 
     pub inline fn getErrno(this: Error) os.E {
-        return @enumFromInt(os.E, this.errno);
+        return @as(os.E, @enumFromInt(this.errno));
     }
 
     pub inline fn withPath(this: Error, path: anytype) Error {
@@ -848,7 +848,7 @@ pub const Error = struct {
         return Error{
             .errno = this.errno,
             .syscall = this.syscall,
-            .fd = @intCast(i32, fd),
+            .fd = @as(i32, @intCast(fd)),
         };
     }
 
@@ -878,7 +878,7 @@ pub const Error = struct {
 
         // errno label
         if (this.errno > 0 and this.errno < C.SystemErrno.max) {
-            const system_errno = @enumFromInt(C.SystemErrno, this.errno);
+            const system_errno = @as(C.SystemErrno, @enumFromInt(this.errno));
             err.code = bun.String.static(@tagName(system_errno));
             if (C.SystemErrno.labels.get(system_errno)) |label| {
                 err.message = bun.String.static(label);
@@ -935,9 +935,9 @@ pub fn setPipeCapacityOnLinux(fd: bun.FileDescriptor, capacity: usize) Maybe(usi
 }
 
 pub fn getMaxPipeSizeOnLinux() usize {
-    return @intCast(
+    return @as(
         usize,
-        bun.once(struct {
+        @intCast(bun.once(struct {
             fn once() c_int {
                 const strings = bun.strings;
                 const default_out_size = 512 * 1024;
@@ -963,8 +963,8 @@ pub fn getMaxPipeSizeOnLinux() usize {
 
                 // we set the absolute max to 8 MB because honestly that's a huge pipe
                 // my current linux machine only goes up to 1 MB, so that's very unlikely to be hit
-                return @min(@truncate(c_int, max_pipe_size -| 32), 1024 * 1024 * 8);
+                return @min(@as(c_int, @truncate(max_pipe_size -| 32)), 1024 * 1024 * 8);
             }
-        }.once, c_int),
+        }.once, c_int)),
     );
 }

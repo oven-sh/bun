@@ -234,7 +234,7 @@ pub const Linker = struct {
         switch (result.loader) {
             .jsx, .js, .ts, .tsx => {
                 var record_i: u32 = 0;
-                const record_count = @truncate(u32, import_records.items.len);
+                const record_count = @as(u32, @truncate(import_records.items.len));
 
                 outer: while (record_i < record_count) : (record_i += 1) {
                     var import_record = &import_records.items[record_i];
@@ -569,7 +569,7 @@ pub const Linker = struct {
                         // But we need to at least tell the printer that this needs to happen.
                         if (loader != .napi and resolved_import.shouldAssumeCommonJS(import_record.kind) and !is_bun) {
                             import_record.do_commonjs_transform_in_printer = true;
-                            import_record.module_id = @truncate(u32, bun.hash(path.pretty));
+                            import_record.module_id = @as(u32, @truncate(bun.hash(path.pretty)));
                         }
                     } else |err| {
                         switch (err) {

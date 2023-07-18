@@ -242,7 +242,7 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
         state: State = State.Uninitialized,
 
         pub fn alloc(ctx: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
-            var this = @ptrCast(*ZlibReader, @alignCast(@alignOf(*ZlibReader), ctx));
+            var this = @as(*ZlibReader, @ptrCast(@alignCast(ctx)));
             const buf = this.arena.allocator().alloc(u8, items * len) catch unreachable;
             return buf.ptr;
         }
@@ -277,8 +277,8 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
 
             zlib_reader.zlib = zStream_struct{
                 .next_in = input.ptr,
-                .avail_in = @intCast(uInt, input.len),
-                .total_in = @intCast(uInt, input.len),
+                .avail_in = @as(uInt, @intCast(input.len)),
+                .total_in = @as(uInt, @intCast(input.len)),
 
                 .next_out = &zlib_reader.buf,
                 .avail_out = buffer_size,
@@ -426,7 +426,7 @@ pub const ZlibReaderArrayList = struct {
     state: State = State.Uninitialized,
 
     pub fn alloc(ctx: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
-        var this = @ptrCast(*ZlibReader, @alignCast(@alignOf(*ZlibReader), ctx));
+        var this = @as(*ZlibReader, @ptrCast(@alignCast(ctx)));
         const buf = this.allocator.alloc(u8, items * len) catch unreachable;
         return buf.ptr;
     }
@@ -478,11 +478,11 @@ pub const ZlibReaderArrayList = struct {
 
         zlib_reader.zlib = zStream_struct{
             .next_in = input.ptr,
-            .avail_in = @intCast(uInt, input.len),
-            .total_in = @intCast(uInt, input.len),
+            .avail_in = @as(uInt, @intCast(input.len)),
+            .total_in = @as(uInt, @intCast(input.len)),
 
             .next_out = zlib_reader.list.items.ptr,
-            .avail_out = @intCast(u32, zlib_reader.list.items.len),
+            .avail_out = @as(u32, @intCast(zlib_reader.list.items.len)),
             .total_out = zlib_reader.list.items.len,
 
             .err_msg = null,
@@ -562,7 +562,7 @@ pub const ZlibReaderArrayList = struct {
                 try this.list.ensureUnusedCapacity(this.list_allocator, 4096);
                 this.list.expandToCapacity();
                 this.zlib.next_out = &this.list.items[initial];
-                this.zlib.avail_out = @intCast(u32, this.list.items.len - initial);
+                this.zlib.avail_out = @as(u32, @intCast(this.list.items.len - initial));
             }
 
             if (this.zlib.avail_in == 0) {
@@ -833,7 +833,7 @@ pub const ZlibCompressorArrayList = struct {
     state: State = State.Uninitialized,
 
     pub fn alloc(ctx: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
-        var this = @ptrCast(*ZlibCompressor, @alignCast(@alignOf(*ZlibCompressor), ctx));
+        var this = @as(*ZlibCompressor, @ptrCast(@alignCast(ctx)));
         const buf = this.allocator.alloc(u8, items * len) catch unreachable;
         return buf.ptr;
     }
@@ -873,11 +873,11 @@ pub const ZlibCompressorArrayList = struct {
 
         zlib_reader.zlib = zStream_struct{
             .next_in = input.ptr,
-            .avail_in = @intCast(uInt, input.len),
-            .total_in = @intCast(uInt, input.len),
+            .avail_in = @as(uInt, @intCast(input.len)),
+            .total_in = @as(uInt, @intCast(input.len)),
 
             .next_out = zlib_reader.list.items.ptr,
-            .avail_out = @intCast(u32, zlib_reader.list.items.len),
+            .avail_out = @as(u32, @intCast(zlib_reader.list.items.len)),
             .total_out = zlib_reader.list.items.len,
 
             .err_msg = null,
@@ -905,7 +905,7 @@ pub const ZlibCompressorArrayList = struct {
             ReturnCode.Ok => {
                 try zlib_reader.list.ensureTotalCapacityPrecise(allocator, deflateBound(&zlib_reader.zlib, input.len));
                 zlib_reader.list_ptr.* = zlib_reader.list;
-                zlib_reader.zlib.avail_out = @truncate(uInt, zlib_reader.list.capacity);
+                zlib_reader.zlib.avail_out = @as(uInt, @truncate(zlib_reader.list.capacity));
                 zlib_reader.zlib.next_out = zlib_reader.list.items.ptr;
 
                 return zlib_reader;
@@ -973,7 +973,7 @@ pub const ZlibCompressorArrayList = struct {
                 try this.list.ensureUnusedCapacity(this.list_allocator, 4096);
                 this.list.expandToCapacity();
                 this.zlib.next_out = &this.list.items[initial];
-                this.zlib.avail_out = @intCast(u32, this.list.items.len - initial);
+                this.zlib.avail_out = @as(u32, @intCast(this.list.items.len - initial));
             }
 
             if (this.zlib.avail_out == 0) {

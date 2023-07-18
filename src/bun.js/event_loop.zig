@@ -173,7 +173,7 @@ pub const AnyTask = struct {
             }
 
             pub fn wrap(this: ?*anyopaque) void {
-                @call(.always_inline, Callback, .{@ptrCast(*Type, @alignCast(@alignOf(Type), this.?))});
+                @call(.always_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
             }
         };
     }
@@ -205,8 +205,8 @@ pub const AnyTaskWithExtraContext = struct {
                     .always_inline,
                     Callback,
                     .{
-                        @ptrCast(*Type, @alignCast(@alignOf(Type), this.?)),
-                        @ptrCast(*ContextType, @alignCast(@alignOf(ContextType), extra.?)),
+                        @as(*Type, @ptrCast(@alignCast(this.?))),
+                        @as(*ContextType, @ptrCast(@alignCast(extra.?))),
                     },
                 );
             }
@@ -503,7 +503,7 @@ pub const EventLoop = struct {
         }
 
         this.tasks.head = if (this.tasks.count == 0) 0 else this.tasks.head;
-        return @truncate(u32, counter);
+        return @as(u32, @truncate(counter));
     }
 
     pub fn tickConcurrent(this: *EventLoop) void {

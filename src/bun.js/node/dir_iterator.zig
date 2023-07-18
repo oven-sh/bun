@@ -65,13 +65,13 @@ pub const Iterator = switch (builtin.os.tag) {
                     }
 
                     self.index = 0;
-                    self.end_index = @intCast(usize, rc);
+                    self.end_index = @as(usize, @intCast(rc));
                 }
-                const darwin_entry = @ptrCast(*align(1) os.system.dirent, &self.buf[self.index]);
+                const darwin_entry = @as(*align(1) os.system.dirent, @ptrCast(&self.buf[self.index]));
                 const next_index = self.index + darwin_entry.reclen();
                 self.index = next_index;
 
-                const name = @ptrCast([*]u8, &darwin_entry.d_name)[0..darwin_entry.d_namlen];
+                const name = @as([*]u8, @ptrCast(&darwin_entry.d_name))[0..darwin_entry.d_namlen];
 
                 if (strings.eqlComptime(name, ".") or strings.eqlComptime(name, "..") or (darwin_entry.d_ino == 0)) {
                     continue :start_over;
@@ -122,11 +122,11 @@ pub const Iterator = switch (builtin.os.tag) {
                     self.index = 0;
                     self.end_index = rc;
                 }
-                const linux_entry = @ptrCast(*align(1) linux.dirent64, &self.buf[self.index]);
+                const linux_entry = @as(*align(1) linux.dirent64, @ptrCast(&self.buf[self.index]));
                 const next_index = self.index + linux_entry.reclen();
                 self.index = next_index;
 
-                const name = mem.sliceTo(@ptrCast([*:0]u8, &linux_entry.d_name), 0);
+                const name = mem.sliceTo(@as([*:0]u8, @ptrCast(&linux_entry.d_name)), 0);
 
                 // skip . and .. entries
                 if (strings.eqlComptime(name, ".") or strings.eqlComptime(name, "..")) {
@@ -196,15 +196,14 @@ pub const Iterator = switch (builtin.os.tag) {
                     }
                 }
 
-                const aligned_ptr = @alignCast(@alignOf(w.FILE_BOTH_DIR_INFORMATION), &self.buf[self.index]);
-                const dir_info = @ptrCast(*w.FILE_BOTH_DIR_INFORMATION, aligned_ptr);
+                const dir_info: *w.FILE_BOTH_DIR_INFORMATION = @ptrCast(@alignCast(&self.buf[self.index]));
                 if (dir_info.NextEntryOffset != 0) {
                     self.index += dir_info.NextEntryOffset;
                 } else {
                     self.index = self.buf.len;
                 }
 
-                const name_utf16le = @ptrCast([*]u16, &dir_info.FileName)[0 .. dir_info.FileNameLength / 2];
+                const name_utf16le = @as([*]u16, @ptrCast(&dir_info.FileName))[0 .. dir_info.FileNameLength / 2];
 
                 if (mem.eql(u16, name_utf16le, &[_]u16{'.'}) or mem.eql(u16, name_utf16le, &[_]u16{ '.', '.' }))
                     continue;
@@ -260,7 +259,7 @@ pub const Iterator = switch (builtin.os.tag) {
                     self.index = 0;
                     self.end_index = bufused;
                 }
-                const entry = @ptrCast(*align(1) w.dirent_t, &self.buf[self.index]);
+                const entry = @as(*align(1) w.dirent_t, @ptrCast(&self.buf[self.index]));
                 const entry_size = @sizeOf(w.dirent_t);
                 const name_index = self.index + entry_size;
                 const name = mem.span(self.buf[name_index .. name_index + entry.d_namlen]);

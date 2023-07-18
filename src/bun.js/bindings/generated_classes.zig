@@ -4458,10 +4458,32 @@ pub const JSTCPSocket = struct {
             @compileLog("Expected TCPSocket.setData to be a setter");
         if (@TypeOf(TCPSocket.end) != CallbackType)
             @compileLog("Expected TCPSocket.end to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.end)));
+        if (@TypeOf(TCPSocket.exportKeyingMaterial) != CallbackType)
+            @compileLog("Expected TCPSocket.exportKeyingMaterial to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.exportKeyingMaterial)));
         if (@TypeOf(TCPSocket.flush) != CallbackType)
             @compileLog("Expected TCPSocket.flush to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.flush)));
         if (@TypeOf(TCPSocket.getAuthorizationError) != CallbackType)
             @compileLog("Expected TCPSocket.getAuthorizationError to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getAuthorizationError)));
+        if (@TypeOf(TCPSocket.getCertificate) != CallbackType)
+            @compileLog("Expected TCPSocket.getCertificate to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getCertificate)));
+        if (@TypeOf(TCPSocket.getCipher) != CallbackType)
+            @compileLog("Expected TCPSocket.getCipher to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getCipher)));
+        if (@TypeOf(TCPSocket.getEphemeralKeyInfo) != CallbackType)
+            @compileLog("Expected TCPSocket.getEphemeralKeyInfo to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getEphemeralKeyInfo)));
+        if (@TypeOf(TCPSocket.getPeerCertificate) != CallbackType)
+            @compileLog("Expected TCPSocket.getPeerCertificate to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getPeerCertificate)));
+        if (@TypeOf(TCPSocket.getSession) != CallbackType)
+            @compileLog("Expected TCPSocket.getSession to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getSession)));
+        if (@TypeOf(TCPSocket.getSharedSigalgs) != CallbackType)
+            @compileLog("Expected TCPSocket.getSharedSigalgs to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getSharedSigalgs)));
+        if (@TypeOf(TCPSocket.getTLSFinishedMessage) != CallbackType)
+            @compileLog("Expected TCPSocket.getTLSFinishedMessage to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getTLSFinishedMessage)));
+        if (@TypeOf(TCPSocket.getTLSPeerFinishedMessage) != CallbackType)
+            @compileLog("Expected TCPSocket.getTLSPeerFinishedMessage to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getTLSPeerFinishedMessage)));
+        if (@TypeOf(TCPSocket.getTLSTicket) != CallbackType)
+            @compileLog("Expected TCPSocket.getTLSTicket to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getTLSTicket)));
+        if (@TypeOf(TCPSocket.getTLSVersion) != CallbackType)
+            @compileLog("Expected TCPSocket.getTLSVersion to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.getTLSVersion)));
         if (@TypeOf(TCPSocket.getListener) != GetterType)
             @compileLog("Expected TCPSocket.getListener to be a getter");
 
@@ -4478,8 +4500,12 @@ pub const JSTCPSocket = struct {
         if (@TypeOf(TCPSocket.getRemoteAddress) != GetterType)
             @compileLog("Expected TCPSocket.getRemoteAddress to be a getter");
 
+        if (@TypeOf(TCPSocket.setMaxSendFragment) != CallbackType)
+            @compileLog("Expected TCPSocket.setMaxSendFragment to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.setMaxSendFragment)));
         if (@TypeOf(TCPSocket.setServername) != CallbackType)
             @compileLog("Expected TCPSocket.setServername to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.setServername)));
+        if (@TypeOf(TCPSocket.setSession) != CallbackType)
+            @compileLog("Expected TCPSocket.setSession to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.setSession)));
         if (@TypeOf(TCPSocket.shutdown) != CallbackType)
             @compileLog("Expected TCPSocket.shutdown to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.shutdown)));
         if (@TypeOf(TCPSocket.timeout) != CallbackType)
@@ -4492,21 +4518,34 @@ pub const JSTCPSocket = struct {
             @compileLog("Expected TCPSocket.write to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.write)));
         if (!JSC.is_bindgen) {
             @export(TCPSocket.end, .{ .name = "TCPSocketPrototype__end" });
+            @export(TCPSocket.exportKeyingMaterial, .{ .name = "TCPSocketPrototype__exportKeyingMaterial" });
             @export(TCPSocket.finalize, .{ .name = "TCPSocketClass__finalize" });
             @export(TCPSocket.flush, .{ .name = "TCPSocketPrototype__flush" });
             @export(TCPSocket.getALPNProtocol, .{ .name = "TCPSocketPrototype__getALPNProtocol" });
             @export(TCPSocket.getAuthorizationError, .{ .name = "TCPSocketPrototype__getAuthorizationError" });
             @export(TCPSocket.getAuthorized, .{ .name = "TCPSocketPrototype__getAuthorized" });
+            @export(TCPSocket.getCertificate, .{ .name = "TCPSocketPrototype__getCertificate" });
+            @export(TCPSocket.getCipher, .{ .name = "TCPSocketPrototype__getCipher" });
             @export(TCPSocket.getData, .{ .name = "TCPSocketPrototype__getData" });
+            @export(TCPSocket.getEphemeralKeyInfo, .{ .name = "TCPSocketPrototype__getEphemeralKeyInfo" });
             @export(TCPSocket.getListener, .{ .name = "TCPSocketPrototype__getListener" });
             @export(TCPSocket.getLocalPort, .{ .name = "TCPSocketPrototype__getLocalPort" });
+            @export(TCPSocket.getPeerCertificate, .{ .name = "TCPSocketPrototype__getPeerCertificate" });
             @export(TCPSocket.getReadyState, .{ .name = "TCPSocketPrototype__getReadyState" });
             @export(TCPSocket.getRemoteAddress, .{ .name = "TCPSocketPrototype__getRemoteAddress" });
+            @export(TCPSocket.getSession, .{ .name = "TCPSocketPrototype__getSession" });
+            @export(TCPSocket.getSharedSigalgs, .{ .name = "TCPSocketPrototype__getSharedSigalgs" });
+            @export(TCPSocket.getTLSFinishedMessage, .{ .name = "TCPSocketPrototype__getTLSFinishedMessage" });
+            @export(TCPSocket.getTLSPeerFinishedMessage, .{ .name = "TCPSocketPrototype__getTLSPeerFinishedMessage" });
+            @export(TCPSocket.getTLSTicket, .{ .name = "TCPSocketPrototype__getTLSTicket" });
+            @export(TCPSocket.getTLSVersion, .{ .name = "TCPSocketPrototype__getTLSVersion" });
             @export(TCPSocket.hasPendingActivity, .{ .name = "TCPSocket__hasPendingActivity" });
             @export(TCPSocket.ref, .{ .name = "TCPSocketPrototype__ref" });
             @export(TCPSocket.reload, .{ .name = "TCPSocketPrototype__reload" });
             @export(TCPSocket.setData, .{ .name = "TCPSocketPrototype__setData" });
+            @export(TCPSocket.setMaxSendFragment, .{ .name = "TCPSocketPrototype__setMaxSendFragment" });
             @export(TCPSocket.setServername, .{ .name = "TCPSocketPrototype__setServername" });
+            @export(TCPSocket.setSession, .{ .name = "TCPSocketPrototype__setSession" });
             @export(TCPSocket.shutdown, .{ .name = "TCPSocketPrototype__shutdown" });
             @export(TCPSocket.timeout, .{ .name = "TCPSocketPrototype__timeout" });
             @export(TCPSocket.unref, .{ .name = "TCPSocketPrototype__unref" });
@@ -4623,10 +4662,32 @@ pub const JSTLSSocket = struct {
             @compileLog("Expected TLSSocket.setData to be a setter");
         if (@TypeOf(TLSSocket.end) != CallbackType)
             @compileLog("Expected TLSSocket.end to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.end)));
+        if (@TypeOf(TLSSocket.exportKeyingMaterial) != CallbackType)
+            @compileLog("Expected TLSSocket.exportKeyingMaterial to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.exportKeyingMaterial)));
         if (@TypeOf(TLSSocket.flush) != CallbackType)
             @compileLog("Expected TLSSocket.flush to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.flush)));
         if (@TypeOf(TLSSocket.getAuthorizationError) != CallbackType)
             @compileLog("Expected TLSSocket.getAuthorizationError to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getAuthorizationError)));
+        if (@TypeOf(TLSSocket.getCertificate) != CallbackType)
+            @compileLog("Expected TLSSocket.getCertificate to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getCertificate)));
+        if (@TypeOf(TLSSocket.getCipher) != CallbackType)
+            @compileLog("Expected TLSSocket.getCipher to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getCipher)));
+        if (@TypeOf(TLSSocket.getEphemeralKeyInfo) != CallbackType)
+            @compileLog("Expected TLSSocket.getEphemeralKeyInfo to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getEphemeralKeyInfo)));
+        if (@TypeOf(TLSSocket.getPeerCertificate) != CallbackType)
+            @compileLog("Expected TLSSocket.getPeerCertificate to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getPeerCertificate)));
+        if (@TypeOf(TLSSocket.getSession) != CallbackType)
+            @compileLog("Expected TLSSocket.getSession to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getSession)));
+        if (@TypeOf(TLSSocket.getSharedSigalgs) != CallbackType)
+            @compileLog("Expected TLSSocket.getSharedSigalgs to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getSharedSigalgs)));
+        if (@TypeOf(TLSSocket.getTLSFinishedMessage) != CallbackType)
+            @compileLog("Expected TLSSocket.getTLSFinishedMessage to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getTLSFinishedMessage)));
+        if (@TypeOf(TLSSocket.getTLSPeerFinishedMessage) != CallbackType)
+            @compileLog("Expected TLSSocket.getTLSPeerFinishedMessage to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getTLSPeerFinishedMessage)));
+        if (@TypeOf(TLSSocket.getTLSTicket) != CallbackType)
+            @compileLog("Expected TLSSocket.getTLSTicket to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getTLSTicket)));
+        if (@TypeOf(TLSSocket.getTLSVersion) != CallbackType)
+            @compileLog("Expected TLSSocket.getTLSVersion to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.getTLSVersion)));
         if (@TypeOf(TLSSocket.getListener) != GetterType)
             @compileLog("Expected TLSSocket.getListener to be a getter");
 
@@ -4643,8 +4704,12 @@ pub const JSTLSSocket = struct {
         if (@TypeOf(TLSSocket.getRemoteAddress) != GetterType)
             @compileLog("Expected TLSSocket.getRemoteAddress to be a getter");
 
+        if (@TypeOf(TLSSocket.setMaxSendFragment) != CallbackType)
+            @compileLog("Expected TLSSocket.setMaxSendFragment to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.setMaxSendFragment)));
         if (@TypeOf(TLSSocket.setServername) != CallbackType)
             @compileLog("Expected TLSSocket.setServername to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.setServername)));
+        if (@TypeOf(TLSSocket.setSession) != CallbackType)
+            @compileLog("Expected TLSSocket.setSession to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.setSession)));
         if (@TypeOf(TLSSocket.shutdown) != CallbackType)
             @compileLog("Expected TLSSocket.shutdown to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.shutdown)));
         if (@TypeOf(TLSSocket.timeout) != CallbackType)
@@ -4657,21 +4722,34 @@ pub const JSTLSSocket = struct {
             @compileLog("Expected TLSSocket.write to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.write)));
         if (!JSC.is_bindgen) {
             @export(TLSSocket.end, .{ .name = "TLSSocketPrototype__end" });
+            @export(TLSSocket.exportKeyingMaterial, .{ .name = "TLSSocketPrototype__exportKeyingMaterial" });
             @export(TLSSocket.finalize, .{ .name = "TLSSocketClass__finalize" });
             @export(TLSSocket.flush, .{ .name = "TLSSocketPrototype__flush" });
             @export(TLSSocket.getALPNProtocol, .{ .name = "TLSSocketPrototype__getALPNProtocol" });
             @export(TLSSocket.getAuthorizationError, .{ .name = "TLSSocketPrototype__getAuthorizationError" });
             @export(TLSSocket.getAuthorized, .{ .name = "TLSSocketPrototype__getAuthorized" });
+            @export(TLSSocket.getCertificate, .{ .name = "TLSSocketPrototype__getCertificate" });
+            @export(TLSSocket.getCipher, .{ .name = "TLSSocketPrototype__getCipher" });
             @export(TLSSocket.getData, .{ .name = "TLSSocketPrototype__getData" });
+            @export(TLSSocket.getEphemeralKeyInfo, .{ .name = "TLSSocketPrototype__getEphemeralKeyInfo" });
             @export(TLSSocket.getListener, .{ .name = "TLSSocketPrototype__getListener" });
             @export(TLSSocket.getLocalPort, .{ .name = "TLSSocketPrototype__getLocalPort" });
+            @export(TLSSocket.getPeerCertificate, .{ .name = "TLSSocketPrototype__getPeerCertificate" });
             @export(TLSSocket.getReadyState, .{ .name = "TLSSocketPrototype__getReadyState" });
             @export(TLSSocket.getRemoteAddress, .{ .name = "TLSSocketPrototype__getRemoteAddress" });
+            @export(TLSSocket.getSession, .{ .name = "TLSSocketPrototype__getSession" });
+            @export(TLSSocket.getSharedSigalgs, .{ .name = "TLSSocketPrototype__getSharedSigalgs" });
+            @export(TLSSocket.getTLSFinishedMessage, .{ .name = "TLSSocketPrototype__getTLSFinishedMessage" });
+            @export(TLSSocket.getTLSPeerFinishedMessage, .{ .name = "TLSSocketPrototype__getTLSPeerFinishedMessage" });
+            @export(TLSSocket.getTLSTicket, .{ .name = "TLSSocketPrototype__getTLSTicket" });
+            @export(TLSSocket.getTLSVersion, .{ .name = "TLSSocketPrototype__getTLSVersion" });
             @export(TLSSocket.hasPendingActivity, .{ .name = "TLSSocket__hasPendingActivity" });
             @export(TLSSocket.ref, .{ .name = "TLSSocketPrototype__ref" });
             @export(TLSSocket.reload, .{ .name = "TLSSocketPrototype__reload" });
             @export(TLSSocket.setData, .{ .name = "TLSSocketPrototype__setData" });
+            @export(TLSSocket.setMaxSendFragment, .{ .name = "TLSSocketPrototype__setMaxSendFragment" });
             @export(TLSSocket.setServername, .{ .name = "TLSSocketPrototype__setServername" });
+            @export(TLSSocket.setSession, .{ .name = "TLSSocketPrototype__setSession" });
             @export(TLSSocket.shutdown, .{ .name = "TLSSocketPrototype__shutdown" });
             @export(TLSSocket.timeout, .{ .name = "TLSSocketPrototype__timeout" });
             @export(TLSSocket.unref, .{ .name = "TLSSocketPrototype__unref" });

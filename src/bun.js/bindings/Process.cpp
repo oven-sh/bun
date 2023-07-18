@@ -15,6 +15,9 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include <termios.h>
+#include <errno.h>
+#include <sys/ioctl.h>
 
 #pragma mark - Node.js Process
 
@@ -109,7 +112,53 @@ JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter,
     return true;
 }
 
-JSC_DECLARE_HOST_FUNCTION(Process_functionNextTick);
+static bool getWindowSize(int fd, size_t* width, size_t* height)
+{
+    struct winsize ws;
+    int err;
+    do
+        err = ioctl(fd, TIOCGWINSZ, &ws);
+    while (err == -1 && errno == EINTR);
+
+    if (err == -1)
+        return false;
+
+    *width = ws.ws_col;
+    *height = ws.ws_row;
+
+    return true;
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionInternalGetWindowSize,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto argCount = callFrame->argumentCount();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    if (argCount == 0) {
+        JSC::throwTypeError(globalObject, throwScope, "getWindowSize requires 2 argument (a file descriptor)"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    int fd = callFrame->uncheckedArgument(0).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    JSC::JSArray* array = jsDynamicCast<JSC::JSArray*>(callFrame->uncheckedArgument(1));
+    if (!array || array->length() < 2) {
+        JSC::throwTypeError(globalObject, throwScope, "getWindowSize requires 2 argument (an array)"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    size_t width, height;
+    if (!getWindowSize(fd, &width, &height)) {
+        return JSC::JSValue::encode(jsBoolean(false));
+    }
+
+    array->putDirectIndex(globalObject, 0, jsNumber(width));
+    array->putDirectIndex(globalObject, 1, jsNumber(height));
+
+    return JSC::JSValue::encode(jsBoolean(true));
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -181,23 +230,35 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 
     auto argCount = callFrame->argumentCount();
     if (argCount < 2) {
-
         JSC::throwTypeError(globalObject, scope, "dlopen requires 2 arguments"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
     JSC::JSValue moduleValue = callFrame->uncheckedArgument(0);
-    if (!moduleValue.isObject()) {
+    JSC::JSObject* moduleObject = jsDynamicCast<JSC::JSObject*>(moduleValue);
+    if (UNLIKELY(!moduleObject)) {
         JSC::throwTypeError(globalObject, scope, "dlopen requires an object as first argument"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
-    JSC::Identifier exportsSymbol = JSC::Identifier::fromString(vm, "exports"_s);
-    JSC::JSObject* exports = moduleValue.getObject()->getIfPropertyExists(globalObject, exportsSymbol).getObject();
 
-    WTF::String filename = callFrame->uncheckedArgument(1).toWTFString(globalObject);
-    CString utf8 = filename.utf8();
+    JSValue exports = moduleObject->getIfPropertyExists(globalObject, builtinNames(vm).exportsPublicName());
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (UNLIKELY(!exports)) {
+        JSC::throwTypeError(globalObject, scope, "dlopen requires an object with an exports property"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
 
     globalObject->pendingNapiModule = exports;
+    if (exports.isCell()) {
+        vm.writeBarrier(globalObject, exports.asCell());
+    }
+
+    WTF::String filename = callFrame->uncheckedArgument(1).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    CString utf8 = filename.utf8();
+
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
 
     if (!handle) {
@@ -855,9 +916,13 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSFunction* getWindowSizeFunction = JSC::JSFunction::create(vm, globalObject, 2,
+        String("getWindowSize"_s), Process_functionInternalGetWindowSize, ImplementationVisibility::Public);
+
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
     args.append(JSC::jsNumber(fd));
+    args.append(getWindowSizeFunction);
 
     auto clientData = WebCore::clientData(vm);
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);

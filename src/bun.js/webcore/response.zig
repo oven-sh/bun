@@ -83,9 +83,9 @@ pub const Response = struct {
 
     pub fn estimatedSize(this: *Response) callconv(.C) usize {
         return this.reported_estimated_size orelse brk: {
-            this.reported_estimated_size = @intCast(
+            this.reported_estimated_size = @as(
                 u63,
-                this.body.value.estimatedSize() + this.url.len + this.status_text.len + @sizeOf(Response),
+                @intCast(this.body.value.estimatedSize() + this.url.len + this.status_text.len + @sizeOf(Response)),
             );
             break :brk this.reported_estimated_size.?;
         };
@@ -411,7 +411,7 @@ pub const Response = struct {
 
         if (args.nextEat()) |init| {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                response.body.init.status_code = @intCast(u16, @min(@max(0, init.toInt32()), std.math.maxInt(u16)));
+                response.body.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
             } else {
                 if (Body.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
                     response.body.init = _init;
@@ -457,7 +457,7 @@ pub const Response = struct {
 
         if (args.nextEat()) |init| {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                response.body.init.status_code = @intCast(u16, @min(@max(0, init.toInt32()), std.math.maxInt(u16)));
+                response.body.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
             } else {
                 if (Body.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
                     response.body.init = _init;
@@ -827,7 +827,7 @@ pub const Fetch = struct {
                 .body = .{
                     .init = .{
                         .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
-                        .status_code = @truncate(u16, http_response.status_code),
+                        .status_code = @as(u16, @truncate(http_response.status_code)),
                     },
                     .value = this.toBodyValue(),
                 },
@@ -838,7 +838,7 @@ pub const Fetch = struct {
             const allocator = bun.default_allocator;
             var response = allocator.create(Response) catch unreachable;
             response.* = this.toResponse(allocator);
-            return Response.makeMaybePooled(@ptrCast(js.JSContextRef, this.global_this), response);
+            return Response.makeMaybePooled(@as(js.JSContextRef, @ptrCast(this.global_this)), response);
         }
 
         pub fn get(
@@ -1375,7 +1375,7 @@ pub const Fetch = struct {
                         }
 
                         const original_size = body.Blob.size;
-                        const stat_size = @intCast(Blob.SizeType, stat.size);
+                        const stat_size = @as(Blob.SizeType, @intCast(stat.size));
                         const blob_size = if (std.os.S.ISREG(stat.mode))
                             stat_size
                         else
@@ -1509,7 +1509,7 @@ pub const Headers = struct {
             if (options.body) |body| {
                 if (body.hasContentTypeFromUser() and (fetch_headers_ref == null or !fetch_headers_ref.?.fastHas(.ContentType))) {
                     header_count += 1;
-                    buf_len += @truncate(u32, body.contentType().len + "Content-Type".len);
+                    buf_len += @as(u32, @truncate(body.contentType().len + "Content-Type".len));
                     break :brk true;
                 }
             }
@@ -1536,7 +1536,7 @@ pub const Headers = struct {
             bun.copy(u8, headers.buf.items[buf_len_before_content_type + "Content-Type".len ..], options.body.?.contentType());
             values[header_count - 1] = .{
                 .offset = buf_len_before_content_type + @as(u32, "Content-Type".len),
-                .length = @truncate(u32, options.body.?.contentType().len),
+                .length = @as(u32, @truncate(options.body.?.contentType().len)),
             };
         }
 
@@ -1696,7 +1696,7 @@ pub const FetchEvent = struct {
 
         defer {
             if (!VirtualMachine.get().had_errors) {
-                Output.printElapsed(@floatFromInt(f64, (request_context.timer.lap())) / std.time.ns_per_ms);
+                Output.printElapsed(@as(f64, @floatFromInt((request_context.timer.lap()))) / std.time.ns_per_ms);
 
                 Output.prettyError(
                     " <b>{s}<r><d> - <b>{d}<r> <d>transpiled, <d><b>{d}<r> <d>imports<r>\n",

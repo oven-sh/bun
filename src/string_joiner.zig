@@ -120,7 +120,7 @@ pub fn ensureNewlineAtEnd(this: *Joiner) void {
 
 pub fn append(this: *Joiner, slice: string, offset: u32, allocator: ?Allocator) void {
     const data = slice[offset..];
-    this.len += @truncate(u32, data.len);
+    this.len += @as(u32, @truncate(data.len));
 
     var new_tail = if (this.use_pool)
         Joinable.Pool.get(default_allocator)
@@ -138,7 +138,7 @@ pub fn append(this: *Joiner, slice: string, offset: u32, allocator: ?Allocator) 
     new_tail.* = .{
         .allocator = default_allocator,
         .data = Joinable{
-            .offset = @truncate(u31, offset),
+            .offset = @as(u31, @truncate(offset)),
             .allocator = allocator orelse undefined,
             .needs_deinit = allocator != null,
             .slice = slice,

@@ -3378,7 +3378,13 @@ pub const Resolver = struct {
                         continue;
                     };
 
-                    var _result = r.loadFromMainField(path, dir_info, field_rel_path, key, extension_order) orelse continue;
+                    var _result = r.loadFromMainField(
+                        path,
+                        dir_info,
+                        field_rel_path,
+                        key,
+                        if (strings.eqlComptime(key, "main")) r.opts.main_field_extension_order else extension_order,
+                    ) orelse continue;
 
                     // If the user did not manually configure a "main" field order, then
                     // use a special per-module automatic algorithm to decide whether to
@@ -3389,13 +3395,13 @@ pub const Resolver = struct {
 
                         if (main_field_values.get("main")) |main_rel_path| {
                             if (main_rel_path.len > 0) {
-                                absolute_result = r.loadFromMainField(path, dir_info, main_rel_path, "main", extension_order);
+                                absolute_result = r.loadFromMainField(path, dir_info, main_rel_path, "main", r.opts.main_field_extension_order);
                             }
                         } else {
                             // Some packages have a "module" field without a "main" field but
                             // still have an implicit "index.js" file. In that case, treat that
                             // as the value for "main".
-                            absolute_result = r.loadAsIndexWithBrowserRemapping(dir_info, path, extension_order);
+                            absolute_result = r.loadAsIndexWithBrowserRemapping(dir_info, path, r.opts.main_field_extension_order);
                         }
 
                         if (absolute_result) |auto_main_result| {

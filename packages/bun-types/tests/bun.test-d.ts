@@ -41,5 +41,3 @@ import * as tsd from "tsd";
     env: { ...process.env, dummy: "" },
   });
 }
-
-// new WebSocket();

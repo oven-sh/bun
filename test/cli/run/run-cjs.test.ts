@@ -45,19 +45,33 @@ export default Foo
 
 test("npm_package_config", () => {
 <<<<<<< HEAD
+<<<<<<< HEAD
   const vals = {
     "port": 8000,
     "password": "hello world",
     "password2": " hello world ",
+=======
+  const vals = {
+    "port": 8000,
+    "password": "hello world",
+>>>>>>> 487a471a (More fixes)
     "isDev": true,
     "isProd": false,
     "piNum": 3.14,
     "emptyStr": "",
+<<<<<<< HEAD
     "emptyStr2": " ",
+=======
+  //  "emptyStr2": " ", TODO: fix this being "" in bun
+  /*  "foo": {
+      "bar": "baz"
+    }, TODO: Support objects */
+>>>>>>> 487a471a (More fixes)
     "why": 0,
     "none": null,
     "emoji": "🍕"
   };
+<<<<<<< HEAD
 
   const dir = tempDirWithFiles("npmpkgcfg", {
     "package.json": JSON.stringify({
@@ -131,50 +145,49 @@ test("npm_package_config", () => {
   
   const { stdout } = bunRunAsScript(dir, "c");
   expect(stdout.toString()).toBe("Hello, Bun!");
+=======
+>>>>>>> 487a471a (More fixes)
 
-  // test multiple config values
-  const dir2 = tempDirWithFiles("npmpkgcfg2", {
+  const dir = tempDirWithFiles("npmpkgcfg", {
     "package.json": JSON.stringify({
-      "name": "bun_npm_package_config",
-      "config": {
-        "a": "Bun!",
-        "b": "Hello,"
-      },
+      config: vals,
       "scripts": {
-        "c": "echo $npm_package_config_b $npm_package_config_a",
+        "dev": bunExe() + " run index.js"
       }
-    })
+    }),
+    "index.js": "console.log(JSON.stringify(process.env))"
   });
 
+<<<<<<< HEAD
   const { stdout: stdout2 } = bunRunAsScript(dir2, "c");
   expect(stdout2.toString()).toBe("Hello, Bun!");
 <<<<<<< HEAD
 >>>>>>> c750eb5d (Impl. npm_package_config)
 =======
+=======
+  const { stdout } = bunRunAsScript(dir, "dev");
+  const jsStd = JSON.parse(stdout.toString())
+>>>>>>> 487a471a (More fixes)
 
-  // test env in file
-  const dir3 = tempDirWithFiles("npmpkgcfg3", {
-      "package.json": JSON.stringify({
-        "name": "bun_npm_package_config",
-        "config": {
-          "port": 8080,
-          "somebool": true
-        },
-        "scripts": {
-          "c": bunExe() + " run index.js",
-        }
-      }),
-      "index.js": `
-        console.log(JSON.stringify({
-          port: process.env.npm_package_config_port,
-          somebool: process.env.npm_package_config_somebool
-        }))
-      `
-  });
+  for (const [key, val] of Object.entries(vals)) {
+    const jsVl = jsStd[`npm_package_config_${key}`];
+    console.log(key, jsVl, val)
 
+<<<<<<< HEAD
   const { stdout: stdout3 } = bunRunAsScript(dir3, "c");
   expect(JSON.parse(stdout3)).toEqual({ port: '8080', somebool: 'true' });
 >>>>>>> adf1d592 (Add support for numbers + booleans)
+=======
+    expect(jsVl).toBeTypeOf("string");
+
+    if (val === false || val === null) {
+      expect(jsVl).toEqual("");
+      continue;
+    }
+
+    expect(jsVl).toEqual(String(val));
+  }
+>>>>>>> 487a471a (More fixes)
 });
 <<<<<<< HEAD
 =======

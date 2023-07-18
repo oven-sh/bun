@@ -1042,20 +1042,27 @@ pub const PackageJSON = struct {
                             // TODO: https://github.com/oven-sh/bun/pull/3661#discussion_r1265966897
                             switch (prop.value.?.data) {
                                 .e_string => {
-                                    const value = prop.value.?.asString(allocator) orelse continue;
-                                    if (!(value.len > 0)) continue;
+                                    const value = prop.value.?.data.asString();
                                     package_json.npm_cfg_map.put(key, value) catch unreachable;
                                 },
                                 .e_number => {
-                                    if (prop.value.?.data.e_number.toStringSafely(allocator)) |value| {
+                                    if (prop.value.?.data.e_number.toStringSafelyWithDecimalPlaces(allocator)) |value| {
                                         if (!(value.len > 0)) continue;
                                         package_json.npm_cfg_map.put(key, value) catch unreachable;
                                     }
                                 },
                                 .e_boolean => {
                                     const value = prop.value.?.asBool() orelse continue;
-                                    const valueAsStr = std.fmt.allocPrint(allocator, "{}", .{value}) catch unreachable;
-                                    package_json.npm_cfg_map.put(key, valueAsStr) catch unreachable;
+                                    if (value) {
+                                        package_json.npm_cfg_map.put(key, "true") catch unreachable;
+                                    } else {
+                                        // Node.js interprets false as a empty string
+                                        package_json.npm_cfg_map.put(key, "") catch unreachable;
+                                    }
+                                },
+                                .e_null => {
+                                    // Node.js interprets null as a empty string
+                                    package_json.npm_cfg_map.put(key, "") catch unreachable;
                                 },
                                 else => {
                                     r.log.addWarning(&json_source, prop.value.?.loc, "Values of \"config\" must be either a boolean, number or string") catch unreachable;

@@ -54,6 +54,8 @@ worker.addEventListener("open", () => {
 });
 ```
 
+Messages are automatically enqueued until the worker is ready, so there is no need to wait for the `"open"` event to send messages.
+
 ## Messages with `postMessage`
 
 To send messages, use [`worker.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Worker/postMessage) and [`self.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage). This leverages the [HTML Structured Clone Algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm).

@@ -71,4 +71,27 @@ test("npm_package_config", () => {
 
   const { stdout: stdout2 } = bunRunAsScript(dir2, "c");
   expect(stdout2.toString()).toBe("Hello, Bun!");
+
+  // test env in file
+  const dir3 = tempDirWithFiles("npmpkgcfg3", {
+      "package.json": JSON.stringify({
+        "name": "bun_npm_package_config",
+        "config": {
+          "port": 8080,
+          "somebool": true
+        },
+        "scripts": {
+          "c": bunExe() + " run index.js",
+        }
+      }),
+      "index.js": `
+        console.log(JSON.stringify({
+          port: process.env.npm_package_config_port,
+          somebool: process.env.npm_package_config_somebool
+        }))
+      `
+  });
+
+  const { stdout: stdout3 } = bunRunAsScript(dir3, "c");
+  expect(JSON.parse(stdout3)).toEqual({ port: '8080', somebool: 'true' });
 });

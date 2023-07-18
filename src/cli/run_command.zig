@@ -245,7 +245,7 @@ pub const RunCommand = struct {
 
             const prefixed_key = try allocator.dupe(u8, buf.items);
             errdefer allocator.free(prefixed_key);
-            try env.map.map.putNoClobber(prefixed_key, value);
+            try env.map.put(prefixed_key, value);
         }
     }
     pub fn runPackageScript(

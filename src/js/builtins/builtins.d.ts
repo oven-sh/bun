@@ -199,7 +199,7 @@ declare const $AsyncGeneratorSuspendReasonYield: TODO;
 declare const $AsyncGeneratorSuspendReasonAwait: TODO;
 declare const $AsyncGeneratorSuspendReasonNone: TODO;
 declare const $abstractModuleRecordFieldState: TODO;
-declare const $asyncContext: InternalFieldObject<[Array<any> | undefined]>;
+declare const $asyncContext: InternalFieldObject<[ReadonlyArray<any> | undefined]>;
 
 // We define our intrinsics in ./BunBuiltinNames.h. Some of those are globals.
 

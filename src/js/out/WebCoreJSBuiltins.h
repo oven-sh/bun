@@ -4776,7 +4776,7 @@ extern const JSC::ConstructorKind s_readableStreamLazyAsyncIteratorCodeConstruct
 extern const JSC::ImplementationVisibility s_readableStreamLazyAsyncIteratorCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_READABLESTREAM_BUILTIN_DATA(macro) \
-    macro(initializeReadableStream, readableStreamInitializeReadableStream, 2) \
+    macro(initializeReadableStream, readableStreamInitializeReadableStream, 3) \
     macro(readableStreamToArray, readableStreamReadableStreamToArray, 1) \
     macro(readableStreamToText, readableStreamReadableStreamToText, 1) \
     macro(readableStreamToArrayBuffer, readableStreamReadableStreamToArrayBuffer, 1) \

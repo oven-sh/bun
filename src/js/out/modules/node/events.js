@@ -327,10 +327,23 @@ class AbortError extends Error {
     this.code = "ABORT_ERR", this.name = "AbortError";
   }
 }
+var AsyncResource = null;
 
 class EventEmitterAsyncResource extends EventEmitter {
-  constructor(options = void 0) {
-    throwNotImplemented("EventEmitterAsyncResource", 1832);
+  triggerAsyncId;
+  asyncResource;
+  constructor(options) {
+    if (!AsyncResource)
+      AsyncResource = import.meta.require("async_hooks").AsyncResource;
+    var { captureRejections = !1, triggerAsyncId, name = new.target.name, requireManualDestroy } = options || {};
+    super({ captureRejections });
+    this.triggerAsyncId = triggerAsyncId ?? 0, this.asyncResource = new AsyncResource(name, { triggerAsyncId, requireManualDestroy });
+  }
+  emit(...args) {
+    this.asyncResource.runInAsyncScope(() => super.emit(...args));
+  }
+  emitDestroy() {
+    this.asyncResource.emitDestroy();
   }
 }
 var usingDomains = !1;

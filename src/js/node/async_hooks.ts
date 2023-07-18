@@ -1,4 +1,26 @@
 // Hardcoded module "node:async_hooks"
+// Bun is only going to implement AsyncLocalStorage and AsyncResource (partial).
+// The other functions are deprecated anyways, and would impact performance too much.
+// API: https://nodejs.org/api/async_hooks.html
+//
+// JSC has been patched to include a special global variable $asyncContext which is set to
+// a constant InternalFieldTuple<[AsyncContextFrame, never]>. `get` and `set` read/write to the
+// first element of this tuple. Inside of PromiseOperations.js, we "snapshot" the context (store it
+// in the promise reaction) and then just before we call .then, we restore it.
+//
+// This means context tracking is *kind-of* manual. If we recieve a callback in native code
+// - In Zig, call jsValue.snapshotAsyncContext(); which returns another JSValue. Store that and
+//   then run .call() on it later.
+// - In C++, call AsyncBoundFunction::snapshotAsyncContext(jsValue). Then to call it,
+//   use AsyncBoundFunction:: call(...) instead of JSC:: call.
+//
+// The above functions will return the same JSFunction if the context is empty, and there are many
+// other checks to ensure that AsyncLocalStorage has virtually no impact on performance when not in
+// use. But the nature of this approach makes the implementation *itself* very low-impact on performance.
+//
+// AsyncContextFrame is an immutable array managed in here, formatted [key, value, key, value] where
+// each key is an AsyncLocalStorage object and the value is the associated value.
+//
 const { get, set } = $lazy("async_hooks");
 
 class AsyncLocalStorage {
@@ -6,13 +28,12 @@ class AsyncLocalStorage {
 
   constructor() {}
 
-  static bind(fn) {
-    return this.snapshot().bind(fn);
+  static bind(fn, ...args: any) {
+    return this.snapshot().bind(null, fn, ...args);
   }
 
   static snapshot() {
     var context = get();
-    if (context) context = context.slice();
     return (fn, ...args) => {
       var prev = get();
       set(context);
@@ -26,14 +47,32 @@ class AsyncLocalStorage {
     };
   }
 
-  enterWith(store) {}
+  // enterWith should be considered deprecated. It's a bad API
+  // with .run() the state is always going to be reset, but this explicitly does not do such.
+  enterWith(store) {
+    var context = get();
+    if (!context) {
+      set([this, store]);
+      return;
+    }
+    var { length } = context;
+    for (var i = 0; i < length; i += 2) {
+      if (context[i] === this) {
+        const clone = context.slice();
+        clone[i + 1] = store;
+        set(clone);
+        return;
+      }
+    }
+    set(context.concat(this, store));
+  }
 
   exit(cb, ...args) {
     return this.run(undefined, cb, ...args);
   }
 
   run(store, callback, ...args) {
-    var context = get();
+    var context = get() as any[]; // we make sure to .slice() before mutating
     var hasPrevious = false;
     var previous;
     var i;
@@ -42,6 +81,7 @@ class AsyncLocalStorage {
       i = 0;
       set((context = [this, store]));
     } else {
+      // it's safe to mutate context now that it was cloned
       context = context!.slice();
       var length = context.length;
       for (i = 0; i < length; i += 2) {
@@ -62,11 +102,13 @@ class AsyncLocalStorage {
     } catch (e) {
       throw e;
     } finally {
-      var context2 = get()!;
+      // Note: early `return` will prevent `throw` above from working. I think...
+      // Set AsyncContextFrame to undefined if we are out of context values
+      var context2 = get()! as any[];
       if (context2 === context && contextWasInit) {
         set(undefined);
       } else {
-        context2 = context2.slice();
+        context2 = context2.slice(); // array is cloned here
         if (hasPrevious) {
           context2[i + 1] = previous;
           set(context2);
@@ -79,8 +121,21 @@ class AsyncLocalStorage {
   }
 
   disable() {
-    // // TODO: i dont think this will work correctly
-    // this.#disableCalled = true;
+    if (!this.#disableCalled) {
+      var context = get() as any[];
+      if (context) {
+        var { length } = context;
+        for (var i = 0; i < length; i += 2) {
+          if (context[i] === this) {
+            context = context.slice();
+            context.splice(i, 2);
+            set(context.length ? context : undefined);
+            break;
+          }
+        }
+      }
+      this.#disableCalled = true;
+    }
   }
 
   getStore() {
@@ -93,104 +148,38 @@ class AsyncLocalStorage {
   }
 }
 
-// class AsyncResource {
-//   type;
-//   #ctx;
+class AsyncResource {
+  type;
+  #snapshot;
 
-//   constructor(type, options) {
-//     if (typeof type !== "string") {
-//       throw new TypeError('The "type" argument must be of type string. Received type ' + typeof type);
-//     }
-//     this.type = type;
-//     this.#ctx = copyContext();
-//   }
+  constructor(type, options) {
+    if (typeof type !== "string") {
+      throw new TypeError('The "type" argument must be of type string. Received type ' + typeof type);
+    }
+    this.type = type;
+    this.#snapshot = AsyncLocalStorage.snapshot();
+  }
 
-//   emitBefore() {
-//     return true;
-//   }
+  emitBefore() {
+    return true;
+  }
 
-//   emitAfter() {
-//     return true;
-//   }
+  emitAfter() {
+    return true;
+  }
 
-//   asyncId() {
-//     return 0;
-//   }
+  asyncId() {
+    return 0;
+  }
 
-//   triggerAsyncId() {
-//     return 0;
-//   }
+  triggerAsyncId() {
+    return 0;
+  }
 
-//   emitDestroy() {}
+  emitDestroy() {}
 
-//   runInAsyncScope(fn, ...args) {
-//     runWithContext(this.#ctx, fn, ...args);
-//   }
-// }
-
-// todo move this into global scope/native code
-// stage 2 proposal: https://github.com/tc39/proposal-async-context
-// export class AsyncContext {
-//   static wrap(fn) {
-//     const ctx = copyContext();
-//     return (...args) => runWithContext(ctx, fn, ...args);
-//   }
-
-//   constructor(options) {
-//     var { name = "AsyncContext", defaultValue } = options || {};
-//     this.#name = String(name);
-//     this.#defaultValue = defaultValue;
-//   }
-
-//   get name() {
-//     return this.#name;
-//   }
-
-//   run(fn, ...args) {
-//     var context = getContextInit();
-//     var hasPrevious = context.has(this);
-//     var previous = hasPrevious ? context.get(this) : undefined;
-//     context.set(this, store);
-//     try {
-//       return fn(...args);
-//     } catch (e) {
-//       throw e;
-//     } finally {
-//       if (hasPrevious) {
-//         context.set(this, previous);
-//       } else {
-//         context.delete(this);
-//       }
-//     }
-//   }
-
-//   get() {
-//     const context = getContext();
-//     if (!context) return this.#defaultValue;
-//     return context.has(this) ? context.get(this) : this.#defaultValue;
-//   }
-// }
-
-// todo move this into events
-// class EventEmitterAsyncResource extends EventEmitter {
-//   triggerAsyncId;
-//   asyncResource;
-
-//   constructor(options) {
-//     var { captureRejections = false, triggerAsyncId, name = new.target.name, requireManualDestroy } = options || {};
-//     super({ captureRejections });
-//     this.triggerAsyncId = triggerAsyncId ?? 0;
-//     this.asyncResource = new AsyncResource(name, { triggerAsyncId, requireManualDestroy });
-//   }
-
-//   emit(...args) {
-//     this.asyncResource.runInAsyncScope(() => super.emit(...args));
-//   }
-
-//   emitDestroy() {
-//     this.asyncResource.emitDestroy();
-//   }
-// }
+  runInAsyncScope(fn, ...args) {}
+}
 
 // The rest of async_hooks is not implemented and is stubbed with no-ops and warnings.
 
@@ -230,11 +219,12 @@ function triggerAsyncId() {
   return 0;
 }
 
-const executionAsyncResourceWarning = createWarning("async_hooks.executionAsyncResource is not implemented in Bun.");
-const stubAsyncResource = {};
+const executionAsyncResourceWarning = createWarning(
+  "async_hooks.executionAsyncResource is not implemented in Bun. It returns a reference to process.stdin every time.",
+);
 function executionAsyncResource() {
   executionAsyncResourceWarning();
-  return stubAsyncResource;
+  return process.stdin;
 }
 
 const asyncWrapProviders = {

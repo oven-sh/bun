@@ -134,8 +134,18 @@ export function setupReadableStreamDefaultController(
     $isReadableStream,
   );
 
+  var asyncContext = stream.$asyncContext;
   const pullAlgorithm = () => $promiseInvokeOrNoopMethod(underlyingSource, pullMethod, [controller]);
-  const cancelAlgorithm = reason => $promiseInvokeOrNoopMethod(underlyingSource, cancelMethod, [reason]);
+  const cancelAlgorithm = asyncContext
+    ? reason => {
+        var prev = $getInternalField($asyncContext, 0);
+        $putInternalField($asyncContext, 0, asyncContext);
+        // this does not throw, but can returns a rejected promise
+        var result = $promiseInvokeOrNoopMethod(underlyingSource, cancelMethod, [reason]);
+        $putInternalField($asyncContext, 0, prev);
+        return result;
+      }
+    : reason => $promiseInvokeOrNoopMethod(underlyingSource, cancelMethod, [reason]);
 
   $putByIdDirectPrivate(controller, "pullAlgorithm", pullAlgorithm);
   $putByIdDirectPrivate(controller, "cancelAlgorithm", cancelAlgorithm);
@@ -645,7 +655,7 @@ export function readDirectStream(stream, sink, underlyingSource) {
     highWaterMark: !highWaterMark || highWaterMark < 64 ? 64 : highWaterMark,
   });
 
-  $startDirectStream.$call(sink, stream, underlyingSource.pull, close);
+  $startDirectStream.$call(sink, stream, underlyingSource.pull, close, stream.$asyncContext);
   $putByIdDirectPrivate(stream, "reader", {});
 
   var maybePromise = underlyingSource.pull(sink);
@@ -692,7 +702,13 @@ export async function readStreamIntoSink(stream, sink, isNative) {
     var wroteCount = many.value.length;
     const highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark");
     if (isNative)
-      $startDirectStream.$call(sink, stream, undefined, () => !didThrow && $markPromiseAsHandled(stream.cancel()));
+      $startDirectStream.$call(
+        sink,
+        stream,
+        undefined,
+        () => !didThrow && $markPromiseAsHandled(stream.cancel()),
+        stream.$asyncContext,
+      );
 
     sink.start({ highWaterMark: highWaterMark || 0 });
 

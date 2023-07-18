@@ -1,28 +1,39 @@
+// https://github.com/nodejs/node/issues/34493
 import { AsyncLocalStorage } from "async_hooks";
-import { bench, run } from "mitata";
+const asyncLocalStorage = new AsyncLocalStorage();
 
-bench("new AsyncLocalStorage()", () => {
-  new AsyncLocalStorage();
+let fn = () =>
+  new Promise(resolve =>
+    setTimeout(() => {
+      if (asyncLocalStorage.getStore() !== 123) {
+        console.log("error", asyncLocalStorage.getStore());
+        process.exit(1);
+      }
+      console.log("pass");
+      resolve();
+    }, 2),
+  );
+
+let runWithExpiry = async (expiry, fn) => {
+  let iterations = 0;
+  while (Date.now() < expiry) {
+    await fn();
+    iterations++;
+  }
+  return iterations;
+};
+
+// console.log(`Performed ${await runWithExpiry(Date.now() + 10000, fn)} iterations to warmup`);
+
+// let withoutAls = await runWithExpiry(Date.now() + 10000, fn);
+// console.log(`Performed ${withoutAls} iterations (with ALS disabled)`);
+
+let withAls;
+await asyncLocalStorage.run(123, async () => {
+  withAls = await runWithExpiry(Date.now() + 10000, fn);
+  console.log(`Performed ${withAls} iterations (with ALS enabled)`);
 });
 
-const storage = new AsyncLocalStorage();
-bench("storage.run()", () => {
-  storage.run(1, () => {});
-});
+asyncLocalStorage.disable();
 
-bench("storage.run() + storage.getStore()", async () => {
-  await storage.run(1, async () => {
-    for (let i = 0; i < 1000; i++) {
-      await Promise.resolve(2).then(() => 1);
-      storage.getStore();
-    }
-  });
-});
-
-// bench("await Promise.resolve().then(() => 1) * 1000", async () => {
-//   for (let i = 0; i < 1000; i++) {
-//     await Promise.resolve().then(() => 1);
-//   }
-// });
-
-await run();
+console.log("ALS penalty: " + Math.round((1 - withAls / withoutAls) * 10000) / 100 + "%");

@@ -1093,7 +1093,7 @@ release-bin-dir:
 
 .PHONY: dev-obj
 dev-obj:
-	$(ZIG) build obj -freference-trace -Dcpu="$(CPU_TARGET)"
+	bun .scripts/make-dev-timer.ts $(ZIG) build obj -freference-trace -Dcpu="$(CPU_TARGET)"
 
 .PHONY: dev-obj-linux
 dev-obj-linux:
@@ -1185,7 +1185,7 @@ jsc-build-mac-compile:
 			-DPORT="JSCOnly" \
 			-DENABLE_STATIC_JSC=ON \
 			-DENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE=ON \
-			-DCMAKE_BUILD_TYPE=relwithdebuginfo \
+			-DCMAKE_BUILD_TYPE=Release \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DBUN_FAST_TLS=ON \
 			-DENABLE_FTL_JIT=ON \
@@ -1252,7 +1252,7 @@ jsc-build-linux-compile-config:
 		cmake \
 			-DPORT="JSCOnly" \
 			-DENABLE_STATIC_JSC=ON \
-			-DCMAKE_BUILD_TYPE=relwithdebuginfo \
+			-DCMAKE_BUILD_TYPE=Release \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DENABLE_FTL_JIT=ON \
 			-DENABLE_REMOTE_INSPECTOR=ON \

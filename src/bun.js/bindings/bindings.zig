@@ -4882,12 +4882,12 @@ pub const JSValue = enum(JSValueReprInt) {
     // - It is safe to run .call() on the resulting JSValue. This includes automatic unwrapping.
     // - Do not pass the callback as-is to JS; The wrapped object is NOT a function.
     // - If passed to C++, call it with AsyncBoundFunction::call() instead of JSC::call()
-    pub fn snapshotAsyncCallback(this: JSValue, global: *JSGlobalObject) JSValue {
-        return AsyncBoundFunction__snapshotCallback(global, this);
+    pub inline fn snapshotAsyncCallback(this: JSValue, global: *JSGlobalObject) JSValue {
+        return AsyncBoundFunction__snapshotAsyncCallback(global, this);
     }
 };
 
-extern "c" fn AsyncBoundFunction__snapshotCallback(global: *JSGlobalObject, callback: JSValue) JSValue;
+extern "c" fn AsyncBoundFunction__snapshotAsyncCallback(global: *JSGlobalObject, callback: JSValue) JSValue;
 
 extern "c" fn Microtask__run(*Microtask, *JSGlobalObject) void;
 extern "c" fn Microtask__run_default(*MicrotaskForDefaultGlobalObject, *JSGlobalObject) void;

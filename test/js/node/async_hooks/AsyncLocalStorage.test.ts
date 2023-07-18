@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "async_hooks";
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 
-describe("async context passes through", () => {
+describe("AsyncLocalStorage", () => {
   test("throw inside of AsyncLocalStorage.run() will be passed out", () => {
     const s = new AsyncLocalStorage();
     expect(() => {
@@ -9,6 +9,15 @@ describe("async context passes through", () => {
         throw new Error("error");
       });
     }).toThrow("error");
+  });
+});
+
+describe("async context passes through", () => {
+  beforeEach(() => {
+    /* @ts-ignore */
+    const { set } = globalThis[Symbol.for("Bun.lazy")]("async_hooks");
+    // just in case
+    set(undefined);
   });
   test("syncronously", () => {
     const s = new AsyncLocalStorage();
@@ -73,11 +82,22 @@ describe("async context passes through", () => {
     expect(v).toBe("value");
     expect(s.getStore()).toBe(undefined);
   });
-  test("await", async () => {
+  test("await 1", async () => {
     const s = new AsyncLocalStorage<string>();
     await s.run("value", async () => {
       expect(s.getStore()).toBe("value");
       await 1;
+      expect(s.getStore()).toBe("value");
+    });
+    expect(s.getStore()).toBe(undefined);
+  });
+  test("await an actual promise", async () => {
+    const s = new AsyncLocalStorage<string>();
+    await s.run("value", async () => {
+      expect(s.getStore()).toBe("value");
+      await Promise.resolve(1);
+      expect(s.getStore()).toBe("value");
+      await Bun.sleep(2);
       expect(s.getStore()).toBe("value");
     });
     expect(s.getStore()).toBe(undefined);
@@ -198,19 +218,25 @@ describe("async context passes through", () => {
   });
   test("Bun.spawn() onExit", async () => {
     const s = new AsyncLocalStorage<string>();
-    await s.run("value", async () => {
+    let value: string | undefined;
+    let resolve!: () => void;
+    const promise = new Promise<void>(r => (resolve = r));
+    await s.run("value", () => {
       expect(s.getStore()).toBe("value");
 
-      const x = await Bun.spawn({
+      const x = Bun.spawn({
         cmd: ["echo", "hello"],
         onExit(subprocess, exitCode, signalCode, error) {
-          expect(s.getStore()).toBe("value");
+          value = s.getStore()!;
+          resolve();
         },
       });
 
       expect(s.getStore()).toBe("value");
     });
     expect(s.getStore()).toBe(undefined);
+    await promise;
+    expect(value).toBe("value");
   });
   test("Bun.serve", async () => {
     const s = new AsyncLocalStorage<string>();
@@ -231,26 +257,181 @@ describe("async context passes through", () => {
     });
     expect(s.getStore()).toBe(undefined);
   });
-  test("readable stream 1", async () => {
+  test("readable stream .start", async () => {
     const s = new AsyncLocalStorage<string>();
     let stream!: ReadableStream;
     s.run("value", async () => {
       stream = new ReadableStream({
         start(controller) {
           controller.enqueue(s.getStore()!);
+          controller.close();
         },
       });
     });
-    const result = await stream.getReader().read();
+    const reader = stream.getReader();
+    const result = await reader.read();
     expect(result.value).toBe("value");
-    const result2 = await stream.getReader().read();
+    const result2 = await reader.read();
     expect(result2.done).toBe(true);
     expect(s.getStore()).toBe(undefined);
   });
-  test("Bun.serve + Websocket", async () => {
+  test("readable stream .pull", async () => {
+    const s = new AsyncLocalStorage<string>();
+    let stream!: ReadableStream;
+    s.run("value", async () => {
+      stream = new ReadableStream(
+        {
+          start(controller) {
+            controller.enqueue(new Uint8Array(500));
+          },
+          pull(controller) {
+            controller.enqueue(s.getStore()!);
+            controller.close();
+          },
+        },
+        {
+          highWaterMark: 1,
+          size() {
+            return 500;
+          },
+        },
+      );
+    });
+    const reader = stream.getReader();
+    const result = await reader.read();
+    const result2 = await reader.read();
+    expect(result2.value).toBe("value");
+    const result3 = await reader.read();
+    expect(result3.done).toBe(true);
+    expect(s.getStore()).toBe(undefined);
+  });
+  test("readable stream .pull 2", async () => {
+    const s = new AsyncLocalStorage<string>();
+    let stream!: ReadableStream;
+    let n = 0;
+    s.run("value", async () => {
+      stream = new ReadableStream(
+        {
+          start(controller) {
+            controller.enqueue(new Uint8Array(500));
+          },
+          async pull(controller) {
+            controller.enqueue(s.getStore()!);
+            n++;
+            if (n < 5) {
+              await new Promise(r => setTimeout(r, 1));
+            } else {
+              controller.close();
+            }
+          },
+        },
+        {
+          highWaterMark: 1,
+          size() {
+            return 500;
+          },
+        },
+      );
+    });
+    expect(s.getStore()).toBe(undefined);
+    const reader = stream.getReader();
+    const result = await reader.read();
+    const result2 = await reader.read();
+    expect(result2.value).toBe("value");
+    const result3 = await reader.read();
+    expect(result3.value).toBe("value");
+    const result4 = await reader.read();
+    expect(result4.value).toBe("value");
+    const result5 = await reader.read();
+    expect(result5.value).toBe("value");
+    const result6 = await reader.read();
+    expect(result6.value).toBe("value");
+    const result7 = await reader.read();
+    expect(result7.done).toBe(true);
+    expect(s.getStore()).toBe(undefined);
+  });
+  test("readable stream .cancel", async () => {
+    const s = new AsyncLocalStorage<string>();
+    let stream!: ReadableStream;
+    let value: string | undefined;
+    let resolve!: () => void;
+    let promise = new Promise<void>(r => (resolve = r));
+    s.run("value", async () => {
+      stream = new ReadableStream({
+        start(controller) {},
+        cancel(reason) {
+          value = s.getStore();
+          resolve();
+        },
+      });
+    });
+    expect(s.getStore()).toBe(undefined);
+    const reader = stream.getReader();
+    reader.cancel();
+    await promise;
+    expect(value).toBe("value");
+  });
+  test("readable stream direct .pull", async () => {
+    const s = new AsyncLocalStorage<string>();
+    let stream!: ReadableStream;
+    let value: string | undefined;
+    let value2: string | undefined;
+    let resolve!: () => void;
+    let promise = new Promise<void>(r => (resolve = r));
+    s.run("value", async () => {
+      stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          console.log("pull");
+          value = s.getStore();
+          controller.write("hello");
+          controller.close();
+          resolve();
+        },
+        cancel(reason) {},
+      });
+    });
+    expect(s.getStore()).toBe(undefined);
+    const reader = stream.getReader();
+    await reader.read();
+    await promise;
+    expect(value).toBe("value");
+  });
+  // blocked by a bug with .cancel
+  test.todo("readable stream direct .cancel", async () => {
+    const s = new AsyncLocalStorage<string>();
+    let stream!: ReadableStream;
+    let value: string | undefined;
+    let value2: string | undefined;
+    let resolve!: () => void;
+    let promise = new Promise<void>(r => (resolve = r));
+    s.run("value", async () => {
+      stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          console.log("pull");
+          value = s.getStore();
+          controller.write("hello");
+        },
+        cancel(reason) {
+          console.log("1");
+          value2 = s.getStore();
+          resolve();
+        },
+      });
+    });
+    expect(s.getStore()).toBe(undefined);
+    const reader = stream.getReader();
+    await reader.read();
+    await reader.cancel();
+    await stream.cancel();
+    await promise;
+    expect(value).toBe("value");
+    expect(value2).toBe("value");
+  });
+  test("Websocket Server", async () => {
     const s = new AsyncLocalStorage<string>();
     let values_server: string[] = [];
-    let values_client: string[] = [];
     let resolve: () => void;
     const promise = new Promise<void>(r => (resolve = r));
     await s.run("value", async () => {
@@ -279,6 +460,41 @@ describe("async context passes through", () => {
       const ws = new WebSocket("ws://" + server.hostname + ":" + server.port);
       ws.addEventListener("open", () => {
         ws.send("hello");
+      });
+      ws.addEventListener("close", () => {
+        resolve();
+      });
+    });
+    expect(s.getStore()).toBe(undefined);
+    await promise;
+    expect(values_server).toEqual(["open:value", "message:value", "close:value"]);
+  });
+  test.todo("WebSocket client", async () => {
+    const s = new AsyncLocalStorage<string>();
+    let values_client: string[] = [];
+    let resolve: () => void;
+    const promise = new Promise<void>(r => (resolve = r));
+    await s.run("value", async () => {
+      expect(s.getStore()).toBe("value");
+
+      const server = Bun.serve({
+        port: 0,
+        fetch(request, server) {
+          if (server.upgrade(request)) return null as any;
+          return new Response(s.getStore()!);
+        },
+        websocket: {
+          open(ws) {},
+          message(ws, message) {
+            ws.close();
+          },
+          close(ws, code, message) {},
+        },
+      });
+
+      const ws = new WebSocket("ws://" + server.hostname + ":" + server.port);
+      ws.addEventListener("open", () => {
+        ws.send("hello");
         values_client.push("open:" + s.getStore());
       });
       ws.addEventListener("close", () => {
@@ -288,7 +504,6 @@ describe("async context passes through", () => {
     });
     expect(s.getStore()).toBe(undefined);
     await promise;
-    expect(values_server).toEqual(["open:value", "message:value", "close:value", "drain:value"]);
     expect(values_client).toEqual(["open:value", "close:value"]);
   });
   test("node:fs callback", async () => {

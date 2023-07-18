@@ -19,20 +19,18 @@ var createWarning = function(message) {
 }, triggerAsyncId = function() {
   return 0;
 }, executionAsyncResource = function() {
-  return executionAsyncResourceWarning(), stubAsyncResource;
+  return executionAsyncResourceWarning(), process.stdin;
 }, { get, set } = globalThis[Symbol.for("Bun.lazy")]("async_hooks");
 
 class AsyncLocalStorage {
   #disableCalled = !1;
   constructor() {
   }
-  static bind(fn) {
-    return this.snapshot().bind(fn);
+  static bind(fn, ...args) {
+    return this.snapshot().bind(null, fn, ...args);
   }
   static snapshot() {
     var context = get();
-    if (context)
-      context = context.slice();
     return (fn, ...args) => {
       var prev = get();
       set(context);
@@ -46,6 +44,19 @@ class AsyncLocalStorage {
     };
   }
   enterWith(store) {
+    var context = get();
+    if (!context) {
+      set([this, store]);
+      return;
+    }
+    var { length } = context;
+    for (var i = 0;i < length; i += 2)
+      if (context[i] === this) {
+        const clone = context.slice();
+        clone[i + 1] = store, set(clone);
+        return;
+      }
+    set(context.concat(this, store));
   }
   exit(cb, ...args) {
     return this.run(void 0, cb, ...args);
@@ -81,6 +92,18 @@ class AsyncLocalStorage {
     }
   }
   disable() {
+    if (!this.#disableCalled) {
+      var context = get();
+      if (context) {
+        var { length } = context;
+        for (var i = 0;i < length; i += 2)
+          if (context[i] === this) {
+            context = context.slice(), context.splice(i, 2), set(context.length ? context : void 0);
+            break;
+          }
+      }
+      this.#disableCalled = !0;
+    }
   }
   getStore() {
     var context = get();
@@ -92,7 +115,33 @@ class AsyncLocalStorage {
         return context[i + 1];
   }
 }
-var createHookNotImpl = createWarning("async_hooks.createHook is not implemented in Bun. Hooks can still be created but will never be called."), executionAsyncIdNotImpl = createWarning("async_hooks.executionAsyncId/triggerAsyncId are not implemented in Bun. It returns 0 every time."), executionAsyncResourceWarning = createWarning("async_hooks.executionAsyncResource is not implemented in Bun."), stubAsyncResource = {}, asyncWrapProviders = {
+
+class AsyncResource {
+  type;
+  #snapshot;
+  constructor(type, options) {
+    if (typeof type !== "string")
+      throw new TypeError('The "type" argument must be of type string. Received type ' + typeof type);
+    this.type = type, this.#snapshot = AsyncLocalStorage.snapshot();
+  }
+  emitBefore() {
+    return !0;
+  }
+  emitAfter() {
+    return !0;
+  }
+  asyncId() {
+    return 0;
+  }
+  triggerAsyncId() {
+    return 0;
+  }
+  emitDestroy() {
+  }
+  runInAsyncScope(fn, ...args) {
+  }
+}
+var createHookNotImpl = createWarning("async_hooks.createHook is not implemented in Bun. Hooks can still be created but will never be called."), executionAsyncIdNotImpl = createWarning("async_hooks.executionAsyncId/triggerAsyncId are not implemented in Bun. It returns 0 every time."), executionAsyncResourceWarning = createWarning("async_hooks.executionAsyncResource is not implemented in Bun. It returns a reference to process.stdin every time."), asyncWrapProviders = {
   NONE: 0,
   DIRHANDLE: 1,
   DNSCHANNEL: 2,

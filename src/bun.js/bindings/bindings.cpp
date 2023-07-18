@@ -96,7 +96,7 @@
 #include "JSURLSearchParams.h"
 
 #include "AsyncBoundFunction.h"
-#include "JavaScriptCore/AsyncContextData.h"
+#include "JavaScriptCore/InternalFieldTuple.h"
 
 template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
@@ -1751,12 +1751,12 @@ extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSC_
     JSC::JSValue jsThisObject = JSValue::decode(thisObject);
 
     JSValue restoreAsyncContext;
-    AsyncContextData* asyncContextData = nullptr;
-    if (auto* wrapper = jsDynamicCast<Bun::AsyncBoundFunction*>(jsObject)) {
+    InternalFieldTuple* asyncContextData = nullptr;
+    if (auto* wrapper = jsDynamicCast<AsyncBoundFunction*>(jsObject)) {
         jsObject = jsCast<JSC::JSObject*>(wrapper->callback.get());
         asyncContextData = globalObject->m_asyncContextData.get();
-        restoreAsyncContext = asyncContextData->internalValue();
-        asyncContextData->setInternalValue(vm, wrapper->context.get());
+        restoreAsyncContext = asyncContextData->getInternalField(0);
+        asyncContextData->putInternalField(vm, 0, wrapper->context.get());
     }
 
     if (!jsThisObject)
@@ -1774,11 +1774,7 @@ extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSC_
     auto result = JSC::call(globalObject, jsObject, callData, jsThisObject, argList, returnedException);
 
     if (asyncContextData) {
-        asyncContextData->setInternalValue(vm, restoreAsyncContext);
-    }
-
-    if (asyncContextData) {
-        asyncContextData->setInternalValue(vm, restoreAsyncContext);
+        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
     }
 
     if (returnedException.get()) {

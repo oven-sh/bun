@@ -5,6 +5,7 @@
 #include "BunClientData.h"
 
 #include "JavaScriptCore/AggregateError.h"
+#include "JavaScriptCore/InternalFieldTuple.h"
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "JavaScriptCore/CallFrameInlines.h"
 #include "JavaScriptCore/ClassInfo.h"
@@ -1051,9 +1052,10 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
     }
 
     Zig::GlobalObject* global = JSC::jsCast<Zig::GlobalObject*>(globalObject);
+    JSC::JSValue asyncContext = global->m_asyncContextData.get()->getInternalField(0);
 
     // This is a JSC builtin function
-    globalObject->queueMicrotask(global->performMicrotaskFunction(), job, JSC::JSValue {},
+    globalObject->queueMicrotask(global->performMicrotaskFunction(), job, asyncContext,
         JSC::JSValue {}, JSC::JSValue {});
 
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -2851,30 +2853,38 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObj
     JSValue result;
     WTF::NakedPtr<JSC::Exception> exceptionPtr;
 
+    JSValue restoreAsyncContext = {};
+    InternalFieldTuple* asyncContextData = nullptr;
+    auto setAsyncContext = callframe->argument(1);
+    if (!setAsyncContext.isUndefined()) {
+        asyncContextData = globalObject->m_asyncContextData.get();
+        restoreAsyncContext = asyncContextData->getInternalField(0);
+        asyncContextData->putInternalField(vm, 0, setAsyncContext);
+    }
+
     size_t argCount = callframe->argumentCount();
     switch (argCount) {
-    case 1: {
-        break;
-    }
     case 2: {
-        arguments.append(callframe->uncheckedArgument(1));
         break;
     }
     case 3: {
         arguments.append(callframe->uncheckedArgument(1));
-        arguments.append(callframe->uncheckedArgument(2));
         break;
     }
     case 4: {
         arguments.append(callframe->uncheckedArgument(1));
         arguments.append(callframe->uncheckedArgument(2));
-        arguments.append(callframe->uncheckedArgument(3));
+        break;
     }
     default:
         break;
     }
 
     JSC::call(globalObject, job, callData, jsUndefined(), arguments, exceptionPtr);
+
+    if (asyncContextData) {
+        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+    }
 
     if (auto* exception = exceptionPtr.get()) {
         Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
@@ -3471,7 +3481,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_asyncBoundFunctionStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
-            init.set(Bun::AsyncBoundFunction::createStructure(init.vm, init.owner));
+            init.set(AsyncBoundFunction::createStructure(init.vm, init.owner));
         });
 
     m_JSFileSinkClassStructure.initLater(

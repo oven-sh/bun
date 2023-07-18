@@ -112,24 +112,15 @@ us_socket_context_t* ScriptExecutionContext::connectedWebSocketKindClientSSL()
 
 ScriptExecutionContextIdentifier ScriptExecutionContext::generateIdentifier()
 {
-    Locker locker { allScriptExecutionContextsMapLock };
-
-    // ASSERT(allScriptExecutionContextsMap().contains(m_identifier));
-    // allScriptExecutionContextsMap().remove(m_identifier);
-
     return ++lastUniqueIdentifier;
 }
 
 void ScriptExecutionContext::regenerateIdentifier()
 {
-    Locker locker { allScriptExecutionContextsMapLock };
-
-    // ASSERT(allScriptExecutionContextsMap().contains(m_identifier));
-    // allScriptExecutionContextsMap().remove(m_identifier);
 
     m_identifier = ++lastUniqueIdentifier;
 
-    // ASSERT(!allScriptExecutionContextsMap().contains(m_identifier));
+    Locker locker { allScriptExecutionContextsMapLock };
     allScriptExecutionContextsMap().add(m_identifier, this);
 }
 
@@ -137,14 +128,14 @@ void ScriptExecutionContext::addToContextsMap()
 {
     Locker locker { allScriptExecutionContextsMapLock };
     ASSERT(!allScriptExecutionContextsMap().contains(m_identifier));
-    // allScriptExecutionContextsMap().add(m_identifier, this);
+    allScriptExecutionContextsMap().add(m_identifier, this);
 }
 
 void ScriptExecutionContext::removeFromContextsMap()
 {
     Locker locker { allScriptExecutionContextsMapLock };
     ASSERT(allScriptExecutionContextsMap().contains(m_identifier));
-    // allScriptExecutionContextsMap().remove(m_identifier);
+    allScriptExecutionContextsMap().remove(m_identifier);
 }
 
 ScriptExecutionContext* executionContext(JSC::JSGlobalObject* globalObject)

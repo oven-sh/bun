@@ -719,6 +719,7 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
     mockModule = Bun::JSMockModule::create(this);
     m_scriptExecutionContext = context;
     context->setGlobalObject(this);
+    context->addToContextsMap();
 }
 
 GlobalObject::~GlobalObject()
@@ -4472,7 +4473,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     thisObject->visitGeneratedLazyClasses<Visitor>(thisObject, visitor);
     visitor.append(thisObject->m_BunCommonJSModuleValue);
-
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
     ScriptExecutionContext* context = thisObject->scriptExecutionContext();
     visitor.addOpaqueRoot(context);
 }
@@ -4539,6 +4540,29 @@ void GlobalObject::handleRejectedPromises()
 }
 
 DEFINE_VISIT_CHILDREN(GlobalObject);
+
+template<typename Visitor>
+void GlobalObject::visitAdditionalChildren(Visitor& visitor)
+{
+    GlobalObject* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    thisObject->globalEventScope->visitJSEventListeners(visitor);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(GlobalObject);
+
+template<typename Visitor>
+void GlobalObject::visitOutputConstraints(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = jsCast<GlobalObject*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitOutputConstraints(thisObject, visitor);
+    thisObject->visitAdditionalChildren(visitor);
+}
+
+template void GlobalObject::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
+template void GlobalObject::visitOutputConstraints(JSCell*, SlotVisitor&);
 
 // void GlobalObject::destroy(JSCell* cell)
 // {

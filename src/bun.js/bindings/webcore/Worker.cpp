@@ -351,6 +351,11 @@ void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)
 extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker* worker, int32_t exitCode)
 {
     if (globalObject) {
+        auto* ctx = globalObject->scriptExecutionContext();
+        if (ctx) {
+            ctx->removeFromContextsMap();
+        }
+
         auto& vm = globalObject->vm();
 
         if (JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(globalObject->moduleLoader())) {

@@ -72,14 +72,14 @@ To receive messages, use the [`message` event handler](https://developer.mozilla
 
 ```js
 // Worker thread:
-self.addEventListener("message", = event => {
+self.addEventListener("message", event => {
   console.log(event.data);
 });
 // or use the setter:
 // self.onmessage = fn
 
 // if on the main thread
-worker.addEventListener("message", = event => {
+worker.addEventListener("message", event => {
   console.log(event.data);
 });
 // or use the setter:

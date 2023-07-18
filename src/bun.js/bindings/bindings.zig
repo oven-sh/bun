@@ -3473,7 +3473,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return JSC.C.JSObjectCallAsFunctionReturnValue(
             globalThis,
             this,
-            @enumFromInt(JSValue, @bitCast(JSValue.Type, @intFromPtr(globalThis))),
+            @enumFromInt(@as(JSValue.Type, @bitCast(@intFromPtr(globalThis)))),
             args.len,
             @as(?[*]const JSC.C.JSValueRef, @ptrCast(args.ptr)),
         );

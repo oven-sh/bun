@@ -1,4 +1,7 @@
 var createWarning = function(message) {
+  if (process.env.NODE_NO_WARNINGS || process.env.BUN_NO_WARNINGS)
+    return () => {
+    };
   let warned = !1;
   return function() {
     if (warned)
@@ -20,7 +23,7 @@ var createWarning = function(message) {
   return 0;
 }, executionAsyncResource = function() {
   return executionAsyncResourceWarning(), process.stdin;
-}, { get, set } = globalThis[Symbol.for("Bun.lazy")]("async_hooks");
+}, { get, set, cleanupLater } = globalThis[Symbol.for("Bun.lazy")]("async_hooks");
 
 class AsyncLocalStorage {
   #disableCalled = !1;
@@ -44,6 +47,7 @@ class AsyncLocalStorage {
     };
   }
   enterWith(store) {
+    cleanupLater();
     var context = get();
     if (!context) {
       set([this, store]);
@@ -82,13 +86,15 @@ class AsyncLocalStorage {
     } catch (e) {
       throw e;
     } finally {
-      var context2 = get();
-      if (context2 === context && contextWasInit)
-        set(void 0);
-      else if (context2 = context2.slice(), hasPrevious)
-        context2[i + 1] = previous, set(context2);
-      else
-        context2.splice(i, 2), set(context2.length ? context2 : void 0);
+      if (!this.#disableCalled) {
+        var context2 = get();
+        if (context2 === context && contextWasInit)
+          set(void 0);
+        else if (context2 = context2.slice(), hasPrevious)
+          context2[i + 1] = previous, set(context2);
+        else
+          context2.splice(i, 2), set(context2.length ? context2 : void 0);
+      }
     }
   }
   disable() {
@@ -98,7 +104,7 @@ class AsyncLocalStorage {
         var { length } = context;
         for (var i = 0;i < length; i += 2)
           if (context[i] === this) {
-            context = context.slice(), context.splice(i, 2), set(context.length ? context : void 0);
+            context.splice(i, 2), set(context.length ? context : void 0);
             break;
           }
       }
@@ -139,9 +145,10 @@ class AsyncResource {
   emitDestroy() {
   }
   runInAsyncScope(fn, ...args) {
+    this.#snapshot(fn, ...args);
   }
 }
-var createHookNotImpl = createWarning("async_hooks.createHook is not implemented in Bun. Hooks can still be created but will never be called."), executionAsyncIdNotImpl = createWarning("async_hooks.executionAsyncId/triggerAsyncId are not implemented in Bun. It returns 0 every time."), executionAsyncResourceWarning = createWarning("async_hooks.executionAsyncResource is not implemented in Bun. It returns a reference to process.stdin every time."), asyncWrapProviders = {
+var createHookNotImpl = createWarning("async_hooks.createHook is not implemented in Bun. Hooks can still be created but will never be called."), executionAsyncIdNotImpl = createWarning("async_hooks.executionAsyncId/triggerAsyncId are not implemented in Bun. It will return 0 every time."), executionAsyncResourceWarning = createWarning("async_hooks.executionAsyncResource is not implemented in Bun. It returns a reference to process.stdin every time."), asyncWrapProviders = {
   NONE: 0,
   DIRHANDLE: 1,
   DNSCHANNEL: 2,

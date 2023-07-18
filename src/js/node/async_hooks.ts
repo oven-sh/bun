@@ -105,30 +105,32 @@ class AsyncLocalStorage {
     } finally {
       // Note: early `return` will prevent `throw` above from working. I think...
       // Set AsyncContextFrame to undefined if we are out of context values
-      var context2 = get()! as any[];
-      if (context2 === context && contextWasInit) {
-        set(undefined);
-      } else {
-        context2 = context2.slice(); // array is cloned here
-        if (hasPrevious) {
-          context2[i + 1] = previous;
-          set(context2);
+      if (!this.#disableCalled) {
+        var context2 = get()! as any[];
+        if (context2 === context && contextWasInit) {
+          set(undefined);
         } else {
-          context2.splice(i, 2);
-          set(context2.length ? context2 : undefined);
+          context2 = context2.slice(); // array is cloned here
+          if (hasPrevious) {
+            context2[i + 1] = previous;
+            set(context2);
+          } else {
+            context2.splice(i, 2);
+            set(context2.length ? context2 : undefined);
+          }
         }
       }
     }
   }
 
   disable() {
+    // In this case, we actually do want to mutate the context state
     if (!this.#disableCalled) {
       var context = get() as any[];
       if (context) {
         var { length } = context;
         for (var i = 0; i < length; i += 2) {
           if (context[i] === this) {
-            context = context.slice();
             context.splice(i, 2);
             set(context.length ? context : undefined);
             break;
@@ -177,14 +179,19 @@ class AsyncResource {
     return 0;
   }
 
-  emitDestroy() {}
+  emitDestroy() {
+    //
+  }
 
-  runInAsyncScope(fn, ...args) {}
+  runInAsyncScope(fn, ...args) {
+    this.#snapshot(fn, ...args);
+  }
 }
 
 // The rest of async_hooks is not implemented and is stubbed with no-ops and warnings.
 
 function createWarning(message) {
+  if (process.env.NODE_NO_WARNINGS || process.env.BUN_NO_WARNINGS) return () => {};
   let warned = false;
   return function () {
     if (warned) return;
@@ -209,7 +216,7 @@ function createHook(callbacks) {
 }
 
 const executionAsyncIdNotImpl = createWarning(
-  "async_hooks.executionAsyncId/triggerAsyncId are not implemented in Bun. It returns 0 every time.",
+  "async_hooks.executionAsyncId/triggerAsyncId are not implemented in Bun. It will return 0 every time.",
 );
 function executionAsyncId() {
   executionAsyncIdNotImpl();

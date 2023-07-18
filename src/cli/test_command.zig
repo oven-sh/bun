@@ -846,7 +846,6 @@ pub const TestCommand = struct {
                 }
             }
 
-            vm.global.vm().clearMicrotaskCallback();
             vm.global.handleRejectedPromises();
             if (repeat_index > 0) {
                 vm.clearEntryPoint();

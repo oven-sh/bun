@@ -13,12 +13,12 @@ test("not implemented yet module masquerades as undefined and throws an error", 
 test("AsyncLocalStorage polyfill", () => {
   const store = new AsyncLocalStorage();
   var called = false;
-  expect(store.getStore()).toBe(null);
+  expect(store.getStore()).toBe(undefined);
   store.run({ foo: "bar" }, () => {
     expect(store.getStore()).toEqual({ foo: "bar" });
     called = true;
   });
-  expect(store.getStore()).toBe(null);
+  expect(store.getStore()).toBe(undefined);
   expect(called).toBe(true);
 });
 

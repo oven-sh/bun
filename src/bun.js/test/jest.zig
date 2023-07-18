@@ -777,7 +777,9 @@ pub const DescribeScope = struct {
     tag: Tag = .pass,
 
     pub fn isAllSkipped(this: *const DescribeScope) bool {
-        return this.is_skip or @as(usize, this.skip_count) >= this.tests.items.len;
+        if (this.is_skip) return true;
+        const total = this.tests.items.len;
+        return total > 0 and @as(usize, this.skip_count) >= total;
     }
 
     pub fn push(new: *DescribeScope) void {
@@ -1080,13 +1082,8 @@ pub const DescribeScope = struct {
         const end = @as(TestRunner.Test.ID, @truncate(tests.len));
         this.pending_tests = std.DynamicBitSetUnmanaged.initFull(allocator, end) catch unreachable;
 
-        if (end == 0) {
-            // TODO: print the describe label when there are no tests
-            return;
-        }
-
         // Step 2. Update the runner with the count of how many tests we have for this block
-        this.test_id_start = Jest.runner.?.addTestCount(end);
+        if (end > 0) this.test_id_start = Jest.runner.?.addTestCount(end);
 
         const source: logger.Source = Jest.runner.?.files.items(.source)[file];
 
@@ -1100,6 +1097,19 @@ pub const DescribeScope = struct {
                 }
                 this.tests.clearAndFree(allocator);
                 this.pending_tests.deinit(allocator);
+                return;
+            }
+            if (end == 0) {
+                var runner = allocator.create(TestRunnerTask) catch unreachable;
+                runner.* = .{
+                    .test_id = std.math.maxInt(TestRunner.Test.ID),
+                    .describe = this,
+                    .globalThis = globalObject,
+                    .source_file_path = source.path.text,
+                };
+                runner.ref.ref(globalObject.bunVM());
+
+                Jest.runner.?.enqueue(runner);
                 return;
             }
         }
@@ -1121,7 +1131,7 @@ pub const DescribeScope = struct {
     pub fn onTestComplete(this: *DescribeScope, globalThis: *JSC.JSGlobalObject, test_id: TestRunner.Test.ID, skipped: bool) void {
         // invalidate it
         this.current_test_id = std.math.maxInt(TestRunner.Test.ID);
-        this.pending_tests.unset(test_id);
+        if (test_id != std.math.maxInt(TestRunner.Test.ID)) this.pending_tests.unset(test_id);
 
         if (!skipped) {
             if (this.runCallback(globalThis, .afterEach)) |err| {
@@ -1221,6 +1231,14 @@ pub const TestRunnerTask = struct {
         jsc_vm.last_reported_error_for_dedupe = .zero;
 
         const test_id = this.test_id;
+
+        if (test_id == std.math.maxInt(TestRunner.Test.ID)) {
+            describe.onTestComplete(globalThis, test_id, true);
+            Jest.runner.?.runNextTest();
+            this.deinit();
+            return false;
+        }
+
         var test_: TestScope = this.describe.tests.items[test_id];
         describe.current_test_id = test_id;
 

@@ -72,7 +72,7 @@ pub const FileSystem = struct {
 
     pub fn tmpname(_: *const FileSystem, extname: string, buf: []u8, hash: u64) ![*:0]u8 {
         // PRNG was...not so random
-        const hex_value = @truncate(u64, @intCast(u128, hash) * @intCast(u128, std.time.nanoTimestamp()));
+        const hex_value = @as(u64, @truncate(@as(u128, @intCast(hash)) * @as(u128, @intCast(std.time.nanoTimestamp()))));
 
         return try std.fmt.bufPrintZ(buf, ".{any}{s}", .{ bun.fmt.hexIntLower(hex_value), extname });
     }
@@ -767,7 +767,7 @@ pub const FileSystem = struct {
                 std.mem.writeIntNative(@TypeOf(this.mtime), hash_bytes_remain[0..@sizeOf(@TypeOf(this.mtime))], this.mtime);
                 hash_bytes_remain = hash_bytes_remain[@sizeOf(@TypeOf(this.mtime))..];
                 std.debug.assert(hash_bytes_remain.len == 8);
-                hash_bytes_remain[0..8].* = @bitCast([8]u8, @as(u64, 0));
+                hash_bytes_remain[0..8].* = @as([8]u8, @bitCast(@as(u64, 0)));
                 return bun.hash(&hash_bytes);
             }
 
@@ -1370,11 +1370,11 @@ pub const PathName = struct {
         // so if dir does not have a trailing slash, but is spaced one apart from the basename
         // we can assume there is a trailing slash there
         // so we extend the original slice's length by one
-        return if (this.dir.len == 0) "./" else this.dir.ptr[0 .. this.dir.len + @intCast(
+        return if (this.dir.len == 0) "./" else this.dir.ptr[0 .. this.dir.len + @as(
             usize,
-            @intFromBool(
+            @intCast(@intFromBool(
                 this.dir[this.dir.len - 1] != std.fs.path.sep_posix and (@intFromPtr(this.dir.ptr) + this.dir.len + 1) == @intFromPtr(this.base.ptr),
-            ),
+            )),
         )];
     }
 

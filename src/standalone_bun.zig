@@ -211,7 +211,7 @@ pub const StandaloneModuleGraph = struct {
         }
 
         var offsets = Offsets{
-            .entry_point_id = @truncate(u32, entry_point_id.?),
+            .entry_point_id = @as(u32, @truncate(entry_point_id.?)),
             .modules_ptr = string_builder.appendCount(std.mem.sliceAsBytes(modules.items)),
             .byte_count = string_builder.len,
         };
@@ -230,7 +230,7 @@ pub const StandaloneModuleGraph = struct {
 
     pub fn inject(bytes: []const u8) i32 {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @bitCast(u64, std.time.milliTimestamp())) catch |err| {
+        var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
             Global.exit(1);
             return -1;
@@ -338,7 +338,7 @@ pub const StandaloneModuleGraph = struct {
             break :brk fd;
         };
 
-        const seek_position = @intCast(u64, brk: {
+        const seek_position = @as(u64, @intCast(brk: {
             const fstat = switch (Syscall.fstat(cloned_executable_fd)) {
                 .result => |res| res,
                 .err => |err| {
@@ -349,7 +349,7 @@ pub const StandaloneModuleGraph = struct {
             };
 
             break :brk @max(fstat.size, 0);
-        });
+        }));
 
         const total_byte_count = seek_position + bytes.len + 8;
 
@@ -479,7 +479,7 @@ pub const StandaloneModuleGraph = struct {
             return null;
 
         var end = @as([]u8, &trailer_bytes).ptr + read_amount - @sizeOf(usize);
-        const total_byte_count: usize = @bitCast(usize, end[0..8].*);
+        const total_byte_count: usize = @as(usize, @bitCast(end[0..8].*));
 
         if (total_byte_count > std.math.maxInt(u32) or total_byte_count < 4096) {
             // sanity check: the total byte count should never be more than 4 GB
@@ -511,7 +511,7 @@ pub const StandaloneModuleGraph = struct {
         // if you have not a ton of code, we only do a single read() call
         if (Environment.allow_assert or offsets.byte_count > 1024 * 3) {
             const offset_from_end = trailer_bytes.len - (@intFromPtr(end) - @intFromPtr(@as([]u8, &trailer_bytes).ptr));
-            std.os.lseek_END(self_exe, -@intCast(i64, offset_from_end + offsets.byte_count)) catch return null;
+            std.os.lseek_END(self_exe, -@as(i64, @intCast(offset_from_end + offsets.byte_count))) catch return null;
 
             if (comptime Environment.allow_assert) {
                 // actually we just want to verify this logic is correct in development

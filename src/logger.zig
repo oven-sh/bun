@@ -75,7 +75,7 @@ pub const Loc = struct {
     pub const toUsize = i;
 
     pub inline fn i(self: *const Loc) usize {
-        return @intCast(usize, @max(self.start, 0));
+        return @as(usize, @intCast(@max(self.start, 0)));
     }
 
     pub const Empty = Loc{ .start = -1 };
@@ -151,7 +151,7 @@ pub const Location = struct {
             .column = this.column,
             .line_text = this.line_text orelse "",
             .suggestion = this.suggestion orelse "",
-            .offset = @truncate(u32, this.offset),
+            .offset = @as(u32, @truncate(this.offset)),
         };
     }
 
@@ -194,7 +194,7 @@ pub const Location = struct {
                 .column = usize2Loc(data.column_count).start,
                 .length = full_line.len,
                 .line_text = full_line,
-                .offset = @intCast(usize, @max(r.loc.start, 0)),
+                .offset = @as(usize, @intCast(@max(r.loc.start, 0))),
             };
         } else {
             return null;
@@ -293,7 +293,7 @@ pub const Data = struct {
             if (location.line_text) |line_text_| {
                 const line_text = std.mem.trimRight(u8, line_text_, "\r\n\t");
 
-                const location_in_line_text = @intCast(u32, @max(location.column, 1) - 1);
+                const location_in_line_text = @as(u32, @intCast(@max(location.column, 1) - 1));
                 const has_position = location.column > -1 and line_text.len > 0 and location_in_line_text < line_text.len;
 
                 if (has_position) {
@@ -400,8 +400,8 @@ pub const BabyString = packed struct {
 
     pub fn in(parent: string, text: string) BabyString {
         return BabyString{
-            .offset = @truncate(u16, std.mem.indexOf(u8, parent, text) orelse unreachable),
-            .len = @truncate(u16, text.len),
+            .offset = @as(u16, @truncate(std.mem.indexOf(u8, parent, text) orelse unreachable)),
+            .len = @as(u16, @truncate(text.len)),
         };
     }
 
@@ -597,8 +597,8 @@ pub const Range = struct {
 
     pub fn in(this: Range, buf: []const u8) []const u8 {
         if (this.loc.start < 0 or this.len <= 0) return "";
-        const slice = buf[@intCast(usize, this.loc.start)..];
-        return slice[0..@min(@intCast(usize, this.len), buf.len)];
+        const slice = buf[@as(usize, @intCast(this.loc.start))..];
+        return slice[0..@min(@as(usize, @intCast(this.len)), buf.len)];
     }
 
     pub fn contains(this: Range, k: i32) bool {
@@ -650,8 +650,8 @@ pub const Log = struct {
         var warnings: u32 = 0;
         var errors: u32 = 0;
         for (this.msgs.items) |msg| {
-            errors += @intCast(u32, @intFromBool(msg.kind == .err));
-            warnings += @intCast(u32, @intFromBool(msg.kind == .warn));
+            errors += @as(u32, @intCast(@intFromBool(msg.kind == .err)));
+            warnings += @as(u32, @intCast(@intFromBool(msg.kind == .warn)));
         }
 
         return Api.Log{
@@ -715,7 +715,7 @@ pub const Log = struct {
         const msgs: []const Msg = this.msgs.items;
         var errors_stack: [256]*anyopaque = undefined;
 
-        const count = @intCast(u16, @min(msgs.len, errors_stack.len));
+        const count = @as(u16, @intCast(@min(msgs.len, errors_stack.len)));
         switch (count) {
             0 => return JSC.JSValue.jsUndefined(),
             1 => {
@@ -743,11 +743,11 @@ pub const Log = struct {
         const msgs: []const Msg = this.msgs.items;
         var errors_stack: [256]*anyopaque = undefined;
 
-        const count = @intCast(u16, @min(msgs.len, errors_stack.len));
+        const count = @as(u16, @intCast(@min(msgs.len, errors_stack.len)));
         var arr = JSC.JSValue.createEmptyArray(global, count);
 
         for (msgs[0..count], 0..) |msg, i| {
-            arr.putIndex(global, @intCast(u32, i), msg.toJS(global, allocator));
+            arr.putIndex(global, @as(u32, @intCast(i)), msg.toJS(global, allocator));
         }
 
         return arr;
@@ -760,7 +760,7 @@ pub const Log = struct {
             const msg: Msg = msg_;
             if (msg.notes) |notes| {
                 for (notes) |note| {
-                    notes_count += @intCast(usize, @intFromBool(note.text.len > 0));
+                    notes_count += @as(usize, @intCast(@intFromBool(note.text.len > 0)));
                 }
             }
         }
@@ -1228,7 +1228,7 @@ pub const Log = struct {
 };
 
 pub inline fn usize2Loc(loc: usize) Loc {
-    return Loc{ .start = @intCast(i32, loc) };
+    return Loc{ .start = @as(i32, @intCast(loc)) };
 }
 
 pub const Source = struct {
@@ -1267,7 +1267,7 @@ pub const Source = struct {
     pub fn isWebAssembly(this: *const Source) bool {
         if (this.contents.len < 4) return false;
 
-        const bytes = @bitCast(u32, this.contents[0..4].*);
+        const bytes = @as(u32, @bitCast(this.contents[0..4].*));
         return bytes == 0x6d736100; // "\0asm"
     }
 
@@ -1320,7 +1320,7 @@ pub const Source = struct {
         if (index >= 0) {
             return Range{ .loc = Loc{
                 .start = loc.start + index,
-            }, .len = @intCast(i32, op.len) };
+            }, .len = @as(i32, @intCast(op.len)) };
         }
 
         return Range{ .loc = loc };
@@ -1344,7 +1344,7 @@ pub const Source = struct {
                 c = text[i];
 
                 if (c == quote) {
-                    return Range{ .loc = loc, .len = @intCast(i32, i + 1) };
+                    return Range{ .loc = loc, .len = @as(i32, @intCast(i + 1)) };
                 } else if (c == '\\') {
                     i += 1;
                 }
@@ -1369,7 +1369,7 @@ pub const Source = struct {
 
     pub fn initErrorPosition(self: *const Source, _offset: Loc) ErrorPosition {
         var prev_code_point: i32 = 0;
-        var offset: usize = @min(if (_offset.start < 0) 0 else @intCast(usize, _offset.start), @max(self.contents.len, 1) - 1);
+        var offset: usize = @min(if (_offset.start < 0) 0 else @as(usize, @intCast(_offset.start)), @max(self.contents.len, 1) - 1);
 
         const contents = self.contents;
 

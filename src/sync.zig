@@ -977,7 +977,7 @@ else if (@import("builtin").os.tag == .linux)
                 }
 
                 Futex.wait(
-                    @ptrCast(*const i32, &self.state),
+                    @as(*const i32, @ptrCast(&self.state)),
                     @intFromEnum(new_state),
                 );
             }
@@ -994,7 +994,7 @@ else if (@import("builtin").os.tag == .linux)
         fn unlockSlow(self: *Mutex) void {
             @setCold(true);
 
-            Futex.wake(@ptrCast(*const i32, &self.state));
+            Futex.wake(@as(*const i32, @ptrCast(&self.state)));
         }
     }
 else

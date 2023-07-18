@@ -36,7 +36,7 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
 
         pub fn indexOf(self: *const Self, value: *const T) ?u32 {
             const start = &self.buffer;
-            const end = @ptrCast([*]const T, start) + capacity;
+            const end = @as([*]const T, @ptrCast(start)) + capacity;
             if (!(@intFromPtr(value) >= @intFromPtr(start) and @intFromPtr(value) < @intFromPtr(end)))
                 return null;
 
@@ -44,12 +44,12 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
             const index = (@intFromPtr(value) - @intFromPtr(start)) / @sizeOf(T);
             assert(index < capacity);
             assert(&self.buffer[index] == value);
-            return @intCast(u32, index);
+            return @as(u32, @intCast(index));
         }
 
         pub fn in(self: *const Self, value: *const T) bool {
             const start = &self.buffer;
-            const end = @ptrCast([*]const T, start) + capacity;
+            const end = @as([*]const T, @ptrCast(start)) + capacity;
             return (@intFromPtr(value) >= @intFromPtr(start) and @intFromPtr(value) < @intFromPtr(end));
         }
 

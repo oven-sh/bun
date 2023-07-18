@@ -706,7 +706,7 @@ pub const String = extern struct {
             if (uchar > 255)
                 return null;
 
-            buffer[i] = @intCast(u8, uchar);
+            buffer[i] = @as(u8, @intCast(uchar));
         }
 
         inline for (0..values.len) |i| {
@@ -747,7 +747,7 @@ pub const String = extern struct {
                 if (uchar > 255)
                     return null;
 
-                byte.* = @intCast(u8, uchar);
+                byte.* = @as(u8, @intCast(uchar));
             }
             break :brk bytes;
         };

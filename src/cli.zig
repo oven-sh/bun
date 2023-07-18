@@ -849,7 +849,7 @@ pub const HelpCommand = struct {
             \\
         ;
 
-        var rand_state = std.rand.DefaultPrng.init(@intCast(u64, @max(std.time.milliTimestamp(), 0)));
+        var rand_state = std.rand.DefaultPrng.init(@as(u64, @intCast(@max(std.time.milliTimestamp(), 0))));
         const rand = rand_state.random();
         const package_add_i = rand.uintAtMost(usize, packages_to_add_filler.len - 1);
         const package_remove_i = rand.uintAtMost(usize, packages_to_remove_filler.len - 1);

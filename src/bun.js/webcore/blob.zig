@@ -217,7 +217,7 @@ pub const Blob = struct {
 
         pub const WriteError = error{};
         pub fn write(this: StructuredCloneWriter, bytes: []const u8) WriteError!usize {
-            this.impl(this.ctx, bytes.ptr, @truncate(u32, bytes.len));
+            this.impl(this.ctx, bytes.ptr, @as(u32, @truncate(bytes.len)));
             return bytes.len;
         }
     };
@@ -229,9 +229,9 @@ pub const Blob = struct {
     ) !void {
         try writer.writeIntNative(u8, serialization_version);
 
-        try writer.writeIntNative(u64, @intCast(u64, this.offset));
+        try writer.writeIntNative(u64, @as(u64, @intCast(this.offset)));
 
-        try writer.writeIntNative(u32, @truncate(u32, this.content_type.len));
+        try writer.writeIntNative(u32, @as(u32, @truncate(this.content_type.len)));
         _ = try writer.write(this.content_type);
         try writer.writeIntNative(u8, @intFromBool(this.content_type_was_set));
 
@@ -329,7 +329,7 @@ pub const Blob = struct {
 
                 switch (pathlike_tag) {
                     .fd => {
-                        const fd = @intCast(i32, try reader.readIntNative(u32));
+                        const fd = @as(i32, @intCast(try reader.readIntNative(u32)));
 
                         var blob = try allocator.create(Blob);
                         blob.* = Blob.findOrCreateFileFromPath(
@@ -369,7 +369,7 @@ pub const Blob = struct {
             },
         };
         blob.allocator = allocator;
-        blob.offset = @intCast(u52, offset);
+        blob.offset = @as(u52, @intCast(offset));
         if (content_type.len > 0) {
             blob.content_type = content_type;
             blob.content_type_allocated = true;
@@ -736,9 +736,9 @@ pub const Blob = struct {
             return JSPromise.resolvedPromiseValue(ctx.ptr(), cloned.toJS(ctx)).asObjectRef();
         } else if (destination_type == .bytes and source_type == .file) {
             var fake_call_frame: [8]JSC.JSValue = undefined;
-            @memset(@ptrCast([*]u8, &fake_call_frame)[0..@sizeOf(@TypeOf(fake_call_frame))], 0);
+            @memset(@as([*]u8, @ptrCast(&fake_call_frame))[0..@sizeOf(@TypeOf(fake_call_frame))], 0);
             const blob_value =
-                source_blob.getSlice(ctx, @ptrCast(*JSC.CallFrame, &fake_call_frame));
+                source_blob.getSlice(ctx, @as(*JSC.CallFrame, @ptrCast(&fake_call_frame)));
 
             return JSPromise.resolvedPromiseValue(
                 ctx.ptr(),
@@ -1010,7 +1010,7 @@ pub const Blob = struct {
             // we only truncate if it's a path
             // if it's a file descriptor, we assume they want manual control over that behavior
             if (truncate) {
-                _ = JSC.Node.Syscall.system.ftruncate(fd, @intCast(i64, written));
+                _ = JSC.Node.Syscall.system.ftruncate(fd, @as(i64, @intCast(written)));
             }
 
             if (needs_open) {
@@ -1076,7 +1076,7 @@ pub const Blob = struct {
         var written: usize = 0;
         defer {
             if (truncate) {
-                _ = JSC.Node.Syscall.system.ftruncate(fd, @intCast(i64, written));
+                _ = JSC.Node.Syscall.system.ftruncate(fd, @as(i64, @intCast(written)));
             }
 
             if (needs_open) {
@@ -1298,18 +1298,18 @@ pub const Blob = struct {
 
                     switch (file.pathlike) {
                         .fd => |fd| {
-                            try writer.writeIntNative(u32, @intCast(u32, fd));
+                            try writer.writeIntNative(u32, @as(u32, @intCast(fd)));
                         },
                         .path => |path| {
                             const path_slice = path.slice();
-                            try writer.writeIntNative(u32, @truncate(u32, path_slice.len));
+                            try writer.writeIntNative(u32, @as(u32, @truncate(path_slice.len)));
                             _ = try writer.write(path_slice);
                         },
                     }
                 },
                 .bytes => |bytes| {
                     const slice = bytes.slice();
-                    try writer.writeIntNative(u32, @truncate(u32, slice.len));
+                    try writer.writeIntNative(u32, @as(u32, @truncate(slice.len)));
                     _ = try writer.write(slice);
                 },
             }
@@ -1409,7 +1409,7 @@ pub const Blob = struct {
                                     this.file_blob.store.?.data.file.pathlike.path;
 
                                 this.system_error = (JSC.Node.Syscall.Error{
-                                    .errno = @intCast(JSC.Node.Syscall.Error.Int, -completion.result),
+                                    .errno = @as(JSC.Node.Syscall.Error.Int, @intCast(-completion.result)),
                                     .path = path_string.slice(),
                                     .syscall = .open,
                                 }).toSystemError();
@@ -1544,7 +1544,7 @@ pub const Blob = struct {
                     }
                 };
 
-                return try ReadFile.createWithCtx(allocator, store, @ptrCast(*anyopaque, context), Handler.run, off, max_len);
+                return try ReadFile.createWithCtx(allocator, store, @as(*anyopaque, @ptrCast(context)), Handler.run, off, max_len);
             }
 
             pub fn doRead(this: *ReadFile) void {
@@ -1605,11 +1605,11 @@ pub const Blob = struct {
             pub fn onRead(this: *ReadFile, completion: *HTTPClient.NetworkThread.Completion, result: AsyncIO.ReadError!usize) void {
                 defer this.doReadLoop();
 
-                this.read_len = @truncate(SizeType, result catch |err| {
+                this.read_len = @as(SizeType, @truncate(result catch |err| {
                     if (@hasField(HTTPClient.NetworkThread.Completion, "result")) {
                         this.errno = AsyncIO.asError(-completion.result);
                         this.system_error = (JSC.Node.Syscall.Error{
-                            .errno = @intCast(JSC.Node.Syscall.Error.Int, -completion.result),
+                            .errno = @as(JSC.Node.Syscall.Error.Int, @intCast(-completion.result)),
                             .syscall = .read,
                         }).toSystemError();
                     } else {
@@ -1627,7 +1627,7 @@ pub const Blob = struct {
 
                     this.read_len = 0;
                     return;
-                });
+                }));
             }
 
             fn runAsync(this: *ReadFile, task: *ReadFileTask) void {
@@ -1689,7 +1689,7 @@ pub const Blob = struct {
 
                 if (stat.size > 0 and std.os.S.ISREG(stat.mode)) {
                     this.size = @min(
-                        @truncate(SizeType, @intCast(SizeType, @max(@intCast(i64, stat.size), 0))),
+                        @as(SizeType, @truncate(@as(SizeType, @intCast(@max(@as(i64, @intCast(stat.size)), 0))))),
                         this.max_length,
                     );
                     // read up to 4k at a time if
@@ -1730,7 +1730,7 @@ pub const Blob = struct {
 
             fn doReadLoop(this: *ReadFile) void {
                 this.read_off += this.read_len;
-                var remain = this.buffer[@min(this.read_off, @truncate(Blob.SizeType, this.buffer.len))..];
+                var remain = this.buffer[@min(this.read_off, @as(Blob.SizeType, @truncate(this.buffer.len)))..];
 
                 if (remain.len > 0 and this.errno == null) {
                     this.doRead();
@@ -1805,7 +1805,7 @@ pub const Blob = struct {
                     allocator,
                     file_blob,
                     bytes_blob,
-                    @ptrCast(*anyopaque, context),
+                    @as(*anyopaque, @ptrCast(context)),
                     Handler.run,
                 );
             }
@@ -1849,7 +1849,7 @@ pub const Blob = struct {
 
                 const wrote = this.wrote;
                 bun.default_allocator.destroy(this);
-                cb(cb_ctx, .{ .result = @truncate(SizeType, wrote) });
+                cb(cb_ctx, .{ .result = @as(SizeType, @truncate(wrote)) });
             }
             pub fn run(this: *WriteFile, task: *WriteFileTask) void {
                 this.io_task = task;
@@ -1858,7 +1858,7 @@ pub const Blob = struct {
 
             pub fn onWrite(this: *WriteFile, _: *HTTPClient.NetworkThread.Completion, result: AsyncIO.WriteError!usize) void {
                 defer this.doWriteLoop();
-                this.wrote += @truncate(SizeType, result catch |errno| {
+                this.wrote += @as(SizeType, @truncate(result catch |errno| {
                     this.errno = errno;
                     this.system_error = this.system_error orelse JSC.SystemError{
                         .code = bun.String.static(bun.asByteSlice(@errorName(errno))),
@@ -1867,7 +1867,7 @@ pub const Blob = struct {
 
                     this.wrote = 0;
                     return;
-                });
+                }));
             }
 
             fn runAsync(this: *WriteFile) void {
@@ -1920,12 +1920,12 @@ pub const Blob = struct {
         };
 
         const unsupported_directory_error = SystemError{
-            .errno = @intCast(c_int, @intFromEnum(bun.C.SystemErrno.EISDIR)),
+            .errno = @as(c_int, @intCast(@intFromEnum(bun.C.SystemErrno.EISDIR))),
             .message = bun.String.static("That doesn't work on folders"),
             .syscall = bun.String.static("fstat"),
         };
         const unsupported_non_regular_file_error = SystemError{
-            .errno = @intCast(c_int, @intFromEnum(bun.C.SystemErrno.ENOTSUP)),
+            .errno = @as(c_int, @intCast(@intFromEnum(bun.C.SystemErrno.ENOTSUP))),
             .message = bun.String.static("Non-regular files aren't supported yet"),
             .syscall = bun.String.static("fstat"),
         };
@@ -2127,7 +2127,7 @@ pub const Blob = struct {
                 const dest_fd = this.destination_fd;
 
                 defer {
-                    this.read_len = @truncate(SizeType, total_written);
+                    this.read_len = @as(SizeType, @truncate(total_written));
                 }
 
                 var has_unset_append = false;
@@ -2158,14 +2158,14 @@ pub const Blob = struct {
                             }
 
                             this.system_error = (JSC.Node.Syscall.Error{
-                                .errno = @intCast(JSC.Node.Syscall.Error.Int, @intFromEnum(linux.E.INVAL)),
+                                .errno = @as(JSC.Node.Syscall.Error.Int, @intCast(@intFromEnum(linux.E.INVAL))),
                                 .syscall = TryWith.tag.get(use).?,
                             }).toSystemError();
                             return AsyncIO.asError(linux.E.INVAL);
                         },
                         else => |errno| {
                             this.system_error = (JSC.Node.Syscall.Error{
-                                .errno = @intCast(JSC.Node.Syscall.Error.Int, @intFromEnum(errno)),
+                                .errno = @as(JSC.Node.Syscall.Error.Int, @intCast(@intFromEnum(errno))),
                                 .syscall = TryWith.tag.get(use).?,
                             }).toSystemError();
                             return AsyncIO.asError(errno);
@@ -2252,15 +2252,15 @@ pub const Blob = struct {
                                 }
 
                                 if (this.doClonefile()) {
-                                    if (this.max_length != Blob.max_size and this.max_length < @intCast(SizeType, stat_.?.size)) {
+                                    if (this.max_length != Blob.max_size and this.max_length < @as(SizeType, @intCast(stat_.?.size))) {
                                         // If this fails...well, there's not much we can do about it.
                                         _ = bun.C.truncate(
                                             this.destination_file_store.pathlike.path.sliceZAssume(),
-                                            @intCast(std.os.off_t, this.max_length),
+                                            @as(std.os.off_t, @intCast(this.max_length)),
                                         );
-                                        this.read_len = @intCast(SizeType, this.max_length);
+                                        this.read_len = @as(SizeType, @intCast(this.max_length));
                                     } else {
-                                        this.read_len = @intCast(SizeType, stat_.?.size);
+                                        this.read_len = @as(SizeType, @intCast(stat_.?.size));
                                     }
                                     return;
                                 } else |_| {
@@ -2313,7 +2313,7 @@ pub const Blob = struct {
                 }
 
                 if (stat.size != 0) {
-                    this.max_length = @max(@min(@intCast(SizeType, stat.size), this.max_length), this.offset) - this.offset;
+                    this.max_length = @max(@min(@as(SizeType, @intCast(stat.size)), this.max_length), this.offset) - this.offset;
                     if (this.max_length == 0) {
                         this.doClose();
                         return;
@@ -2375,8 +2375,8 @@ pub const Blob = struct {
 
                         return;
                     };
-                    if (stat.size != 0 and @intCast(SizeType, stat.size) > this.max_length) {
-                        _ = darwin.ftruncate(this.destination_fd, @intCast(std.os.off_t, this.max_length));
+                    if (stat.size != 0 and @as(SizeType, @intCast(stat.size)) > this.max_length) {
+                        _ = darwin.ftruncate(this.destination_fd, @as(std.os.off_t, @intCast(this.max_length)));
                     }
 
                     this.doClose();
@@ -2426,8 +2426,8 @@ pub const Blob = struct {
         pub fn init(bytes: []u8, allocator: std.mem.Allocator) ByteStore {
             return .{
                 .ptr = bytes.ptr,
-                .len = @truncate(SizeType, bytes.len),
-                .cap = @truncate(SizeType, bytes.len),
+                .len = @as(SizeType, @truncate(bytes.len)),
+                .cap = @as(SizeType, @truncate(bytes.len)),
                 .allocator = allocator,
             };
         }
@@ -2470,7 +2470,7 @@ pub const Blob = struct {
                 return JSValue.jsUndefined();
             }
 
-            recommended_chunk_size = @intCast(SizeType, @max(0, @truncate(i52, arguments[0].toInt64())));
+            recommended_chunk_size = @as(SizeType, @intCast(@max(0, @as(i52, @truncate(arguments[0].toInt64())))));
         }
         return JSC.WebCore.ReadableStream.fromBlob(
             globalThis,
@@ -2665,7 +2665,7 @@ pub const Blob = struct {
         var relativeStart: i64 = 0;
 
         // If the optional end parameter is not used as a parameter when making this call, let relativeEnd be size.
-        var relativeEnd: i64 = @intCast(i64, this.size);
+        var relativeEnd: i64 = @as(i64, @intCast(this.size));
 
         if (args.ptr[0].isString()) {
             args.ptr[2] = args.ptr[0];
@@ -2684,10 +2684,10 @@ pub const Blob = struct {
                 const start = start_.toInt64();
                 if (start < 0) {
                     // If the optional start parameter is negative, let relativeStart be start + size.
-                    relativeStart = @intCast(i64, @max(start +% @intCast(i64, this.size), 0));
+                    relativeStart = @as(i64, @intCast(@max(start +% @as(i64, @intCast(this.size)), 0)));
                 } else {
                     // Otherwise, let relativeStart be start.
-                    relativeStart = @min(@intCast(i64, start), @intCast(i64, this.size));
+                    relativeStart = @min(@as(i64, @intCast(start)), @as(i64, @intCast(this.size)));
                 }
             }
         }
@@ -2698,10 +2698,10 @@ pub const Blob = struct {
                 // If end is negative, let relativeEnd be max((size + end), 0).
                 if (end < 0) {
                     // If the optional start parameter is negative, let relativeStart be start + size.
-                    relativeEnd = @intCast(i64, @max(end +% @intCast(i64, this.size), 0));
+                    relativeEnd = @as(i64, @intCast(@max(end +% @as(i64, @intCast(this.size)), 0)));
                 } else {
                     // Otherwise, let relativeStart be start.
-                    relativeEnd = @min(@intCast(i64, end), @intCast(i64, this.size));
+                    relativeEnd = @min(@as(i64, @intCast(end)), @as(i64, @intCast(this.size)));
                 }
             }
         }
@@ -2731,12 +2731,12 @@ pub const Blob = struct {
             }
         }
 
-        const len = @intCast(SizeType, @max(relativeEnd -| relativeStart, 0));
+        const len = @as(SizeType, @intCast(@max(relativeEnd -| relativeStart, 0)));
 
         // This copies over the is_all_ascii flag
         // which is okay because this will only be a <= slice
         var blob = this.dupe();
-        blob.offset = @intCast(SizeType, relativeStart);
+        blob.offset = @as(SizeType, @intCast(relativeStart));
         blob.size = len;
 
         // infer the content type if it was not specified
@@ -2909,8 +2909,8 @@ pub const Blob = struct {
     }
 
     fn toJSTime(sec: isize, nsec: isize) JSTimeType {
-        const millisec = @intCast(u64, @divTrunc(nsec, std.time.ns_per_ms));
-        return @truncate(JSTimeType, @intCast(u64, sec * std.time.ms_per_s) + millisec);
+        const millisec = @as(u64, @intCast(@divTrunc(nsec, std.time.ns_per_ms)));
+        return @as(JSTimeType, @truncate(@as(u64, @intCast(sec * std.time.ms_per_s)) + millisec));
     }
 
     /// resolve file stat like size, last_modified
@@ -2920,7 +2920,7 @@ pub const Blob = struct {
             switch (JSC.Node.Syscall.stat(store.data.file.pathlike.path.sliceZ(&buffer))) {
                 .result => |stat| {
                     store.data.file.max_size = if (std.os.S.ISREG(stat.mode) or stat.size > 0)
-                        @truncate(SizeType, @intCast(u64, @max(stat.size, 0)))
+                        @as(SizeType, @truncate(@as(u64, @intCast(@max(stat.size, 0)))))
                     else
                         Blob.max_size;
                     store.data.file.mode = stat.mode;
@@ -2934,7 +2934,7 @@ pub const Blob = struct {
             switch (JSC.Node.Syscall.fstat(store.data.file.pathlike.fd)) {
                 .result => |stat| {
                     store.data.file.max_size = if (std.os.S.ISREG(stat.mode) or stat.size > 0)
-                        @truncate(SizeType, @intCast(u64, @max(stat.size, 0)))
+                        @as(SizeType, @truncate(@as(u64, @intCast(@max(stat.size, 0)))))
                     else
                         Blob.max_size;
                     store.data.file.mode = stat.mode;
@@ -3027,7 +3027,7 @@ pub const Blob = struct {
             store.?.is_all_ascii = is_all_ascii;
         }
         return Blob{
-            .size = @truncate(SizeType, bytes.len),
+            .size = @as(SizeType, @truncate(bytes.len)),
             .store = store,
             .allocator = null,
             .content_type = "",
@@ -3038,7 +3038,7 @@ pub const Blob = struct {
 
     pub fn init(bytes: []u8, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) Blob {
         return Blob{
-            .size = @truncate(SizeType, bytes.len),
+            .size = @as(SizeType, @truncate(bytes.len)),
             .store = if (bytes.len > 0)
                 Blob.Store.init(bytes, allocator) catch unreachable
             else
@@ -3057,7 +3057,7 @@ pub const Blob = struct {
     ) Blob {
         var bytes = allocator.dupe(u8, bytes_) catch @panic("Out of memory");
         return Blob{
-            .size = @truncate(SizeType, bytes_.len),
+            .size = @as(SizeType, @truncate(bytes_.len)),
             .store = if (bytes.len > 0)
                 Blob.Store.init(bytes, allocator) catch unreachable
             else
@@ -3183,7 +3183,7 @@ pub const Blob = struct {
                     .result => |result| {
                         const bytes = result.buf;
                         if (blob.size > 0)
-                            blob.size = @min(@truncate(u32, bytes.len), blob.size);
+                            blob.size = @min(@as(u32, @truncate(bytes.len)), blob.size);
                         const value = Function(&blob, globalThis, bytes, .temporary);
 
                         // invalid JSON needs to be rejected
@@ -3537,7 +3537,7 @@ pub const Blob = struct {
                     var sliced = top_value.toSlice(global, bun.default_allocator);
                     const is_all_ascii = !sliced.isAllocated();
                     if (!sliced.isAllocated() and sliced.len > 0) {
-                        sliced.ptr = @ptrCast([*]const u8, (try bun.default_allocator.dupe(u8, sliced.slice())).ptr);
+                        sliced.ptr = @as([*]const u8, @ptrCast((try bun.default_allocator.dupe(u8, sliced.slice())).ptr));
                         sliced.allocator = NullableAllocator.init(bun.default_allocator);
                     }
 
@@ -3750,8 +3750,8 @@ pub const AnyBlob = union(enum) {
     pub inline fn fastSize(this: *const AnyBlob) Blob.SizeType {
         return switch (this.*) {
             .Blob => this.Blob.size,
-            .WTFStringImpl => @truncate(Blob.SizeType, this.WTFStringImpl.byteLength()),
-            else => @truncate(Blob.SizeType, this.slice().len),
+            .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.byteLength())),
+            else => @as(Blob.SizeType, @truncate(this.slice().len)),
         };
     }
 
@@ -3884,8 +3884,8 @@ pub const AnyBlob = union(enum) {
     pub inline fn size(this: *const AnyBlob) Blob.SizeType {
         return switch (this.*) {
             .Blob => this.Blob.size,
-            .WTFStringImpl => @truncate(Blob.SizeType, this.WTFStringImpl.utf8ByteLength()),
-            else => @truncate(Blob.SizeType, this.slice().len),
+            .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.utf8ByteLength())),
+            else => @as(Blob.SizeType, @truncate(this.slice().len)),
         };
     }
 
@@ -4054,7 +4054,7 @@ pub const InlineBlob = extern struct {
         if (second.len > 0)
             @memcpy(bytes_slice[first.len..][0..second.len], second);
 
-        inline_blob.len = @truncate(@TypeOf(inline_blob.len), total);
+        inline_blob.len = @as(@TypeOf(inline_blob.len), @truncate(total));
         return inline_blob;
     }
 
@@ -4062,7 +4062,7 @@ pub const InlineBlob = extern struct {
         std.debug.assert(data.len <= available_bytes);
 
         var blob = InlineBlob{
-            .len = @intCast(IntSize, data.len),
+            .len = @as(IntSize, @intCast(data.len)),
             .was_string = was_string,
         };
 

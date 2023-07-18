@@ -315,7 +315,7 @@ pub const SocketConfig = struct {
                     if (parsed_url.getPort()) |port_num| {
                         port_value = JSValue.jsNumber(port_num);
                         hostname_or_unix.ptr = parsed_url.hostname.ptr;
-                        hostname_or_unix.len = @truncate(u32, parsed_url.hostname.len);
+                        hostname_or_unix.len = @as(u32, @truncate(parsed_url.hostname.len));
                     }
                 }
 
@@ -422,10 +422,10 @@ pub const Listener = struct {
         pub fn deinit(this: UnixOrHost) void {
             switch (this) {
                 .unix => |u| {
-                    bun.default_allocator.destroy(@ptrFromInt([*]u8, @intFromPtr(u.ptr)));
+                    bun.default_allocator.destroy(@as([*]u8, @ptrFromInt(@intFromPtr(u.ptr))));
                 },
                 .host => |h| {
-                    bun.default_allocator.destroy(@ptrFromInt([*]u8, @intFromPtr(h.host.ptr)));
+                    bun.default_allocator.destroy(@as([*]u8, @ptrFromInt(@intFromPtr(h.host.ptr))));
                 },
             }
         }
@@ -583,7 +583,7 @@ pub const Listener = struct {
                     );
                     // should return the assigned port
                     if (socket) |s| {
-                        connection.host.port = @intCast(u16, s.getLocalPort(ssl_enabled));
+                        connection.host.port = @as(u16, @intCast(s.getLocalPort(ssl_enabled)));
                     }
                     break :brk socket;
                 },
@@ -963,7 +963,7 @@ fn selectALPNCallback(
             return BoringSSL.SSL_TLSEXT_ERR_NOACK;
         }
 
-        const status = BoringSSL.SSL_select_next_proto(bun.cast([*c][*c]u8, out), outlen, protos.ptr, @intCast(c_uint, protos.len), in, inlen);
+        const status = BoringSSL.SSL_select_next_proto(bun.cast([*c][*c]u8, out), outlen, protos.ptr, @as(c_uint, @intCast(protos.len)), in, inlen);
 
         // Previous versions of Node.js returned SSL_TLSEXT_ERR_NOACK if no protocol
         // match was found. This would neither cause a fatal alert nor would it result
@@ -1175,7 +1175,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             // Add SNI support for TLS (mongodb and others requires this)
             if (comptime ssl) {
-                var ssl_ptr: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, socket.getNativeHandle());
+                var ssl_ptr: *BoringSSL.SSL = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
                 if (!ssl_ptr.isInitFinished()) {
                     if (this.server_name) |server_name| {
                         const host = normalizeHost(server_name);
@@ -1198,7 +1198,7 @@ fn NewSocket(comptime ssl: bool) type {
                         if (this.handlers.is_server) {
                             BoringSSL.SSL_CTX_set_alpn_select_cb(BoringSSL.SSL_get_SSL_CTX(ssl_ptr), selectALPNCallback, bun.cast(*anyopaque, this));
                         } else {
-                            _ = BoringSSL.SSL_set_alpn_protos(ssl_ptr, protos.ptr, @intCast(c_uint, protos.len));
+                            _ = BoringSSL.SSL_set_alpn_protos(ssl_ptr, protos.ptr, @as(c_uint, @intCast(protos.len)));
                         }
                     }
                 }
@@ -1483,7 +1483,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            this.socket.timeout(@intCast(c_uint, t));
+            this.socket.timeout(@as(c_uint, @intCast(t)));
 
             return JSValue.jsUndefined();
         }
@@ -1566,7 +1566,7 @@ fn NewSocket(comptime ssl: bool) type {
             var text_buf: [512]u8 = undefined;
 
             this.socket.remoteAddress(&buf, &length);
-            const address_bytes = buf[0..@intCast(usize, length)];
+            const address_bytes = buf[0..@as(usize, @intCast(length))];
             const address: std.net.Address = switch (length) {
                 4 => std.net.Address.initIp4(address_bytes[0..4].*, 0),
                 16 => std.net.Address.initIp6(address_bytes[0..16].*, 0, 0, 0),
@@ -1895,7 +1895,7 @@ fn NewSocket(comptime ssl: bool) type {
             var alpn_proto: [*c]const u8 = null;
             var alpn_proto_len: u32 = 0;
 
-            var ssl_ptr: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+            var ssl_ptr: *BoringSSL.SSL = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
             BoringSSL.SSL_get0_alpn_selected(ssl_ptr, &alpn_proto, &alpn_proto_len);
             if (alpn_proto == null or alpn_proto_len == 0) {
                 return JSValue.jsBoolean(false);
@@ -1952,7 +1952,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             const host = normalizeHost(@as([]const u8, slice));
             if (host.len > 0) {
-                var ssl_ptr: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+                var ssl_ptr: *BoringSSL.SSL = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
                 if (ssl_ptr.isInitFinished()) {
                     // match node.js exceptions
                     globalObject.throw("Already started.", .{});

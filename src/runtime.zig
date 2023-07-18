@@ -105,11 +105,11 @@ pub const Fallback = struct {
                     acc_len += 8;
                     while (acc_len >= 6) {
                         acc_len -= 6;
-                        try writer.writeByte(alphabet_chars[@truncate(u6, (acc >> acc_len))]);
+                        try writer.writeByte(alphabet_chars[@as(u6, @truncate((acc >> acc_len)))]);
                     }
                 }
                 if (acc_len > 0) {
-                    try writer.writeByte(alphabet_chars[@truncate(u6, (acc << 6 - acc_len))]);
+                    try writer.writeByte(alphabet_chars[@as(u6, @truncate((acc << 6 - acc_len)))]);
                 }
             }
         };
@@ -142,7 +142,7 @@ pub const Fallback = struct {
     var version_hash_int: u32 = 0;
     pub fn versionHash() u32 {
         if (version_hash_int == 0) {
-            version_hash_int = @truncate(u32, std.fmt.parseInt(u64, version(), 16) catch unreachable);
+            version_hash_int = @as(u32, @truncate(std.fmt.parseInt(u64, version(), 16) catch unreachable));
         }
         return version_hash_int;
     }
@@ -267,7 +267,7 @@ pub const Runtime = struct {
     var version_hash_int: u32 = 0;
     pub fn versionHash() u32 {
         if (version_hash_int == 0) {
-            version_hash_int = @truncate(u32, version_hash);
+            version_hash_int = @as(u32, @truncate(version_hash));
         }
         return version_hash_int;
     }
@@ -400,6 +400,7 @@ pub const Runtime = struct {
             "$$typeof",
         };
         const all_sorted: [all.len]string = brk: {
+            @setEvalBranchQuota(1000000);
             var list = all;
             const Sorter = struct {
                 fn compare(_: void, a: []const u8, b: []const u8) bool {

@@ -549,7 +549,7 @@ pub const JestPrettyFormat = struct {
             var writer = WrappedWriter(Writer){ .ctx = writer_ };
             var slice = slice_;
             var i: u32 = 0;
-            var len: u32 = @truncate(u32, slice.len);
+            var len: u32 = @as(u32, @truncate(slice.len));
             var any_non_ascii = false;
             while (i < len) : (i += 1) {
                 switch (slice[i]) {
@@ -576,7 +576,7 @@ pub const JestPrettyFormat = struct {
                         any_non_ascii = false;
                         slice = slice[@min(slice.len, i + 1)..];
                         i = 0;
-                        len = @truncate(u32, slice.len);
+                        len = @as(u32, @truncate(slice.len));
                         const next_value = this.remaining_values[0];
                         this.remaining_values = this.remaining_values[1..];
                         switch (token) {
@@ -1047,7 +1047,7 @@ pub const JestPrettyFormat = struct {
                             i = -i;
                         }
                         const digits = if (i != 0)
-                            bun.fmt.fastDigitCount(@intCast(usize, i)) + @as(usize, @intFromBool(is_negative))
+                            bun.fmt.fastDigitCount(@as(usize, @intCast(i))) + @as(usize, @intFromBool(is_negative))
                         else
                             1;
                         this.addForNewLine(digits);
@@ -1139,7 +1139,7 @@ pub const JestPrettyFormat = struct {
                     }
                 },
                 .Array => {
-                    const len = @truncate(u32, value.getLength(this.globalThis));
+                    const len = @as(u32, @truncate(value.getLength(this.globalThis)));
                     if (len == 0) {
                         writer.writeAll("[]");
                         this.addForNewLine(2);
@@ -1250,9 +1250,9 @@ pub const JestPrettyFormat = struct {
                             enable_ansi_colors,
                         );
                     } else if (value.as(JSC.API.Bun.Timer.TimerObject)) |timer| {
-                        this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@intCast(u64, @max(timer.id, 0))));
+                        this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.id, 0)))));
                         if (timer.kind == .setInterval) {
-                            this.addForNewLine("repeats ".len + bun.fmt.fastDigitCount(@intCast(u64, @max(timer.id, 0))));
+                            this.addForNewLine("repeats ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.id, 0)))));
                             writer.print(comptime Output.prettyFmt("<r><blue>Timeout<r> <d>(#<yellow>{d}<r><d>, repeats)<r>", enable_ansi_colors), .{
                                 timer.id,
                             });
@@ -1670,7 +1670,7 @@ pub const JestPrettyFormat = struct {
 
                                                     var j: usize = 0;
                                                     while (j < length) : (j += 1) {
-                                                        const child = JSC.JSObject.getIndex(children, this.globalThis, @intCast(u32, j));
+                                                        const child = JSC.JSObject.getIndex(children, this.globalThis, @as(u32, @intCast(j)));
                                                         this.format(Tag.get(child, this.globalThis), Writer, writer_, child, this.globalThis, enable_ansi_colors);
                                                         if (j + 1 < length) {
                                                             writer.writeAll("\n");
@@ -1827,7 +1827,7 @@ pub const JestPrettyFormat = struct {
                     if (slice.len > 0) {
                         switch (jsType) {
                             .Int8Array => {
-                                const slice_with_type = @alignCast(std.meta.alignment([]i8), std.mem.bytesAsSlice(i8, slice));
+                                const slice_with_type: []align(std.meta.alignment([]i8)) i8 = @alignCast(std.mem.bytesAsSlice(i8, slice));
                                 this.indent += 1;
                                 defer this.indent -|= 1;
                                 for (slice_with_type) |el| {
@@ -1837,7 +1837,7 @@ pub const JestPrettyFormat = struct {
                                 }
                             },
                             .Int16Array => {
-                                const slice_with_type = @alignCast(std.meta.alignment([]i16), std.mem.bytesAsSlice(i16, slice));
+                                const slice_with_type: []align(std.meta.alignment([]i16)) i16 = @alignCast(std.mem.bytesAsSlice(i16, slice));
                                 this.indent += 1;
                                 defer this.indent -|= 1;
                                 for (slice_with_type) |el| {
@@ -1847,7 +1847,7 @@ pub const JestPrettyFormat = struct {
                                 }
                             },
                             .Uint16Array => {
-                                const slice_with_type = @alignCast(std.meta.alignment([]u16), std.mem.bytesAsSlice(u16, slice));
+                                const slice_with_type: []align(std.meta.alignment([]u16)) u16 = @alignCast(std.mem.bytesAsSlice(u16, slice));
                                 this.indent += 1;
                                 defer this.indent -|= 1;
                                 for (slice_with_type) |el| {
@@ -1857,7 +1857,7 @@ pub const JestPrettyFormat = struct {
                                 }
                             },
                             .Int32Array => {
-                                const slice_with_type = @alignCast(std.meta.alignment([]i32), std.mem.bytesAsSlice(i32, slice));
+                                const slice_with_type: []align(std.meta.alignment([]i32)) i32 = @alignCast(std.mem.bytesAsSlice(i32, slice));
                                 this.indent += 1;
                                 defer this.indent -|= 1;
                                 for (slice_with_type) |el| {
@@ -1867,7 +1867,7 @@ pub const JestPrettyFormat = struct {
                                 }
                             },
                             .Uint32Array => {
-                                const slice_with_type = @alignCast(std.meta.alignment([]u32), std.mem.bytesAsSlice(u32, slice));
+                                const slice_with_type: []align(std.meta.alignment([]u32)) u32 = @alignCast(std.mem.bytesAsSlice(u32, slice));
                                 this.indent += 1;
                                 defer this.indent -|= 1;
                                 for (slice_with_type) |el| {
@@ -1877,7 +1877,7 @@ pub const JestPrettyFormat = struct {
                                 }
                             },
                             .Float32Array => {
-                                const slice_with_type = @alignCast(std.meta.alignment([]f32), std.mem.bytesAsSlice(f32, slice));
+                                const slice_with_type: []align(std.meta.alignment([]f32)) f32 = @alignCast(std.mem.bytesAsSlice(f32, slice));
                                 this.indent += 1;
                                 defer this.indent -|= 1;
                                 for (slice_with_type) |el| {
@@ -1887,7 +1887,7 @@ pub const JestPrettyFormat = struct {
                                 }
                             },
                             .Float64Array => {
-                                const slice_with_type = @alignCast(std.meta.alignment([]f64), std.mem.bytesAsSlice(f64, slice));
+                                const slice_with_type: []align(std.meta.alignment([]f64)) f64 = @alignCast(std.mem.bytesAsSlice(f64, slice));
                                 this.indent += 1;
                                 defer this.indent -|= 1;
                                 for (slice_with_type) |el| {
@@ -1897,7 +1897,7 @@ pub const JestPrettyFormat = struct {
                                 }
                             },
                             .BigInt64Array => {
-                                const slice_with_type = @alignCast(std.meta.alignment([]i64), std.mem.bytesAsSlice(i64, slice));
+                                const slice_with_type: []align(std.meta.alignment([]i64)) i64 = @alignCast(std.mem.bytesAsSlice(i64, slice));
                                 this.indent += 1;
                                 defer this.indent -|= 1;
                                 for (slice_with_type) |el| {
@@ -1907,7 +1907,7 @@ pub const JestPrettyFormat = struct {
                                 }
                             },
                             .BigUint64Array => {
-                                const slice_with_type = @alignCast(std.meta.alignment([]u64), std.mem.bytesAsSlice(u64, slice));
+                                const slice_with_type: []align(std.meta.alignment([]u64)) u64 = @alignCast(std.mem.bytesAsSlice(u64, slice));
                                 this.indent += 1;
                                 defer this.indent -|= 1;
                                 for (slice_with_type) |el| {
@@ -1919,7 +1919,7 @@ pub const JestPrettyFormat = struct {
 
                             // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
                             else => {
-                                var slice_with_type = @alignCast(std.meta.alignment([]u8), std.mem.bytesAsSlice(u8, slice));
+                                var slice_with_type: []align(std.meta.alignment([]u8)) u8 = @alignCast(std.mem.bytesAsSlice(u8, slice));
                                 this.indent += 1;
                                 defer this.indent -|= 1;
                                 for (slice_with_type) |el| {

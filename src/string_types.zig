@@ -40,20 +40,20 @@ pub const PathString = packed struct {
 
     pub inline fn slice(this: anytype) string {
         @setRuntimeSafety(false); // "cast causes pointer to be null" is fine here. if it is null, the len will be 0.
-        return @ptrFromInt([*]u8, @intCast(usize, this.ptr))[0..this.len];
+        return @as([*]u8, @ptrFromInt(@as(usize, @intCast(this.ptr))))[0..this.len];
     }
 
     pub inline fn sliceAssumeZ(this: anytype) stringZ {
         @setRuntimeSafety(false); // "cast causes pointer to be null" is fine here. if it is null, the len will be 0.
-        return @ptrFromInt([*:0]u8, @intCast(usize, this.ptr))[0..this.len :0];
+        return @as([*:0]u8, @ptrFromInt(@as(usize, @intCast(this.ptr))))[0..this.len :0];
     }
 
     pub inline fn init(str: string) @This() {
         @setRuntimeSafety(false); // "cast causes pointer to be null" is fine here. if it is null, the len will be 0.
 
         return @This(){
-            .ptr = @truncate(PointerIntType, @intFromPtr(str.ptr)),
-            .len = @truncate(PathInt, str.len),
+            .ptr = @as(PointerIntType, @truncate(@intFromPtr(str.ptr))),
+            .len = @as(PathInt, @truncate(str.len)),
         };
     }
 
@@ -78,20 +78,20 @@ pub const HashedString = struct {
     len: u32,
     hash: u32,
 
-    pub const empty = HashedString{ .ptr = @ptrFromInt([*]const u8, 0xDEADBEEF), .len = 0, .hash = 0 };
+    pub const empty = HashedString{ .ptr = @as([*]const u8, @ptrFromInt(0xDEADBEEF)), .len = 0, .hash = 0 };
 
     pub fn init(buf: string) HashedString {
         return HashedString{
             .ptr = buf.ptr,
-            .len = @truncate(u32, buf.len),
-            .hash = @truncate(u32, bun.hash(buf)),
+            .len = @as(u32, @truncate(buf.len)),
+            .hash = @as(u32, @truncate(bun.hash(buf))),
         };
     }
 
     pub fn initNoHash(buf: string) HashedString {
         return HashedString{
             .ptr = buf.ptr,
-            .len = @truncate(u32, buf.len),
+            .len = @as(u32, @truncate(buf.len)),
             .hash = 0,
         };
     }
@@ -106,7 +106,7 @@ pub const HashedString = struct {
                 return ((@max(this.hash, other.hash) > 0 and this.hash == other.hash) or (this.ptr == other.ptr)) and this.len == other.len;
             },
             else => {
-                return @as(usize, this.len) == other.len and @truncate(u32, bun.hash(other[0..other.len])) == this.hash;
+                return @as(usize, this.len) == other.len and @as(u32, @truncate(bun.hash(other[0..other.len]))) == this.hash;
             },
         }
     }

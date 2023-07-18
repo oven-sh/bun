@@ -400,7 +400,7 @@ pub const Channel = opaque {
         const SockStateWrap = struct {
             pub fn onSockState(ctx: ?*anyopaque, socket: ares_socket_t, readable: c_int, writable: c_int) callconv(.C) void {
                 var container = bun.cast(*Container, ctx.?);
-                Container.onDNSSocketState(container, @intCast(i32, socket), readable != 0, writable != 0);
+                Container.onDNSSocketState(container, @as(i32, @intCast(socket)), readable != 0, writable != 0);
             }
         };
 
@@ -408,7 +408,7 @@ pub const Channel = opaque {
 
         opts.flags = ARES_FLAG_NOCHECKRESP;
         opts.sock_state_cb = &SockStateWrap.onSockState;
-        opts.sock_state_cb_data = @ptrCast(*anyopaque, this);
+        opts.sock_state_cb_data = @as(*anyopaque, @ptrCast(this));
         opts.timeout = 1000;
         opts.tries = 3;
 
@@ -1210,8 +1210,8 @@ pub const Error = enum(i32) {
     ESERVICE = ARES_ESERVICE,
 
     pub fn initEAI(rc: i32) ?Error {
-        return switch (@enumFromInt(std.os.system.EAI, rc)) {
-            @enumFromInt(std.os.system.EAI, 0) => return null,
+        return switch (@as(std.os.system.EAI, @enumFromInt(rc))) {
+            @as(std.os.system.EAI, @enumFromInt(0)) => return null,
             .ADDRFAMILY => Error.EBADFAMILY,
             .BADFLAGS => Error.EBADFLAGS, // Invalid hints
             .FAIL => Error.EBADRESP,
@@ -1284,8 +1284,8 @@ pub const Error = enum(i32) {
     pub fn get(rc: i32) ?Error {
         return switch (rc) {
             0 => null,
-            1...ARES_ESERVICE => @enumFromInt(Error, rc),
-            -ARES_ESERVICE...-1 => @enumFromInt(Error, -rc),
+            1...ARES_ESERVICE => @as(Error, @enumFromInt(rc)),
+            -ARES_ESERVICE...-1 => @as(Error, @enumFromInt(-rc)),
             else => unreachable,
         };
     }

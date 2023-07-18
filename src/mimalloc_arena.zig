@@ -217,7 +217,7 @@ pub const Arena = struct {
         }
 
         return if (ptr) |p|
-            @ptrCast([*]u8, p)
+            @as([*]u8, @ptrCast(p))
         else
             null;
     }
@@ -234,7 +234,7 @@ pub const Arena = struct {
             return alignedAlloc(this, len, log2_align);
         }
 
-        const alignment = @as(usize, 1) << @intCast(Allocator.Log2Align, log2_align);
+        const alignment = @as(usize, 1) << @as(Allocator.Log2Align, @intCast(log2_align));
 
         return alignedAlloc(
             this,

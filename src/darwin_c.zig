@@ -294,7 +294,7 @@ pub const SystemErrno = enum(u8) {
         }
 
         if (code >= max) return null;
-        return @enumFromInt(SystemErrno, code);
+        return @as(SystemErrno, @enumFromInt(code));
     }
 
     pub fn label(this: SystemErrno) ?[]const u8 {
@@ -460,9 +460,9 @@ pub const io_object_t = c_uint;
 pub const io_service_t = c_uint;
 pub const io_registry_entry_t = c_uint;
 pub const FSEventStreamCallback = ?*const fn (FSEventStreamRef, ?*anyopaque, c_int, ?*anyopaque, [*c]const FSEventStreamEventFlags, [*c]const FSEventStreamEventId) callconv(.C) void;
-pub const kCFStringEncodingUTF8: CFStringEncoding = @bitCast(CFStringEncoding, @as(c_int, 134217984));
+pub const kCFStringEncodingUTF8: CFStringEncoding = @as(CFStringEncoding, @bitCast(@as(c_int, 134217984)));
 pub const noErr: OSStatus = 0;
-pub const kFSEventStreamEventIdSinceNow: FSEventStreamEventId = @bitCast(FSEventStreamEventId, @as(c_longlong, -@as(c_int, 1)));
+pub const kFSEventStreamEventIdSinceNow: FSEventStreamEventId = @as(FSEventStreamEventId, @bitCast(@as(c_longlong, -@as(c_int, 1))));
 pub const kFSEventStreamCreateFlagNoDefer: c_int = 2;
 pub const kFSEventStreamCreateFlagFileEvents: c_int = 16;
 pub const kFSEventStreamEventFlagEventIdsWrapped: c_int = 8;
@@ -521,7 +521,7 @@ pub fn get_system_uptime() u64 {
         else => return 0,
     };
 
-    return @bitCast(u64, std.time.timestamp() - uptime_[0].sec);
+    return @as(u64, @bitCast(std.time.timestamp() - uptime_[0].sec));
 }
 
 pub const struct_LoadAvg = struct {
@@ -543,11 +543,11 @@ pub fn get_system_loadavg() [3]f64 {
     };
 
     const loadavg = loadavg_[0];
-    const scale = @floatFromInt(f64, loadavg.fscale);
+    const scale = @as(f64, @floatFromInt(loadavg.fscale));
     return [3]f64{
-        @floatFromInt(f64, loadavg.ldavg[0]) / scale,
-        @floatFromInt(f64, loadavg.ldavg[1]) / scale,
-        @floatFromInt(f64, loadavg.ldavg[2]) / scale,
+        @as(f64, @floatFromInt(loadavg.ldavg[0])) / scale,
+        @as(f64, @floatFromInt(loadavg.ldavg[1])) / scale,
+        @as(f64, @floatFromInt(loadavg.ldavg[2])) / scale,
     };
 }
 

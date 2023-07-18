@@ -146,8 +146,8 @@ pub fn toDependency(
     };
     return Dependency{
         .name = name,
-        .name_hash = @bitCast(u64, this[8..16].*),
-        .behavior = @enumFromInt(Dependency.Behavior, this[16]),
+        .name_hash = @as(u64, @bitCast(this[8..16].*)),
+        .behavior = @as(Dependency.Behavior, @enumFromInt(this[16])),
         .version = Dependency.Version.toVersion(name, this[17..this.len].*, ctx),
     };
 }
@@ -155,7 +155,7 @@ pub fn toDependency(
 pub fn toExternal(this: Dependency) External {
     var bytes: External = undefined;
     bytes[0..this.name.bytes.len].* = this.name.bytes;
-    bytes[8..16].* = @bitCast([8]u8, this.name_hash);
+    bytes[8..16].* = @as([8]u8, @bitCast(this.name_hash));
     bytes[16] = @intFromEnum(this.behavior);
     bytes[17..bytes.len].* = this.version.toExternal();
     return bytes;
@@ -265,7 +265,7 @@ pub const Version = struct {
         ctx: Dependency.Context,
     ) Dependency.Version {
         const slice = String{ .bytes = bytes[1..9].* };
-        const tag = @enumFromInt(Dependency.Version.Tag, bytes[0]);
+        const tag = @as(Dependency.Version.Tag, @enumFromInt(bytes[0]));
         const sliced = &slice.sliced(ctx.buffer);
         return Dependency.parseWithTag(
             ctx.allocator,
@@ -920,41 +920,41 @@ pub const Behavior = enum(u8) {
 
     pub inline fn setNormal(this: Behavior, value: bool) Behavior {
         if (value) {
-            return @enumFromInt(Behavior, @intFromEnum(this) | Behavior.normal);
+            return @as(Behavior, @enumFromInt(@intFromEnum(this) | Behavior.normal));
         } else {
-            return @enumFromInt(Behavior, @intFromEnum(this) & ~Behavior.normal);
+            return @as(Behavior, @enumFromInt(@intFromEnum(this) & ~Behavior.normal));
         }
     }
 
     pub inline fn setOptional(this: Behavior, value: bool) Behavior {
         if (value) {
-            return @enumFromInt(Behavior, @intFromEnum(this) | Behavior.optional);
+            return @as(Behavior, @enumFromInt(@intFromEnum(this) | Behavior.optional));
         } else {
-            return @enumFromInt(Behavior, @intFromEnum(this) & ~Behavior.optional);
+            return @as(Behavior, @enumFromInt(@intFromEnum(this) & ~Behavior.optional));
         }
     }
 
     pub inline fn setDev(this: Behavior, value: bool) Behavior {
         if (value) {
-            return @enumFromInt(Behavior, @intFromEnum(this) | Behavior.dev);
+            return @as(Behavior, @enumFromInt(@intFromEnum(this) | Behavior.dev));
         } else {
-            return @enumFromInt(Behavior, @intFromEnum(this) & ~Behavior.dev);
+            return @as(Behavior, @enumFromInt(@intFromEnum(this) & ~Behavior.dev));
         }
     }
 
     pub inline fn setPeer(this: Behavior, value: bool) Behavior {
         if (value) {
-            return @enumFromInt(Behavior, @intFromEnum(this) | Behavior.peer);
+            return @as(Behavior, @enumFromInt(@intFromEnum(this) | Behavior.peer));
         } else {
-            return @enumFromInt(Behavior, @intFromEnum(this) & ~Behavior.peer);
+            return @as(Behavior, @enumFromInt(@intFromEnum(this) & ~Behavior.peer));
         }
     }
 
     pub inline fn setWorkspace(this: Behavior, value: bool) Behavior {
         if (value) {
-            return @enumFromInt(Behavior, @intFromEnum(this) | Behavior.workspace);
+            return @as(Behavior, @enumFromInt(@intFromEnum(this) | Behavior.workspace));
         } else {
-            return @enumFromInt(Behavior, @intFromEnum(this) & ~Behavior.workspace);
+            return @as(Behavior, @enumFromInt(@intFromEnum(this) & ~Behavior.workspace));
         }
     }
 

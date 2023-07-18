@@ -64,7 +64,7 @@ pub fn add(this: *StringBuilder, len: usize) bun.StringPointer {
 
     if (comptime Environment.allow_assert) assert(this.len <= this.cap);
 
-    return bun.StringPointer{ .offset = @truncate(u32, start), .length = @truncate(u32, len) };
+    return bun.StringPointer{ .offset = @as(u32, @truncate(start)), .length = @as(u32, @truncate(len)) };
 }
 pub fn appendCount(this: *StringBuilder, slice: string) bun.StringPointer {
     if (comptime Environment.allow_assert) {
@@ -80,7 +80,7 @@ pub fn appendCount(this: *StringBuilder, slice: string) bun.StringPointer {
 
     if (comptime Environment.allow_assert) assert(this.len <= this.cap);
 
-    return bun.StringPointer{ .offset = @truncate(u32, start), .length = @truncate(u32, slice.len) };
+    return bun.StringPointer{ .offset = @as(u32, @truncate(start)), .length = @as(u32, @truncate(slice.len)) };
 }
 
 pub fn fmt(this: *StringBuilder, comptime str: string, args: anytype) string {
@@ -112,8 +112,8 @@ pub fn fmtAppendCount(this: *StringBuilder, comptime str: string, args: anytype)
     if (comptime Environment.allow_assert) assert(this.len <= this.cap);
 
     return bun.StringPointer{
-        .offset = @truncate(u32, off),
-        .length = @truncate(u32, out.len),
+        .offset = @as(u32, @truncate(off)),
+        .length = @as(u32, @truncate(out.len)),
     };
 }
 

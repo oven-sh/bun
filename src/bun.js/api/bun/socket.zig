@@ -2050,7 +2050,8 @@ fn NewSocket(comptime ssl: bool) type {
             var buffer = JSValue.createBufferFromLength(globalObject, buffer_size);
             var buffer_ptr = @ptrCast([*c]u8, buffer.asArrayBuffer(globalObject).?.ptr);
 
-            _ = BoringSSL.i2d_SSL_SESSION(session, &buffer_ptr);
+            const result_size = BoringSSL.i2d_SSL_SESSION(session, &buffer_ptr);
+            std.debug.assert(result_size == size);
             return buffer;
         }
 
@@ -2314,7 +2315,8 @@ fn NewSocket(comptime ssl: bool) type {
             var buffer = JSValue.createBufferFromLength(globalObject, buffer_size);
             var buffer_ptr = @ptrCast(*anyopaque, buffer.asArrayBuffer(globalObject).?.ptr);
 
-            _ = BoringSSL.SSL_get_peer_finished(ssl_ptr, buffer_ptr, buffer_size);
+            const result_size = BoringSSL.SSL_get_peer_finished(ssl_ptr, buffer_ptr, buffer_size);
+            std.debug.assert(result_size == size);
             return buffer;
         }
 
@@ -2345,7 +2347,8 @@ fn NewSocket(comptime ssl: bool) type {
             var buffer = JSValue.createBufferFromLength(globalObject, buffer_size);
             var buffer_ptr = @ptrCast(*anyopaque, buffer.asArrayBuffer(globalObject).?.ptr);
 
-            _ = BoringSSL.SSL_get_finished(ssl_ptr, buffer_ptr, buffer_size);
+            const result_size = BoringSSL.SSL_get_finished(ssl_ptr, buffer_ptr, buffer_size);
+            std.debug.assert(result_size == size);
             return buffer;
         }
 

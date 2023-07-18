@@ -418,7 +418,8 @@ fn getRawDERCertificate(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JS
     const size = BoringSSL.i2d_X509(cert, null);
     var buffer = JSValue.createBufferFromLength(globalObject, @intCast(usize, size));
     var buffer_ptr = @ptrCast([*c]u8, buffer.asArrayBuffer(globalObject).?.ptr);
-    _ = BoringSSL.i2d_X509(cert, &buffer_ptr);
+    const result_size = BoringSSL.i2d_X509(cert, &buffer_ptr);
+    std.debug.assert(result_size == size);
     return buffer;
 }
 
@@ -519,7 +520,8 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
                     var buffer = JSValue.createBufferFromLength(globalObject, @intCast(usize, size));
                     var buffer_ptr = @ptrCast([*c]u8, buffer.asArrayBuffer(globalObject).?.ptr);
 
-                    _ = BoringSSL.EC_POINT_point2oct(group, point, form, buffer_ptr, size, null);
+                    const result_size = BoringSSL.EC_POINT_point2oct(group, point, form, buffer_ptr, size, null);
+                    std.debug.assert(result_size == size);
                     result.put(globalObject, ZigString.static("pubkey"), buffer);
                 } else {
                     result.put(globalObject, ZigString.static("pubkey"), JSValue.jsUndefined());

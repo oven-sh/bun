@@ -3527,6 +3527,10 @@ pub const JSValue = enum(JSValueReprInt) {
         cppFn("putIndex", .{ value, globalObject, i, out });
     }
 
+    pub fn push(value: JSValue, globalObject: *JSGlobalObject, out: JSValue) void {
+        cppFn("push", .{ value, globalObject, out });
+    }
+
     pub fn as(value: JSValue, comptime ZigType: type) ?*ZigType {
         if (value.isEmptyOrUndefinedOrNull())
             return null;
@@ -4843,6 +4847,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "put",
         "putDirect",
         "putIndex",
+        "push",
         "putRecord",
         "strictDeepEquals",
         "symbolFor",

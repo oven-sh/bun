@@ -1417,6 +1417,7 @@ pub const BundleOptions = struct {
     public_path: []const u8 = "",
     extension_order: []const string = &Defaults.ExtensionOrder,
     esm_extension_order: []const string = &Defaults.ModuleExtensionOrder,
+    main_field_extension_order: []const string = &Defaults.MainFieldExtensionOrder,
     out_extensions: bun.StringHashMap(string),
     import_path_format: ImportPathFormat = ImportPathFormat.relative,
     framework: ?Framework = null,
@@ -1553,6 +1554,16 @@ pub const BundleOptions = struct {
             ".js",
             ".mjs",
             ".mts",
+            ".json",
+        };
+
+        pub const MainFieldExtensionOrder = [_]string{
+            ".js",
+            ".cjs",
+            ".cts",
+            ".tsx",
+            ".ts",
+            ".jsx",
             ".json",
         };
 

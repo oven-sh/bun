@@ -17008,11 +17008,44 @@ JSC_DECLARE_CUSTOM_SETTER(TCPSocketPrototype__dataSetterWrap);
 extern "C" EncodedJSValue TCPSocketPrototype__end(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__endCallback);
 
+extern "C" EncodedJSValue TCPSocketPrototype__exportKeyingMaterial(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__exportKeyingMaterialCallback);
+
 extern "C" EncodedJSValue TCPSocketPrototype__flush(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__flushCallback);
 
 extern "C" EncodedJSValue TCPSocketPrototype__getAuthorizationError(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__getAuthorizationErrorCallback);
+
+extern "C" EncodedJSValue TCPSocketPrototype__getCertificate(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__getCertificateCallback);
+
+extern "C" EncodedJSValue TCPSocketPrototype__getCipher(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__getCipherCallback);
+
+extern "C" EncodedJSValue TCPSocketPrototype__getEphemeralKeyInfo(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__getEphemeralKeyInfoCallback);
+
+extern "C" EncodedJSValue TCPSocketPrototype__getPeerCertificate(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__getPeerCertificateCallback);
+
+extern "C" EncodedJSValue TCPSocketPrototype__getSession(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__getSessionCallback);
+
+extern "C" EncodedJSValue TCPSocketPrototype__getSharedSigalgs(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__getSharedSigalgsCallback);
+
+extern "C" EncodedJSValue TCPSocketPrototype__getTLSFinishedMessage(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__getTLSFinishedMessageCallback);
+
+extern "C" EncodedJSValue TCPSocketPrototype__getTLSPeerFinishedMessage(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__getTLSPeerFinishedMessageCallback);
+
+extern "C" EncodedJSValue TCPSocketPrototype__getTLSTicket(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__getTLSTicketCallback);
+
+extern "C" EncodedJSValue TCPSocketPrototype__getTLSVersion(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__getTLSVersionCallback);
 
 extern "C" JSC::EncodedJSValue TCPSocketPrototype__getListener(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(TCPSocketPrototype__listenerGetterWrap);
@@ -17032,8 +17065,14 @@ JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__reloadCallback);
 extern "C" JSC::EncodedJSValue TCPSocketPrototype__getRemoteAddress(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(TCPSocketPrototype__remoteAddressGetterWrap);
 
+extern "C" EncodedJSValue TCPSocketPrototype__setMaxSendFragment(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__setMaxSendFragmentCallback);
+
 extern "C" EncodedJSValue TCPSocketPrototype__setServername(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__setServernameCallback);
+
+extern "C" EncodedJSValue TCPSocketPrototype__setSession(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__setSessionCallback);
 
 extern "C" EncodedJSValue TCPSocketPrototype__shutdown(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(TCPSocketPrototype__shutdownCallback);
@@ -17057,15 +17096,28 @@ static const HashTableValue JSTCPSocketPrototypeTableValues[] = {
     { "authorized"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TCPSocketPrototype__authorizedGetterWrap, 0 } },
     { "data"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TCPSocketPrototype__dataGetterWrap, TCPSocketPrototype__dataSetterWrap } },
     { "end"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__endCallback, 3 } },
+    { "exportKeyingMaterial"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__exportKeyingMaterialCallback, 3 } },
     { "flush"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__flushCallback, 0 } },
     { "getAuthorizationError"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__getAuthorizationErrorCallback, 0 } },
+    { "getCertificate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__getCertificateCallback, 0 } },
+    { "getCipher"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__getCipherCallback, 0 } },
+    { "getEphemeralKeyInfo"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__getEphemeralKeyInfoCallback, 0 } },
+    { "getPeerCertificate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__getPeerCertificateCallback, 1 } },
+    { "getSession"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__getSessionCallback, 0 } },
+    { "getSharedSigalgs"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__getSharedSigalgsCallback, 0 } },
+    { "getTLSFinishedMessage"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__getTLSFinishedMessageCallback, 0 } },
+    { "getTLSPeerFinishedMessage"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__getTLSPeerFinishedMessageCallback, 0 } },
+    { "getTLSTicket"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__getTLSTicketCallback, 0 } },
+    { "getTLSVersion"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__getTLSVersionCallback, 0 } },
     { "listener"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TCPSocketPrototype__listenerGetterWrap, 0 } },
     { "localPort"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TCPSocketPrototype__localPortGetterWrap, 0 } },
     { "readyState"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TCPSocketPrototype__readyStateGetterWrap, 0 } },
     { "ref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__refCallback, 0 } },
     { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__reloadCallback, 1 } },
     { "remoteAddress"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TCPSocketPrototype__remoteAddressGetterWrap, 0 } },
+    { "setMaxSendFragment"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__setMaxSendFragmentCallback, 1 } },
     { "setServername"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__setServernameCallback, 1 } },
+    { "setSession"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__setSessionCallback, 0 } },
     { "shutdown"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__shutdownCallback, 1 } },
     { "timeout"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__timeoutCallback, 1 } },
     { "unref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TCPSocketPrototype__unrefCallback, 0 } },
@@ -17180,6 +17232,33 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__endCallback, (JSGlobalObject * lexi
     return TCPSocketPrototype__end(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
+JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__exportKeyingMaterialCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTCPSocket* thisObject = jsDynamicCast<JSTCPSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TCPSocketPrototype__exportKeyingMaterial(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
 JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__flushCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -17232,6 +17311,276 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__getAuthorizationErrorCallback, (JSG
 #endif
 
     return TCPSocketPrototype__getAuthorizationError(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__getCertificateCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTCPSocket* thisObject = jsDynamicCast<JSTCPSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TCPSocketPrototype__getCertificate(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__getCipherCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTCPSocket* thisObject = jsDynamicCast<JSTCPSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TCPSocketPrototype__getCipher(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__getEphemeralKeyInfoCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTCPSocket* thisObject = jsDynamicCast<JSTCPSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TCPSocketPrototype__getEphemeralKeyInfo(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__getPeerCertificateCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTCPSocket* thisObject = jsDynamicCast<JSTCPSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TCPSocketPrototype__getPeerCertificate(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__getSessionCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTCPSocket* thisObject = jsDynamicCast<JSTCPSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TCPSocketPrototype__getSession(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__getSharedSigalgsCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTCPSocket* thisObject = jsDynamicCast<JSTCPSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TCPSocketPrototype__getSharedSigalgs(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__getTLSFinishedMessageCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTCPSocket* thisObject = jsDynamicCast<JSTCPSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TCPSocketPrototype__getTLSFinishedMessage(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__getTLSPeerFinishedMessageCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTCPSocket* thisObject = jsDynamicCast<JSTCPSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TCPSocketPrototype__getTLSPeerFinishedMessage(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__getTLSTicketCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTCPSocket* thisObject = jsDynamicCast<JSTCPSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TCPSocketPrototype__getTLSTicket(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__getTLSVersionCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTCPSocket* thisObject = jsDynamicCast<JSTCPSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TCPSocketPrototype__getTLSVersion(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(TCPSocketPrototype__listenerGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -17355,6 +17704,33 @@ extern "C" EncodedJSValue TCPSocketPrototype__remoteAddressGetCachedValue(JSC::E
     return JSValue::encode(thisObject->m_remoteAddress.get());
 }
 
+JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__setMaxSendFragmentCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTCPSocket* thisObject = jsDynamicCast<JSTCPSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TCPSocketPrototype__setMaxSendFragment(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
 JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__setServernameCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -17380,6 +17756,33 @@ JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__setServernameCallback, (JSGlobalObj
 #endif
 
     return TCPSocketPrototype__setServername(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__setSessionCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTCPSocket* thisObject = jsDynamicCast<JSTCPSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TCPSocketPrototype__setSession(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__shutdownCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -17694,11 +18097,44 @@ JSC_DECLARE_CUSTOM_SETTER(TLSSocketPrototype__dataSetterWrap);
 extern "C" EncodedJSValue TLSSocketPrototype__end(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__endCallback);
 
+extern "C" EncodedJSValue TLSSocketPrototype__exportKeyingMaterial(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__exportKeyingMaterialCallback);
+
 extern "C" EncodedJSValue TLSSocketPrototype__flush(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__flushCallback);
 
 extern "C" EncodedJSValue TLSSocketPrototype__getAuthorizationError(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__getAuthorizationErrorCallback);
+
+extern "C" EncodedJSValue TLSSocketPrototype__getCertificate(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__getCertificateCallback);
+
+extern "C" EncodedJSValue TLSSocketPrototype__getCipher(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__getCipherCallback);
+
+extern "C" EncodedJSValue TLSSocketPrototype__getEphemeralKeyInfo(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__getEphemeralKeyInfoCallback);
+
+extern "C" EncodedJSValue TLSSocketPrototype__getPeerCertificate(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__getPeerCertificateCallback);
+
+extern "C" EncodedJSValue TLSSocketPrototype__getSession(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__getSessionCallback);
+
+extern "C" EncodedJSValue TLSSocketPrototype__getSharedSigalgs(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__getSharedSigalgsCallback);
+
+extern "C" EncodedJSValue TLSSocketPrototype__getTLSFinishedMessage(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__getTLSFinishedMessageCallback);
+
+extern "C" EncodedJSValue TLSSocketPrototype__getTLSPeerFinishedMessage(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__getTLSPeerFinishedMessageCallback);
+
+extern "C" EncodedJSValue TLSSocketPrototype__getTLSTicket(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__getTLSTicketCallback);
+
+extern "C" EncodedJSValue TLSSocketPrototype__getTLSVersion(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__getTLSVersionCallback);
 
 extern "C" JSC::EncodedJSValue TLSSocketPrototype__getListener(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(TLSSocketPrototype__listenerGetterWrap);
@@ -17718,8 +18154,14 @@ JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__reloadCallback);
 extern "C" JSC::EncodedJSValue TLSSocketPrototype__getRemoteAddress(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(TLSSocketPrototype__remoteAddressGetterWrap);
 
+extern "C" EncodedJSValue TLSSocketPrototype__setMaxSendFragment(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__setMaxSendFragmentCallback);
+
 extern "C" EncodedJSValue TLSSocketPrototype__setServername(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__setServernameCallback);
+
+extern "C" EncodedJSValue TLSSocketPrototype__setSession(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__setSessionCallback);
 
 extern "C" EncodedJSValue TLSSocketPrototype__shutdown(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(TLSSocketPrototype__shutdownCallback);
@@ -17743,15 +18185,28 @@ static const HashTableValue JSTLSSocketPrototypeTableValues[] = {
     { "authorized"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TLSSocketPrototype__authorizedGetterWrap, 0 } },
     { "data"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TLSSocketPrototype__dataGetterWrap, TLSSocketPrototype__dataSetterWrap } },
     { "end"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__endCallback, 3 } },
+    { "exportKeyingMaterial"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__exportKeyingMaterialCallback, 3 } },
     { "flush"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__flushCallback, 0 } },
     { "getAuthorizationError"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__getAuthorizationErrorCallback, 0 } },
+    { "getCertificate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__getCertificateCallback, 0 } },
+    { "getCipher"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__getCipherCallback, 0 } },
+    { "getEphemeralKeyInfo"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__getEphemeralKeyInfoCallback, 0 } },
+    { "getPeerCertificate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__getPeerCertificateCallback, 1 } },
+    { "getSession"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__getSessionCallback, 0 } },
+    { "getSharedSigalgs"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__getSharedSigalgsCallback, 0 } },
+    { "getTLSFinishedMessage"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__getTLSFinishedMessageCallback, 0 } },
+    { "getTLSPeerFinishedMessage"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__getTLSPeerFinishedMessageCallback, 0 } },
+    { "getTLSTicket"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__getTLSTicketCallback, 0 } },
+    { "getTLSVersion"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__getTLSVersionCallback, 0 } },
     { "listener"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TLSSocketPrototype__listenerGetterWrap, 0 } },
     { "localPort"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TLSSocketPrototype__localPortGetterWrap, 0 } },
     { "readyState"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TLSSocketPrototype__readyStateGetterWrap, 0 } },
     { "ref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__refCallback, 0 } },
     { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__reloadCallback, 1 } },
     { "remoteAddress"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, TLSSocketPrototype__remoteAddressGetterWrap, 0 } },
+    { "setMaxSendFragment"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__setMaxSendFragmentCallback, 1 } },
     { "setServername"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__setServernameCallback, 1 } },
+    { "setSession"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__setSessionCallback, 0 } },
     { "shutdown"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__shutdownCallback, 1 } },
     { "timeout"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__timeoutCallback, 1 } },
     { "unref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TLSSocketPrototype__unrefCallback, 0 } },
@@ -17866,6 +18321,33 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__endCallback, (JSGlobalObject * lexi
     return TLSSocketPrototype__end(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
+JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__exportKeyingMaterialCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTLSSocket* thisObject = jsDynamicCast<JSTLSSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TLSSocketPrototype__exportKeyingMaterial(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
 JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__flushCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -17918,6 +18400,276 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__getAuthorizationErrorCallback, (JSG
 #endif
 
     return TLSSocketPrototype__getAuthorizationError(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__getCertificateCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTLSSocket* thisObject = jsDynamicCast<JSTLSSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TLSSocketPrototype__getCertificate(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__getCipherCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTLSSocket* thisObject = jsDynamicCast<JSTLSSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TLSSocketPrototype__getCipher(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__getEphemeralKeyInfoCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTLSSocket* thisObject = jsDynamicCast<JSTLSSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TLSSocketPrototype__getEphemeralKeyInfo(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__getPeerCertificateCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTLSSocket* thisObject = jsDynamicCast<JSTLSSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TLSSocketPrototype__getPeerCertificate(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__getSessionCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTLSSocket* thisObject = jsDynamicCast<JSTLSSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TLSSocketPrototype__getSession(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__getSharedSigalgsCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTLSSocket* thisObject = jsDynamicCast<JSTLSSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TLSSocketPrototype__getSharedSigalgs(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__getTLSFinishedMessageCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTLSSocket* thisObject = jsDynamicCast<JSTLSSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TLSSocketPrototype__getTLSFinishedMessage(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__getTLSPeerFinishedMessageCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTLSSocket* thisObject = jsDynamicCast<JSTLSSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TLSSocketPrototype__getTLSPeerFinishedMessage(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__getTLSTicketCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTLSSocket* thisObject = jsDynamicCast<JSTLSSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TLSSocketPrototype__getTLSTicket(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__getTLSVersionCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTLSSocket* thisObject = jsDynamicCast<JSTLSSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TLSSocketPrototype__getTLSVersion(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(TLSSocketPrototype__listenerGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -18041,6 +18793,33 @@ extern "C" EncodedJSValue TLSSocketPrototype__remoteAddressGetCachedValue(JSC::E
     return JSValue::encode(thisObject->m_remoteAddress.get());
 }
 
+JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__setMaxSendFragmentCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTLSSocket* thisObject = jsDynamicCast<JSTLSSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TLSSocketPrototype__setMaxSendFragment(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
 JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__setServernameCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -18066,6 +18845,33 @@ JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__setServernameCallback, (JSGlobalObj
 #endif
 
     return TLSSocketPrototype__setServername(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__setSessionCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSTLSSocket* thisObject = jsDynamicCast<JSTLSSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return TLSSocketPrototype__setSession(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__shutdownCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

@@ -1,4 +1,4 @@
-import { TLSSocket, connect } from "tls";
+import tls, { TLSSocket, connect, checkServerIdentity } from "tls";
 
 it("should work with alpnProtocols", done => {
   try {
@@ -120,4 +120,9 @@ it("getCipher, getProtocol, getEphemeralKeyInfo, getSharedSigalgs, getSession, e
   } finally {
     socket.end();
   }
+});
+
+it("should have checkServerIdentity", async () => {
+  expect(checkServerIdentity).toBeFunction();
+  expect(tls.checkServerIdentity).toBeFunction();
 });

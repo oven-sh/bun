@@ -392,7 +392,6 @@ const TLSSocket = (function (InternalTLSSocket) {
     getPeerFinished() {
       return this[bunSocketInternal]?.getTLSPeerFinishedMessage() || undefined;
     }
-
     isSessionReused() {
       return !!this.#session;
     }
@@ -698,6 +697,7 @@ var exports = {
   SecureContext,
   Server,
   TLSSocket,
+  checkServerIdentity,
 };
 
 export {

@@ -32,7 +32,7 @@ pub const FSWatcher = struct {
     onAccept: std.ArrayHashMapUnmanaged(FSWatcher.Watcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
     ctx: *VirtualMachine,
     verbose: bool = false,
-    file_paths: bun.BabyList(string) = .{},
+    file_paths: bun.StringHashMap(void),
     entry_path: ?string = null,
     entry_dir: string = "",
     last_change_event: ChangeEvent = .{},
@@ -67,10 +67,11 @@ pub const FSWatcher = struct {
         // stop all managers and signals
         this.detach();
 
-        while (this.file_paths.popOrNull()) |file_path| {
+        var it = this.file_paths.keyIterator();
+        while (it.next()) |file_path| {
             bun.default_allocator.destroy(file_path);
         }
-        this.file_paths.deinitWithAllocator(bun.default_allocator);
+        this.file_paths.deinit();
         if (this.entry_path) |path| {
             this.entry_path = null;
             bun.default_allocator.destroy(path);
@@ -202,7 +203,7 @@ pub const FSWatcher = struct {
             ctx.entry_path = dir_path_clone;
             ctx.entry_dir = dir_path_clone;
         } else {
-            ctx.file_paths.push(bun.default_allocator, dir_path_clone) catch unreachable;
+            ctx.file_paths.put(dir_path_clone, {}) catch unreachable;
         }
         fs_watcher.addDirectory(fd, dir_path_clone, FSWatcher.Watcher.getHash(file_path), false) catch |err| {
             ctx.deinit();
@@ -239,7 +240,7 @@ pub const FSWatcher = struct {
             if (fs_info.is_file) {
                 const file_path_clone = bun.default_allocator.dupeZ(u8, entry_path) catch unreachable;
 
-                ctx.file_paths.push(bun.default_allocator, file_path_clone) catch unreachable;
+                ctx.file_paths.put(file_path_clone, {}) catch unreachable;
 
                 fs_watcher.addFile(fs_info.fd, file_path_clone, FSWatcher.Watcher.getHash(entry_path), options.Loader.file, 0, null, false) catch |err| {
                     ctx.deinit();
@@ -406,27 +407,24 @@ pub const FSWatcher = struct {
 
                             _on_file_update_path_buf[path_slice.len] = 0;
                             const full_path = _on_file_update_path_buf[0..path_slice.len :0];
-                            const is_watched = blk: {
-                                for (this.file_paths.slice()) |path| {
-                                    if (bun.strings.eql(path, full_path)) {
-                                        break :blk true;
-                                    }
-                                }
-                                break :blk false;
-                            };
 
+                            var is_watched = false;
+                            if (this.file_paths.contains(full_path)) {
+                                is_watched = true;
+                            }
                             // Add new files or directories to the watch list.
                             if (!is_watched) {
-                                this.file_paths.push(bun.default_allocator, full_path) catch unreachable;
+                                const full_path_clone = bun.default_allocator.dupe(u8, full_path) catch unreachable;
+                                this.file_paths.put(full_path_clone, {}) catch unreachable;
                                 const fs_info = fdFromAbsolutePathZ(full_path) catch null;
                                 if (fs_info) |info| {
                                     if (info.is_file) {
-                                        this.default_watcher.?.addFileAssumeLocked(info.fd, full_path, file_hash, options.Loader.file, 0, null, true) catch unreachable;
+                                        this.default_watcher.?.addFileAssumeLocked(info.fd, full_path_clone, file_hash, options.Loader.file, 0, null, false) catch unreachable;
                                         const relative_path_clone = bun.default_allocator.dupe(u8, relative_path) catch unreachable;
                                         current_task.append(relative_path_clone, .change, .destroy);
                                     } else {
                                         if (this.recursive) {
-                                            this.default_watcher.?.addDirectoryAssumeLocked(info.fd, full_path, file_hash, true) catch unreachable;
+                                            this.default_watcher.?.addDirectoryAssumeLocked(info.fd, full_path_clone, file_hash, false) catch unreachable;
                                         }
                                     }
                                 }
@@ -888,10 +886,7 @@ pub const FSWatcher = struct {
             .has_pending_activity = std.atomic.Atomic(bool).init(true),
             .verbose = args.verbose,
             .recursive = args.recursive,
-            .file_paths = bun.BabyList(string).initCapacity(bun.default_allocator, 1) catch |err| {
-                ctx.deinit();
-                return err;
-            },
+            .file_paths = bun.StringHashMap(void).init(bun.default_allocator),
         };
 
         if (comptime Environment.isMac) {

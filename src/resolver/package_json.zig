@@ -1023,7 +1023,7 @@ pub const PackageJSON = struct {
                             // TODO: https://github.com/oven-sh/bun/pull/3661#discussion_r1265966897
                             switch (prop.value.?.data) {
                                 .e_string => {
-                                    const value = prop.value.?.data.asString();
+                                    const value = prop.value.?.asString();
                                     package_json.npm_cfg_map.put(key, value) catch unreachable;
                                 },
                                 .e_number => {

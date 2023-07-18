@@ -432,7 +432,8 @@ var CLIENT_RENEG_LIMIT = 3, CLIENT_RENEG_WINDOW = 600, DEFAULT_ECDH_CURVE = "aut
   parseCertString,
   SecureContext,
   Server,
-  TLSSocket
+  TLSSocket,
+  checkServerIdentity
 };
 export {
   parseCertString,

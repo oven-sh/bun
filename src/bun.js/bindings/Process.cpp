@@ -230,23 +230,35 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 
     auto argCount = callFrame->argumentCount();
     if (argCount < 2) {
-
         JSC::throwTypeError(globalObject, scope, "dlopen requires 2 arguments"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
     JSC::JSValue moduleValue = callFrame->uncheckedArgument(0);
-    if (!moduleValue.isObject()) {
+    JSC::JSObject* moduleObject = jsDynamicCast<JSC::JSObject*>(moduleValue);
+    if (UNLIKELY(!moduleObject)) {
         JSC::throwTypeError(globalObject, scope, "dlopen requires an object as first argument"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
-    JSC::Identifier exportsSymbol = JSC::Identifier::fromString(vm, "exports"_s);
-    JSC::JSObject* exports = moduleValue.getObject()->getIfPropertyExists(globalObject, exportsSymbol).getObject();
 
-    WTF::String filename = callFrame->uncheckedArgument(1).toWTFString(globalObject);
-    CString utf8 = filename.utf8();
+    JSValue exports = moduleObject->getIfPropertyExists(globalObject, builtinNames(vm).exportsPublicName());
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (UNLIKELY(!exports)) {
+        JSC::throwTypeError(globalObject, scope, "dlopen requires an object with an exports property"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
 
     globalObject->pendingNapiModule = exports;
+    if (exports.isCell()) {
+        vm.writeBarrier(globalObject, exports.asCell());
+    }
+
+    WTF::String filename = callFrame->uncheckedArgument(1).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    CString utf8 = filename.utf8();
+
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
 
     if (!handle) {

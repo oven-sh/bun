@@ -478,3 +478,13 @@ for (const stub of emptyArrayStubs) {
     expect(process[stub]).toHaveLength(0);
   });
 }
+
+it("dlopen args parsing", () => {
+  expect(() => process.dlopen({ module: "42" }, "/tmp/not-found.so")).toThrow();
+  expect(() => process.dlopen({ module: 42 }, "/tmp/not-found.so")).toThrow();
+  expect(() => process.dlopen({ module: { exports: "42" } }, "/tmp/not-found.so")).toThrow();
+  expect(() => process.dlopen({ module: { exports: 42 } }, "/tmp/not-found.so")).toThrow();
+  expect(() => process.dlopen({ module: Symbol() }, "/tmp/not-found.so")).toThrow();
+  expect(() => process.dlopen({ module: { exports: Symbol("123") } }, "/tmp/not-found.so")).toThrow();
+  expect(() => process.dlopen({ module: { exports: Symbol("123") } }, Symbol("badddd"))).toThrow();
+});

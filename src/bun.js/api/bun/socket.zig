@@ -1249,7 +1249,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             // Add SNI support for TLS (mongodb and others requires this)
             if (comptime ssl) {
-                var ssl_ptr: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, socket.getNativeHandle());
+                var ssl_ptr = this.socket.ssl();
                 if (!ssl_ptr.isInitFinished()) {
                     if (this.server_name) |server_name| {
                         const host = normalizeHost(server_name);
@@ -1967,7 +1967,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            var ssl_ptr: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+            var ssl_ptr = this.socket.ssl();
             const session = BoringSSL.SSL_get_session(ssl_ptr) orelse return JSValue.jsUndefined();
             var ticket: [*c]const u8 = undefined;
             var length: usize = 0;
@@ -2009,7 +2009,7 @@ fn NewSocket(comptime ssl: bool) type {
             var exception: JSC.C.ExceptionRef = &exception_ref;
             if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), session_arg, exception)) |sb| {
                 var session_slice = sb.slice();
-                var ssl_ptr: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+                var ssl_ptr = this.socket.ssl();
                 var tmp = @ptrCast([*c]const u8, session_slice.ptr);
                 const session = BoringSSL.d2i_SSL_SESSION(null, &tmp, @intCast(c_long, session_slice.len)) orelse return JSValue.jsUndefined();
                 if (BoringSSL.SSL_set_session(ssl_ptr, session) != 1) {
@@ -2039,7 +2039,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            var ssl_ptr: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+            var ssl_ptr = this.socket.ssl();
             const session = BoringSSL.SSL_get_session(ssl_ptr) orelse return JSValue.jsUndefined();
             const size = BoringSSL.i2d_SSL_SESSION(session, null);
             if (size <= 0) {
@@ -2069,7 +2069,7 @@ fn NewSocket(comptime ssl: bool) type {
             var alpn_proto: [*c]const u8 = null;
             var alpn_proto_len: u32 = 0;
 
-            var ssl_ptr: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+            var ssl_ptr = this.socket.ssl();
             BoringSSL.SSL_get0_alpn_selected(ssl_ptr, &alpn_proto, &alpn_proto_len);
             if (alpn_proto == null or alpn_proto_len == 0) {
                 return JSValue.jsBoolean(false);
@@ -2619,7 +2619,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             const host = normalizeHost(@as([]const u8, slice));
             if (host.len > 0) {
-                var ssl_ptr: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+                var ssl_ptr = this.socket.ssl();
                 if (ssl_ptr.isInitFinished()) {
                     // match node.js exceptions
                     globalObject.throw("Already started.", .{});

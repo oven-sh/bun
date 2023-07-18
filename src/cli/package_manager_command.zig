@@ -222,7 +222,7 @@ pub const PackageManagerCommand = struct {
                 const sorted_dependencies = try ctx.allocator.alloc(DependencyID, root_deps.len);
                 defer ctx.allocator.free(sorted_dependencies);
                 for (sorted_dependencies, 0..) |*dep, i| {
-                    dep.* = @truncate(DependencyID, root_deps.off + i);
+                    dep.* = @as(DependencyID, @truncate(root_deps.off + i));
                 }
                 std.sort.block(DependencyID, sorted_dependencies, ByName{
                     .dependencies = dependencies,

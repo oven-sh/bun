@@ -62,14 +62,14 @@ pub const PosixSpawn = struct {
         pub fn get(self: Attr) !u16 {
             var flags: c_short = undefined;
             switch (errno(system.posix_spawnattr_getflags(&self.attr, &flags))) {
-                .SUCCESS => return @bitCast(u16, flags),
+                .SUCCESS => return @as(u16, @bitCast(flags)),
                 .INVAL => unreachable,
                 else => |err| return unexpectedErrno(err),
             }
         }
 
         pub fn set(self: *Attr, flags: u16) !void {
-            switch (errno(system.posix_spawnattr_setflags(&self.attr, @bitCast(c_short, flags)))) {
+            switch (errno(system.posix_spawnattr_setflags(&self.attr, @as(c_short, @bitCast(flags))))) {
                 .SUCCESS => return,
                 .INVAL => unreachable,
                 else => |err| return unexpectedErrno(err),
@@ -107,7 +107,7 @@ pub const PosixSpawn = struct {
         }
 
         pub fn openZ(self: *Actions, fd: fd_t, path: [*:0]const u8, flags: u32, mode: mode_t) !void {
-            switch (errno(system.posix_spawn_file_actions_addopen(&self.actions, fd, path, @bitCast(c_int, flags), mode))) {
+            switch (errno(system.posix_spawn_file_actions_addopen(&self.actions, fd, path, @as(c_int, @bitCast(flags)), mode))) {
                 .SUCCESS => return,
                 .BADF => return error.InvalidFileDescriptor,
                 .NOMEM => return error.SystemResources,
@@ -283,12 +283,12 @@ pub const PosixSpawn = struct {
         const Status = c_int;
         var status: Status = undefined;
         while (true) {
-            const rc = system.waitpid(pid, &status, @intCast(c_int, flags));
+            const rc = system.waitpid(pid, &status, @as(c_int, @intCast(flags)));
             switch (errno(rc)) {
                 .SUCCESS => return Maybe(WaitPidResult){
                     .result = .{
-                        .pid = @intCast(pid_t, rc),
-                        .status = @bitCast(u32, status),
+                        .pid = @as(pid_t, @intCast(rc)),
+                        .status = @as(u32, @bitCast(status)),
                     },
                 },
                 .INTR => continue,

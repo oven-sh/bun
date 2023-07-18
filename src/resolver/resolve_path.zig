@@ -25,11 +25,11 @@ const IsSeparatorFunc = fn (char: u8) bool;
 const LastSeparatorFunction = fn (slice: []const u8) ?usize;
 
 inline fn @"is .."(slice: []const u8) bool {
-    return slice.len >= 2 and @bitCast(u16, slice[0..2].*) == comptime std.mem.readIntNative(u16, "..");
+    return slice.len >= 2 and @as(u16, @bitCast(slice[0..2].*)) == comptime std.mem.readIntNative(u16, "..");
 }
 
 inline fn isDotSlash(slice: []const u8) bool {
-    return @bitCast(u16, slice[0..2].*) == comptime std.mem.readIntNative(u16, "./");
+    return @as(u16, @bitCast(slice[0..2].*)) == comptime std.mem.readIntNative(u16, "./");
 }
 
 inline fn @"is ../"(slice: []const u8) bool {
@@ -376,7 +376,7 @@ pub fn relativeToCommonPath(
     var out_slice: []u8 = buf[0..0];
 
     if (normalized_from.len > 0) {
-        var i: usize = @intCast(usize, @intFromBool(normalized_from[0] == separator)) + 1 + last_common_separator;
+        var i: usize = @as(usize, @intCast(@intFromBool(normalized_from[0] == separator))) + 1 + last_common_separator;
 
         while (i <= normalized_from.len) : (i += 1) {
             if (i == normalized_from.len or (normalized_from[i] == separator and i + 1 < normalized_from.len)) {
@@ -878,14 +878,14 @@ inline fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: typ
 
     {
         var part_i: u16 = 0;
-        var part_len: u16 = @truncate(u16, parts.len);
+        var part_len: u16 = @as(u16, @truncate(parts.len));
 
         while (part_i < part_len) {
             if (_platform.isAbsolute(parts[part_i])) {
                 cwd = parts[part_i];
                 parts = parts[part_i + 1 ..];
 
-                part_len = @truncate(u16, parts.len);
+                part_len = @as(u16, @truncate(parts.len));
                 part_i = 0;
                 continue;
             }
@@ -959,7 +959,7 @@ pub fn lastIndexOfNonSeparatorPosix(slice: []const u8) ?u32 {
     var i: usize = slice.len;
     while (i != 0) : (i -= 1) {
         if (slice[i] != std.fs.path.sep_posix) {
-            return @intCast(u32, i);
+            return @as(u32, @intCast(i));
         }
     }
 

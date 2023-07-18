@@ -440,7 +440,7 @@ pub const RunCommand = struct {
         var retried = false;
 
         if (!strings.endsWithComptime(std.mem.span(std.os.argv[0]), "node")) {
-            var argv0 = @ptrCast([*:0]const u8, optional_bun_path.ptr);
+            var argv0 = @as([*:0]const u8, @ptrCast(optional_bun_path.ptr));
 
             // if we are already an absolute path, use that
             // if the user started the application via a shebang, it's likely that the path is absolute already
@@ -452,7 +452,7 @@ pub const RunCommand = struct {
                 var self = std.fs.selfExePath(&self_exe_bin_path_buf) catch unreachable;
                 if (self.len > 0) {
                     self.ptr[self.len] = 0;
-                    argv0 = @ptrCast([*:0]const u8, self.ptr);
+                    argv0 = @as([*:0]const u8, @ptrCast(self.ptr));
                     optional_bun_path.* = self;
                 }
             }
@@ -615,7 +615,7 @@ pub const RunCommand = struct {
                 try new_path.appendSlice(package_json_dir);
             }
 
-            var bin_dir_i: i32 = @intCast(i32, bin_dirs.len) - 1;
+            var bin_dir_i: i32 = @as(i32, @intCast(bin_dirs.len)) - 1;
             // Iterate in reverse order
             // Directories are added to bin_dirs in top-down order
             // That means the parent-most node_modules/.bin will be first
@@ -624,7 +624,7 @@ pub const RunCommand = struct {
                 if (needs_colon) {
                     try new_path.append(':');
                 }
-                try new_path.appendSlice(bin_dirs[@intCast(usize, bin_dir_i)]);
+                try new_path.appendSlice(bin_dirs[@as(usize, @intCast(bin_dir_i))]);
             }
 
             if (needs_colon) {

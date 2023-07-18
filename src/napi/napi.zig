@@ -233,7 +233,7 @@ const prefilled_undefined_args_array: [128]JSC.JSValue = brk: {
 };
 pub export fn napi_create_array_with_length(env: napi_env, length: usize, result: *napi_value) napi_status {
     log("napi_create_array_with_length", .{});
-    const len = @intCast(u32, length);
+    const len = @as(u32, @intCast(length));
 
     const array = JSC.JSValue.createEmptyArray(env, len);
     array.ensureStillAlive();
@@ -274,7 +274,7 @@ inline fn setNapiValue(result: *napi_value, value: JSValue) void {
 pub export fn napi_create_string_latin1(env: napi_env, str: [*]const u8, length: usize, result: *napi_value) napi_status {
     log("napi_create_string_latin1", .{});
     const slice = if (NAPI_AUTO_LENGTH == length)
-        bun.sliceTo(@ptrCast([*:0]const u8, str), 0)
+        bun.sliceTo(@as([*:0]const u8, @ptrCast(str)), 0)
     else
         str[0..length];
 
@@ -283,7 +283,7 @@ pub export fn napi_create_string_latin1(env: napi_env, str: [*]const u8, length:
 }
 pub export fn napi_create_string_utf8(env: napi_env, str: [*]const u8, length: usize, result: *napi_value) napi_status {
     const slice = if (NAPI_AUTO_LENGTH == length)
-        bun.sliceTo(@ptrCast([*:0]const u8, str), 0)
+        bun.sliceTo(@as([*:0]const u8, @ptrCast(str)), 0)
     else
         str[0..length];
 
@@ -297,7 +297,7 @@ pub export fn napi_create_string_utf8(env: napi_env, str: [*]const u8, length: u
 pub export fn napi_create_string_utf16(env: napi_env, str: [*]const char16_t, length: usize, result: *napi_value) napi_status {
     log("napi_create_string_utf16", .{});
     const slice = if (NAPI_AUTO_LENGTH == length)
-        bun.sliceTo(@ptrCast([*:0]const char16_t, str), 0)
+        bun.sliceTo(@as([*:0]const char16_t, @ptrCast(str)), 0)
     else
         str[0..length];
 
@@ -342,7 +342,7 @@ inline fn maybeAppendNull(ptr: anytype, doit: bool) void {
 pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf_ptr_: ?[*:0]c_char, bufsize: usize, result_ptr: ?*usize) napi_status {
     log("napi_get_value_string_latin1", .{});
     defer value.ensureStillAlive();
-    var buf_ptr = @ptrCast(?[*:0]u8, buf_ptr_);
+    var buf_ptr = @as(?[*:0]u8, @ptrCast(buf_ptr_));
 
     const str = value.toBunString(env);
     var buf = buf_ptr orelse {
@@ -418,7 +418,7 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf_
     var buf_ = buf[0..bufsize];
 
     if (bufsize == NAPI_AUTO_LENGTH) {
-        buf_ = bun.sliceTo(@ptrCast([*:0]u16, buf_ptr.?), 0);
+        buf_ = bun.sliceTo(@as([*:0]u16, @ptrCast(buf_ptr.?)), 0);
         if (buf_.len == 0) {
             if (result_ptr) |result| {
                 result.* = 0;
@@ -505,7 +505,7 @@ pub export fn napi_get_array_length(env: napi_env, value: napi_value, result: [*
         return .array_expected;
     }
 
-    result.* = @truncate(u32, value.getLength(env));
+    result.* = @as(u32, @truncate(value.getLength(env)));
     return .ok;
 }
 pub export fn napi_strict_equals(env: napi_env, lhs: napi_value, rhs: napi_value, result: *bool) napi_status {
@@ -530,7 +530,7 @@ pub export fn napi_new_instance(env: napi_env, constructor: napi_value, argc: us
             constructor.asObjectRef(),
             argc,
             if (argv != null)
-                @ptrCast([*]const JSC.C.JSValueRef, argv)
+                @as([*]const JSC.C.JSValueRef, @ptrCast(argv))
             else
                 null,
             &exception,
@@ -614,7 +614,7 @@ pub export fn napi_make_callback(env: napi_env, _: *anyopaque, recv: napi_value,
         else
             JSC.JSValue.jsUndefined(),
         if (arg_count > 0 and args != null)
-            @ptrCast([*]const JSC.JSValue, args.?)[0..arg_count]
+            @as([*]const JSC.JSValue, @ptrCast(args.?))[0..arg_count]
         else
             &.{},
     );
@@ -701,7 +701,7 @@ pub export fn napi_create_arraybuffer(env: napi_env, byte_length: usize, data: [
     log("napi_create_arraybuffer", .{});
     var typed_array = JSC.C.JSObjectMakeTypedArray(env.ref(), .kJSTypedArrayTypeArrayBuffer, byte_length, TODO_EXCEPTION);
     var array_buffer = JSValue.c(typed_array).asArrayBuffer(env) orelse return genericFailure();
-    const len = @min(array_buffer.len, @truncate(u32, byte_length));
+    const len = @min(array_buffer.len, @as(u32, @truncate(byte_length)));
     @memcpy(array_buffer.ptr[0..len], data[0..len]);
     result.* = JSValue.c(typed_array);
     return .ok;
@@ -711,7 +711,7 @@ pub export fn napi_create_external_arraybuffer(env: napi_env, external_data: ?*a
     log("napi_create_external_arraybuffer", .{});
     var external = JSC.ExternalBuffer.create(
         finalize_hint,
-        @ptrCast([*]u8, external_data.?)[0..byte_length],
+        @as([*]u8, @ptrCast(external_data.?))[0..byte_length],
         env,
         finalize_cb,
         env.bunVM().allocator,
@@ -1074,7 +1074,7 @@ pub export fn napi_create_buffer(env: napi_env, length: usize, data: ?**anyopaqu
 }
 pub export fn napi_create_external_buffer(env: napi_env, length: usize, data: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status {
     log("napi_create_external_buffer: {d}", .{length});
-    var buf = JSC.ExternalBuffer.create(finalize_hint, @ptrCast([*]u8, data.?)[0..length], env, finalize_cb, bun.default_allocator) catch {
+    var buf = JSC.ExternalBuffer.create(finalize_hint, @as([*]u8, @ptrCast(data.?))[0..length], env, finalize_cb, bun.default_allocator) catch {
         return genericFailure();
     };
 

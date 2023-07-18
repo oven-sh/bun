@@ -138,7 +138,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
                 out.* = b;
             }
 
-            overflow.allocated = @truncate(Overflow.UsedSize, to_move.len);
+            overflow.allocated = @as(Overflow.UsedSize, @truncate(to_move.len));
             overflow.used = 0;
 
             return used;
@@ -183,7 +183,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
                 var i: usize = 1;
                 const end = sliced.len;
                 while (i < end) {
-                    var ptrs = @ptrCast(*[2]Block, sliced[i]);
+                    var ptrs = @as(*[2]Block, @ptrCast(sliced[i]));
                     allocator.free(ptrs);
                     i += 2;
                 }
@@ -207,12 +207,9 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
 
             var block = self.overflow.tail();
 
-            return @ptrCast(
+            return @as(
                 *ValueType,
-                @alignCast(
-                    @alignOf(ValueType),
-                    @alignCast(@alignOf(ValueType), block.append(BytesAsSlice, bytes)),
-                ),
+                @ptrCast(@alignCast(block.append(BytesAsSlice, bytes))),
             );
         }
     };
@@ -631,9 +628,9 @@ pub const CharFreq = struct {
 
         for (text) |c| {
             const i: usize = switch (c) {
-                'a'...'z' => @intCast(usize, c) - 'a',
-                'A'...'Z' => @intCast(usize, c) - ('A' - 26),
-                '0'...'9' => @intCast(usize, c) + (53 - '0'),
+                'a'...'z' => @as(usize, @intCast(c)) - 'a',
+                'A'...'Z' => @as(usize, @intCast(c)) - ('A' - 26),
+                '0'...'9' => @as(usize, @intCast(c)) + (53 - '0'),
                 '_' => 62,
                 '$' => 63,
                 else => continue,
@@ -700,13 +697,13 @@ pub const NameMinifier = struct {
     pub fn numberToMinifiedName(this: *NameMinifier, name: *std.ArrayList(u8), _i: isize) !void {
         name.clearRetainingCapacity();
         var i = _i;
-        var j = @intCast(usize, @mod(i, 54));
+        var j = @as(usize, @intCast(@mod(i, 54)));
         try name.appendSlice(this.head.items[j .. j + 1]);
         i = @divFloor(i, 54);
 
         while (i > 0) {
             i -= 1;
-            j = @intCast(usize, @mod(i, 64));
+            j = @as(usize, @intCast(@mod(i, 64)));
             try name.appendSlice(this.tail.items[j .. j + 1]);
             i = @divFloor(i, 64);
         }
@@ -714,14 +711,14 @@ pub const NameMinifier = struct {
 
     pub fn defaultNumberToMinifiedName(allocator: std.mem.Allocator, _i: isize) !string {
         var i = _i;
-        var j = @intCast(usize, @mod(i, 54));
+        var j = @as(usize, @intCast(@mod(i, 54)));
         var name = std.ArrayList(u8).init(allocator);
         try name.appendSlice(default_head[j .. j + 1]);
         i = @divFloor(i, 54);
 
         while (i > 0) {
             i -= 1;
-            j = @intCast(usize, @mod(i, 64));
+            j = @as(usize, @intCast(@mod(i, 64)));
             try name.appendSlice(default_tail[j .. j + 1]);
             i = @divFloor(i, 64);
         }
@@ -1225,8 +1222,8 @@ pub const Symbol = struct {
                         .{
                             symbol.original_name, @tagName(symbol.kind),
                             if (symbol.hasLink()) symbol.link else Ref{
-                                .source_index = @truncate(Ref.Int, i),
-                                .inner_index = @truncate(Ref.Int, inner_index),
+                                .source_index = @as(Ref.Int, @truncate(i)),
+                                .inner_index = @as(Ref.Int, @truncate(inner_index)),
                                 .tag = .symbol,
                             },
                         },
@@ -1441,7 +1438,7 @@ pub const E = struct {
             array.protect();
             defer array.unprotect();
             for (items, 0..) |expr, j| {
-                array.putIndex(globalObject, @truncate(u32, j), try expr.data.toJS(allocator, globalObject));
+                array.putIndex(globalObject, @as(u32, @truncate(j)), try expr.data.toJS(allocator, globalObject));
             }
 
             return array;
@@ -1706,8 +1703,8 @@ pub const E = struct {
 
         pub fn toStringFromF64Safe(value: f64, allocator: std.mem.Allocator) ?string {
             if (value == @trunc(value) and (value < std.math.maxInt(i32) and value > std.math.minInt(i32))) {
-                const int_value = @intFromFloat(i64, value);
-                const abs = @intCast(u64, std.math.absInt(int_value) catch return null);
+                const int_value = @as(i64, @intFromFloat(value));
+                const abs = @as(u64, @intCast(std.math.absInt(int_value) catch return null));
                 if (abs < double_digit.len) {
                     return if (int_value < 0)
                         neg_double_digit[abs]
@@ -1715,7 +1712,7 @@ pub const E = struct {
                         double_digit[abs];
                 }
 
-                return std.fmt.allocPrint(allocator, "{d}", .{@intCast(i32, int_value)}) catch return null;
+                return std.fmt.allocPrint(allocator, "{d}", .{@as(i32, @intCast(int_value))}) catch return null;
             }
 
             if (std.math.isNan(value)) {
@@ -1750,7 +1747,7 @@ pub const E = struct {
         }
 
         pub fn to(self: Number, comptime T: type) T {
-            return @intFromFloat(T, @min(@max(@trunc(self.value), 0), comptime @min(std.math.floatMax(f64), std.math.maxInt(T))));
+            return @as(T, @intFromFloat(@min(@max(@trunc(self.value), 0), comptime @min(std.math.floatMax(f64), std.math.maxInt(T)))));
         }
 
         pub fn jsonStringify(self: *const Number, opts: anytype, o: anytype) !void {
@@ -2048,7 +2045,7 @@ pub const E = struct {
                     return Expr.Query{
                         .expr = value,
                         .loc = key.loc,
-                        .i = @truncate(u32, i),
+                        .i = @as(u32, @truncate(i)),
                     };
                 }
             }
@@ -2154,11 +2151,11 @@ pub const E = struct {
             std.debug.assert(other.isUTF8());
 
             if (other.rope_len == 0) {
-                other.rope_len = @truncate(u32, other.data.len);
+                other.rope_len = @as(u32, @truncate(other.data.len));
             }
 
             if (this.rope_len == 0) {
-                this.rope_len = @truncate(u32, this.data.len);
+                this.rope_len = @as(u32, @truncate(this.data.len));
             }
 
             this.rope_len += other.rope_len;
@@ -2181,7 +2178,7 @@ pub const E = struct {
             const Value = @TypeOf(value);
             if (Value == []u16 or Value == []const u16) {
                 return .{
-                    .data = @ptrCast([*]const u8, value.ptr)[0..value.len],
+                    .data = @as([*]const u8, @ptrCast(value.ptr))[0..value.len],
                     .is_utf16 = true,
                 };
             }
@@ -2192,7 +2189,7 @@ pub const E = struct {
 
         pub fn slice16(this: *const String) []const u16 {
             std.debug.assert(this.is_utf16);
-            return @ptrCast([*]const u16, @alignCast(@alignOf(u16), this.data.ptr))[0..this.data.len];
+            return @as([*]const u16, @ptrCast(@alignCast(this.data.ptr)))[0..this.data.len];
         }
 
         pub fn resolveRopeIfNeeded(this: *String, allocator: std.mem.Allocator) void {
@@ -2249,10 +2246,10 @@ pub const E = struct {
             }
 
             if (s.isUTF8()) {
-                return @truncate(u32, bun.simdutf.length.utf16.from.utf8.le(s.data));
+                return @as(u32, @truncate(bun.simdutf.length.utf16.from.utf8.le(s.data)));
             }
 
-            return @truncate(u32, s.slice16().len);
+            return @as(u32, @truncate(s.slice16().len));
         }
 
         pub inline fn len(s: *const String) usize {
@@ -2354,7 +2351,7 @@ pub const E = struct {
                 return bun.hash(s.data);
             } else {
                 // hash utf-16
-                return bun.hash(@ptrCast([*]const u8, s.slice16().ptr)[0 .. s.slice16().len * 2]);
+                return bun.hash(@as([*]const u8, @ptrCast(s.slice16().ptr))[0 .. s.slice16().len * 2]);
             }
         }
 
@@ -2391,7 +2388,7 @@ pub const E = struct {
             var buf = [_]u8{0} ** 4096;
             var i: usize = 0;
             for (s.slice16()) |char| {
-                buf[i] = @intCast(u8, char);
+                buf[i] = @as(u8, @intCast(char));
                 i += 1;
                 if (i >= 4096) {
                     break;
@@ -5793,11 +5790,11 @@ pub const Op = struct {
         }
 
         pub inline fn sub(self: Level, i: anytype) Level {
-            return @enumFromInt(Level, @intFromEnum(self) - i);
+            return @as(Level, @enumFromInt(@intFromEnum(self) - i));
         }
 
         pub inline fn addF(self: Level, i: anytype) Level {
-            return @enumFromInt(Level, @intFromEnum(self) + i);
+            return @as(Level, @enumFromInt(@intFromEnum(self) + i));
         }
     };
 
@@ -6143,7 +6140,7 @@ pub const BundledAst = struct {
 
     pub fn init(ast: Ast) BundledAst {
         return .{
-            .approximate_newline_count = @truncate(u32, ast.approximate_newline_count),
+            .approximate_newline_count = @as(u32, @truncate(ast.approximate_newline_count)),
             .nested_scope_slot_counts = ast.nested_scope_slot_counts,
             .externals = ast.externals,
 
@@ -7309,7 +7306,7 @@ pub const Macro = struct {
                 _: js.JSStringRef,
                 _: js.ExceptionRef,
             ) js.JSObjectRef {
-                return JSC.JSValue.jsNumberFromU16(@intCast(u16, @intFromEnum(std.meta.activeTag(this.data)))).asRef();
+                return JSC.JSValue.jsNumberFromU16(@as(u16, @intCast(@intFromEnum(std.meta.activeTag(this.data))))).asRef();
             }
             pub fn getTagName(
                 this: *JSNode,
@@ -7716,7 +7713,7 @@ pub const Macro = struct {
                 var list = std.EnumArray(Tag, Expr.Data).initFill(Expr.Data{ .e_number = E.Number{ .value = 0.0 } });
                 const fields: []const std.builtin.Type.EnumField = @typeInfo(Tag).Enum.fields;
                 for (fields) |field| {
-                    list.set(@enumFromInt(Tag, field.value), Expr.Data{ .e_number = E.Number{ .value = @floatFromInt(f64, field.value) } });
+                    list.set(@as(Tag, @enumFromInt(field.value)), Expr.Data{ .e_number = E.Number{ .value = @as(f64, @floatFromInt(field.value)) } });
                 }
 
                 break :brk list;
@@ -7940,7 +7937,7 @@ pub const Macro = struct {
                     for (props, 0..) |prop, i| {
                         const key = prop.key orelse continue;
                         if (key.data != .e_string or !key.data.e_string.isUTF8()) continue;
-                        if (strings.eqlComptime(key.data.e_string.data, name)) return @intCast(u32, i);
+                        if (strings.eqlComptime(key.data.e_string.data, name)) return @as(u32, @intCast(i));
                     }
 
                     return null;
@@ -8032,7 +8029,7 @@ pub const Macro = struct {
                                         Expr{
                                             .data = .{
                                                 .e_number = E.Number{
-                                                    .value = @floatFromInt(f64, @intFromBool(value.data.e_boolean.value)),
+                                                    .value = @as(f64, @floatFromInt(@intFromBool(value.data.e_boolean.value))),
                                                 },
                                             },
                                             .loc = value.loc,
@@ -8108,8 +8105,8 @@ pub const Macro = struct {
                         Tag.e_array => {
                             self.args.ensureUnusedCapacity(2 + children.len) catch unreachable;
                             self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.e_array) });
-                            const children_count = @truncate(u16, children.len);
-                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = .{ .e_number = E.Number{ .value = @floatFromInt(f64, children_count) } } });
+                            const children_count = @as(u16, @truncate(children.len));
+                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = .{ .e_number = E.Number{ .value = @as(f64, @floatFromInt(children_count)) } } });
 
                             var old_parent = self.parent_tag;
                             self.parent_tag = Tag.e_array;
@@ -8147,8 +8144,8 @@ pub const Macro = struct {
                         Tag.e_object => {
                             self.args.ensureUnusedCapacity(2 + children.len) catch unreachable;
                             self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.e_object) });
-                            const children_count = @truncate(u16, children.len);
-                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = .{ .e_number = E.Number{ .value = @floatFromInt(f64, children_count) } } });
+                            const children_count = @as(u16, @truncate(children.len));
+                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = .{ .e_number = E.Number{ .value = @as(f64, @floatFromInt(children_count)) } } });
 
                             var old_parent = self.parent_tag;
                             self.parent_tag = Tag.e_object;
@@ -8353,7 +8350,7 @@ pub const Macro = struct {
                             }
                             self.args.ensureUnusedCapacity(2 + count) catch unreachable;
                             self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.inline_inject) });
-                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = .{ .e_number = .{ .value = @floatFromInt(f64, @intCast(u32, children.len)) } } });
+                            self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = .{ .e_number = .{ .value = @as(f64, @floatFromInt(@as(u32, @intCast(children.len)))) } } });
 
                             const old_parent_tag = self.parent_tag;
                             self.parent_tag = Tag.inline_inject;
@@ -8418,7 +8415,7 @@ pub const Macro = struct {
                             const namespace_ = propertyValueNamed(props, "namespace");
 
                             const items_count: u32 = 1 +
-                                @intCast(u32, @intFromBool(namespace_ != null));
+                                @as(u32, @intCast(@intFromBool(namespace_ != null)));
 
                             self.args.ensureUnusedCapacity(items_count) catch unreachable;
                             self.args.appendAssumeCapacity(Expr{ .loc = loc, .data = comptime Tag.ids.get(Tag.s_import) });
@@ -8529,7 +8526,7 @@ pub const Macro = struct {
                                 .loc = loc,
                                 .data = .{
                                     .e_number = E.Number{
-                                        .value = @floatFromInt(f64, children.len),
+                                        .value = @as(f64, @floatFromInt(children.len)),
                                     },
                                 },
                             });
@@ -8719,7 +8716,7 @@ pub const Macro = struct {
                 hasher.update(path);
                 hasher.update("#");
                 hasher.update(name);
-                return @bitCast(i32, @truncate(u32, hasher.final()));
+                return @as(i32, @bitCast(@as(u32, @truncate(hasher.final()))));
             }
         };
 
@@ -8767,11 +8764,11 @@ pub const Macro = struct {
                 pub fn fromJSValueRefNoValidate(ctx: js.JSContextRef, value: js.JSValueRef) TagOrJSNode {
                     switch (js.JSValueGetType(ctx, value)) {
                         js.JSType.kJSTypeNumber => {
-                            const tag_int = @intFromFloat(u8, JSC.JSValue.fromRef(value).asNumber());
+                            const tag_int = @as(u8, @intFromFloat(JSC.JSValue.fromRef(value).asNumber()));
                             if (tag_int < Tag.min_tag or tag_int > Tag.max_tag) {
                                 return TagOrJSNode{ .invalid = {} };
                             }
-                            return TagOrJSNode{ .tag = @enumFromInt(JSNode.Tag, tag_int) };
+                            return TagOrJSNode{ .tag = @as(JSNode.Tag, @enumFromInt(tag_int)) };
                         },
                         js.JSType.kJSTypeObject => {
                             if (JSCBase.GetJSPrivateData(JSNode, value)) |node| {
@@ -8789,13 +8786,13 @@ pub const Macro = struct {
                 pub fn fromJSValueRef(writer: *Writer, ctx: js.JSContextRef, value: js.JSValueRef) TagOrJSNode {
                     switch (js.JSValueGetType(ctx, value)) {
                         js.JSType.kJSTypeNumber => {
-                            const tag_int = @intFromFloat(u8, JSC.JSValue.fromRef(value).asNumber());
+                            const tag_int = @as(u8, @intFromFloat(JSC.JSValue.fromRef(value).asNumber()));
                             if (tag_int < Tag.min_tag or tag_int > Tag.max_tag) {
                                 throwTypeError(ctx, "Node type has invalid value", writer.exception);
                                 writer.errored = true;
                                 return TagOrJSNode{ .invalid = {} };
                             }
-                            return TagOrJSNode{ .tag = @enumFromInt(JSNode.Tag, tag_int) };
+                            return TagOrJSNode{ .tag = @as(JSNode.Tag, @enumFromInt(tag_int)) };
                         },
                         js.JSType.kJSTypeObject => {
                             if (JSCBase.GetJSPrivateData(JSNode, value)) |node| {
@@ -8957,7 +8954,7 @@ pub const Macro = struct {
 
                             import.import.items = writer.allocator.alloc(
                                 ClauseItem,
-                                @intCast(u32, @intFromBool(has_default)) + array_iter.len,
+                                @as(u32, @intCast(@intFromBool(has_default))) + array_iter.len,
                             ) catch return false;
 
                             while (array_iter.next()) |name| {
@@ -8986,7 +8983,7 @@ pub const Macro = struct {
                         } else {
                             import.import.items = writer.allocator.alloc(
                                 ClauseItem,
-                                @intCast(u32, @intFromBool(has_default)),
+                                @as(u32, @intCast(@intFromBool(has_default))),
                             ) catch return false;
                         }
 
@@ -9024,8 +9021,8 @@ pub const Macro = struct {
                         while (i < count) {
                             var nextArg = writer.eatArg() orelse return false;
                             if (js.JSValueIsArray(writer.ctx, nextArg.asRef())) {
-                                const extras = @truncate(u32, nextArg.getLength(writer.ctx.ptr()));
-                                count += @max(@truncate(@TypeOf(count), extras), 1) - 1;
+                                const extras = @as(u32, @truncate(nextArg.getLength(writer.ctx.ptr())));
+                                count += @max(@as(@TypeOf(count), @truncate(extras)), 1) - 1;
                                 items.ensureUnusedCapacity(extras) catch unreachable;
                                 items.expandToCapacity();
                                 var new_writer = writer.*;
@@ -9405,7 +9402,7 @@ pub const Macro = struct {
                 .allocator = JSCBase.getAllocator(ctx),
                 .exception = exception,
                 .args_value = args_value,
-                .args_len = @truncate(u32, args_value.getLength(ctx.ptr())),
+                .args_len = @as(u32, @truncate(args_value.getLength(ctx.ptr()))),
                 .args_i = 0,
                 .errored = false,
             };
@@ -9701,7 +9698,7 @@ pub const Macro = struct {
                         macro_callback,
                         null,
                         args_count,
-                        @ptrCast([*]js.JSObjectRef, args_ptr),
+                        @as([*]js.JSObjectRef, @ptrCast(args_ptr)),
                     );
 
                     var runner = Run{
@@ -9945,7 +9942,7 @@ pub const Macro = struct {
                         },
 
                         .Integer => {
-                            return Expr.init(E.Number, E.Number{ .value = @floatFromInt(f64, value.toInt32()) }, this.caller.loc);
+                            return Expr.init(E.Number, E.Number{ .value = @as(f64, @floatFromInt(value.toInt32())) }, this.caller.loc);
                         },
                         .Double => {
                             return Expr.init(E.Number, E.Number{ .value = value.asNumber() }, this.caller.loc);

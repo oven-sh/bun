@@ -394,7 +394,7 @@ pub const RequestContext = struct {
             }
 
             if (this.bundler.router.?.routeIndexByHash(match.hash)) |ind| {
-                route_index = @intCast(i32, ind);
+                route_index = @as(i32, @intCast(ind));
             }
 
             module_preload: {
@@ -437,7 +437,7 @@ pub const RequestContext = struct {
             .reason = step,
             .cwd = this.bundler.fs.top_level_dir,
             .problems = Api.Problems{
-                .code = @truncate(u16, @intFromError(err)),
+                .code = @as(u16, @truncate(@intFromError(err))),
                 .name = @errorName(err),
                 .exceptions = exceptions,
                 .build = try log.toAPI(allocator),
@@ -730,7 +730,7 @@ pub const RequestContext = struct {
             SOCKET_FLAGS,
         );
 
-        ctx.status = @truncate(HTTPStatusCode, code);
+        ctx.status = @as(HTTPStatusCode, @truncate(code));
     }
 
     pub fn init(
@@ -1079,7 +1079,7 @@ pub const RequestContext = struct {
                                 .from_timestamp = from_timestamp,
                                 .loader = parse_result.loader.toAPI(),
                                 .module_path = this.bundler.fs.relativeTo(file_path_str),
-                                .blob_length = @truncate(u32, written),
+                                .blob_length = @as(u32, @truncate(written)),
                             },
                         },
                         .id = id,
@@ -1166,7 +1166,7 @@ pub const RequestContext = struct {
                                 .from_timestamp = from_timestamp,
                                 .loader = .css,
                                 .module_path = this.bundler.fs.relativeTo(file_path_str),
-                                .blob_length = @truncate(u32, count.written),
+                                .blob_length = @as(u32, @truncate(count.written)),
                                 // .log = std.mem.zeroes(Api.Log),
                             },
                         },
@@ -1432,7 +1432,7 @@ pub const RequestContext = struct {
             JavaScript.API.Bun.flushCSSImports();
             vm.flush();
 
-            Output.printElapsed(@floatFromInt(f64, (handler.start_timer.read())) / std.time.ns_per_ms);
+            Output.printElapsed(@as(f64, @floatFromInt((handler.start_timer.read()))) / std.time.ns_per_ms);
 
             if (vm.bundler.options.framework.?.display_name.len > 0) {
                 Output.prettyError(
@@ -1716,11 +1716,11 @@ pub const RequestContext = struct {
         pub var to_close: []*WebsocketHandler = &[_]*WebsocketHandler{};
 
         pub fn generateTimestamp(handler: *WebsocketHandler) u32 {
-            return @truncate(u32, handler.ctx.timer.read() / std.time.ns_per_ms);
+            return @as(u32, @truncate(handler.ctx.timer.read() / std.time.ns_per_ms));
         }
 
         pub fn toTimestamp(timestamp: u64) u32 {
-            return @truncate(u32, timestamp / std.time.ns_per_ms);
+            return @as(u32, @truncate(timestamp / std.time.ns_per_ms));
         }
 
         pub fn broadcast(message: []const u8) !void {
@@ -1897,7 +1897,7 @@ pub const RequestContext = struct {
                 const welcome_message = Api.WebsocketMessageWelcome{
                     .asset_prefix = handler.ctx.bundler.options.routes.asset_prefix_path,
                     .epoch = WebsocketHandler.toTimestamp(
-                        @intCast(u64, (handler.ctx.timer.started.timestamp.tv_sec * std.time.ns_per_s)) + @intCast(u64, handler.ctx.timer.started.timestamp.tv_nsec),
+                        @as(u64, @intCast((handler.ctx.timer.started.timestamp.tv_sec * std.time.ns_per_s))) + @as(u64, @intCast(handler.ctx.timer.started.timestamp.tv_nsec)),
                     ),
                     .javascript_reloader = reloader,
                     .cwd = handler.ctx.bundler.fs.top_level_dir,
@@ -2085,7 +2085,7 @@ pub const RequestContext = struct {
                                                 socket_buffers[2] = iovec(build_result.bytes);
                                                 // we reuse the accept key buffer
                                                 // so we have a pointer that is not stack memory
-                                                handler.accept_key[0..@sizeOf(usize)].* = @bitCast([@sizeOf(usize)]u8, bun.hash(build_result.bytes));
+                                                handler.accept_key[0..@sizeOf(usize)].* = @as([@sizeOf(usize)]u8, @bitCast(bun.hash(build_result.bytes)));
                                                 socket_buffers[3] = iovec(handler.accept_key[0..4]);
                                                 socket_buffer_count = 4;
                                             }
@@ -2271,7 +2271,7 @@ pub const RequestContext = struct {
 
                     pub fn reserveNext(this: *SocketPrinterInternal, count: u32) anyerror![*]u8 {
                         try this.buffer.growIfNeeded(count);
-                        return @ptrCast([*]u8, &this.buffer.list.items.ptr[this.buffer.list.items.len]);
+                        return @as([*]u8, @ptrCast(&this.buffer.list.items.ptr[this.buffer.list.items.len]));
                     }
 
                     pub fn advanceBy(this: *SocketPrinterInternal, count: u32) void {
@@ -3491,8 +3491,8 @@ pub const Server = struct {
             }
 
             if (attempts >= 10) {
-                var random_number = std.rand.DefaultPrng.init(@intCast(u64, std.time.milliTimestamp()));
-                const default_port = @intCast(u16, server.bundler.options.origin.getPort() orelse 3000);
+                var random_number = std.rand.DefaultPrng.init(@as(u64, @intCast(std.time.milliTimestamp())));
+                const default_port = @as(u16, @intCast(server.bundler.options.origin.getPort() orelse 3000));
                 Output.prettyErrorln(
                     "<r><red>error<r>: bun can't start because <b>port {d} is already in use<r>. Tried {d} - {d}. Try closing the other apps or manually passing bun a port\n\n  <r><cyan><b>bun --origin http://localhost:{d}/<r>\n",
                     .{
@@ -3715,7 +3715,7 @@ pub const Server = struct {
 
                     req_ctx.sendInternalError(error.InternalError) catch {};
                 }
-                const status = req_ctx.status orelse @intCast(HTTPStatusCode, 500);
+                const status = req_ctx.status orelse @as(HTTPStatusCode, @intCast(500));
 
                 if (log.msgs.items.len == 0) {
                     if (!did_print) {

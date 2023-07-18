@@ -1045,7 +1045,7 @@ pub const PackageJSON = struct {
         hasher.update(std.mem.asBytes(&this.hash));
         hasher.update(module);
 
-        return @truncate(u32, hasher.final());
+        return @as(u32, @truncate(hasher.final()));
     }
 };
 
@@ -1378,14 +1378,14 @@ pub const ESModule = struct {
         pub fn parseName(specifier: string) ?string {
             var slash = strings.indexOfCharNeg(specifier, '/');
             if (!strings.startsWithChar(specifier, '@')) {
-                slash = if (slash == -1) @intCast(i32, specifier.len) else slash;
-                return specifier[0..@intCast(usize, slash)];
+                slash = if (slash == -1) @as(i32, @intCast(specifier.len)) else slash;
+                return specifier[0..@as(usize, @intCast(slash))];
             } else {
                 if (slash == -1) return null;
 
-                const slash2 = strings.indexOfChar(specifier[@intCast(usize, slash) + 1 ..], '/') orelse
-                    specifier[@intCast(u32, slash + 1)..].len;
-                return specifier[0 .. @intCast(usize, slash + 1) + slash2];
+                const slash2 = strings.indexOfChar(specifier[@as(usize, @intCast(slash)) + 1 ..], '/') orelse
+                    specifier[@as(u32, @intCast(slash + 1))..].len;
+                return specifier[0 .. @as(usize, @intCast(slash + 1)) + slash2];
             }
         }
 

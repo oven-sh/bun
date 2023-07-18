@@ -26,7 +26,7 @@ pub fn createHashTable(allocator: std.mem.Allocator) !Map {
     const decls = comptime std.meta.declarations(all);
 
     var map = Map.init(allocator);
-    try map.ensureTotalCapacity(@truncate(u32, decls.len));
+    try map.ensureTotalCapacity(@as(u32, @truncate(decls.len)));
     @setEvalBranchQuota(4000);
     inline for (decls) |decl| {
         map.putAssumeCapacityNoClobber(decl.name, @field(all, decl.name));

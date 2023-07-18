@@ -117,7 +117,7 @@ pub const Expect = struct {
                     const now = std.time.Instant.now() catch unreachable;
                     const pending_test = Jest.runner.?.pending_test.?;
                     const elapsed = @divFloor(now.since(pending_test.started_at), std.time.ns_per_ms);
-                    const remaining = @truncate(u32, Jest.runner.?.last_test_timeout_timer_duration -| elapsed);
+                    const remaining = @as(u32, @truncate(Jest.runner.?.last_test_timeout_timer_duration -| elapsed));
 
                     if (!globalThis.bunVM().waitForPromiseWithTimeout(promise, remaining)) {
                         pending_test.timeout();
@@ -2139,7 +2139,7 @@ pub const Expect = struct {
         active_test_expectation_counter.actual += 1;
 
         const not = this.flags.not;
-        var pass = value.jsType().isArray() and @intCast(i32, value.getLength(globalThis)) == size.toInt32();
+        var pass = value.jsType().isArray() and @as(i32, @intCast(value.getLength(globalThis))) == size.toInt32();
 
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -3003,7 +3003,7 @@ pub const Expect = struct {
 
         const times = arguments[0].coerce(i32, globalObject);
 
-        var pass = @intCast(i32, calls.getLength(globalObject)) == times;
+        var pass = @as(i32, @intCast(calls.getLength(globalObject))) == times;
 
         const not = this.flags.not;
         if (not) pass = !pass;

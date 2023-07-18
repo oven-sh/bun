@@ -61,7 +61,7 @@ pub const Integrity = extern struct {
             });
 
             // parse hex integer
-            integrity.value[out_i] = @truncate(u8, x0 << 4 | x1);
+            integrity.value[out_i] = @as(u8, @truncate(x0 << 4 | x1));
 
             out_i += 1;
             i += 1;

@@ -154,6 +154,8 @@ public:
     WebCore::DOMWrapperWorld& world() { return m_world.get(); }
 
     DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
 
     bool worldIsNormal() const { return m_worldIsNormal; }
     static ptrdiff_t offsetOfWorldIsNormal() { return OBJECT_OFFSETOF(GlobalObject, m_worldIsNormal); }

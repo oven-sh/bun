@@ -28,7 +28,7 @@ const URLPath = @import("./http/url_path.zig");
 const PathnameScanner = @import("./url.zig").PathnameScanner;
 const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 
-const index_route_hash = @truncate(u32, bun.hash("$$/index-route$$-!(@*@#&*%-901823098123"));
+const index_route_hash = @as(u32, @truncate(bun.hash("$$/index-route$$-!(@*@#&*%-901823098123")));
 const arbitrary_max_route = 4096;
 
 pub const Param = struct {
@@ -335,7 +335,7 @@ const RouteLoader = struct {
 
         const relative_dir = FileSystem.instance.relative(base_dir, config.dir);
         if (!strings.hasPrefixComptime(relative_dir, "..")) {
-            route_dirname_len = @truncate(u16, relative_dir.len + @as(usize, @intFromBool(config.dir[config.dir.len - 1] != std.fs.path.sep)));
+            route_dirname_len = @as(u16, @truncate(relative_dir.len + @as(usize, @intFromBool(config.dir[config.dir.len - 1] != std.fs.path.sep))));
         }
 
         var this = RouteLoader{
@@ -515,7 +515,7 @@ pub const TinyPtr = packed struct {
     }
 
     pub inline fn eql(a: TinyPtr, b: TinyPtr) bool {
-        return @bitCast(u32, a) == @bitCast(u32, b);
+        return @as(u32, @bitCast(a)) == @as(u32, @bitCast(b));
     }
 
     pub fn from(parent: string, in: string) TinyPtr {
@@ -529,7 +529,7 @@ pub const TinyPtr = packed struct {
 
         const length = @max(end, right) - right;
         const offset = @max(@intFromPtr(in.ptr), @intFromPtr(parent.ptr)) - @intFromPtr(parent.ptr);
-        return TinyPtr{ .offset = @truncate(u16, offset), .len = @truncate(u16, length) };
+        return TinyPtr{ .offset = @as(u16, @truncate(offset)), .len = @as(u16, @truncate(length)) };
     }
 };
 
@@ -571,7 +571,7 @@ pub const Route = struct {
             var table: [std.math.maxInt(u8)]u8 = undefined;
             var i: u16 = 0;
             while (i < @as(u16, table.len)) {
-                table[i] = @intCast(u8, i);
+                table[i] = @as(u8, @intCast(i));
                 i += 1;
             }
             // move dynamic routes to the bottom
@@ -770,7 +770,7 @@ pub const Route = struct {
             .full_hash = if (is_index)
                 index_route_hash
             else
-                @truncate(u32, bun.hash(name)),
+                @as(u32, @truncate(bun.hash(name))),
             .param_count = validation_result.param_count,
             .kind = validation_result.kind,
             .abs_path = entry.abs_path,
@@ -1184,7 +1184,7 @@ const Pattern = struct {
         var offset: RoutePathInt = 0;
         std.debug.assert(input.len > 0);
         var kind: u4 = @intFromEnum(Tag.static);
-        const end = @truncate(u32, input.len - 1);
+        const end = @as(u32, @truncate(input.len - 1));
         while (offset < end) {
             const pattern: Pattern = Pattern.initUnhashed(input, offset) catch |err| {
                 const source = Logger.Source.initEmptyFile(input);
@@ -1248,10 +1248,10 @@ const Pattern = struct {
             };
             offset = pattern.len;
             kind = @max(@intFromEnum(@as(Pattern.Tag, pattern.value)), kind);
-            count += @intCast(u16, @intFromBool(@intFromEnum(@as(Pattern.Tag, pattern.value)) > @intFromEnum(Pattern.Tag.static)));
+            count += @as(u16, @intCast(@intFromBool(@intFromEnum(@as(Pattern.Tag, pattern.value)) > @intFromEnum(Pattern.Tag.static))));
         }
 
-        return ValidationResult{ .param_count = count, .kind = @enumFromInt(Tag, kind) };
+        return ValidationResult{ .param_count = count, .kind = @as(Tag, @enumFromInt(kind)) };
     }
 
     pub fn eql(a: Pattern, b: Pattern) bool {
@@ -1292,13 +1292,13 @@ const Pattern = struct {
 
         if (input.len == 0 or input.len <= @as(usize, offset)) return Pattern{
             .value = .{ .static = HashedString.empty },
-            .len = @truncate(RoutePathInt, @min(input.len, @as(usize, offset))),
+            .len = @as(RoutePathInt, @truncate(@min(input.len, @as(usize, offset)))),
         };
 
         var i: RoutePathInt = offset;
 
         var tag = Tag.static;
-        const end = @intCast(RoutePathInt, input.len - 1);
+        const end = @as(RoutePathInt, @intCast(input.len - 1));
 
         if (offset == end) return Pattern{ .len = offset, .value = .{ .static = HashedString.empty } };
 

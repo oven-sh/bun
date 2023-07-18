@@ -766,7 +766,7 @@ pub const TestCommand = struct {
         // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#grouping-log-lines
         const file_prefix = if (Output.is_github_action) "::group::" else "";
 
-        vm.main_hash = @truncate(u32, bun.hash(file_path));
+        vm.main_hash = @as(u32, @truncate(bun.hash(file_path)));
         var repeat_count = reporter.repeat_count;
         var repeat_index: u32 = 0;
         while (repeat_index < repeat_count) : (repeat_index += 1) {

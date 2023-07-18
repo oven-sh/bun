@@ -368,7 +368,7 @@ pub const Arguments = struct {
                 };
 
                 arguments.eat();
-                break :brk @intCast(uid_t, uid_value.toInt32());
+                break :brk @as(uid_t, @intCast(uid_value.toInt32()));
             };
 
             const gid: gid_t = brk: {
@@ -385,7 +385,7 @@ pub const Arguments = struct {
                 };
 
                 arguments.eat();
-                break :brk @intCast(gid_t, gid_value.toInt32());
+                break :brk @as(gid_t, @intCast(gid_value.toInt32()));
             };
 
             return Chown{ .path = path, .uid = uid, .gid = gid };
@@ -438,7 +438,7 @@ pub const Arguments = struct {
                 };
 
                 arguments.eat();
-                break :brk @intCast(uid_t, uid_value.toInt32());
+                break :brk @as(uid_t, @intCast(uid_value.toInt32()));
             };
 
             const gid: gid_t = brk: {
@@ -455,7 +455,7 @@ pub const Arguments = struct {
                 };
 
                 arguments.eat();
-                break :brk @intCast(gid_t, gid_value.toInt32());
+                break :brk @as(gid_t, @intCast(gid_value.toInt32()));
             };
 
             return Fchown{ .fd = fd, .uid = uid, .gid = gid };
@@ -1672,7 +1672,7 @@ pub const Arguments = struct {
                     }
 
                     if (arguments.remaining[1].isNumber() or arguments.remaining[1].isBigInt())
-                        args.position = @intCast(ReadPosition, arguments.remaining[1].to(i52));
+                        args.position = @as(ReadPosition, @intCast(arguments.remaining[1].to(i52)));
 
                     arguments.remaining = arguments.remaining[2..];
                 } else if (current.isObject()) {
@@ -1798,7 +1798,7 @@ pub const Arguments = struct {
         mode: Mode = 0o666,
         file: PathOrFileDescriptor,
         data: StringOrBuffer,
-        dirfd: FileDescriptor = @intCast(FileDescriptor, std.fs.cwd().fd),
+        dirfd: FileDescriptor = @as(FileDescriptor, @intCast(std.fs.cwd().fd)),
 
         pub fn deinit(self: WriteFile) void {
             self.file.deinit();
@@ -2424,7 +2424,7 @@ pub const Arguments = struct {
             return CopyFile{
                 .src = src,
                 .dest = dest,
-                .mode = @enumFromInt(Constants.Copyfile, mode),
+                .mode = @as(Constants.Copyfile, @enumFromInt(mode)),
             };
         }
     };
@@ -2568,7 +2568,7 @@ const Return = struct {
                 ctx.ptr(),
                 &fields.bytesRead,
                 &fields.buffer,
-                JSC.JSValue.jsNumberFromUint64(@intCast(u52, @min(std.math.maxInt(u52), this.bytes_read))),
+                JSC.JSValue.jsNumberFromUint64(@as(u52, @intCast(@min(std.math.maxInt(u52), this.bytes_read)))),
                 this.buffer_val,
             ).asObjectRef();
         }
@@ -2592,7 +2592,7 @@ const Return = struct {
                 ctx.ptr(),
                 &fields.bytesWritten,
                 &fields.buffer,
-                JSC.JSValue.jsNumberFromUint64(@intCast(u52, @min(std.math.maxInt(u52), this.bytes_written))),
+                JSC.JSValue.jsNumberFromUint64(@as(u52, @intCast(@min(std.math.maxInt(u52), this.bytes_written)))),
                 if (this.buffer == .buffer)
                     this.buffer_val
                 else
@@ -2805,7 +2805,7 @@ pub const NodeFS = struct {
                                 .err => |err| return Maybe(Return.CopyFile){ .err = err },
                             };
                             defer {
-                                _ = std.c.ftruncate(dest_fd, @intCast(std.c.off_t, @truncate(u63, wrote)));
+                                _ = std.c.ftruncate(dest_fd, @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
                                 _ = Syscall.close(dest_fd);
                             }
 
@@ -2815,7 +2815,7 @@ pub const NodeFS = struct {
                             // 16 KB is high end of what is okay to use for stack space
                             // good thing we ask for absurdly large stack sizes
                             var buf: [16384]u8 = undefined;
-                            var remain = @intCast(u64, @max(stat_.size, 0));
+                            var remain = @as(u64, @intCast(@max(stat_.size, 0)));
                             toplevel: while (remain > 0) {
                                 const amt = switch (Syscall.read(src_fd, buf[0..@min(buf.len, remain)])) {
                                     .result => |result| result,
@@ -2913,15 +2913,15 @@ pub const NodeFS = struct {
                         .err => |err| return Maybe(Return.CopyFile){ .err = err },
                     };
 
-                    var size = @intCast(usize, @max(stat_.size, 0));
+                    var size = @as(usize, @intCast(@max(stat_.size, 0)));
 
                     defer {
-                        _ = linux.ftruncate(dest_fd, @intCast(i64, @truncate(u63, wrote)));
+                        _ = linux.ftruncate(dest_fd, @as(i64, @intCast(@as(u63, @truncate(wrote)))));
                         _ = Syscall.close(dest_fd);
                     }
 
-                    var off_in_copy = @bitCast(i64, @as(u64, 0));
-                    var off_out_copy = @bitCast(i64, @as(u64, 0));
+                    var off_in_copy = @as(i64, @bitCast(@as(u64, 0)));
+                    var off_out_copy = @as(i64, @bitCast(@as(u64, 0)));
 
                     if (size == 0) {
                         // copy until EOF
@@ -3199,7 +3199,7 @@ pub const NodeFS = struct {
             .sync => {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const path = args.path.sliceZWithForceCopy(&buf, true);
-                const len = @truncate(u16, path.len);
+                const len = @as(u16, @truncate(path.len));
 
                 // First, attempt to create the desired directory
                 // If that fails, then walk back up the path until we have a match
@@ -3349,8 +3349,8 @@ pub const NodeFS = struct {
             };
         }
         // std.c.getErrno(rc) returns SUCCESS if rc is null so we call std.c._errno() directly
-        const errno = @enumFromInt(std.c.E, std.c._errno().*);
-        return .{ .err = Syscall.Error{ .errno = @truncate(Syscall.Error.Int, @intFromEnum(errno)), .syscall = .mkdtemp } };
+        const errno = @as(std.c.E, @enumFromInt(std.c._errno().*));
+        return .{ .err = Syscall.Error{ .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(errno))), .syscall = .mkdtemp } };
     }
     pub fn open(this: *NodeFS, args: Arguments.Open, comptime flavor: Flavor) Maybe(Return.Open) {
         switch (comptime flavor) {
@@ -3389,7 +3389,7 @@ pub const NodeFS = struct {
                     },
                     .result => |amt| .{
                         .result = .{
-                            .bytes_read = @truncate(u52, amt),
+                            .bytes_read = @as(u52, @truncate(amt)),
                         },
                     },
                 };
@@ -3413,7 +3413,7 @@ pub const NodeFS = struct {
                     },
                     .result => |amt| .{
                         .result = .{
-                            .bytes_read = @truncate(u52, amt),
+                            .bytes_read = @as(u52, @truncate(amt)),
                         },
                     },
                 };
@@ -3461,7 +3461,7 @@ pub const NodeFS = struct {
                     },
                     .result => |amt| .{
                         .result = .{
-                            .bytes_written = @truncate(u52, amt),
+                            .bytes_written = @as(u52, @truncate(amt)),
                         },
                     },
                 };
@@ -3486,7 +3486,7 @@ pub const NodeFS = struct {
                         .err = err,
                     },
                     .result => |amt| .{ .result = .{
-                        .bytes_written = @truncate(u52, amt),
+                        .bytes_written = @as(u52, @truncate(amt)),
                     } },
                 };
             },
@@ -3506,7 +3506,7 @@ pub const NodeFS = struct {
                         .err = err,
                     },
                     .result => |amt| .{ .result = .{
-                        .bytes_read = @truncate(u52, amt),
+                        .bytes_read = @as(u52, @truncate(amt)),
                     } },
                 };
             },
@@ -3524,7 +3524,7 @@ pub const NodeFS = struct {
                         .err = err,
                     },
                     .result => |amt| .{ .result = .{
-                        .bytes_read = @truncate(u52, amt),
+                        .bytes_read = @as(u52, @truncate(amt)),
                     } },
                 };
             },
@@ -3544,7 +3544,7 @@ pub const NodeFS = struct {
                         .err = err,
                     },
                     .result => |amt| .{ .result = .{
-                        .bytes_written = @truncate(u52, amt),
+                        .bytes_written = @as(u52, @truncate(amt)),
                     } },
                 };
             },
@@ -3562,7 +3562,7 @@ pub const NodeFS = struct {
                         .err = err,
                     },
                     .result => |amt| .{ .result = .{
-                        .bytes_written = @truncate(u52, amt),
+                        .bytes_written = @as(u52, @truncate(amt)),
                     } },
                 };
             },
@@ -3775,21 +3775,21 @@ pub const NodeFS = struct {
                 }
 
                 // For certain files, the size might be 0 but the file might still have contents.
-                const size = @intCast(
+                const size = @as(
                     u64,
-                    @max(
+                    @intCast(@max(
                         @min(
                             stat_.size,
-                            @intCast(
+                            @as(
                                 @TypeOf(stat_.size),
                                 // Only used in DOMFormData
-                                args.max_size orelse std.math.maxInt(
+                                @intCast(args.max_size orelse std.math.maxInt(
                                     JSC.WebCore.Blob.SizeType,
-                                ),
+                                )),
                             ),
                         ),
                         0,
-                    ),
+                    )),
                 ) + if (comptime string_type == .null_terminated) 1 else 0;
 
                 var buf = std.ArrayList(u8).init(bun.default_allocator);
@@ -3937,20 +3937,20 @@ pub const NodeFS = struct {
                         // on linux, it's absolutely positioned
                         const pos = JSC.Node.Syscall.system.lseek(
                             fd,
-                            @intCast(std.os.off_t, 0),
+                            @as(std.os.off_t, @intCast(0)),
                             std.os.linux.SEEK.CUR,
                         );
 
                         switch (JSC.Node.Syscall.getErrno(pos)) {
-                            .SUCCESS => break :brk @intCast(usize, pos),
+                            .SUCCESS => break :brk @as(usize, @intCast(pos)),
                             else => break :preallocate,
                         }
                     };
 
                     bun.C.preallocate_file(
                         fd,
-                        @intCast(std.os.off_t, offset),
-                        @intCast(std.os.off_t, buf.len),
+                        @as(std.os.off_t, @intCast(offset)),
+                        @as(std.os.off_t, @intCast(buf.len)),
                     ) catch {};
                 }
             }
@@ -3973,7 +3973,7 @@ pub const NodeFS = struct {
 
         // https://github.com/oven-sh/bun/issues/2931
         if ((@intFromEnum(args.flag) & std.os.O.APPEND) == 0) {
-            _ = ftruncateSync(.{ .fd = fd, .len = @truncate(JSC.WebCore.Blob.SizeType, written) });
+            _ = ftruncateSync(.{ .fd = fd, .len = @as(JSC.WebCore.Blob.SizeType, @truncate(written)) });
         }
 
         return Maybe(Return.WriteFile).success;
@@ -4119,7 +4119,7 @@ pub const NodeFS = struct {
 
                         while (true) {
                             if (Maybe(Return.Rmdir).errnoSys(bun.C.darwin.removefileat(std.os.AT.FDCWD, dest, null, flags), .rmdir)) |errno| {
-                                switch (@enumFromInt(os.E, errno.err.errno)) {
+                                switch (@as(os.E, @enumFromInt(errno.err.errno))) {
                                     .AGAIN, .INTR => continue,
                                     .NOENT => return Maybe(Return.Rmdir).success,
                                     .MLINK => {
@@ -4206,7 +4206,7 @@ pub const NodeFS = struct {
                         }
 
                         if (Maybe(Return.Rm).errnoSys(bun.C.darwin.removefileat(std.os.AT.FDCWD, dest, null, flags), .unlink)) |errno| {
-                            switch (@enumFromInt(os.E, errno.err.errno)) {
+                            switch (@as(os.E, @enumFromInt(errno.err.errno))) {
                                 .AGAIN, .INTR => continue,
                                 .NOENT => {
                                     if (args.force) {

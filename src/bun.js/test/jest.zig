@@ -127,7 +127,7 @@ pub const TestRunner = struct {
 
             if (this.last_test_timeout_timer_duration != milliseconds) {
                 this.last_test_timeout_timer_duration = milliseconds;
-                this.test_timeout_timer.?.set(this, onTestTimeout, @intCast(i32, milliseconds), @intCast(i32, milliseconds));
+                this.test_timeout_timer.?.set(this, onTestTimeout, @as(i32, @intCast(milliseconds)), @as(i32, @intCast(milliseconds)));
             }
         }
     }
@@ -209,7 +209,7 @@ pub const TestRunner = struct {
 
     pub fn addTestCount(this: *TestRunner, count: u32) u32 {
         this.tests.ensureUnusedCapacity(this.allocator, count) catch unreachable;
-        const start = @truncate(Test.ID, this.tests.len);
+        const start = @as(Test.ID, @truncate(this.tests.len));
         this.tests.len += count;
         var statuses = this.tests.items(.status)[start..][0..count];
         @memset(statuses, Test.Status.pending);
@@ -218,15 +218,15 @@ pub const TestRunner = struct {
     }
 
     pub fn getOrPutFile(this: *TestRunner, file_path: string) *DescribeScope {
-        var entry = this.index.getOrPut(this.allocator, @truncate(u32, bun.hash(file_path))) catch unreachable;
+        var entry = this.index.getOrPut(this.allocator, @as(u32, @truncate(bun.hash(file_path)))) catch unreachable;
         if (entry.found_existing) {
             return this.files.items(.module_scope)[entry.value_ptr.*];
         }
         var scope = this.allocator.create(DescribeScope) catch unreachable;
-        const file_id = @truncate(File.ID, this.files.len);
+        const file_id = @as(File.ID, @truncate(this.files.len));
         scope.* = DescribeScope{
             .file_id = file_id,
-            .test_id_start = @truncate(Test.ID, this.tests.len),
+            .test_id_start = @as(Test.ID, @truncate(this.tests.len)),
         };
         this.files.append(this.allocator, .{ .module_scope = scope, .source = logger.Source.initEmptyFile(file_path) }) catch unreachable;
         entry.value_ptr.* = file_id;
@@ -502,7 +502,7 @@ pub const Jest = struct {
             JSError(getAllocator(ctx), "Run \"bun test\" to run a test", .{}, ctx, exception);
             return js.JSValueMakeUndefined(ctx);
         };
-        const arguments = @ptrCast([]const JSC.JSValue, arguments_);
+        const arguments = @as([]const JSC.JSValue, @ptrCast(arguments_));
 
         if (arguments.len < 1 or !arguments[0].isString()) {
             JSError(getAllocator(ctx), "Bun.jest() expects a string filename", .{}, ctx, exception);
@@ -777,7 +777,9 @@ pub const DescribeScope = struct {
     tag: Tag = .pass,
 
     pub fn isAllSkipped(this: *const DescribeScope) bool {
-        return this.is_skip or @as(usize, this.skip_count) >= this.tests.items.len;
+        if (this.is_skip) return true;
+        const total = this.tests.items.len;
+        return total > 0 and @as(usize, this.skip_count) >= total;
     }
 
     pub fn push(new: *DescribeScope) void {
@@ -1077,16 +1079,11 @@ pub const DescribeScope = struct {
         const file = this.file_id;
         const allocator = getAllocator(globalObject);
         var tests: []TestScope = this.tests.items;
-        const end = @truncate(TestRunner.Test.ID, tests.len);
+        const end = @as(TestRunner.Test.ID, @truncate(tests.len));
         this.pending_tests = std.DynamicBitSetUnmanaged.initFull(allocator, end) catch unreachable;
 
-        if (end == 0) {
-            // TODO: print the describe label when there are no tests
-            return;
-        }
-
         // Step 2. Update the runner with the count of how many tests we have for this block
-        this.test_id_start = Jest.runner.?.addTestCount(end);
+        if (end > 0) this.test_id_start = Jest.runner.?.addTestCount(end);
 
         const source: logger.Source = Jest.runner.?.files.items(.source)[file];
 
@@ -1100,6 +1097,19 @@ pub const DescribeScope = struct {
                 }
                 this.tests.clearAndFree(allocator);
                 this.pending_tests.deinit(allocator);
+                return;
+            }
+            if (end == 0) {
+                var runner = allocator.create(TestRunnerTask) catch unreachable;
+                runner.* = .{
+                    .test_id = std.math.maxInt(TestRunner.Test.ID),
+                    .describe = this,
+                    .globalThis = globalObject,
+                    .source_file_path = source.path.text,
+                };
+                runner.ref.ref(globalObject.bunVM());
+
+                Jest.runner.?.enqueue(runner);
                 return;
             }
         }
@@ -1121,7 +1131,7 @@ pub const DescribeScope = struct {
     pub fn onTestComplete(this: *DescribeScope, globalThis: *JSC.JSGlobalObject, test_id: TestRunner.Test.ID, skipped: bool) void {
         // invalidate it
         this.current_test_id = std.math.maxInt(TestRunner.Test.ID);
-        this.pending_tests.unset(test_id);
+        if (test_id != std.math.maxInt(TestRunner.Test.ID)) this.pending_tests.unset(test_id);
 
         if (!skipped) {
             if (this.runCallback(globalThis, .afterEach)) |err| {
@@ -1221,6 +1231,14 @@ pub const TestRunnerTask = struct {
         jsc_vm.last_reported_error_for_dedupe = .zero;
 
         const test_id = this.test_id;
+
+        if (test_id == std.math.maxInt(TestRunner.Test.ID)) {
+            describe.onTestComplete(globalThis, test_id, true);
+            Jest.runner.?.runNextTest();
+            this.deinit();
+            return false;
+        }
+
         var test_: TestScope = this.describe.tests.items[test_id];
         describe.current_test_id = test_id;
 
@@ -1384,7 +1402,7 @@ pub const TestRunnerTask = struct {
     fn deinit(this: *TestRunnerTask) void {
         var vm = JSC.VirtualMachine.get();
         if (vm.onUnhandledRejectionCtx) |ctx| {
-            if (ctx == @ptrCast(*anyopaque, this)) {
+            if (ctx == @as(*anyopaque, @ptrCast(this))) {
                 vm.onUnhandledRejectionCtx = null;
             }
         }
@@ -1457,14 +1475,14 @@ inline fn createScope(
 
     var timeout_ms: u32 = Jest.runner.?.default_timeout_ms;
     if (options.isNumber()) {
-        timeout_ms = @intCast(u32, @max(args[2].coerce(i32, globalThis), 0));
+        timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {
         if (options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
                 globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
                 return .zero;
             }
-            timeout_ms = @intCast(u32, @max(timeout.coerce(i32, globalThis), 0));
+            timeout_ms = @as(u32, @intCast(@max(timeout.coerce(i32, globalThis), 0)));
         }
         if (options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
@@ -1642,7 +1660,7 @@ pub fn printGithubAnnotation(exception: *JSC.ZigException) void {
 
         var i: i16 = 0;
         while (i < frames.len) : (i += 1) {
-            const frame = frames[@intCast(usize, i)];
+            const frame = frames[@as(usize, @intCast(i))];
             const source_url = frame.source_url.toUTF8(allocator);
             defer source_url.deinit();
             const file = bun.path.relative(dir, source_url.slice());

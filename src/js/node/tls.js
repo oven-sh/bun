@@ -16,6 +16,8 @@ const StringPrototypeSplit = String.prototype.split;
 const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeSubstring = String.prototype.substring;
 const StringPrototypeEndsWith = String.prototype.endsWith;
+const StringFromCharCode = String.fromCharCode;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -40,11 +42,16 @@ function isValidTLSArray(obj) {
 }
 
 function unfqdn(host) {
-  return RegExpPrototypeSymbolReplace(/[.]$/, host, "");
+  return RegExpPrototypeSymbolReplace.call(/[.]$/, host, "");
+}
+// String#toLowerCase() is locale-sensitive so we use
+// a conservative version that only lowercases A-Z.
+function toLowerCase(c) {
+  return StringFromCharCode.call(32 + StringPrototypeCharCodeAt.call(c, 0));
 }
 
 function splitHost(host) {
-  return StringPrototypeSplit.call(RegExpPrototypeSymbolReplace(/[A-Z]/g, unfqdn(host), toLowerCase), ".");
+  return StringPrototypeSplit.call(RegExpPrototypeSymbolReplace.call(/[A-Z]/g, unfqdn(host), toLowerCase), ".");
 }
 
 function check(hostParts, pattern, wildcards) {
@@ -163,7 +170,6 @@ function checkServerIdentity(hostname, cert) {
   let reason = "Unknown reason";
 
   hostname = unfqdn(hostname); // Remove trailing dot for error messages.
-
   if (net.isIP(hostname)) {
     valid = ArrayPrototypeIncludes.call(ips, canonicalizeIP(hostname));
     if (!valid) reason = `IP: ${hostname} is not in the cert's list: ` + ArrayPrototypeJoin.call(ips, ", ");
@@ -178,7 +184,7 @@ function checkServerIdentity(hostname, cert) {
       // Match against Common Name only if no supported identifiers exist.
       const cn = subject.CN;
 
-      if (ArrayIsArray(cn)) valid = ArrayPrototypeSome.call(cn, wildcard);
+      if (Array.isArray(cn)) valid = ArrayPrototypeSome.call(cn, wildcard);
       else if (cn) valid = wildcard(cn);
 
       if (!valid) reason = `Host: ${hostname}. is not cert's CN: ${cn}`;
@@ -186,7 +192,6 @@ function checkServerIdentity(hostname, cert) {
   } else {
     reason = "Cert does not contain a DNS name";
   }
-
   if (!valid) {
     let error = new Error(`ERR_TLS_CERT_ALTNAME_INVALID: Hostname/IP does not match certificate's altnames: ${reason}`);
     error.name = "ERR_TLS_CERT_ALTNAME_INVALID";
@@ -274,9 +279,8 @@ function translatePeerCertificate(c) {
   if (c.infoAccess != null) {
     const info = c.infoAccess;
     c.infoAccess = { __proto__: null };
-
     // XXX: More key validation?
-    RegExpPrototypeSymbolReplace(/([^\n:]*):([^\n]*)(?:\n|$)/g, info, (all, key, val) => {
+    RegExpPrototypeSymbolReplace.call(/([^\n:]*):([^\n]*)(?:\n|$)/g, info, (all, key, val) => {
       if (val.charCodeAt(0) === 0x22) {
         // The translatePeerCertificate function is only
         // used on internally created legacy certificate
@@ -318,6 +322,8 @@ const TLSSocket = (function (InternalTLSSocket) {
     #secureContext;
     ALPNProtocols;
     #socket;
+    #checkServerIdentity;
+    #session;
 
     constructor(socket, options) {
       super(socket instanceof InternalTCPSocket ? options : options || socket);
@@ -337,6 +343,8 @@ const TLSSocket = (function (InternalTLSSocket) {
       this.secureConnecting = true;
       this._secureEstablished = false;
       this._securePending = true;
+      this.#checkServerIdentity = options.checkServerIdentity || checkServerIdentity;
+      this.#session = options.session || null;
     }
 
     _secureEstablished = false;
@@ -348,22 +356,76 @@ const TLSSocket = (function (InternalTLSSocket) {
     servername;
     authorized = false;
     authorizationError;
+    #renegotiationDisabled = false;
 
     encrypted = true;
 
     _start() {
-      // some frameworks uses this _start internal implementation is suposed to start TLS handshake
-      // on Bun we auto start this after on_open callback and when wrapping we start it after the socket is attached to the net.Socket/tls.Socket
+      // some frameworks uses this _start internal implementation is suposed to start TLS handshake/connect
+      this.connect();
     }
 
+    getSession() {
+      return this[bunSocketInternal]?.getSession();
+    }
+
+    getEphemeralKeyInfo() {
+      return this[bunSocketInternal]?.getEphemeralKeyInfo();
+    }
+
+    getCipher() {
+      return this[bunSocketInternal]?.getCipher();
+    }
+
+    getSharedSigalgs() {
+      return this[bunSocketInternal]?.getSharedSigalgs();
+    }
+
+    getProtocol() {
+      return this[bunSocketInternal]?.getTLSVersion();
+    }
+
+    getFinished() {
+      return this[bunSocketInternal]?.getTLSFinishedMessage() || undefined;
+    }
+
+    getPeerFinished() {
+      return this[bunSocketInternal]?.getTLSPeerFinishedMessage() || undefined;
+    }
+
+    isSessionReused() {
+      return !!this.#session;
+    }
+
+    renegotiate() {
+      if (this.#renegotiationDisabled) {
+        const error = new Error("ERR_TLS_RENEGOTIATION_DISABLED: TLS session renegotiation disabled for this socket");
+        error.name = "ERR_TLS_RENEGOTIATION_DISABLED";
+        throw error;
+      }
+
+      throw Error("Not implented in Bun yet");
+    }
+    disableRenegotiation() {
+      this.#renegotiationDisabled = true;
+    }
+    getTLSTicket() {
+      return this[bunSocketInternal]?.getTLSTicket();
+    }
     exportKeyingMaterial(length, label, context) {
-      //SSL_export_keying_material
-      throw Error("Not implented in Bun yet");
+      if (context) {
+        return this[bunSocketInternal]?.exportKeyingMaterial(length, label, context);
+      }
+      return this[bunSocketInternal]?.exportKeyingMaterial(length, label);
     }
+
     setMaxSendFragment(size) {
-      // SSL_set_max_send_fragment
-      throw Error("Not implented in Bun yet");
+      return this[bunSocketInternal]?.setMaxSendFragment(size) || false;
     }
+
+    // only for debug purposes so we just mock for now
+    enableTrace() {}
+
     setServername(name) {
       if (this.isServer) {
         let error = new Error("ERR_TLS_SNI_FROM_SERVER: Cannot issue SNI from a TLS server-side socket");
@@ -374,25 +436,27 @@ const TLSSocket = (function (InternalTLSSocket) {
       this.servername = name;
       this[bunSocketInternal]?.setServername(name);
     }
-    setSession() {
-      throw Error("Not implented in Bun yet");
+    setSession(session) {
+      this.#session = session;
+      if (typeof session === "string") session = Buffer.from(session, "latin1");
+      return this[bunSocketInternal]?.setSession(session);
     }
-    getPeerCertificate() {
-      // need to implement peerCertificate on socket.zig
-      // const cert = this[bunSocketInternal]?.peerCertificate;
-      // if(cert) {
-      //   return translatePeerCertificate(cert);
-      // }
-      throw Error("Not implented in Bun yet");
+    getPeerCertificate(abbreviated) {
+      const cert =
+        arguments.length < 1
+          ? this[bunSocketInternal]?.getPeerCertificate()
+          : this[bunSocketInternal]?.getPeerCertificate(abbreviated);
+      if (cert) {
+        return translatePeerCertificate(cert);
+      }
     }
     getCertificate() {
       // need to implement certificate on socket.zig
-      // const cert = this[bunSocketInternal]?.certificate;
-      // if(cert) {
-      // It's not a peer cert, but the formatting is identical.
-      //   return translatePeerCertificate(cert);
-      // }
-      throw Error("Not implented in Bun yet");
+      const cert = this[bunSocketInternal]?.getCertificate();
+      if (cert) {
+        // It's not a peer cert, but the formatting is identical.
+        return translatePeerCertificate(cert);
+      }
     }
     getPeerX509Certificate() {
       throw Error("Not implented in Bun yet");
@@ -410,6 +474,8 @@ const TLSSocket = (function (InternalTLSSocket) {
         socket: this.#socket,
         ALPNProtocols: this.ALPNProtocols,
         serverName: this.servername || host || "localhost",
+        checkServerIdentity: this.#checkServerIdentity,
+        session: this.#session,
         ...this.#secureContext,
       };
     }
@@ -426,22 +492,10 @@ class Server extends NetServer {
   _requestCert;
   servername;
   ALPNProtocols;
-  #checkServerIdentity;
 
   constructor(options, secureConnectionListener) {
     super(options, secureConnectionListener);
-    this.#checkServerIdentity = options?.checkServerIdentity || checkServerIdentity;
     this.setSecureContext(options);
-  }
-  emit(event, args) {
-    super.emit(event, args);
-
-    if (event === "connection") {
-      // grabs secureConnect to emit secureConnection
-      args.once("secureConnect", () => {
-        super.emit("secureConnection", args);
-      });
-    }
   }
   setSecureContext(options) {
     if (options instanceof InternalSecureContext) {
@@ -535,7 +589,6 @@ class Server extends NetServer {
         rejectUnauthorized: isClient ? false : this._rejectUnauthorized,
         requestCert: isClient ? false : this._requestCert,
         ALPNProtocols: this.ALPNProtocols,
-        checkServerIdentity: this.#checkServerIdentity,
       },
       SocketClass,
     ];

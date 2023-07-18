@@ -21,9 +21,9 @@ fn NativeSocketHandleType(comptime ssl: bool) type {
         return anyopaque;
     }
 }
-pub fn NewSocketHandler(comptime ssl: bool) type {
+pub fn NewSocketHandler(comptime is_ssl: bool) type {
     return struct {
-        const ssl_int: i32 = @intFromBool(ssl);
+        const ssl_int: i32 = @intFromBool(is_ssl);
         socket: *Socket,
         const ThisSocket = @This();
 
@@ -42,6 +42,13 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
 
         pub fn startTLS(this: ThisSocket, is_client: bool) void {
             _ = us_socket_open(comptime ssl_int, this.socket, @intFromBool(is_client), null, 0);
+        }
+
+        pub fn ssl(this: ThisSocket) *BoringSSL.SSL {
+            if (comptime is_ssl) {
+                return @ptrCast(*BoringSSL.SSL, this.getNativeHandle());
+            }
+            @panic("socket is not a TLS socket");
         }
 
         // Note: this assumes that the socket is non-TLS and will be adopted and wrapped with a new TLS context
@@ -154,12 +161,12 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
             return NewSocketHandler(true).from(socket);
         }
 
-        pub fn getNativeHandle(this: ThisSocket) *NativeSocketHandleType(ssl) {
-            return @ptrCast(*NativeSocketHandleType(ssl), us_socket_get_native_handle(comptime ssl_int, this.socket).?);
+        pub fn getNativeHandle(this: ThisSocket) *NativeSocketHandleType(is_ssl) {
+            return @ptrCast(*NativeSocketHandleType(is_ssl), us_socket_get_native_handle(comptime ssl_int, this.socket).?);
         }
 
         pub fn fd(this: ThisSocket) i32 {
-            if (comptime ssl) {
+            if (comptime is_ssl) {
                 @compileError("SSL sockets do not have a file descriptor accessible this way");
             }
 
@@ -167,7 +174,7 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
         }
 
         pub fn markNeedsMoreForSendfile(this: ThisSocket) void {
-            if (comptime ssl) {
+            if (comptime is_ssl) {
                 @compileError("SSL sockets do not support sendfile yet");
             }
 

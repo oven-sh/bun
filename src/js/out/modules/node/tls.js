@@ -12,9 +12,11 @@ var parseCertString = function() {
     return !0;
   }
 }, unfqdn = function(host2) {
-  return RegExpPrototypeSymbolReplace(/[.]$/, host2, "");
+  return RegExpPrototypeSymbolReplace.call(/[.]$/, host2, "");
+}, toLowerCase = function(c) {
+  return StringFromCharCode.call(32 + StringPrototypeCharCodeAt.call(c, 0));
 }, splitHost = function(host2) {
-  return StringPrototypeSplit.call(RegExpPrototypeSymbolReplace(/[A-Z]/g, unfqdn(host2), toLowerCase), ".");
+  return StringPrototypeSplit.call(RegExpPrototypeSymbolReplace.call(/[A-Z]/g, unfqdn(host2), toLowerCase), ".");
 }, check = function(hostParts, pattern, wildcards) {
   if (!pattern)
     return !1;
@@ -87,7 +89,7 @@ var parseCertString = function() {
         reason = `Host: ${hostname}. is not in the cert's altnames: ${altNames}`;
     } else {
       const cn = subject.CN;
-      if (ArrayIsArray(cn))
+      if (Array.isArray(cn))
         valid = ArrayPrototypeSome.call(cn, wildcard);
       else if (cn)
         valid = wildcard(cn);
@@ -104,8 +106,24 @@ var parseCertString = function() {
   return new InternalSecureContext(options);
 }, createSecureContext = function(options) {
   return new SecureContext(options);
-};
-var createServer = function(options, connectionListener) {
+}, translatePeerCertificate = function(c) {
+  if (!c)
+    return null;
+  if (c.issuerCertificate != null && c.issuerCertificate !== c)
+    c.issuerCertificate = translatePeerCertificate(c.issuerCertificate);
+  if (c.infoAccess != null) {
+    const info = c.infoAccess;
+    c.infoAccess = { __proto__: null }, RegExpPrototypeSymbolReplace.call(/([^\n:]*):([^\n]*)(?:\n|$)/g, info, (all, key, val) => {
+      if (val.charCodeAt(0) === 34)
+        val = JSONParse(val);
+      if (key in c.infoAccess)
+        ArrayPrototypePush.call(c.infoAccess[key], val);
+      else
+        c.infoAccess[key] = [val];
+    });
+  }
+  return c;
+}, createServer = function(options, connectionListener) {
   return new Server(options, connectionListener);
 }, getCiphers = function() {
   return DEFAULT_CIPHERS.split(":");
@@ -131,7 +149,7 @@ var createServer = function(options, connectionListener) {
     out.ALPNProtocols = Buffer.from(protocols.buffer.slice(protocols.byteOffset, protocols.byteOffset + protocols.byteLength));
   else if (Buffer.isBuffer(protocols))
     out.ALPNProtocols = protocols;
-}, InternalTCPSocket = net[Symbol.for("::bunternal::")], bunSocketInternal = Symbol.for("::bunnetsocketinternal::"), { RegExp, Array, String } = globalThis[Symbol.for("Bun.lazy")]("primordials"), SymbolReplace = Symbol.replace, RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace], RegExpPrototypeExec = RegExp.prototype.exec, StringPrototypeStartsWith = String.prototype.startsWith, StringPrototypeSlice = String.prototype.slice, StringPrototypeIncludes = String.prototype.includes, StringPrototypeSplit = String.prototype.split, StringPrototypeIndexOf = String.prototype.indexOf, StringPrototypeSubstring = String.prototype.substring, StringPrototypeEndsWith = String.prototype.endsWith, ArrayPrototypeIncludes = Array.prototype.includes, ArrayPrototypeJoin = Array.prototype.join, ArrayPrototypeForEach = Array.prototype.forEach, ArrayPrototypePush = Array.prototype.push, ArrayPrototypeSome = Array.prototype.some, ArrayPrototypeReduce = Array.prototype.reduce, jsonStringPattern = /^"(?:[^"\\\u0000-\u001f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"/, InternalSecureContext = class SecureContext2 {
+}, InternalTCPSocket = net[Symbol.for("::bunternal::")], bunSocketInternal = Symbol.for("::bunnetsocketinternal::"), { RegExp, Array, String } = globalThis[Symbol.for("Bun.lazy")]("primordials"), SymbolReplace = Symbol.replace, RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace], RegExpPrototypeExec = RegExp.prototype.exec, StringPrototypeStartsWith = String.prototype.startsWith, StringPrototypeSlice = String.prototype.slice, StringPrototypeIncludes = String.prototype.includes, StringPrototypeSplit = String.prototype.split, StringPrototypeIndexOf = String.prototype.indexOf, StringPrototypeSubstring = String.prototype.substring, StringPrototypeEndsWith = String.prototype.endsWith, StringFromCharCode = String.fromCharCode, StringPrototypeCharCodeAt = String.prototype.charCodeAt, ArrayPrototypeIncludes = Array.prototype.includes, ArrayPrototypeJoin = Array.prototype.join, ArrayPrototypeForEach = Array.prototype.forEach, ArrayPrototypePush = Array.prototype.push, ArrayPrototypeSome = Array.prototype.some, ArrayPrototypeReduce = Array.prototype.reduce, jsonStringPattern = /^"(?:[^"\\\u0000-\u001f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"/, InternalSecureContext = class SecureContext2 {
   context;
   constructor(options) {
     const context = {};
@@ -184,6 +202,8 @@ var createServer = function(options, connectionListener) {
   #secureContext;
   ALPNProtocols;
   #socket;
+  #checkServerIdentity;
+  #session;
   constructor(socket, options) {
     super(socket instanceof InternalTCPSocket ? options : options || socket);
     if (options = options || socket || {}, typeof options === "object") {
@@ -193,7 +213,7 @@ var createServer = function(options, connectionListener) {
       if (socket instanceof InternalTCPSocket)
         this.#socket = socket;
     }
-    this.#secureContext = options.secureContext || createSecureContext(options), this.authorized = !1, this.secureConnecting = !0, this._secureEstablished = !1, this._securePending = !0;
+    this.#secureContext = options.secureContext || createSecureContext(options), this.authorized = !1, this.secureConnecting = !0, this._secureEstablished = !1, this._securePending = !0, this.#checkServerIdentity = options.checkServerIdentity || checkServerIdentity, this.#session = options.session || null;
   }
   _secureEstablished = !1;
   _securePending = !0;
@@ -204,14 +224,57 @@ var createServer = function(options, connectionListener) {
   servername;
   authorized = !1;
   authorizationError;
+  #renegotiationDisabled = !1;
   encrypted = !0;
   _start() {
+    this.connect();
+  }
+  getSession() {
+    return this[bunSocketInternal]?.getSession();
+  }
+  getEphemeralKeyInfo() {
+    return this[bunSocketInternal]?.getEphemeralKeyInfo();
+  }
+  getCipher() {
+    return this[bunSocketInternal]?.getCipher();
+  }
+  getSharedSigalgs() {
+    return this[bunSocketInternal]?.getSharedSigalgs();
+  }
+  getProtocol() {
+    return this[bunSocketInternal]?.getTLSVersion();
+  }
+  getFinished() {
+    return this[bunSocketInternal]?.getTLSFinishedMessage() || void 0;
+  }
+  getPeerFinished() {
+    return this[bunSocketInternal]?.getTLSPeerFinishedMessage() || void 0;
+  }
+  isSessionReused() {
+    return !!this.#session;
+  }
+  renegotiate() {
+    if (this.#renegotiationDisabled) {
+      const error = new Error("ERR_TLS_RENEGOTIATION_DISABLED: TLS session renegotiation disabled for this socket");
+      throw error.name = "ERR_TLS_RENEGOTIATION_DISABLED", error;
+    }
+    throw Error("Not implented in Bun yet");
+  }
+  disableRenegotiation() {
+    this.#renegotiationDisabled = !0;
+  }
+  getTLSTicket() {
+    return this[bunSocketInternal]?.getTLSTicket();
   }
   exportKeyingMaterial(length, label, context) {
-    throw Error("Not implented in Bun yet");
+    if (context)
+      return this[bunSocketInternal]?.exportKeyingMaterial(length, label, context);
+    return this[bunSocketInternal]?.exportKeyingMaterial(length, label);
   }
   setMaxSendFragment(size) {
-    throw Error("Not implented in Bun yet");
+    return this[bunSocketInternal]?.setMaxSendFragment(size) || !1;
+  }
+  enableTrace() {
   }
   setServername(name) {
     if (this.isServer) {
@@ -220,14 +283,20 @@ var createServer = function(options, connectionListener) {
     }
     this.servername = name, this[bunSocketInternal]?.setServername(name);
   }
-  setSession() {
-    throw Error("Not implented in Bun yet");
+  setSession(session) {
+    if (this.#session = session, typeof session === "string")
+      session = Buffer.from(session, "latin1");
+    return this[bunSocketInternal]?.setSession(session);
   }
-  getPeerCertificate() {
-    throw Error("Not implented in Bun yet");
+  getPeerCertificate(abbreviated) {
+    const cert = arguments.length < 1 ? this[bunSocketInternal]?.getPeerCertificate() : this[bunSocketInternal]?.getPeerCertificate(abbreviated);
+    if (cert)
+      return translatePeerCertificate(cert);
   }
   getCertificate() {
-    throw Error("Not implented in Bun yet");
+    const cert = this[bunSocketInternal]?.getCertificate();
+    if (cert)
+      return translatePeerCertificate(cert);
   }
   getPeerX509Certificate() {
     throw Error("Not implented in Bun yet");
@@ -243,6 +312,8 @@ var createServer = function(options, connectionListener) {
       socket: this.#socket,
       ALPNProtocols: this.ALPNProtocols,
       serverName: this.servername || host2 || "localhost",
+      checkServerIdentity: this.#checkServerIdentity,
+      session: this.#session,
       ...this.#secureContext
     };
   }
@@ -258,16 +329,9 @@ class Server extends NetServer {
   _requestCert;
   servername;
   ALPNProtocols;
-  #checkServerIdentity;
   constructor(options, secureConnectionListener) {
     super(options, secureConnectionListener);
-    this.#checkServerIdentity = options?.checkServerIdentity || checkServerIdentity, this.setSecureContext(options);
-  }
-  emit(event, args) {
-    if (super.emit(event, args), event === "connection")
-      args.once("secureConnect", () => {
-        super.emit("secureConnection", args);
-      });
+    this.setSecureContext(options);
   }
   setSecureContext(options) {
     if (options instanceof InternalSecureContext)
@@ -335,8 +399,7 @@ class Server extends NetServer {
         secureOptions: this.secureOptions,
         rejectUnauthorized: isClient ? !1 : this._rejectUnauthorized,
         requestCert: isClient ? !1 : this._requestCert,
-        ALPNProtocols: this.ALPNProtocols,
-        checkServerIdentity: this.#checkServerIdentity
+        ALPNProtocols: this.ALPNProtocols
       },
       SocketClass
     ];

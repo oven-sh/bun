@@ -60,6 +60,7 @@ test("npm_package_config", () => {
     "piNum": 3.14,
     "emptyStr": "",
 <<<<<<< HEAD
+<<<<<<< HEAD
     "emptyStr2": " ",
 =======
   //  "emptyStr2": " ", TODO: fix this being "" in bun
@@ -67,6 +68,8 @@ test("npm_package_config", () => {
       "bar": "baz"
     }, TODO: Support objects */
 >>>>>>> 487a471a (More fixes)
+=======
+>>>>>>> 40553a28 (Add object support)
     "why": 0,
     "none": null,
     "emoji": "🍕"
@@ -88,6 +91,7 @@ test("npm_package_config", () => {
 
   for (const [key, val] of Object.entries(vals)) {
     const jsVl = jsStd[`npm_package_config_${key}`];
+<<<<<<< HEAD
 
     expect(jsVl).toBeTypeOf("string");
 
@@ -172,6 +176,8 @@ test("npm_package_config", () => {
   for (const [key, val] of Object.entries(vals)) {
     const jsVl = jsStd[`npm_package_config_${key}`];
     console.log(key, jsVl, val)
+=======
+>>>>>>> 40553a28 (Add object support)
 
 <<<<<<< HEAD
   const { stdout: stdout3 } = bunRunAsScript(dir3, "c");
@@ -187,7 +193,38 @@ test("npm_package_config", () => {
 
     expect(jsVl).toEqual(String(val));
   }
+<<<<<<< HEAD
 >>>>>>> 487a471a (More fixes)
+=======
+
+  // Now deep objects
+  const deepDir = tempDirWithFiles("npmpkgcfg", {
+    "package.json": JSON.stringify({
+      config: {
+        "foo": {
+          "bar": "baz",
+          "buzz": {
+            "fizz": "fuzz",
+            "dave": "🕶️",
+            "something": 1
+          }
+        }
+      },
+      "scripts": {
+        "dev": bunExe() + " run index.js"
+      }
+    }),
+    "index.js": "console.log(JSON.stringify(process.env))"
+  });
+
+  const { stdout: deepStdout } = bunRunAsScript(deepDir, "dev");
+  const deepJsStd = JSON.parse(deepStdout.toString())
+
+  expect(deepJsStd.npm_package_config_foo_bar).toEqual("baz");
+  expect(deepJsStd.npm_package_config_foo_buzz_fizz).toEqual("fuzz");
+  expect(deepJsStd.npm_package_config_foo_buzz_dave).toEqual("🕶️");
+  expect(deepJsStd.npm_package_config_foo_buzz_something).toEqual("1");
+>>>>>>> 40553a28 (Add object support)
 });
 <<<<<<< HEAD
 =======

@@ -1014,46 +1014,7 @@ pub const PackageJSON = struct {
             }
 
             if (json.asProperty("config")) |npm_pkg_cfg| {
-                switch (npm_pkg_cfg.expr.data) {
-                    .e_object => |obj| {
-                        for (obj.properties.slice()) |*prop| {
-                            const key = prop.key.?.asString(allocator) orelse continue;
-                            if (!(key.len > 0)) continue;
-
-                            // TODO: https://github.com/oven-sh/bun/pull/3661#discussion_r1265966897
-                            switch (prop.value.?.data) {
-                                .e_string => {
-                                    const value = prop.value.?.asString(allocator) orelse continue;
-                                    package_json.npm_cfg_map.put(key, value) catch unreachable;
-                                },
-                                .e_number => {
-                                    if (prop.value.?.data.e_number.toStringSafelyWithDecimalPlaces(allocator)) |value| {
-                                        if (!(value.len > 0)) continue;
-                                        package_json.npm_cfg_map.put(key, value) catch unreachable;
-                                    }
-                                },
-                                .e_boolean => {
-                                    const value = prop.value.?.asBool() orelse continue;
-                                    if (value) {
-                                        package_json.npm_cfg_map.put(key, "true") catch unreachable;
-                                    } else {
-                                        // Node.js interprets false as a empty string
-                                        package_json.npm_cfg_map.put(key, "") catch unreachable;
-                                    }
-                                },
-                                .e_null => {
-                                    // Node.js interprets null as a empty string
-                                    package_json.npm_cfg_map.put(key, "") catch unreachable;
-                                },
-                                else => {
-                                    r.log.addWarning(&json_source, prop.value.?.loc, "Values of \"config\" must be either a boolean, number or string") catch unreachable;
-                                    continue;
-                                },
-                            }
-                        }
-                    },
-                    else => r.log.addWarning(&json_source, npm_pkg_cfg.loc, "The \"config\" field must be an object") catch unreachable,
-                }
+                parseNpmCfg(allocator, &json_source, r, npm_pkg_cfg.expr, &package_json, "");
             }
         }
 
@@ -1064,6 +1025,54 @@ pub const PackageJSON = struct {
         }
 
         return package_json;
+    }
+
+    pub fn parseNpmCfg(allocator: std.mem.Allocator, json_source: ?*const logger.Source, r: *resolver.Resolver, jsonDataExpr: js_ast.Expr, package_json: *PackageJSON, prefix: []const u8) void {
+        switch (jsonDataExpr.data) {
+            .e_object => |obj| {
+                for (obj.properties.slice()) |*prop| {
+                    const key = prop.key.?.asString(allocator) orelse continue;
+                    if (key.len <= 0) continue;
+
+                    const lkey = strings.concat(allocator, &.{prefix, key}) catch unreachable;
+
+                    switch (prop.value.?.data) {
+                        .e_object => {
+                            const newkey = strings.concat(allocator, &.{lkey, "_"}) catch unreachable;
+                            parseNpmCfg(allocator, json_source, r, prop.value.?, package_json, newkey);
+                        },
+                        .e_string => {
+                            const value = prop.value.?.asString(allocator) orelse continue;
+                            package_json.npm_cfg_map.put(lkey, value) catch unreachable;
+                        },
+                        .e_number => {
+                            if (prop.value.?.data.e_number.toStringSafelyWithDecimalPlaces(allocator)) |value| {
+                                if (!(value.len > 0)) continue;
+                                package_json.npm_cfg_map.put(lkey, value) catch unreachable;
+                            }
+                        },
+                        .e_boolean => {
+                            const value = prop.value.?.asBool() orelse continue;
+                            if (value) {
+                                package_json.npm_cfg_map.put(lkey, "true") catch unreachable;
+                            } else {
+                                // Node.js interprets false as a empty string
+                                package_json.npm_cfg_map.put(lkey, "") catch unreachable;
+                            }
+                        },
+                        .e_null => {
+                            // Node.js interprets null as a empty string
+                            package_json.npm_cfg_map.put(lkey, "") catch unreachable;
+                        },
+                        else => {
+                            r.log.addWarning(json_source, prop.value.?.loc, "Values of \"config\" must be either a boolean, number or string") catch unreachable;
+                            continue;
+                        },
+                    }
+                }
+            },
+            else => r.log.addWarning(json_source, jsonDataExpr.loc, "The \"config\" field must be an object") catch unreachable,
+        }
     }
 
     pub fn hashModule(this: *const PackageJSON, module: string) u32 {

@@ -669,22 +669,6 @@ pub const PackageJSON = struct {
             }
         }
 
-        if (json.asProperty("config")) |npm_pkg_cfg| {
-            switch (npm_pkg_cfg.expr.data) {
-                .e_object => |obj| {
-                    for (obj.properties.slice()) |*prop| {
-                        const key = prop.key.?.asString(allocator) orelse continue;
-                        const value = prop.value.?.asString(allocator) orelse continue;
-
-                        if (!(key.len > 0 and value.len > 0)) continue;
-
-                        package_json.npm_cfg_map.put(key, value) catch unreachable;
-                    }
-                },
-                else => r.log.addWarning(&json_source, npm_pkg_cfg.loc, "The \"config\" field must be an object") catch unreachable,
-            }
-        }
-
         // If we're coming from `bun run`
         // We do not need to parse all this stuff.
         if (comptime !include_scripts) {
@@ -1026,6 +1010,23 @@ pub const PackageJSON = struct {
                         package_json.scripts = allocator.create(ScriptsMap) catch unreachable;
                         package_json.scripts.?.* = scripts;
                     }
+                }
+            }
+
+            if (json.asProperty("config")) |npm_pkg_cfg| {
+                switch (npm_pkg_cfg.expr.data) {
+                    .e_object => |obj| {
+                        for (obj.properties.slice()) |*prop| {
+                            const key = prop.key.?.asString(allocator) orelse continue;
+                            // TODO: https://github.com/oven-sh/bun/pull/3661#discussion_r1265966897
+                            const value = prop.value.?.asString(allocator) orelse continue;
+
+                            if (!(key.len > 0 and value.len > 0)) continue;
+
+                            package_json.npm_cfg_map.put(key, value) catch unreachable;
+                        }
+                    },
+                    else => r.log.addWarning(&json_source, npm_pkg_cfg.loc, "The \"config\" field must be an object") catch unreachable,
                 }
             }
         }

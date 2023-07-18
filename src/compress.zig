@@ -37,11 +37,11 @@ pub const Controller = struct {
     pub fn init(comptime ContextType: type, context: ContextType) Controller {
         const Context = std.meta.Child(ContextType);
         return Controller{
-            .ctx = @ptrCast(*anyopaque, context),
-            .closed = @ptrCast(*bool, &context.closed),
-            .receive_data_fn = @ptrCast(*const fn (*anyopaque, []const u8, Ownership, Completion) void, &Context.onData),
-            .receive_error_fn = @ptrCast(*const fn (*anyopaque, Error) void, &Context.onError),
-            .pull_fn = @ptrCast(*const fn (*anyopaque) void, &Context.onPull),
+            .ctx = @as(*anyopaque, @ptrCast(context)),
+            .closed = @as(*bool, @ptrCast(&context.closed)),
+            .receive_data_fn = @as(*const fn (*anyopaque, []const u8, Ownership, Completion) void, @ptrCast(&Context.onData)),
+            .receive_error_fn = @as(*const fn (*anyopaque, Error) void, @ptrCast(&Context.onError)),
+            .pull_fn = @as(*const fn (*anyopaque) void, @ptrCast(&Context.onPull)),
         };
     }
 };

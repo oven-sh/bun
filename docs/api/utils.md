@@ -247,7 +247,7 @@ Bun.deepEquals(new Foo(), { a: 1 }, true); // false
 
 ## `Bun.escapeHTML()`
 
-`Bun.escapeHTML(value: string | object | number | boolean): boolean`
+`Bun.escapeHTML(value: string | object | number | boolean): string`
 
 Escapes the following characters from an input string:
 

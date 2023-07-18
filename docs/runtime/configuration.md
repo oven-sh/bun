@@ -28,9 +28,8 @@ jsxImportSource = "react"
 # Reduce memory usage at the cost of performance
 smol = true
 
-# Set a default framework to use
-# By default, Bun will look for an npm package like `bun-framework-${framework}`, followed by `${framework}`
-logLevel = "debug"
+# Set Bun's log level
+logLevel = "debug" # "debug", "warn", "error"
 
 # publicDir = "public"
 # external = ["jquery"]

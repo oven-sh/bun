@@ -16472,6 +16472,11 @@ pub const OBJ_sha512_256 = blk: {
     _ = @as(c_long, 2);
     break :blk @as(c_long, 6);
 };
+
+pub const NID_id_on_SmtpUTF8Mailbox = @as(c_int, 1208);
+pub const NID_XmppAddr = @as(c_int, 1209);
+pub const NID_SRVName = @as(c_int, 1210);
+pub const NID_NAIRealm = @as(c_int, 1211);
 pub const EVP_PKEY_NONE = NID_undef;
 pub const EVP_PKEY_RSA = NID_rsaEncryption;
 pub const EVP_PKEY_RSA_PSS = NID_rsassaPss;

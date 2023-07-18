@@ -72,10 +72,8 @@ fn x509GetNameObject(globalObject: *JSGlobalObject, name: ?*BoringSSL.X509_NAME)
     return result;
 }
 
-inline fn isSafeAltName(name: [*c]const u8, length: usize, utf8: bool) bool {
-    for (0..length) |i| {
-        const c = name[i];
-
+inline fn isSafeAltName(name: []const u8, utf8: bool) bool {
+    for (name) |c| {
         switch (c) {
             '"',
             '\\',
@@ -114,14 +112,14 @@ inline fn isSafeAltName(name: [*c]const u8, length: usize, utf8: bool) bool {
     return true;
 }
 
-inline fn printAltName(out: *BoringSSL.BIO, name: [*]const u8, length: usize, utf8: bool, safe_prefix: ?[*]const u8) void {
-    if (isSafeAltName(name, length, utf8)) {
+inline fn printAltName(out: *BoringSSL.BIO, name: []const u8, utf8: bool, safe_prefix: ?[*]const u8) void {
+    if (isSafeAltName(name, utf8)) {
         // For backward-compatibility, append "safe" names without any
         // modifications.
         if (safe_prefix) |prefix| {
             _ = BoringSSL.BIO_printf(out, "%s:", prefix);
         }
-        _ = BoringSSL.BIO_write(out, name, @intCast(c_int, length));
+        _ = BoringSSL.BIO_write(out, @ptrCast([*]const u8, name.ptr), @intCast(c_int, name.len));
     } else {
         // If a name is not "safe", we cannot embed it without special
         // encoding. This does not usually happen, but we don't want to hide
@@ -130,8 +128,7 @@ inline fn printAltName(out: *BoringSSL.BIO, name: [*]const u8, length: usize, ut
         if (safe_prefix) |prefix| {
             _ = BoringSSL.BIO_printf(out, "%s:", prefix);
         }
-        for (0..length) |j| {
-            const c = name[j];
+        for (name) |c| {
             if (c == '\\') {
                 _ = BoringSSL.BIO_write(out, "\\\\", 2);
             } else if (c == '"') {
@@ -157,20 +154,14 @@ inline fn printAltName(out: *BoringSSL.BIO, name: [*]const u8, length: usize, ut
 }
 
 inline fn printLatin1AltName(out: *BoringSSL.BIO, name: *BoringSSL.ASN1_IA5STRING, safe_prefix: ?[*]const u8) void {
-    printAltName(out, bun.cast([*]const u8, name.data), @intCast(usize, name.length), false, safe_prefix);
+    printAltName(out, name.data[0..@intCast(usize, name.length)], false, safe_prefix);
 }
 
 inline fn printUTF8AltName(out: *BoringSSL.BIO, name: *BoringSSL.ASN1_UTF8STRING, safe_prefix: ?[*]const u8) void {
-    printAltName(out, bun.cast([*]const u8, name.data), @intCast(usize, name.length), true, safe_prefix);
+    printAltName(out, name.data[0..@intCast(usize, name.length)], true, safe_prefix);
 }
 
 pub const kX509NameFlagsRFC2253WithinUtf8JSON = BoringSSL.XN_FLAG_RFC2253 & ~BoringSSL.ASN1_STRFLGS_ESC_MSB & ~BoringSSL.ASN1_STRFLGS_ESC_CTRL;
-
-const NID_ms_upn = 649;
-const NID_id_on_SmtpUTF8Mailbox = 1208;
-const NID_XmppAddr = 1209;
-const NID_SRVName = 1210;
-const NID_NAIRealm = 1211;
 
 // This function emulates the behavior of i2v_GENERAL_NAME in a safer and less
 // ambiguous way. "othername:" entries use the GENERAL_NAME_print format.
@@ -214,7 +205,7 @@ fn x509PrintGeneralName(out: *BoringSSL.BIO, name: *BoringSSL.GENERAL_NAME) bool
         var oline: [*]const u8 = undefined;
         const n_bytes = BoringSSL.BIO_get_mem_data(tmp, @ptrCast([*c][*c]u8, &oline));
         if (n_bytes <= 0) return false;
-        printAltName(out, oline, @intCast(usize, n_bytes), true, null);
+        printAltName(out, oline[0..@intCast(usize, n_bytes)], true, null);
     } else if (name.name_type == .GEN_OTHERNAME) {
         // The format that is used here is based on OpenSSL's implementation of
         // GENERAL_NAME_print (as of OpenSSL 3.0.1). Earlier versions of Node.js
@@ -225,20 +216,20 @@ fn x509PrintGeneralName(out: *BoringSSL.BIO, name: *BoringSSL.GENERAL_NAME) bool
 
         const nid = BoringSSL.OBJ_obj2nid(name.d.otherName.type_id);
         switch (nid) {
-            NID_id_on_SmtpUTF8Mailbox => {
+            BoringSSL.NID_id_on_SmtpUTF8Mailbox => {
                 prefix = "SmtpUTF8Mailbox";
             },
-            NID_XmppAddr => {
+            BoringSSL.NID_XmppAddr => {
                 prefix = "XmppAddr";
             },
-            NID_SRVName => {
+            BoringSSL.NID_SRVName => {
                 prefix = "SRVName";
                 unicode = false;
             },
-            NID_ms_upn => {
+            BoringSSL.NID_ms_upn => {
                 prefix = "UPN";
             },
-            NID_NAIRealm => {
+            BoringSSL.NID_NAIRealm => {
                 prefix = "NAIRealm";
             },
             else => {
@@ -378,21 +369,20 @@ fn x509GetInfoAccessString(globalObject: *JSGlobalObject, bio: *BoringSSL.BIO, c
     return JSC.ZigString.fromUTF8(bio.slice()).toValueGC(globalObject);
 }
 
-fn addFingerprintDigest(md: []const u8, mdSize: c_uint, fingerprint: []u8) void {
+fn addFingerprintDigest(md: []const u8, mdSize: c_uint, fingerprint: []u8) usize {
     const hex: []const u8 = "0123456789ABCDEF";
     var idx: usize = 0;
 
-    if (mdSize == 0) {
-        fingerprint[0] = 0;
-    } else {
-        for (md) |byte| {
-            fingerprint[idx] = hex[(byte & 0xF0) >> 4];
-            fingerprint[idx + 1] = hex[byte & 0x0F];
-            fingerprint[idx + 2] = ':';
-            idx += 3;
-        }
-        fingerprint[if (idx > 0) (idx - 1) else 0] = 0;
+    const slice = md[0..@intCast(usize, mdSize)];
+    for (slice) |byte| {
+        fingerprint[idx] = hex[(byte & 0xF0) >> 4];
+        fingerprint[idx + 1] = hex[byte & 0x0F];
+        fingerprint[idx + 2] = ':';
+        idx += 3;
     }
+    const length = if (idx > 0) (idx - 1) else 0;
+    fingerprint[length] = 0;
+    return length;
 }
 
 fn getFingerprintDigest(cert: *BoringSSL.X509, method: *const BoringSSL.EVP_MD, globalObject: *JSGlobalObject) JSValue {
@@ -401,8 +391,8 @@ fn getFingerprintDigest(cert: *BoringSSL.X509, method: *const BoringSSL.EVP_MD, 
     var fingerprint: [BoringSSL.EVP_MAX_MD_SIZE * 3]u8 = undefined;
 
     if (BoringSSL.X509_digest(cert, method, @ptrCast([*c]u8, &md), &md_size) != 0) {
-        addFingerprintDigest(&md, md_size, &fingerprint);
-        return JSC.ZigString.fromUTF8(fingerprint[0 .. bun.len(fingerprint) - 1]).toValueGC(globalObject);
+        const length = addFingerprintDigest(&md, md_size, &fingerprint);
+        return JSC.ZigString.fromUTF8(fingerprint[0..length]).toValueGC(globalObject);
     }
     return JSValue.jsUndefined();
 }
@@ -414,7 +404,10 @@ fn getSerialNumber(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue
         if (bignum != null) {
             const data = BoringSSL.BN_bn2hex(bignum);
             if (data != null) {
-                return JSC.ZigString.fromUTF8(data[0..bun.len(data)]).toValueGC(globalObject);
+                const slice = data[0..bun.len(data)];
+                // BoringSSL prints the hex value of the serialNumber in lower case, but we need upper case
+                toUpper(slice);
+                return JSC.ZigString.fromUTF8(slice).toValueGC(globalObject);
             }
         }
     }
@@ -423,11 +416,19 @@ fn getSerialNumber(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue
 
 fn getRawDERCertificate(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
     const size = BoringSSL.i2d_X509(cert, null);
-    var buffer = bun.default_allocator.alloc(u8, @intCast(usize, size)) catch unreachable;
-    defer bun.default_allocator.free(buffer);
-    var tmp = @ptrCast([*c]u8, buffer.ptr);
-    _ = BoringSSL.i2d_X509(cert, &tmp);
-    return JSC.ArrayBuffer.createBuffer(globalObject, buffer);
+    var buffer = JSValue.createBufferFromLength(globalObject, @intCast(usize, size));
+    var buffer_ptr = @ptrCast([*c]u8, buffer.asArrayBuffer(globalObject).?.ptr);
+    _ = BoringSSL.i2d_X509(cert, &buffer_ptr);
+    return buffer;
+}
+
+fn toUpper(slice: []u8) void {
+    for (0..slice.len) |i| {
+        const c = slice[i];
+        if (c >= 'a' and c <= 'z') {
+            slice[i] &= 223;
+        }
+    }
 }
 
 pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
@@ -466,8 +467,10 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
                 }
 
                 result.put(globalObject, ZigString.static("bits"), bits);
-
-                const modulus = JSC.ZigString.fromUTF8(bio.slice()).toValueGC(globalObject);
+                const slice = bio.slice();
+                // BoringSSL prints the hex value of the modulus in lower case, but we need upper case
+                toUpper(slice);
+                const modulus = JSC.ZigString.fromUTF8(slice).toValueGC(globalObject);
                 _ = BoringSSL.BIO_reset(bio);
                 result.put(globalObject, ZigString.static("modulus"), modulus);
 
@@ -482,12 +485,13 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
                     globalObject.throw("Failed to get public key length", .{});
                     return .zero;
                 }
-                var buffer = bun.default_allocator.alloc(u8, @intCast(usize, size)) catch unreachable;
-                defer bun.default_allocator.free(buffer);
-                var tmp = @ptrCast([*c]u8, buffer.ptr);
-                _ = BoringSSL.i2d_RSA_PUBKEY(rsa, &tmp);
 
-                result.put(globalObject, ZigString.static("pubkey"), JSC.ArrayBuffer.createBuffer(globalObject, buffer));
+                var buffer = JSValue.createBufferFromLength(globalObject, @intCast(usize, size));
+                var buffer_ptr = @ptrCast([*c]u8, buffer.asArrayBuffer(globalObject).?.ptr);
+
+                _ = BoringSSL.i2d_RSA_PUBKEY(rsa, &buffer_ptr);
+
+                result.put(globalObject, ZigString.static("pubkey"), buffer);
             }
         },
         BoringSSL.EVP_PKEY_EC => {
@@ -512,10 +516,11 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
                         return .zero;
                     }
 
-                    var buffer = bun.default_allocator.alloc(u8, size) catch unreachable;
-                    defer bun.default_allocator.free(buffer);
-                    _ = BoringSSL.EC_POINT_point2oct(group, point, form, @ptrCast([*c]u8, buffer.ptr), size, null);
-                    result.put(globalObject, ZigString.static("pubkey"), JSC.ArrayBuffer.createBuffer(globalObject, buffer));
+                    var buffer = JSValue.createBufferFromLength(globalObject, @intCast(usize, size));
+                    var buffer_ptr = @ptrCast([*c]u8, buffer.asArrayBuffer(globalObject).?.ptr);
+
+                    _ = BoringSSL.EC_POINT_point2oct(group, point, form, buffer_ptr, size, null);
+                    result.put(globalObject, ZigString.static("pubkey"), buffer);
                 } else {
                     result.put(globalObject, ZigString.static("pubkey"), JSValue.jsUndefined());
                 }

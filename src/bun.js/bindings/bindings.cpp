@@ -2195,7 +2195,7 @@ CPP_DECL void JSC__JSValue__push(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSValue value2 = JSC::JSValue::decode(JSValue3);
     JSC::JSArray* array = JSC::jsCast<JSC::JSArray*>(value);
-    array->pushInline(arg1, value2);
+    array->push(arg1, value2);
 }
 
 JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject* globalObject, const ZigString* arg1,

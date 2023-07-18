@@ -1971,6 +1971,7 @@ fn NewSocket(comptime ssl: bool) type {
             const session = BoringSSL.SSL_get_session(ssl_ptr) orelse return JSValue.jsUndefined();
             var ticket: [*c]const u8 = undefined;
             var length: usize = 0;
+            //The pointer is only valid while the connection is in use so we need to copy it
             BoringSSL.SSL_SESSION_get0_ticket(session, @ptrCast([*c][*c]const u8, &ticket), &length);
 
             if (ticket == null or length == 0) {
@@ -2044,12 +2045,13 @@ fn NewSocket(comptime ssl: bool) type {
             if (size <= 0) {
                 return JSValue.jsUndefined();
             }
-            var buffer = bun.default_allocator.alloc(u8, @intCast(usize, size)) catch unreachable;
-            defer bun.default_allocator.free(buffer);
-            var tmp = @ptrCast([*c]u8, buffer.ptr);
-            _ = BoringSSL.i2d_SSL_SESSION(session, &tmp);
-            const result = JSC.ArrayBuffer.createBuffer(globalObject, buffer);
-            return result;
+
+            const buffer_size = @intCast(usize, size);
+            var buffer = JSValue.createBufferFromLength(globalObject, buffer_size);
+            var buffer_ptr = @ptrCast([*c]u8, buffer.asArrayBuffer(globalObject).?.ptr);
+
+            _ = BoringSSL.i2d_SSL_SESSION(session, &buffer_ptr);
+            return buffer;
         }
 
         pub fn getALPNProtocol(
@@ -2138,15 +2140,16 @@ fn NewSocket(comptime ssl: bool) type {
                 if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), context_arg, exception)) |sb| {
                     const context_slice = sb.slice();
 
-                    var buffer = bun.default_allocator.alloc(u8, @intCast(usize, length)) catch unreachable;
-                    defer bun.default_allocator.free(buffer);
+                    const buffer_size = @intCast(usize, length);
+                    var buffer = JSValue.createBufferFromLength(globalObject, buffer_size);
+                    var buffer_ptr = @ptrCast([*c]u8, buffer.asArrayBuffer(globalObject).?.ptr);
 
-                    const result = BoringSSL.SSL_export_keying_material(ssl_ptr, @ptrCast([*c]u8, buffer.ptr), buffer.len, @ptrCast([*c]const u8, label_slice.ptr), label_slice.len, @ptrCast([*c]const u8, context_slice.ptr), context_slice.len, 1);
+                    const result = BoringSSL.SSL_export_keying_material(ssl_ptr, buffer_ptr, buffer_size, @ptrCast([*c]const u8, label_slice.ptr), label_slice.len, @ptrCast([*c]const u8, context_slice.ptr), context_slice.len, 1);
                     if (result != 1) {
                         globalObject.throwValue(getSSLException(globalObject, "Failed to export keying material"));
                         return .zero;
                     }
-                    return JSC.ArrayBuffer.createBuffer(globalObject, buffer);
+                    return buffer;
                 } else if (exception.* != null) {
                     globalObject.throwValue(JSC.JSValue.c(exception.*));
                     return .zero;
@@ -2155,14 +2158,16 @@ fn NewSocket(comptime ssl: bool) type {
                     return .zero;
                 }
             } else {
-                var buffer = bun.default_allocator.alloc(u8, @intCast(usize, length)) catch unreachable;
-                defer bun.default_allocator.free(buffer);
-                const result = BoringSSL.SSL_export_keying_material(ssl_ptr, @ptrCast([*c]u8, buffer.ptr), buffer.len, @ptrCast([*c]const u8, label_slice.ptr), label_slice.len, null, 0, 0);
+                const buffer_size = @intCast(usize, length);
+                var buffer = JSValue.createBufferFromLength(globalObject, buffer_size);
+                var buffer_ptr = @ptrCast([*c]u8, buffer.asArrayBuffer(globalObject).?.ptr);
+
+                const result = BoringSSL.SSL_export_keying_material(ssl_ptr, buffer_ptr, buffer_size, @ptrCast([*c]const u8, label_slice.ptr), label_slice.len, null, 0, 0);
                 if (result != 1) {
                     globalObject.throwValue(getSSLException(globalObject, "Failed to export keying material"));
                     return .zero;
                 }
-                return JSC.ArrayBuffer.createBuffer(globalObject, buffer);
+                return buffer;
             }
         }
 
@@ -2305,11 +2310,12 @@ fn NewSocket(comptime ssl: bool) type {
             const size = BoringSSL.SSL_get_peer_finished(ssl_ptr, @ptrCast(*anyopaque, &dummy), @sizeOf(@TypeOf(dummy)));
             if (size == 0) return JSValue.jsUndefined();
 
-            var buffer = bun.default_allocator.alloc(u8, @intCast(usize, size)) catch unreachable;
-            defer bun.default_allocator.free(buffer);
+            const buffer_size = @intCast(usize, size);
+            var buffer = JSValue.createBufferFromLength(globalObject, buffer_size);
+            var buffer_ptr = @ptrCast(*anyopaque, buffer.asArrayBuffer(globalObject).?.ptr);
 
-            _ = BoringSSL.SSL_get_peer_finished(ssl_ptr, @ptrCast(*anyopaque, buffer.ptr), buffer.len);
-            return JSC.ArrayBuffer.createBuffer(globalObject, buffer);
+            _ = BoringSSL.SSL_get_peer_finished(ssl_ptr, buffer_ptr, buffer_size);
+            return buffer;
         }
 
         pub fn getTLSFinishedMessage(
@@ -2335,11 +2341,12 @@ fn NewSocket(comptime ssl: bool) type {
             const size = BoringSSL.SSL_get_finished(ssl_ptr, @ptrCast(*anyopaque, &dummy), @sizeOf(@TypeOf(dummy)));
             if (size == 0) return JSValue.jsUndefined();
 
-            var buffer = bun.default_allocator.alloc(u8, @intCast(usize, size)) catch unreachable;
-            defer bun.default_allocator.free(buffer);
+            const buffer_size = @intCast(usize, size);
+            var buffer = JSValue.createBufferFromLength(globalObject, buffer_size);
+            var buffer_ptr = @ptrCast(*anyopaque, buffer.asArrayBuffer(globalObject).?.ptr);
 
-            _ = BoringSSL.SSL_get_finished(ssl_ptr, @ptrCast(*anyopaque, buffer.ptr), buffer.len);
-            return JSC.ArrayBuffer.createBuffer(globalObject, buffer);
+            _ = BoringSSL.SSL_get_finished(ssl_ptr, buffer_ptr, buffer_size);
+            return buffer;
         }
 
         pub fn getSharedSigalgs(

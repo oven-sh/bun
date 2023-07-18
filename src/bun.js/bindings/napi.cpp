@@ -496,7 +496,10 @@ extern "C" void napi_module_register(napi_module* mod)
     auto* globalObject = Bun__getDefaultGlobal();
     JSC::VM& vm = globalObject->vm();
     globalObject->napiModuleRegisterCallCount++;
-    JSC::JSObject* object = globalObject->pendingNapiModule.getObject();
+    JSValue pendingNapiModule = globalObject->pendingNapiModule;
+    JSObject* object = (pendingNapiModule && pendingNapiModule.isObject()) ? pendingNapiModule.getObject()
+                                                                           : nullptr;
+
     if (!object) {
         object = JSC::constructEmptyObject(globalObject);
     } else {
@@ -504,20 +507,23 @@ extern "C" void napi_module_register(napi_module* mod)
     }
 
     EnsureStillAliveScope ensureAlive(object);
-    auto result = reinterpret_cast<JSC::EncodedJSValue>(
-        mod->nm_register_func(reinterpret_cast<napi_env>(globalObject), reinterpret_cast<napi_value>(JSC::JSValue::encode(JSC::JSValue(object)))));
+    auto resultValue = toJS(
+        mod->nm_register_func(toNapi(globalObject), toNapi(object)));
 
     auto keyStr = WTF::String::fromUTF8(mod->nm_modname);
-    JSC::JSValue resultValue = JSC::JSValue::decode(result);
     EnsureStillAliveScope ensureAlive2(resultValue);
     if (resultValue.isEmpty()) {
-        globalObject->pendingNapiModule = createError(globalObject, makeString("Node-API module \""_s, keyStr, "\" returned an error"_s));
+        JSValue errorInstance = createError(globalObject, makeString("Node-API module \""_s, keyStr, "\" returned an error"_s));
+        globalObject->pendingNapiModule = errorInstance;
+        vm.writeBarrier(globalObject, errorInstance);
         EnsureStillAliveScope ensureAlive(globalObject->pendingNapiModule);
         return;
     }
 
     if (!resultValue.isObject()) {
-        globalObject->pendingNapiModule = createError(globalObject, makeString("Expected Node-API module \""_s, keyStr, "\" to return an exports object"_s));
+        JSValue errorInstance = createError(globalObject, makeString("Expected Node-API module \""_s, keyStr, "\" to return an exports object"_s));
+        globalObject->pendingNapiModule = errorInstance;
+        vm.writeBarrier(globalObject, errorInstance);
         EnsureStillAliveScope ensureAlive(globalObject->pendingNapiModule);
         return;
     }
@@ -532,7 +538,9 @@ extern "C" void napi_module_register(napi_module* mod)
 
     // Add it to the ESM registry
     globalObject->moduleLoader()->provideFetch(globalObject, JSC::jsString(vm, WTFMove(keyStr)), WTFMove(source));
+
     globalObject->pendingNapiModule = object;
+    vm.writeBarrier(globalObject, object);
 }
 
 extern "C" napi_status napi_wrap(napi_env env,

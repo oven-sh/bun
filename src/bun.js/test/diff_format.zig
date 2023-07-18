@@ -104,7 +104,7 @@ pub const DiffFormatter = struct {
             ZigConsoleClient.format(
                 .Debug,
                 this.globalObject,
-                @ptrCast([*]const JSValue, &received),
+                @as([*]const JSValue, @ptrCast(&received)),
                 1,
                 Writer,
                 Writer,
@@ -118,7 +118,7 @@ pub const DiffFormatter = struct {
             ZigConsoleClient.format(
                 .Debug,
                 this.globalObject,
-                @ptrCast([*]const JSValue, &this.expected),
+                @as([*]const JSValue, @ptrCast(&this.expected)),
                 1,
                 Writer,
                 Writer,

@@ -139,7 +139,7 @@ pub fn Maybe(comptime ResultType: type) type {
         pub inline fn getErrno(this: @This()) os.E {
             return switch (this) {
                 .result => os.E.SUCCESS,
-                .err => |err| @enumFromInt(os.E, err.errno),
+                .err => |err| @as(os.E, @enumFromInt(err.errno)),
             };
         }
 
@@ -148,7 +148,7 @@ pub fn Maybe(comptime ResultType: type) type {
                 .SUCCESS => null,
                 else => |err| @This(){
                     // always truncate
-                    .err = .{ .errno = @truncate(Syscall.Error.Int, @intFromEnum(err)) },
+                    .err = .{ .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(err))) },
                 },
             };
         }
@@ -158,7 +158,7 @@ pub fn Maybe(comptime ResultType: type) type {
                 .SUCCESS => null,
                 else => |err| @This(){
                     // always truncate
-                    .err = .{ .errno = @truncate(Syscall.Error.Int, @intFromEnum(err)), .syscall = syscall },
+                    .err = .{ .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(err))), .syscall = syscall },
                 },
             };
         }
@@ -169,9 +169,9 @@ pub fn Maybe(comptime ResultType: type) type {
                 else => |err| @This(){
                     // always truncate
                     .err = .{
-                        .errno = @truncate(Syscall.Error.Int, @intFromEnum(err)),
+                        .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(err))),
                         .syscall = syscall,
-                        .fd = @intCast(i32, fd),
+                        .fd = @as(i32, @intCast(fd)),
                     },
                 },
             };
@@ -182,7 +182,7 @@ pub fn Maybe(comptime ResultType: type) type {
                 .SUCCESS => null,
                 else => |err| @This(){
                     // always truncate
-                    .err = .{ .errno = @truncate(Syscall.Error.Int, @intFromEnum(err)), .syscall = syscall, .path = bun.asByteSlice(path) },
+                    .err = .{ .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(err))), .syscall = syscall, .path = bun.asByteSlice(path) },
                 },
             };
         }
@@ -203,7 +203,7 @@ pub const StringOrBuffer = union(Tag) {
     }
 
     pub export fn external_string_finalizer(_: ?*anyopaque, _: JSC.C.JSStringRef, buffer: *anyopaque, byteLength: usize) void {
-        bun.default_allocator.free(@ptrCast([*]const u8, buffer)[0..byteLength]);
+        bun.default_allocator.free(@as([*]const u8, @ptrCast(buffer))[0..byteLength]);
     }
 
     pub fn toJS(this: StringOrBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
@@ -846,7 +846,7 @@ pub const VectorArrayBuffer = struct {
         bufferlist.ensureTotalCapacityPrecise(len) catch @panic("Failed to allocate memory for ArrayBuffer[]");
 
         while (i < len) {
-            const element = val.getIndex(globalObject, @truncate(u32, i));
+            const element = val.getIndex(globalObject, @as(u32, @truncate(i)));
 
             if (!element.isCell()) {
                 JSC.throwInvalidArguments("Expected ArrayBufferView[]", .{}, globalObject, exception);
@@ -906,7 +906,7 @@ pub const ArgumentsSlice = struct {
     }
 
     pub fn from(vm: *JSC.VirtualMachine, arguments: []const JSC.JSValueRef) ArgumentsSlice {
-        return init(vm, @ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
+        return init(vm, @as([*]const JSC.JSValue, @ptrCast(arguments.ptr))[0..arguments.len]);
     }
     pub fn init(vm: *JSC.VirtualMachine, arguments: []const JSC.JSValue) ArgumentsSlice {
         return ArgumentsSlice{
@@ -918,7 +918,7 @@ pub const ArgumentsSlice = struct {
     }
 
     pub inline fn len(this: *const ArgumentsSlice) u16 {
-        return @truncate(u16, this.remaining.len);
+        return @as(u16, @truncate(this.remaining.len));
     }
     pub fn eat(this: *ArgumentsSlice) void {
         if (this.remaining.len == 0) {
@@ -952,7 +952,7 @@ pub fn fileDescriptorFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, excepti
         return null;
     }
 
-    return @truncate(bun.FileDescriptor, fd);
+    return @as(bun.FileDescriptor, @truncate(fd));
 }
 
 // Node.js docs:
@@ -965,7 +965,7 @@ pub fn timeLikeFromJS(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, _: JS
             return null;
         }
 
-        return @truncate(TimeLike, @intFromFloat(i64, milliseconds / @as(f64, std.time.ms_per_s)));
+        return @as(TimeLike, @truncate(@as(i64, @intFromFloat(milliseconds / @as(f64, std.time.ms_per_s)))));
     }
 
     if (!value.isNumber() and !value.isString()) {
@@ -977,12 +977,12 @@ pub fn timeLikeFromJS(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, _: JS
         return null;
     }
 
-    return @truncate(TimeLike, @intFromFloat(i64, seconds));
+    return @as(TimeLike, @truncate(@as(i64, @intFromFloat(seconds))));
 }
 
 pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Mode {
     const mode_int = if (value.isNumber())
-        @truncate(Mode, value.to(Mode))
+        @as(Mode, @truncate(value.to(Mode)))
     else brk: {
         if (value.isUndefinedOrNull()) return null;
 
@@ -1062,7 +1062,7 @@ pub const PathOrFileDescriptor = union(Tag) {
     pub fn toJS(this: JSC.Node.PathOrFileDescriptor, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
         return switch (this) {
             .path => this.path.toJS(ctx, exception),
-            .fd => JSC.JSValue.jsNumberFromInt32(@intCast(i32, this.fd)).asRef(),
+            .fd => JSC.JSValue.jsNumberFromInt32(@as(i32, @intCast(this.fd))).asRef(),
         };
     }
 };
@@ -1167,7 +1167,7 @@ pub const FileSystemFlags = enum(Mode) {
     pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue, exception: JSC.C.ExceptionRef) ?FileSystemFlags {
         if (val.isNumber()) {
             const number = val.coerce(i32, ctx);
-            return @enumFromInt(FileSystemFlags, @intCast(Mode, @max(number, 0)));
+            return @as(FileSystemFlags, @enumFromInt(@as(Mode, @intCast(@max(number, 0)))));
         }
 
         const jsType = val.jsType();
@@ -1198,7 +1198,7 @@ pub const FileSystemFlags = enum(Mode) {
                     inline else => |is_16bit| {
                         const chars = if (is_16bit) str.utf16SliceAligned() else str.slice();
 
-                        if (std.ascii.isDigit(@truncate(u8, chars[0]))) {
+                        if (std.ascii.isDigit(@as(u8, @truncate(chars[0])))) {
                             // node allows "0o644" as a string :(
                             if (is_16bit) {
                                 const slice = str.toSlice(bun.default_allocator);
@@ -1223,7 +1223,7 @@ pub const FileSystemFlags = enum(Mode) {
                 return null;
             };
 
-            return @enumFromInt(FileSystemFlags, @intCast(Mode, flags));
+            return @as(FileSystemFlags, @enumFromInt(@as(Mode, @intCast(flags))));
         }
 
         return null;
@@ -1235,7 +1235,7 @@ pub const Date = enum(u64) {
     _,
 
     pub fn toJS(this: Date, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        const seconds = @floatCast(f64, @floatFromInt(f64, @intFromEnum(this)) * 1000.0);
+        const seconds = @as(f64, @floatCast(@as(f64, @floatFromInt(@intFromEnum(this))) * 1000.0));
         const unix_timestamp = JSC.JSValue.jsNumber(seconds);
         const array: [1]JSC.C.JSValueRef = .{unix_timestamp.asObjectRef()};
         const obj = JSC.C.JSObjectMakeDate(ctx, 1, &array, exception);
@@ -1272,34 +1272,34 @@ fn StatsDataType(comptime T: type) type {
             const ctime = stat_.ctime();
 
             return @This(){
-                .dev = @truncate(T, @intCast(i64, stat_.dev)),
-                .ino = @truncate(T, @intCast(i64, stat_.ino)),
-                .mode = @truncate(T, @intCast(i64, stat_.mode)),
-                .nlink = @truncate(T, @intCast(i64, stat_.nlink)),
-                .uid = @truncate(T, @intCast(i64, stat_.uid)),
-                .gid = @truncate(T, @intCast(i64, stat_.gid)),
-                .rdev = @truncate(T, @intCast(i64, stat_.rdev)),
-                .size = @truncate(T, @intCast(i64, stat_.size)),
-                .blksize = @truncate(T, @intCast(i64, stat_.blksize)),
-                .blocks = @truncate(T, @intCast(i64, stat_.blocks)),
-                .atime_ms = (@floatFromInt(f64, @max(atime.tv_sec, 0)) * std.time.ms_per_s) + (@floatFromInt(f64, @intCast(usize, @max(atime.tv_nsec, 0))) / std.time.ns_per_ms),
-                .mtime_ms = (@floatFromInt(f64, @max(mtime.tv_sec, 0)) * std.time.ms_per_s) + (@floatFromInt(f64, @intCast(usize, @max(mtime.tv_nsec, 0))) / std.time.ns_per_ms),
-                .ctime_ms = (@floatFromInt(f64, @max(ctime.tv_sec, 0)) * std.time.ms_per_s) + (@floatFromInt(f64, @intCast(usize, @max(ctime.tv_nsec, 0))) / std.time.ns_per_ms),
-                .atime = @enumFromInt(Date, @intCast(u64, @max(atime.tv_sec, 0))),
-                .mtime = @enumFromInt(Date, @intCast(u64, @max(mtime.tv_sec, 0))),
-                .ctime = @enumFromInt(Date, @intCast(u64, @max(ctime.tv_sec, 0))),
+                .dev = @as(T, @truncate(@as(i64, @intCast(stat_.dev)))),
+                .ino = @as(T, @truncate(@as(i64, @intCast(stat_.ino)))),
+                .mode = @as(T, @truncate(@as(i64, @intCast(stat_.mode)))),
+                .nlink = @as(T, @truncate(@as(i64, @intCast(stat_.nlink)))),
+                .uid = @as(T, @truncate(@as(i64, @intCast(stat_.uid)))),
+                .gid = @as(T, @truncate(@as(i64, @intCast(stat_.gid)))),
+                .rdev = @as(T, @truncate(@as(i64, @intCast(stat_.rdev)))),
+                .size = @as(T, @truncate(@as(i64, @intCast(stat_.size)))),
+                .blksize = @as(T, @truncate(@as(i64, @intCast(stat_.blksize)))),
+                .blocks = @as(T, @truncate(@as(i64, @intCast(stat_.blocks)))),
+                .atime_ms = (@as(f64, @floatFromInt(@max(atime.tv_sec, 0))) * std.time.ms_per_s) + (@as(f64, @floatFromInt(@as(usize, @intCast(@max(atime.tv_nsec, 0))))) / std.time.ns_per_ms),
+                .mtime_ms = (@as(f64, @floatFromInt(@max(mtime.tv_sec, 0))) * std.time.ms_per_s) + (@as(f64, @floatFromInt(@as(usize, @intCast(@max(mtime.tv_nsec, 0))))) / std.time.ns_per_ms),
+                .ctime_ms = (@as(f64, @floatFromInt(@max(ctime.tv_sec, 0))) * std.time.ms_per_s) + (@as(f64, @floatFromInt(@as(usize, @intCast(@max(ctime.tv_nsec, 0))))) / std.time.ns_per_ms),
+                .atime = @as(Date, @enumFromInt(@as(u64, @intCast(@max(atime.tv_sec, 0))))),
+                .mtime = @as(Date, @enumFromInt(@as(u64, @intCast(@max(mtime.tv_sec, 0))))),
+                .ctime = @as(Date, @enumFromInt(@as(u64, @intCast(@max(ctime.tv_sec, 0))))),
 
                 // Linux doesn't include this info in stat
                 // maybe it does in statx, but do you really need birthtime? If you do please file an issue.
                 .birthtime_ms = if (Environment.isLinux)
                     0
                 else
-                    @truncate(T, @intCast(i64, if (stat_.birthtime().tv_nsec > 0) (@intCast(usize, stat_.birthtime().tv_nsec) / std.time.ns_per_ms) else 0)),
+                    @as(T, @truncate(@as(i64, @intCast(if (stat_.birthtime().tv_nsec > 0) (@as(usize, @intCast(stat_.birthtime().tv_nsec)) / std.time.ns_per_ms) else 0)))),
 
                 .birthtime = if (Environment.isLinux)
-                    @enumFromInt(Date, 0)
+                    @as(Date, @enumFromInt(0))
                 else
-                    @enumFromInt(Date, @intCast(u64, @max(stat_.birthtime().tv_sec, 0))),
+                    @as(Date, @enumFromInt(@as(u64, @intCast(@max(stat_.birthtime().tv_sec, 0))))),
             };
         }
     };
@@ -1375,33 +1375,33 @@ pub const Stats = union(enum) {
 
     fn modeInternal(this: *This) i32 {
         return switch (this.*) {
-            .big => @truncate(i32, this.big.mode),
+            .big => @as(i32, @truncate(this.big.mode)),
             .small => this.small.mode,
         };
     }
 
     pub fn isBlockDevice(this: *This) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(os.S.ISBLK(@intCast(Mode, this.modeInternal())));
+        return JSC.JSValue.jsBoolean(os.S.ISBLK(@as(Mode, @intCast(this.modeInternal()))));
     }
 
     pub fn isCharacterDevice(this: *This) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(os.S.ISCHR(@intCast(Mode, this.modeInternal())));
+        return JSC.JSValue.jsBoolean(os.S.ISCHR(@as(Mode, @intCast(this.modeInternal()))));
     }
 
     pub fn isDirectory(this: *This) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(os.S.ISDIR(@intCast(Mode, this.modeInternal())));
+        return JSC.JSValue.jsBoolean(os.S.ISDIR(@as(Mode, @intCast(this.modeInternal()))));
     }
 
     pub fn isFIFO(this: *This) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(os.S.ISFIFO(@intCast(Mode, this.modeInternal())));
+        return JSC.JSValue.jsBoolean(os.S.ISFIFO(@as(Mode, @intCast(this.modeInternal()))));
     }
 
     pub fn isFile(this: *This) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(os.S.ISREG(@intCast(Mode, this.modeInternal())));
+        return JSC.JSValue.jsBoolean(os.S.ISREG(@as(Mode, @intCast(this.modeInternal()))));
     }
 
     pub fn isSocket(this: *This) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(os.S.ISSOCK(@intCast(Mode, this.modeInternal())));
+        return JSC.JSValue.jsBoolean(os.S.ISSOCK(@as(Mode, @intCast(this.modeInternal()))));
     }
 
     // Node.js says this method is only valid on the result of lstat()
@@ -1410,7 +1410,7 @@ pub const Stats = union(enum) {
     //
     // See https://nodejs.org/api/fs.html#statsissymboliclink
     pub fn isSymbolicLink(this: *This) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(os.S.ISLNK(@intCast(Mode, this.modeInternal())));
+        return JSC.JSValue.jsBoolean(os.S.ISLNK(@as(Mode, @intCast(this.modeInternal()))));
     }
 
     pub fn finalize(this: *This) callconv(.C) void {
@@ -2204,7 +2204,7 @@ pub const Process = struct {
                 // However, this might be called many times in a row, so we use a pre-allocated buffer
                 // that way we don't have to worry about garbage collector
                 JSC.VirtualMachine.get().bundler.fs.top_level_dir = std.os.getcwd(&JSC.VirtualMachine.get().bundler.fs.top_level_dir_buf) catch {
-                    _ = Syscall.chdir(@ptrCast([:0]const u8, JSC.VirtualMachine.get().bundler.fs.top_level_dir));
+                    _ = Syscall.chdir(@as([:0]const u8, @ptrCast(JSC.VirtualMachine.get().bundler.fs.top_level_dir)));
                     return JSC.toInvalidArguments("Invalid path", .{}, globalObject.ref());
                 };
 
@@ -2220,13 +2220,13 @@ pub const Process = struct {
     pub fn exit(globalObject: *JSC.JSGlobalObject, code: i32) callconv(.C) void {
         var vm = globalObject.bunVM();
         if (vm.worker) |worker| {
-            vm.exit_handler.exit_code = @truncate(u8, @max(code, 0));
+            vm.exit_handler.exit_code = @as(u8, @truncate(@max(code, 0)));
             worker.terminate();
             return;
         }
 
         vm.onExit();
-        std.os.exit(@truncate(u8, @intCast(u32, @max(code, 0))));
+        std.os.exit(@as(u8, @truncate(@as(u32, @intCast(@max(code, 0))))));
     }
 
     pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;

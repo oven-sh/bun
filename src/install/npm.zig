@@ -204,7 +204,7 @@ pub const Registry = struct {
             package_name,
             newly_last_modified,
             new_etag,
-            @truncate(u32, @intCast(u64, @max(0, std.time.timestamp()))) + 300,
+            @as(u32, @truncate(@as(u64, @intCast(@max(0, std.time.timestamp()))))) + 300,
         )) |package| {
             if (package_manager.options.enable.manifest_cache) {
                 PackageManifest.Serializer.save(&package, package_manager.getTemporaryDirectory(), package_manager.getCacheDirectory()) catch {};
@@ -231,7 +231,7 @@ const ExternVersionMap = extern struct {
     pub fn findKeyIndex(this: ExternVersionMap, buf: []const Semver.Version, find: Semver.Version) ?u32 {
         for (this.keys.get(buf), 0..) |key, i| {
             if (key.eql(find)) {
-                return @truncate(u32, i);
+                return @as(u32, @truncate(i));
             }
         }
 
@@ -290,9 +290,9 @@ pub const OperatingSystem = enum(u16) {
         const field: u16 = NameMap.get(str[offset..]) orelse return this_;
 
         if (is_not) {
-            return @enumFromInt(OperatingSystem, this & ~field);
+            return @as(OperatingSystem, @enumFromInt(this & ~field));
         } else {
-            return @enumFromInt(OperatingSystem, this | field);
+            return @as(OperatingSystem, @enumFromInt(this | field));
         }
     }
 };
@@ -355,9 +355,9 @@ pub const Architecture = enum(u16) {
         const field: u16 = NameMap.get(input) orelse return this_;
 
         if (is_not) {
-            return @enumFromInt(Architecture, this & ~field);
+            return @as(Architecture, @enumFromInt(this & ~field));
         } else {
-            return @enumFromInt(Architecture, this | field);
+            return @as(Architecture, @enumFromInt(this | field));
         }
     }
 };
@@ -536,7 +536,7 @@ pub const PackageManifest = struct {
 
             stream.pos += Aligner.skipAmount(Type, stream.pos);
             const result_bytes = stream.buffer[stream.pos..][0..byte_len];
-            const result = @ptrCast([*]const Type, @alignCast(@alignOf([*]const Type), result_bytes.ptr))[0 .. result_bytes.len / @sizeOf(Type)];
+            const result = @as([*]const Type, @ptrCast(@alignCast(result_bytes.ptr)))[0 .. result_bytes.len / @sizeOf(Type)];
             stream.pos += result_bytes.len;
             return result;
         }
@@ -577,7 +577,7 @@ pub const PackageManifest = struct {
             var dest_path_stream = std.io.fixedBufferStream(&dest_path_buf);
             var dest_path_stream_writer = dest_path_stream.writer();
             const hex_fmt = bun.fmt.hexIntLower(file_id);
-            const hex_timestamp = @intCast(usize, @max(std.time.milliTimestamp(), 0));
+            const hex_timestamp = @as(usize, @intCast(@max(std.time.milliTimestamp(), 0)));
             const hex_timestamp_fmt = bun.fmt.hexIntLower(hex_timestamp);
             try dest_path_stream_writer.print("{any}.npm-{any}", .{ hex_fmt, hex_timestamp_fmt });
             try dest_path_stream_writer.writeByte(0);
@@ -1306,15 +1306,15 @@ pub const PackageManifest = struct {
                                         }
 
                                         if (optional_peer_dep_names.items.len == 0) {
-                                            const names_hash_bytes = @bitCast([8]u8, this_names[i].hash);
+                                            const names_hash_bytes = @as([8]u8, @bitCast(this_names[i].hash));
                                             name_hasher.update(&names_hash_bytes);
-                                            const versions_hash_bytes = @bitCast([8]u8, this_versions[i].hash);
+                                            const versions_hash_bytes = @as([8]u8, @bitCast(this_versions[i].hash));
                                             version_hasher.update(&versions_hash_bytes);
                                         }
                                     } else {
-                                        const names_hash_bytes = @bitCast([8]u8, this_names[i].hash);
+                                        const names_hash_bytes = @as([8]u8, @bitCast(this_names[i].hash));
                                         name_hasher.update(&names_hash_bytes);
-                                        const versions_hash_bytes = @bitCast([8]u8, this_versions[i].hash);
+                                        const versions_hash_bytes = @as([8]u8, @bitCast(this_versions[i].hash));
                                         version_hasher.update(&versions_hash_bytes);
                                     }
 
@@ -1327,7 +1327,7 @@ pub const PackageManifest = struct {
                                 var version_list = ExternalStringList.init(version_extern_strings, this_versions);
 
                                 if (comptime is_peer) {
-                                    package_version.optional_peer_dependencies_len = @truncate(u32, peer_dependency_len);
+                                    package_version.optional_peer_dependencies_len = @as(u32, @truncate(peer_dependency_len));
                                 }
 
                                 if (count > 0 and
@@ -1502,10 +1502,10 @@ pub const PackageManifest = struct {
         }
 
         result.pkg.string_lists_buf.off = 0;
-        result.pkg.string_lists_buf.len = @truncate(u32, all_extern_strings.len);
+        result.pkg.string_lists_buf.len = @as(u32, @truncate(all_extern_strings.len));
 
         result.pkg.versions_buf.off = 0;
-        result.pkg.versions_buf.len = @truncate(u32, all_semver_versions.len);
+        result.pkg.versions_buf.len = @as(u32, @truncate(all_semver_versions.len));
 
         result.versions = all_semver_versions;
         result.external_strings = all_extern_strings;
@@ -1518,7 +1518,7 @@ pub const PackageManifest = struct {
             result.string_buf = ptr[0..string_builder.len];
             result.pkg.string_buf = BigExternalString{
                 .off = 0,
-                .len = @truncate(u32, string_builder.len),
+                .len = @as(u32, @truncate(string_builder.len)),
                 .hash = 0,
             };
         }

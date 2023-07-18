@@ -148,7 +148,7 @@ pub const SystemErrno = enum(u8) {
         }
 
         if (code >= max) return null;
-        return @enumFromInt(SystemErrno, code);
+        return @as(SystemErrno, @enumFromInt(code));
     }
 
     pub fn label(this: SystemErrno) ?[]const u8 {
@@ -373,7 +373,7 @@ pub fn preallocate_file(fd: std.os.fd_t, offset: std.os.off_t, len: std.os.off_t
     //   './micro 65432000 temp --preallocate' ran
     //     1.18 ± 0.06 times faster than './micro 65432000 temp'
     //
-    _ = std.os.linux.fallocate(fd, 0, @intCast(i64, offset), len);
+    _ = std.os.linux.fallocate(fd, 0, @as(i64, @intCast(offset)), len);
 }
 
 /// splice() moves data between two file descriptors without copying
@@ -384,9 +384,9 @@ pub fn preallocate_file(fd: std.os.fd_t, offset: std.os.off_t, len: std.os.off_t
 pub fn splice(fd_in: std.os.fd_t, off_in: ?*i64, fd_out: std.os.fd_t, off_out: ?*i64, len: usize, flags: u32) usize {
     return std.os.linux.syscall6(
         .splice,
-        @bitCast(usize, @as(isize, fd_in)),
+        @as(usize, @bitCast(@as(isize, fd_in))),
         @intFromPtr(off_in),
-        @bitCast(usize, @as(isize, fd_out)),
+        @as(usize, @bitCast(@as(isize, fd_out))),
         @intFromPtr(off_out),
         len,
         flags,
@@ -411,26 +411,26 @@ pub const struct_sysinfo = extern struct {
     pub fn _f(self: anytype) @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), u8) {
         const Intermediate = @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), u8);
         const ReturnType = @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), u8);
-        return @ptrCast(ReturnType, @alignCast(@alignOf(u8), @ptrCast(Intermediate, self) + 108));
+        return @as(ReturnType, @ptrCast(@alignCast(@as(Intermediate, @ptrCast(self)) + 108)));
     }
 };
 pub extern fn sysinfo(__info: [*c]struct_sysinfo) c_int;
 
 pub fn get_free_memory() u64 {
     var info: struct_sysinfo = undefined;
-    if (sysinfo(&info) == @as(c_int, 0)) return @bitCast(u64, info.freeram) *% @bitCast(c_ulong, @as(c_ulong, info.mem_unit));
+    if (sysinfo(&info) == @as(c_int, 0)) return @as(u64, @bitCast(info.freeram)) *% @as(c_ulong, @bitCast(@as(c_ulong, info.mem_unit)));
     return 0;
 }
 
 pub fn get_total_memory() u64 {
     var info: struct_sysinfo = undefined;
-    if (sysinfo(&info) == @as(c_int, 0)) return @bitCast(u64, info.totalram) *% @bitCast(c_ulong, @as(c_ulong, info.mem_unit));
+    if (sysinfo(&info) == @as(c_int, 0)) return @as(u64, @bitCast(info.totalram)) *% @as(c_ulong, @bitCast(@as(c_ulong, info.mem_unit)));
     return 0;
 }
 
 pub fn get_system_uptime() u64 {
     var info: struct_sysinfo = undefined;
-    if (sysinfo(&info) == @as(c_int, 0)) return @bitCast(u64, info.uptime);
+    if (sysinfo(&info) == @as(c_int, 0)) return @as(u64, @bitCast(info.uptime));
     return 0;
 }
 
@@ -438,9 +438,9 @@ pub fn get_system_loadavg() [3]f64 {
     var info: struct_sysinfo = undefined;
     if (sysinfo(&info) == @as(c_int, 0)) {
         return [3]f64{
-            std.math.ceil((@floatFromInt(f64, info.loads[0]) / 65536.0) * 100.0) / 100.0,
-            std.math.ceil((@floatFromInt(f64, info.loads[1]) / 65536.0) * 100.0) / 100.0,
-            std.math.ceil((@floatFromInt(f64, info.loads[2]) / 65536.0) * 100.0) / 100.0,
+            std.math.ceil((@as(f64, @floatFromInt(info.loads[0])) / 65536.0) * 100.0) / 100.0,
+            std.math.ceil((@as(f64, @floatFromInt(info.loads[1])) / 65536.0) * 100.0) / 100.0,
+            std.math.ceil((@as(f64, @floatFromInt(info.loads[2])) / 65536.0) * 100.0) / 100.0,
         };
     }
     return [3]f64{ 0, 0, 0 };

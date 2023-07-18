@@ -165,11 +165,11 @@ test "Check #3" {
 
     var i: i32 = id_end_range[0];
     while (i < id_end_range[1]) : (i += 1) {
-        try std.testing.expectEqual(id_continue.isSet(@intCast(usize, id_end_range[1] - i)), Cache.id_continue.isSet(@intCast(usize, id_end_range[1] - i)));
+        try std.testing.expectEqual(id_continue.isSet(@as(usize, @intCast(id_end_range[1] - i))), Cache.id_continue.isSet(@as(usize, @intCast(id_end_range[1] - i))));
     }
 
     i = id_start_range[0];
     while (i < id_start_range[1]) : (i += 1) {
-        try std.testing.expectEqual(id_start.isSet(@intCast(usize, id_start_range[1] - i)), Cache.id_start.isSet(@intCast(usize, id_start_range[1] - i)));
+        try std.testing.expectEqual(id_start.isSet(@as(usize, @intCast(id_start_range[1] - i))), Cache.id_start.isSet(@as(usize, @intCast(id_start_range[1] - i))));
     }
 }

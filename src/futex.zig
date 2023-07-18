@@ -105,12 +105,12 @@ const WindowsFutex = struct {
         // Positive values for timeouts are absolute time while negative is relative.
         if (timeout) |timeout_ns| {
             timeout_ptr = &timeout_value;
-            timeout_value = -@intCast(windows.LARGE_INTEGER, timeout_ns / 100);
+            timeout_value = -@as(windows.LARGE_INTEGER, @intCast(timeout_ns / 100));
         }
 
         switch (windows.ntdll.RtlWaitOnAddress(
-            @ptrCast(?*const anyopaque, ptr),
-            @ptrCast(?*const anyopaque, &expect),
+            @as(?*const anyopaque, @ptrCast(ptr)),
+            @as(?*const anyopaque, @ptrCast(&expect)),
             @sizeOf(@TypeOf(expect)),
             timeout_ptr,
         )) {
@@ -121,7 +121,7 @@ const WindowsFutex = struct {
     }
 
     fn wake(ptr: *const Atomic(u32), num_waiters: u32) void {
-        const address = @ptrCast(?*const anyopaque, ptr);
+        const address = @as(?*const anyopaque, @ptrCast(ptr));
         switch (num_waiters) {
             1 => windows.ntdll.RtlWakeAddressSingle(address),
             else => windows.ntdll.RtlWakeAddressAll(address),
@@ -139,14 +139,14 @@ const LinuxFutex = struct {
         // Futex timespec timeout is already in relative time.
         if (timeout) |timeout_ns| {
             ts_ptr = &ts;
-            ts.tv_sec = @intCast(@TypeOf(ts.tv_sec), timeout_ns / std.time.ns_per_s);
-            ts.tv_nsec = @intCast(@TypeOf(ts.tv_nsec), timeout_ns % std.time.ns_per_s);
+            ts.tv_sec = @as(@TypeOf(ts.tv_sec), @intCast(timeout_ns / std.time.ns_per_s));
+            ts.tv_nsec = @as(@TypeOf(ts.tv_nsec), @intCast(timeout_ns % std.time.ns_per_s));
         }
 
         switch (linux.getErrno(linux.futex_wait(
-            @ptrCast(*const i32, ptr),
+            @as(*const i32, @ptrCast(ptr)),
             linux.FUTEX.PRIVATE_FLAG | linux.FUTEX.WAIT,
-            @bitCast(i32, expect),
+            @as(i32, @bitCast(expect)),
             ts_ptr,
         ))) {
             .SUCCESS => {}, // notified by `wake()`
@@ -161,7 +161,7 @@ const LinuxFutex = struct {
 
     fn wake(ptr: *const Atomic(u32), num_waiters: u32) void {
         switch (linux.getErrno(linux.futex_wake(
-            @ptrCast(*const i32, ptr),
+            @as(*const i32, @ptrCast(ptr)),
             linux.FUTEX.PRIVATE_FLAG | linux.FUTEX.WAKE,
             std.math.cast(i32, num_waiters) orelse std.math.maxInt(i32),
         ))) {
@@ -191,7 +191,7 @@ const DarwinFutex = struct {
             assert(timeout_value != 0);
             timeout_ns = timeout_value;
         }
-        const addr = @ptrCast(*const anyopaque, ptr);
+        const addr = @as(*const anyopaque, @ptrCast(ptr));
         const flags = darwin.UL_COMPARE_AND_WAIT | darwin.ULF_NO_ERRNO;
         // If we're using `__ulock_wait` and `timeout` is too big to fit inside a `u32` count of
         // micro-seconds (around 70min), we'll request a shorter timeout. This is fine (users
@@ -209,7 +209,7 @@ const DarwinFutex = struct {
         };
 
         if (status >= 0) return;
-        switch (@enumFromInt(std.os.E, -status)) {
+        switch (@as(std.os.E, @enumFromInt(-status))) {
             .INTR => {},
             // Address of the futex is paged out. This is unlikely, but possible in theory, and
             // pthread/libdispatch on darwin bother to handle it. In this case we'll return
@@ -227,11 +227,11 @@ const DarwinFutex = struct {
         }
 
         while (true) {
-            const addr = @ptrCast(*const anyopaque, ptr);
+            const addr = @as(*const anyopaque, @ptrCast(ptr));
             const status = darwin.__ulock_wake(flags, addr, 0);
 
             if (status >= 0) return;
-            switch (@enumFromInt(std.os.E, -status)) {
+            switch (@as(std.os.E, @enumFromInt(-status))) {
                 .INTR => continue, // spurious wake()
                 .FAULT => continue, // address of the lock was paged out
                 .NOENT => return, // nothing was woken up
@@ -353,8 +353,8 @@ const PosixFutex = struct {
             if (timeout) |timeout_ns| {
                 ts_ptr = &ts;
                 std.os.clock_gettime(std.os.CLOCK_REALTIME, &ts) catch unreachable;
-                ts.tv_sec += @intCast(@TypeOf(ts.tv_sec), timeout_ns / std.time.ns_per_s);
-                ts.tv_nsec += @intCast(@TypeOf(ts.tv_nsec), timeout_ns % std.time.ns_per_s);
+                ts.tv_sec += @as(@TypeOf(ts.tv_sec), @intCast(timeout_ns / std.time.ns_per_s));
+                ts.tv_nsec += @as(@TypeOf(ts.tv_nsec), @intCast(timeout_ns % std.time.ns_per_s));
                 if (ts.tv_nsec >= std.time.ns_per_s) {
                     ts.tv_sec += 1;
                     ts.tv_nsec -= std.time.ns_per_s;
@@ -473,7 +473,7 @@ test "Futex - Broadcast" {
 
         fn runSender(self: *@This()) !void {
             self.broadcast.store(BROADCAST_SENT, .Monotonic);
-            Futex.wake(&self.broadcast, @intCast(u32, self.threads.len));
+            Futex.wake(&self.broadcast, @as(u32, @intCast(self.threads.len)));
 
             while (true) {
                 const broadcast = self.broadcast.load(.Acquire);

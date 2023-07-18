@@ -257,7 +257,7 @@ pub const HTMLRewriter = opaque {
                     auto_disable();
 
                     @setRuntimeSafety(false);
-                    var this = @ptrCast(*OutputSinkType, @alignCast(@alignOf(*OutputSinkType), user_data));
+                    var this = @as(*OutputSinkType, @ptrCast(@alignCast(user_data)));
                     switch (len) {
                         0 => Done(this),
                         else => Writer(this, ptr[0..len]),
@@ -374,7 +374,7 @@ pub const TextChunk = opaque {
     }
     pub fn getUserData(this: *const TextChunk, comptime Type: type) ?*Type {
         auto_disable();
-        return @ptrCast(?*Type, @alignCast(@alignOf(?*Type), this.lol_html_text_chunk_user_data_get()));
+        return @as(?*Type, @ptrCast(@alignCast(this.lol_html_text_chunk_user_data_get())));
     }
 };
 pub const Element = opaque {
@@ -499,7 +499,7 @@ pub const Element = opaque {
     }
     pub fn getUserData(element: *const Element, comptime Type: type) ?*Type {
         auto_disable();
-        return @ptrCast(?*Element, @alignCast(@alignOf(?*Element), lol_html_element_user_data_get(element)));
+        return @as(?*Element, @ptrCast(@alignCast(lol_html_element_user_data_get(element))));
     }
     pub fn onEndTag(element: *Element, end_tag_handler: lol_html_end_tag_handler_t, user_data: ?*anyopaque) Error!void {
         auto_disable();
@@ -567,7 +567,7 @@ pub const HTMLString = extern struct {
     fn deinit_external(ctx: *anyopaque, ptr: *anyopaque, len: u32) callconv(.C) void {
         _ = ctx;
         auto_disable();
-        lol_html_str_free(.{ .ptr = @ptrCast([*]const u8, ptr), .len = len });
+        lol_html_str_free(.{ .ptr = @as([*]const u8, @ptrCast(ptr)), .len = len });
     }
 
     pub fn toString(this: HTMLString) bun.String {
@@ -752,23 +752,22 @@ pub fn DirectiveHandler(comptime Container: type, comptime UserDataType: type, c
     return struct {
         pub fn callback(this: *Container, user_data: ?*anyopaque) callconv(.C) Directive {
             auto_disable();
-            return @enumFromInt(
+            return @as(
                 Directive,
-                @as(
+                @enumFromInt(@as(
                     c_uint,
                     @intFromBool(
                         Callback(
-                            @ptrCast(
+                            @as(
                                 *UserDataType,
-                                @alignCast(
-                                    @alignOf(*UserDataType),
+                                @ptrCast(@alignCast(
                                     user_data.?,
-                                ),
+                                )),
                             ),
                             this,
                         ),
                     ),
-                ),
+                )),
             );
         }
     }.callback;

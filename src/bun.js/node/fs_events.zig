@@ -254,7 +254,7 @@ pub const FSEventsLoop = struct {
                 }
 
                 pub fn wrap(this: ?*anyopaque) void {
-                    @call(.always_inline, Callback, .{@ptrCast(*Type, @alignCast(@alignOf(Type), this.?))});
+                    @call(.always_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
                 }
             };
         }

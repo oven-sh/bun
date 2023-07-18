@@ -254,14 +254,14 @@ pub const URL = struct {
         }
 
         if (strings.indexOfChar(base[offset..], '?')) |q| {
-            offset += @intCast(u31, q);
+            offset += @as(u31, @intCast(q));
             url.path = base[path_offset..][0..q];
             can_update_path = false;
             url.search = base[offset..];
         }
 
         if (strings.indexOfChar(base[offset..], '#')) |hash| {
-            offset += @intCast(u31, hash);
+            offset += @as(u31, @intCast(hash));
             hash_offset = offset;
             if (can_update_path) {
                 url.path = base[path_offset..][0..hash];
@@ -304,7 +304,7 @@ pub const URL = struct {
             url.pathname = "/";
         }
 
-        while (url.pathname.len > 1 and @bitCast(u16, url.pathname[0..2].*) == comptime std.mem.readIntNative(u16, "//")) {
+        while (url.pathname.len > 1 and @as(u16, @bitCast(url.pathname[0..2].*)) == comptime std.mem.readIntNative(u16, "//")) {
             url.pathname = url.pathname[1..];
         }
 
@@ -633,10 +633,10 @@ pub const QueryStringMap = struct {
             var value = result.value;
             const name_slice = result.rawName(scanner.pathname.routename);
 
-            name.length = @truncate(u32, name_slice.len);
+            name.length = @as(u32, @truncate(name_slice.len));
             name.offset = buf_writer_pos;
             try writer.writeAll(name_slice);
-            buf_writer_pos += @truncate(u32, name_slice.len);
+            buf_writer_pos += @as(u32, @truncate(name_slice.len));
 
             var name_hash: u64 = bun.hash(name_slice);
 
@@ -844,7 +844,7 @@ pub const PercentEncoding = struct {
                     // scan ahead assuming .writeAll is faster than .writeByte one at a time
                     while (i < input.len and input[i] != '%') : (i += 1) {}
                     try writer.writeAll(input[start..i]);
-                    written += @truncate(u32, i - start);
+                    written += @as(u32, @truncate(i - start));
                 },
             }
         }
@@ -933,7 +933,7 @@ pub const FormData = struct {
         if (begin.len == 0)
             return null;
 
-        var boundary_end = strings.indexOfChar(begin, ';') orelse @truncate(u32, begin.len);
+        var boundary_end = strings.indexOfChar(begin, ';') orelse @as(u32, @truncate(begin.len));
         if (begin[0] == '"' and boundary_end > 0 and begin[boundary_end -| 1] == '"') {
             boundary_end -|= 1;
             return begin[1..boundary_end];
@@ -1207,8 +1207,8 @@ fn stringPointerFromStrings(parent: string, in: string) Api.StringPointer {
             }
 
             return Api.StringPointer{
-                .offset = @truncate(u32, i),
-                .length = @truncate(u32, in.len),
+                .offset = @as(u32, @truncate(i)),
+                .length = @as(u32, @truncate(in.len)),
             };
         }
     }
@@ -1301,7 +1301,7 @@ pub const Scanner = struct {
 
             var slice = this.query_string[this.i..];
             relative_i = 0;
-            var name = Api.StringPointer{ .offset = @truncate(u32, this.i), .length = 0 };
+            var name = Api.StringPointer{ .offset = @as(u32, @truncate(this.i)), .length = 0 };
             var value = Api.StringPointer{ .offset = 0, .length = 0 };
             var name_needs_decoding = false;
 
@@ -1309,10 +1309,10 @@ pub const Scanner = struct {
                 const char = slice[relative_i];
                 switch (char) {
                     '=' => {
-                        name.length = @truncate(u32, relative_i);
+                        name.length = @as(u32, @truncate(relative_i));
                         relative_i += 1;
 
-                        value.offset = @truncate(u32, relative_i + this.i);
+                        value.offset = @as(u32, @truncate(relative_i + this.i));
 
                         const offset = relative_i;
                         var value_needs_decoding = false;
@@ -1322,7 +1322,7 @@ pub const Scanner = struct {
                                 else => false,
                             };
                         }
-                        value.length = @truncate(u32, relative_i - offset);
+                        value.length = @as(u32, @truncate(relative_i - offset));
                         // If the name is empty and it's just a value, skip it.
                         // This is kind of an opinion. But, it's hard to see where that might be intentional.
                         if (name.length == 0) return null;
@@ -1334,7 +1334,7 @@ pub const Scanner = struct {
                     '&' => {
                         // key&
                         if (relative_i > 0) {
-                            name.length = @truncate(u32, relative_i);
+                            name.length = @as(u32, @truncate(relative_i));
                             return Result{ .name = name, .value = value, .name_needs_decoding = name_needs_decoding, .value_needs_decoding = false };
                         }
 
@@ -1355,7 +1355,7 @@ pub const Scanner = struct {
                 return null;
             }
 
-            name.length = @truncate(u32, relative_i);
+            name.length = @as(u32, @truncate(relative_i));
             return Result{ .name = name, .value = value, .name_needs_decoding = name_needs_decoding };
         }
     }

@@ -432,7 +432,7 @@ pub fn asError(err: anytype) Errno {
     else
         err;
     return switch (errnum) {
-        1...errno_map.len => errno_map[@intCast(u8, errnum)],
+        1...errno_map.len => errno_map[@as(u8, @intCast(errnum))],
         else => error.Unexpected,
     };
 }
@@ -660,7 +660,7 @@ fn flush_completions(self: *IO, wait_nr: u32, timeouts: *usize, etime: *bool) !v
                 if (-cqe.res == os.ETIME) etime.* = true;
                 continue;
             }
-            const completion = @ptrFromInt(*Completion, @intCast(usize, cqe.user_data));
+            const completion = @as(*Completion, @ptrFromInt(@as(usize, @intCast(cqe.user_data))));
             completion.result = cqe.res;
             // We do not run the completion here (instead appending to a linked list) to avoid:
             // * recursion through `flush_submissions()` and `flush_completions()`,
@@ -804,7 +804,7 @@ pub const Completion = struct {
                     os.EPERM => error.PermissionDenied,
                     os.EPROTO => error.ProtocolFailure,
                     else => |errno| asError(errno),
-                } else @intCast(os.socket_t, completion.result);
+                } else @as(os.socket_t, @intCast(completion.result));
                 completion.callback(completion.context, completion, &result);
             },
 
@@ -843,7 +843,7 @@ pub const Completion = struct {
                     os.EEXIST => error.PathAlreadyExists,
                     os.EBUSY => error.DeviceBusy,
                     else => |errno| asError(errno),
-                } else @intCast(linux.fd_t, completion.result);
+                } else @as(linux.fd_t, @intCast(completion.result));
                 completion.callback(completion.context, completion, &result);
             },
             .connect => {
@@ -904,7 +904,7 @@ pub const Completion = struct {
                     os.EOVERFLOW => error.Unseekable,
                     os.ESPIPE => error.Unseekable,
                     else => |errno| asError(errno),
-                } else @intCast(usize, completion.result);
+                } else @as(usize, @intCast(completion.result));
                 completion.callback(completion.context, completion, &result);
             },
             .readev, .recv => {
@@ -920,7 +920,7 @@ pub const Completion = struct {
                     os.ENOTSOCK => error.FileDescriptorNotASocket,
                     os.ECONNRESET => error.ConnectionResetByPeer,
                     else => |errno| asError(errno),
-                } else @intCast(usize, completion.result);
+                } else @as(usize, @intCast(completion.result));
                 completion.callback(completion.context, completion, &result);
             },
             .writev, .send => {
@@ -942,7 +942,7 @@ pub const Completion = struct {
                     os.EOPNOTSUPP => error.OperationNotSupported,
                     os.EPIPE => error.BrokenPipe,
                     else => |errno| asError(errno),
-                } else @intCast(usize, completion.result);
+                } else @as(usize, @intCast(completion.result));
                 completion.callback(completion.context, completion, &result);
             },
             .timeout => {
@@ -977,7 +977,7 @@ pub const Completion = struct {
                     os.EPIPE => error.BrokenPipe,
                     os.ESPIPE => error.Unseekable,
                     else => |errno| asError(errno),
-                } else @intCast(usize, completion.result);
+                } else @as(usize, @intCast(completion.result));
                 completion.callback(completion.context, completion, &result);
             },
         }
@@ -988,7 +988,7 @@ pub const Waker = struct {
     fd: os.fd_t,
 
     pub fn init(allocator: std.mem.Allocator) !Waker {
-        return initWithFileDescriptor(allocator, @intCast(os.fd_t, try std.os.eventfd(0, 0)));
+        return initWithFileDescriptor(allocator, @as(os.fd_t, @intCast(try std.os.eventfd(0, 0))));
     }
 
     pub fn initWithFileDescriptor(_: std.mem.Allocator, fd: os.fd_t) Waker {
@@ -999,15 +999,15 @@ pub const Waker = struct {
 
     pub fn wait(this: Waker) !u64 {
         var bytes: usize = 0;
-        _ = std.os.read(this.fd, @ptrCast(*[8]u8, &bytes)) catch 0;
-        return @intCast(u64, bytes);
+        _ = std.os.read(this.fd, @as(*[8]u8, @ptrCast(&bytes))) catch 0;
+        return @as(u64, @intCast(bytes));
     }
 
     pub fn wake(this: *const Waker) !void {
         var bytes: usize = 1;
         _ = std.os.write(
             this.fd,
-            @ptrCast(*[8]u8, &bytes),
+            @as(*[8]u8, @ptrCast(&bytes)),
         ) catch 0;
     }
 };
@@ -1107,9 +1107,9 @@ pub fn accept(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @ptrFromInt(Context, @intFromPtr(ctx)),
+                    @as(Context, @ptrFromInt(@intFromPtr(ctx))),
                     comp,
-                    @ptrFromInt(*const AcceptError!os.socket_t, @intFromPtr(res)).*,
+                    @as(*const AcceptError!os.socket_t, @ptrFromInt(@intFromPtr(res))).*,
                 );
             }
         }.wrapper,
@@ -1149,9 +1149,9 @@ pub fn close(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @ptrFromInt(Context, @intFromPtr(ctx)),
+                    @as(Context, @ptrFromInt(@intFromPtr(ctx))),
                     comp,
-                    @ptrFromInt(*const CloseError!void, @intFromPtr(res)).*,
+                    @as(*const CloseError!void, @ptrFromInt(@intFromPtr(res))).*,
                 );
             }
         }.wrapper,
@@ -1160,7 +1160,7 @@ pub fn close(
 
     if (features.close_blocking) {
         const rc = linux.close(fd);
-        completion.result = @intCast(i32, rc);
+        completion.result = @as(i32, @intCast(rc));
         self.next_tick.push(completion);
         return;
     }
@@ -1206,9 +1206,9 @@ pub fn connect(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @ptrFromInt(Context, @intFromPtr(ctx)),
+                    @as(Context, @ptrFromInt(@intFromPtr(ctx))),
                     comp,
-                    @ptrFromInt(*const ConnectError!void, @intFromPtr(res)).*,
+                    @as(*const ConnectError!void, @ptrFromInt(@intFromPtr(res))).*,
                 );
             }
         }.wrapper,
@@ -1222,7 +1222,7 @@ pub fn connect(
 
     if (features.connect_blocking) {
         const rc = linux.connect(socket, &address.any, address.getOsSockLen());
-        completion.result = @intCast(i32, rc);
+        completion.result = @as(i32, @intCast(rc));
         self.completed.push(completion);
         return;
     }
@@ -1257,9 +1257,9 @@ pub fn fsync(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @ptrFromInt(Context, @intFromPtr(ctx)),
+                    @as(Context, @ptrFromInt(@intFromPtr(ctx))),
                     comp,
-                    @ptrFromInt(*const FsyncError!void, @intFromPtr(res)).*,
+                    @as(*const FsyncError!void, @ptrFromInt(@intFromPtr(res))).*,
                 );
             }
         }.wrapper,
@@ -1303,9 +1303,9 @@ pub fn read(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @ptrFromInt(Context, @intFromPtr(ctx)),
+                    @as(Context, @ptrFromInt(@intFromPtr(ctx))),
                     comp,
-                    @ptrFromInt(*const ReadError!usize, @intFromPtr(res)).*,
+                    @as(*const ReadError!usize, @ptrFromInt(@intFromPtr(res))).*,
                 );
             }
         }.wrapper,
@@ -1355,9 +1355,9 @@ pub fn recv(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @ptrFromInt(Context, @intFromPtr(ctx)),
+                    @as(Context, @ptrFromInt(@intFromPtr(ctx))),
                     comp,
-                    @ptrFromInt(*const RecvError!usize, @intFromPtr(res)).*,
+                    @as(*const RecvError!usize, @ptrFromInt(@intFromPtr(res))).*,
                 );
             }
         }.wrapper,
@@ -1390,9 +1390,9 @@ pub fn readev(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @ptrFromInt(Context, @intFromPtr(ctx)),
+                    @as(Context, @ptrFromInt(@intFromPtr(ctx))),
                     comp,
-                    @ptrFromInt(*const RecvError!usize, @intFromPtr(res)).*,
+                    @as(*const RecvError!usize, @ptrFromInt(@intFromPtr(res))).*,
                 );
             }
         }.wrapper,
@@ -1446,9 +1446,9 @@ pub fn send(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @ptrFromInt(Context, @intFromPtr(ctx)),
+                    @as(Context, @ptrFromInt(@intFromPtr(ctx))),
                     comp,
-                    @ptrFromInt(*const SendError!usize, @intFromPtr(res)).*,
+                    @as(*const SendError!usize, @ptrFromInt(@intFromPtr(res))).*,
                 );
             }
         }.wrapper,
@@ -1538,16 +1538,16 @@ pub fn open(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @ptrFromInt(Context, @intFromPtr(ctx)),
+                    @as(Context, @ptrFromInt(@intFromPtr(ctx))),
                     comp,
-                    @ptrFromInt(*const OpenError!linux.fd_t, @intFromPtr(res)).*,
+                    @as(*const OpenError!linux.fd_t, @ptrFromInt(@intFromPtr(res))).*,
                 );
             }
         }.wrapper,
         .operation = .{
             .open = .{
                 .path = path,
-                .flags = @intCast(u32, flags),
+                .flags = @as(u32, @intCast(flags)),
                 .mode = mode,
             },
         },
@@ -1575,9 +1575,9 @@ pub fn writev(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @ptrFromInt(Context, @intFromPtr(ctx)),
+                    @as(Context, @ptrFromInt(@intFromPtr(ctx))),
                     comp,
-                    @ptrFromInt(*const SendError!usize, @intFromPtr(res)).*,
+                    @as(*const SendError!usize, @ptrFromInt(@intFromPtr(res))).*,
                 );
             }
         }.wrapper,
@@ -1613,9 +1613,9 @@ pub fn timeout(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @ptrFromInt(Context, @intFromPtr(ctx)),
+                    @as(Context, @ptrFromInt(@intFromPtr(ctx))),
                     comp,
-                    @ptrFromInt(*const TimeoutError!void, @intFromPtr(res)).*,
+                    @as(*const TimeoutError!void, @ptrFromInt(@intFromPtr(res))).*,
                 );
             }
         }.wrapper,
@@ -1662,9 +1662,9 @@ pub fn write(
         .callback = struct {
             fn wrapper(ctx: ?*anyopaque, comp: *Completion, res: *const anyopaque) void {
                 callback(
-                    @ptrFromInt(Context, @intFromPtr(ctx)),
+                    @as(Context, @ptrFromInt(@intFromPtr(ctx))),
                     comp,
-                    @ptrFromInt(*const WriteError!usize, @intFromPtr(res)).*,
+                    @as(*const WriteError!usize, @ptrFromInt(@intFromPtr(res))).*,
                 );
             }
         }.wrapper,
@@ -1702,7 +1702,7 @@ const Syscall = struct {
     pub fn socket(domain: u32, socket_type: u32, protocol: u32) SocketError!os.socket_t {
         const rc = linux.socket(domain, socket_type, protocol);
         return switch (linux.getErrno((rc))) {
-            .SUCCESS => @intCast(os.fd_t, rc),
+            .SUCCESS => @as(os.fd_t, @intCast(rc)),
             .ACCES => return error.PermissionDenied,
             .AFNOSUPPORT => return error.AddressFamilyNotSupported,
             .INVAL => return error.ProtocolFamilyNotAvailable,

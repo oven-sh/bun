@@ -250,7 +250,7 @@ pub fn asError(err: anytype) Errno {
         err;
 
     return switch (int) {
-        1...errno_map.len => |val| errno_map[@intCast(u8, val)],
+        1...errno_map.len => |val| errno_map[@as(u8, @intCast(val))],
         else => error.Unexpected,
     };
 }
@@ -402,7 +402,7 @@ pub const Syscall = struct {
     pub fn fcntl(fd: fd_t, cmd: i32, arg: usize) Errno!usize {
         const rc = darwin.@"fcntl$NOCANCEL"(fd, cmd, arg);
         return switch (darwin.getErrno(rc)) {
-            .SUCCESS => @intCast(usize, rc),
+            .SUCCESS => @as(usize, @intCast(rc)),
             else => |err| asError(err),
         };
     }
@@ -445,7 +445,7 @@ pub const Syscall = struct {
     } || Errno;
 
     pub fn setsockopt(fd: socket_t, level: u32, optname: u32, opt: []const u8) SetSockOptError!void {
-        switch (darwin.getErrno(darwin.setsockopt(fd, level, optname, opt.ptr, @intCast(socklen_t, opt.len)))) {
+        switch (darwin.getErrno(darwin.setsockopt(fd, level, optname, opt.ptr, @as(socklen_t, @intCast(opt.len))))) {
             .SUCCESS => {},
             .DOM => return error.TimeoutTooBig,
             .ISCONN => return error.AlreadyConnected,
@@ -462,7 +462,7 @@ pub const Syscall = struct {
         const rc = darwin.socket(domain, filtered_sock_type, protocol);
         switch (darwin.getErrno(rc)) {
             .SUCCESS => {
-                const fd = @intCast(fd_t, rc);
+                const fd = @as(fd_t, @intCast(rc));
                 try setSockFlags(fd, socket_type);
                 return fd;
             },
@@ -540,7 +540,7 @@ pub const Waker = struct {
             return asError(std.c.getErrno(count));
         }
 
-        return @intCast(usize, count);
+        return @as(usize, @intCast(count));
     }
 
     extern fn io_darwin_create_machport(
@@ -627,7 +627,7 @@ pub const UserFilterWaker = struct {
             return asError(std.c.getErrno(errno));
         }
 
-        return @intCast(u64, errno);
+        return @as(u64, @intCast(errno));
     }
 
     pub fn init(_: std.mem.Allocator) !UserFilterWaker {
@@ -646,7 +646,7 @@ pub const UserFilterWaker = struct {
             &events,
             1,
             &events,
-            @intCast(c_int, events.len),
+            @as(c_int, @intCast(events.len)),
             0,
             &timespec,
         );
@@ -742,16 +742,16 @@ fn flush(self: *IO, comptime _: @Type(.EnumLiteral)) !void {
 
     // We need to wait (not poll) on kevent if there's nothing to submit or complete.
     if (next_timeout) |timeout_ns| {
-        ts.tv_nsec = @intCast(@TypeOf(ts.tv_nsec), timeout_ns % std.time.ns_per_s);
-        ts.tv_sec = @intCast(@TypeOf(ts.tv_sec), timeout_ns / std.time.ns_per_s);
+        ts.tv_nsec = @as(@TypeOf(ts.tv_nsec), @intCast(timeout_ns % std.time.ns_per_s));
+        ts.tv_sec = @as(@TypeOf(ts.tv_sec), @intCast(timeout_ns / std.time.ns_per_s));
     }
 
     const new_events_ = std.os.system.kevent64(
         self.waker.kq,
         &events,
-        @intCast(c_int, change_events),
+        @as(c_int, @intCast(change_events)),
         &events,
-        @intCast(c_int, events.len),
+        @as(c_int, @intCast(events.len)),
         0,
         if (next_timeout != null) &ts else null,
     );
@@ -759,7 +759,7 @@ fn flush(self: *IO, comptime _: @Type(.EnumLiteral)) !void {
     if (new_events_ < 0) {
         return std.debug.panic("kevent() failed {s}", .{@tagName(std.c.getErrno(new_events_))});
     }
-    const new_events = @intCast(usize, new_events_);
+    const new_events = @as(usize, @intCast(new_events_));
 
     // Mark the io events submitted only after kevent() successfully processed them
     self.io_pending.out = io_pending;
@@ -776,7 +776,7 @@ fn flush(self: *IO, comptime _: @Type(.EnumLiteral)) !void {
             continue;
         }
 
-        const completion = @ptrFromInt(*Completion, kevent.udata);
+        const completion = @as(*Completion, @ptrFromInt(kevent.udata));
         completion.next = null;
         self.completed.push(completion);
     }
@@ -836,9 +836,9 @@ fn flush_io(_: *IO, events: []Kevent64, io_pending_top: *?*Completion) usize {
 
         kevent.* = .{
             .ext = [2]u64{ 0, 0 },
-            .ident = @intCast(u32, event_info[0]),
-            .filter = @intCast(i16, event_info[1]),
-            .flags = @intCast(u16, event_info[2]),
+            .ident = @as(u32, @intCast(event_info[0])),
+            .filter = @as(i16, @intCast(event_info[1])),
+            .flags = @as(u16, @intCast(event_info[2])),
             .fflags = 0,
             .data = 0,
             .udata = @intFromPtr(completion),
@@ -999,7 +999,7 @@ fn submitWithIncrementPending(
 
             // Complete the Completion
             return callback(
-                @ptrFromInt(Context, @intFromPtr(_completion.context)),
+                @as(Context, @ptrFromInt(@intFromPtr(_completion.context))),
                 _completion,
                 result,
             );
@@ -1023,7 +1023,7 @@ pub const AcceptError = os.AcceptError || os.SetSockOptError;
 
 // -- NOT DONE YET
 pub fn eventfd(self: *IO) os.fd_t {
-    return @intCast(os.fd_t, self.last_event_fd.fetchAdd(1, .Monotonic));
+    return @as(os.fd_t, @intCast(self.last_event_fd.fetchAdd(1, .Monotonic)));
 }
 
 // -- NOT DONE YET
@@ -1204,10 +1204,10 @@ pub fn connect(
                     true => brk: {
                         var err_code: i32 = undefined;
                         var size: u32 = @sizeOf(u32);
-                        const rc = system.getsockopt(op.socket, os.SOL.SOCKET, os.SO.ERROR, @ptrCast([*]u8, &err_code), &size);
+                        const rc = system.getsockopt(op.socket, os.SOL.SOCKET, os.SO.ERROR, @as([*]u8, @ptrCast(&err_code)), &size);
                         assert(size == 4);
                         break :brk switch (darwin.getErrno(rc)) {
-                            .SUCCESS => switch (@enumFromInt(os.E, err_code)) {
+                            .SUCCESS => switch (@as(os.E, @enumFromInt(err_code))) {
                                 .SUCCESS => {},
                                 .ACCES => error.PermissionDenied,
                                 .PERM => error.PermissionDenied,
@@ -1306,7 +1306,7 @@ pub fn openSync(
     file_path: [:0]const u8,
     flags: os.mode_t,
 ) OpenError!fd_t {
-    return Syscall.open(file_path, @intCast(c_uint, flags));
+    return Syscall.open(file_path, @as(c_uint, @intCast(flags)));
 }
 
 pub const ReadError = error{
@@ -1343,7 +1343,7 @@ pub fn read(
         .{
             .fd = fd,
             .buf = buffer.ptr,
-            .len = @intCast(u32, buffer_limit(buffer.len)),
+            .len = @as(u32, @intCast(buffer_limit(buffer.len))),
             .offset = offset_,
             .positional = offset != null,
         },
@@ -1356,7 +1356,7 @@ pub fn read(
                         op.len,
                     );
                     return switch (@intFromEnum(os.errno(rc))) {
-                        0 => @intCast(usize, rc),
+                        0 => @as(usize, @intCast(rc)),
                         os.EINTR => continue,
                         os.EAGAIN => error.WouldBlock,
                         os.EBADF => error.NotOpenForReading,
@@ -1405,13 +1405,13 @@ pub fn recv(
         .{
             .socket = socket,
             .buf = buffer.ptr,
-            .len = @intCast(u32, buffer_limit(buffer.len)),
+            .len = @as(u32, @intCast(buffer_limit(buffer.len))),
         },
         struct {
             fn doOperation(op: anytype) RecvError!usize {
                 const rc = system.@"recvfrom$NOCANCEL"(op.socket, op.buf, op.len, 0, null, null);
                 return switch (system.getErrno(rc)) {
-                    .SUCCESS => @intCast(usize, rc),
+                    .SUCCESS => @as(usize, @intCast(rc)),
                     .AGAIN => error.WouldBlock,
                     .NOMEM => error.SystemResources,
                     .CONNREFUSED => error.ConnectionRefused,
@@ -1463,14 +1463,14 @@ pub fn send(
         .{
             .socket = socket,
             .buf = buffer.ptr,
-            .len = @intCast(u32, buffer_limit(buffer.len)),
+            .len = @as(u32, @intCast(buffer_limit(buffer.len))),
             .flags = 0,
         },
         struct {
             fn doOperation(op: anytype) SendError!usize {
                 const rc = system.@"sendto$NOCANCEL"(op.socket, op.buf, op.len, op.flags, null, 0);
                 return switch (system.getErrno(rc)) {
-                    .SUCCESS => @intCast(usize, rc),
+                    .SUCCESS => @as(usize, @intCast(rc)),
                     .ACCES => error.AccessDenied,
                     .AGAIN => error.WouldBlock,
                     .ALREADY => error.FastOpenAlreadyInProgress,
@@ -1578,7 +1578,7 @@ pub fn write(
         .{
             .fd = fd,
             .buf = buffer.ptr,
-            .len = @intCast(u32, buffer_limit(buffer.len)),
+            .len = @as(u32, @intCast(buffer_limit(buffer.len))),
             .offset = offset,
         },
         struct {

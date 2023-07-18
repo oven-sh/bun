@@ -533,7 +533,7 @@ pub const JSBundler = struct {
         arguments_: []const js.JSValueRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return build(globalThis, @ptrCast([]const JSC.JSValue, arguments_)).asObjectRef();
+        return build(globalThis, @as([]const JSC.JSValue, @ptrCast(arguments_))).asObjectRef();
     }
 
     pub const Resolve = struct {
@@ -844,7 +844,7 @@ pub const JSBundler = struct {
 
                 this.value = .{
                     .success = .{
-                        .loader = @enumFromInt(options.Loader, @intCast(u8, loader_as_int.to(i32))),
+                        .loader = @as(options.Loader, @enumFromInt(@as(u8, @intCast(loader_as_int.to(i32))))),
                         .source_code = source_code,
                     },
                 };

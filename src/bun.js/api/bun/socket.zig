@@ -389,7 +389,7 @@ pub const SocketConfig = struct {
                     if (parsed_url.getPort()) |port_num| {
                         port_value = JSValue.jsNumber(port_num);
                         hostname_or_unix.ptr = parsed_url.hostname.ptr;
-                        hostname_or_unix.len = @truncate(u32, parsed_url.hostname.len);
+                        hostname_or_unix.len = @as(u32, @truncate(parsed_url.hostname.len));
                     }
                 }
 
@@ -496,10 +496,10 @@ pub const Listener = struct {
         pub fn deinit(this: UnixOrHost) void {
             switch (this) {
                 .unix => |u| {
-                    bun.default_allocator.destroy(@ptrFromInt([*]u8, @intFromPtr(u.ptr)));
+                    bun.default_allocator.destroy(@as([*]u8, @ptrFromInt(@intFromPtr(u.ptr))));
                 },
                 .host => |h| {
-                    bun.default_allocator.destroy(@ptrFromInt([*]u8, @intFromPtr(h.host.ptr)));
+                    bun.default_allocator.destroy(@as([*]u8, @ptrFromInt(@intFromPtr(h.host.ptr))));
                 },
             }
         }
@@ -657,7 +657,7 @@ pub const Listener = struct {
                     );
                     // should return the assigned port
                     if (socket) |s| {
-                        connection.host.port = @intCast(u16, s.getLocalPort(ssl_enabled));
+                        connection.host.port = @as(u16, @intCast(s.getLocalPort(ssl_enabled)));
                     }
                     break :brk socket;
                 },
@@ -1037,7 +1037,7 @@ fn selectALPNCallback(
             return BoringSSL.SSL_TLSEXT_ERR_NOACK;
         }
 
-        const status = BoringSSL.SSL_select_next_proto(bun.cast([*c][*c]u8, out), outlen, protos.ptr, @intCast(c_uint, protos.len), in, inlen);
+        const status = BoringSSL.SSL_select_next_proto(bun.cast([*c][*c]u8, out), outlen, protos.ptr, @as(c_uint, @intCast(protos.len)), in, inlen);
 
         // Previous versions of Node.js returned SSL_TLSEXT_ERR_NOACK if no protocol
         // match was found. This would neither cause a fatal alert nor would it result
@@ -1250,6 +1250,7 @@ fn NewSocket(comptime ssl: bool) type {
             // Add SNI support for TLS (mongodb and others requires this)
             if (comptime ssl) {
                 var ssl_ptr = this.socket.ssl();
+
                 if (!ssl_ptr.isInitFinished()) {
                     if (this.server_name) |server_name| {
                         const host = normalizeHost(server_name);
@@ -1272,7 +1273,7 @@ fn NewSocket(comptime ssl: bool) type {
                         if (this.handlers.is_server) {
                             BoringSSL.SSL_CTX_set_alpn_select_cb(BoringSSL.SSL_get_SSL_CTX(ssl_ptr), selectALPNCallback, bun.cast(*anyopaque, this));
                         } else {
-                            _ = BoringSSL.SSL_set_alpn_protos(ssl_ptr, protos.ptr, @intCast(c_uint, protos.len));
+                            _ = BoringSSL.SSL_set_alpn_protos(ssl_ptr, protos.ptr, @as(c_uint, @intCast(protos.len)));
                         }
                     }
                 }
@@ -1557,7 +1558,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            this.socket.timeout(@intCast(c_uint, t));
+            this.socket.timeout(@as(c_uint, @intCast(t)));
 
             return JSValue.jsUndefined();
         }
@@ -1640,7 +1641,7 @@ fn NewSocket(comptime ssl: bool) type {
             var text_buf: [512]u8 = undefined;
 
             this.socket.remoteAddress(&buf, &length);
-            const address_bytes = buf[0..@intCast(usize, length)];
+            const address_bytes = buf[0..@as(usize, @intCast(length))];
             const address: std.net.Address = switch (length) {
                 4 => std.net.Address.initIp4(address_bytes[0..4].*, 0),
                 16 => std.net.Address.initIp6(address_bytes[0..16].*, 0, 0, 0),
@@ -1972,7 +1973,7 @@ fn NewSocket(comptime ssl: bool) type {
             var ticket: [*c]const u8 = undefined;
             var length: usize = 0;
             //The pointer is only valid while the connection is in use so we need to copy it
-            BoringSSL.SSL_SESSION_get0_ticket(session, @ptrCast([*c][*c]const u8, &ticket), &length);
+            BoringSSL.SSL_SESSION_get0_ticket(session, @as([*c][*c]const u8, @ptrCast(&ticket)), &length);
 
             if (ticket == null or length == 0) {
                 return JSValue.jsUndefined();
@@ -2010,8 +2011,8 @@ fn NewSocket(comptime ssl: bool) type {
             if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), session_arg, exception)) |sb| {
                 var session_slice = sb.slice();
                 var ssl_ptr = this.socket.ssl();
-                var tmp = @ptrCast([*c]const u8, session_slice.ptr);
-                const session = BoringSSL.d2i_SSL_SESSION(null, &tmp, @intCast(c_long, session_slice.len)) orelse return JSValue.jsUndefined();
+                var tmp = @as([*c]const u8, @ptrCast(session_slice.ptr));
+                const session = BoringSSL.d2i_SSL_SESSION(null, &tmp, @as(c_long, @intCast(session_slice.len))) orelse return JSValue.jsUndefined();
                 if (BoringSSL.SSL_set_session(ssl_ptr, session) != 1) {
                     globalObject.throwValue(getSSLException(globalObject, "SSL_set_session error"));
                     return .zero;
@@ -2046,9 +2047,9 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            const buffer_size = @intCast(usize, size);
+            const buffer_size = @as(usize, @intCast(size));
             var buffer = JSValue.createBufferFromLength(globalObject, buffer_size);
-            var buffer_ptr = @ptrCast([*c]u8, buffer.asArrayBuffer(globalObject).?.ptr);
+            var buffer_ptr = @as([*c]u8, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
 
             const result_size = BoringSSL.i2d_SSL_SESSION(session, &buffer_ptr);
             std.debug.assert(result_size == size);
@@ -2071,6 +2072,7 @@ fn NewSocket(comptime ssl: bool) type {
             var alpn_proto_len: u32 = 0;
 
             var ssl_ptr = this.socket.ssl();
+
             BoringSSL.SSL_get0_alpn_selected(ssl_ptr, &alpn_proto, &alpn_proto_len);
             if (alpn_proto == null or alpn_proto_len == 0) {
                 return JSValue.jsBoolean(false);
@@ -2128,7 +2130,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             defer label.deinit();
             const label_slice = label.slice();
-            const ssl_ptr = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+            const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
 
             if (args.len > 2) {
                 const context_arg = args.ptr[2];
@@ -2141,11 +2143,11 @@ fn NewSocket(comptime ssl: bool) type {
                 if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), context_arg, exception)) |sb| {
                     const context_slice = sb.slice();
 
-                    const buffer_size = @intCast(usize, length);
+                    const buffer_size = @as(usize, @intCast(length));
                     var buffer = JSValue.createBufferFromLength(globalObject, buffer_size);
-                    var buffer_ptr = @ptrCast([*c]u8, buffer.asArrayBuffer(globalObject).?.ptr);
+                    var buffer_ptr = @as([*c]u8, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
 
-                    const result = BoringSSL.SSL_export_keying_material(ssl_ptr, buffer_ptr, buffer_size, @ptrCast([*c]const u8, label_slice.ptr), label_slice.len, @ptrCast([*c]const u8, context_slice.ptr), context_slice.len, 1);
+                    const result = BoringSSL.SSL_export_keying_material(ssl_ptr, buffer_ptr, buffer_size, @as([*c]const u8, @ptrCast(label_slice.ptr)), label_slice.len, @as([*c]const u8, @ptrCast(context_slice.ptr)), context_slice.len, 1);
                     if (result != 1) {
                         globalObject.throwValue(getSSLException(globalObject, "Failed to export keying material"));
                         return .zero;
@@ -2159,11 +2161,11 @@ fn NewSocket(comptime ssl: bool) type {
                     return .zero;
                 }
             } else {
-                const buffer_size = @intCast(usize, length);
+                const buffer_size = @as(usize, @intCast(length));
                 var buffer = JSValue.createBufferFromLength(globalObject, buffer_size);
-                var buffer_ptr = @ptrCast([*c]u8, buffer.asArrayBuffer(globalObject).?.ptr);
+                var buffer_ptr = @as([*c]u8, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
 
-                const result = BoringSSL.SSL_export_keying_material(ssl_ptr, buffer_ptr, buffer_size, @ptrCast([*c]const u8, label_slice.ptr), label_slice.len, null, 0, 0);
+                const result = BoringSSL.SSL_export_keying_material(ssl_ptr, buffer_ptr, buffer_size, @as([*c]const u8, @ptrCast(label_slice.ptr)), label_slice.len, null, 0, 0);
                 if (result != 1) {
                     globalObject.throwValue(getSSLException(globalObject, "Failed to export keying material"));
                     return .zero;
@@ -2191,7 +2193,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
             var result = JSValue.createEmptyObject(globalObject, 3);
 
-            const ssl_ptr = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+            const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
             // TODO: investigate better option or compatible way to get the key
             // this implementation follows nodejs but for BoringSSL SSL_get_server_tmp_key will always return 0
             // wich will result in a empty object
@@ -2255,7 +2257,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
             var result = JSValue.createEmptyObject(globalObject, 3);
 
-            const ssl_ptr = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+            const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
             const cipher = BoringSSL.SSL_get_current_cipher(ssl_ptr);
             if (cipher == null) {
                 result.put(globalObject, ZigString.static("name"), JSValue.jsNull());
@@ -2301,19 +2303,19 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            const ssl_ptr = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+            const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
             // We cannot just pass nullptr to SSL_get_peer_finished()
             // because it would further be propagated to memcpy(),
             // where the standard requirements as described in ISO/IEC 9899:2011
             // sections 7.21.2.1, 7.21.1.2, and 7.1.4, would be violated.
             // Thus, we use a dummy byte.
             var dummy: [1]u8 = undefined;
-            const size = BoringSSL.SSL_get_peer_finished(ssl_ptr, @ptrCast(*anyopaque, &dummy), @sizeOf(@TypeOf(dummy)));
+            const size = BoringSSL.SSL_get_peer_finished(ssl_ptr, @as(*anyopaque, @ptrCast(&dummy)), @sizeOf(@TypeOf(dummy)));
             if (size == 0) return JSValue.jsUndefined();
 
-            const buffer_size = @intCast(usize, size);
+            const buffer_size = @as(usize, @intCast(size));
             var buffer = JSValue.createBufferFromLength(globalObject, buffer_size);
-            var buffer_ptr = @ptrCast(*anyopaque, buffer.asArrayBuffer(globalObject).?.ptr);
+            var buffer_ptr = @as(*anyopaque, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
 
             const result_size = BoringSSL.SSL_get_peer_finished(ssl_ptr, buffer_ptr, buffer_size);
             std.debug.assert(result_size == size);
@@ -2333,19 +2335,19 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            const ssl_ptr = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+            const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
             // We cannot just pass nullptr to SSL_get_finished()
             // because it would further be propagated to memcpy(),
             // where the standard requirements as described in ISO/IEC 9899:2011
             // sections 7.21.2.1, 7.21.1.2, and 7.1.4, would be violated.
             // Thus, we use a dummy byte.
             var dummy: [1]u8 = undefined;
-            const size = BoringSSL.SSL_get_finished(ssl_ptr, @ptrCast(*anyopaque, &dummy), @sizeOf(@TypeOf(dummy)));
+            const size = BoringSSL.SSL_get_finished(ssl_ptr, @as(*anyopaque, @ptrCast(&dummy)), @sizeOf(@TypeOf(dummy)));
             if (size == 0) return JSValue.jsUndefined();
 
-            const buffer_size = @intCast(usize, size);
+            const buffer_size = @as(usize, @intCast(size));
             var buffer = JSValue.createBufferFromLength(globalObject, buffer_size);
-            var buffer_ptr = @ptrCast(*anyopaque, buffer.asArrayBuffer(globalObject).?.ptr);
+            var buffer_ptr = @as(*anyopaque, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
 
             const result_size = BoringSSL.SSL_get_finished(ssl_ptr, buffer_ptr, buffer_size);
             std.debug.assert(result_size == size);
@@ -2365,18 +2367,18 @@ fn NewSocket(comptime ssl: bool) type {
             if (this.detached) {
                 return JSValue.jsNull();
             }
-            const ssl_ptr = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+            const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
 
             const nsig = BoringSSL.SSL_get_shared_sigalgs(ssl_ptr, 0, null, null, null, null, null);
 
-            const array = JSC.JSValue.createEmptyArray(globalObject, @intCast(usize, nsig));
+            const array = JSC.JSValue.createEmptyArray(globalObject, @as(usize, @intCast(nsig)));
 
-            for (0..@intCast(usize, nsig)) |i| {
+            for (0..@as(usize, @intCast(nsig))) |i| {
                 var hash_nid: c_int = 0;
                 var sign_nid: c_int = 0;
                 var sig_with_md: []const u8 = "";
 
-                _ = BoringSSL.SSL_get_shared_sigalgs(ssl_ptr, @intCast(c_int, i), &sign_nid, &hash_nid, null, null, null);
+                _ = BoringSSL.SSL_get_shared_sigalgs(ssl_ptr, @as(c_int, @intCast(i)), &sign_nid, &hash_nid, null, null, null);
                 switch (sign_nid) {
                     BoringSSL.EVP_PKEY_RSA => {
                         sig_with_md = "RSA";
@@ -2430,14 +2432,14 @@ fn NewSocket(comptime ssl: bool) type {
                     bun.copy(u8, buffer, sig_with_md);
                     buffer[sig_with_md.len] = '+';
                     bun.copy(u8, buffer[sig_with_md.len + 1 ..], hash_slice);
-                    array.putIndex(globalObject, @intCast(u32, i), JSC.ZigString.fromUTF8(buffer).toValueGC(globalObject));
+                    array.putIndex(globalObject, @as(u32, @intCast(i)), JSC.ZigString.fromUTF8(buffer).toValueGC(globalObject));
                 } else {
                     const buffer = bun.default_allocator.alloc(u8, sig_with_md.len + 6) catch unreachable;
                     defer bun.default_allocator.free(buffer);
 
                     bun.copy(u8, buffer, sig_with_md);
                     bun.copy(u8, buffer[sig_with_md.len..], "+UNDEF");
-                    array.putIndex(globalObject, @intCast(u32, i), JSC.ZigString.fromUTF8(buffer).toValueGC(globalObject));
+                    array.putIndex(globalObject, @as(u32, @intCast(i)), JSC.ZigString.fromUTF8(buffer).toValueGC(globalObject));
                 }
             }
             return array;
@@ -2457,7 +2459,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsNull();
             }
 
-            const ssl_ptr = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+            const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
             const version = BoringSSL.SSL_get_version(ssl_ptr);
             if (version == null) return JSValue.jsNull();
             const version_len = bun.len(version);
@@ -2502,8 +2504,8 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            const ssl_ptr = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
-            return JSValue.jsBoolean(BoringSSL.SSL_set_max_send_fragment(ssl_ptr, @intCast(usize, size)) == 1);
+            const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
+            return JSValue.jsBoolean(BoringSSL.SSL_set_max_send_fragment(ssl_ptr, @as(usize, @intCast(size))) == 1);
         }
         pub fn getPeerCertificate(
             this: *This,
@@ -2530,7 +2532,7 @@ fn NewSocket(comptime ssl: bool) type {
                 abbreviated = arg.toBoolean();
             }
 
-            const ssl_ptr = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+            const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
 
             if (abbreviated) {
                 if (this.handlers.is_server) {
@@ -2573,7 +2575,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            const ssl_ptr = @ptrCast(*BoringSSL.SSL, this.socket.getNativeHandle());
+            const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
             const cert = BoringSSL.SSL_get_certificate(ssl_ptr);
 
             if (cert) |x509| {
@@ -2623,6 +2625,7 @@ fn NewSocket(comptime ssl: bool) type {
             const host = normalizeHost(@as([]const u8, slice));
             if (host.len > 0) {
                 var ssl_ptr = this.socket.ssl();
+
                 if (ssl_ptr.isInitFinished()) {
                     // match node.js exceptions
                     globalObject.throw("Already started.", .{});

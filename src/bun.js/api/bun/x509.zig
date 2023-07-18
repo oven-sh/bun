@@ -13,8 +13,8 @@ fn x509GetNameObject(globalObject: *JSGlobalObject, name: ?*BoringSSL.X509_NAME)
     }
     var result = JSValue.createEmptyObject(globalObject, 1);
 
-    for (0..@intCast(usize, cnt)) |i| {
-        const entry = BoringSSL.X509_NAME_get_entry(name, @intCast(c_int, i)) orelse continue;
+    for (0..@as(usize, @intCast(cnt))) |i| {
+        const entry = BoringSSL.X509_NAME_get_entry(name, @as(c_int, @intCast(i))) orelse continue;
         // We intentionally ignore the value of X509_NAME_ENTRY_set because the
         // representation as an object does not allow grouping entries into sets
         // anyway, and multi-value RDNs are rare, i.e., the vast majority of
@@ -37,7 +37,7 @@ fn x509GetNameObject(globalObject: *JSGlobalObject, name: ?*BoringSSL.X509_NAME)
             if (length <= 0) {
                 continue;
             }
-            name_slice = type_buf[0..@intCast(usize, length)];
+            name_slice = type_buf[0..@as(usize, @intCast(length))];
         }
 
         const value_data = BoringSSL.X509_NAME_ENTRY_get_data(entry);
@@ -47,7 +47,7 @@ fn x509GetNameObject(globalObject: *JSGlobalObject, name: ?*BoringSSL.X509_NAME)
         if (value_str_len < 0) {
             continue;
         }
-        const value_slice = value_str[0..@intCast(usize, value_str_len)];
+        const value_slice = value_str[0..@as(usize, @intCast(value_str_len))];
         defer BoringSSL.OPENSSL_free(value_str);
         // For backward compatibility, we only create arrays if multiple values
         // exist for the same key. That is not great but there is not much we can
@@ -119,7 +119,7 @@ inline fn printAltName(out: *BoringSSL.BIO, name: []const u8, utf8: bool, safe_p
         if (safe_prefix) |prefix| {
             _ = BoringSSL.BIO_printf(out, "%s:", prefix);
         }
-        _ = BoringSSL.BIO_write(out, @ptrCast([*]const u8, name.ptr), @intCast(c_int, name.len));
+        _ = BoringSSL.BIO_write(out, @as([*]const u8, @ptrCast(name.ptr)), @as(c_int, @intCast(name.len)));
     } else {
         // If a name is not "safe", we cannot embed it without special
         // encoding. This does not usually happen, but we don't want to hide
@@ -154,11 +154,11 @@ inline fn printAltName(out: *BoringSSL.BIO, name: []const u8, utf8: bool, safe_p
 }
 
 inline fn printLatin1AltName(out: *BoringSSL.BIO, name: *BoringSSL.ASN1_IA5STRING, safe_prefix: ?[*]const u8) void {
-    printAltName(out, name.data[0..@intCast(usize, name.length)], false, safe_prefix);
+    printAltName(out, name.data[0..@as(usize, @intCast(name.length))], false, safe_prefix);
 }
 
 inline fn printUTF8AltName(out: *BoringSSL.BIO, name: *BoringSSL.ASN1_UTF8STRING, safe_prefix: ?[*]const u8) void {
-    printAltName(out, name.data[0..@intCast(usize, name.length)], true, safe_prefix);
+    printAltName(out, name.data[0..@as(usize, @intCast(name.length))], true, safe_prefix);
 }
 
 pub const kX509NameFlagsRFC2253WithinUtf8JSON = BoringSSL.XN_FLAG_RFC2253 & ~BoringSSL.ASN1_STRFLGS_ESC_MSB & ~BoringSSL.ASN1_STRFLGS_ESC_CTRL;
@@ -203,9 +203,9 @@ fn x509PrintGeneralName(out: *BoringSSL.BIO, name: *BoringSSL.GENERAL_NAME) bool
             return false;
         }
         var oline: [*]const u8 = undefined;
-        const n_bytes = BoringSSL.BIO_get_mem_data(tmp, @ptrCast([*c][*c]u8, &oline));
+        const n_bytes = BoringSSL.BIO_get_mem_data(tmp, @as([*c][*c]u8, @ptrCast(&oline)));
         if (n_bytes <= 0) return false;
-        printAltName(out, oline[0..@intCast(usize, n_bytes)], true, null);
+        printAltName(out, oline[0..@as(usize, @intCast(n_bytes))], true, null);
     } else if (name.name_type == .GEN_OTHERNAME) {
         // The format that is used here is based on OpenSSL's implementation of
         // GENERAL_NAME_print (as of OpenSSL 3.0.1). Earlier versions of Node.js
@@ -262,7 +262,7 @@ fn x509PrintGeneralName(out: *BoringSSL.BIO, name: *BoringSSL.GENERAL_NAME) bool
             _ = BoringSSL.BIO_printf(out, "%d.%d.%d.%d", b[0], b[1], b[2], b[3]);
         } else if (ip.length == 16) {
             for (0..8) |j| {
-                const pair: u16 = (@intCast(u16, b[2 * j]) << 8) | @intCast(u16, b[2 * j + 1]);
+                const pair: u16 = (@as(u16, @intCast(b[2 * j])) << 8) | @as(u16, @intCast(b[2 * j + 1]));
                 _ = BoringSSL.BIO_printf(out, if (j == 0) "%X" else ":%X", pair);
             }
         } else {
@@ -373,7 +373,7 @@ fn addFingerprintDigest(md: []const u8, mdSize: c_uint, fingerprint: []u8) usize
     const hex: []const u8 = "0123456789ABCDEF";
     var idx: usize = 0;
 
-    const slice = md[0..@intCast(usize, mdSize)];
+    const slice = md[0..@as(usize, @intCast(mdSize))];
     for (slice) |byte| {
         fingerprint[idx] = hex[(byte & 0xF0) >> 4];
         fingerprint[idx + 1] = hex[byte & 0x0F];
@@ -390,7 +390,7 @@ fn getFingerprintDigest(cert: *BoringSSL.X509, method: *const BoringSSL.EVP_MD, 
     var md_size: c_uint = 0;
     var fingerprint: [BoringSSL.EVP_MAX_MD_SIZE * 3]u8 = undefined;
 
-    if (BoringSSL.X509_digest(cert, method, @ptrCast([*c]u8, &md), &md_size) != 0) {
+    if (BoringSSL.X509_digest(cert, method, @as([*c]u8, @ptrCast(&md)), &md_size) != 0) {
         const length = addFingerprintDigest(&md, md_size, &fingerprint);
         return JSC.ZigString.fromUTF8(fingerprint[0..length]).toValueGC(globalObject);
     }
@@ -416,8 +416,8 @@ fn getSerialNumber(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue
 
 fn getRawDERCertificate(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
     const size = BoringSSL.i2d_X509(cert, null);
-    var buffer = JSValue.createBufferFromLength(globalObject, @intCast(usize, size));
-    var buffer_ptr = @ptrCast([*c]u8, buffer.asArrayBuffer(globalObject).?.ptr);
+    var buffer = JSValue.createBufferFromLength(globalObject, @as(usize, @intCast(size)));
+    var buffer_ptr = @as([*c]u8, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
     const result_size = BoringSSL.i2d_X509(cert, &buffer_ptr);
     std.debug.assert(result_size == size);
     return buffer;
@@ -457,7 +457,7 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
             if (rsa_key) |rsa| {
                 var n: [*c]const BoringSSL.BIGNUM = undefined;
                 var e: [*c]const BoringSSL.BIGNUM = undefined;
-                BoringSSL.RSA_get0_key(rsa, @ptrCast([*c][*c]const BoringSSL.BIGNUM, &n), @ptrCast([*c][*c]const BoringSSL.BIGNUM, &e), null);
+                BoringSSL.RSA_get0_key(rsa, @as([*c][*c]const BoringSSL.BIGNUM, @ptrCast(&n)), @as([*c][*c]const BoringSSL.BIGNUM, @ptrCast(&e)), null);
                 _ = BoringSSL.BN_print(bio, n);
 
                 var bits = JSValue.jsUndefined();
@@ -487,8 +487,8 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
                     return .zero;
                 }
 
-                var buffer = JSValue.createBufferFromLength(globalObject, @intCast(usize, size));
-                var buffer_ptr = @ptrCast([*c]u8, buffer.asArrayBuffer(globalObject).?.ptr);
+                var buffer = JSValue.createBufferFromLength(globalObject, @as(usize, @intCast(size)));
+                var buffer_ptr = @as([*c]u8, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
 
                 _ = BoringSSL.i2d_RSA_PUBKEY(rsa, &buffer_ptr);
 
@@ -517,8 +517,8 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
                         return .zero;
                     }
 
-                    var buffer = JSValue.createBufferFromLength(globalObject, @intCast(usize, size));
-                    var buffer_ptr = @ptrCast([*c]u8, buffer.asArrayBuffer(globalObject).?.ptr);
+                    var buffer = JSValue.createBufferFromLength(globalObject, @as(usize, @intCast(size)));
+                    var buffer_ptr = @as([*c]u8, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
 
                     const result_size = BoringSSL.EC_POINT_point2oct(group, point, form, buffer_ptr, size, null);
                     std.debug.assert(result_size == size);

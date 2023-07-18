@@ -69,7 +69,7 @@ fn formatUnsignedIntegerBetween(comptime len: u16, buf: *[len]u8, val: u64) void
 
     inline while (i > 0) {
         comptime i -= 1;
-        buf[comptime i] = @intCast(u8, (remainder % 10)) + '0';
+        buf[comptime i] = @as(u8, @intCast((remainder % 10))) + '0';
         remainder /= 10;
     }
 }
@@ -188,7 +188,7 @@ pub fn estimateLengthForJSON(input: []const u8, comptime ascii_only: bool) usize
         }
         remaining = remaining[char_len..];
     } else {
-        return @truncate(u32, remaining.len) + 2;
+        return @as(u32, @truncate(remaining.len)) + 2;
     }
 
     return len;
@@ -260,7 +260,7 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
                 i += @as(usize, width);
 
                 if (c < 0xFFFF) {
-                    const k = @intCast(usize, c);
+                    const k = @as(usize, @intCast(c));
                     bytes.ensureUnusedCapacity(6) catch unreachable;
                     const old = bytes.list.items.len;
                     bytes.list.items.len += 6;
@@ -279,8 +279,8 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
                     bytes.list.items.len += 12;
 
                     const k = c - 0x10000;
-                    const lo = @intCast(usize, first_high_surrogate + ((k >> 10) & 0x3FF));
-                    const hi = @intCast(usize, first_low_surrogate + (k & 0x3FF));
+                    const lo = @as(usize, @intCast(first_high_surrogate + ((k >> 10) & 0x3FF)));
+                    const hi = @as(usize, @intCast(first_low_surrogate + (k & 0x3FF)));
 
                     bytes.list.items[old .. old + 12][0..12].* = [_]u8{
                         '\\',
@@ -407,7 +407,7 @@ pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer,
                 text = text[@as(usize, width)..];
 
                 if (c < 0xFFFF) {
-                    const k = @intCast(usize, c);
+                    const k = @as(usize, @intCast(c));
 
                     try writer.writeAll(&[_]u8{
                         '\\',
@@ -419,8 +419,8 @@ pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer,
                     });
                 } else {
                     const k = c - 0x10000;
-                    const lo = @intCast(usize, first_high_surrogate + ((k >> 10) & 0x3FF));
-                    const hi = @intCast(usize, first_low_surrogate + (k & 0x3FF));
+                    const lo = @as(usize, @intCast(first_high_surrogate + ((k >> 10) & 0x3FF)));
+                    const hi = @as(usize, @intCast(first_low_surrogate + (k & 0x3FF)));
 
                     try writer.writeAll(&[_]u8{
                         '\\',
@@ -467,7 +467,7 @@ pub const SourceMapHandler = struct {
     pub fn For(comptime Type: type, comptime handler: (fn (t: *Type, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void)) type {
         return struct {
             pub fn onChunk(self: *anyopaque, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
-                try handler(@ptrCast(*Type, @alignCast(@alignOf(*Type), self)), chunk, source);
+                try handler(@as(*Type, @ptrCast(@alignCast(self))), chunk, source);
             }
 
             pub fn init(self: *Type) SourceMapHandler {
@@ -571,7 +571,7 @@ pub const RequireOrImportMeta = struct {
         ) Callback {
             return Callback{
                 .ctx = bun.cast(*anyopaque, ctx),
-                .callback = @ptrCast(*const Fn, &callback),
+                .callback = @as(*const Fn, @ptrCast(&callback)),
             };
         }
     };
@@ -1340,13 +1340,13 @@ fn NewPrinter(
                 // In JavaScript, numbers are represented as 64 bit floats
                 // However, they could also be signed or unsigned int 32 (when doing bit shifts)
                 // In this case, it's always going to unsigned since that conversion has already happened.
-                const val = @intFromFloat(u64, float);
+                const val = @as(u64, @intFromFloat(float));
                 switch (val) {
                     0 => {
                         p.print("0");
                     },
                     1...9 => {
-                        var bytes = [1]u8{'0' + @intCast(u8, val)};
+                        var bytes = [1]u8{'0' + @as(u8, @intCast(val))};
                         p.print(&bytes);
                     },
                     10 => {
@@ -1552,7 +1552,7 @@ fn NewPrinter(
                     else => {
                         switch (c) {
                             first_ascii...last_ascii => {
-                                e.print(@intCast(u8, c));
+                                e.print(@as(u8, @intCast(c)));
 
                                 // Fast path for printing long UTF-16 template literals
                                 // this only applies to template literal strings
@@ -1578,7 +1578,7 @@ fn NewPrinter(
                                             e.writer.advance(len);
                                             continue :outer;
                                         } else {
-                                            const count = @truncate(u32, remain.len);
+                                            const count = @as(u32, @truncate(remain.len));
                                             var ptr = e.writer.reserve(count) catch unreachable;
                                             var to_copy = ptr[0..count];
                                             strings.copyU16IntoU8(to_copy, []const u16, remain);
@@ -4504,7 +4504,7 @@ fn NewPrinter(
                                         p.print(",");
                                         p.printSpace();
                                     }
-                                    p.printLoadFromBundleWithoutCall(@truncate(u32, i));
+                                    p.printLoadFromBundleWithoutCall(@as(u32, @truncate(i)));
                                     needs_comma = true;
                                 }
 
@@ -5291,7 +5291,7 @@ pub fn NewWriter(
 
         pub fn advance(writer: *Self, count: u32) void {
             advanceBy(&writer.ctx, count);
-            writer.written += @intCast(i32, count);
+            writer.written += @as(i32, @intCast(count));
         }
 
         pub const Error = error{FormatError};
@@ -5299,7 +5299,7 @@ pub fn NewWriter(
         pub fn writeAll(writer: *Self, bytes: anytype) Error!usize {
             const written = @max(writer.written, 0);
             writer.print(@TypeOf(bytes), bytes);
-            return @intCast(usize, writer.written) - @intCast(usize, written);
+            return @as(usize, @intCast(writer.written)) - @as(usize, @intCast(written));
         }
 
         pub inline fn print(writer: *Self, comptime ValueType: type, str: ValueType) void {
@@ -5311,12 +5311,12 @@ pub fn NewWriter(
 
             switch (ValueType) {
                 comptime_int, u16, u8 => {
-                    const written = writeByte(&writer.ctx, @intCast(u8, str)) catch |err| brk: {
+                    const written = writeByte(&writer.ctx, @as(u8, @intCast(str))) catch |err| brk: {
                         writer.orig_err = err;
                         break :brk 0;
                     };
 
-                    writer.written += @intCast(i32, written);
+                    writer.written += @as(i32, @intCast(written));
                     writer.err = if (written == 0) error.WriteFailed else writer.err;
                 },
                 else => {
@@ -5325,7 +5325,7 @@ pub fn NewWriter(
                         break :brk 0;
                     };
 
-                    writer.written += @intCast(i32, written);
+                    writer.written += @as(i32, @intCast(written));
                     if (written < str.len) {
                         writer.err = if (written == 0) error.WriteFailed else error.PartialWrite;
                     }
@@ -5419,7 +5419,7 @@ const FileWriterInternal = struct {
 
     pub fn reserveNext(_: *FileWriterInternal, count: u32) anyerror![*]u8 {
         try buffer.growIfNeeded(count);
-        return @ptrCast([*]u8, &buffer.list.items.ptr[buffer.list.items.len]);
+        return @as([*]u8, @ptrCast(&buffer.list.items.ptr[buffer.list.items.len]));
     }
     pub fn advanceBy(this: *FileWriterInternal, count: u32) void {
         if (comptime Environment.isDebug) std.debug.assert(buffer.list.items.len + count <= buffer.list.capacity);
@@ -5534,7 +5534,7 @@ pub const BufferWriter = struct {
 
     pub fn reserveNext(ctx: *BufferWriter, count: u32) anyerror![*]u8 {
         try ctx.buffer.growIfNeeded(count);
-        return @ptrCast([*]u8, &ctx.buffer.list.items.ptr[ctx.buffer.list.items.len]);
+        return @as([*]u8, @ptrCast(&ctx.buffer.list.items.ptr[ctx.buffer.list.items.len]));
     }
     pub fn advanceBy(ctx: *BufferWriter, count: u32) void {
         if (comptime Environment.isDebug) std.debug.assert(ctx.buffer.list.items.len + count <= ctx.buffer.list.capacity);
@@ -5644,9 +5644,9 @@ pub fn getSourceMapBuilder(
             if (generate_source_map == .lazy) break :brk SourceMap.LineOffsetTable.generate(
                 opts.allocator,
                 source.contents,
-                @intCast(
+                @as(
                     i32,
-                    tree.approximate_newline_count,
+                    @intCast(tree.approximate_newline_count),
                 ),
             );
 
@@ -5788,7 +5788,7 @@ pub fn printAst(
 
     try printer.writer.done();
 
-    return @intCast(usize, @max(printer.writer.written, 0));
+    return @as(usize, @intCast(@max(printer.writer.written, 0)));
 }
 
 pub fn printJSON(
@@ -5824,7 +5824,7 @@ pub fn printJSON(
     }
     try printer.writer.done();
 
-    return @intCast(usize, @max(printer.writer.written, 0));
+    return @as(usize, @intCast(@max(printer.writer.written, 0)));
 }
 
 pub fn print(
@@ -6006,7 +6006,7 @@ pub fn printCommonJS(
 
     try printer.writer.done();
 
-    return @intCast(usize, @max(printer.writer.written, 0));
+    return @as(usize, @intCast(@max(printer.writer.written, 0)));
 }
 
 // pub fn printChunk(
@@ -6082,26 +6082,26 @@ pub fn printCommonJSThreaded(
     {
         defer lock.unlock();
         lock.lock();
-        result.off = @truncate(u32, try getPos(getter));
+        result.off = @as(u32, @truncate(try getPos(getter)));
         if (comptime Environment.isLinux) {
             if (printer.writer.written > C.preallocate_length) {
                 // on mac, it's relative to current position in file handle
                 // on linux, it's absolute
                 try C.preallocate_file(
                     getter.handle,
-                    @intCast(std.os.off_t, if (comptime Environment.isMac) 0 else result.off),
-                    @intCast(std.os.off_t, printer.writer.written),
+                    @as(std.os.off_t, @intCast(if (comptime Environment.isMac) 0 else result.off)),
+                    @as(std.os.off_t, @intCast(printer.writer.written)),
                 );
             }
         }
 
         try printer.writer.done();
         @fence(.SeqCst);
-        result.end_off = @truncate(u32, try getPos(getter));
+        result.end_off = @as(u32, @truncate(try getPos(getter)));
         @atomicStore(u32, end_off_ptr, result.end_off, .SeqCst);
     }
 
-    result.len = @intCast(usize, @max(printer.writer.written, 0));
+    result.len = @as(usize, @intCast(@max(printer.writer.written, 0)));
 
     return result;
 }

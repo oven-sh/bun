@@ -26,26 +26,26 @@ pub const TaggedPointer = packed struct {
         const address = @intFromPtr(ptr);
 
         return TaggedPointer{
-            ._ptr = @truncate(AddressableSize, address),
+            ._ptr = @as(AddressableSize, @truncate(address)),
             .data = data,
         };
     }
 
     pub inline fn get(this: TaggedPointer, comptime Type: type) *Type {
-        return @ptrFromInt(*Type, @intCast(usize, this._ptr));
+        return @as(*Type, @ptrFromInt(@as(usize, @intCast(this._ptr))));
     }
 
     pub inline fn from(val: anytype) TaggedPointer {
         const ValueType = @TypeOf(val);
         return switch (ValueType) {
-            f64, i64, u64 => @bitCast(TaggedPointer, val),
-            ?*anyopaque, *anyopaque => @bitCast(TaggedPointer, @intFromPtr(val)),
+            f64, i64, u64 => @as(TaggedPointer, @bitCast(val)),
+            ?*anyopaque, *anyopaque => @as(TaggedPointer, @bitCast(@intFromPtr(val))),
             else => @compileError("Unsupported type: " ++ @typeName(ValueType)),
         };
     }
 
     pub inline fn to(this: TaggedPointer) *anyopaque {
-        return @ptrFromInt(*anyopaque, @bitCast(u64, this));
+        return @as(*anyopaque, @ptrFromInt(@as(u64, @bitCast(this))));
     }
 };
 
@@ -111,7 +111,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
         }
 
         pub inline fn tag(this: This) TagType {
-            return @enumFromInt(TagType, this.repr.data);
+            return @as(TagType, @enumFromInt(this.repr.data));
         }
 
         /// unsafely cast a tagged pointer to a specific type, without checking that it's really that type

@@ -10,7 +10,7 @@ function* TestIDGenerator() {
 }
 const test_id = TestIDGenerator();
 
-["sqlite" /*"postgres", "mongodb"*/].forEach(async type => {
+["sqlite", "postgres" /*"mongodb"*/].forEach(async type => {
   let Client: typeof PrismaClient;
 
   try {

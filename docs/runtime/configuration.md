@@ -215,13 +215,3 @@ These environment variables are checked by Bun to detect functionality and toggl
 - If `DO_NOT_TRACK=1`, then analytics are [disabled](https://do-not-track.dev/). Bun records bundle timings (so we can answer with data, "is Bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it's not a lot of data.
 
 {% /table %}
-
-## smol mode
-
-To reduce Bun's memory footprint in the runtime and test runner, pass `--smol`.
-
-```bash
-$ bun --smol ./my-script.ts
-```
-
-This configures JavaScriptCore (the engine) to use a smaller heap size and run the garbage collector more frequently. This is currently disabled by default for performance reasons, but it may become the default in the future. This feature was introduced in Bun v0.6.15.

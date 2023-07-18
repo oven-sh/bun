@@ -12,6 +12,20 @@ describe("AsyncLocalStorage", () => {
   });
 });
 
+test("AsyncResource", () => {
+  const resource = new AsyncResource("prisma-client-request");
+  var called = false;
+  resource.runInAsyncScope(
+    () => {
+      called = true;
+    },
+    null,
+    "foo",
+    "bar",
+  );
+  expect(called).toBe(true);
+});
+
 describe("async context passes through", () => {
   beforeEach(() => {
     /* @ts-ignore */

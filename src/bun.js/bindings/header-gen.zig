@@ -833,21 +833,29 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                                     }
 
                                     if (@hasDecl(Type, "Export")) {
-                                        const ExportLIst = comptime brk: {
-                                            const Sorder = struct {
-                                                pub fn lessThan(_: @This(), comptime lhs: StaticExport, comptime rhs: StaticExport) bool {
-                                                    return std.ascii.orderIgnoreCase(lhs.symbol_name, rhs.symbol_name) == std.math.Order.lt;
+                                        const ExportList = comptime brk: {
+                                            const SortContext = struct {
+                                                data: []StaticExport,
+                                                pub fn lessThan(comptime ctx: @This(), comptime lhs: usize, comptime rhs: usize) bool {
+                                                    return std.ascii.orderIgnoreCase(ctx.data[lhs].symbol_name, ctx.data[rhs].symbol_name) == std.math.Order.lt;
+                                                }
+                                                pub fn swap(comptime ctx: @This(), comptime lhs: usize, comptime rhs: usize) void {
+                                                    const tmp = ctx.data[lhs];
+                                                    ctx.data[lhs] = ctx.data[rhs];
+                                                    ctx.data[rhs] = tmp;
                                                 }
                                             };
                                             var extern_list = Type.Export;
-                                            std.sort.block(StaticExport, &extern_list, Sorder{}, Sorder.lessThan);
+                                            std.sort.insertionContext(0, extern_list.len, SortContext{
+                                                .data = &extern_list,
+                                            });
                                             break :brk extern_list;
                                         };
 
                                         gen.direction = C_Generator.Direction.export_zig;
-                                        if (ExportLIst.len > 0) {
+                                        if (ExportList.len > 0) {
                                             gen.write("\n#ifdef __cplusplus\n\n");
-                                            inline for (ExportLIst) |static_export| {
+                                            inline for (ExportList) |static_export| {
                                                 processStaticExport(
                                                     self,
                                                     file,

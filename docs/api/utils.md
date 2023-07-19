@@ -402,7 +402,7 @@ The second argument supports the same set of configuration options as [`Bun.gzip
 
 ## `Bun.inflateSync()`
 
-DEcompresses a `Uint8Array` using zlib's INFLATE algorithm.
+Decompresses a `Uint8Array` using zlib's INFLATE algorithm.
 
 ```ts
 const buf = Buffer.from("hello".repeat(100));

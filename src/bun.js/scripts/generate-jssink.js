@@ -221,7 +221,7 @@ async function implementation() {
 #include "BunClientData.h"
 
 #include "JSSink.h"
-#include "AsyncBoundFunction.h"
+#include "AsyncContextFrame.h"
 
 #include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
@@ -296,13 +296,13 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
     if (!onPull.isObject() || !onPull.isCallable()) {
         onPull = JSC::jsUndefined();
     } else if (!asyncContext.isUndefined()) {
-        onPull = AsyncBoundFunction::create(globalObject, onPull, asyncContext);
+        onPull = AsyncContextFrame::create(globalObject, onPull, asyncContext);
     }
 
     if (!onClose.isObject() || !onClose.isCallable()) {
         onClose = JSC::jsUndefined();
     } else if (!asyncContext.isUndefined()) {
-        onClose = AsyncBoundFunction::create(globalObject, onClose, asyncContext);
+        onClose = AsyncContextFrame::create(globalObject, onClose, asyncContext);
     }
 
 `;
@@ -915,7 +915,7 @@ extern "C" void ${name}__onReady(JSC__JSValue controllerValue, JSC__JSValue amt,
     arguments.append(JSC::JSValue::decode(amt));
     arguments.append(JSC::JSValue::decode(offset));
 
-    AsyncBoundFunction::call(globalObject, function, JSC::jsUndefined(), arguments);
+    AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
 }
 
 extern "C" void ${name}__onStart(JSC__JSValue controllerValue)
@@ -939,7 +939,7 @@ extern "C" void ${name}__onClose(JSC__JSValue controllerValue, JSC__JSValue reas
     arguments.append(readableStream ? readableStream : JSC::jsUndefined());
 
     arguments.append(JSC::JSValue::decode(reason));
-    AsyncBoundFunction::call(globalObject, function, JSC::jsUndefined(), arguments);
+    AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
 }
 
 `;

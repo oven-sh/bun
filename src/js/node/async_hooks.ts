@@ -4,21 +4,21 @@
 // API: https://nodejs.org/api/async_hooks.html
 //
 // JSC has been patched to include a special global variable $asyncContext which is set to
-// a constant InternalFieldTuple<[AsyncContextFrame, never]>. `get` and `set` read/write to the
+// a constant InternalFieldTuple<[AsyncContextData, never]>. `get` and `set` read/write to the
 // first element of this tuple. Inside of PromiseOperations.js, we "snapshot" the context (store it
 // in the promise reaction) and then just before we call .then, we restore it.
 //
 // This means context tracking is *kind-of* manual. If we recieve a callback in native code
-// - In Zig, call jsValue.snapshotAsyncContext(); which returns another JSValue. Store that and
+// - In Zig, call jsValue.withAsyncContextIfNeeded(); which returns another JSValue. Store that and
 //   then run .call() on it later.
-// - In C++, call AsyncBoundFunction::snapshotAsyncContext(jsValue). Then to call it,
-//   use AsyncBoundFunction:: call(...) instead of JSC:: call.
+// - In C++, call AsyncContextFrame::withAsyncContextIfNeeded(jsValue). Then to call it,
+//   use AsyncContextFrame:: call(...) instead of JSC:: call.
 //
 // The above functions will return the same JSFunction if the context is empty, and there are many
 // other checks to ensure that AsyncLocalStorage has virtually no impact on performance when not in
 // use. But the nature of this approach makes the implementation *itself* very low-impact on performance.
 //
-// AsyncContextFrame is an immutable array managed in here, formatted [key, value, key, value] where
+// AsyncContextData is an immutable array managed in here, formatted [key, value, key, value] where
 // each key is an AsyncLocalStorage object and the value is the associated value.
 //
 import { hideFromStack } from "../shared";

@@ -10,7 +10,7 @@
 #include "BunClientData.h"
 
 #include "JSSink.h"
-#include "AsyncBoundFunction.h"
+#include "AsyncContextFrame.h"
 
 #include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
@@ -79,13 +79,13 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
     if (!onPull.isObject() || !onPull.isCallable()) {
         onPull = JSC::jsUndefined();
     } else if (!asyncContext.isUndefined()) {
-        onPull = AsyncBoundFunction::create(globalObject, onPull, asyncContext);
+        onPull = AsyncContextFrame::create(globalObject, onPull, asyncContext);
     }
 
     if (!onClose.isObject() || !onClose.isCallable()) {
         onClose = JSC::jsUndefined();
     } else if (!asyncContext.isUndefined()) {
-        onClose = AsyncBoundFunction::create(globalObject, onClose, asyncContext);
+        onClose = AsyncContextFrame::create(globalObject, onClose, asyncContext);
     }
 
     if (WebCore::JSReadableArrayBufferSinkController* ArrayBufferSinkController = JSC::jsDynamicCast<WebCore::JSReadableArrayBufferSinkController*>(callFrame->thisValue())) {
@@ -1838,7 +1838,7 @@ extern "C" void ArrayBufferSink__onReady(JSC__JSValue controllerValue, JSC__JSVa
     arguments.append(JSC::JSValue::decode(amt));
     arguments.append(JSC::JSValue::decode(offset));
 
-    AsyncBoundFunction::call(globalObject, function, JSC::jsUndefined(), arguments);
+    AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
 }
 
 extern "C" void ArrayBufferSink__onStart(JSC__JSValue controllerValue)
@@ -1861,7 +1861,7 @@ extern "C" void ArrayBufferSink__onClose(JSC__JSValue controllerValue, JSC__JSVa
     arguments.append(readableStream ? readableStream : JSC::jsUndefined());
 
     arguments.append(JSC::JSValue::decode(reason));
-    AsyncBoundFunction::call(globalObject, function, JSC::jsUndefined(), arguments);
+    AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
 }
 
 extern "C" JSC__JSValue FileSink__createObject(JSC__JSGlobalObject* arg0, void* sinkPtr)
@@ -1922,7 +1922,7 @@ extern "C" void FileSink__onReady(JSC__JSValue controllerValue, JSC__JSValue amt
     arguments.append(JSC::JSValue::decode(amt));
     arguments.append(JSC::JSValue::decode(offset));
 
-    AsyncBoundFunction::call(globalObject, function, JSC::jsUndefined(), arguments);
+    AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
 }
 
 extern "C" void FileSink__onStart(JSC__JSValue controllerValue)
@@ -1945,7 +1945,7 @@ extern "C" void FileSink__onClose(JSC__JSValue controllerValue, JSC__JSValue rea
     arguments.append(readableStream ? readableStream : JSC::jsUndefined());
 
     arguments.append(JSC::JSValue::decode(reason));
-    AsyncBoundFunction::call(globalObject, function, JSC::jsUndefined(), arguments);
+    AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
 }
 
 extern "C" JSC__JSValue HTTPResponseSink__createObject(JSC__JSGlobalObject* arg0, void* sinkPtr)
@@ -2006,7 +2006,7 @@ extern "C" void HTTPResponseSink__onReady(JSC__JSValue controllerValue, JSC__JSV
     arguments.append(JSC::JSValue::decode(amt));
     arguments.append(JSC::JSValue::decode(offset));
 
-    AsyncBoundFunction::call(globalObject, function, JSC::jsUndefined(), arguments);
+    AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
 }
 
 extern "C" void HTTPResponseSink__onStart(JSC__JSValue controllerValue)
@@ -2029,7 +2029,7 @@ extern "C" void HTTPResponseSink__onClose(JSC__JSValue controllerValue, JSC__JSV
     arguments.append(readableStream ? readableStream : JSC::jsUndefined());
 
     arguments.append(JSC::JSValue::decode(reason));
-    AsyncBoundFunction::call(globalObject, function, JSC::jsUndefined(), arguments);
+    AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
 }
 
 extern "C" JSC__JSValue HTTPSResponseSink__createObject(JSC__JSGlobalObject* arg0, void* sinkPtr)
@@ -2090,7 +2090,7 @@ extern "C" void HTTPSResponseSink__onReady(JSC__JSValue controllerValue, JSC__JS
     arguments.append(JSC::JSValue::decode(amt));
     arguments.append(JSC::JSValue::decode(offset));
 
-    AsyncBoundFunction::call(globalObject, function, JSC::jsUndefined(), arguments);
+    AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
 }
 
 extern "C" void HTTPSResponseSink__onStart(JSC__JSValue controllerValue)
@@ -2113,5 +2113,5 @@ extern "C" void HTTPSResponseSink__onClose(JSC__JSValue controllerValue, JSC__JS
     arguments.append(readableStream ? readableStream : JSC::jsUndefined());
 
     arguments.append(JSC::JSValue::decode(reason));
-    AsyncBoundFunction::call(globalObject, function, JSC::jsUndefined(), arguments);
+    AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
 }

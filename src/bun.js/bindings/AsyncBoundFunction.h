@@ -4,22 +4,22 @@
 #include "BunClientData.h"
 #include "JavaScriptCore/CallData.h"
 
-class AsyncBoundFunction : public JSC::JSNonFinalObject {
+class AsyncContextFrame : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    static AsyncBoundFunction* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSValue callback, JSC::JSValue context);
-    static AsyncBoundFunction* create(JSC::JSGlobalObject* global, JSC::JSValue callback, JSC::JSValue context);
+    static AsyncContextFrame* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSValue callback, JSC::JSValue context);
+    static AsyncContextFrame* create(JSC::JSGlobalObject* global, JSC::JSValue callback, JSC::JSValue context);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 
     // When given a JSFunction that you want to call later, wrap it with this function
-    static JSC::JSValue snapshotAsyncCallback(JSC::JSGlobalObject* globalObject, JSC::JSValue callback);
+    static JSC::JSValue withAsyncContextIfNeeded(JSC::JSGlobalObject* globalObject, JSC::JSValue callback);
 
     // The following is JSC::call but
-    // - it unwraps AsyncBoundFunction
-    // - does not take a CallData, because JSC::getCallData(AsyncBoundFunction) -> not callable
+    // - it unwraps AsyncContextFrame
+    // - does not take a CallData, because JSC::getCallData(AsyncContextFrame) -> not callable
     static JSC::JSValue call(JSC::JSGlobalObject*, JSC::JSValue functionObject, const JSC::ArgList&, ASCIILiteral errorMessage);
     static JSC::JSValue call(JSC::JSGlobalObject*, JSC::JSValue functionObject, JSC::JSValue thisValue, const JSC::ArgList&, ASCIILiteral errorMessage);
     static JSC::JSValue call(JSC::JSGlobalObject*, JSC::JSValue functionObject, JSC::JSValue thisValue, const JSC::ArgList&);
@@ -36,15 +36,15 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<AsyncBoundFunction, Bun::UseCustomHeapCellType::No>(
+        return WebCore::subspaceForImpl<AsyncContextFrame, Bun::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForAsyncBoundFunction.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForAsyncBoundFunction = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForAsyncBoundFunction.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForAsyncBoundFunction = std::forward<decltype(space)>(space); });
+            [](auto& spaces) { return spaces.m_clientSubspaceForAsyncContextFrame.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForAsyncContextFrame = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForAsyncContextFrame.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForAsyncContextFrame = std::forward<decltype(space)>(space); });
     }
 
-    AsyncBoundFunction(JSC::VM& vm, JSC::Structure* structure)
+    AsyncContextFrame(JSC::VM& vm, JSC::Structure* structure)
         : JSNonFinalObject(vm, structure)
     {
     }

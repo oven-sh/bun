@@ -95,7 +95,7 @@
 #include <JavaScriptCore/JSWeakMap.h>
 #include "JSURLSearchParams.h"
 
-#include "AsyncBoundFunction.h"
+#include "AsyncContextFrame.h"
 #include "JavaScriptCore/InternalFieldTuple.h"
 
 template<typename UWSResponse>
@@ -1752,7 +1752,7 @@ extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSC_
 
     JSValue restoreAsyncContext;
     InternalFieldTuple* asyncContextData = nullptr;
-    if (auto* wrapper = jsDynamicCast<AsyncBoundFunction*>(jsObject)) {
+    if (auto* wrapper = jsDynamicCast<AsyncContextFrame*>(jsObject)) {
         jsObject = jsCast<JSC::JSObject*>(wrapper->callback.get());
         asyncContextData = globalObject->m_asyncContextData.get();
         restoreAsyncContext = asyncContextData->getInternalField(0);

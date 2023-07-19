@@ -1153,7 +1153,7 @@ pub const Subprocess = struct {
                             globalThis.throwInvalidArguments("onExit must be a function or undefined", .{});
                             return .zero;
                         }
-                        on_exit_callback = onExit_.snapshotAsyncCallback(globalThis);
+                        on_exit_callback = onExit_.withAsyncContextIfNeeded(globalThis);
                     }
                 }
 

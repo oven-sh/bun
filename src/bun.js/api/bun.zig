@@ -4197,7 +4197,7 @@ pub const Timer = struct {
             0,
         );
 
-        const wrappedCallback = callback.snapshotAsyncCallback(globalThis);
+        const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
 
         Timer.set(id, globalThis, wrappedCallback, interval, arguments, false) catch
             return JSValue.jsUndefined();
@@ -4214,7 +4214,7 @@ pub const Timer = struct {
         const id = globalThis.bunVM().timer.last_id;
         globalThis.bunVM().timer.last_id +%= 1;
 
-        const wrappedCallback = callback.snapshotAsyncCallback(globalThis);
+        const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
 
         // We don't deal with nesting levels directly
         // but we do set the minimum timeout to be 1ms for repeating timers

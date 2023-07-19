@@ -93,7 +93,7 @@
 #include "JSReadableState.h"
 #include "JSReadableHelper.h"
 #include "Process.h"
-#include "AsyncBoundFunction.h"
+#include "AsyncContextFrame.h"
 
 #include "WebCoreJSBuiltins.h"
 #include "JSBuffer.h"
@@ -3441,7 +3441,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_asyncBoundFunctionStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
-            init.set(AsyncBoundFunction::createStructure(init.vm, init.owner));
+            init.set(AsyncContextFrame::createStructure(init.vm, init.owner));
         });
 
     m_JSFileSinkClassStructure.initLater(

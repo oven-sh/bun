@@ -4873,18 +4873,18 @@ pub const JSValue = enum(JSValueReprInt) {
     };
 
     // For any callback JSValue created in JS that you will not call *immediatly*, you must wrap it
-    // in an AsyncBoundFunction with this function. This allows AsyncLocalStorage to work by
+    // in an AsyncContextFrame with this function. This allows AsyncLocalStorage to work by
     // snapshotting it's state and restoring it when called.
     // - If there is no current context, this returns the callback as-is.
     // - It is safe to run .call() on the resulting JSValue. This includes automatic unwrapping.
     // - Do not pass the callback as-is to JS; The wrapped object is NOT a function.
-    // - If passed to C++, call it with AsyncBoundFunction::call() instead of JSC::call()
-    pub inline fn snapshotAsyncCallback(this: JSValue, global: *JSGlobalObject) JSValue {
-        return AsyncBoundFunction__snapshotAsyncCallback(global, this);
+    // - If passed to C++, call it with AsyncContextFrame::call() instead of JSC::call()
+    pub inline fn withAsyncContextIfNeeded(this: JSValue, global: *JSGlobalObject) JSValue {
+        return AsyncContextFrame__withAsyncContextIfNeeded(global, this);
     }
 };
 
-extern "c" fn AsyncBoundFunction__snapshotAsyncCallback(global: *JSGlobalObject, callback: JSValue) JSValue;
+extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;
 
 extern "c" fn Microtask__run(*Microtask, *JSGlobalObject) void;
 extern "c" fn Microtask__run_default(*MicrotaskForDefaultGlobalObject, *JSGlobalObject) void;

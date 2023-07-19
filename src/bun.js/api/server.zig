@@ -795,7 +795,7 @@ pub const ServerConfig = struct {
                     }
                     return args;
                 }
-                const onErrorSnapshot = onError.snapshotAsyncCallback(global);
+                const onErrorSnapshot = onError.withAsyncContextIfNeeded(global);
                 args.onError = onErrorSnapshot;
                 onErrorSnapshot.protect();
             }
@@ -805,7 +805,7 @@ pub const ServerConfig = struct {
                     JSC.throwInvalidArguments("Expected fetch() to be a function", .{}, global, exception);
                     return args;
                 }
-                const onRequest = onRequest_.snapshotAsyncCallback(global);
+                const onRequest = onRequest_.withAsyncContextIfNeeded(global);
                 JSC.C.JSValueProtect(global, onRequest.asObjectRef());
                 args.onRequest = onRequest;
             } else {
@@ -3020,7 +3020,7 @@ pub const WebSocketServer = struct {
                     globalObject.throwInvalidArguments("websocket expects a function for the message option", .{});
                     return null;
                 }
-                const message = message_.snapshotAsyncCallback(globalObject);
+                const message = message_.withAsyncContextIfNeeded(globalObject);
                 handler.onMessage = message;
                 message.ensureStillAlive();
                 valid = true;
@@ -3031,7 +3031,7 @@ pub const WebSocketServer = struct {
                     globalObject.throwInvalidArguments("websocket expects a function for the open option", .{});
                     return null;
                 }
-                const open = open_.snapshotAsyncCallback(globalObject);
+                const open = open_.withAsyncContextIfNeeded(globalObject);
                 handler.onOpen = open;
                 open.ensureStillAlive();
                 valid = true;
@@ -3042,7 +3042,7 @@ pub const WebSocketServer = struct {
                     globalObject.throwInvalidArguments("websocket expects a function for the close option", .{});
                     return null;
                 }
-                const close = close_.snapshotAsyncCallback(globalObject);
+                const close = close_.withAsyncContextIfNeeded(globalObject);
                 handler.onClose = close;
                 close.ensureStillAlive();
                 valid = true;
@@ -3053,7 +3053,7 @@ pub const WebSocketServer = struct {
                     globalObject.throwInvalidArguments("websocket expects a function for the drain option", .{});
                     return null;
                 }
-                const drain = drain_.snapshotAsyncCallback(globalObject);
+                const drain = drain_.withAsyncContextIfNeeded(globalObject);
                 handler.onDrain = drain;
                 drain.ensureStillAlive();
                 valid = true;
@@ -3064,7 +3064,7 @@ pub const WebSocketServer = struct {
                     globalObject.throwInvalidArguments("websocket expects a function for the onError option", .{});
                     return null;
                 }
-                const onError = onError_.snapshotAsyncCallback(globalObject);
+                const onError = onError_.withAsyncContextIfNeeded(globalObject);
                 handler.onError = onError;
                 onError.ensureStillAlive();
             }

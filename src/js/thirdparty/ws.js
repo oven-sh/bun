@@ -631,7 +631,7 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   get readyState() {
-    return readyStates[this.#state];
+    return this.#state;
   }
   get url() {
     return this.#url;

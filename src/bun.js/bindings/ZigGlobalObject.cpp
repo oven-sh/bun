@@ -199,6 +199,7 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include <wtf/RAMSize.h>
 #include <wtf/text/Base64.h>
 #include "simdutf.h"
+#include "libusockets.h"
 
 constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
@@ -1639,6 +1640,25 @@ JSC:
         if (string == "createImportMeta"_s) {
             Zig::ImportMetaObject* obj = Zig::ImportMetaObject::create(globalObject, callFrame->argument(1));
             return JSValue::encode(obj);
+        }
+
+        if(string == "rootCertificates"_s) {
+            auto sourceOrigin = callFrame->callerSourceOrigin(vm).url();
+            bool isBuiltin = sourceOrigin.protocolIs("builtin"_s);
+            if (!isBuiltin) {
+                return JSC::JSValue::encode(JSC::jsUndefined());
+            }
+            const char* const * out;
+            auto size = us_raw_root_certs(&out);
+            if (size < 0) {
+                return JSValue::encode(JSC::jsUndefined());
+            }
+            auto rootCertificates = JSC::JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), size);
+            for(auto i = 0; i < size; i++) {
+                auto str = WTF::String::fromUTF8(out[i]);
+                rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
+            }
+            return JSValue::encode(rootCertificates);
         }
 
         if (string == "masqueradesAsUndefined"_s) {

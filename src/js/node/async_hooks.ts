@@ -153,7 +153,7 @@ class AsyncResource {
       throw new TypeError('The "type" argument must be of type string. Received type ' + typeof type);
     }
     this.type = type;
-    this.#snapshot = AsyncLocalStorage.snapshot();
+    this.#snapshot = get();
   }
 
   emitBefore() {
@@ -176,8 +176,16 @@ class AsyncResource {
     //
   }
 
-  runInAsyncScope(fn, ...args) {
-    return this.#snapshot(fn, ...args);
+  runInAsyncScope(fn, thisArg, ...args) {
+    var prev = get();
+    set(this.#snapshot);
+    try {
+      return fn.apply(thisArg, args);
+    } catch (error) {
+      throw error;
+    } finally {
+      set(prev);
+    }
   }
 }
 

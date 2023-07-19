@@ -119,7 +119,7 @@ class AsyncResource {
   constructor(type, options) {
     if (typeof type !== "string")
       throw new TypeError('The "type" argument must be of type string. Received type ' + typeof type);
-    this.type = type, this.#snapshot = AsyncLocalStorage.snapshot();
+    this.type = type, this.#snapshot = get();
   }
   emitBefore() {
     return !0;
@@ -135,8 +135,16 @@ class AsyncResource {
   }
   emitDestroy() {
   }
-  runInAsyncScope(fn, ...args) {
-    return this.#snapshot(fn, ...args);
+  runInAsyncScope(fn, thisArg, ...args) {
+    var prev = get();
+    set(this.#snapshot);
+    try {
+      return fn.apply(thisArg, args);
+    } catch (error) {
+      throw error;
+    } finally {
+      set(prev);
+    }
   }
 }
 var createHookNotImpl = createWarning("async_hooks.createHook is not implemented in Bun. Hooks can still be created but will never be called."), executionAsyncIdNotImpl = createWarning("async_hooks.executionAsyncId/triggerAsyncId are not implemented in Bun. It will return 0 every time."), executionAsyncResourceWarning = createWarning("async_hooks.executionAsyncResource is not implemented in Bun. It returns a reference to process.stdin every time."), asyncWrapProviders = {

@@ -32,7 +32,12 @@ pub const FSWatcher = struct {
     onAccept: std.ArrayHashMapUnmanaged(FSWatcher.Watcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
     ctx: *VirtualMachine,
     verbose: bool = false,
-    file_paths: bun.StringHashMap(void),
+    // This variable stores a collection of paths
+    // where the key is the `full_path` and the value is the `relative_path`.
+    // It has ownership over these variables and ensures that
+    // their values are lived until `FsWathcer` deinitialized.
+    // It is also used to cache the paths that need to be watched.
+    file_paths: bun.StringHashMap(string),
     entry_path: ?string = null,
     entry_dir: string = "",
     last_change_event: ChangeEvent = .{},
@@ -67,9 +72,10 @@ pub const FSWatcher = struct {
         // stop all managers and signals
         this.detach();
 
-        var it = this.file_paths.keyIterator();
-        while (it.next()) |file_path| {
-            bun.default_allocator.destroy(file_path);
+        var it = this.file_paths.iterator();
+        while (it.next()) |*entry| {
+            bun.default_allocator.destroy(entry.key_ptr.*);
+            bun.default_allocator.destroy(entry.value_ptr.*);
         }
         this.file_paths.deinit();
         if (this.entry_path) |path| {
@@ -197,13 +203,15 @@ pub const FSWatcher = struct {
     ) void);
 
     fn addDirectory(ctx: *FSWatcher, fs_watcher: *FSWatcher.Watcher, fd: StoredFileDescriptorType, file_path: string, recursive: bool, buf: *[bun.MAX_PATH_BYTES + 1]u8, is_entry_path: bool) !void {
+        const fs = fs_watcher.fs;
         var dir_path_clone = bun.default_allocator.dupeZ(u8, file_path) catch unreachable;
 
         if (is_entry_path) {
             ctx.entry_path = dir_path_clone;
             ctx.entry_dir = dir_path_clone;
         } else {
-            ctx.file_paths.put(dir_path_clone, {}) catch unreachable;
+            const relative_path = bun.default_allocator.dupe(u8, fs.relative(ctx.entry_dir, dir_path_clone)) catch unreachable;
+            ctx.file_paths.put(dir_path_clone, relative_path) catch unreachable;
         }
         fs_watcher.addDirectory(fd, dir_path_clone, FSWatcher.Watcher.getHash(file_path), false) catch |err| {
             ctx.deinit();
@@ -239,8 +247,8 @@ pub const FSWatcher = struct {
 
             if (fs_info.is_file) {
                 const file_path_clone = bun.default_allocator.dupeZ(u8, entry_path) catch unreachable;
-
-                ctx.file_paths.put(file_path_clone, {}) catch unreachable;
+                const relative_path = bun.default_allocator.dupe(u8, fs.relative(ctx.entry_dir, file_path_clone)) catch unreachable;
+                ctx.file_paths.put(file_path_clone, relative_path) catch unreachable;
 
                 fs_watcher.addFile(fs_info.fd, file_path_clone, FSWatcher.Watcher.getHash(entry_path), options.Loader.file, 0, null, false) catch |err| {
                     ctx.deinit();
@@ -359,9 +367,26 @@ pub const FSWatcher = struct {
                             if (this.verbose)
                                 Output.prettyErrorln("<r><d>File changed: {s}<r>", .{relative_slice});
 
-                            const relative_path = bun.default_allocator.dupe(u8, relative_slice) catch unreachable;
+                            if (this.file_paths.getEntry(file_path)) |*entry| {
+                                const relative_path = entry.value_ptr.*;
+                                if (event.op.delete) {
+                                    defer {
+                                        bun.default_allocator.destroy(entry.key_ptr.*);
+                                        this.file_paths.removeByPtr(entry.key_ptr);
+                                    }
+                                    // Ownership transfer here
+                                    current_task.append(relative_path, event_type, .destroy);
+                                } else {
+                                    // Borrow this variable
+                                    current_task.append(relative_path, event_type, .none);
+                                }
+                            } else {
+                                const relative_path = bun.default_allocator.dupe(u8, relative_slice) catch unreachable;
+                                const file_path_clone = bun.default_allocator.dupe(u8, file_path) catch unreachable;
+                                this.file_paths.put(file_path_clone, relative_path) catch unreachable;
 
-                            current_task.append(relative_path, event_type, .destroy);
+                                current_task.append(relative_path, event_type, .none);
+                            }
                         }
                     }
                 },
@@ -397,34 +422,47 @@ pub const FSWatcher = struct {
                         // skip consecutive duplicates
                         const event_type: FSWatchTask.EventType = .rename; // renaming folders, creating folder or files will be always be rename
                         if ((this.last_change_event.time_stamp == 0 or time_diff > 1) or this.last_change_event.event_type != event_type and this.last_change_event.hash != file_hash) {
-                            const relative_path = bun.default_allocator.dupe(u8, relative_slice) catch unreachable;
-
                             this.last_change_event.time_stamp = time_stamp;
                             this.last_change_event.event_type = event_type;
                             this.last_change_event.hash = file_hash;
-
-                            current_task.append(relative_path, event_type, .destroy);
 
                             _on_file_update_path_buf[path_slice.len] = 0;
                             const full_path = _on_file_update_path_buf[0..path_slice.len :0];
 
                             var is_watched = false;
-                            if (this.file_paths.contains(full_path)) {
+                            var relative_path: string = undefined;
+                            if (this.file_paths.getEntry(full_path)) |*entry| {
+                                relative_path = entry.value_ptr.*;
+                                // remove if deleted
+                                if (event.op.delete) {
+                                    bun.default_allocator.destroy(entry.key_ptr.*);
+                                    this.file_paths.removeByPtr(entry.key_ptr);
+                                    current_task.append(relative_path, event_type, .destroy);
+
+                                    if (this.verbose)
+                                        Output.prettyErrorln("<r> <d>Dir change: {s}<r>", .{relative_path});
+                                    continue;
+                                }
+
                                 is_watched = true;
+                            } else {
+                                relative_path = bun.default_allocator.dupe(u8, relative_slice) catch unreachable;
                             }
+
+                            current_task.append(relative_path, event_type, .none);
+
                             // Add new files or directories to the watch list.
                             if (!is_watched) {
                                 const full_path_clone = bun.default_allocator.dupe(u8, full_path) catch unreachable;
-                                this.file_paths.put(full_path_clone, {}) catch unreachable;
+                                this.file_paths.put(full_path_clone, relative_path) catch unreachable;
                                 const fs_info = fdFromAbsolutePathZ(full_path) catch null;
                                 if (fs_info) |info| {
                                     if (info.is_file) {
-                                        this.default_watcher.?.addFileAssumeLocked(info.fd, full_path_clone, file_hash, options.Loader.file, 0, null, false) catch unreachable;
-                                        const relative_path_clone = bun.default_allocator.dupe(u8, relative_path) catch unreachable;
-                                        current_task.append(relative_path_clone, .change, .destroy);
+                                        ctx.addFileAssumeLocked(info.fd, full_path_clone, file_hash, options.Loader.file, 0, null, false) catch unreachable;
+                                        current_task.append(relative_path, .change, .none);
                                     } else {
                                         if (this.recursive) {
-                                            this.default_watcher.?.addDirectoryAssumeLocked(info.fd, full_path_clone, file_hash, false) catch unreachable;
+                                            ctx.addDirectoryAssumeLocked(info.fd, full_path_clone, file_hash, false) catch unreachable;
                                         }
                                     }
                                 }
@@ -886,7 +924,7 @@ pub const FSWatcher = struct {
             .has_pending_activity = std.atomic.Atomic(bool).init(true),
             .verbose = args.verbose,
             .recursive = args.recursive,
-            .file_paths = bun.StringHashMap(void).init(bun.default_allocator),
+            .file_paths = bun.StringHashMap(string).init(bun.default_allocator),
         };
 
         if (comptime Environment.isMac) {

@@ -11,6 +11,7 @@ import * as StreamModule from "node:stream";
 
 const MAX_STRING_LENGTH = 536870888;
 var Buffer = globalThis.Buffer;
+const EMPTY_BUFFER = Buffer.alloc(0);
 const { isAnyArrayBuffer, isArrayBufferView } = require("util/types");
 
 function getArrayBufferOrView(buffer, name, encoding) {
@@ -3120,14 +3121,16 @@ var require_encrypter = __commonJS({
       var config = MODES[suite.toLowerCase()];
       if (!config) throw new TypeError("invalid suite type");
       password = getArrayBufferOrView(password, "password");
-      iv = getArrayBufferOrView(iv, "iv");
+      const iv_length = iv?.length || 0;
+      const required_iv_length = config.iv || 0;
+      iv = iv === null ? EMPTY_BUFFER : getArrayBufferOrView(iv, "iv");
 
-      if ((typeof password == "string" && (password = Buffer2.from(password)), password?.length !== config.key / 8)) {
+      if (password?.length !== config.key / 8) {
         var error = new RangeError("Invalid key length");
         error.code = "ERR_CRYPTO_INVALID_KEYLEN";
         throw error;
       }
-      if ((typeof iv == "string" && (iv = Buffer2.from(iv)), config.mode !== "GCM" && iv?.length !== config.iv)) {
+      if (config.mode !== "GCM" && iv_length !== required_iv_length) {
         var error = new RangeError("Invalid key length");
         error.code = "ERR_CRYPTO_INVALID_KEYLEN";
         throw error;
@@ -3214,14 +3217,16 @@ var require_decrypter = __commonJS({
       if (!config) throw new TypeError("invalid suite type");
 
       password = getArrayBufferOrView(password, "password");
-      iv = getArrayBufferOrView(iv, "iv");
+      const iv_length = iv?.length || 0;
+      const required_iv_length = config.iv || 0;
+      iv = iv === null ? EMPTY_BUFFER : getArrayBufferOrView(iv, "iv");
 
-      if (config.mode !== "GCM" && iv?.length !== config.iv) {
+      if (config.mode !== "GCM" && iv_length !== required_iv_length) {
         var error = new RangeError("Invalid key length");
         error.code = "ERR_CRYPTO_INVALID_KEYLEN";
         throw error;
       }
-      if (password?.length !== config.key / 8) {
+      if (password.length !== config.key / 8) {
         var error = new RangeError("Invalid key length");
         error.code = "ERR_CRYPTO_INVALID_KEYLEN";
         throw error;

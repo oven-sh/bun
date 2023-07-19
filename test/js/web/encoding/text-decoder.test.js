@@ -225,6 +225,19 @@ describe("TextDecoder", () => {
     expect(decoder.decode(bytes.subarray(0, amount.written))).toBe(text);
     gcTrace(true);
   });
+
+  it("should respect fatal when encountering invalid data", () => {
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    expect(() => {
+      decoder.decode(new Uint8Array([0xC0])) // Invalid UTF8 
+    }).toThrow(); // should throw TypeError according to WHATWG Encoding Standard
+  });
+
+  it("constructor should set values", () => {
+    const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
+    expect(decoder.fatal).toBe(true);
+    // expect(decoder.ignoreBOM).toBe(false); // currently the getter for ignoreBOM doesn't work and always returns undefined
+  });
 });
 
 it("truncated sequences", () => {

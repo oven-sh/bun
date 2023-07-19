@@ -21,8 +21,6 @@
 // AsyncContextData is an immutable array managed in here, formatted [key, value, key, value] where
 // each key is an AsyncLocalStorage object and the value is the associated value.
 //
-import { hideFromStack } from "../shared";
-
 const { get, set, cleanupLater } = $lazy("async_hooks");
 
 class AsyncLocalStorage {
@@ -49,8 +47,6 @@ class AsyncLocalStorage {
     };
   }
 
-  // enterWith should be considered deprecated. It's a bad API
-  // with .run() the state is always going to be reset, but this explicitly does not do such.
   enterWith(store) {
     cleanupLater();
     var context = get();
@@ -78,24 +74,19 @@ class AsyncLocalStorage {
     var context = get() as any[]; // we make sure to .slice() before mutating
     var hasPrevious = false;
     var previous;
-    var i;
+    var i = 0;
     var contextWasInit = !context;
     if (contextWasInit) {
-      i = 0;
       set((context = [this, store]));
     } else {
       // it's safe to mutate context now that it was cloned
       context = context!.slice();
-      var length = context.length;
-      for (i = 0; i < length; i += 2) {
-        if (context[i] === this) {
-          hasPrevious = true;
-          previous = context[i + 1];
-          context[i + 1] = store;
-          break;
-        }
-      }
-      if (!hasPrevious) {
+      i = context.indexOf(this);
+      if (i > -1) {
+        hasPrevious = true;
+        previous = context[i + 1];
+        context[i + 1] = store;
+      } else {
         context.push(this, store);
       }
       set(context);
@@ -186,7 +177,7 @@ class AsyncResource {
   }
 
   runInAsyncScope(fn, ...args) {
-    this.#snapshot(fn, ...args);
+    return this.#snapshot(fn, ...args);
   }
 }
 
@@ -198,7 +189,7 @@ function createWarning(message) {
     if (warned) return;
 
     // zx does not need createHook to function
-    const isFromZX = new Error().stack.includes("zx/build/core.js");
+    const isFromZX = new Error().stack!.includes("zx/build/core.js");
     if (isFromZX) return;
 
     warned = true;

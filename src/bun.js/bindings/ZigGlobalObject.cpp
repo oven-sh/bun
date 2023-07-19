@@ -1502,6 +1502,12 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     return JSC::JSValue::encode(JSC::jsString(vm, url.fileSystemPath()));
 }
 
+static void cleanupAsyncHooksData(JSC::VM& vm)
+{
+    vm.setOnEachMicrotaskTick(nullptr);
+    Bun__getDefaultGlobal()->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
+}
+
 // $lazy("async_hooks").cleanupLater
 JSC_DEFINE_HOST_FUNCTION(asyncHooksCleanupLater, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -1509,10 +1515,7 @@ JSC_DEFINE_HOST_FUNCTION(asyncHooksCleanupLater, (JSC::JSGlobalObject * globalOb
     // - nobody else uses setOnEachMicrotaskTick
     // - this is called by js if we set async context in a way we may not clear it
     // - AsyncLocalStorage.prototype.run cleans up after itself and does not call this cb
-    globalObject->vm().setOnEachMicrotaskTick([=](JSC::VM& vm) {
-        vm.setOnEachMicrotaskTick(nullptr);
-        globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
-    });
+    globalObject->vm().setOnEachMicrotaskTick(&cleanupAsyncHooksData);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

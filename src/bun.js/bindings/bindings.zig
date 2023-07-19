@@ -2508,6 +2508,10 @@ pub const JSGlobalObject = extern struct {
         return JSGlobalObject__setTimeZone(this, timeZone);
     }
 
+    pub inline fn toJS(globalThis: JSGlobalObject) JSValue {
+        return @enumFromInt(@as(JSValue.Type, @bitCast(@intFromPtr(globalThis))));
+    }
+
     pub fn throwInvalidArguments(
         this: *JSGlobalObject,
         comptime fmt: string,
@@ -3138,6 +3142,8 @@ pub const JSValue = enum(JSValueReprInt) {
         DerivedStringObject,
         // End StringObject s.
 
+        InternalFieldTuple,
+
         MaxJS = 0b11111111,
         Event = 0b11101111,
         DOMWrapper = 0b11101110,
@@ -3470,7 +3476,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return JSC.C.JSObjectCallAsFunctionReturnValue(
             globalThis,
             this,
-            @enumFromInt(@as(JSValue.Type, @bitCast(@intFromPtr(globalThis)))),
+            globalThis.toJS(),
             args.len,
             @as(?[*]const JSC.C.JSValueRef, @ptrCast(args.ptr)),
         );

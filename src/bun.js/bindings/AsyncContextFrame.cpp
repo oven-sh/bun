@@ -69,7 +69,7 @@ extern "C" EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlobalOb
     return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, JSValue::decode(callback)));
 }
 
-#define ASYNCBOUNDFUNCTION_CALL_IMPL(...)                                    \
+#define ASYNCCONTEXTFRAME_CALL_IMPL(...)                                     \
     if (!functionObject.isCell())                                            \
         return jsUndefined();                                                \
     auto& vm = global->vm();                                                 \
@@ -89,19 +89,19 @@ extern "C" EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlobalOb
 
 JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, const ArgList& args, ASCIILiteral errorMessage)
 {
-    ASYNCBOUNDFUNCTION_CALL_IMPL(global, functionObject, args, errorMessage);
+    ASYNCCONTEXTFRAME_CALL_IMPL(global, functionObject, args, errorMessage);
 }
 JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args, ASCIILiteral errorMessage)
 {
-    ASYNCBOUNDFUNCTION_CALL_IMPL(global, functionObject, thisValue, args, errorMessage);
+    ASYNCCONTEXTFRAME_CALL_IMPL(global, functionObject, thisValue, args, errorMessage);
 }
 JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args)
 {
-    ASYNCBOUNDFUNCTION_CALL_IMPL(global, functionObject, getCallData(functionObject.asCell()), thisValue, args);
+    ASYNCCONTEXTFRAME_CALL_IMPL(global, functionObject, getCallData(functionObject.asCell()), thisValue, args);
 }
 JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args, NakedPtr<Exception>& returnedException)
 {
-    ASYNCBOUNDFUNCTION_CALL_IMPL(global, functionObject, getCallData(functionObject.asCell()), thisValue, args, returnedException);
+    ASYNCCONTEXTFRAME_CALL_IMPL(global, functionObject, getCallData(functionObject.asCell()), thisValue, args, returnedException);
 }
 
-#undef ASYNCBOUNDFUNCTION_CALL_IMPL
+#undef ASYNCCONTEXTFRAME_CALL_IMPL

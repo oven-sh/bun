@@ -1648,14 +1648,15 @@ JSC:
             if (!isBuiltin) {
                 return JSC::JSValue::encode(JSC::jsUndefined());
             }
-            const char* const * out;
+            struct us_cert_string_t* out;
             auto size = us_raw_root_certs(&out);
             if (size < 0) {
                 return JSValue::encode(JSC::jsUndefined());
             }
             auto rootCertificates = JSC::JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), size);
             for(auto i = 0; i < size; i++) {
-                auto str = WTF::String::fromUTF8(out[i]);
+                auto raw = out[i];
+                auto str = WTF::String::fromUTF8(raw.str, raw.len);
                 rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
             }
             return JSValue::encode(rootCertificates);

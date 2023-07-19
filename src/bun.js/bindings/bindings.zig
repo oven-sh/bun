@@ -2508,7 +2508,7 @@ pub const JSGlobalObject = extern struct {
         return JSGlobalObject__setTimeZone(this, timeZone);
     }
 
-    pub inline fn toJS(globalThis: JSGlobalObject) JSValue {
+    pub inline fn toJS(globalThis: *JSGlobalObject) JSValue {
         return @enumFromInt(@as(JSValue.Type, @bitCast(@intFromPtr(globalThis))));
     }
 

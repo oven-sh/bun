@@ -62,18 +62,13 @@ class AsyncLocalStorage {
     return this.run(void 0, cb, ...args);
   }
   run(store, callback, ...args) {
-    var context = get(), hasPrevious = !1, previous, i, contextWasInit = !context;
+    var context = get(), hasPrevious = !1, previous, i = 0, contextWasInit = !context;
     if (contextWasInit)
-      i = 0, set(context = [this, store]);
+      set(context = [this, store]);
     else {
-      context = context.slice();
-      var length = context.length;
-      for (i = 0;i < length; i += 2)
-        if (context[i] === this) {
-          hasPrevious = !0, previous = context[i + 1], context[i + 1] = store;
-          break;
-        }
-      if (!hasPrevious)
+      if (context = context.slice(), i = context.indexOf(this), i > -1)
+        hasPrevious = !0, previous = context[i + 1], context[i + 1] = store;
+      else
         context.push(this, store);
       set(context);
     }
@@ -141,7 +136,7 @@ class AsyncResource {
   emitDestroy() {
   }
   runInAsyncScope(fn, ...args) {
-    this.#snapshot(fn, ...args);
+    return this.#snapshot(fn, ...args);
   }
 }
 var createHookNotImpl = createWarning("async_hooks.createHook is not implemented in Bun. Hooks can still be created but will never be called."), executionAsyncIdNotImpl = createWarning("async_hooks.executionAsyncId/triggerAsyncId are not implemented in Bun. It will return 0 every time."), executionAsyncResourceWarning = createWarning("async_hooks.executionAsyncResource is not implemented in Bun. It returns a reference to process.stdin every time."), asyncWrapProviders = {

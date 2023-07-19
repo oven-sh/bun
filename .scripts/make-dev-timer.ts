@@ -10,10 +10,10 @@ const diff = (Math.max(Math.round(end - start), 0) / 1000).toFixed(3);
 const success = result.exitCode === 0;
 try {
   const line = `${new Date().toISOString()}, ${success ? "success" : "fail"}, ${diff}\n`;
-  if (fs.existsSync("make-dev-stats.csv")) {
-    fs.appendFileSync("make-dev-stats.csv", line);
+  if (fs.existsSync(".scripts/make-dev-stats.csv")) {
+    fs.appendFileSync(".scripts/make-dev-stats.csv", line);
   } else {
-    fs.writeFileSync("make-dev-stats.csv", line);
+    fs.writeFileSync(".scripts/make-dev-stats.csv", line);
   }
 } catch {
   // Ignore

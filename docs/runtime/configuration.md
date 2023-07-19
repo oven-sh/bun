@@ -31,9 +31,6 @@ smol = true
 # Set Bun's log level
 logLevel = "debug" # "debug", "warn", "error"
 
-# publicDir = "public"
-# external = ["jquery"]
-
 [define]
 # Replace any usage of "process.env.bagel" with the string `lox`.
 # The values are parsed as JSON, except single-quoted strings are supported and `'undefined'` becomes `undefined` in JS.
@@ -43,16 +40,13 @@ logLevel = "debug" # "debug", "warn", "error"
 [loaders]
 # When loading a .bagel file, run the JS parser
 ".bagel" = "js"
-# - "atom"
-# If you pass it a file path, it will open with the file path instead
-# It will recognize non-GUI editors, but I don't think it will work yet
 ```
 
 ## Test runner
 
 ```toml
 [test]
-# setup scripts to run before all test files
+# Scripts to run before all test files
 preload = ["./setup.ts"]
 
 # Reduce memory usage at the cost of performance

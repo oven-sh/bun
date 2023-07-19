@@ -97,11 +97,11 @@ JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, 
 }
 JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args)
 {
-    ASYNCCONTEXTFRAME_CALL_IMPL(global, functionObject, getCallData(functionObject.asCell()), thisValue, args);
+    ASYNCCONTEXTFRAME_CALL_IMPL(global, functionObject, JSC::getCallData(functionObject), thisValue, args);
 }
 JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args, NakedPtr<Exception>& returnedException)
 {
-    ASYNCCONTEXTFRAME_CALL_IMPL(global, functionObject, getCallData(functionObject.asCell()), thisValue, args, returnedException);
+    ASYNCCONTEXTFRAME_CALL_IMPL(global, functionObject, JSC::getCallData(functionObject), thisValue, args, returnedException);
 }
 
 #undef ASYNCCONTEXTFRAME_CALL_IMPL

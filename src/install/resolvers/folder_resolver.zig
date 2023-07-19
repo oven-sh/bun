@@ -23,6 +23,34 @@ pub const FolderResolution = union(Tag) {
 
     pub const Tag = enum { package_id, err, new_package_id };
 
+    pub const PackageWorkspaceSearchPathFormatter = struct {
+        manager: *PackageManager,
+        version: Dependency.Version,
+        quoted: bool = true,
+
+        pub fn format(this: PackageWorkspaceSearchPathFormatter, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            var joined: [bun.MAX_PATH_BYTES + 2]u8 = undefined;
+            const str_to_use = this.manager.lockfile.workspace_paths.getPtr(
+                @truncate(String.Builder.stringHash(this.manager.lockfile.str(&this.version.value.workspace))),
+            ) orelse &this.version.value.workspace;
+            var paths = normalizePackageJSONPath(.{ .relative = .workspace }, joined[2..], this.manager.lockfile.str(str_to_use));
+
+            if (!strings.startsWithChar(paths.rel, '.') and !strings.startsWithChar(paths.rel, std.fs.path.sep)) {
+                joined[0..2].* = ("." ++ std.fs.path.sep_str).*;
+                paths.rel = joined[0 .. paths.rel.len + 2];
+            }
+
+            if (this.quoted) {
+                const quoted = strings.QuotedFormatter{
+                    .text = paths.rel,
+                };
+                try quoted.format(fmt, opts, writer);
+            } else {
+                try writer.writeAll(paths.rel);
+            }
+        }
+    };
+
     pub const Map = std.HashMapUnmanaged(u64, FolderResolution, IdentityContext(u64), 80);
 
     pub fn normalize(path: string) string {

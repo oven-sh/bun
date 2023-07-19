@@ -126,6 +126,7 @@ private:
     // bool m_isSuspendedForBackForwardCache { false };
     // JSC::RuntimeFlags m_runtimeFlags;
     Deque<RefPtr<Event>> m_pendingEvents;
+    Lock m_pendingTasksMutex;
     Deque<Function<void(ScriptExecutionContext&)>> m_pendingTasks;
     bool m_wasTerminated { false };
     bool m_didStartWorkerGlobalScope { false };

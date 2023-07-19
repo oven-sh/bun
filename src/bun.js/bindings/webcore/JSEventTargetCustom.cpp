@@ -36,6 +36,7 @@
 // #include "JSWindowProxy.h"
 // #include "JSWorkerGlobalScope.h"
 // #include "WorkerGlobalScope.h"
+#include "BunWorkerGlobalScope.h"
 
 #if ENABLE(OFFSCREEN_CANVAS)
 #include "OffscreenCanvas.h"
@@ -56,7 +57,7 @@ EventTarget* JSEventTarget::toWrapped(VM& vm, JSValue value)
     // if (value.inherits<JSDOMWindow>())
     //     return &jsCast<JSDOMWindow*>(asObject(value))->wrapped();
     if (value.inherits<JSDOMGlobalObject>())
-        return jsCast<JSDOMGlobalObject*>(asObject(value))->eventTarget().ptr();
+        return &jsCast<JSDOMGlobalObject*>(asObject(value))->globalEventScope;
     if (value.inherits<JSEventTarget>())
         return &jsCast<JSEventTarget*>(asObject(value))->wrapped();
     return nullptr;

@@ -179,6 +179,17 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include "webcrypto/JSSubtleCrypto.h"
 
 #include "JSDOMFormData.h"
+#include "JSDOMBinding.h"
+#include "JSDOMConstructor.h"
+#include "JSDOMConvertBase.h"
+#include "JSDOMConvertBoolean.h"
+#include "JSDOMConvertDictionary.h"
+#include "JSDOMConvertEventListener.h"
+#include "JSDOMConvertInterface.h"
+#include "JSDOMConvertNullable.h"
+#include "JSDOMConvertStrings.h"
+#include "JSDOMConvertUnion.h"
+#include "AddEventListenerOptions.h"
 
 #include "ErrorStackTrace.h"
 #include "CallSite.h"
@@ -423,11 +434,10 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObje
     Zig::GlobalObject* globalObject;
 
     if (UNLIKELY(executionContextId > -1)) {
-        ScriptExecutionContext* context = new WebCore::ScriptExecutionContext(&vm, nullptr, static_cast<ScriptExecutionContextIdentifier>(executionContextId));
         globalObject = Zig::GlobalObject::create(
             vm,
             Zig::GlobalObject::createStructure(vm, JSC::JSGlobalObject::create(vm, JSC::JSGlobalObject::createStructure(vm, JSC::jsNull())), JSC::jsNull()),
-            context);
+            static_cast<ScriptExecutionContextIdentifier>(executionContextId));
     } else {
         globalObject = Zig::GlobalObject::create(
             vm,
@@ -435,7 +445,7 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObje
                 JSC::jsNull()));
     }
 
-    globalObject->setConsole(globalObject);
+    globalObject->setConsole(console_client);
     globalObject->isThreadLocalDefaultGlobalObject = true;
     globalObject->setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT); // Node.js defaults to 10
     vm.setOnComputeErrorInfo(computeErrorInfo);
@@ -699,27 +709,25 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure)
     , m_world(WebCore::DOMWrapperWorld::create(vm, WebCore::DOMWrapperWorld::Type::Normal))
     , m_worldIsNormal(true)
     , m_builtinInternalFunctions(vm)
-    , globalEventScope(Bun::GlobalScope::create(nullptr))
-
+    , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this))
+    , globalEventScope(*new Bun::GlobalScope(m_scriptExecutionContext))
 {
-    m_scriptExecutionContext = new WebCore::ScriptExecutionContext(&vm, this);
-    globalEventScope->m_context = m_scriptExecutionContext;
     mockModule = Bun::JSMockModule::create(this);
+    globalEventScope.m_context = m_scriptExecutionContext;
 }
 
-GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::ScriptExecutionContext* context)
+GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::ScriptExecutionContextIdentifier contextId)
     : JSC::JSGlobalObject(vm, structure, &s_globalObjectMethodTable)
     , m_bunVM(Bun__getVM())
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(WebCore::DOMWrapperWorld::create(vm, WebCore::DOMWrapperWorld::Type::Normal))
     , m_worldIsNormal(true)
     , m_builtinInternalFunctions(vm)
-    , globalEventScope(Bun::GlobalScope::create(context))
+    , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this, contextId))
+    , globalEventScope(*new Bun::GlobalScope(m_scriptExecutionContext))
 {
     mockModule = Bun::JSMockModule::create(this);
-    m_scriptExecutionContext = context;
-    context->setGlobalObject(this);
-    context->addToContextsMap();
+    globalEventScope.m_context = m_scriptExecutionContext;
 }
 
 GlobalObject::~GlobalObject()
@@ -774,12 +782,9 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
     }
 }
 
-static Zig::ConsoleClient* m_console;
-
 void GlobalObject::setConsole(void* console)
 {
-    m_console = new Zig::ConsoleClient(console);
-    this->setConsoleClient(m_console);
+    this->setConsoleClient(new Zig::ConsoleClient(console));
 }
 
 #pragma mark - Globals
@@ -826,7 +831,7 @@ JSC_DEFINE_CUSTOM_SETTER(globalSetterOnError,
     return true;
 }
 
-Ref<WebCore::EventTarget> GlobalObject::eventTarget()
+WebCore::EventTarget& GlobalObject::eventTarget()
 {
     return globalEventScope;
 }
@@ -1687,6 +1692,84 @@ JSC:
         break;
     }
     }
+}
+
+static inline JSC::EncodedJSValue jsFunctionAddEventListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, Zig::GlobalObject* castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->globalEventScope;
+    if (UNLIKELY(callFrame->argumentCount() < 2))
+        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+    auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
+    auto listener = convert<IDLNullable<IDLEventListener<JSEventListener>>>(*lexicalGlobalObject, argument1.value(), *castedThis, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeObjectError(lexicalGlobalObject, scope, 1, "listener", "EventTarget", "addEventListener"); });
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    EnsureStillAliveScope argument2 = callFrame->argument(2);
+    auto options = argument2.value().isUndefined() ? false : convert<IDLUnion<IDLDictionary<AddEventListenerOptions>, IDLBoolean>>(*lexicalGlobalObject, argument2.value());
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    auto result = JSValue::encode(WebCore::toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.addEventListenerForBindings(WTFMove(type), WTFMove(listener), WTFMove(options)); }));
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());
+    return result;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionAddEventListener, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return jsFunctionAddEventListenerBody(lexicalGlobalObject, callFrame, jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject));
+}
+
+static inline JSC::EncodedJSValue jsFunctionRemoveEventListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, Zig::GlobalObject* castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->globalEventScope;
+    if (UNLIKELY(callFrame->argumentCount() < 2))
+        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+    auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
+    auto listener = convert<IDLNullable<IDLEventListener<JSEventListener>>>(*lexicalGlobalObject, argument1.value(), *castedThis, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeObjectError(lexicalGlobalObject, scope, 1, "listener", "EventTarget", "removeEventListener"); });
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    EnsureStillAliveScope argument2 = callFrame->argument(2);
+    auto options = argument2.value().isUndefined() ? false : convert<IDLUnion<IDLDictionary<EventListenerOptions>, IDLBoolean>>(*lexicalGlobalObject, argument2.value());
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    auto result = JSValue::encode(WebCore::toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.removeEventListenerForBindings(WTFMove(type), WTFMove(listener), WTFMove(options)); }));
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());
+    return result;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionRemoveEventListener, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return jsFunctionRemoveEventListenerBody(lexicalGlobalObject, callFrame, jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject));
+}
+
+static inline JSC::EncodedJSValue jsFunctionDispatchEventBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, Zig::GlobalObject* castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->globalEventScope;
+    if (UNLIKELY(callFrame->argumentCount() < 1))
+        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+    auto event = convert<IDLInterface<Event>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "event", "EventTarget", "dispatchEvent", "Event"); });
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(WebCore::toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.dispatchEventForBindings(*event))));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionDispatchEvent, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return jsFunctionDispatchEventBody(lexicalGlobalObject, callFrame, jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject));
 }
 
 static inline JSValue jsServiceWorkerGlobalScope_ByteLengthQueuingStrategyConstructorGetter(JSGlobalObject& lexicalGlobalObject, Zig::GlobalObject& thisObject)
@@ -3463,11 +3546,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
         return JSValue::encode(jsUndefined());
     }
 
-    ScriptExecutionContext::postTaskTo(context->identifier(), [message = serialized.releaseReturnValue(), protectedThis = Ref { *worker }](ScriptExecutionContext& context) {
+    RefPtr<SerializedScriptValue> message = serialized.releaseReturnValue();
+    ScriptExecutionContext::postTaskTo(context->identifier(), [message = WTFMove(message), protectedThis = Ref { *worker }](ScriptExecutionContext& context) {
         Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(context.jsGlobalObject());
         bool didFail = false;
         JSValue value = message->deserialize(*globalObject, globalObject, SerializationErrorMode::NonThrowing, &didFail);
-        message->deref();
 
         if (didFail) {
             protectedThis->dispatchEvent(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init {}, MessageEvent::IsTrusted::Yes));
@@ -3774,7 +3857,6 @@ JSC_DEFINE_HOST_FUNCTION(functionGetDirectStreamDetails, (JSC::JSGlobalObject * 
 
     return JSC::JSValue::encode(resultObject);
 }
-
 JSC::GCClient::IsoSubspace* GlobalObject::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(
@@ -3878,31 +3960,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
             GlobalPropertyInfo { postMessageIdentifier,
                 JSC::JSFunction::create(vm, this, 1,
                     "postMessage"_s, jsFunctionPostMessage, ImplementationVisibility::Public),
-                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
-    }
-
-    {
-        JSC::Identifier addEventListener = JSC::Identifier::fromString(vm, "addEventListener"_s);
-        extraStaticGlobals.uncheckedAppend(
-            GlobalPropertyInfo { addEventListener,
-                JSC::JSFunction::create(vm, this, 2,
-                    "addEventListener"_s, WebCore::jsEventTargetPrototypeFunction_addEventListener, ImplementationVisibility::Public),
-                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
-    }
-
-    {
-        extraStaticGlobals.uncheckedAppend(
-            GlobalPropertyInfo { JSC::Identifier::fromString(vm, "dispatchEvent"_s),
-                JSC::JSFunction::create(vm, this, 1,
-                    "dispatchEvent"_s, WebCore::jsEventTargetPrototypeFunction_dispatchEvent, ImplementationVisibility::Public),
-                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
-    }
-
-    {
-        extraStaticGlobals.uncheckedAppend(
-            GlobalPropertyInfo { JSC::Identifier::fromString(vm, "removeEventListener"_s),
-                JSC::JSFunction::create(vm, this, 1,
-                    "removeEventListener"_s, WebCore::jsEventTargetPrototypeFunction_removeEventListener, ImplementationVisibility::Public),
                 JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
     }
 
@@ -4101,6 +4158,30 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "CountQueuingStrategy"_s), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_CountQueuingStrategyConstructor, nullptr), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "SubtleCrypto"_s), JSC::CustomGetterSetter::create(vm, getterSubtleCryptoConstructor, nullptr), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "CryptoKey"_s), JSC::CustomGetterSetter::create(vm, getterCryptoKeyConstructor, nullptr), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    putDirectNativeFunction(vm, this,
+        Identifier::fromString(vm, "addEventListener"_s),
+        2,
+        jsFunctionAddEventListener,
+        ImplementationVisibility::Public,
+        NoIntrinsic,
+        JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+
+    putDirectNativeFunction(vm, this,
+        Identifier::fromString(vm, "dispatchEvent"_s),
+        1,
+        jsFunctionDispatchEvent,
+        ImplementationVisibility::Public,
+        NoIntrinsic,
+        JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+
+    putDirectNativeFunction(vm, this,
+        Identifier::fromString(vm, "removeEventListener"_s),
+        2,
+        jsFunctionRemoveEventListener,
+        ImplementationVisibility::Public,
+        NoIntrinsic,
+        JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
 }
 
 // We set it in here since it's a global
@@ -4474,8 +4555,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->visitGeneratedLazyClasses<Visitor>(thisObject, visitor);
     visitor.append(thisObject->m_BunCommonJSModuleValue);
     thisObject->visitAdditionalChildren<Visitor>(visitor);
-    ScriptExecutionContext* context = thisObject->scriptExecutionContext();
-    visitor.addOpaqueRoot(context);
 }
 
 extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, const ZigString* timeZone)
@@ -4547,7 +4626,10 @@ void GlobalObject::visitAdditionalChildren(Visitor& visitor)
     GlobalObject* thisObject = this;
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
-    thisObject->globalEventScope->visitJSEventListeners(visitor);
+    thisObject->globalEventScope.visitJSEventListeners(visitor);
+
+    ScriptExecutionContext* context = thisObject->scriptExecutionContext();
+    visitor.addOpaqueRoot(context);
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(GlobalObject);

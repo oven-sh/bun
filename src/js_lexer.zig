@@ -1793,6 +1793,7 @@ fn NewLexer_(
                 }
             };
 
+            lexer.did_panic = true;
             try lexer.addRangeError(lexer.range(), "Unexpected {s}", .{found}, true);
         }
 

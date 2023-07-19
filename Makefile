@@ -52,6 +52,8 @@ endif
 
 BUN_OR_NODE = $(shell which bun 2>/dev/null || which node 2>/dev/null)
 
+
+
 CXX_VERSION=c++2a
 TRIPLET = $(OS_NAME)-$(ARCH_NAME)
 PACKAGE_NAME = bun-$(TRIPLET)
@@ -1091,9 +1093,25 @@ test/wiptest/run: test/wiptest/run.o
 release-bin-dir:
 	echo $(PACKAGE_DIR)
 
+
+.PHONY: dev-obj-track
+dev-obj-track:
+	bun .scripts/make-dev-timer.ts $(ZIG) build obj -freference-trace -Dcpu="$(CPU_TARGET)"
+
+.PHONY: dev-obj-notrack
+dev-obj-notrack:
+	$(ZIG) build obj -freference-trace -Dcpu="$(CPU_TARGET)"
+
+
 .PHONY: dev-obj
 dev-obj:
-	bun .scripts/make-dev-timer.ts $(ZIG) build obj -freference-trace -Dcpu="$(CPU_TARGET)"
+
+ifeq ($(shell which bun),)
+dev-obj : dev-obj-notrack
+else
+dev-obj : dev-obj-track
+endif
+
 
 .PHONY: dev-obj-linux
 dev-obj-linux:

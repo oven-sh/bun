@@ -8,7 +8,6 @@
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JavaScriptCore/JSCJSValueInlines.h"
 #include "JavaScriptCore/JSInternalPromise.h"
-#include "JavaScriptCore/JSInternalFieldObjectImpl.h"
 
 #include "ZigSourceProvider.h"
 
@@ -36,11 +35,12 @@
 #include "../modules/TTYModule.h"
 #include "node_util_types.h"
 #include "CommonJSModuleRecord.h"
-#include <JavaScriptCore/JSModuleLoader.h>
-#include <JavaScriptCore/Completion.h>
-#include <JavaScriptCore/JSModuleNamespaceObject.h>
-#include <JavaScriptCore/JSMap.h>
-#include <JavaScriptCore/JSMapInlines.h>
+#include "JavaScriptCore/JSModuleLoader.h"
+#include "JavaScriptCore/Completion.h"
+#include "JavaScriptCore/JSModuleNamespaceObject.h"
+#include "JavaScriptCore/JSMap.h"
+#include "JavaScriptCore/JSMapInlines.h"
+#include "JavaScriptCore/JSInternalFieldObjectImplInlines.h"
 
 namespace Bun {
 using namespace Zig;
@@ -690,18 +690,3 @@ JSValue fetchSourceCodeAsync(
     return fetchSourceCode<true>(globalObject, res, specifier, referrer);
 }
 }
-namespace JSC {
-
-template<unsigned passedNumberOfInternalFields>
-template<typename Visitor>
-void JSInternalFieldObjectImpl<passedNumberOfInternalFields>::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = jsCast<JSInternalFieldObjectImpl*>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.appendValues(thisObject->m_internalFields, numberOfInternalFields);
-}
-
-DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<unsigned passedNumberOfInternalFields>, JSInternalFieldObjectImpl<passedNumberOfInternalFields>);
-
-} // namespace JSC

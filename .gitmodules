@@ -75,3 +75,10 @@ fetchRecurseSubmodules = false
 	ignore = dirty
 	depth = 1
 	shallow = true
+[submodule "src/deps/brotli"]
+	path = src/deps/brotli
+	url = https://github.com/google/brotli.git
+	ignore = dirty
+	depth = 1
+	shallow = true
+	fetchRecurseSubmodules = false

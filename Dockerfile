@@ -316,6 +316,28 @@ WORKDIR $BUN_DIR
 RUN cd $BUN_DIR && \
     make base64 && rm -rf src/deps/base64 Makefile
 
+FROM bun-base as brotli
+
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
+ARG CPU_TARGET
+ENV CPU_TARGET=${CPU_TARGET}
+
+COPY Makefile ${BUN_DIR}/Makefile
+COPY src/deps/brotli ${BUN_DIR}/src/deps/brotli
+
+WORKDIR $BUN_DIR
+
+RUN cd $BUN_DIR && \
+    make brotli && rm -rf src/deps/brotli Makefile
+
+
 FROM bun-base as picohttp
 
 ARG DEBIAN_FRONTEND
@@ -578,6 +600,7 @@ ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
 
 COPY --from=zlib ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=base64 ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
+COPY --from=brotli ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=lolhtml ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/

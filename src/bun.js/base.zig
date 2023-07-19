@@ -1784,6 +1784,16 @@ pub const ArrayBuffer = extern struct {
         };
     }
 
+    pub fn createFromLength(globalThis: *JSC.JSGlobalObject, len: usize, comptime kind: BinaryType) JSValue {
+        JSC.markBinding(@src());
+        return switch (comptime kind) {
+            .Uint8Array => Bun__createUint8ArrayForCopy(globalThis, null, len, false),
+            .Buffer => Bun__createUint8ArrayForCopy(globalThis, null, len, true),
+            .ArrayBuffer => Bun__createArrayBufferForCopy(globalThis, null, len),
+            else => @compileError("Not implemented yet"),
+        };
+    }
+
     pub fn createEmpty(globalThis: *JSC.JSGlobalObject, comptime kind: JSC.JSValue.JSType) JSValue {
         JSC.markBinding(@src());
 

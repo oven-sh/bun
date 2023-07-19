@@ -518,6 +518,20 @@ pub const DrainResult = union(enum) {
     aborted: void,
 };
 
+pub const ErrorMessage = struct {
+    message: bun.String = bun.String.empty,
+    code: bun.String = bun.String.empty,
+
+    pub fn toJS(this: *const @This(), globalObject: *JSC.JSGlobalObject) JSValue {
+        defer this.message.deref();
+        defer this.code.deref();
+        return (JSC.SystemError{
+            .message = this.message,
+            .code = this.code,
+        }).toErrorInstance(globalObject);
+    }
+};
+
 pub const StreamResult = union(Tag) {
     owned: bun.ByteList,
     owned_and_done: bun.ByteList,
@@ -528,6 +542,7 @@ pub const StreamResult = union(Tag) {
     pending: *Pending,
     err: Syscall.Error,
     done: void,
+    error_message: ErrorMessage,
 
     pub const Tag = enum {
         owned,
@@ -539,6 +554,7 @@ pub const StreamResult = union(Tag) {
         pending,
         err,
         done,
+        error_message,
     };
 
     pub fn slice(this: *const StreamResult) []const u8 {
@@ -555,6 +571,7 @@ pub const StreamResult = union(Tag) {
         pending: *Writable.Pending,
 
         err: Syscall.Error,
+        error_message: ErrorMessage,
         done: void,
 
         owned: Blob.SizeType,
@@ -663,6 +680,11 @@ pub const StreamResult = union(Tag) {
                     const promise_value = pending.promise(globalThis).asValue(globalThis);
                     promise_value.protect();
                     break :brk promise_value;
+                },
+
+                .error_message => brk: {
+                    globalThis.throwValue(this.error_message.toJS(globalThis));
+                    break :brk JSC.JSValue.jsUndefined();
                 },
             };
         }
@@ -805,6 +827,9 @@ pub const StreamResult = union(Tag) {
 
             .err => |err| {
                 return JSC.JSPromise.rejectedPromise(globalThis, JSValue.c(err.toJS(globalThis))).asValue(globalThis);
+            },
+            .error_message => {
+                return JSC.JSPromise.rejectedPromise(globalThis, this.error_message.toJS(globalThis)).asValue(globalThis);
             },
 
             // false == controller.close()
@@ -1894,6 +1919,382 @@ pub const ArrayBufferSink = struct {
     }
 
     pub const JSSink = NewJSSink(@This(), "ArrayBufferSink");
+};
+
+pub const BrotliCompressorSink = struct {
+    state: ?*bun.brotli.BrotliEncoderState = null,
+    allocator: std.mem.Allocator,
+    done: bool = false,
+    signal: Signal = .{},
+    next: ?Sink = null,
+    output_buffer: bun.ByteList = bun.ByteList{},
+    chunk_size: u32 = 16 * 1024,
+    total_size: usize = 0,
+
+    pub fn connect(this: *BrotliCompressorSink, signal: Signal) void {
+        std.debug.assert(this.reader == null);
+        this.signal = signal;
+    }
+
+    pub fn start(this: *BrotliCompressorSink, _: StreamStart) JSC.Node.Maybe(void) {
+        this.output_buffer.len = 0;
+
+        if (this.state == null) {
+            this.state = bun.brotli.BrotliEncoderState.init();
+        }
+
+        // switch (stream_start) {
+        //     .BrotliCompressorSink => |config| {
+        //         if (config.chunk_size > 0) {
+        //             list.ensureTotalCapacityPrecise(config.chunk_size) catch return .{ .err = Syscall.Error.oom };
+        //             this.bytes.update(list);
+        //         }
+
+        //         this.as_uint8array = config.as_uint8array;
+        //         this.streaming = config.stream;
+        //     },
+        //     else => {},
+        // }
+
+        this.done = false;
+
+        this.signal.start();
+        return .{ .result = {} };
+    }
+
+    pub fn flush(this: *BrotliCompressorSink) JSC.Node.Maybe(void) {
+        _ = this;
+        return .{ .result = {} };
+    }
+
+    pub fn flushFromJS(this: *BrotliCompressorSink, globalThis: *JSGlobalObject, wait: bool) JSC.Node.Maybe(JSValue) {
+        _ = globalThis;
+        _ = wait;
+
+        if (this.state) |state| {
+            var output_slice = this.output_buffer.ptr[0..this.output_buffer.cap];
+            std.debug.assert(state.flush(&output_slice, &output_slice, &this.total_size));
+        }
+
+        return .{ .result = JSC.JSValue.jsNumber(0) };
+    }
+
+    pub fn finalize(this: *BrotliCompressorSink) void {
+        if (this.state) |state| {
+            state.deinit();
+        }
+        this.output_buffer.deinitWithAllocator(bun.default_allocator);
+        this.allocator.destroy(this);
+    }
+
+    pub fn init(allocator: std.mem.Allocator, next: ?Sink) !*BrotliCompressorSink {
+        var this = try allocator.create(BrotliCompressorSink);
+        this.* = BrotliCompressorSink{
+            .bytes = bun.ByteList.init(&.{}),
+            .allocator = allocator,
+            .next = next,
+        };
+        return this;
+    }
+
+    pub fn construct(
+        this: *BrotliCompressorSink,
+        allocator: std.mem.Allocator,
+    ) void {
+        this.* = BrotliCompressorSink{
+            .allocator = allocator,
+            .next = null,
+            .state = null,
+        };
+    }
+
+    pub fn write(this: *@This(), data: StreamResult) StreamResult.Writable {
+        var state = this.state orelse return .{ .done = {} };
+        var initial_slice = data.slice();
+        var slice = initial_slice;
+        while (slice.len > 0) {
+            this.output_buffer.ensureUnusedCapacity(
+                bun.default_allocator,
+                bun.brotli.BrotliEncoderMaxCompressedSize(slice.len),
+            ) catch {
+                return .{ .err = Syscall.Error.oom };
+            };
+
+            var output_slice = this.output_buffer.ptr[0..this.output_buffer.cap];
+            std.debug.assert(state.write(&slice, &output_slice, &this.total_size));
+            slice = initial_slice;
+            std.debug.assert(state.flush(&slice, &output_slice, &this.total_size));
+
+            this.output_buffer.len = @as(u32, @truncate(this.total_size));
+        }
+
+        return .{ .owned = @as(Blob.SizeType, @truncate(initial_slice.len - slice.len)) };
+    }
+    pub const writeBytes = write;
+    pub fn writeLatin1(this: *@This(), data: StreamResult) StreamResult.Writable {
+        if (strings.isAllASCII(data.slice())) {
+            return this.write(data);
+        }
+
+        var allocated = strings.allocateLatin1IntoUTF8(bun.default_allocator, []const u8, data.slice()) catch {
+            return .{ .err = Syscall.Error.oom };
+        };
+        defer bun.default_allocator.free(allocated);
+        return this.write(.{ .temporary = bun.ByteList.init(allocated) });
+    }
+    pub fn writeUTF16(this: *@This(), data: StreamResult) StreamResult.Writable {
+        if (this.next) |*next| {
+            return next.writeUTF16(data);
+        }
+        var bytes = strings.toUTF8Alloc(bun.default_allocator, @alignCast(std.mem.bytesAsSlice(u16, data.slice()))) catch {
+            return .{ .err = Syscall.Error.oom };
+        };
+        defer bun.default_allocator.free(bytes);
+        return this.write(.{ .temporary = bun.ByteList.init(bytes) });
+    }
+
+    pub fn end(this: *BrotliCompressorSink, err: ?Syscall.Error) JSC.Node.Maybe(void) {
+        if (this.next) |*next| {
+            return next.end(err);
+        }
+        this.signal.close(err);
+        return .{ .result = {} };
+    }
+
+    pub fn toJS(this: *BrotliCompressorSink, globalThis: *JSGlobalObject) JSValue {
+        return JSSink.createObject(globalThis, this);
+    }
+
+    pub fn endFromJS(this: *@This(), globalThis: *JSGlobalObject) JSC.Node.Maybe(JSValue) {
+        var state = this.state orelse return .{ .result = JSC.JSValue.jsUndefined() };
+        var finishing_byte_slice = this.output_buffer.ptr[0..this.output_buffer.cap];
+        var finish2 = finishing_byte_slice;
+        finish2 = finishing_byte_slice;
+        _ = state.finish(null, &finishing_byte_slice, &this.total_size);
+        var bytes = this.output_buffer.ptr[0..this.total_size];
+        state.deinit();
+        this.state = null;
+
+        this.output_buffer = .{};
+        std.debug.assert(this.next == null);
+        this.done = true;
+        this.signal.close(null);
+        return .{ .result = JSC.ArrayBuffer.fromBytes(bytes, .ArrayBuffer).toJS(globalThis, null) };
+    }
+
+    pub fn sink(this: *BrotliCompressorSink) Sink {
+        return Sink.init(this);
+    }
+
+    pub const JSSink = NewJSSink(@This(), "BrotliCompressorSink");
+};
+
+pub const BrotliDecompressorSink = struct {
+    state: ?*bun.brotli.BrotliDecoderState = null,
+    allocator: std.mem.Allocator,
+    done: bool = false,
+    signal: Signal = .{},
+    streaming: bool = false,
+    next: ?Sink = null,
+    output_buffer: bun.ByteList = bun.ByteList{},
+    chunk_size: u32 = 16 * 1024,
+    total_size: usize = 0,
+
+    pub fn connect(this: *BrotliDecompressorSink, signal: Signal) void {
+        std.debug.assert(this.reader == null);
+        this.signal = signal;
+    }
+
+    pub fn start(this: *BrotliDecompressorSink, _: StreamStart) JSC.Node.Maybe(void) {
+        this.output_buffer.len = 0;
+
+        if (this.state) |existing| {
+            if (existing.isUsed()) {
+                existing.deinit();
+                this.state = null;
+            }
+        }
+
+        if (this.state == null) {
+            this.state = bun.brotli.BrotliDecoderState.init();
+        }
+
+        // switch (stream_start) {
+        //     .BrotliDecompressorSink => |config| {
+        //         if (config.chunk_size > 0) {
+        //             list.ensureTotalCapacityPrecise(config.chunk_size) catch return .{ .err = Syscall.Error.oom };
+        //             this.bytes.update(list);
+        //         }
+
+        //         this.as_uint8array = config.as_uint8array;
+        //         this.streaming = config.stream;
+        //     },
+        //     else => {},
+        // }
+
+        this.done = false;
+
+        this.signal.start();
+        return .{ .result = {} };
+    }
+
+    pub fn flush(this: *BrotliDecompressorSink) JSC.Node.Maybe(void) {
+        _ = this;
+        return .{ .result = {} };
+    }
+
+    pub fn flushFromJS(this: *BrotliDecompressorSink, globalThis: *JSGlobalObject, wait: bool) JSC.Node.Maybe(JSValue) {
+        _ = wait;
+
+        if (this.output_buffer.len > 0) {
+            if (this.next) |*next| {
+                var list = this.output_buffer;
+                this.output_buffer = bun.ByteList.init("");
+                return .{ .result = next.writeBytes(.{ .owned = list }).toJS(globalThis) };
+            }
+
+            return .{ .result = JSC.JSValue.jsNumber(this.output_buffer.len) };
+        }
+
+        return .{ .result = JSC.JSValue.jsNumber(0) };
+    }
+
+    pub fn finalize(this: *BrotliDecompressorSink) void {
+        if (this.state) |state| {
+            state.deinit();
+        }
+        this.output_buffer.deinitWithAllocator(bun.default_allocator);
+        this.allocator.destroy(this);
+    }
+
+    pub fn init(allocator: std.mem.Allocator, next: ?Sink) !*BrotliDecompressorSink {
+        var this = try allocator.create(BrotliDecompressorSink);
+        this.* = BrotliDecompressorSink{
+            .bytes = bun.ByteList.init(&.{}),
+            .allocator = allocator,
+            .next = next,
+        };
+        return this;
+    }
+
+    pub fn construct(
+        this: *BrotliDecompressorSink,
+        allocator: std.mem.Allocator,
+    ) void {
+        this.* = BrotliDecompressorSink{
+            .allocator = allocator,
+            .next = null,
+            .state = null,
+        };
+    }
+
+    pub fn write(this: *@This(), data: StreamResult) StreamResult.Writable {
+        var state = this.state orelse return .{ .done = {} };
+        var initial_slice = data.slice();
+        var slice = initial_slice;
+
+        while (true) {
+            if (this.output_buffer.cap - this.output_buffer.len < this.chunk_size) {
+                this.output_buffer.ensureUnusedCapacity(bun.default_allocator, this.chunk_size) catch {
+                    return .{ .err = Syscall.Error.oom };
+                };
+            }
+            var output_slice = this.output_buffer.ptr[this.output_buffer.len..this.output_buffer.cap];
+            const res = state.write(&slice, &output_slice, &this.total_size);
+            this.output_buffer.len += @as(u32, @truncate(this.total_size));
+
+            switch (res) {
+                .success => {
+                    if (this.next) |*next| {
+                        var output_buffer = this.output_buffer;
+                        this.output_buffer = .{};
+                        return next.writeBytes(.{ .owned_and_done = output_buffer });
+                    }
+                    this.signal.ready(null, null);
+                    return .{ .owned_and_done = @as(Blob.SizeType, @truncate(initial_slice.len - slice.len)) };
+                },
+                .@"error" => {
+                    const code = state.getErrorCode();
+                    return .{
+                        .error_message = .{
+                            .code = bun.String.static(code.code()),
+                            .message = bun.String.static(code.message()),
+                        },
+                    };
+                },
+                .needs_more_input => {
+                    this.signal.ready(null, null);
+                    return .{ .owned = @as(Blob.SizeType, @truncate(initial_slice.len - slice.len)) };
+                },
+
+                .needs_more_output => {
+                    if (this.next) |*next| {
+                        var output_buffer = this.output_buffer;
+                        this.output_buffer = .{};
+                        return next.writeBytes(.{ .owned = output_buffer });
+                    }
+
+                    this.output_buffer.ensureUnusedCapacity(bun.default_allocator, this.chunk_size) catch {
+                        return .{ .err = Syscall.Error.oom };
+                    };
+                },
+            }
+        }
+    }
+    pub const writeBytes = write;
+    pub fn writeLatin1(this: *@This(), data: StreamResult) StreamResult.Writable {
+        if (strings.isAllASCII(data.slice())) {
+            return this.write(data);
+        }
+
+        var allocated = strings.allocateLatin1IntoUTF8(bun.default_allocator, []const u8, data.slice()) catch {
+            return .{ .err = Syscall.Error.oom };
+        };
+        defer bun.default_allocator.free(allocated);
+        return this.write(.{ .temporary = bun.ByteList.init(allocated) });
+    }
+    pub fn writeUTF16(this: *@This(), data: StreamResult) StreamResult.Writable {
+        if (this.next) |*next| {
+            return next.writeUTF16(data);
+        }
+        var bytes = strings.toUTF8Alloc(bun.default_allocator, @alignCast(std.mem.bytesAsSlice(u16, data.slice()))) catch {
+            return .{ .err = Syscall.Error.oom };
+        };
+        defer bun.default_allocator.free(bytes);
+        return this.write(.{ .temporary = bun.ByteList.init(bytes) });
+    }
+
+    pub fn end(this: *BrotliDecompressorSink, err: ?Syscall.Error) JSC.Node.Maybe(void) {
+        if (this.next) |*next| {
+            return next.end(err);
+        }
+        this.signal.close(err);
+        return .{ .result = {} };
+    }
+
+    pub fn toJS(this: *BrotliDecompressorSink, globalThis: *JSGlobalObject) JSValue {
+        return JSSink.createObject(globalThis, this);
+    }
+
+    pub fn endFromJS(this: *@This(), globalThis: *JSGlobalObject) JSC.Node.Maybe(JSValue) {
+        if (this.state) |state| {
+            state.deinit();
+            this.state = null;
+        }
+
+        std.debug.assert(this.next == null);
+        var list = this.output_buffer.listManaged(this.allocator);
+        this.output_buffer = bun.ByteList.init("");
+        this.done = true;
+        this.signal.close(null);
+        return .{ .result = JSC.JSValue.createBuffer(globalThis, list.items, bun.default_allocator) };
+    }
+
+    pub fn sink(this: *BrotliDecompressorSink) Sink {
+        return Sink.init(this);
+    }
+
+    pub const JSSink = NewJSSink(@This(), "BrotliDecompressorSink");
 };
 
 pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {

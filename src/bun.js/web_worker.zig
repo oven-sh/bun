@@ -210,6 +210,7 @@ pub const WebWorker = struct {
     }
 
     fn flushLogs(this: *WebWorker) void {
+        JSC.markBinding(@src());
         var vm = this.vm orelse return;
         if (vm.log.msgs.items.len == 0) return;
         const err = vm.log.toJS(vm.global, bun.default_allocator, "Error in worker");
@@ -247,7 +248,7 @@ pub const WebWorker = struct {
         buffered_writer.flush() catch {
             @panic("OOM");
         };
-
+        JSC.markBinding(@src());
         WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.create(array.toOwnedSliceLeaky()), error_instance);
     }
 
@@ -285,7 +286,7 @@ pub const WebWorker = struct {
         _ = promise.result(vm.global.vm());
 
         this.flushLogs();
-
+        JSC.markBinding(@src());
         WebWorker__dispatchOnline(this.cpp_worker, vm.global);
         this.setStatus(.running);
 

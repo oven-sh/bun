@@ -1,4 +1,5 @@
 // I would have made this a bash script but there isn't an easy way to track
+// time in bash sub-second cross platform.
 import fs from "fs";
 const start = Date.now() + 5;
 const result = Bun.spawnSync(process.argv.slice(2), {

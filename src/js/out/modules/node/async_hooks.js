@@ -1,21 +1,37 @@
+function throwNotImplemented(feature, issue) {
+  throw hideFromStack(throwNotImplemented), new NotImplementedError(feature, issue);
+}
+function hideFromStack(...fns) {
+  for (let fn of fns)
+    Object.defineProperty(fn, "name", {
+      value: "::bunternal::"
+    });
+}
+
+class NotImplementedError extends Error {
+  code;
+  constructor(feature, issue) {
+    super(feature + " is not yet implemented in Bun." + (issue ? " Track the status & thumbs up the issue: https://github.com/oven-sh/bun/issues/" + issue : ""));
+    this.name = "NotImplementedError", this.code = "ERR_NOT_IMPLEMENTED", hideFromStack(NotImplementedError);
+  }
+}
+
+// src/js/node/async_hooks.ts
 var createWarning = function(message) {
   if (process.env.NODE_NO_WARNINGS || process.env.BUN_NO_WARNINGS)
     return () => {
     };
   let warned = !1;
-  return function() {
+  var x = (0, function() {
     if (warned)
       return;
     warned = !0, process.emitWarning(message);
-  };
+  });
+  return hideFromStack(x), x;
 }, createHook = function(callbacks) {
   return {
-    enable() {
-      createHookNotImpl();
-    },
-    disable() {
-      createHookNotImpl();
-    }
+    enable: createHookNotImpl,
+    disable: createHookNotImpl
   };
 }, executionAsyncId = function() {
   return executionAsyncIdNotImpl(), 0;

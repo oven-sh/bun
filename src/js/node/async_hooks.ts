@@ -21,6 +21,8 @@
 // AsyncContextFrame is an immutable array managed in here, formatted [key, value, key, value] where
 // each key is an AsyncLocalStorage object and the value is the associated value.
 //
+import { hideFromStack } from "../shared";
+
 const { get, set, cleanupLater } = $lazy("async_hooks");
 
 class AsyncLocalStorage {
@@ -193,11 +195,15 @@ class AsyncResource {
 function createWarning(message) {
   if (process.env.NODE_NO_WARNINGS || process.env.BUN_NO_WARNINGS) return () => {};
   let warned = false;
-  return function () {
-    if (warned) return;
-    warned = true;
-    process.emitWarning(message);
-  };
+  var x =
+    (0,
+    function () {
+      if (warned) return;
+      warned = true;
+      process.emitWarning(message);
+    });
+  hideFromStack(x);
+  return x;
 }
 
 const createHookNotImpl = createWarning(
@@ -206,12 +212,8 @@ const createHookNotImpl = createWarning(
 
 function createHook(callbacks) {
   return {
-    enable() {
-      createHookNotImpl();
-    },
-    disable() {
-      createHookNotImpl();
-    },
+    enable: createHookNotImpl,
+    disable: createHookNotImpl,
   };
 }
 

@@ -833,6 +833,12 @@ export function onPullDirectStream(controller) {
   var deferClose;
   var deferFlush;
 
+  var asyncContext = stream.$asyncContext;
+  if (asyncContext) {
+    var prev = $getInternalField($asyncContext, 0);
+    $putInternalField($asyncContext, 0, asyncContext);
+  }
+
   // Direct streams allow $pull to be called multiple times, unlike the spec.
   // Backpressure is handled by the destination, not by the underlying source.
   // In this case, we rely on the heuristic that repeatedly draining in the same tick
@@ -855,6 +861,10 @@ export function onPullDirectStream(controller) {
     deferClose = controller._deferClose;
     deferFlush = controller._deferFlush;
     controller._deferFlush = controller._deferClose = 0;
+
+    if (asyncContext) {
+      $putInternalField($asyncContext, 0, prev);
+    }
   }
 
   var promiseToReturn;

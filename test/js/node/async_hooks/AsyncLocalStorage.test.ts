@@ -1,4 +1,4 @@
-import { AsyncLocalStorage } from "async_hooks";
+import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { beforeEach, describe, expect, test } from "bun:test";
 
 describe("AsyncLocalStorage", () => {
@@ -396,7 +396,6 @@ describe("async context passes through", () => {
       stream = new ReadableStream({
         type: "direct",
         pull(controller) {
-          console.log("pull");
           value = s.getStore();
           controller.write("hello");
           controller.close();
@@ -423,7 +422,6 @@ describe("async context passes through", () => {
       stream = new ReadableStream({
         type: "direct",
         pull(controller) {
-          console.log("pull");
           value = s.getStore();
           controller.write("hello");
         },

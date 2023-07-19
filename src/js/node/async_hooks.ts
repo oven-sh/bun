@@ -193,17 +193,18 @@ class AsyncResource {
 // The rest of async_hooks is not implemented and is stubbed with no-ops and warnings.
 
 function createWarning(message) {
-  if (process.env.NODE_NO_WARNINGS || process.env.BUN_NO_WARNINGS) return () => {};
   let warned = false;
-  var x =
-    (0,
-    function () {
-      if (warned) return;
-      warned = true;
-      process.emitWarning(message);
-    });
-  hideFromStack(x);
-  return x;
+  var wrapped = function () {
+    if (warned) return;
+
+    // zx does not need createHook to function
+    const isFromZX = new Error().stack.includes("zx/build/core.js");
+    if (isFromZX) return;
+
+    warned = true;
+    console.warn("[bun] Warning:", message);
+  };
+  return wrapped;
 }
 
 const createHookNotImpl = createWarning(

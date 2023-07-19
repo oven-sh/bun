@@ -2814,16 +2814,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObj
 
     size_t argCount = callframe->argumentCount();
     switch (argCount) {
-    case 2: {
-        break;
-    }
     case 3: {
-        arguments.append(callframe->uncheckedArgument(1));
+        arguments.append(callframe->uncheckedArgument(2));
         break;
     }
     case 4: {
-        arguments.append(callframe->uncheckedArgument(1));
         arguments.append(callframe->uncheckedArgument(2));
+        arguments.append(callframe->uncheckedArgument(3));
         break;
     }
     default:
@@ -2881,11 +2878,24 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotaskVariadic, (JSGlobalObject * g
     WTF::NakedPtr<JSC::Exception> exceptionPtr;
     JSValue thisValue = jsUndefined();
 
-    if (callframe->argumentCount() > 2) {
-        thisValue = callframe->argument(2);
+    if (callframe->argumentCount() > 3) {
+        thisValue = callframe->argument(3);
+    }
+
+    JSValue restoreAsyncContext = {};
+    InternalFieldTuple* asyncContextData = nullptr;
+    auto setAsyncContext = callframe->argument(2);
+    if (!setAsyncContext.isUndefined()) {
+        asyncContextData = globalObject->m_asyncContextData.get();
+        restoreAsyncContext = asyncContextData->getInternalField(0);
+        asyncContextData->putInternalField(vm, 0, setAsyncContext);
     }
 
     JSC::call(globalObject, job, callData, thisValue, arguments, exceptionPtr);
+
+    if (asyncContextData) {
+        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+    }
 
     if (auto* exception = exceptionPtr.get()) {
         Bun__reportUnhandledError(globalObject, JSValue::encode(exception));

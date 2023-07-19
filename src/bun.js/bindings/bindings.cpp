@@ -2550,9 +2550,9 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC__JSPromise* promise, JSC__J
         globalObject->queueMicrotask(
             globalObject->performMicrotaskFunction(),
             globalObject->rejectPromiseFunction(),
+            globalObject->m_asyncContextData.get()->getInternalField(0),
             promise,
-            value,
-            JSValue {});
+            value);
         RETURN_IF_EXCEPTION(scope, void());
     }
 }
@@ -4338,14 +4338,14 @@ extern "C" size_t JSC__VM__externalMemorySize(JSC__VM* vm)
 #endif
 }
 
-extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue JSValue2, JSC__JSValue JSValue3, JSC__JSValue JSValue4)
+extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue JSValue3, JSC__JSValue JSValue4)
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
     JSC::VM& vm = globalObject->vm();
     globalObject->queueMicrotask(
         JSValue(globalObject->performMicrotaskFunction()),
         JSC::JSValue::decode(JSValue1),
-        JSC::JSValue::decode(JSValue2),
+        globalObject->m_asyncContextData.get()->getInternalField(0),
         JSC::JSValue::decode(JSValue3),
         JSC::JSValue::decode(JSValue4));
 }

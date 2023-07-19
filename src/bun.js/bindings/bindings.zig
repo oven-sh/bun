@@ -2759,7 +2759,6 @@ pub const JSGlobalObject = extern struct {
             function,
             if (args.len > 0) args[0] else .zero,
             if (args.len > 1) args[1] else .zero,
-            if (args.len > 2) args[2] else .zero,
         );
     }
 
@@ -2768,14 +2767,12 @@ pub const JSGlobalObject = extern struct {
         function: JSValue,
         first: JSValue,
         second: JSValue,
-        third: JSValue,
     ) void {
         shim.cppFn("queueMicrotaskJob", .{
             this,
             function,
             first,
             second,
-            third,
         });
     }
 

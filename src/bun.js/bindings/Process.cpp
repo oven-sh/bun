@@ -208,7 +208,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
         }
 
         global->queueMicrotask(
-            global->performMicrotaskVariadicFunction(), job, args, JSValue {}, JSC::JSValue {});
+            global->performMicrotaskVariadicFunction(), job, args, asyncContextValue, JSC::JSValue {});
 
         break;
     }

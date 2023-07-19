@@ -1,4 +1,4 @@
-import { connect, createServer, Server, TLSSocket } from "tls";
+import tls, { rootCertificates, connect, createServer, Server, TLSSocket } from "tls";
 import type { PeerCertificate } from "tls";
 import { realpathSync, readFileSync } from "fs";
 import { tmpdir } from "os";
@@ -644,4 +644,16 @@ describe("tls.createServer events", () => {
       }),
     );
   });
+});
+
+it("tls.rootCertificates should exists", () => {
+  expect(tls.rootCertificates).toBeDefined();
+  expect(tls.rootCertificates).toBeInstanceOf(Array);
+  expect(tls.rootCertificates.length).toBeGreaterThan(0);
+  expect(typeof tls.rootCertificates[0]).toBe("string");
+
+  expect(rootCertificates).toBeDefined();
+  expect(rootCertificates).toBeInstanceOf(Array);
+  expect(rootCertificates.length).toBeGreaterThan(0);
+  expect(typeof rootCertificates[0]).toBe("string");
 });

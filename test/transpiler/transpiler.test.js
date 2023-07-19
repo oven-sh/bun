@@ -106,6 +106,13 @@ describe("Bun.Transpiler", () => {
       ts.expectPrinted_("import Foo = Baz.Bar;\nexport default Foo;", "const Foo = Baz.Bar;\nexport default Foo");
     });
 
+    it("ternary should parse correctly when parsing typescript fails", () => {
+      ts.expectPrinted_(
+        "var c = Math.random() ? ({ ...{} }) : ({ ...{} })",
+        "var c = Math.random() ? { ...{} } : { ...{} }",
+      );
+    });
+
     it.todo("instantiation expressions", async () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;

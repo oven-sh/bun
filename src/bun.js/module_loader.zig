@@ -1697,6 +1697,12 @@ pub const ModuleLoader = struct {
                 // so it consistently handles bundled imports
                 // we can't take the shortcut of just directly importing the file, sadly.
                 .@"bun:main" => {
+                    defer {
+                        if (jsc_vm.worker) |worker| {
+                            worker.queueInitialTask();
+                        }
+                    }
+
                     if (comptime disable_transpilying) {
                         return ResolvedSource{
                             .allocator = null,

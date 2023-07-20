@@ -2327,8 +2327,9 @@ pub const E = struct {
                 strings.eqlComptimeUTF16(s.slice16()[0..value.len], value);
         }
 
-        pub fn string(s: *const String, allocator: std.mem.Allocator) !bun.string {
+        pub fn string(s: *String, allocator: std.mem.Allocator) !bun.string {
             if (s.isUTF8()) {
+                s.resolveRopeIfNeeded(allocator);
                 return s.data;
             } else {
                 return strings.toUTF8Alloc(allocator, s.slice16());

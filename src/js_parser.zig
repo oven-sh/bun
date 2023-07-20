@@ -5141,7 +5141,6 @@ fn NewParser_(
                         return Expr{ .data = nullExprData, .loc = arg.loc };
                     }
 
-                    str.resolveRopeIfNeeded(p.allocator);
                     const pathname = str.string(p.allocator) catch unreachable;
                     const path = fs.Path.init(pathname);
 
@@ -18866,7 +18865,7 @@ fn NewParser_(
                     p.should_fold_typescript_constant_expressions = true;
                     for (data.values) |*enum_value| {
                         // gotta allocate here so it lives after this function stack frame goes poof
-                        const name = enum_value.name;
+                        var name = enum_value.name;
                         var assign_target: Expr = Expr{ .loc = logger.Loc.Empty, .data = Prefill.Data.EMissing };
                         var has_string_value = false;
 

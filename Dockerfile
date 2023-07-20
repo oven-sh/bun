@@ -20,7 +20,7 @@ ARG ZIG_FILENAME=${ZIG_FOLDERNAME}.tar.xz
 ARG WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/$WEBKIT_TAG/${WEBKIT_BASENAME}.tar.gz"
 ARG ZIG_URL="https://ziglang.org/builds/${ZIG_FILENAME}"
 ARG GIT_SHA=""
-ARG BUN_BASE_VERSION=0.6
+ARG BUN_BASE_VERSION=0.7
 
 FROM bitnami/minideb:bullseye as bun-base
 

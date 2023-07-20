@@ -65,8 +65,18 @@ brew install bun
 # with Docker
 docker pull oven/bun
 docker run --rm --init --ulimit memlock=-1:-1 oven/bun
-```
 
+# with Proto
+$ proto install bun
+
+# with asdf
+# add the bun plugin for asdf if not installed
+# asdf lets you have multiple versions of bun installed
+$ asdf plugin-add bun
+# Install/use latest version
+$ asdf install bun latest
+$ asdf global bun latest
+```
 ### Upgrade
 
 To upgrade to the latest version of Bun, run:
@@ -74,6 +84,14 @@ To upgrade to the latest version of Bun, run:
 ```sh
 bun upgrade
 ```
+
+{% callout %}
+**Homebrew users** - To avoid conflicts with Homebrew, use `brew upgrade bun` instead.
+
+**proto users** - Use `proto install bun --pin` instead.
+
+**asdf users** - Use `asdf install bun latest` and `asdf global bun latest` instead.
+{% /callout %}
 
 Bun automatically releases a canary build on every commit to `main`. To upgrade to the latest canary build, run:
 

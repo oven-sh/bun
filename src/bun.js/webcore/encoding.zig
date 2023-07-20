@@ -630,11 +630,13 @@ pub const TextDecoder = struct {
                     } else |err| {
                         switch (err) {
                             error.InvalidByteSequence => {
-                                globalThis.throw("Invalid byte sequence", .{});
+                                globalThis.throwValue(
+                                    globalThis.createTypeErrorInstance("Invalid byte sequence", .{}),
+                                );
                                 return JSValue.zero;
                             },
                             error.OutOfMemory => {
-                                globalThis.throw("Out of memory", .{});
+                                globalThis.throwOutOfMemory();
                                 return JSValue.zero;
                             },
                         }
@@ -647,7 +649,7 @@ pub const TextDecoder = struct {
                     } else |err| {
                         switch (err) {
                             error.OutOfMemory => {
-                                globalThis.throw("Out of memory", .{});
+                                globalThis.throwOutOfMemory();
                                 return JSValue.zero;
                             },
                         }
@@ -676,26 +678,59 @@ pub const TextDecoder = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) ?*TextDecoder {
-        var args_ = callframe.arguments(1);
+        var args_ = callframe.arguments(2);
         var arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
 
-        var encoding = EncodingLabel.@"UTF-8";
+        var decoder = TextDecoder{};
+
         if (arguments.len > 0) {
-            if (!arguments[0].isString()) {
+            // encoding
+            if (arguments[0].isString()) {
+                var str = arguments[0].toSlice(globalThis, default_allocator);
+                defer if (str.isAllocated()) str.deinit();
+
+                if (EncodingLabel.which(str.slice())) |label| {
+                    decoder.encoding = label;
+                } else {
+                    globalThis.throwInvalidArguments("Unsupported encoding label \"{s}\"", .{str.slice()});
+                    return null;
+                }
+            } else {
                 globalThis.throwInvalidArguments("TextDecoder(encoding) label is invalid", .{});
                 return null;
             }
 
-            var str = arguments[0].toSlice(globalThis, default_allocator);
-            defer if (str.isAllocated()) str.deinit();
-            encoding = EncodingLabel.which(str.slice()) orelse {
-                globalThis.throwInvalidArguments("Unsupported encoding label \"{s}\"", .{str.slice()});
-                return null;
-            };
+            if (arguments.len >= 2) {
+                const options = arguments[1];
+
+                if (!options.isObject()) {
+                    globalThis.throwInvalidArguments("TextDecoder(options) is invalid", .{});
+                    return null;
+                }
+
+                if (options.get(globalThis, "fatal")) |fatal| {
+                    if (fatal.isBoolean()) {
+                        decoder.fatal = fatal.asBoolean();
+                    } else {
+                        globalThis.throwInvalidArguments("TextDecoder(options) fatal is invalid. Expected boolean value", .{});
+                        return null;
+                    }
+                }
+
+                if (options.get(globalThis, "ignoreBOM")) |ignoreBOM| {
+                    if (ignoreBOM.isBoolean()) {
+                        decoder.ignore_bom = ignoreBOM.asBoolean();
+                    } else {
+                        globalThis.throwInvalidArguments("TextDecoder(options) ignoreBOM is invalid. Expected boolean value", .{});
+                        return null;
+                    }
+                }
+            }
         }
-        var decoder = getAllocator(globalThis).create(TextDecoder) catch unreachable;
-        decoder.* = TextDecoder{ .encoding = encoding };
-        return decoder;
+
+        var result = getAllocator(globalThis).create(TextDecoder) catch unreachable;
+        result.* = decoder;
+        return result;
     }
 };
 

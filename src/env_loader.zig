@@ -484,12 +484,12 @@ pub const Loader = struct {
 
         var file = dir.openFile(base, .{ .mode = .read_only }) catch |err| {
             switch (err) {
-                error.FileNotFound => {
+                error.IsDir, error.FileNotFound => {
                     // prevent retrying
                     @field(this, base) = logger.Source.initPathString(base, "");
                     return;
                 },
-                error.FileBusy, error.DeviceBusy, error.AccessDenied, error.IsDir => {
+                error.Unexpected, error.FileBusy, error.DeviceBusy, error.AccessDenied => {
                     if (!this.quiet) {
                         Output.prettyErrorln("<r><red>{s}<r> error loading {s} file", .{ @errorName(err), base });
                     }
@@ -508,14 +508,27 @@ pub const Loader = struct {
         const stat = try file.stat();
         const end = stat.size;
 
-        if (end == 0) {
+        if (end == 0 or stat.kind != .file) {
             @field(this, base) = logger.Source.initPathString(base, "");
             return;
         }
 
         var buf = try this.allocator.alloc(u8, end + 1);
         errdefer this.allocator.free(buf);
-        const amount_read = try file.readAll(buf[0..end]);
+        const amount_read = file.readAll(buf[0..end]) catch |err| switch (err) {
+            error.Unexpected, error.SystemResources, error.OperationAborted, error.BrokenPipe, error.AccessDenied, error.IsDir => {
+                if (!this.quiet) {
+                    Output.prettyErrorln("<r><red>{s}<r> error loading {s} file", .{ @errorName(err), base });
+                }
+
+                // prevent retrying
+                @field(this, base) = logger.Source.initPathString(base, "");
+                return;
+            },
+            else => {
+                return err;
+            },
+        };
 
         // The null byte here is mostly for debugging purposes.
         buf[end] = 0;

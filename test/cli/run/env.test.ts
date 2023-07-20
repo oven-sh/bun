@@ -318,3 +318,15 @@ test(".env with zero length strings", () => {
   const { stdout } = bunRun(`${dir}/index.ts`);
   expect(stdout).toBe("||0|0");
 });
+
+test(".env in a folder doesn't throw an error", () => {
+  const dir = tempDirWithFiles("dotenv-issue-3670", {
+    ".env": {
+      ".env.local": "FOO=''\n",
+    },
+    "index.ts": "console.write('hey')",
+    "package.json": '{ "name": ' + '"test"' + " }",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(stdout).toBe("hey");
+});

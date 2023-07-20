@@ -3,7 +3,7 @@
   "module": "index.ts",
   "type": "module",
   "devDependencies": {
-    "bun-types": "0.6.12",
+    "bun-types": "0.7.0",
     "prisma": "5.0.0"
   },
   "peerDependencies": {

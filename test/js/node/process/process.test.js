@@ -455,9 +455,9 @@ for (const stub of arrayStubs) {
   });
 }
 
-const emptyObjectStubs = ["_preload_modules"];
+const emptyObjectStubs = [];
 const emptySetStubs = ["allowedNodeEnvironmentFlags"];
-const emptyArrayStubs = ["moduleLoadList"];
+const emptyArrayStubs = ["moduleLoadList", "_preload_modules"];
 
 for (const stub of emptyObjectStubs) {
   it(`process.${stub}`, () => {

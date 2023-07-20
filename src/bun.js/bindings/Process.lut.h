@@ -202,7 +202,7 @@ static const struct HashTableValue processObjectTableValues[62] = {
    { "_getActiveRequests"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, Process_stubFunctionReturningArray, 0 } },
    { "_getActiveHandles"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, Process_stubFunctionReturningArray, 0 } },
    { "_linkedBinding"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, Process_stubEmptyFunction, 0 } },
-   { "_preload_modules"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, Process_stubEmptyObject } },
+   { "_preload_modules"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, Process_stubEmptyArray } },
    { "_rawDebug"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, Process_stubEmptyFunction, 0 } },
    { "_startProfilerIdleNotifier"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, Process_stubEmptyFunction, 0 } },
    { "_stopProfilerIdleNotifier"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, Process_stubEmptyFunction, 0 } },

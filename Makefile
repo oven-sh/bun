@@ -1489,7 +1489,7 @@ generate-classes:
 generate-sink:
 	bun src/bun.js/scripts/generate-jssink.js
 	$(CLANG_FORMAT) -i  src/bun.js/bindings/JSSink.cpp  src/bun.js/bindings/JSSink.h
-	$(WEBKIT_DIR)/Source/JavaScriptCore/create_hash_table src/bun.js/bindings/JSSink.cpp > src/bun.js/bindings/JSSinkLookupTable.h
+	./src/bun.js/scripts/create_hash_table src/bun.js/bindings/JSSink.cpp > src/bun.js/bindings/JSSinkLookupTable.h
 	$(SED) -i -e 's/#include "Lookup.h"//' src/bun.js/bindings/JSSinkLookupTable.h
 	$(SED) -i -e 's/namespace JSC {//' src/bun.js/bindings/JSSinkLookupTable.h
 	$(SED) -i -e 's/} \/\/ namespace JSC//' src/bun.js/bindings/JSSinkLookupTable.h

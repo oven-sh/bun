@@ -23,10 +23,8 @@ worker.terminate();
 
 // Bun.pathToFileURL
 const _worker3 = new Worker(new URL("worker.ts", import.meta.url).href, {
-  bun: {
-    ref: true,
-    smol: true,
-  },
+  ref: true,
+  smol: true,
 });
 
 export { worker, _worker2, _worker3 };

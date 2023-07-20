@@ -184,6 +184,8 @@ template<> JSValue JSDOMFormDataDOMConstructor::prototypeForStructure(JSC::VM& v
     return globalObject.functionPrototype();
 }
 
+extern "C" EncodedJSValue FormData__jsFunctionFromMultipartData(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe);
+
 template<> void JSDOMFormDataDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
     putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
@@ -191,6 +193,7 @@ template<> void JSDOMFormDataDOMConstructor::initializeProperties(VM& vm, JSDOMG
     m_originalName.set(vm, this, nameString);
     putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     putDirect(vm, vm.propertyNames->prototype, JSDOMFormData::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    putDirectNativeFunction(vm, &globalObject, vm.propertyNames->from, 1, FormData__jsFunctionFromMultipartData, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
 }
 
 /* Hash table for prototype */

@@ -1775,7 +1775,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
   _getActiveRequests               Process_stubFunctionReturningArray       Function 0
   _getActiveHandles                Process_stubFunctionReturningArray       Function 0
   _linkedBinding                   Process_stubEmptyFunction                Function 0
-  _preload_modules                 Process_stubEmptyObject                  PropertyCallback
+  _preload_modules                 Process_stubEmptyArray                   PropertyCallback
   _rawDebug                        Process_stubEmptyFunction                Function 0
   _startProfilerIdleNotifier       Process_stubEmptyFunction                Function 0
   _stopProfilerIdleNotifier        Process_stubEmptyFunction                Function 0

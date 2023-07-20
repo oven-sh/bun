@@ -1869,6 +1869,16 @@ pub const VirtualMachine = struct {
         return promise;
     }
 
+    // worker dont has bun_watcher and also we dont wanna call autoTick before dispatchOnline
+    pub fn loadEntryPointForWebWorker(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
+        var promise = try this.reloadEntryPoint(entry_path);
+        this.eventLoop().performGC();
+        this.waitForPromise(JSC.AnyPromise{
+            .Internal = promise,
+        });
+        return this.pending_internal_promise;
+    }
+
     pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
         var promise = try this.reloadEntryPoint(entry_path);
 

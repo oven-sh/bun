@@ -266,7 +266,7 @@ pub const WebWorker = struct {
         std.debug.assert(this.status == .start);
         this.setStatus(.starting);
 
-        var promise = vm.loadEntryPoint(this.specifier) catch {
+        var promise = vm.loadEntryPointForWebWorker(this.specifier) catch {
             this.flushLogs();
             this.onTerminate();
             return;
@@ -298,8 +298,10 @@ pub const WebWorker = struct {
             vm.global.vm().releaseWeakRefs();
             _ = vm.arena.gc(false);
             _ = vm.global.vm().runGC(false);
-            vm.tick();
         }
+
+        // always doing a first tick so we call CppTask without delay after dispatchOnline
+        vm.tick();
 
         {
             while (true) {

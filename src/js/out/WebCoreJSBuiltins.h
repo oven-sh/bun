@@ -4582,6 +4582,14 @@ extern const JSC::ConstructAbility s_readableStreamReadableStreamToArrayBufferCo
 extern const JSC::ConstructorKind s_readableStreamReadableStreamToArrayBufferCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToArrayBufferCodeImplementationVisibility;
 
+// readableStreamToFormData
+#define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOFORMDATA 1
+extern const char* const s_readableStreamReadableStreamToFormDataCode;
+extern const int s_readableStreamReadableStreamToFormDataCodeLength;
+extern const JSC::ConstructAbility s_readableStreamReadableStreamToFormDataCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamReadableStreamToFormDataCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToFormDataCodeImplementationVisibility;
+
 // readableStreamToJSON
 #define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOJSON 1
 extern const char* const s_readableStreamReadableStreamToJSONCode;
@@ -4691,6 +4699,7 @@ extern const JSC::ImplementationVisibility s_readableStreamLazyAsyncIteratorCode
     macro(readableStreamToArray, readableStreamReadableStreamToArray, 1) \
     macro(readableStreamToText, readableStreamReadableStreamToText, 1) \
     macro(readableStreamToArrayBuffer, readableStreamReadableStreamToArrayBuffer, 1) \
+    macro(readableStreamToFormData, readableStreamReadableStreamToFormData, 3) \
     macro(readableStreamToJSON, readableStreamReadableStreamToJSON, 1) \
     macro(readableStreamToBlob, readableStreamReadableStreamToBlob, 1) \
     macro(consumeReadableStream, readableStreamConsumeReadableStream, 3) \
@@ -4710,6 +4719,7 @@ extern const JSC::ImplementationVisibility s_readableStreamLazyAsyncIteratorCode
     macro(readableStreamReadableStreamToArrayCode, readableStreamToArray, ASCIILiteral(), s_readableStreamReadableStreamToArrayCodeLength) \
     macro(readableStreamReadableStreamToTextCode, readableStreamToText, ASCIILiteral(), s_readableStreamReadableStreamToTextCodeLength) \
     macro(readableStreamReadableStreamToArrayBufferCode, readableStreamToArrayBuffer, ASCIILiteral(), s_readableStreamReadableStreamToArrayBufferCodeLength) \
+    macro(readableStreamReadableStreamToFormDataCode, readableStreamToFormData, ASCIILiteral(), s_readableStreamReadableStreamToFormDataCodeLength) \
     macro(readableStreamReadableStreamToJSONCode, readableStreamToJSON, ASCIILiteral(), s_readableStreamReadableStreamToJSONCodeLength) \
     macro(readableStreamReadableStreamToBlobCode, readableStreamToBlob, ASCIILiteral(), s_readableStreamReadableStreamToBlobCodeLength) \
     macro(readableStreamConsumeReadableStreamCode, consumeReadableStream, ASCIILiteral(), s_readableStreamConsumeReadableStreamCodeLength) \
@@ -4729,6 +4739,7 @@ extern const JSC::ImplementationVisibility s_readableStreamLazyAsyncIteratorCode
     macro(readableStreamToArray) \
     macro(readableStreamToText) \
     macro(readableStreamToArrayBuffer) \
+    macro(readableStreamToFormData) \
     macro(readableStreamToJSON) \
     macro(readableStreamToBlob) \
     macro(consumeReadableStream) \

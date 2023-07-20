@@ -708,11 +708,21 @@ pub const TextDecoder = struct {
                 }
 
                 if (options.get(globalThis, "fatal")) |fatal| {
-                    decoder.fatal = fatal.asBoolean();
+                    if (fatal.isBoolean()) {
+                        decoder.fatal = fatal.asBoolean();
+                    } else {
+                        globalThis.throwInvalidArguments("TextDecoder(options) fatal is invalid. Expected boolean value", .{});
+                        return null;
+                    }
                 }
 
                 if (options.get(globalThis, "ignoreBOM")) |ignoreBOM| {
-                    decoder.ignore_bom = ignoreBOM.asBoolean();
+                    if (ignoreBOM.isBoolean()) {
+                        decoder.ignore_bom = ignoreBOM.asBoolean();
+                    } else {
+                        globalThis.throwInvalidArguments("TextDecoder(options) ignoreBOM is invalid. Expected boolean value", .{});
+                        return null;
+                    }
                 }
             }
         }

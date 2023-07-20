@@ -238,6 +238,12 @@ describe("TextDecoder", () => {
     expect(decoder.fatal).toBe(true);
     // expect(decoder.ignoreBOM).toBe(false); // currently the getter for ignoreBOM doesn't work and always returns undefined
   });
+
+  it("should throw on invalid input", () => {
+    expect(() => {
+      const decoder = new TextDecoder("utf-8", { fatal: 10, ignoreBOM: {} });
+    }).toThrow();
+  });
 });
 
 it("truncated sequences", () => {

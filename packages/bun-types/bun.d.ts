@@ -306,9 +306,27 @@ declare module "bun" {
    * @param stream The stream to consume.
    * @params multipartBoundaryExcludingDashes Optional boundary to use for multipart form data. If none is provided, assumes it is a URLEncoded form.
    * @returns A promise that resolves with the data encoded into a {@link FormData} object.
+   *
+   * ## Multipart form data example
+   *
+   * ```ts
+   * // without dashes
+   * const boundary = "WebKitFormBoundary" + Math.random().toString(16).slice(2);
+   *
+   * const myStream = getStreamFromSomewhere() // ...
+   * const formData = await Bun.readableStreamToFormData(stream, boundary);
+   * formData.get("foo"); // "bar"
+   * ```
+   * ## URL-encoded form data example
+   *
+   * ```ts
+   * const stream = new Response("hello=123").body;
+   * const formData = await Bun.readableStreamToFormData(stream);
+   * formData.get("hello"); // "123"
+   * ```
    */
   export function readableStreamToFormData(
-    stream: ReadableStream,
+    stream: ReadableStream<string | TypedArray | ArrayBufferView>,
     multipartBoundaryExcludingDashes?: string | TypedArray | ArrayBufferView,
   ): Promise<FormData>;
 

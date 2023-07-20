@@ -155,6 +155,12 @@ describe("readableStreamToFormData", () => {
       ).toEqual(expected.toJSON());
     });
   }
+
+  test("URL-encoded example", async () => {
+    const stream = new Response("hello=123").body;
+    const formData = await Bun.readableStreamToFormData(stream);
+    expect(formData.get("hello")).toBe("123");
+  });
 });
 
 describe("WritableStream", () => {

@@ -1,4 +1,5 @@
 // https://github.com/oven-sh/bun/issues/3216
+import { test, expect } from "bun:test";
 import { tmpdir } from "os";
 import { mkdtempSync, writeFileSync } from "fs";
 import { join } from "path";

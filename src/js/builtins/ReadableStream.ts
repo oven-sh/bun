@@ -149,6 +149,16 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
 }
 
 $linkTimeConstant;
+export function readableStreamToFormData(
+  stream: ReadableStream<ArrayBuffer>,
+  contentType: string | ArrayBuffer | ArrayBufferView,
+): Promise<FormData> {
+  return Bun.readableStreamToBlob(stream).then(blob => {
+    return FormData.from(blob, contentType);
+  });
+}
+
+$linkTimeConstant;
 export function readableStreamToJSON(stream: ReadableStream): unknown {
   return Bun.readableStreamToText(stream).$then(globalThis.JSON.parse);
 }

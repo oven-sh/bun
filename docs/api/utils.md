@@ -460,6 +460,12 @@ await Bun.readableStreamToText(stream);
 // returns all chunks as an array
 await Bun.readableStreamToArray(stream);
 // => unknown[]
+
+// returns all chunks as a FormData object (encoded as x-www-form-urlencoded)
+await Bun.readableStreamToFormData(stream);
+
+// returns all chunks as a FormData object (encoded as multipart/form-data)
+await Bun.readableStreamToFormData(stream, multipartFormBoundary);
 ```
 
 ## `Bun.resolveSync()`

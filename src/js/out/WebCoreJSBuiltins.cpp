@@ -2492,6 +2492,14 @@ const int s_readableStreamReadableStreamToArrayBufferCodeLength = 270;
 static const JSC::Intrinsic s_readableStreamReadableStreamToArrayBufferCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamReadableStreamToArrayBufferCode = "(function (_){\"use strict\";var p=@getByIdDirectPrivate(_,\"underlyingSource\");if(p!==@undefined)return @readableStreamToArrayBufferDirect(_,p);var b=@Bun.readableStreamToArray(_);if(@isPromise(b))return b.then(@Bun.concatArrayBuffers);return @Bun.concatArrayBuffers(b)})\n";
 
+// readableStreamToFormData
+const JSC::ConstructAbility s_readableStreamReadableStreamToFormDataCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_readableStreamReadableStreamToFormDataCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamReadableStreamToFormDataCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
+const int s_readableStreamReadableStreamToFormDataCodeLength = 106;
+static const JSC::Intrinsic s_readableStreamReadableStreamToFormDataCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_readableStreamReadableStreamToFormDataCode = "(function (r,d){\"use strict\";return @Bun.readableStreamToBlob(r).then((u)=>{return FormData.from(u,d)})})\n";
+
 // readableStreamToJSON
 const JSC::ConstructAbility s_readableStreamReadableStreamToJSONCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamReadableStreamToJSONCodeConstructorKind = JSC::ConstructorKind::None;

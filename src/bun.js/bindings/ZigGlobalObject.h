@@ -377,6 +377,7 @@ public:
     mutable WriteBarrier<JSFunction> m_readableStreamToBlob;
     mutable WriteBarrier<JSFunction> m_readableStreamToJSON;
     mutable WriteBarrier<JSFunction> m_readableStreamToText;
+    mutable WriteBarrier<JSFunction> m_readableStreamToFormData;
     mutable WriteBarrier<Unknown> m_JSBufferSetterValue;
     mutable WriteBarrier<Unknown> m_JSFetchHeadersSetterValue;
     mutable WriteBarrier<Unknown> m_JSMessageEventSetterValue;

@@ -1661,7 +1661,7 @@ JSC:
             return JSValue::encode(obj);
         }
 
-        if(string == "rootCertificates"_s) {
+        if (string == "rootCertificates"_s) {
             auto sourceOrigin = callFrame->callerSourceOrigin(vm).url();
             bool isBuiltin = sourceOrigin.protocolIs("builtin"_s);
             if (!isBuiltin) {
@@ -1673,7 +1673,7 @@ JSC:
                 return JSValue::encode(JSC::jsUndefined());
             }
             auto rootCertificates = JSC::JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), size);
-            for(auto i = 0; i < size; i++) {
+            for (auto i = 0; i < size; i++) {
                 auto raw = out[i];
                 auto str = WTF::String::fromUTF8(raw.str, raw.len);
                 rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
@@ -2575,7 +2575,6 @@ extern "C" JSC__JSValue Bun__Jest__testModuleObject(Zig::GlobalObject* globalObj
     return JSValue::encode(globalObject->lazyTestModuleObject());
 }
 
-static inline JSC__JSValue ZigGlobalObject__readableStreamToArrayBufferBody(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue);
 static inline JSC__JSValue ZigGlobalObject__readableStreamToArrayBufferBody(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
 {
     auto& vm = globalObject->vm();
@@ -2602,7 +2601,6 @@ static inline JSC__JSValue ZigGlobalObject__readableStreamToArrayBufferBody(Zig:
         return JSValue::encode(result);
 
     if (UNLIKELY(!object)) {
-
         auto throwScope = DECLARE_THROW_SCOPE(vm);
         throwTypeError(globalObject, throwScope, "Expected object"_s);
         return JSValue::encode(jsUndefined());
@@ -2643,6 +2641,30 @@ extern "C" JSC__JSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject*
 
     JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
     arguments.append(JSValue::decode(readableStreamValue));
+
+    auto callData = JSC::getCallData(function);
+    return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
+}
+
+extern "C" JSC__JSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue, JSC__JSValue contentTypeValue)
+{
+    auto& vm = globalObject->vm();
+
+    auto clientData = WebCore::clientData(vm);
+    auto& builtinNames = WebCore::builtinNames(vm);
+
+    JSC::JSFunction* function = nullptr;
+    if (auto readableStreamToFormData = globalObject->m_readableStreamToFormData.get()) {
+        function = readableStreamToFormData;
+    } else {
+        function = JSFunction::create(vm, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToFormDataCodeGenerator(vm)), globalObject);
+
+        globalObject->m_readableStreamToFormData.set(vm, globalObject, function);
+    }
+
+    JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
+    arguments.append(JSValue::decode(readableStreamValue));
+    arguments.append(JSValue::decode(contentTypeValue));
 
     auto callData = JSC::getCallData(function);
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
@@ -4331,6 +4353,12 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         }
 
         {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "readableStreamToFormData"_s);
+            object->putDirectBuiltinFunction(vm, this, identifier, readableStreamReadableStreamToFormDataCodeGenerator(vm),
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        }
+
+        {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "readableStreamToText"_s);
             object->putDirectBuiltinFunction(vm, this, identifier, readableStreamReadableStreamToTextCodeGenerator(vm),
                 JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
@@ -4546,6 +4574,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_readableStreamToBlob);
     visitor.append(thisObject->m_readableStreamToJSON);
     visitor.append(thisObject->m_readableStreamToText);
+    visitor.append(thisObject->m_readableStreamToFormData);
 
     visitor.append(thisObject->m_JSTextDecoderSetterValue);
     visitor.append(thisObject->m_JSResponseSetterValue);

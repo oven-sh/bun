@@ -230,7 +230,7 @@ describe("TextDecoder", () => {
     const decoder = new TextDecoder("utf-8", { fatal: true });
     expect(() => {
       decoder.decode(new Uint8Array([0xC0])) // Invalid UTF8 
-    }).toThrow(); // should throw TypeError according to WHATWG Encoding Standard
+    }).toThrow(TypeError);
   });
 
   it("constructor should set values", () => {

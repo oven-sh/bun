@@ -630,11 +630,13 @@ pub const TextDecoder = struct {
                     } else |err| {
                         switch (err) {
                             error.InvalidByteSequence => {
-                                globalThis.throw("Invalid byte sequence", .{});
+                                globalThis.throwValue(
+                                    globalThis.createTypeErrorInstance("Invalid byte sequence", .{}),
+                                );
                                 return JSValue.zero;
                             },
                             error.OutOfMemory => {
-                                globalThis.throw("Out of memory", .{});
+                                globalThis.throwOutOfMemory();
                                 return JSValue.zero;
                             },
                         }
@@ -647,7 +649,7 @@ pub const TextDecoder = struct {
                     } else |err| {
                         switch (err) {
                             error.OutOfMemory => {
-                                globalThis.throw("Out of memory", .{});
+                                globalThis.throwOutOfMemory();
                                 return JSValue.zero;
                             },
                         }

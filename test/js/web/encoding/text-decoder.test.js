@@ -229,7 +229,7 @@ describe("TextDecoder", () => {
   it("should respect fatal when encountering invalid data", () => {
     const decoder = new TextDecoder("utf-8", { fatal: true });
     expect(() => {
-      decoder.decode(new Uint8Array([0xC0])) // Invalid UTF8 
+      decoder.decode(new Uint8Array([0xc0])); // Invalid UTF8
     }).toThrow(TypeError);
   });
 

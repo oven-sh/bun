@@ -5141,6 +5141,7 @@ fn NewParser_(
                         return Expr{ .data = nullExprData, .loc = arg.loc };
                     }
 
+                    str.resolveRopeIfNeeded(p.allocator);
                     const pathname = str.string(p.allocator) catch unreachable;
                     const path = fs.Path.init(pathname);
 

@@ -1239,8 +1239,8 @@ pub const VirtualMachine = struct {
         if (strings.hasPrefixComptime(specifier, "file://")) specifier = specifier["file://".len..];
 
         if (strings.indexOfChar(specifier, '?')) |i| {
-            specifier = specifier[0..i];
             query_string.* = specifier[i..];
+            specifier = specifier[0..i];
         }
 
         return specifier;
@@ -1323,6 +1323,7 @@ pub const VirtualMachine = struct {
                             var parts = [_]string{
                                 source_to_use,
                                 normalized_specifier,
+                                "../",
                             };
 
                             break :name bun.path.joinAbsStringBuf(

@@ -1,4 +1,13 @@
-import { dlopen, FFIType, suffix, CString, Pointer } from "bun:ffi";
+import {
+  dlopen,
+  FFIType,
+  suffix,
+  CString,
+  Pointer,
+  // FFIFunction,
+  // ConvertFns,
+  // Narrow,
+} from "bun:ffi";
 import * as tsd from "tsd";
 import * as tc from "conditional-type-checks";
 
@@ -76,18 +85,18 @@ tc.assert<
       number,
       number,
       number,
-      never,
-      never,
-      never,
-      never,
-      never,
-      never,
-      never,
-      never,
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
+      number,
       boolean,
       Pointer,
       Pointer,
-      never,
+      void,
       CString,
       number | bigint,
       number | bigint,

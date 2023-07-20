@@ -238,7 +238,7 @@ pub const Loader = struct {
 
                             e_strings[0] = js_ast.E.String{
                                 .data = if (value.len > 0)
-                                    @ptrFromInt([*]u8, @intFromPtr(value.ptr))[0..value.len]
+                                    @as([*]u8, @ptrFromInt(@intFromPtr(value.ptr)))[0..value.len]
                                 else
                                     &[_]u8{},
                             };
@@ -261,7 +261,7 @@ pub const Loader = struct {
                             if (std.mem.indexOfScalar(u64, string_map_hashes, hash)) |key_i| {
                                 e_strings[0] = js_ast.E.String{
                                     .data = if (value.len > 0)
-                                        @ptrFromInt([*]u8, @intFromPtr(value.ptr))[0..value.len]
+                                        @as([*]u8, @ptrFromInt(@intFromPtr(value.ptr)))[0..value.len]
                                     else
                                         &[_]u8{},
                                 };
@@ -287,7 +287,7 @@ pub const Loader = struct {
 
                         e_strings[0] = js_ast.E.String{
                             .data = if (entry.value_ptr.*.len > 0)
-                                @ptrFromInt([*]u8, @intFromPtr(entry.value_ptr.*.ptr))[0..value.len]
+                                @as([*]u8, @ptrFromInt(@intFromPtr(entry.value_ptr.*.ptr)))[0..value.len]
                             else
                                 &[_]u8{},
                         };
@@ -425,17 +425,17 @@ pub const Loader = struct {
 
     pub fn printLoaded(this: *Loader, start: i128) void {
         const count =
-            @intCast(u8, @intFromBool(this.@".env.development.local" != null)) +
-            @intCast(u8, @intFromBool(this.@".env.production.local" != null)) +
-            @intCast(u8, @intFromBool(this.@".env.test.local" != null)) +
-            @intCast(u8, @intFromBool(this.@".env.local" != null)) +
-            @intCast(u8, @intFromBool(this.@".env.development" != null)) +
-            @intCast(u8, @intFromBool(this.@".env.production" != null)) +
-            @intCast(u8, @intFromBool(this.@".env.test" != null)) +
-            @intCast(u8, @intFromBool(this.@".env" != null));
+            @as(u8, @intCast(@intFromBool(this.@".env.development.local" != null))) +
+            @as(u8, @intCast(@intFromBool(this.@".env.production.local" != null))) +
+            @as(u8, @intCast(@intFromBool(this.@".env.test.local" != null))) +
+            @as(u8, @intCast(@intFromBool(this.@".env.local" != null))) +
+            @as(u8, @intCast(@intFromBool(this.@".env.development" != null))) +
+            @as(u8, @intCast(@intFromBool(this.@".env.production" != null))) +
+            @as(u8, @intCast(@intFromBool(this.@".env.test" != null))) +
+            @as(u8, @intCast(@intFromBool(this.@".env" != null)));
 
         if (count == 0) return;
-        const elapsed = @floatFromInt(f64, (std.time.nanoTimestamp() - start)) / std.time.ns_per_ms;
+        const elapsed = @as(f64, @floatFromInt((std.time.nanoTimestamp() - start))) / std.time.ns_per_ms;
 
         const all = [_]string{
             ".env.development.local",
@@ -484,12 +484,12 @@ pub const Loader = struct {
 
         var file = dir.openFile(base, .{ .mode = .read_only }) catch |err| {
             switch (err) {
-                error.FileNotFound => {
+                error.IsDir, error.FileNotFound => {
                     // prevent retrying
                     @field(this, base) = logger.Source.initPathString(base, "");
                     return;
                 },
-                error.FileBusy, error.DeviceBusy, error.AccessDenied, error.IsDir => {
+                error.Unexpected, error.FileBusy, error.DeviceBusy, error.AccessDenied => {
                     if (!this.quiet) {
                         Output.prettyErrorln("<r><red>{s}<r> error loading {s} file", .{ @errorName(err), base });
                     }
@@ -508,14 +508,27 @@ pub const Loader = struct {
         const stat = try file.stat();
         const end = stat.size;
 
-        if (end == 0) {
+        if (end == 0 or stat.kind != .file) {
             @field(this, base) = logger.Source.initPathString(base, "");
             return;
         }
 
         var buf = try this.allocator.alloc(u8, end + 1);
         errdefer this.allocator.free(buf);
-        const amount_read = try file.readAll(buf[0..end]);
+        const amount_read = file.readAll(buf[0..end]) catch |err| switch (err) {
+            error.Unexpected, error.SystemResources, error.OperationAborted, error.BrokenPipe, error.AccessDenied, error.IsDir => {
+                if (!this.quiet) {
+                    Output.prettyErrorln("<r><red>{s}<r> error loading {s} file", .{ @errorName(err), base });
+                }
+
+                // prevent retrying
+                @field(this, base) = logger.Source.initPathString(base, "");
+                return;
+            },
+            else => {
+                return err;
+            },
+        };
 
         // The null byte here is mostly for debugging purposes.
         buf[end] = 0;

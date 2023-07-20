@@ -28,7 +28,7 @@ const mixed_decoder = brk: {
     });
 
     for (zig_base64.url_safe_alphabet_chars[62..], 62..) |c, i| {
-        decoder.decoder.char_to_index[c] = @intCast(u8, i);
+        decoder.decoder.char_to_index[c] = @as(u8, @intCast(i));
     }
 
     break :brk decoder;
@@ -189,12 +189,12 @@ const zig_base64 = struct {
                 acc_len += 8;
                 while (acc_len >= 6) {
                     acc_len -= 6;
-                    dest[out_idx] = encoder.alphabet_chars[@truncate(u6, (acc >> acc_len))];
+                    dest[out_idx] = encoder.alphabet_chars[@as(u6, @truncate((acc >> acc_len)))];
                     out_idx += 1;
                 }
             }
             if (acc_len > 0) {
-                dest[out_idx] = encoder.alphabet_chars[@truncate(u6, (acc << 6 - acc_len))];
+                dest[out_idx] = encoder.alphabet_chars[@as(u6, @truncate((acc << 6 - acc_len)))];
                 out_idx += 1;
             }
             if (encoder.pad_char) |pad_char| {
@@ -225,7 +225,7 @@ const zig_base64 = struct {
                 assert(!char_in_alphabet[c]);
                 assert(pad_char == null or c != pad_char.?);
 
-                result.char_to_index[c] = @intCast(u8, i);
+                result.char_to_index[c] = @as(u8, @intCast(i));
                 char_in_alphabet[c] = true;
             }
             return result;
@@ -277,7 +277,7 @@ const zig_base64 = struct {
                 acc_len += 6;
                 if (acc_len >= 8) {
                     acc_len -= 8;
-                    dest[dest_idx] = @truncate(u8, acc >> acc_len);
+                    dest[dest_idx] = @as(u8, @truncate(acc >> acc_len));
                     dest_idx += 1;
                 }
             }
@@ -362,7 +362,7 @@ const zig_base64 = struct {
                 if (acc_len >= 8) {
                     if (dest_idx == dest.len) return error.NoSpaceLeft;
                     acc_len -= 8;
-                    dest[dest_idx] = @truncate(u8, acc >> acc_len);
+                    dest[dest_idx] = @as(u8, @truncate(acc >> acc_len));
                     dest_idx += 1;
                 }
             }

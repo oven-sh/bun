@@ -194,8 +194,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         pub fn register(global: *JSC.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.C) void {
             var vm = global.bunVM();
-            var loop = @ptrCast(*uws.Loop, @alignCast(@alignOf(uws.Loop), loop_));
-            var ctx: *uws.SocketContext = @ptrCast(*uws.SocketContext, ctx_);
+            var loop = @as(*uws.Loop, @ptrCast(@alignCast(loop_)));
+            var ctx: *uws.SocketContext = @as(*uws.SocketContext, @ptrCast(ctx_));
 
             if (vm.uws_event_loop) |other| {
                 std.debug.assert(other == loop);
@@ -268,7 +268,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             if (Socket.connect(
                 display_host,
                 port,
-                @ptrCast(*uws.SocketContext, socket_ctx),
+                @as(*uws.SocketContext, @ptrCast(socket_ctx)),
                 HTTPClient,
                 client,
                 "tcp",
@@ -366,7 +366,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 return;
             }
 
-            this.to_send = this.input_body_buf[@intCast(usize, wrote)..];
+            this.to_send = this.input_body_buf[@as(usize, @intCast(wrote))..];
         }
 
         pub fn handleData(this: *HTTPClient, socket: Socket, data: []const u8) void {
@@ -410,7 +410,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 }
             };
 
-            this.processResponse(response, body[@intCast(usize, response.bytes_read)..]);
+            this.processResponse(response, body[@as(usize, @intCast(response.bytes_read))..]);
         }
 
         pub fn handleEnd(this: *HTTPClient, socket: Socket) void {
@@ -547,7 +547,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 this.terminate(ErrorCode.failed_to_write);
                 return;
             }
-            this.to_send = this.to_send[@min(@intCast(usize, wrote), this.to_send.len)..];
+            this.to_send = this.to_send[@min(@as(usize, @intCast(wrote)), this.to_send.len)..];
         }
         pub fn handleTimeout(
             this: *HTTPClient,
@@ -586,7 +586,7 @@ pub const Mask = struct {
         mask_buf.* = globalThis.bunVM().rareData().entropySlice(4)[0..4].*;
         const mask = mask_buf.*;
 
-        const skip_mask = @bitCast(u32, mask) == 0;
+        const skip_mask = @as(u32, @bitCast(mask)) == 0;
         if (!skip_mask) {
             fillWithSkipMask(mask, output_, input_, false);
         } else {
@@ -711,7 +711,7 @@ fn parseWebSocketHeader(
     // + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
     // |                     Payload Data continued ...                |
     // +---------------------------------------------------------------+
-    const header = @bitCast(WebsocketHeader, @byteSwap(@bitCast(u16, bytes)));
+    const header = @as(WebsocketHeader, @bitCast(@byteSwap(@as(u16, @bitCast(bytes)))));
     const payload = @as(usize, header.len);
     payload_length.* = payload;
     receiving_type.* = header.opcode;
@@ -787,13 +787,13 @@ const Copy = union(enum) {
         // 0, 2, 8 byte length
         var to_mask = buf[content_offset..];
 
-        var header = @bitCast(WebsocketHeader, @as(u16, 0));
+        var header = @as(WebsocketHeader, @bitCast(@as(u16, 0)));
 
         // Write extended length if needed
         switch (how_big_is_the_length_integer) {
             0 => {},
-            2 => std.mem.writeIntBig(u16, buf[2..][0..2], @truncate(u16, content_byte_len)),
-            8 => std.mem.writeIntBig(u64, buf[2..][0..8], @truncate(u64, content_byte_len)),
+            2 => std.mem.writeIntBig(u16, buf[2..][0..2], @as(u16, @truncate(content_byte_len))),
+            8 => std.mem.writeIntBig(u64, buf[2..][0..8], @as(u64, @truncate(content_byte_len))),
             else => unreachable,
         }
 
@@ -846,7 +846,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         outgoing_websocket: ?*CppWebSocket = null,
 
         receive_state: ReceiveState = ReceiveState.need_header,
-        receive_header: WebsocketHeader = @bitCast(WebsocketHeader, @as(u16, 0)),
+        receive_header: WebsocketHeader = @as(WebsocketHeader, @bitCast(@as(u16, 0))),
         receiving_type: Opcode = Opcode.ResB,
 
         ping_frame_bytes: [128 + 6]u8 = [_]u8{0} ** (128 + 6),
@@ -874,9 +874,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         pub fn register(global: *JSC.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.C) void {
             var vm = global.bunVM();
-            var loop = @ptrCast(*uws.Loop, @alignCast(@alignOf(uws.Loop), loop_));
+            var loop = @as(*uws.Loop, @ptrCast(@alignCast(loop_)));
 
-            var ctx: *uws.SocketContext = @ptrCast(*uws.SocketContext, ctx_);
+            var ctx: *uws.SocketContext = @as(*uws.SocketContext, @ptrCast(ctx_));
 
             if (vm.uws_event_loop) |other| {
                 std.debug.assert(other == loop);
@@ -935,6 +935,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn handleHandshake(this: *WebSocket, socket: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
+            JSC.markBinding(@src());
             _ = socket;
             _ = ssl_error;
             JSC.markBinding(@src());
@@ -1312,7 +1313,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             // fast path: no backpressure, no queue, just send the bytes.
             if (!this.hasBackpressure()) {
                 const wrote = socket.write(bytes, !is_closing);
-                const expected = @intCast(c_int, bytes.len);
+                const expected = @as(c_int, @intCast(bytes.len));
                 if (wrote == expected) {
                     return true;
                 }
@@ -1322,7 +1323,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     return false;
                 }
 
-                _ = this.copyToSendBuffer(bytes[@intCast(usize, wrote)..], false, is_closing);
+                _ = this.copyToSendBuffer(bytes[@as(usize, @intCast(wrote))..], false, is_closing);
                 return true;
             }
 
@@ -1369,7 +1370,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 this.terminate(ErrorCode.failed_to_write);
                 return false;
             }
-            const expected = @intCast(usize, wrote);
+            const expected = @as(usize, @intCast(wrote));
             var readable = this.send_buffer.readableSlice(0);
             if (readable.ptr == out_buf.ptr) {
                 this.send_buffer.discard(expected);
@@ -1388,15 +1389,15 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 return false;
             }
 
-            var header = @bitCast(WebsocketHeader, @as(u16, 0));
+            var header = @as(WebsocketHeader, @bitCast(@as(u16, 0)));
             header.final = true;
             header.opcode = .Pong;
 
             var to_mask = this.ping_frame_bytes[6..][0..this.ping_len];
 
             header.mask = to_mask.len > 0;
-            header.len = @truncate(u7, this.ping_len);
-            this.ping_frame_bytes[0..2].* = @bitCast([2]u8, header);
+            header.len = @as(u7, @truncate(this.ping_len));
+            this.ping_frame_bytes[0..2].* = @as([2]u8, @bitCast(header));
 
             if (to_mask.len > 0) {
                 Mask.fill(this.globalThis, this.ping_frame_bytes[2..6], to_mask, to_mask);
@@ -1422,12 +1423,12 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             socket.shutdownRead();
             var final_body_bytes: [128 + 8]u8 = undefined;
-            var header = @bitCast(WebsocketHeader, @as(u16, 0));
+            var header = @as(WebsocketHeader, @bitCast(@as(u16, 0)));
             header.final = true;
             header.opcode = .Close;
             header.mask = true;
-            header.len = @truncate(u7, body_len + 2);
-            final_body_bytes[0..2].* = @bitCast([2]u8, @bitCast(u16, header));
+            header.len = @as(u7, @truncate(body_len + 2));
+            final_body_bytes[0..2].* = @as([2]u8, @bitCast(@as(u16, @bitCast(header))));
             var mask_buf: *[4]u8 = final_body_bytes[2..6];
             std.mem.writeIntSliceBig(u16, final_body_bytes[6..8], code);
 
@@ -1489,7 +1490,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 return;
             }
 
-            const opcode = @enumFromInt(Opcode, @truncate(u4, op));
+            const opcode = @as(Opcode, @enumFromInt(@as(u4, @truncate(op))));
             const slice = ptr[0..len];
             const bytes = Copy{ .bytes = slice };
             // fast path: small frame, no backpressure, attempt to send without allocating
@@ -1516,7 +1517,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             // Note: 0 is valid
 
-            const opcode = @enumFromInt(Opcode, @truncate(u4, op));
+            const opcode = @as(Opcode, @enumFromInt(@as(u4, @truncate(op))));
             {
                 var inline_buf: [stack_frame_size]u8 = undefined;
 
@@ -1622,8 +1623,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             buffered_data: [*]u8,
             buffered_data_len: usize,
         ) callconv(.C) ?*anyopaque {
-            var tcp = @ptrCast(*uws.Socket, input_socket);
-            var ctx = @ptrCast(*uws.SocketContext, socket_ctx);
+            var tcp = @as(*uws.Socket, @ptrCast(input_socket));
+            var ctx = @as(*uws.SocketContext, @ptrCast(socket_ctx));
             var adopted = Socket.adopt(
                 tcp,
                 ctx,
@@ -1657,9 +1658,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 // before the initial data handler is called
                 outgoing.ref();
             }
-            return @ptrCast(
+            return @as(
                 *anyopaque,
-                adopted,
+                @ptrCast(adopted),
             );
         }
 

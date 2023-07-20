@@ -19,9 +19,9 @@ pub const Bitset = struct {
     pub fn isIdentifierStart(codepoint: i32) bool {
         return codepoint >= (comptime id_start_range[0]) and
             codepoint <= (comptime id_start_range[1]) and
-            id_start.isSet((comptime @intCast(usize, id_start_range[1])) - @intCast(
+            id_start.isSet((comptime @as(usize, @intCast(id_start_range[1]))) - @as(
             usize,
-            codepoint,
+            @intCast(codepoint),
         ));
     }
 
@@ -29,9 +29,9 @@ pub const Bitset = struct {
         return codepoint >= (comptime id_end_range[0]) and
             codepoint <= (comptime id_end_range[1]) and
             id_continue.isSet(
-            (comptime @intCast(usize, id_end_range[1])) - @intCast(
+            (comptime @as(usize, @intCast(id_end_range[1]))) - @as(
                 usize,
-                codepoint,
+                @intCast(codepoint),
             ),
         );
     }
@@ -46,7 +46,7 @@ pub const JumpTable = struct {
         @setCold(true);
         return switch (codepoint) {
             // explicitly tell LLVM's optimizer about values we know will not be in the range of this switch statement
-            0xaa...0xffd7 => isIdentifierPartSlow16(@intCast(u16, codepoint)),
+            0xaa...0xffd7 => isIdentifierPartSlow16(@as(u16, @intCast(codepoint))),
             (0xffd7 + 1)...0xe01ef => isIdentifierPartSlow32(codepoint),
             else => false,
         };
@@ -87,7 +87,7 @@ pub const JumpTable = struct {
             // explicitly tell LLVM's optimizer about values we know will not be in the range of this switch statement
 
             (max_codepoint + 1)...maxInt(i32), minInt(i32)...127 => unreachable,
-            128...0xfdc7 => isIdentifierStartSlow16(@intCast(u16, codepoint)),
+            128...0xfdc7 => isIdentifierStartSlow16(@as(u16, @intCast(codepoint))),
             0xfdf0...0x3134a => isIdentifierStartSlow32(codepoint),
             else => false,
         };

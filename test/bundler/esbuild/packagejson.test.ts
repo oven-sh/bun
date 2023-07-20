@@ -915,6 +915,82 @@ describe("bundler", () => {
       stdout: "browser main\nbrowser main",
     },
   });
+  itBundled("packagejson/DualPackageHazardMainFieldWithoutExtension", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        const { foo } = require("bar");
+        const { foo: foo2 } = await import("bar");
+        console.log(foo === foo2);
+      `,
+      "/Users/user/project/node_modules/bar/package.json": /* json */ `
+        {
+          "name": "bar",
+          "version": "2.0.0",
+          "main": "index"
+        }
+      `,
+      "/Users/user/project/node_modules/bar/index.js": /* js */ `
+        module.exports.foo = function() { return "cjs"; };
+      `,
+      "/Users/user/project/node_modules/bar/index.mjs": /* js */ `
+        export const foo = function(){ return "esm"; };
+      `,
+    },
+    run: {
+      stdout: "true",
+    },
+  });
+  itBundled("packagejson/DualPackageHazardModuleFieldAndMainFieldWithoutExtension", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        const { foo } = require("bar");
+        const { foo: foo2 } = await import("bar");
+        console.log(foo === foo2);
+      `,
+      "/Users/user/project/node_modules/bar/package.json": /* json */ `
+        {
+          "name": "bar",
+          "version": "2.0.0",
+          "main": "index",
+          "module": "index.mjs"
+        }
+      `,
+      "/Users/user/project/node_modules/bar/index.js": /* js */ `
+        module.exports.foo = function() { return "cjs"; };
+      `,
+      "/Users/user/project/node_modules/bar/index.mjs": /* js */ `
+        export const foo = function(){ return "esm"; };
+      `,
+    },
+    run: {
+      stdout: "true",
+    },
+  });
+  itBundled("packagejson/DualPackageHazardModuleFieldNoMainField", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        const { foo } = require("bar");
+        const { foo: foo2 } = await import("bar");
+        console.log(foo === foo2);
+      `,
+      "/Users/user/project/node_modules/bar/package.json": /* json */ `
+        {
+          "name": "bar",
+          "version": "2.0.0",
+          "module": "index.mjs"
+        }
+      `,
+      "/Users/user/project/node_modules/bar/index.js": /* js */ `
+        module.exports.foo = function() { return "cjs"; };
+      `,
+      "/Users/user/project/node_modules/bar/index.mjs": /* js */ `
+        export const foo = function(){ return "esm"; };
+      `,
+    },
+    run: {
+      stdout: "true",
+    },
+  });
   itBundled("packagejson/MainFieldsA", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `

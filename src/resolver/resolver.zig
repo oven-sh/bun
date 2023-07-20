@@ -283,10 +283,10 @@ pub const Result = struct {
         if (strings.lastIndexOf(module, node_module_root)) |end_| {
             var end: usize = end_ + node_module_root.len;
 
-            return @truncate(u32, bun.hash(module[end..]));
+            return @as(u32, @truncate(bun.hash(module[end..])));
         }
 
-        return @truncate(u32, bun.hash(this.path_pair.primary.text));
+        return @as(u32, @truncate(bun.hash(this.path_pair.primary.text)));
     }
 };
 
@@ -1262,7 +1262,7 @@ pub const Resolver = struct {
                 if (NodeFallbackModules.Map.get(import_path_without_node_prefix)) |*fallback_module| {
                     result.path_pair.primary = fallback_module.path;
                     result.module_type = .cjs;
-                    result.package_json = @ptrFromInt(*PackageJSON, @intFromPtr(fallback_module.package_json));
+                    result.package_json = @as(*PackageJSON, @ptrFromInt(@intFromPtr(fallback_module.package_json)));
                     result.is_from_node_modules = true;
                     return .{ .success = result };
                     // "node:*
@@ -1693,7 +1693,7 @@ pub const Resolver = struct {
                 // check the global cache directory for a package.json file.
                 var manager = r.getPackageManager();
                 var dependency_version = Dependency.Version{};
-                var dependency_behavior = @enumFromInt(Dependency.Behavior, Dependency.Behavior.normal);
+                var dependency_behavior = @as(Dependency.Behavior, @enumFromInt(Dependency.Behavior.normal));
                 var string_buf = esm.version;
 
                 // const initial_pending_tasks = manager.pending_tasks;
@@ -2466,15 +2466,15 @@ pub const Resolver = struct {
                 top_parent = result;
                 break;
             }
-            bufs(.dir_entry_paths_to_resolve)[@intCast(usize, i)] = DirEntryResolveQueueItem{
+            bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))] = DirEntryResolveQueueItem{
                 .unsafe_path = top,
                 .result = result,
                 .fd = 0,
             };
 
             if (rfs.entries.get(top)) |top_entry| {
-                bufs(.dir_entry_paths_to_resolve)[@intCast(usize, i)].safe_path = top_entry.entries.dir;
-                bufs(.dir_entry_paths_to_resolve)[@intCast(usize, i)].fd = top_entry.entries.fd;
+                bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))].safe_path = top_entry.entries.dir;
+                bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))].fd = top_entry.entries.fd;
             }
             i += 1;
         }
@@ -2484,21 +2484,21 @@ pub const Resolver = struct {
             if (result.status != .unknown) {
                 top_parent = result;
             } else {
-                bufs(.dir_entry_paths_to_resolve)[@intCast(usize, i)] = DirEntryResolveQueueItem{
+                bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))] = DirEntryResolveQueueItem{
                     .unsafe_path = root_path,
                     .result = result,
                     .fd = 0,
                 };
                 if (rfs.entries.get(top)) |top_entry| {
-                    bufs(.dir_entry_paths_to_resolve)[@intCast(usize, i)].safe_path = top_entry.entries.dir;
-                    bufs(.dir_entry_paths_to_resolve)[@intCast(usize, i)].fd = top_entry.entries.fd;
+                    bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))].safe_path = top_entry.entries.dir;
+                    bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))].fd = top_entry.entries.fd;
                 }
 
                 i += 1;
             }
         }
 
-        var queue_slice: []DirEntryResolveQueueItem = bufs(.dir_entry_paths_to_resolve)[0..@intCast(usize, i)];
+        var queue_slice: []DirEntryResolveQueueItem = bufs(.dir_entry_paths_to_resolve)[0..@as(usize, @intCast(i))];
         if (Environment.allow_assert) std.debug.assert(queue_slice.len > 0);
         var open_dir_count: usize = 0;
 
@@ -2626,7 +2626,7 @@ pub const Resolver = struct {
 
                 // Directories must always end in a trailing slash or else various bugs can occur.
                 // This covers "what happens when the trailing"
-                end += @intCast(usize, @intFromBool(safe_path.len > end and end > 0 and safe_path[end - 1] != std.fs.path.sep and safe_path[end] == std.fs.path.sep));
+                end += @as(usize, @intCast(@intFromBool(safe_path.len > end and end > 0 and safe_path[end - 1] != std.fs.path.sep and safe_path[end] == std.fs.path.sep)));
                 break :brk safe_path[dir_path_i..end];
             };
 
@@ -2779,8 +2779,8 @@ pub const Resolver = struct {
                     (prefix.len >= longest_match_prefix_length and
                     suffix.len > longest_match_suffix_length))
                 {
-                    longest_match_prefix_length = @intCast(i32, prefix.len);
-                    longest_match_suffix_length = @intCast(i32, suffix.len);
+                    longest_match_prefix_length = @as(i32, @intCast(prefix.len));
+                    longest_match_suffix_length = @as(i32, @intCast(suffix.len));
                     longest_match = TSConfigMatch{ .prefix = prefix, .suffix = suffix, .original_paths = original_paths };
                 }
             }
@@ -3378,7 +3378,13 @@ pub const Resolver = struct {
                         continue;
                     };
 
-                    var _result = r.loadFromMainField(path, dir_info, field_rel_path, key, extension_order) orelse continue;
+                    var _result = r.loadFromMainField(
+                        path,
+                        dir_info,
+                        field_rel_path,
+                        key,
+                        if (strings.eqlComptime(key, "main")) r.opts.main_field_extension_order else extension_order,
+                    ) orelse continue;
 
                     // If the user did not manually configure a "main" field order, then
                     // use a special per-module automatic algorithm to decide whether to
@@ -3389,13 +3395,13 @@ pub const Resolver = struct {
 
                         if (main_field_values.get("main")) |main_rel_path| {
                             if (main_rel_path.len > 0) {
-                                absolute_result = r.loadFromMainField(path, dir_info, main_rel_path, "main", extension_order);
+                                absolute_result = r.loadFromMainField(path, dir_info, main_rel_path, "main", r.opts.main_field_extension_order);
                             }
                         } else {
                             // Some packages have a "module" field without a "main" field but
                             // still have an implicit "index.js" file. In that case, treat that
                             // as the value for "main".
-                            absolute_result = r.loadAsIndexWithBrowserRemapping(dir_info, path, extension_order);
+                            absolute_result = r.loadAsIndexWithBrowserRemapping(dir_info, path, r.opts.main_field_extension_order);
                         }
 
                         if (absolute_result) |auto_main_result| {

@@ -383,7 +383,7 @@ const JSXTag = struct {
             try p.lexer.expectInsideJSXElement(.t_identifier);
 
             if (strings.indexOfChar(member, '-')) |index| {
-                try p.log.addError(p.source, logger.Loc{ .start = member_range.loc.start + @intCast(i32, index) }, "Unexpected \"-\"");
+                try p.log.addError(p.source, logger.Loc{ .start = member_range.loc.start + @as(i32, @intCast(index)) }, "Unexpected \"-\"");
                 return error.SyntaxError;
             }
 
@@ -3123,7 +3123,7 @@ pub const Parser = struct {
                         }
 
                         if (needs_decl_count > 0) {
-                            p.symbols.items[p.exports_ref.innerIndex()].use_count_estimate += @truncate(u32, export_refs.len);
+                            p.symbols.items[p.exports_ref.innerIndex()].use_count_estimate += @as(u32, @truncate(export_refs.len));
                             p.deoptimizeCommonJSNamedExports();
                         }
                     }
@@ -4192,7 +4192,7 @@ pub const Parser = struct {
             var iter = p.runtime_imports.iter();
             var i: usize = 0;
             while (iter.next()) |entry| {
-                runtime_imports[i] = @intCast(u8, entry.key);
+                runtime_imports[i] = @as(u8, @intCast(entry.key));
                 i += 1;
             }
 
@@ -5184,7 +5184,7 @@ fn NewParser_(
                         return p.newExpr(
                             E.RequireString{
                                 .import_record_index = import_record_index,
-                                .unwrapped_id = @intCast(u32, p.imports_to_convert_from_require.items.len - 1),
+                                .unwrapped_id = @as(u32, @intCast(p.imports_to_convert_from_require.items.len - 1)),
                             },
                             arg.loc,
                         );
@@ -5202,9 +5202,9 @@ fn NewParser_(
                     p.import_records.items[import_record_index].contains_import_star = true;
 
                     const symbol_name = p.import_records.items[import_record_index].path.name.nonUniqueNameString(p.allocator) catch unreachable;
-                    const hash_value = @truncate(
+                    const hash_value = @as(
                         u16,
-                        bun.hash(p.import_records.items[import_record_index].path.text),
+                        @truncate(bun.hash(p.import_records.items[import_record_index].path.text)),
                     );
 
                     const cjs_import_name = std.fmt.allocPrint(
@@ -5524,7 +5524,7 @@ fn NewParser_(
                         const symbol: *const Symbol = &symbols[entry.value_ptr.ref.innerIndex()];
 
                         if (symbol.slotNamespace() != .must_not_be_renamed) {
-                            char_freq.scan(symbol.original_name, -@intCast(i32, symbol.use_count_estimate));
+                            char_freq.scan(symbol.original_name, -@as(i32, @intCast(symbol.use_count_estimate)));
                         }
                     }
 
@@ -5532,7 +5532,7 @@ fn NewParser_(
                         const symbol = &symbols[ref.innerIndex()];
 
                         if (symbol.slotNamespace() != .must_not_be_renamed) {
-                            char_freq.scan(symbol.original_name, -@intCast(i32, symbol.use_count_estimate) - 1);
+                            char_freq.scan(symbol.original_name, -@as(i32, @intCast(symbol.use_count_estimate)) - 1);
                         }
                     }
 
@@ -8203,8 +8203,8 @@ fn NewParser_(
             }
 
             var item_refs = ImportItemForNamespaceMap.init(p.allocator);
-            const count_excluding_namespace = @intCast(u16, stmt.items.len) +
-                @intCast(u16, @intFromBool(stmt.default_name != null));
+            const count_excluding_namespace = @as(u16, @intCast(stmt.items.len)) +
+                @as(u16, @intCast(@intFromBool(stmt.default_name != null)));
 
             try item_refs.ensureUnusedCapacity(count_excluding_namespace);
             // Even though we allocate ahead of time here
@@ -8468,7 +8468,7 @@ fn NewParser_(
         }
 
         pub fn newSymbol(p: *P, kind: Symbol.Kind, identifier: string) !Ref {
-            const inner_index = @truncate(Ref.Int, p.symbols.items.len);
+            const inner_index = @as(Ref.Int, @truncate(p.symbols.items.len));
             try p.symbols.append(Symbol{
                 .kind = kind,
                 .original_name = identifier,
@@ -11633,7 +11633,11 @@ fn NewParser_(
                         error.Backtrack => {
                             backtrack = true;
                         },
-                        else => {},
+                        else => {
+                            if (p.lexer.did_panic) {
+                                backtrack = true;
+                            }
+                        },
                     }
                     if (comptime FnReturnType == anyerror!bool or FnReturnType == anyerror!void)
                         // we are not using the value
@@ -11792,7 +11796,7 @@ fn NewParser_(
             // to the expression "a().b()".
 
             if (had_pure_comment_before and level.lt(.call)) {
-                expr = try p.parseSuffix(expr, @enumFromInt(Level, @intFromEnum(Level.call) - 1), errors, flags);
+                expr = try p.parseSuffix(expr, @as(Level, @enumFromInt(@intFromEnum(Level.call) - 1)), errors, flags);
                 switch (expr.data) {
                     .e_call => |ex| {
                         ex.can_be_unwrapped_if_unused = true;
@@ -11823,7 +11827,7 @@ fn NewParser_(
                 .path = path,
             };
             p.import_records.append(record) catch unreachable;
-            return @intCast(u32, index);
+            return @as(u32, @intCast(index));
         }
 
         pub fn popScope(p: *P) void {
@@ -12983,7 +12987,7 @@ fn NewParser_(
                         }
 
                         try p.lexer.next();
-                        left = p.newExpr(E.Binary{ .op = .bin_add_assign, .left = left, .right = try p.parseExpr(@enumFromInt(Op.Level, @intFromEnum(Op.Level.assign) - 1)) }, left.loc);
+                        left = p.newExpr(E.Binary{ .op = .bin_add_assign, .left = left, .right = try p.parseExpr(@as(Op.Level, @enumFromInt(@intFromEnum(Op.Level.assign) - 1))) }, left.loc);
                     },
                     .t_minus => {
                         if (level.gte(.add)) {
@@ -13422,7 +13426,7 @@ fn NewParser_(
 
                 p.is_import_item.ensureUnusedCapacity(
                     p.allocator,
-                    @intCast(u32, p.is_import_item.count() + import.items.len),
+                    @as(u32, @intCast(p.is_import_item.count() + import.items.len)),
                 ) catch unreachable;
 
                 for (import.items) |*clause| {
@@ -13715,7 +13719,7 @@ fn NewParser_(
                         if (value.data.e_index.index.data == .e_private_identifier) {
                             const private = value.data.e_index.index.data.e_private_identifier;
                             const name = p.loadNameFromRef(private.ref);
-                            const range = logger.Range{ .loc = value.loc, .len = @intCast(i32, name.len) };
+                            const range = logger.Range{ .loc = value.loc, .len = @as(i32, @intCast(name.len)) };
                             p.log.addRangeErrorFmt(p.source, range, p.allocator, "Deleting the private name \"{s}\" is forbidden", .{name}) catch unreachable;
                         }
                     }
@@ -15157,7 +15161,7 @@ fn NewParser_(
                                     const children_elements = e_.children.slice()[0..children_count];
                                     for (children_elements) |child| {
                                         args[i] = p.visitExpr(child);
-                                        i += @intCast(usize, @intFromBool(args[i].data != .e_missing));
+                                        i += @as(usize, @intCast(@intFromBool(args[i].data != .e_missing)));
                                     }
 
                                     const target = p.jsxStringsToMemberExpression(expr.loc, p.options.jsx.factory) catch unreachable;
@@ -15188,7 +15192,7 @@ fn NewParser_(
                                         for (children) |child| {
                                             e_.children.ptr[last_child] = p.visitExpr(child);
                                             // if tree-shaking removes the element, we must also remove it here.
-                                            last_child += @intCast(u32, @intFromBool(e_.children.ptr[last_child].data != .e_missing));
+                                            last_child += @as(u32, @intCast(@intFromBool(e_.children.ptr[last_child].data != .e_missing)));
                                         }
                                         e_.children.len = last_child;
                                     }
@@ -15510,7 +15514,7 @@ fn NewParser_(
                                 // Unlike regular identifiers, there are no unbound private identifiers
                                 const kind: Symbol.Kind = p.symbols.items[result.ref.innerIndex()].kind;
                                 if (!Symbol.isKindPrivate(kind)) {
-                                    const r = logger.Range{ .loc = e_.left.loc, .len = @intCast(i32, name.len) };
+                                    const r = logger.Range{ .loc = e_.left.loc, .len = @as(i32, @intCast(name.len)) };
                                     p.log.addRangeErrorFmt(p.source, r, p.allocator, "Private name \"{s}\" must be declared in an enclosing class", .{name}) catch unreachable;
                                 }
 
@@ -15972,17 +15976,17 @@ fn NewParser_(
                             const kind: Symbol.Kind = p.symbols.items[result.ref.innerIndex()].kind;
                             var r: logger.Range = undefined;
                             if (!Symbol.isKindPrivate(kind)) {
-                                r = logger.Range{ .loc = e_.index.loc, .len = @intCast(i32, name.len) };
+                                r = logger.Range{ .loc = e_.index.loc, .len = @as(i32, @intCast(name.len)) };
                                 p.log.addRangeErrorFmt(p.source, r, p.allocator, "Private name \"{s}\" must be declared in an enclosing class", .{name}) catch unreachable;
                             } else {
                                 if (in.assign_target != .none and (kind == .private_method or kind == .private_static_method)) {
-                                    r = logger.Range{ .loc = e_.index.loc, .len = @intCast(i32, name.len) };
+                                    r = logger.Range{ .loc = e_.index.loc, .len = @as(i32, @intCast(name.len)) };
                                     p.log.addRangeWarningFmt(p.source, r, p.allocator, "Writing to read-only method \"{s}\" will throw", .{name}) catch unreachable;
                                 } else if (in.assign_target != .none and (kind == .private_get or kind == .private_static_get)) {
-                                    r = logger.Range{ .loc = e_.index.loc, .len = @intCast(i32, name.len) };
+                                    r = logger.Range{ .loc = e_.index.loc, .len = @as(i32, @intCast(name.len)) };
                                     p.log.addRangeWarningFmt(p.source, r, p.allocator, "Writing to getter-only property \"{s}\" will throw", .{name}) catch unreachable;
                                 } else if (in.assign_target != .replace and (kind == .private_set or kind == .private_static_set)) {
-                                    r = logger.Range{ .loc = e_.index.loc, .len = @intCast(i32, name.len) };
+                                    r = logger.Range{ .loc = e_.index.loc, .len = @as(i32, @intCast(name.len)) };
                                     p.log.addRangeWarningFmt(p.source, r, p.allocator, "Reading from setter-only property \"{s}\" will throw", .{name}) catch unreachable;
                                 }
                             }
@@ -17735,7 +17739,7 @@ fn NewParser_(
                                         .needs_decl = true,
                                     };
                                     if (p.commonjs_named_exports_needs_conversion == std.math.maxInt(u32))
-                                        p.commonjs_named_exports_needs_conversion = @truncate(u32, p.commonjs_named_exports.count() - 1);
+                                        p.commonjs_named_exports_needs_conversion = @as(u32, @truncate(p.commonjs_named_exports.count() - 1));
                                 }
 
                                 const ref = named_export_entry.value_ptr.*.loc_ref.ref.?;
@@ -17768,7 +17772,7 @@ fn NewParser_(
                     if (p.options.features.minify_syntax) {
                         // minify "long-string".length to 11
                         if (strings.eqlComptime(name, "length")) {
-                            return p.newExpr(E.Number{ .value = @floatFromInt(f64, str.javascriptLength()) }, loc);
+                            return p.newExpr(E.Number{ .value = @as(f64, @floatFromInt(str.javascriptLength())) }, loc);
                         }
                     }
                 },
@@ -18248,7 +18252,7 @@ fn NewParser_(
                         return;
                     }
 
-                    data.decls.len = @truncate(u32, decls_len);
+                    data.decls.len = @as(u32, @truncate(decls_len));
 
                     // Handle being exported inside a namespace
                     if (data.is_export and p.enclosing_namespace_arg_ref != null) {
@@ -19196,7 +19200,7 @@ fn NewParser_(
                     {
                         var array = expr.data.e_array;
 
-                        array.items.len = @min(array.items.len, @truncate(u32, bound_array.items.len));
+                        array.items.len = @min(array.items.len, @as(u32, @truncate(bound_array.items.len)));
                         for (bound_array.items[0..array.items.len], array.items.slice()) |item, *child_expr| {
                             if (item.binding.data == .b_missing) {
                                 child_expr.* = p.newExpr(E.Missing{}, expr.loc);
@@ -19489,7 +19493,7 @@ fn NewParser_(
                                             for (arg.ts_decorators.ptr[0..arg.ts_decorators.len]) |arg_decorator| {
                                                 var decorators = if (is_constructor) class.ts_decorators.listManaged(p.allocator) else prop.ts_decorators.listManaged(p.allocator);
                                                 const args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                                args[0] = p.newExpr(E.Number{ .value = @floatFromInt(f64, i) }, arg_decorator.loc);
+                                                args[0] = p.newExpr(E.Number{ .value = @as(f64, @floatFromInt(i)) }, arg_decorator.loc);
                                                 args[1] = arg_decorator;
                                                 decorators.append(p.callRuntime(arg_decorator.loc, "__decorateParam", args)) catch unreachable;
                                                 if (is_constructor) {
@@ -20358,7 +20362,7 @@ fn NewParser_(
                                 var gpe = fn_stmts.getOrPut(name_ref) catch unreachable;
                                 var index = gpe.value_ptr.*;
                                 if (!gpe.found_existing) {
-                                    index = @intCast(u32, let_decls.items.len);
+                                    index = @as(u32, @intCast(let_decls.items.len));
                                     gpe.value_ptr.* = index;
                                     let_decls.append(.{
                                         .binding = p.b(B.Identifier{
@@ -20505,7 +20509,7 @@ fn NewParser_(
                                         decls[end] = decl;
                                         end += 1;
                                     }
-                                    local.decls.len = @truncate(u32, end);
+                                    local.decls.len = @as(u32, @truncate(end));
                                     if (end == 0) {
                                         stmt.* = stmt.*.toEmpty();
                                     }
@@ -21440,7 +21444,7 @@ fn NewParser_(
                         // We still call exportAll just with an empty object.
                         const has_any_exports = named_exports_count > 0;
 
-                        const toplevel_stmts_count = 3 + (@intCast(usize, @intFromBool(has_any_exports)) * 2);
+                        const toplevel_stmts_count = 3 + (@as(usize, @intCast(@intFromBool(has_any_exports))) * 2);
                         var _stmts = allocator.alloc(
                             Stmt,
                             end_iife_stmts_count + toplevel_stmts_count + (named_exports_count * 2) + imports_count + exports_from_count,
@@ -21499,7 +21503,7 @@ fn NewParser_(
                         var new_call_args = call_args[0..new_call_args_count];
                         var hmr_module_ident = p.newExpr(E.Identifier{ .ref = p.hmr_module.ref }, logger.Loc.Empty);
 
-                        new_call_args[0] = p.newExpr(E.Number{ .value = @floatFromInt(f64, p.options.filepath_hash_for_hmr) }, logger.Loc.Empty);
+                        new_call_args[0] = p.newExpr(E.Number{ .value = @as(f64, @floatFromInt(p.options.filepath_hash_for_hmr)) }, logger.Loc.Empty);
                         // This helps us provide better error messages
                         new_call_args[1] = p.newExpr(E.String{ .data = p.source.path.pretty }, logger.Loc.Empty);
                         if (p.options.features.react_fast_refresh) {
@@ -21816,7 +21820,7 @@ fn NewParser_(
                             entry.value_ptr.* = .{};
                         }
 
-                        entry.value_ptr.push(ctx.allocator, @truncate(u32, ctx.part_index)) catch unreachable;
+                        entry.value_ptr.push(ctx.allocator, @as(u32, @truncate(ctx.part_index))) catch unreachable;
                     }
                 };
 
@@ -21827,7 +21831,7 @@ fn NewParser_(
                         .allocator = p.allocator,
                         .top_level_symbols_to_parts = top_level,
                         .symbols = p.symbols.items,
-                        .part_index = @truncate(u32, part_index),
+                        .part_index = @as(u32, @truncate(part_index)),
                     };
 
                     DeclaredSymbol.forEachTopLevelSymbol(decls, ctx, Ctx.next);

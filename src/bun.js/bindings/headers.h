@@ -285,7 +285,7 @@ CPP_DECL JSC__JSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC__JSGlobalObj
 CPP_DECL JSC__JSValue JSC__JSGlobalObject__getCachedObject(JSC__JSGlobalObject* arg0, const ZigString* arg1);
 CPP_DECL void JSC__JSGlobalObject__handleRejectedPromises(JSC__JSGlobalObject* arg0);
 CPP_DECL JSC__JSValue JSC__JSGlobalObject__putCachedObject(JSC__JSGlobalObject* arg0, const ZigString* arg1, JSC__JSValue JSValue2);
-CPP_DECL void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue JSValue2, JSC__JSValue JSValue3, JSC__JSValue JSValue4);
+CPP_DECL void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue JSValue3, JSC__JSValue JSValue4);
 CPP_DECL void JSC__JSGlobalObject__reload(JSC__JSGlobalObject* arg0);
 CPP_DECL bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* arg0, unsigned char* arg1, uint16_t arg2);
 CPP_DECL JSC__VM* JSC__JSGlobalObject__vm(JSC__JSGlobalObject* arg0);
@@ -383,6 +383,7 @@ CPP_DECL unsigned char JSC__JSValue__jsType(JSC__JSValue JSValue0);
 CPP_DECL JSC__JSValue JSC__JSValue__jsUndefined();
 CPP_DECL JSC__JSValue JSC__JSValue__makeWithNameAndPrototype(JSC__JSGlobalObject* arg0, void* arg1, void* arg2, const ZigString* arg3);
 CPP_DECL JSC__JSValue JSC__JSValue__parseJSON(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
+CPP_DECL void JSC__JSValue__push(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL void JSC__JSValue__put(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, const ZigString* arg2, JSC__JSValue JSValue3);
 CPP_DECL void JSC__JSValue__putIndex(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, uint32_t arg2, JSC__JSValue JSValue3);
 CPP_DECL void JSC__JSValue__putRecord(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2, ZigString* arg3, size_t arg4);

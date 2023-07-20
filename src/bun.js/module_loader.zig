@@ -826,7 +826,7 @@ pub const ModuleLoader = struct {
                 else
                     null;
                 resolved_source.commonjs_exports_len = if (commonjs_exports.len > 0)
-                    @truncate(u32, commonjs_exports.len)
+                    @as(u32, @truncate(commonjs_exports.len))
                 else if (parse_result.ast.exports_kind == .cjs)
                     std.math.maxInt(u32)
                 else
@@ -845,7 +845,7 @@ pub const ModuleLoader = struct {
                 else
                     null,
                 .commonjs_exports_len = if (commonjs_exports.len > 0)
-                    @truncate(u32, commonjs_exports.len)
+                    @as(u32, @truncate(commonjs_exports.len))
                 else if (parse_result.ast.exports_kind == .cjs)
                     std.math.maxInt(u32)
                 else
@@ -1228,7 +1228,7 @@ pub const ModuleLoader = struct {
                     else
                         null;
                     resolved_source.commonjs_exports_len = if (commonjs_exports.len > 0)
-                        @truncate(u32, commonjs_exports.len)
+                        @as(u32, @truncate(commonjs_exports.len))
                     else if (parse_result.ast.exports_kind == .cjs)
                         std.math.maxInt(u32)
                     else
@@ -1265,7 +1265,7 @@ pub const ModuleLoader = struct {
                     else
                         null,
                     .commonjs_exports_len = if (commonjs_exports.len > 0)
-                        @truncate(u32, commonjs_exports.len)
+                        @as(u32, @truncate(commonjs_exports.len))
                     else if (parse_result.ast.exports_kind == .cjs)
                         std.math.maxInt(u32)
                     else
@@ -1330,7 +1330,7 @@ pub const ModuleLoader = struct {
                             var encoded = JSC.EncodedJSValue{
                                 .asPtr = globalThis,
                             };
-                            const globalValue = @enumFromInt(JSC.JSValue, encoded.asInt64);
+                            const globalValue = @as(JSC.JSValue, @enumFromInt(encoded.asInt64));
                             globalValue.put(
                                 globalThis,
                                 JSC.ZigString.static("wasmSourceBytes"),
@@ -1697,6 +1697,12 @@ pub const ModuleLoader = struct {
                 // so it consistently handles bundled imports
                 // we can't take the shortcut of just directly importing the file, sadly.
                 .@"bun:main" => {
+                    defer {
+                        if (jsc_vm.worker) |worker| {
+                            worker.queueInitialTask();
+                        }
+                    }
+
                     if (comptime disable_transpilying) {
                         return ResolvedSource{
                             .allocator = null,
@@ -1807,7 +1813,7 @@ pub const ModuleLoader = struct {
                 .@"node:tty" => return jsSyntheticModule(.@"node:tty", specifier),
                 .@"node:util/types" => return jsSyntheticModule(.@"node:util/types", specifier),
                 .@"bun:events_native" => return jsSyntheticModule(.@"bun:events_native", specifier),
-
+                .@"node:constants" => return jsSyntheticModule(.@"node:constants", specifier),
                 .@"node:fs/promises" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -2021,6 +2027,7 @@ pub const HardcodedModule = enum {
     @"node:buffer",
     @"node:child_process",
     @"node:crypto",
+    @"node:constants",
     @"node:dns",
     @"node:dns/promises",
     @"node:events",
@@ -2086,6 +2093,7 @@ pub const HardcodedModule = enum {
             .{ "node:child_process", HardcodedModule.@"node:child_process" },
             .{ "node:cluster", HardcodedModule.@"node:cluster" },
             .{ "node:crypto", HardcodedModule.@"node:crypto" },
+            .{ "node:constants", HardcodedModule.@"node:constants" },
             .{ "node:dgram", HardcodedModule.@"node:dgram" },
             .{ "node:diagnostics_channel", HardcodedModule.@"node:diagnostics_channel" },
             .{ "node:dns", HardcodedModule.@"node:dns" },
@@ -2148,6 +2156,7 @@ pub const HardcodedModule = enum {
             .{ "bun:events_native", .{ .path = "bun:events_native" } },
             .{ "child_process", .{ .path = "node:child_process" } },
             .{ "crypto", .{ .path = "node:crypto" } },
+            .{ "constants", .{ .path = "node:constants" } },
             .{ "detect-libc", .{ .path = "detect-libc" } },
             .{ "detect-libc/lib/detect-libc.js", .{ .path = "detect-libc" } },
             .{ "dns", .{ .path = "node:dns" } },
@@ -2166,6 +2175,7 @@ pub const HardcodedModule = enum {
             .{ "node:buffer", .{ .path = "node:buffer" } },
             .{ "node:child_process", .{ .path = "node:child_process" } },
             .{ "node:crypto", .{ .path = "node:crypto" } },
+            .{ "node:constants", .{ .path = "node:constants" } },
             .{ "node:dns", .{ .path = "node:dns" } },
             .{ "node:dns/promises", .{ .path = "node:dns/promises" } },
             .{ "node:events", .{ .path = "node:events" } },

@@ -68,7 +68,7 @@ pub fn lstat_absolute(path: [:0]const u8) !Stat {
     const ctime = st.ctime();
     return Stat{
         .inode = st.ino,
-        .size = @bitCast(u64, st.size),
+        .size = @as(u64, @bitCast(st.size)),
         .mode = st.mode,
         .kind = switch (builtin.os.tag) {
             .wasi => switch (st.filetype) {
@@ -142,16 +142,16 @@ pub fn moveFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, dest
     const out_handle = try std.os.openatZ(to_dir, destination, std.os.O.WRONLY | std.os.O.CREAT | std.os.O.CLOEXEC, 0o022);
     defer std.os.close(out_handle);
     if (comptime Environment.isLinux) {
-        _ = std.os.system.fallocate(out_handle, 0, 0, @intCast(i64, stat_.size));
-        _ = try std.os.sendfile(out_handle, in_handle, 0, @intCast(usize, stat_.size), &[_]std.os.iovec_const{}, &[_]std.os.iovec_const{}, 0);
+        _ = std.os.system.fallocate(out_handle, 0, 0, @as(i64, @intCast(stat_.size)));
+        _ = try std.os.sendfile(out_handle, in_handle, 0, @as(usize, @intCast(stat_.size)), &[_]std.os.iovec_const{}, &[_]std.os.iovec_const{}, 0);
     } else {
         if (comptime Environment.isMac) {
             // if this fails, it doesn't matter
             // we only really care about read & write succeeding
             PlatformSpecific.preallocate_file(
                 out_handle,
-                @intCast(std.os.off_t, 0),
-                @intCast(std.os.off_t, stat_.size),
+                @as(std.os.off_t, @intCast(0)),
+                @as(std.os.off_t, @intCast(stat_.size)),
             ) catch {};
         }
 
@@ -350,15 +350,15 @@ pub fn getSystemLoadavg() [3]f64 {
 }
 
 pub fn getProcessPriority(pid_: i32) i32 {
-    const pid = @intCast(c_uint, pid_);
+    const pid = @as(c_uint, @intCast(pid_));
     return get_process_priority(pid);
 }
 
 pub fn setProcessPriority(pid_: i32, priority_: i32) std.c.E {
     if (pid_ < 0) return .SRCH;
 
-    const pid = @intCast(c_uint, pid_);
-    const priority = @intCast(c_int, priority_);
+    const pid = @as(c_uint, @intCast(pid_));
+    const priority = @as(c_int, @intCast(priority_));
 
     const code: i32 = set_process_priority(pid, priority);
 
@@ -431,9 +431,9 @@ pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptim
 pub fn dlsym(comptime Type: type, comptime name: [:0]const u8) ?Type {
     const handle_getter = struct {
         const RTLD_DEFAULT = if (bun.Environment.isMac)
-            @ptrFromInt(?*anyopaque, @bitCast(usize, @as(isize, -2)))
+            @as(?*anyopaque, @ptrFromInt(@as(usize, @bitCast(@as(isize, -2)))))
         else
-            @ptrFromInt(?*anyopaque, @as(usize, 0));
+            @as(?*anyopaque, @ptrFromInt(@as(usize, 0)));
 
         pub fn getter() ?*anyopaque {
             return RTLD_DEFAULT;

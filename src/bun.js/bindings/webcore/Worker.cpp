@@ -60,6 +60,7 @@
 #include "JavaScriptCore/DeferredWorkTimer.h"
 #include "MessageEvent.h"
 #include <JavaScriptCore/HashMapImplInlines.h>
+#include "BunWorkerGlobalScope.h"
 
 namespace WebCore {
 
@@ -104,7 +105,7 @@ Worker::Worker(ScriptExecutionContext& context, WorkerOptions&& options)
     auto addResult = allWorkers().add(m_clientIdentifier, this);
     ASSERT_UNUSED(addResult, addResult.isNewEntry);
 }
-
+extern "C" bool WebWorker__updatePtr(void* worker, Worker* ptr);
 extern "C" void* WebWorker__create(
     Worker* worker,
     void* parent,
@@ -122,6 +123,18 @@ extern "C" void WebWorker__setRef(
 void Worker::setKeepAlive(bool keepAlive)
 {
     WebWorker__setRef(impl_, keepAlive);
+}
+
+bool Worker::updatePtr()
+{
+    if (!WebWorker__updatePtr(impl_, this)) {
+        m_wasTerminated = true;
+        m_isClosing = true;
+        m_isOnline = false;
+        return false;
+    }
+
+    return true;
 }
 
 ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const String& urlInit, WorkerOptions&& options)
@@ -176,20 +189,21 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
     if (message.hasException())
         return message.releaseException();
 
-    this->postTaskToWorkerGlobalScope([message = message.releaseReturnValue()](auto& context) {
+    RefPtr<SerializedScriptValue> result = message.releaseReturnValue();
+
+    this->postTaskToWorkerGlobalScope([message = WTFMove(result)](auto& context) {
         Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(context.jsGlobalObject());
         bool didFail = false;
         JSValue value = message->deserialize(*globalObject, globalObject, SerializationErrorMode::NonThrowing, &didFail);
-        message->deref();
 
         if (didFail) {
-            globalObject->eventTarget()->dispatchEvent(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init {}, MessageEvent::IsTrusted::Yes));
+            globalObject->globalEventScope.dispatchEvent(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init {}, MessageEvent::IsTrusted::Yes));
             return;
         }
 
         WebCore::MessageEvent::Init init;
         init.data = value;
-        globalObject->eventTarget()->dispatchEvent(MessageEvent::create(eventNames().messageEvent, WTFMove(init), MessageEvent::IsTrusted::Yes));
+        globalObject->globalEventScope.dispatchEvent(MessageEvent::create(eventNames().messageEvent, WTFMove(init), MessageEvent::IsTrusted::Yes));
     });
     return {};
 }
@@ -229,6 +243,10 @@ void Worker::terminate()
 
 bool Worker::hasPendingActivity() const
 {
+    if (this->refCount() > 0) {
+        return true;
+    }
+
     if (this->m_isOnline) {
         return !this->m_isClosing;
     }
@@ -241,7 +259,7 @@ void Worker::dispatchEvent(Event& event)
     if (m_wasTerminated)
         return;
 
-    EventTarget::dispatchEvent(event);
+    EventTargetWithInlineData::dispatchEvent(event);
 }
 
 #if ENABLE(WEB_RTC)
@@ -259,6 +277,7 @@ void Worker::createRTCRtpScriptTransformer(RTCRtpScriptTransform& transform, Mes
 
 void Worker::drainEvents()
 {
+    Locker lock(this->m_pendingTasksMutex);
     for (auto& task : m_pendingTasks)
         postTaskToWorkerGlobalScope(WTFMove(task));
     m_pendingTasks.clear();
@@ -277,19 +296,26 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
         });
     }
 
+    Locker lock(this->m_pendingTasksMutex);
+
     this->m_isOnline = true;
     auto* thisContext = workerGlobalObject->scriptExecutionContext();
     if (!thisContext) {
         return;
     }
+    RELEASE_ASSERT(&thisContext->vm() == &workerGlobalObject->vm());
+    RELEASE_ASSERT(thisContext == workerGlobalObject->globalEventScope.scriptExecutionContext());
 
-    if (workerGlobalObject->eventTarget()->hasActiveEventListeners(eventNames().messageEvent)) {
+    if (workerGlobalObject->globalEventScope.hasActiveEventListeners(eventNames().messageEvent)) {
         auto tasks = std::exchange(this->m_pendingTasks, {});
+        lock.unlockEarly();
         for (auto& task : tasks) {
             task(*thisContext);
         }
     } else {
         auto tasks = std::exchange(this->m_pendingTasks, {});
+        lock.unlockEarly();
+
         thisContext->postTask([tasks = WTFMove(tasks)](auto& ctx) mutable {
             for (auto& task : tasks) {
                 task(ctx);
@@ -334,6 +360,7 @@ void Worker::dispatchExit()
 void Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&& task)
 {
     if (!this->m_isOnline) {
+        Locker lock(this->m_pendingTasksMutex);
         this->m_pendingTasks.append(WTFMove(task));
         return;
     }
@@ -351,6 +378,11 @@ void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)
 extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker* worker, int32_t exitCode)
 {
     if (globalObject) {
+        auto* ctx = globalObject->scriptExecutionContext();
+        if (ctx) {
+            ctx->removeFromContextsMap();
+        }
+
         auto& vm = globalObject->vm();
 
         if (JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(globalObject->moduleLoader())) {
@@ -383,7 +415,7 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     init.cancelable = false;
     init.bubbles = false;
 
-    globalObject->eventTarget()->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    globalObject->globalEventScope.dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
     worker->dispatchError(Bun::toWTFString(message));
 }
 

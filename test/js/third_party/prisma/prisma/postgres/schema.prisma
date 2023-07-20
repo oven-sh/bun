@@ -8,7 +8,7 @@ generator client {
 
 datasource db {
   provider = "postgres"
-  url      = env("PRISMA_POSTGRES_DATABASE_URL")
+  url      = env("TLS_POSTGRES_DATABASE_URL")
 }
 
 model User {

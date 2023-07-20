@@ -24,7 +24,11 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-export function initializeReadableStream(this: any, underlyingSource: UnderlyingSource, strategy: any) {
+export function initializeReadableStream(
+  this: ReadableStream,
+  underlyingSource: UnderlyingSource,
+  strategy: QueuingStrategy,
+) {
   if (underlyingSource === undefined)
     underlyingSource = { $bunNativeType: 0, $bunNativePtr: 0, $lazy: false } as UnderlyingSource;
   if (strategy === undefined) strategy = {};
@@ -46,6 +50,8 @@ export function initializeReadableStream(this: any, underlyingSource: Underlying
   $putByIdDirectPrivate(this, "readableStreamController", null);
   $putByIdDirectPrivate(this, "bunNativeType", $getByIdDirectPrivate(underlyingSource, "bunNativeType") ?? 0);
   $putByIdDirectPrivate(this, "bunNativePtr", $getByIdDirectPrivate(underlyingSource, "bunNativePtr") ?? 0);
+
+  $putByIdDirectPrivate(this, "asyncContext", $getInternalField($asyncContext, 0));
 
   const isDirect = underlyingSource.type === "direct";
   // direct streams are always lazy
@@ -140,6 +146,16 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
   }
 
   return Bun.concatArrayBuffers(result);
+}
+
+$linkTimeConstant;
+export function readableStreamToFormData(
+  stream: ReadableStream<ArrayBuffer>,
+  contentType: string | ArrayBuffer | ArrayBufferView,
+): Promise<FormData> {
+  return Bun.readableStreamToBlob(stream).then(blob => {
+    return FormData.from(blob, contentType);
+  });
 }
 
 $linkTimeConstant;

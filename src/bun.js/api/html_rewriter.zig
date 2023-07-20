@@ -846,11 +846,11 @@ fn HandlerCallback(
             };
             var result = JSC.C.JSObjectCallAsFunctionReturnValue(
                 this.global,
-                @field(this, callback_name).?.asObjectRef(),
+                @field(this, callback_name).?,
                 if (comptime @hasField(HandlerType, "thisObject"))
-                    @field(this, "thisObject").asObjectRef()
+                    @field(this, "thisObject")
                 else
-                    null,
+                    JSValue.zero,
                 1,
                 &args,
             );
@@ -1874,7 +1874,7 @@ pub const Element = struct {
                 AttributeIterator.getAttributeIteratorJSClass(globalObject).asObjectRef(),
                 null,
                 1,
-                @ptrCast([*]JSC.C.JSObjectRef, &attr),
+                @as([*]JSC.C.JSObjectRef, @ptrCast(&attr)),
                 null,
             ),
         );

@@ -407,10 +407,10 @@ fn NewLexer_(
                                     },
                                 }
 
-                                iter.c = @intCast(i32, value);
+                                iter.c = @as(i32, @intCast(value));
                                 if (is_bad) {
                                     lexer.addRangeError(
-                                        logger.Range{ .loc = .{ .start = @intCast(i32, octal_start) }, .len = @intCast(i32, iter.i - octal_start) },
+                                        logger.Range{ .loc = .{ .start = @as(i32, @intCast(octal_start)) }, .len = @as(i32, @intCast(iter.i - octal_start)) },
                                         "Invalid legacy octal literal",
                                         .{},
                                         false,
@@ -522,7 +522,7 @@ fn NewLexer_(
 
                                     if (is_out_of_range) {
                                         try lexer.addRangeError(
-                                            .{ .loc = .{ .start = @intCast(i32, start + hex_start) }, .len = @intCast(i32, ((iter.i + start) - hex_start)) },
+                                            .{ .loc = .{ .start = @as(i32, @intCast(start + hex_start)) }, .len = @as(i32, @intCast(((iter.i + start) - hex_start))) },
                                             "Unicode escape sequence is out of range",
                                             .{},
                                             true,
@@ -562,7 +562,7 @@ fn NewLexer_(
                                     }
                                 }
 
-                                iter.c = @truncate(CodePoint, value);
+                                iter.c = @as(CodePoint, @truncate(value));
                             },
                             '\r' => {
                                 if (comptime is_json) {
@@ -606,13 +606,13 @@ fn NewLexer_(
                 switch (iter.c) {
                     -1 => return try lexer.addDefaultError("Unexpected end of file"),
                     0...0xFFFF => {
-                        buf.append(@intCast(u16, iter.c)) catch unreachable;
+                        buf.append(@as(u16, @intCast(iter.c))) catch unreachable;
                     },
                     else => {
                         iter.c -= 0x10000;
                         buf.ensureUnusedCapacity(2) catch unreachable;
-                        buf.appendAssumeCapacity(@intCast(u16, 0xD800 + ((iter.c >> 10) & 0x3FF)));
-                        buf.appendAssumeCapacity(@intCast(u16, 0xDC00 + (iter.c & 0x3FF)));
+                        buf.appendAssumeCapacity(@as(u16, @intCast(0xD800 + ((iter.c >> 10) & 0x3FF))));
+                        buf.appendAssumeCapacity(@as(u16, @intCast(0xDC00 + (iter.c & 0x3FF))));
                     },
                 }
             }
@@ -797,7 +797,7 @@ fn NewLexer_(
             const code_point = switch (slice.len) {
                 0 => -1,
                 1 => @as(CodePoint, slice[0]),
-                else => strings.decodeWTF8RuneTMultibyte(slice.ptr[0..4], @intCast(u3, slice.len), CodePoint, strings.unicode_replacement),
+                else => strings.decodeWTF8RuneTMultibyte(slice.ptr[0..4], @as(u3, @intCast(slice.len)), CodePoint, strings.unicode_replacement),
             };
 
             it.end = it.current;
@@ -958,7 +958,7 @@ fn NewLexer_(
 
             if (!isIdentifier(identifier)) {
                 try lexer.addRangeError(
-                    .{ .loc = logger.usize2Loc(lexer.start), .len = @intCast(i32, lexer.end - lexer.start) },
+                    .{ .loc = logger.usize2Loc(lexer.start), .len = @as(i32, @intCast(lexer.end - lexer.start)) },
                     "Invalid identifier: \"{s}\"",
                     .{result.contents},
                     true,
@@ -1793,6 +1793,7 @@ fn NewLexer_(
                 }
             };
 
+            lexer.did_panic = true;
             try lexer.addRangeError(lexer.range(), "Unexpected {s}", .{found}, true);
         }
 
@@ -1864,8 +1865,8 @@ fn NewLexer_(
                     const vec: strings.AsciiVector = rest.ptr[0..strings.ascii_vector_size].*;
 
                     // lookahead for any # or @ characters
-                    const hashtag = @bitCast(strings.AsciiVectorU1, vec == @splat(strings.ascii_vector_size, @as(u8, '#')));
-                    const at = @bitCast(strings.AsciiVectorU1, vec == @splat(strings.ascii_vector_size, @as(u8, '@')));
+                    const hashtag = @as(strings.AsciiVectorU1, @bitCast(vec == @as(strings.AsciiVector, @splat(@as(u8, '#')))));
+                    const at = @as(strings.AsciiVectorU1, @bitCast(vec == @as(strings.AsciiVector, @splat(@as(u8, '@')))));
 
                     if (@reduce(.Max, hashtag + at) == 1) {
                         rest.len = @intFromPtr(end) - @intFromPtr(rest.ptr);
@@ -2079,15 +2080,15 @@ fn NewLexer_(
                             switch (lexer.code_point) {
                                 'd', 'g', 'i', 'm', 's', 'u', 'y', 'v' => {
                                     if (!has_set_flags_start) {
-                                        lexer.regex_flags_start = @truncate(u16, lexer.end - lexer.start);
+                                        lexer.regex_flags_start = @as(u16, @truncate(lexer.end - lexer.start));
                                         has_set_flags_start = true;
                                     }
-                                    const flag = max_flag - @intCast(u8, lexer.code_point);
+                                    const flag = max_flag - @as(u8, @intCast(lexer.code_point));
                                     if (flags.isSet(flag)) {
                                         lexer.addError(
                                             lexer.current,
                                             "Duplicate flag \"{u}\" in regular expression",
-                                            .{@intCast(u21, lexer.code_point)},
+                                            .{@as(u21, @intCast(lexer.code_point))},
                                             false,
                                         );
                                     }
@@ -2099,7 +2100,7 @@ fn NewLexer_(
                                     lexer.addError(
                                         lexer.current,
                                         "Invalid flag \"{u}\" in regular expression",
-                                        .{@intCast(u21, lexer.code_point)},
+                                        .{@as(u21, @intCast(lexer.code_point))},
                                         false,
                                     );
 
@@ -2134,9 +2135,9 @@ fn NewLexer_(
             var list = std.ArrayList(u8).initCapacity(lexer.allocator, js.len) catch unreachable;
             var i: usize = 0;
             while (i < js.len) : (i += 1) {
-                var r1 = @intCast(i32, js[i]);
+                var r1 = @as(i32, @intCast(js[i]));
                 if (r1 >= 0xD800 and r1 <= 0xDBFF and i + 1 < js.len) {
-                    const r2 = @intCast(i32, js[i] + 1);
+                    const r2 = @as(i32, @intCast(js[i] + 1));
                     if (r2 >= 0xDC00 and r2 <= 0xDFFF) {
                         r1 = (r1 - 0xD800) << 10 | (r2 - 0xDC00) + 0x10000;
                         i += 1;
@@ -2317,7 +2318,7 @@ fn NewLexer_(
 
                     '\\' => {
                         backslash = logger.Range{ .loc = logger.Loc{
-                            .start = @intCast(i32, lexer.end),
+                            .start = @as(i32, @intCast(lexer.end)),
                         }, .len = 1 };
                         lexer.step();
 
@@ -2531,11 +2532,11 @@ fn NewLexer_(
                         break :brk strings.unicode_replacement;
                     };
 
-                    cursor.i += @intCast(u32, length) + 1;
+                    cursor.i += @as(u32, @intCast(length)) + 1;
                     cursor.width = 1;
                 } else if (tables.jsxEntity.get(entity)) |ent| {
                     cursor.c = ent;
-                    cursor.i += @intCast(u32, length) + 1;
+                    cursor.i += @as(u32, @intCast(length)) + 1;
                 }
             }
         }
@@ -2550,18 +2551,18 @@ fn NewLexer_(
                 if (cursor.c == '&') lexer.maybeDecodeJSXEntity(text, &cursor);
 
                 if (cursor.c <= 0xFFFF) {
-                    try out.append(@intCast(u16, cursor.c));
+                    try out.append(@as(u16, @intCast(cursor.c)));
                 } else {
                     cursor.c -= 0x10000;
                     try out.ensureUnusedCapacity(2);
                     (out.items.ptr + out.items.len)[0..2].* = [_]u16{
-                        @truncate(
+                        @as(
                             u16,
-                            @bitCast(u32, @as(i32, 0xD800) + ((cursor.c >> 10) & 0x3FF)),
+                            @truncate(@as(u32, @bitCast(@as(i32, 0xD800) + ((cursor.c >> 10) & 0x3FF)))),
                         ),
-                        @truncate(
+                        @as(
                             u16,
-                            @bitCast(u32, @as(i32, 0xDC00) + (cursor.c & 0x3FF)),
+                            @truncate(@as(u32, @bitCast(@as(i32, 0xDC00) + (cursor.c & 0x3FF)))),
                         ),
                     };
                     out.items = out.items.ptr[0 .. out.items.len + 2];
@@ -2950,9 +2951,9 @@ fn NewLexer_(
                     // Parse a 32-bit integer (very fast path);
                     var number: u32 = 0;
                     for (text) |c| {
-                        number = number * 10 + @intCast(u32, c - '0');
+                        number = number * 10 + @as(u32, @intCast(c - '0'));
                     }
-                    lexer.number = @floatFromInt(f64, number);
+                    lexer.number = @as(f64, @floatFromInt(number));
                 } else {
                     // Parse a double-precision floating-point number
                     if (bun.parseDouble(text)) |num| {
@@ -3089,7 +3090,7 @@ pub fn isIdentifierUTF16(text: []const u16) bool {
 // this fn is a stub!
 pub fn rangeOfIdentifier(source: *const Source, loc: logger.Loc) logger.Range {
     const contents = source.contents;
-    if (loc.start == -1 or @intCast(usize, loc.start) >= contents.len) return logger.Range.None;
+    if (loc.start == -1 or @as(usize, @intCast(loc.start)) >= contents.len) return logger.Range.None;
 
     const iter = strings.CodepointIterator.init(contents[loc.toUsize()..]);
     var cursor = strings.CodepointIterator.Cursor{};
@@ -3099,7 +3100,7 @@ pub fn rangeOfIdentifier(source: *const Source, loc: logger.Loc) logger.Range {
         return r;
     }
     const text = iter.bytes;
-    const end = @intCast(u32, text.len);
+    const end = @as(u32, @intCast(text.len));
 
     if (!iter.next(&cursor)) return r;
 
@@ -3112,7 +3113,7 @@ pub fn rangeOfIdentifier(source: *const Source, loc: logger.Loc) logger.Range {
     }
 
     if (isIdentifierStart(cursor.c) or cursor.c == '\\') {
-        defer r.len = @intCast(i32, cursor.i);
+        defer r.len = @as(i32, @intCast(cursor.i));
         while (iter.next(&cursor)) {
             if (cursor.c == '\\') {
 
@@ -3155,7 +3156,7 @@ pub fn rangeOfIdentifier(source: *const Source, loc: logger.Loc) logger.Range {
 }
 
 inline fn float64(num: anytype) f64 {
-    return @floatFromInt(f64, num);
+    return @as(f64, @floatFromInt(num));
 }
 
 pub fn isLatin1Identifier(comptime Buffer: type, name: Buffer) bool {
@@ -3215,7 +3216,7 @@ fn latin1IdentifierContinueLength(name: []const u8) usize {
                 };
             }
 
-            if (std.simd.firstIndexOfValue(@bitCast(Vec, other), 1)) |first| {
+            if (std.simd.firstIndexOfValue(@as(Vec, @bitCast(other)), 1)) |first| {
                 if (comptime Environment.allow_assert) {
                     for (vec[0..first]) |c| {
                         std.debug.assert(isIdentifierContinue(c));
@@ -3293,9 +3294,9 @@ pub const PragmaArg = enum {
 
         return js_ast.Span{
             .range = logger.Range{
-                .len = @intCast(i32, i),
+                .len = @as(i32, @intCast(i)),
                 .loc = logger.Loc{
-                    .start = @intCast(i32, start + @intCast(u32, offset_) + @intCast(u32, pragma.len)),
+                    .start = @as(i32, @intCast(start + @as(u32, @intCast(offset_)) + @as(u32, @intCast(pragma.len)))),
                 },
             },
             .text = text[0..i],
@@ -3305,9 +3306,9 @@ pub const PragmaArg = enum {
 
 fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
     var text = text_;
-    const star = @splat(strings.ascii_vector_size, @as(u8, '*'));
-    const carriage = @splat(strings.ascii_vector_size, @as(u8, '\r'));
-    const newline = @splat(strings.ascii_vector_size, @as(u8, '\n'));
+    const star: @Vector(strings.ascii_vector_size, u8) = @splat(@as(u8, '*'));
+    const carriage: @Vector(strings.ascii_vector_size, u8) = @splat(@as(u8, '\r'));
+    const newline: @Vector(strings.ascii_vector_size, u8) = @splat(@as(u8, '\n'));
     const V1x16 = strings.AsciiVectorU1;
 
     const text_end_len = text.len & ~(@as(usize, strings.ascii_vector_size) - 1);
@@ -3320,41 +3321,41 @@ fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
         const vec: strings.AsciiVector = text.ptr[0..strings.ascii_vector_size].*;
 
         const any_significant =
-            @bitCast(V1x16, vec > strings.max_16_ascii) |
-            @bitCast(V1x16, star == vec) |
-            @bitCast(V1x16, carriage == vec) |
-            @bitCast(V1x16, newline == vec);
+            @as(V1x16, @bitCast(vec > strings.max_16_ascii)) |
+            @as(V1x16, @bitCast(star == vec)) |
+            @as(V1x16, @bitCast(carriage == vec)) |
+            @as(V1x16, @bitCast(newline == vec));
 
         if (@reduce(.Max, any_significant) > 0) {
-            const bitmask = @bitCast(u16, any_significant);
+            const bitmask = @as(u16, @bitCast(any_significant));
             const first = @ctz(bitmask);
             std.debug.assert(first < strings.ascii_vector_size);
             std.debug.assert(text.ptr[first] == '*' or text.ptr[first] == '\r' or text.ptr[first] == '\n' or text.ptr[first] > 127);
-            return @truncate(u32, first + (@intFromPtr(text.ptr) - @intFromPtr(text_.ptr)));
+            return @as(u32, @truncate(first + (@intFromPtr(text.ptr) - @intFromPtr(text_.ptr))));
         }
         text.ptr += strings.ascii_vector_size;
     }
 
-    return @truncate(u32, @intFromPtr(text.ptr) - @intFromPtr(text_.ptr));
+    return @as(u32, @truncate(@intFromPtr(text.ptr) - @intFromPtr(text_.ptr)));
 }
 
 fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usize {
     var text = text_;
-    const quote_ = @splat(strings.ascii_vector_size, @as(u8, quote));
-    const backslash = @splat(strings.ascii_vector_size, @as(u8, '\\'));
+    const quote_: @Vector(strings.ascii_vector_size, u8) = @splat(@as(u8, quote));
+    const backslash: @Vector(strings.ascii_vector_size, u8) = @splat(@as(u8, '\\'));
     const V1x16 = strings.AsciiVectorU1;
 
     while (text.len >= strings.ascii_vector_size) {
         const vec: strings.AsciiVector = text[0..strings.ascii_vector_size].*;
 
         const any_significant =
-            @bitCast(V1x16, vec > strings.max_16_ascii) |
-            @bitCast(V1x16, vec < strings.min_16_ascii) |
-            @bitCast(V1x16, quote_ == vec) |
-            @bitCast(V1x16, backslash == vec);
+            @as(V1x16, @bitCast(vec > strings.max_16_ascii)) |
+            @as(V1x16, @bitCast(vec < strings.min_16_ascii)) |
+            @as(V1x16, @bitCast(quote_ == vec)) |
+            @as(V1x16, @bitCast(backslash == vec));
 
         if (@reduce(.Max, any_significant) > 0) {
-            const bitmask = @bitCast(u16, any_significant);
+            const bitmask = @as(u16, @bitCast(any_significant));
             const first = @ctz(bitmask);
             std.debug.assert(first < strings.ascii_vector_size);
             return first + (@intFromPtr(text.ptr) - @intFromPtr(text_.ptr));

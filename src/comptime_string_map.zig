@@ -26,7 +26,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
                     return a.key.len < b.key.len;
                 }
                 // https://stackoverflow.com/questions/11227809/why-is-processing-a-sorted-array-faster-than-processing-an-unsorted-array
-                @setEvalBranchQuota(99999);
+                @setEvalBranchQuota(999999);
                 return std.mem.order(KeyType, a.key, b.key) == .lt;
             }
         }).lenAsc;

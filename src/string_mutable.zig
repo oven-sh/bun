@@ -224,7 +224,7 @@ pub const MutableString = struct {
         );
     }
     pub inline fn lenI(self: *MutableString) i32 {
-        return @intCast(i32, self.list.items.len);
+        return @as(i32, @intCast(self.list.items.len));
     }
 
     pub fn toOwnedSlice(self: *MutableString) string {

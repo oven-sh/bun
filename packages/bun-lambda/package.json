@@ -1,6 +1,6 @@
 {
   "devDependencies": {
-    "bun-types": "^0.4.0",
+    "bun-types": "^0.7.0",
     "jszip": "^3.10.1",
     "oclif": "^3.6.5",
     "prettier": "^2.8.2"

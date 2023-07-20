@@ -70,6 +70,7 @@ public:
     void terminate();
     bool wasTerminated() const { return m_wasTerminated; }
     bool hasPendingActivity() const;
+    bool updatePtr();
 
     String identifier() const { return m_identifier; }
     const String& name() const { return m_options.name; }
@@ -126,6 +127,7 @@ private:
     // bool m_isSuspendedForBackForwardCache { false };
     // JSC::RuntimeFlags m_runtimeFlags;
     Deque<RefPtr<Event>> m_pendingEvents;
+    Lock m_pendingTasksMutex;
     Deque<Function<void(ScriptExecutionContext&)>> m_pendingTasks;
     bool m_wasTerminated { false };
     bool m_didStartWorkerGlobalScope { false };

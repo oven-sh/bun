@@ -124,7 +124,7 @@ pub inline fn getBits(comptime TargetType: type, target: anytype, comptime start
         }
     }
 
-    return @truncate(TargetType, target >> start_bit);
+    return @as(TargetType, @truncate(target >> start_bit));
 }
 
 /// In some parts of Bun, we have many different IDs pointing to different things.
@@ -149,11 +149,11 @@ pub const Index = packed struct(u32) {
     pub const Int = u32;
 
     pub inline fn source(num: anytype) Index {
-        return .{ .value = @truncate(Int, num) };
+        return .{ .value = @as(Int, @truncate(num)) };
     }
 
     pub inline fn part(num: anytype) Index {
-        return .{ .value = @truncate(Int, num) };
+        return .{ .value = @as(Int, @truncate(num)) };
     }
 
     pub fn init(num: anytype) Index {
@@ -164,12 +164,12 @@ pub const Index = packed struct(u32) {
 
         if (comptime bun.Environment.allow_assert) {
             return .{
-                .value = @intCast(Int, num),
+                .value = @as(Int, @intCast(num)),
             };
         }
 
         return .{
-            .value = @intCast(Int, num),
+            .value = @as(Int, @intCast(num)),
         };
     }
 
@@ -208,7 +208,7 @@ pub const Ref = packed struct(u64) {
     pub const Int = std.meta.Int(.unsigned, (64 - 2) / 2);
 
     pub fn toInt(value: anytype) Int {
-        return @intCast(Int, value);
+        return @as(Int, @intCast(value));
     }
 
     pub fn isSourceIndexNull(this: anytype) bool {
@@ -255,7 +255,7 @@ pub const Ref = packed struct(u64) {
             .inner_index = inner_index,
 
             // if we overflow, we want a panic
-            .source_index = @intCast(Int, source_index),
+            .source_index = @as(Int, @intCast(source_index)),
 
             .tag = if (is_source_contents_slice) .source_contents_slice else .allocated_name,
         };
@@ -267,15 +267,15 @@ pub const Ref = packed struct(u64) {
     }
 
     pub fn hash(key: Ref) u32 {
-        return @truncate(u32, key.hash64());
+        return @as(u32, @truncate(key.hash64()));
     }
 
     pub inline fn asU64(key: Ref) u64 {
-        return @bitCast(u64, key);
+        return @as(u64, @bitCast(key));
     }
 
     pub inline fn hash64(key: Ref) u64 {
-        return bun.hash(&@bitCast([8]u8, key.asU64()));
+        return bun.hash(&@as([8]u8, @bitCast(key.asU64())));
     }
 
     pub fn eql(ref: Ref, b: Ref) bool {

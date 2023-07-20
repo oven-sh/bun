@@ -245,7 +245,7 @@ pub const BufferReadStream = struct {
     }
 
     pub inline fn fromCtx(ctx: *anyopaque) *Stream {
-        return @ptrCast(*Stream, @alignCast(@alignOf(*Stream), ctx));
+        return @as(*Stream, @ptrCast(@alignCast(ctx)));
     }
 
     pub fn archive_close_callback(
@@ -267,7 +267,7 @@ pub const BufferReadStream = struct {
         const diff = @min(remaining.len, this.block_size);
         buffer.* = remaining[0..diff].ptr;
         this.pos += diff;
-        return @intCast(isize, diff);
+        return @as(isize, @intCast(diff));
     }
 
     pub fn archive_skip_callback(
@@ -277,12 +277,12 @@ pub const BufferReadStream = struct {
     ) callconv(.C) lib.la_int64_t {
         var this = fromCtx(ctx_);
 
-        const buflen = @intCast(isize, this.buf.len);
-        const pos = @intCast(isize, this.pos);
+        const buflen = @as(isize, @intCast(this.buf.len));
+        const pos = @as(isize, @intCast(this.pos));
 
         const proposed = pos + offset;
         const new_pos = @min(@max(proposed, 0), buflen - 1);
-        this.pos = @intCast(usize, this.pos);
+        this.pos = @as(usize, @intCast(this.pos));
         return new_pos - pos;
     }
 
@@ -294,23 +294,23 @@ pub const BufferReadStream = struct {
     ) callconv(.C) lib.la_int64_t {
         var this = fromCtx(ctx_);
 
-        const buflen = @intCast(isize, this.buf.len);
-        const pos = @intCast(isize, this.pos);
+        const buflen = @as(isize, @intCast(this.buf.len));
+        const pos = @as(isize, @intCast(this.pos));
 
-        switch (@enumFromInt(Seek, whence)) {
+        switch (@as(Seek, @enumFromInt(whence))) {
             Seek.current => {
                 const new_pos = @max(@min(pos + offset, buflen - 1), 0);
-                this.pos = @intCast(usize, new_pos);
+                this.pos = @as(usize, @intCast(new_pos));
                 return new_pos;
             },
             Seek.end => {
                 const new_pos = @max(@min(buflen - offset, buflen), 0);
-                this.pos = @intCast(usize, new_pos);
+                this.pos = @as(usize, @intCast(new_pos));
                 return new_pos;
             },
             Seek.set => {
                 const new_pos = @max(@min(offset, buflen - 1), 0);
-                this.pos = @intCast(usize, new_pos);
+                this.pos = @as(usize, @intCast(new_pos));
                 return new_pos;
             },
         }
@@ -363,7 +363,7 @@ pub const Archive = struct {
 
         pub const U64Context = struct {
             pub fn hash(_: @This(), k: u64) u32 {
-                return @truncate(u32, k);
+                return @as(u32, @truncate(k));
             }
             pub fn eql(_: @This(), a: u64, b: u64, _: usize) bool {
                 return a == b;
@@ -413,7 +413,7 @@ pub const Archive = struct {
         };
 
         loop: while (true) {
-            const r = @enumFromInt(Status, lib.archive_read_next_header(archive, &entry));
+            const r = @as(Status, @enumFromInt(lib.archive_read_next_header(archive, &entry)));
 
             switch (r) {
                 Status.eof => break :loop,
@@ -434,7 +434,7 @@ pub const Archive = struct {
                     pathname = std.mem.sliceTo(pathname_.ptr[0..pathname_.len :0], 0);
                     const dirname = std.mem.trim(u8, std.fs.path.dirname(bun.asByteSlice(pathname)) orelse "", std.fs.path.sep_str);
 
-                    const size = @intCast(usize, @max(lib.archive_entry_size(entry), 0));
+                    const size = @as(usize, @intCast(@max(lib.archive_entry_size(entry), 0)));
                     if (size > 0) {
                         var opened = dir.dir.openFileZ(pathname, .{ .mode = .write_only }) catch continue :loop;
                         var stat = try opened.stat();
@@ -490,7 +490,7 @@ pub const Archive = struct {
         const dir_fd = dir.fd;
 
         loop: while (true) {
-            const r = @enumFromInt(Status, lib.archive_read_next_header(archive, &entry));
+            const r = @as(Status, @enumFromInt(lib.archive_read_next_header(archive, &entry)));
 
             switch (r) {
                 Status.eof => break :loop,
@@ -513,7 +513,7 @@ pub const Archive = struct {
                     }
 
                     var pathname_ = tokenizer.rest();
-                    pathname = @ptrFromInt([*]const u8, @intFromPtr(pathname_.ptr))[0..pathname_.len :0];
+                    pathname = @as([*]const u8, @ptrFromInt(@intFromPtr(pathname_.ptr)))[0..pathname_.len :0];
                     if (pathname.len == 0) continue;
 
                     const kind = C.kindFromMode(lib.archive_entry_filetype(entry));
@@ -528,7 +528,7 @@ pub const Archive = struct {
 
                     switch (kind) {
                         Kind.directory => {
-                            var mode = @intCast(i32, lib.archive_entry_perm(entry));
+                            var mode = @as(i32, @intCast(lib.archive_entry_perm(entry)));
 
                             // if dirs are readable, then they should be listable
                             // https://github.com/npm/node-tar/blob/main/lib/mode-fix.js
@@ -539,7 +539,7 @@ pub const Archive = struct {
                             if ((mode & 0o4) != 0)
                                 mode |= 0o1;
 
-                            std.os.mkdiratZ(dir_fd, pathname, @intCast(u32, mode)) catch |err| {
+                            std.os.mkdiratZ(dir_fd, pathname, @as(u32, @intCast(mode))) catch |err| {
                                 if (err == error.PathAlreadyExists or err == error.NotDir) break;
                                 try dir.makePath(std.fs.path.dirname(slice) orelse return err);
                                 try std.os.mkdiratZ(dir_fd, pathname, 0o777);
@@ -561,7 +561,7 @@ pub const Archive = struct {
                             };
                         },
                         Kind.file => {
-                            const mode = @intCast(std.os.mode_t, lib.archive_entry_perm(entry));
+                            const mode = @as(std.os.mode_t, @intCast(lib.archive_entry_perm(entry)));
                             const file = dir.createFileZ(pathname, .{ .truncate = true, .mode = mode }) catch |err| brk: {
                                 switch (err) {
                                     error.AccessDenied, error.FileNotFound => {
@@ -579,7 +579,7 @@ pub const Archive = struct {
                             defer if (comptime close_handles) file.close();
 
                             const entry_size = @max(lib.archive_entry_size(entry), 0);
-                            const size = @intCast(usize, entry_size);
+                            const size = @as(usize, @intCast(entry_size));
                             if (size > 0) {
                                 if (ctx) |ctx_| {
                                     const hash: u64 = if (ctx_.pluckers.len > 0)
@@ -599,7 +599,7 @@ pub const Archive = struct {
                                             try plucker_.contents.inflate(size);
                                             plucker_.contents.list.expandToCapacity();
                                             var read = lib.archive_read_data(archive, plucker_.contents.list.items.ptr, size);
-                                            try plucker_.contents.inflate(@intCast(usize, read));
+                                            try plucker_.contents.inflate(@as(usize, @intCast(read)));
                                             plucker_.found = read > 0;
                                             plucker_.fd = file.handle;
                                             continue :loop;

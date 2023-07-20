@@ -11,6 +11,26 @@ import * as StreamModule from "node:stream";
 
 const MAX_STRING_LENGTH = 536870888;
 var Buffer = globalThis.Buffer;
+const EMPTY_BUFFER = Buffer.alloc(0);
+const { isAnyArrayBuffer, isArrayBufferView } = require("util/types");
+
+function getArrayBufferOrView(buffer, name, encoding) {
+  if (isAnyArrayBuffer(buffer)) return buffer;
+  if (typeof buffer === "string") {
+    if (encoding === "buffer") encoding = "utf8";
+    return Buffer.from(buffer, encoding);
+  }
+  if (!isArrayBufferView(buffer)) {
+    var error = new TypeError(
+      `ERR_INVALID_ARG_TYPE: The "${name}" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received ` +
+        buffer,
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  return buffer;
+}
+
 const crypto = globalThis.crypto;
 const globalCrypto = crypto;
 
@@ -3100,10 +3120,22 @@ var require_encrypter = __commonJS({
     function createCipheriv(suite, password, iv) {
       var config = MODES[suite.toLowerCase()];
       if (!config) throw new TypeError("invalid suite type");
-      if ((typeof password == "string" && (password = Buffer2.from(password)), password.length !== config.key / 8))
-        throw new TypeError("invalid key length " + password.length);
-      if ((typeof iv == "string" && (iv = Buffer2.from(iv)), config.mode !== "GCM" && iv.length !== config.iv))
-        throw new TypeError("invalid iv length " + iv.length);
+      password = getArrayBufferOrView(password, "password");
+      const iv_length = iv?.length || 0;
+      const required_iv_length = config.iv || 0;
+      iv = iv === null ? EMPTY_BUFFER : getArrayBufferOrView(iv, "iv");
+
+      if (password?.length !== config.key / 8) {
+        var error = new RangeError("Invalid key length");
+        error.code = "ERR_CRYPTO_INVALID_KEYLEN";
+        throw error;
+      }
+      if (config.mode !== "GCM" && iv_length !== required_iv_length) {
+        var error = new RangeError("Invalid key length");
+        error.code = "ERR_CRYPTO_INVALID_KEYLEN";
+        throw error;
+      }
+
       return config.type === "stream"
         ? new StreamCipher(config.module, password, iv)
         : config.type === "auth"
@@ -3183,10 +3215,22 @@ var require_decrypter = __commonJS({
     function createDecipheriv(suite, password, iv) {
       var config = MODES[suite.toLowerCase()];
       if (!config) throw new TypeError("invalid suite type");
-      if ((typeof iv == "string" && (iv = Buffer2.from(iv)), config.mode !== "GCM" && iv.length !== config.iv))
-        throw new TypeError("invalid iv length " + iv.length);
-      if ((typeof password == "string" && (password = Buffer2.from(password)), password.length !== config.key / 8))
-        throw new TypeError("invalid key length " + password.length);
+
+      password = getArrayBufferOrView(password, "password");
+      const iv_length = iv?.length || 0;
+      const required_iv_length = config.iv || 0;
+      iv = iv === null ? EMPTY_BUFFER : getArrayBufferOrView(iv, "iv");
+
+      if (config.mode !== "GCM" && iv_length !== required_iv_length) {
+        var error = new RangeError("Invalid key length");
+        error.code = "ERR_CRYPTO_INVALID_KEYLEN";
+        throw error;
+      }
+      if (password.length !== config.key / 8) {
+        var error = new RangeError("Invalid key length");
+        error.code = "ERR_CRYPTO_INVALID_KEYLEN";
+        throw error;
+      }
       return config.type === "stream"
         ? new StreamCipher(config.module, password, iv, !0)
         : config.type === "auth"

@@ -137,19 +137,15 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::const
             }
         }
 
-        if (auto bunValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "bun"_s))) {
-            if (bunValue.isObject()) {
-                if (auto* bunObject = bunValue.getObject()) {
-                    if (auto miniModeValue = bunObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "smol"_s))) {
-                        options.bun.mini = miniModeValue.toBoolean(lexicalGlobalObject);
-                        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-                    }
+        if (auto* bunObject = optionsObject) {
+            if (auto miniModeValue = bunObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "smol"_s))) {
+                options.bun.mini = miniModeValue.toBoolean(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+            }
 
-                    if (auto ref = bunObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "ref"_s))) {
-                        options.bun.unref = !ref.toBoolean(lexicalGlobalObject);
-                        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-                    }
-                }
+            if (auto ref = bunObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "ref"_s))) {
+                options.bun.unref = !ref.toBoolean(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
             }
         }
     }
@@ -162,8 +158,16 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::const
     auto jsValue = toJSNewlyCreated<IDLInterface<Worker>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
+
+    auto& impl = jsCast<JSWorker*>(jsValue)->wrapped();
+    if (!impl.updatePtr()) {
+        throwVMError(lexicalGlobalObject, throwScope, "Failed to start Worker thread"_s);
+        return encodedJSValue();
+    }
+
     setSubclassStructureIfNeeded<Worker>(lexicalGlobalObject, callFrame, asObject(jsValue));
     RETURN_IF_EXCEPTION(throwScope, {});
+
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSWorkerDOMConstructorConstruct, JSWorkerDOMConstructor::construct);

@@ -1,5 +1,5 @@
 {% callout %}
-`Worker` support was added in Bun v0.6.15.
+`Worker` support was added in Bun v0.7.0.
 {% /callout %}
 
 [`Worker`](https://developer.mozilla.org/en-US/docs/Web/API/Worker) lets you start and communicate with a new JavaScript instance running on a separate thread while sharing I/O resources with the main thread.
@@ -54,6 +54,8 @@ worker.addEventListener("open", () => {
 });
 ```
 
+Messages are automatically enqueued until the worker is ready, so there is no need to wait for the `"open"` event to send messages.
+
 ## Messages with `postMessage`
 
 To send messages, use [`worker.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Worker/postMessage) and [`self.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage). This leverages the [HTML Structured Clone Algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm).
@@ -70,14 +72,14 @@ To receive messages, use the [`message` event handler](https://developer.mozilla
 
 ```js
 // Worker thread:
-self.addEventListener("message", = event => {
+self.addEventListener("message", event => {
   console.log(event.data);
 });
 // or use the setter:
 // self.onmessage = fn
 
 // if on the main thread
-worker.addEventListener("message", = event => {
+worker.addEventListener("message", event => {
   console.log(event.data);
 });
 // or use the setter:
@@ -130,9 +132,7 @@ Alternatively, you can also pass an `options` object to `Worker`:
 
 ```ts
 const worker = new Worker(new URL("worker.ts", import.meta.url).href, {
-  bun: {
-    ref: true,
-  },
+  ref: true,
 });
 ```
 
@@ -155,9 +155,7 @@ JavaScript instances can use a lot of memory. Bun's `Worker` supports a `smol` m
 
 ```js
 const worker = new Worker("./i-am-smol.ts", {
-  bun: {
-    smol: true,
-  },
+  smol: true,
 });
 ```
 

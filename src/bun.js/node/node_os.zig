@@ -207,7 +207,7 @@ pub const Os = struct {
         var num_cpus: c.natural_t = 0;
         var info: [*]local_bindings.processor_cpu_load_info = undefined;
         var info_size: std.c.mach_msg_type_number_t = 0;
-        if (local_bindings.host_processor_info(std.c.mach_host_self(), local_bindings.PROCESSOR_CPU_LOAD_INFO, &num_cpus, @ptrCast(*local_bindings.processor_info_array_t, &info), &info_size) != .SUCCESS) {
+        if (local_bindings.host_processor_info(std.c.mach_host_self(), local_bindings.PROCESSOR_CPU_LOAD_INFO, &num_cpus, @as(*local_bindings.processor_info_array_t, @ptrCast(&info)), &info_size) != .SUCCESS) {
             return error.no_processor_info;
         }
         defer _ = std.c.vm_deallocate(std.c.mach_task_self(), @intFromPtr(info), info_size);
@@ -247,10 +247,10 @@ pub const Os = struct {
             @cInclude("unistd.h");
         });
         const ticks: i64 = unistd.sysconf(unistd._SC_CLK_TCK);
-        const multiplier = 1000 / @intCast(u64, ticks);
+        const multiplier = 1000 / @as(u64, @intCast(ticks));
 
         // Set up each CPU value in the return
-        const values = JSC.JSValue.createEmptyArray(globalThis, @intCast(u32, num_cpus));
+        const values = JSC.JSValue.createEmptyArray(globalThis, @as(u32, @intCast(num_cpus)));
         var cpu_index: u32 = 0;
         while (cpu_index < num_cpus) : (cpu_index += 1) {
             const times = CPUTimes{
@@ -436,8 +436,8 @@ pub const Os = struct {
             if (helpers.skip(iface) or helpers.isLinkLayer(iface)) continue;
 
             const interface_name = std.mem.sliceTo(iface.ifa_name, 0);
-            const addr = std.net.Address.initPosix(@alignCast(4, @ptrCast(*std.os.sockaddr, iface.ifa_addr)));
-            const netmask = std.net.Address.initPosix(@alignCast(4, @ptrCast(*std.os.sockaddr, iface.ifa_netmask)));
+            const addr = std.net.Address.initPosix(@alignCast(@as(*std.os.sockaddr, @ptrCast(iface.ifa_addr))));
+            const netmask = std.net.Address.initPosix(@alignCast(@as(*std.os.sockaddr, @ptrCast(iface.ifa_netmask))));
 
             var interface = JSC.JSValue.createEmptyObject(globalThis, 7);
 
@@ -448,7 +448,7 @@ pub const Os = struct {
                 //  be converted to a CIDR suffix
                 const maybe_suffix: ?u8 = switch (addr.any.family) {
                     std.os.AF.INET => netmaskToCIDRSuffix(netmask.in.sa.addr),
-                    std.os.AF.INET6 => netmaskToCIDRSuffix(@bitCast(u128, netmask.in6.sa.addr)),
+                    std.os.AF.INET6 => netmaskToCIDRSuffix(@as(u128, @bitCast(netmask.in6.sa.addr))),
                     else => null,
                 };
 
@@ -500,9 +500,9 @@ pub const Os = struct {
                     // This is the correct link-layer interface entry for the current interface,
                     //  cast to a link-layer socket address
                     if (comptime Environment.isLinux) {
-                        break @ptrCast(?*std.os.sockaddr.ll, @alignCast(4, ll_iface.ifa_addr));
+                        break @as(?*std.os.sockaddr.ll, @ptrCast(@alignCast(ll_iface.ifa_addr)));
                     } else if (comptime Environment.isMac) {
-                        break @ptrCast(?*C.sockaddr_dl, @alignCast(2, ll_iface.ifa_addr));
+                        break @as(?*C.sockaddr_dl, @ptrCast(@alignCast(ll_iface.ifa_addr)));
                     } else unreachable;
                 } else null;
 
@@ -530,7 +530,7 @@ pub const Os = struct {
             // Does this entry already exist?
             if (ret.get(globalThis, interface_name)) |array| {
                 // Add this interface entry to the existing array
-                const next_index = @intCast(u32, array.getLength(globalThis));
+                const next_index = @as(u32, @intCast(array.getLength(globalThis)));
                 array.putIndex(globalThis, next_index, interface);
             } else {
                 // Add it as an array with this interface as an element
@@ -750,7 +750,7 @@ test "netmaskToCIDRSuffix" {
     };
     inline for (ipv6_tests) |t| {
         const addr = try std.net.Address.parseIp6(t[0], 0);
-        const bits = @bitCast(u128, addr.in6.sa.addr);
+        const bits = @as(u128, @bitCast(addr.in6.sa.addr));
         try std.testing.expectEqual(@as(?u8, t[1]), netmaskToCIDRSuffix(bits));
     }
 }

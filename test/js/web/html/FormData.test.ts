@@ -226,6 +226,21 @@ describe("FormData", () => {
     }
   });
 
+  test("FormData.from (URLSearchParams)", () => {
+    expect(
+      // @ts-expect-error
+      FormData.from(
+        new URLSearchParams({
+          a: "b",
+          c: "d",
+        }).toString(),
+      ).toJSON(),
+    ).toEqual({
+      a: "b",
+      c: "d",
+    });
+  });
+
   it("should throw on bad boundary", async () => {
     const response = new Response('foo\r\nContent-Disposition: form-data; name="foo"\r\n\r\nbar\r\n', {
       headers: {

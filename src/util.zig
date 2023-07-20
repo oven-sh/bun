@@ -218,7 +218,7 @@ pub fn fromSlice(
                 map.items.len = default.len;
                 slice = map.items;
             } else if (comptime @hasField(Array, "len")) {
-                map.len = @intCast(u32, default.len);
+                map.len = @as(u32, @intCast(default.len));
                 slice = map.slice();
             } else {
                 @compileError("Cannot set length of " ++ @typeName(Array));
@@ -229,8 +229,8 @@ pub fn fromSlice(
             slice = try allocator.alloc(Of(Array), default.len);
             map = .{
                 .ptr = slice.ptr,
-                .len = @truncate(u32, default.len),
-                .cap = @truncate(u32, default.len),
+                .len = @as(u32, @truncate(default.len)),
+                .cap = @as(u32, @truncate(default.len)),
             };
         }
 
@@ -269,7 +269,7 @@ pub fn Batcher(comptime Type: type) type {
         }
 
         pub inline fn eat(this: *@This(), value: Type) *Type {
-            return @ptrCast(*Type, &this.head.eat1(value).ptr);
+            return @as(*Type, @ptrCast(&this.head.eat1(value).ptr));
         }
 
         pub inline fn eat1(this: *@This(), value: Type) []Type {

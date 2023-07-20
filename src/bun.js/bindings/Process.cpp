@@ -1,4 +1,5 @@
 #include "Process.h"
+#include "JavaScriptCore/InternalFieldTuple.h"
 #include "JavaScriptCore/JSMicrotask.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/NumberPrototype.h"
@@ -179,22 +180,19 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
     }
 
     Zig::GlobalObject* global = JSC::jsCast<Zig::GlobalObject*>(globalObject);
+    JSC::JSValue asyncContextValue = globalObject->m_asyncContextData.get()->getInternalField(0);
 
     switch (callFrame->argumentCount()) {
     case 1: {
-        global->queueMicrotask(global->performMicrotaskFunction(), job, JSC::JSValue {}, JSC::JSValue {}, JSC::JSValue {});
+        global->queueMicrotask(global->performMicrotaskFunction(), job, asyncContextValue, JSC::JSValue {}, JSC::JSValue {});
         break;
     }
     case 2: {
-        global->queueMicrotask(global->performMicrotaskFunction(), job, callFrame->uncheckedArgument(1), JSC::JSValue {}, JSC::JSValue {});
+        global->queueMicrotask(global->performMicrotaskFunction(), job, asyncContextValue, callFrame->uncheckedArgument(1), JSC::JSValue {});
         break;
     }
     case 3: {
-        global->queueMicrotask(global->performMicrotaskFunction(), job, callFrame->uncheckedArgument(1), callFrame->uncheckedArgument(2), JSC::JSValue {});
-        break;
-    }
-    case 4: {
-        global->queueMicrotask(global->performMicrotaskFunction(), job, callFrame->uncheckedArgument(1), callFrame->uncheckedArgument(2), callFrame->uncheckedArgument(3));
+        global->queueMicrotask(global->performMicrotaskFunction(), job, asyncContextValue, callFrame->uncheckedArgument(1), callFrame->uncheckedArgument(2));
         break;
     }
     default: {
@@ -210,7 +208,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
         }
 
         global->queueMicrotask(
-            global->performMicrotaskVariadicFunction(), job, args, JSValue {}, JSC::JSValue {});
+            global->performMicrotaskVariadicFunction(), job, args, asyncContextValue, JSC::JSValue {});
 
         break;
     }

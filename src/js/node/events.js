@@ -453,11 +453,29 @@ function checkListener(listener) {
   }
 }
 
+let AsyncResource = null;
+
 class EventEmitterAsyncResource extends EventEmitter {
-  constructor(options = undefined) {
-    throwNotImplemented("EventEmitterAsyncResource", 1832);
+  triggerAsyncId;
+  asyncResource;
+
+  constructor(options) {
+    if (!AsyncResource) AsyncResource = import.meta.require("async_hooks").AsyncResource;
+    var { captureRejections = false, triggerAsyncId, name = new.target.name, requireManualDestroy } = options || {};
+    super({ captureRejections });
+    this.triggerAsyncId = triggerAsyncId ?? 0;
+    this.asyncResource = new AsyncResource(name, { triggerAsyncId, requireManualDestroy });
+  }
+
+  emit(...args) {
+    this.asyncResource.runInAsyncScope(() => super.emit(...args));
+  }
+
+  emitDestroy() {
+    this.asyncResource.emitDestroy();
   }
 }
+
 const usingDomains = false;
 // EventEmitter[Symbol.for("CommonJS")] = 0;
 Object.assign(EventEmitter, { once, on, getEventListeners, setMaxListeners, listenerCount, EventEmitterAsyncResource });

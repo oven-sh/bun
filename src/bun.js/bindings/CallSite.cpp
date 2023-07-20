@@ -86,7 +86,8 @@ void CallSite::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisCallSite->m_sourceURL);
 }
 
-void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder &sb) {
+void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb)
+{
     JSString* myTypeName = jsTypeStringForValue(globalObject, thisValue());
     JSString* myFunction = functionName().toString(globalObject);
     JSString* myFunctionName = functionName().toString(globalObject);

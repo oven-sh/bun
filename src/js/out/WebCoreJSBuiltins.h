@@ -3396,6 +3396,95 @@ inline void TransformStreamDefaultControllerBuiltinsWrapper::exportNames()
     WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
 #undef EXPORT_FUNCTION_NAME
 }
+/* AsyncContext.ts */
+// getAsyncContext
+#define WEBCORE_BUILTIN_ASYNCCONTEXT_GETASYNCCONTEXT 1
+extern const char* const s_asyncContextGetAsyncContextCode;
+extern const int s_asyncContextGetAsyncContextCodeLength;
+extern const JSC::ConstructAbility s_asyncContextGetAsyncContextCodeConstructAbility;
+extern const JSC::ConstructorKind s_asyncContextGetAsyncContextCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_asyncContextGetAsyncContextCodeImplementationVisibility;
+
+// setAsyncContext
+#define WEBCORE_BUILTIN_ASYNCCONTEXT_SETASYNCCONTEXT 1
+extern const char* const s_asyncContextSetAsyncContextCode;
+extern const int s_asyncContextSetAsyncContextCodeLength;
+extern const JSC::ConstructAbility s_asyncContextSetAsyncContextCodeConstructAbility;
+extern const JSC::ConstructorKind s_asyncContextSetAsyncContextCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_asyncContextSetAsyncContextCodeImplementationVisibility;
+
+#define WEBCORE_FOREACH_ASYNCCONTEXT_BUILTIN_DATA(macro) \
+    macro(getAsyncContext, asyncContextGetAsyncContext, 0) \
+    macro(setAsyncContext, asyncContextSetAsyncContext, 1) \
+
+#define WEBCORE_FOREACH_ASYNCCONTEXT_BUILTIN_CODE(macro) \
+    macro(asyncContextGetAsyncContextCode, getAsyncContext, ASCIILiteral(), s_asyncContextGetAsyncContextCodeLength) \
+    macro(asyncContextSetAsyncContextCode, setAsyncContext, ASCIILiteral(), s_asyncContextSetAsyncContextCodeLength) \
+
+#define WEBCORE_FOREACH_ASYNCCONTEXT_BUILTIN_FUNCTION_NAME(macro) \
+    macro(getAsyncContext) \
+    macro(setAsyncContext) \
+
+#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
+    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
+
+WEBCORE_FOREACH_ASYNCCONTEXT_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+#undef DECLARE_BUILTIN_GENERATOR
+
+class AsyncContextBuiltinsWrapper : private JSC::WeakHandleOwner {
+public:
+    explicit AsyncContextBuiltinsWrapper(JSC::VM& vm)
+        : m_vm(vm)
+        WEBCORE_FOREACH_ASYNCCONTEXT_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+        WEBCORE_FOREACH_ASYNCCONTEXT_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
+    {
+    }
+
+#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+    JSC::UnlinkedFunctionExecutable* name##Executable(); \
+    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
+    WEBCORE_FOREACH_ASYNCCONTEXT_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+#undef EXPOSE_BUILTIN_EXECUTABLES
+
+    WEBCORE_FOREACH_ASYNCCONTEXT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+
+    void exportNames();
+
+private:
+    JSC::VM& m_vm;
+
+    WEBCORE_FOREACH_ASYNCCONTEXT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+
+#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
+    JSC::SourceCode m_##name##Source;\
+    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
+    WEBCORE_FOREACH_ASYNCCONTEXT_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+#undef DECLARE_BUILTIN_SOURCE_MEMBERS
+
+};
+
+#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+inline JSC::UnlinkedFunctionExecutable* AsyncContextBuiltinsWrapper::name##Executable() \
+{\
+    if (!m_##name##Executable) {\
+        JSC::Identifier executableName = functionName##PublicName();\
+        if (overriddenName)\
+            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+    }\
+    return m_##name##Executable.get();\
+}
+WEBCORE_FOREACH_ASYNCCONTEXT_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+#undef DEFINE_BUILTIN_EXECUTABLES
+
+inline void AsyncContextBuiltinsWrapper::exportNames()
+{
+#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
+    WEBCORE_FOREACH_ASYNCCONTEXT_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+#undef EXPORT_FUNCTION_NAME
+}
 /* ReadableStreamBYOBReader.ts */
 // initializeReadableStreamBYOBReader
 #define WEBCORE_BUILTIN_READABLESTREAMBYOBREADER_INITIALIZEREADABLESTREAMBYOBREADER 1
@@ -4695,7 +4784,7 @@ extern const JSC::ConstructorKind s_readableStreamLazyAsyncIteratorCodeConstruct
 extern const JSC::ImplementationVisibility s_readableStreamLazyAsyncIteratorCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_READABLESTREAM_BUILTIN_DATA(macro) \
-    macro(initializeReadableStream, readableStreamInitializeReadableStream, 2) \
+    macro(initializeReadableStream, readableStreamInitializeReadableStream, 3) \
     macro(readableStreamToArray, readableStreamReadableStreamToArray, 1) \
     macro(readableStreamToText, readableStreamReadableStreamToText, 1) \
     macro(readableStreamToArrayBuffer, readableStreamReadableStreamToArrayBuffer, 1) \
@@ -5616,6 +5705,7 @@ public:
         , m_consoleObjectBuiltins(m_vm)
         , m_readableStreamInternalsBuiltins(m_vm)
         , m_transformStreamDefaultControllerBuiltins(m_vm)
+        , m_asyncContextBuiltins(m_vm)
         , m_readableStreamBYOBReaderBuiltins(m_vm)
         , m_jsBufferConstructorBuiltins(m_vm)
         , m_readableStreamDefaultReaderBuiltins(m_vm)
@@ -5649,6 +5739,7 @@ public:
     ConsoleObjectBuiltinsWrapper& consoleObjectBuiltins() { return m_consoleObjectBuiltins; }
     ReadableStreamInternalsBuiltinsWrapper& readableStreamInternalsBuiltins() { return m_readableStreamInternalsBuiltins; }
     TransformStreamDefaultControllerBuiltinsWrapper& transformStreamDefaultControllerBuiltins() { return m_transformStreamDefaultControllerBuiltins; }
+    AsyncContextBuiltinsWrapper& asyncContextBuiltins() { return m_asyncContextBuiltins; }
     ReadableStreamBYOBReaderBuiltinsWrapper& readableStreamBYOBReaderBuiltins() { return m_readableStreamBYOBReaderBuiltins; }
     JSBufferConstructorBuiltinsWrapper& jsBufferConstructorBuiltins() { return m_jsBufferConstructorBuiltins; }
     ReadableStreamDefaultReaderBuiltinsWrapper& readableStreamDefaultReaderBuiltins() { return m_readableStreamDefaultReaderBuiltins; }
@@ -5677,6 +5768,7 @@ private:
     ConsoleObjectBuiltinsWrapper m_consoleObjectBuiltins;
     ReadableStreamInternalsBuiltinsWrapper m_readableStreamInternalsBuiltins;
     TransformStreamDefaultControllerBuiltinsWrapper m_transformStreamDefaultControllerBuiltins;
+    AsyncContextBuiltinsWrapper m_asyncContextBuiltins;
     ReadableStreamBYOBReaderBuiltinsWrapper m_readableStreamBYOBReaderBuiltins;
     JSBufferConstructorBuiltinsWrapper m_jsBufferConstructorBuiltins;
     ReadableStreamDefaultReaderBuiltinsWrapper m_readableStreamDefaultReaderBuiltins;

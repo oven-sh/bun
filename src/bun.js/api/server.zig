@@ -795,15 +795,17 @@ pub const ServerConfig = struct {
                     }
                     return args;
                 }
-                JSC.C.JSValueProtect(global, onError.asObjectRef());
-                args.onError = onError;
+                const onErrorSnapshot = onError.withAsyncContextIfNeeded(global);
+                args.onError = onErrorSnapshot;
+                onErrorSnapshot.protect();
             }
 
-            if (arg.getTruthy(global, "fetch")) |onRequest| {
-                if (!onRequest.isCallable(global.vm())) {
+            if (arg.getTruthy(global, "fetch")) |onRequest_| {
+                if (!onRequest_.isCallable(global.vm())) {
                     JSC.throwInvalidArguments("Expected fetch() to be a function", .{}, global, exception);
                     return args;
                 }
+                const onRequest = onRequest_.withAsyncContextIfNeeded(global);
                 JSC.C.JSValueProtect(global, onRequest.asObjectRef());
                 args.onRequest = onRequest;
             } else {
@@ -2643,8 +2645,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             JSC.markBinding(@src());
             if (!this.server.config.onError.isEmpty() and !this.flags.has_called_error_handler) {
                 this.flags.has_called_error_handler = true;
-                var args = [_]JSC.C.JSValueRef{value.asObjectRef()};
-                const result = JSC.C.JSObjectCallAsFunctionReturnValue(this.server.globalThis, this.server.config.onError.asObjectRef(), this.server.thisObject.asObjectRef(), 1, &args);
+                const result = this.server.config.onError.callWithThis(
+                    this.server.globalThis,
+                    this.server.thisObject,
+                    &.{value},
+                );
                 defer result.ensureStillAlive();
                 if (!result.isEmptyOrUndefinedOrNull()) {
                     if (result.toError()) |err| {
@@ -3010,54 +3015,58 @@ pub const WebSocketServer = struct {
             var vm = globalObject.vm();
             var valid = false;
 
-            if (object.getTruthy(globalObject, "message")) |message| {
-                if (!message.isCallable(vm)) {
+            if (object.getTruthy(globalObject, "message")) |message_| {
+                if (!message_.isCallable(vm)) {
                     globalObject.throwInvalidArguments("websocket expects a function for the message option", .{});
                     return null;
                 }
+                const message = message_.withAsyncContextIfNeeded(globalObject);
                 handler.onMessage = message;
                 message.ensureStillAlive();
                 valid = true;
             }
 
-            if (object.getTruthy(globalObject, "open")) |open| {
-                if (!open.isCallable(vm)) {
+            if (object.getTruthy(globalObject, "open")) |open_| {
+                if (!open_.isCallable(vm)) {
                     globalObject.throwInvalidArguments("websocket expects a function for the open option", .{});
                     return null;
                 }
+                const open = open_.withAsyncContextIfNeeded(globalObject);
                 handler.onOpen = open;
                 open.ensureStillAlive();
                 valid = true;
             }
 
-            if (object.getTruthy(globalObject, "close")) |close| {
-                if (!close.isCallable(vm)) {
+            if (object.getTruthy(globalObject, "close")) |close_| {
+                if (!close_.isCallable(vm)) {
                     globalObject.throwInvalidArguments("websocket expects a function for the close option", .{});
                     return null;
                 }
+                const close = close_.withAsyncContextIfNeeded(globalObject);
                 handler.onClose = close;
                 close.ensureStillAlive();
                 valid = true;
             }
 
-            if (object.getTruthy(globalObject, "drain")) |drain| {
-                if (!drain.isCallable(vm)) {
+            if (object.getTruthy(globalObject, "drain")) |drain_| {
+                if (!drain_.isCallable(vm)) {
                     globalObject.throwInvalidArguments("websocket expects a function for the drain option", .{});
                     return null;
                 }
+                const drain = drain_.withAsyncContextIfNeeded(globalObject);
                 handler.onDrain = drain;
                 drain.ensureStillAlive();
                 valid = true;
             }
 
-            if (object.getTruthy(globalObject, "error")) |cb| {
-                if (!cb.isCallable(vm)) {
-                    globalObject.throwInvalidArguments("websocket expects a function for the error option", .{});
+            if (object.getTruthy(globalObject, "onError")) |onError_| {
+                if (!onError_.isCallable(vm)) {
+                    globalObject.throwInvalidArguments("websocket expects a function for the onError option", .{});
                     return null;
                 }
-                handler.onError = cb;
-                cb.ensureStillAlive();
-                valid = true;
+                const onError = onError_.withAsyncContextIfNeeded(globalObject);
+                handler.onError = onError;
+                onError.ensureStillAlive();
             }
 
             if (object.getTruthy(globalObject, "ping")) |cb| {
@@ -4912,8 +4921,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             var args_ = [_]JSC.C.JSValueRef{request.toJS(this.globalThis).asObjectRef()};
             const response_value = JSC.C.JSObjectCallAsFunctionReturnValue(
                 this.globalThis,
-                this.config.onRequest.asObjectRef(),
-                this.thisObject.asObjectRef(),
+                this.config.onRequest,
+                this.thisObject,
                 1,
                 &args_,
             );

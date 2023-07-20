@@ -168,8 +168,6 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForJSMockImplementation = std::forward<decltype(space)>(space); });
     }
 
-    static constexpr unsigned numberOfInternalFields = 2;
-
     // either a function or a return value, depends on kind
     mutable JSC::WriteBarrier<Unknown> underlyingValue;
 

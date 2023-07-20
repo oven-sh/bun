@@ -1239,8 +1239,8 @@ pub const VirtualMachine = struct {
         if (strings.hasPrefixComptime(specifier, "file://")) specifier = specifier["file://".len..];
 
         if (strings.indexOfChar(specifier, '?')) |i| {
-            specifier = specifier[0..i];
             query_string.* = specifier[i..];
+            specifier = specifier[0..i];
         }
 
         return specifier;
@@ -1323,6 +1323,7 @@ pub const VirtualMachine = struct {
                             var parts = [_]string{
                                 source_to_use,
                                 normalized_specifier,
+                                "../",
                             };
 
                             break :name bun.path.joinAbsStringBuf(
@@ -2597,7 +2598,7 @@ pub const EventListenerMixin = struct {
 
         for (listeners.items) |listener_ref| {
             vm.tick();
-            var result = js.JSObjectCallAsFunctionReturnValue(vm.global, listener_ref, null, 1, &fetch_args);
+            var result = js.JSObjectCallAsFunctionReturnValue(vm.global, JSValue.fromRef(listener_ref), JSValue.zero, 1, &fetch_args);
             vm.tick();
             var promise = JSInternalPromise.resolvedPromise(vm.global, result);
 

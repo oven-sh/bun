@@ -85,7 +85,7 @@ const build_prod_unminified = await Bun.build({
 
 const build_dev = await Bun.build({
   entrypoints: entrypoints,
-  minify: { syntax: true },
+  minify: { syntax: false },
   sourcemap: "external",
   ...devOpts,
 });

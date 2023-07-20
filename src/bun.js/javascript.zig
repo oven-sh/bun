@@ -1298,7 +1298,10 @@ pub const VirtualMachine = struct {
             jsc_vm.bundler.fs.top_level_dir;
 
         const result: Resolver.Result = try brk: {
-            var retry_on_not_found = query_string.len > 0;
+            // TODO: We only want to retry on not found only when the directories we searched for were cached.
+            // This fixes an issue where new files created in cached directories were not picked up.
+            // See https://github.com/oven-sh/bun/issues/3216
+            var retry_on_not_found = true;
             while (true) {
                 break :brk switch (jsc_vm.bundler.resolver.resolveAndAutoInstall(
                     source_to_use,

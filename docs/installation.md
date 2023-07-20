@@ -30,6 +30,16 @@ $ docker run --rm --init --ulimit memlock=-1:-1 oven/bun
 $ proto install bun
 ```
 
+```bash#asdf
+# for macOS and Linux - add the bun plugin if not installed
+# asdf lets you have multiple versions of bun installed
+$ asdf plugin-add bun
+
+# Install/use latest version
+$ asdf install bun latest
+$ asdf global bun latest
+```
+
 {% /codetabs %}
 
 ## Upgrading

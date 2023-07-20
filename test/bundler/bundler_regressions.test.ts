@@ -180,4 +180,20 @@ describe("bundler", () => {
       file: "/entry.js",
     },
   });
+
+  // https://github.com/oven-sh/bun/issues/3660
+  itBundled("regression/StringDecoder#3660", {
+    files: {
+      "/entry.js": `
+        import { StringDecoder } from 'string_decoder'
+
+        const decoder = new StringDecoder('utf8')
+        const buf = Buffer.from([0xe4, 0xbd, 0xa0, 0xe5, 0xa5, 0xbd])
+        const str = decoder.write(buf)
+
+        console.log(str)
+      `,
+    },
+    run: { stdout: "你好" },
+  });
 });

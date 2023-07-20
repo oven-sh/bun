@@ -684,21 +684,20 @@ pub const TextDecoder = struct {
         var decoder = TextDecoder{};
 
         if (arguments.len > 0) {
-            if (!arguments[0].isString()) {
-                globalThis.throwInvalidArguments("TextDecoder(encoding) label is invalid", .{});
-                return null;
-            }
-
             // encoding
-            {
+            if (arguments[0].isString()) {
                 var str = arguments[0].toSlice(globalThis, default_allocator);
                 defer if (str.isAllocated()) str.deinit();
+
                 if (EncodingLabel.which(str.slice())) |label| {
                     decoder.encoding = label;
                 } else {
                     globalThis.throwInvalidArguments("Unsupported encoding label \"{s}\"", .{str.slice()});
                     return null;
                 }
+            } else {
+                globalThis.throwInvalidArguments("TextDecoder(encoding) label is invalid", .{});
+                return null;
             }
 
             if (arguments.len >= 2) {

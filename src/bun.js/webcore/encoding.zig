@@ -679,54 +679,47 @@ pub const TextDecoder = struct {
         var args_ = callframe.arguments(2);
         var arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
 
-        var decoder = getAllocator(globalThis).create(TextDecoder) catch unreachable;
-        decoder.* = TextDecoder{}; // Is this necessary? Does allocation initialize variables?
+        var decoder = TextDecoder{};
 
-        var ctor_failed = false; // using errdefer would be much nicer but would require another fn
-        defer if (ctor_failed) getAllocator(globalThis).destroy(decoder);
-
-        if (arguments.len == 0) {
-            return decoder;
-        }
-
-        if (!arguments[0].isString()) {
-            globalThis.throwInvalidArguments("TextDecoder(encoding) label is invalid", .{});
-            ctor_failed = true;
-            return null;
-        }
-
-        // encoding
-        {
-            var str = arguments[0].toSlice(globalThis, default_allocator);
-            defer if (str.isAllocated()) str.deinit();
-            if (EncodingLabel.which(str.slice())) |label| {
-                decoder.encoding = label;
-            } else {
-                globalThis.throwInvalidArguments("Unsupported encoding label \"{s}\"", .{str.slice()});
-                ctor_failed = true;
-                return null;
-            }
-        }
-
-        if (arguments.len >= 2) {
-            const options = arguments[1];
-
-            if (!options.isObject()) {
-                globalThis.throwInvalidArguments("TextDecoder(options) is invalid", .{});
-                ctor_failed = true;
+        if (arguments.len > 0) {
+            if (!arguments[0].isString()) {
+                globalThis.throwInvalidArguments("TextDecoder(encoding) label is invalid", .{});
                 return null;
             }
 
-            if (options.get(globalThis, "fatal")) |fatal| {
-                decoder.fatal = fatal.asBoolean();
+            // encoding
+            {
+                var str = arguments[0].toSlice(globalThis, default_allocator);
+                defer if (str.isAllocated()) str.deinit();
+                if (EncodingLabel.which(str.slice())) |label| {
+                    decoder.encoding = label;
+                } else {
+                    globalThis.throwInvalidArguments("Unsupported encoding label \"{s}\"", .{str.slice()});
+                    return null;
+                }
             }
 
-            if (options.get(globalThis, "ignoreBOM")) |ignoreBOM| {
-                decoder.ignore_bom = ignoreBOM.asBoolean();
+            if (arguments.len >= 2) {
+                const options = arguments[1];
+
+                if (!options.isObject()) {
+                    globalThis.throwInvalidArguments("TextDecoder(options) is invalid", .{});
+                    return null;
+                }
+
+                if (options.get(globalThis, "fatal")) |fatal| {
+                    decoder.fatal = fatal.asBoolean();
+                }
+
+                if (options.get(globalThis, "ignoreBOM")) |ignoreBOM| {
+                    decoder.ignore_bom = ignoreBOM.asBoolean();
+                }
             }
         }
 
-        return decoder;
+        var result = getAllocator(globalThis).create(TextDecoder) catch unreachable;
+        result.* = decoder;
+        return result;
     }
 };
 

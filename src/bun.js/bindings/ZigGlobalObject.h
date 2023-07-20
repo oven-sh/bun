@@ -277,6 +277,7 @@ public:
     JSObject* lazyPreloadTestModuleObject() { return m_lazyPreloadTestModuleObject.getInitializedOnMainThread(this); }
     Structure* CommonJSModuleObjectStructure() { return m_commonJSModuleObjectStructure.getInitializedOnMainThread(this); }
     Structure* ImportMetaObjectStructure() { return m_importMetaObjectStructure.getInitializedOnMainThread(this); }
+    Structure* AsyncContextFrameStructure() { return m_asyncBoundFunctionStructure.getInitializedOnMainThread(this); }
 
     Structure* commonJSFunctionArgumentsStructure() { return m_commonJSFunctionArgumentsStructure.getInitializedOnMainThread(this); }
 
@@ -524,6 +525,7 @@ private:
     LazyProperty<JSGlobalObject, JSC::JSObject> m_importMetaRequireFunctionUnbound;
     LazyProperty<JSGlobalObject, JSC::JSObject> m_importMetaRequireResolveFunctionUnbound;
     LazyProperty<JSGlobalObject, JSC::Structure> m_importMetaObjectStructure;
+    LazyProperty<JSGlobalObject, JSC::Structure> m_asyncBoundFunctionStructure;
 
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     void* m_bunVM;

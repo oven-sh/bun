@@ -935,6 +935,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn handleHandshake(this: *WebSocket, socket: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
+            JSC.markBinding(@src());
             _ = socket;
             _ = ssl_error;
             JSC.markBinding(@src());

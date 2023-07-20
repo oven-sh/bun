@@ -301,6 +301,38 @@ declare module "bun" {
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.
    *
+   * Reads the multi-part or URL-encoded form data into a {@link FormData} object
+   *
+   * @param stream The stream to consume.
+   * @params multipartBoundaryExcludingDashes Optional boundary to use for multipart form data. If none is provided, assumes it is a URLEncoded form.
+   * @returns A promise that resolves with the data encoded into a {@link FormData} object.
+   *
+   * ## Multipart form data example
+   *
+   * ```ts
+   * // without dashes
+   * const boundary = "WebKitFormBoundary" + Math.random().toString(16).slice(2);
+   *
+   * const myStream = getStreamFromSomewhere() // ...
+   * const formData = await Bun.readableStreamToFormData(stream, boundary);
+   * formData.get("foo"); // "bar"
+   * ```
+   * ## URL-encoded form data example
+   *
+   * ```ts
+   * const stream = new Response("hello=123").body;
+   * const formData = await Bun.readableStreamToFormData(stream);
+   * formData.get("hello"); // "123"
+   * ```
+   */
+  export function readableStreamToFormData(
+    stream: ReadableStream<string | TypedArray | ArrayBufferView>,
+    multipartBoundaryExcludingDashes?: string | TypedArray | ArrayBufferView,
+  ): Promise<FormData>;
+
+  /**
+   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   *
    * Concatenate the chunks into a single string. Chunks must be a TypedArray or an ArrayBuffer. If you need to support chunks of different types, consider {@link readableStreamToBlob}.
    *
    * @param stream The stream to consume.
@@ -1316,7 +1348,7 @@ declare module "bun" {
    * This is slightly different than the browser {@link WebSocket} which Bun supports for clients.
    *
    * Powered by [uWebSockets](https://github.com/uNetworking/uWebSockets).
-   * 
+   *
    * @example
    * import { serve } from "bun";
    *
@@ -1346,7 +1378,10 @@ declare module "bun" {
      * ws.send("Compress this.", true);
      * ws.send(new Uint8Array([1, 2, 3, 4]));
      */
-    send(data: string | BufferSource, compress?: boolean): ServerWebSocketSendStatus;
+    send(
+      data: string | BufferSource,
+      compress?: boolean,
+    ): ServerWebSocketSendStatus;
 
     /**
      * Sends a text message to the client.
@@ -1368,7 +1403,10 @@ declare module "bun" {
      * ws.send(new TextEncoder().encode("Hello!"));
      * ws.send(new Uint8Array([1, 2, 3, 4]), true);
      */
-    sendBinary(data: BufferSource, compress?: boolean): ServerWebSocketSendStatus;
+    sendBinary(
+      data: BufferSource,
+      compress?: boolean,
+    ): ServerWebSocketSendStatus;
 
     /**
      * Closes the connection.
@@ -1382,9 +1420,9 @@ declare module "bun" {
      * - `4000` through `4999` are reserved for applications (you can use it!)
      *
      * To close the connection abruptly, use `terminate()`.
-     * 
+     *
      * @param code The close code to send
-     * @param reason The close reason to send   
+     * @param reason The close reason to send
      */
     close(code?: number, reason?: string): void;
 
@@ -1420,7 +1458,11 @@ declare module "bun" {
      * ws.publish("chat", "Compress this.", true);
      * ws.publish("chat", new Uint8Array([1, 2, 3, 4]));
      */
-    publish(topic: string, data: string | BufferSource, compress?: boolean): ServerWebSocketSendStatus;
+    publish(
+      topic: string,
+      data: string | BufferSource,
+      compress?: boolean,
+    ): ServerWebSocketSendStatus;
 
     /**
      * Sends a text message to subscribers of the topic.
@@ -1432,7 +1474,11 @@ declare module "bun" {
      * ws.publish("chat", "Hello!");
      * ws.publish("chat", "Compress this.", true);
      */
-    publishText(topic: string, data: string, compress?: boolean): ServerWebSocketSendStatus;
+    publishText(
+      topic: string,
+      data: string,
+      compress?: boolean,
+    ): ServerWebSocketSendStatus;
 
     /**
      * Sends a binary message to subscribers of the topic.
@@ -1444,7 +1490,11 @@ declare module "bun" {
      * ws.publish("chat", new TextEncoder().encode("Hello!"));
      * ws.publish("chat", new Uint8Array([1, 2, 3, 4]), true);
      */
-    publishBinary(topic: string, data: BufferSource, compress?: boolean): ServerWebSocketSendStatus;
+    publishBinary(
+      topic: string,
+      data: BufferSource,
+      compress?: boolean,
+    ): ServerWebSocketSendStatus;
 
     /**
      * Subscribes a client to the topic.
@@ -1510,7 +1560,7 @@ declare module "bun" {
      * @example
      * console.log(socket.readyState); // 1
      */
-    readonly readyState: WebSocketReadyState
+    readonly readyState: WebSocketReadyState;
 
     /**
      * Sets how binary data is returned in events.
@@ -1533,7 +1583,7 @@ declare module "bun" {
      *
      * @example
      * import { serve } from "bun";
-     * 
+     *
      * serve({
      *   fetch(request, server) {
      *     const data = {
@@ -1620,7 +1670,10 @@ declare module "bun" {
      * @param ws The websocket that sent the message
      * @param message The message received
      */
-    message(ws: ServerWebSocket<T>, message: string | Buffer): void | Promise<void>;
+    message(
+      ws: ServerWebSocket<T>,
+      message: string | Buffer,
+    ): void | Promise<void>;
 
     /**
      * Called when a connection is opened.
@@ -1644,7 +1697,11 @@ declare module "bun" {
      * @param code The close code
      * @param message The close message
      */
-    close?(ws: ServerWebSocket<T>, code: number, reason: string): void | Promise<void>;
+    close?(
+      ws: ServerWebSocket<T>,
+      code: number,
+      reason: string,
+    ): void | Promise<void>;
 
     /**
      * Called when a ping is sent.
@@ -1722,7 +1779,7 @@ declare module "bun" {
            */
           decompress?: WebSocketCompressor | boolean;
         };
-  }
+  };
 
   interface GenericServeOptions {
     /**

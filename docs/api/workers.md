@@ -132,9 +132,7 @@ Alternatively, you can also pass an `options` object to `Worker`:
 
 ```ts
 const worker = new Worker(new URL("worker.ts", import.meta.url).href, {
-  bun: {
-    ref: true,
-  },
+  ref: true,
 });
 ```
 
@@ -157,9 +155,7 @@ JavaScript instances can use a lot of memory. Bun's `Worker` supports a `smol` m
 
 ```js
 const worker = new Worker("./i-am-smol.ts", {
-  bun: {
-    smol: true,
-  },
+  smol: true,
 });
 ```
 

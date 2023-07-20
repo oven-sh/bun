@@ -241,12 +241,23 @@ pub const Body = struct {
                 //     .JavaScript
                 // }
                 switch (action) {
-                    .getText, .getJSON, .getBlob, .getArrayBuffer => {
+                    .getFormData, .getText, .getJSON, .getBlob, .getArrayBuffer => {
                         value.promise = switch (action) {
                             .getJSON => globalThis.readableStreamToJSON(readable.value),
                             .getArrayBuffer => globalThis.readableStreamToArrayBuffer(readable.value),
                             .getText => globalThis.readableStreamToText(readable.value),
                             .getBlob => globalThis.readableStreamToBlob(readable.value),
+                            .getFormData => |form_data| brk: {
+                                defer {
+                                    form_data.?.deinit();
+                                    value.action.getFormData = null;
+                                }
+
+                                break :brk globalThis.readableStreamToFormData(readable.value, switch (form_data.?.encoding) {
+                                    .Multipart => |multipart| bun.String.init(multipart).toJSConst(globalThis),
+                                    .URLEncoded => JSC.JSValue.jsUndefined(),
+                                });
+                            },
                             else => unreachable,
                         };
                         value.promise.?.ensureStillAlive();
@@ -257,8 +268,6 @@ pub const Body = struct {
 
                         return value.promise.?;
                     },
-                    // TODO:
-                    .getFormData => {},
 
                     .none => {},
                 }

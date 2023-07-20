@@ -10,7 +10,6 @@ const TMP_DIR = path.join(import.meta.dir, "out/tmp");
 const minifyList = [
   "node/stream.js",
   "node/crypto.js",
-  "node/constants.js",
   "node/assert.js",
   "node/assert.strict.js",
   "node/fs.promises.ts",
@@ -86,7 +85,7 @@ const build_prod_unminified = await Bun.build({
 
 const build_dev = await Bun.build({
   entrypoints: entrypoints,
-  minify: { syntax: true },
+  minify: { syntax: false },
   sourcemap: "external",
   ...devOpts,
 });

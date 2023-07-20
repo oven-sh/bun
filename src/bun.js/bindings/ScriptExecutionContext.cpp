@@ -120,8 +120,7 @@ void ScriptExecutionContext::regenerateIdentifier()
 
     m_identifier = ++lastUniqueIdentifier;
 
-    Locker locker { allScriptExecutionContextsMapLock };
-    allScriptExecutionContextsMap().add(m_identifier, this);
+    addToContextsMap();
 }
 
 void ScriptExecutionContext::addToContextsMap()

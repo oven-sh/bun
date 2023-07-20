@@ -203,3 +203,21 @@ it("hash regression #2110", () => {
   var s = "6fbf7e2948e0c2f29eaacac1733546a4af5ca482";
   expect(crypto.createHash("sha1").update(s, "binary").digest("hex")).toBe("e7c8b3c6f114c523d07ee355c534ee9bef3c044b");
 });
+
+// https://github.com/oven-sh/bun/issues/3680
+it("createDecipheriv should validate iv and password", () => {
+  const key = Buffer.alloc(16);
+
+  expect(() => crypto.createDecipheriv("aes-128-ecb", key, undefined).setAutoPadding(false)).toThrow();
+  expect(() => crypto.createDecipheriv("aes-128-ecb", key).setAutoPadding(false)).toThrow();
+  expect(() => crypto.createDecipheriv("aes-128-ecb", key, null).setAutoPadding(false)).not.toThrow();
+  expect(() =>
+    crypto.createDecipheriv("aes-128-ecb", Buffer.from("Random", "utf8"), null).setAutoPadding(false),
+  ).toThrow();
+  expect(() => crypto.createDecipheriv("aes-128-ecb", key, Buffer.alloc(0)).setAutoPadding(false)).not.toThrow();
+
+  expect(() => crypto.createDecipheriv("aes-128-cbc", key, undefined).setAutoPadding(false)).toThrow();
+  expect(() => crypto.createDecipheriv("aes-128-cbc", key, null).setAutoPadding(false)).toThrow();
+  expect(() => crypto.createDecipheriv("aes-128-cbc", key).setAutoPadding(false)).toThrow();
+  expect(() => crypto.createDecipheriv("aes-128-cbc", key, Buffer.alloc(16)).setAutoPadding(false)).not.toThrow();
+});

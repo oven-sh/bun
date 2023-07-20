@@ -414,7 +414,7 @@ var CLIENT_RENEG_LIMIT = 3, CLIENT_RENEG_WINDOW = 600, DEFAULT_ECDH_CURVE = "aut
     return new TLSSocket(port).connect(port, host2, connectListener);
   }
   return new TLSSocket().connect(port, host2, connectListener);
-}, connect = createConnection, exports = {
+}, connect = createConnection, rootCertificates = globalThis[Symbol.for("Bun.lazy")]("rootCertificates"), exports = {
   [Symbol.for("CommonJS")]: 0,
   CLIENT_RENEG_LIMIT,
   CLIENT_RENEG_WINDOW,
@@ -433,9 +433,11 @@ var CLIENT_RENEG_LIMIT = 3, CLIENT_RENEG_WINDOW = 600, DEFAULT_ECDH_CURVE = "aut
   SecureContext,
   Server,
   TLSSocket,
-  checkServerIdentity
+  checkServerIdentity,
+  rootCertificates
 };
 export {
+  rootCertificates,
   parseCertString,
   getCurves,
   getCiphers,

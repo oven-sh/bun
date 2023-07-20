@@ -2508,6 +2508,10 @@ pub const JSGlobalObject = extern struct {
         return JSGlobalObject__setTimeZone(this, timeZone);
     }
 
+    pub inline fn toJS(globalThis: *JSGlobalObject) JSValue {
+        return @enumFromInt(@as(JSValue.Type, @bitCast(@intFromPtr(globalThis))));
+    }
+
     pub fn throwInvalidArguments(
         this: *JSGlobalObject,
         comptime fmt: string,
@@ -2759,7 +2763,6 @@ pub const JSGlobalObject = extern struct {
             function,
             if (args.len > 0) args[0] else .zero,
             if (args.len > 1) args[1] else .zero,
-            if (args.len > 2) args[2] else .zero,
         );
     }
 
@@ -2768,14 +2771,12 @@ pub const JSGlobalObject = extern struct {
         function: JSValue,
         first: JSValue,
         second: JSValue,
-        third: JSValue,
     ) void {
         shim.cppFn("queueMicrotaskJob", .{
             this,
             function,
             first,
             second,
-            third,
         });
     }
 
@@ -2889,6 +2890,7 @@ pub const JSGlobalObject = extern struct {
     extern fn ZigGlobalObject__readableStreamToArrayBuffer(*JSGlobalObject, JSValue) JSValue;
     extern fn ZigGlobalObject__readableStreamToText(*JSGlobalObject, JSValue) JSValue;
     extern fn ZigGlobalObject__readableStreamToJSON(*JSGlobalObject, JSValue) JSValue;
+    extern fn ZigGlobalObject__readableStreamToFormData(*JSGlobalObject, JSValue, JSValue) JSValue;
     extern fn ZigGlobalObject__readableStreamToBlob(*JSGlobalObject, JSValue) JSValue;
 
     pub fn readableStreamToArrayBuffer(this: *JSGlobalObject, value: JSValue) JSValue {
@@ -2909,6 +2911,11 @@ pub const JSGlobalObject = extern struct {
     pub fn readableStreamToBlob(this: *JSGlobalObject, value: JSValue) JSValue {
         if (comptime is_bindgen) unreachable;
         return ZigGlobalObject__readableStreamToBlob(this, value);
+    }
+
+    pub fn readableStreamToFormData(this: *JSGlobalObject, value: JSValue, content_type: JSValue) JSValue {
+        if (comptime is_bindgen) unreachable;
+        return ZigGlobalObject__readableStreamToFormData(this, value, content_type);
     }
 
     pub const Extern = [_][]const u8{
@@ -3140,6 +3147,8 @@ pub const JSValue = enum(JSValueReprInt) {
         StringObject,
         DerivedStringObject,
         // End StringObject s.
+
+        InternalFieldTuple,
 
         MaxJS = 0b11111111,
         Event = 0b11101111,
@@ -3472,8 +3481,8 @@ pub const JSValue = enum(JSValueReprInt) {
         JSC.markBinding(@src());
         return JSC.C.JSObjectCallAsFunctionReturnValue(
             globalThis,
-            this.asObjectRef(),
-            @as(JSC.C.JSValueRef, @ptrCast(globalThis)),
+            this,
+            globalThis.toJS(),
             args.len,
             @as(?[*]const JSC.C.JSValueRef, @ptrCast(args.ptr)),
         );
@@ -3483,8 +3492,8 @@ pub const JSValue = enum(JSValueReprInt) {
         JSC.markBinding(@src());
         return JSC.C.JSObjectCallAsFunctionReturnValue(
             globalThis,
-            this.asObjectRef(),
-            @as(JSC.C.JSValueRef, @ptrCast(thisValue.asNullableVoid())),
+            this,
+            thisValue,
             args.len,
             @as(?[*]const JSC.C.JSValueRef, @ptrCast(args.ptr)),
         );
@@ -4874,7 +4883,20 @@ pub const JSValue = enum(JSValueReprInt) {
         "jestStrictDeepEquals",
         "jestDeepMatch",
     };
+
+    // For any callback JSValue created in JS that you will not call *immediatly*, you must wrap it
+    // in an AsyncContextFrame with this function. This allows AsyncLocalStorage to work by
+    // snapshotting it's state and restoring it when called.
+    // - If there is no current context, this returns the callback as-is.
+    // - It is safe to run .call() on the resulting JSValue. This includes automatic unwrapping.
+    // - Do not pass the callback as-is to JS; The wrapped object is NOT a function.
+    // - If passed to C++, call it with AsyncContextFrame::call() instead of JSC::call()
+    pub inline fn withAsyncContextIfNeeded(this: JSValue, global: *JSGlobalObject) JSValue {
+        return AsyncContextFrame__withAsyncContextIfNeeded(global, this);
+    }
 };
+
+extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;
 
 extern "c" fn Microtask__run(*Microtask, *JSGlobalObject) void;
 extern "c" fn Microtask__run_default(*MicrotaskForDefaultGlobalObject, *JSGlobalObject) void;
@@ -4980,32 +5002,6 @@ pub const VM = extern struct {
         global_object: *JSGlobalObject,
     ) void {
         return cppFn("deleteAllCode", .{ vm, global_object });
-    }
-
-    extern fn Bun__setOnEachMicrotaskTick(vm: *VM, ptr: ?*anyopaque, callback: ?*const fn (*anyopaque) callconv(.C) void) void;
-
-    pub fn onEachMicrotask(vm: *VM, comptime Ptr: type, ptr: *Ptr, comptime callback: *const fn (*Ptr) void) void {
-        if (comptime is_bindgen) {
-            return;
-        }
-
-        const callback_ = callback;
-        const Wrapper = struct {
-            pub fn run(ptr_: *anyopaque) callconv(.C) void {
-                var ptr__ = @as(*Ptr, @ptrCast(@alignCast(ptr_)));
-                callback_(ptr__);
-            }
-        };
-
-        Bun__setOnEachMicrotaskTick(vm, ptr, Wrapper.run);
-    }
-
-    pub fn clearMicrotaskCallback(vm: *VM) void {
-        if (comptime is_bindgen) {
-            return;
-        }
-
-        Bun__setOnEachMicrotaskTick(vm, null, null);
     }
 
     pub fn whenIdle(

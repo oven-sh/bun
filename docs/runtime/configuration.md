@@ -28,12 +28,8 @@ jsxImportSource = "react"
 # Reduce memory usage at the cost of performance
 smol = true
 
-# Set a default framework to use
-# By default, Bun will look for an npm package like `bun-framework-${framework}`, followed by `${framework}`
-logLevel = "debug"
-
-# publicDir = "public"
-# external = ["jquery"]
+# Set Bun's log level
+logLevel = "debug" # "debug", "warn", "error"
 
 [define]
 # Replace any usage of "process.env.bagel" with the string `lox`.
@@ -44,16 +40,13 @@ logLevel = "debug"
 [loaders]
 # When loading a .bagel file, run the JS parser
 ".bagel" = "js"
-# - "atom"
-# If you pass it a file path, it will open with the file path instead
-# It will recognize non-GUI editors, but I don't think it will work yet
 ```
 
 ## Test runner
 
 ```toml
 [test]
-# setup scripts to run before all test files
+# Scripts to run before all test files
 preload = ["./setup.ts"]
 
 # Reduce memory usage at the cost of performance
@@ -215,13 +208,3 @@ These environment variables are checked by Bun to detect functionality and toggl
 - If `DO_NOT_TRACK=1`, then analytics are [disabled](https://do-not-track.dev/). Bun records bundle timings (so we can answer with data, "is Bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it's not a lot of data.
 
 {% /table %}
-
-## smol mode
-
-To reduce Bun's memory footprint in the runtime and test runner, pass `--smol`.
-
-```bash
-$ bun --smol ./my-script.ts
-```
-
-This configures JavaScriptCore (the engine) to use a smaller heap size and run the garbage collector more frequently. This is currently disabled by default for performance reasons, but it may become the default in the future. This feature was introduced in Bun v0.6.15.

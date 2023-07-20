@@ -247,7 +247,7 @@ Bun.deepEquals(new Foo(), { a: 1 }, true); // false
 
 ## `Bun.escapeHTML()`
 
-`Bun.escapeHTML(value: string | object | number | boolean): boolean`
+`Bun.escapeHTML(value: string | object | number | boolean): string`
 
 Escapes the following characters from an input string:
 
@@ -402,7 +402,7 @@ The second argument supports the same set of configuration options as [`Bun.gzip
 
 ## `Bun.inflateSync()`
 
-DEcompresses a `Uint8Array` using zlib's INFLATE algorithm.
+Decompresses a `Uint8Array` using zlib's INFLATE algorithm.
 
 ```ts
 const buf = Buffer.from("hello".repeat(100));

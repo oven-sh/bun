@@ -5,6 +5,7 @@
 #include "BunClientData.h"
 
 #include "JavaScriptCore/AggregateError.h"
+#include "JavaScriptCore/InternalFieldTuple.h"
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "JavaScriptCore/CallFrameInlines.h"
 #include "JavaScriptCore/ClassInfo.h"
@@ -92,6 +93,7 @@
 #include "JSReadableState.h"
 #include "JSReadableHelper.h"
 #include "Process.h"
+#include "AsyncContextFrame.h"
 
 #include "WebCoreJSBuiltins.h"
 #include "JSBuffer.h"
@@ -199,6 +201,7 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include <wtf/RAMSize.h>
 #include <wtf/text/Base64.h>
 #include "simdutf.h"
+#include "libusockets.h"
 
 constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
@@ -1049,9 +1052,10 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
     }
 
     Zig::GlobalObject* global = JSC::jsCast<Zig::GlobalObject*>(globalObject);
+    JSC::JSValue asyncContext = global->m_asyncContextData.get()->getInternalField(0);
 
     // This is a JSC builtin function
-    globalObject->queueMicrotask(global->performMicrotaskFunction(), job, JSC::JSValue {},
+    globalObject->queueMicrotask(global->performMicrotaskFunction(), job, asyncContext,
         JSC::JSValue {}, JSC::JSValue {});
 
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -1498,6 +1502,23 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     return JSC::JSValue::encode(JSC::jsString(vm, url.fileSystemPath()));
 }
 
+static void cleanupAsyncHooksData(JSC::VM& vm)
+{
+    vm.setOnEachMicrotaskTick(nullptr);
+    Bun__getDefaultGlobal()->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
+}
+
+// $lazy("async_hooks").cleanupLater
+JSC_DEFINE_HOST_FUNCTION(asyncHooksCleanupLater, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    // assumptions and notes:
+    // - nobody else uses setOnEachMicrotaskTick
+    // - this is called by js if we set async context in a way we may not clear it
+    // - AsyncLocalStorage.prototype.run cleans up after itself and does not call this cb
+    globalObject->vm().setOnEachMicrotaskTick(&cleanupAsyncHooksData);
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
 JSC_DEFINE_CUSTOM_GETTER(noop_getter, (JSGlobalObject*, EncodedJSValue, PropertyName))
 {
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -1562,7 +1583,6 @@ JSC:
         return JSC::JSValue::encode(JSC::JSValue {});
     }
     default: {
-
         JSC::JSValue moduleName = callFrame->argument(0);
         if (moduleName.isNumber()) {
             switch (moduleName.toInt32(globalObject)) {
@@ -1641,6 +1661,26 @@ JSC:
             return JSValue::encode(obj);
         }
 
+        if(string == "rootCertificates"_s) {
+            auto sourceOrigin = callFrame->callerSourceOrigin(vm).url();
+            bool isBuiltin = sourceOrigin.protocolIs("builtin"_s);
+            if (!isBuiltin) {
+                return JSC::JSValue::encode(JSC::jsUndefined());
+            }
+            struct us_cert_string_t* out;
+            auto size = us_raw_root_certs(&out);
+            if (size < 0) {
+                return JSValue::encode(JSC::jsUndefined());
+            }
+            auto rootCertificates = JSC::JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), size);
+            for(auto i = 0; i < size; i++) {
+                auto raw = out[i];
+                auto str = WTF::String::fromUTF8(raw.str, raw.len);
+                rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
+            }
+            return JSValue::encode(rootCertificates);
+        }
+
         if (string == "masqueradesAsUndefined"_s) {
             return JSValue::encode(InternalFunction::createFunctionThatMasqueradesAsUndefined(vm, globalObject, 0, String(), functionCallNotImplemented));
         }
@@ -1674,6 +1714,20 @@ JSC:
             }
 
             auto* obj = globalObject->primordialsObject();
+            return JSValue::encode(obj);
+        }
+
+        if (string == "async_hooks"_s) {
+            auto* obj = constructEmptyObject(globalObject);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "get"_s)),
+                JSC::JSFunction::create(vm, asyncContextGetAsyncContextCodeGenerator(vm), globalObject), 0);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "set"_s)),
+                JSC::JSFunction::create(vm, asyncContextSetAsyncContextCodeGenerator(vm), globalObject), 0);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "cleanupLater"_s)),
+                JSC::JSFunction::create(vm, globalObject, 0, "cleanupLater"_s, asyncHooksCleanupLater, ImplementationVisibility::Public), 0);
             return JSValue::encode(obj);
         }
 
@@ -2752,30 +2806,35 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObj
     JSValue result;
     WTF::NakedPtr<JSC::Exception> exceptionPtr;
 
+    JSValue restoreAsyncContext = {};
+    InternalFieldTuple* asyncContextData = nullptr;
+    auto setAsyncContext = callframe->argument(1);
+    if (!setAsyncContext.isUndefined()) {
+        asyncContextData = globalObject->m_asyncContextData.get();
+        restoreAsyncContext = asyncContextData->getInternalField(0);
+        asyncContextData->putInternalField(vm, 0, setAsyncContext);
+    }
+
     size_t argCount = callframe->argumentCount();
     switch (argCount) {
-    case 1: {
-        break;
-    }
-    case 2: {
-        arguments.append(callframe->uncheckedArgument(1));
-        break;
-    }
     case 3: {
-        arguments.append(callframe->uncheckedArgument(1));
         arguments.append(callframe->uncheckedArgument(2));
         break;
     }
     case 4: {
-        arguments.append(callframe->uncheckedArgument(1));
         arguments.append(callframe->uncheckedArgument(2));
         arguments.append(callframe->uncheckedArgument(3));
+        break;
     }
     default:
         break;
     }
 
     JSC::call(globalObject, job, callData, jsUndefined(), arguments, exceptionPtr);
+
+    if (asyncContextData) {
+        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+    }
 
     if (auto* exception = exceptionPtr.get()) {
         Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
@@ -2822,11 +2881,24 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotaskVariadic, (JSGlobalObject * g
     WTF::NakedPtr<JSC::Exception> exceptionPtr;
     JSValue thisValue = jsUndefined();
 
-    if (callframe->argumentCount() > 2) {
-        thisValue = callframe->argument(2);
+    if (callframe->argumentCount() > 3) {
+        thisValue = callframe->argument(3);
+    }
+
+    JSValue restoreAsyncContext = {};
+    InternalFieldTuple* asyncContextData = nullptr;
+    auto setAsyncContext = callframe->argument(2);
+    if (!setAsyncContext.isUndefined()) {
+        asyncContextData = globalObject->m_asyncContextData.get();
+        restoreAsyncContext = asyncContextData->getInternalField(0);
+        asyncContextData->putInternalField(vm, 0, setAsyncContext);
     }
 
     JSC::call(globalObject, job, callData, thisValue, arguments, exceptionPtr);
+
+    if (asyncContextData) {
+        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+    }
 
     if (auto* exception = exceptionPtr.get()) {
         Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
@@ -3173,6 +3245,10 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<JSWeakMap>& init) {
             init.set(JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
         });
+    // m_asyncHooksContext.initLater(
+    //     [](const Initializer<JSC::JSMap>& init) {
+    //         init.set(JSC::JSMap::create(init.vm, init.owner->mapStructure()));
+    //     });
 
     m_JSBufferSubclassStructure.initLater(
         [](const Initializer<Structure>& init) {
@@ -3364,6 +3440,11 @@ void GlobalObject::finishCreation(VM& vm)
     m_importMetaObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
             init.set(Zig::ImportMetaObject::createStructure(init.vm, init.owner));
+        });
+
+    m_asyncBoundFunctionStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
+            init.set(AsyncContextFrame::createStructure(init.vm, init.owner));
         });
 
     m_JSFileSinkClassStructure.initLater(
@@ -3647,18 +3728,6 @@ JSC_DEFINE_HOST_FUNCTION(functionBunPeekStatus,
     }
 
     return JSValue::encode(jsUndefined());
-}
-
-extern "C" void Bun__setOnEachMicrotaskTick(JSC::VM* vm, void* ptr, void (*callback)(void* ptr))
-{
-    if (callback == nullptr) {
-        vm->setOnEachMicrotaskTick(nullptr);
-        return;
-    }
-
-    vm->setOnEachMicrotaskTick([=](JSC::VM& vm) {
-        callback(ptr);
-    });
 }
 
 JSC_DEFINE_CUSTOM_GETTER(BunCommonJSModule_getter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -4527,6 +4596,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_importMetaRequireFunctionUnbound.visit(visitor);
     thisObject->m_importMetaRequireResolveFunctionUnbound.visit(visitor);
     thisObject->m_importMetaObjectStructure.visit(visitor);
+    thisObject->m_asyncBoundFunctionStructure.visit(visitor);
 
     thisObject->m_dnsObject.visit(visitor);
     thisObject->m_lazyRequireCacheObject.visit(visitor);

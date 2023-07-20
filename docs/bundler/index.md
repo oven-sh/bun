@@ -307,7 +307,7 @@ Depending on the target, Bun will apply different module resolution rules and op
 ---
 
 - `browser`
-- _Default._ For generating bundles that are intended for execution by a browser. Prioritizes the `"browser"` export condition when resolving imports. An error will be thrown if any Node.js or Bun built-ins are imported or used, e.g. `node:fs` or `Bun.serve`.
+- _Default._ For generating bundles that are intended for execution by a browser. Prioritizes the `"browser"` export condition when resolving imports. Importing any built-in modules, like `node:events` or `node:path` will work, but calling some functions, like `fs.readFile` will not work.
 
 ---
 
@@ -1272,7 +1272,17 @@ interface BuildArtifact extends Blob {
   sourcemap?: BuildArtifact;
 }
 
-type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text";
+type Loader =
+  | "js"
+  | "jsx"
+  | "ts"
+  | "tsx"
+  | "json"
+  | "toml"
+  | "file"
+  | "napi"
+  | "wasm"
+  | "text";
 
 interface BuildOutput {
   outputs: BuildArtifact[];

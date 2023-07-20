@@ -11633,7 +11633,11 @@ fn NewParser_(
                         error.Backtrack => {
                             backtrack = true;
                         },
-                        else => {},
+                        else => {
+                            if (p.lexer.did_panic) {
+                                backtrack = true;
+                            }
+                        },
                     }
                     if (comptime FnReturnType == anyerror!bool or FnReturnType == anyerror!void)
                         // we are not using the value

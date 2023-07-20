@@ -235,7 +235,7 @@ declare module "bun:sqlite" {
       ParamsType extends SQLQueryBindings | SQLQueryBindings[],
     >(
       sqlQuery: string,
-      params?: ParamsType
+      params?: ParamsType,
     ): Statement<
       ReturnType,
       ParamsType extends Array<any> ? ParamsType : [ParamsType]

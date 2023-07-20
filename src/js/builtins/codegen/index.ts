@@ -8,12 +8,7 @@ import { spawn } from "bun";
 async function createStaticHashtables() {
   const STATIC_HASH_TABLES = ["src/bun.js/bindings/Process.cpp"];
   console.time("Creating static hash tables...");
-  const create_hash_table = [
-    "src/bun.js/WebKit/Source/JavaScriptCore/create_hash_table",
-    "bun-webkit/Source/JavaScriptCore/create_hash_table",
-  ]
-    .map(x => path.join(import.meta.dir, "../../../../" + x))
-    .find(x => existsSync(x));
+  const create_hash_table = path.join(import.meta.dir, "../../../../src/bun.js/scripts/create_hash_table");
   if (!create_hash_table) {
     console.warn(
       "Could not find create_hash_table executable. Run `bun i` or clone webkit to build static hash tables",

@@ -105,7 +105,7 @@ Worker::Worker(ScriptExecutionContext& context, WorkerOptions&& options)
     auto addResult = allWorkers().add(m_clientIdentifier, this);
     ASSERT_UNUSED(addResult, addResult.isNewEntry);
 }
-
+extern "C" bool WebWorker__updatePtr(void* worker, Worker* ptr);
 extern "C" void* WebWorker__create(
     Worker* worker,
     void* parent,
@@ -123,6 +123,18 @@ extern "C" void WebWorker__setRef(
 void Worker::setKeepAlive(bool keepAlive)
 {
     WebWorker__setRef(impl_, keepAlive);
+}
+
+bool Worker::updatePtr()
+{
+    if (!WebWorker__updatePtr(impl_, this)) {
+        m_wasTerminated = true;
+        m_isClosing = true;
+        m_isOnline = false;
+        return false;
+    }
+
+    return true;
 }
 
 ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const String& urlInit, WorkerOptions&& options)

@@ -19,18 +19,37 @@ pub const WebWorker = struct {
     store_fd: bool = false,
     arena: bun.MimallocArena = undefined,
     name: [:0]const u8 = "Worker",
-    cpp_worker: *void,
+    cpp_worker: *anyopaque,
     allowed_to_exit: bool = false,
     mini: bool = false,
     parent_poll_ref: JSC.PollRef = .{},
     initial_poll_ref: JSC.PollRef = .{},
+    did_send_initial_task: bool = false,
 
-    extern fn WebWorker__dispatchExit(?*JSC.JSGlobalObject, *void, i32) void;
-    extern fn WebWorker__dispatchOnline(this: *void, *JSC.JSGlobalObject) void;
-    extern fn WebWorker__dispatchError(*JSC.JSGlobalObject, *void, bun.String, JSValue) void;
+    extern fn WebWorker__dispatchExit(?*JSC.JSGlobalObject, *anyopaque, i32) void;
+    extern fn WebWorker__dispatchOnline(this: *anyopaque, *JSC.JSGlobalObject) void;
+    extern fn WebWorker__dispatchError(*JSC.JSGlobalObject, *anyopaque, bun.String, JSValue) void;
     export fn WebWorker__getParentWorker(vm: *JSC.VirtualMachine) ?*anyopaque {
         var worker = vm.worker orelse return null;
         return worker.cpp_worker;
+    }
+
+    export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {
+        worker.cpp_worker = ptr;
+
+        var thread = std.Thread.spawn(
+            .{ .stack_size = 2 * 1024 * 1024 },
+            startWithErrorHandling,
+            .{worker},
+        ) catch {
+            worker.deinit();
+            worker.parent_poll_ref.unref(worker.parent);
+            worker.initial_poll_ref.unref(worker.parent);
+            bun.default_allocator.destroy(worker);
+            return false;
+        };
+        thread.detach();
+        return true;
     }
 
     pub fn hasPendingActivity(this: *WebWorker) callconv(.C) bool {
@@ -105,23 +124,13 @@ pub const WebWorker = struct {
             worker.parent_poll_ref.ref(parent);
         }
 
-        var thread = std.Thread.spawn(
-            .{ .stack_size = 2 * 1024 * 1024 },
-            startWithErrorHandling,
-            .{worker},
-        ) catch {
-            worker.deinit();
-            worker.requested_terminate = true;
-            worker.parent_poll_ref.unref(worker.parent);
-            worker.initial_poll_ref.unref(worker.parent);
-            return null;
-        };
-        thread.detach();
-
         return worker;
     }
 
-    fn queueInitialTask(this: *WebWorker) void {
+    pub fn queueInitialTask(this: *WebWorker) void {
+        if (this.did_send_initial_task) return;
+        this.did_send_initial_task = true;
+
         const Unref = struct {
             pub fn unref(worker: *WebWorker) void {
                 worker.initial_poll_ref.unref(worker.parent);
@@ -201,6 +210,7 @@ pub const WebWorker = struct {
     }
 
     fn flushLogs(this: *WebWorker) void {
+        JSC.markBinding(@src());
         var vm = this.vm orelse return;
         if (vm.log.msgs.items.len == 0) return;
         const err = vm.log.toJS(vm.global, bun.default_allocator, "Error in worker");
@@ -238,7 +248,7 @@ pub const WebWorker = struct {
         buffered_writer.flush() catch {
             @panic("OOM");
         };
-
+        JSC.markBinding(@src());
         WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.create(array.toOwnedSliceLeaky()), error_instance);
     }
 
@@ -276,7 +286,7 @@ pub const WebWorker = struct {
         _ = promise.result(vm.global.vm());
 
         this.flushLogs();
-
+        JSC.markBinding(@src());
         WebWorker__dispatchOnline(this.cpp_worker, vm.global);
         this.setStatus(.running);
 
@@ -364,6 +374,7 @@ pub const WebWorker = struct {
             @export(create, .{ .name = "WebWorker__create" });
             @export(terminate, .{ .name = "WebWorker__terminate" });
             @export(setRef, .{ .name = "WebWorker__setRef" });
+            _ = WebWorker__updatePtr;
         }
     }
 

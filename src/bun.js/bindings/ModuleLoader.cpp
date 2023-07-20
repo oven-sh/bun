@@ -34,6 +34,7 @@
 #include "../modules/ObjectModule.h"
 #include "../modules/NodeModuleModule.h"
 #include "../modules/TTYModule.h"
+#include "../modules/ConstantsModule.h"
 #include "node_util_types.h"
 #include "CommonJSModuleRecord.h"
 #include <JavaScriptCore/JSModuleLoader.h>
@@ -566,6 +567,13 @@ static JSValue fetchSourceCode(
         case SyntheticModuleType::StringDecoder: {
             auto source = JSC::SourceCode(
                 JSC::SyntheticSourceProvider::create(generateStringDecoderSourceCode,
+                    JSC::SourceOrigin(), WTFMove(moduleKey)));
+
+            return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));
+        }
+        case SyntheticModuleType::Constants: {
+            auto source = JSC::SourceCode(
+                JSC::SyntheticSourceProvider::create(generateConstantsSourceCode,
                     JSC::SourceOrigin(), WTFMove(moduleKey)));
 
             return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));

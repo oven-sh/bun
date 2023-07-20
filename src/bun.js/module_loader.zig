@@ -1697,6 +1697,12 @@ pub const ModuleLoader = struct {
                 // so it consistently handles bundled imports
                 // we can't take the shortcut of just directly importing the file, sadly.
                 .@"bun:main" => {
+                    defer {
+                        if (jsc_vm.worker) |worker| {
+                            worker.queueInitialTask();
+                        }
+                    }
+
                     if (comptime disable_transpilying) {
                         return ResolvedSource{
                             .allocator = null,
@@ -1807,7 +1813,7 @@ pub const ModuleLoader = struct {
                 .@"node:tty" => return jsSyntheticModule(.@"node:tty", specifier),
                 .@"node:util/types" => return jsSyntheticModule(.@"node:util/types", specifier),
                 .@"bun:events_native" => return jsSyntheticModule(.@"bun:events_native", specifier),
-
+                .@"node:constants" => return jsSyntheticModule(.@"node:constants", specifier),
                 .@"node:fs/promises" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -1841,7 +1847,6 @@ pub const ModuleLoader = struct {
                 .@"node:async_hooks" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:async_hooks", "node/async_hooks.js", specifier),
                 .@"node:child_process" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:child_process", "node/child_process.js", specifier),
                 .@"node:crypto" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:crypto", "node/crypto.js", specifier),
-                .@"node:constants" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:constants", "node/constants.js", specifier),
                 .@"node:dns" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:dns", "node/dns.js", specifier),
                 .@"node:dns/promises" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:dns/promises", "node/dns.promises.js", specifier),
                 .@"node:events" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:child_process", "node/events.js", specifier),

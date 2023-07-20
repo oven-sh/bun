@@ -1,59 +1,153 @@
-import {drainMicrotasks} from "bun:jsc";
-var createHook = function() {
+var createWarning = function(message) {
+  let warned = !1;
+  var wrapped = function() {
+    if (warned)
+      return;
+    if (new Error().stack.includes("zx/build/core.js"))
+      return;
+    warned = !0, console.warn("[bun] Warning:", message);
+  };
+  return wrapped;
+}, createHook = function(callbacks) {
   return {
-    enable() {
-      notImplemented();
-    },
-    disable() {
-      notImplemented();
-    }
+    enable: createHookNotImpl,
+    disable: createHookNotImpl
   };
 }, executionAsyncId = function() {
-  return 0;
+  return executionAsyncIdNotImpl(), 0;
 }, triggerAsyncId = function() {
   return 0;
 }, executionAsyncResource = function() {
-  return null;
-}, notImplemented = () => {
-  console.warn("[bun] Warning: async_hooks has not been implemented yet. See https://github.com/oven-sh/bun/issues/1832"), notImplemented = () => {
-  };
-};
+  return executionAsyncResourceWarning(), process.stdin;
+}, { get, set, cleanupLater } = globalThis[Symbol.for("Bun.lazy")]("async_hooks");
 
 class AsyncLocalStorage {
-  #store;
-  _enabled;
+  #disableCalled = !1;
   constructor() {
-    this._enabled = !1, this.#store = null;
+  }
+  static bind(fn, ...args) {
+    return this.snapshot().bind(null, fn, ...args);
+  }
+  static snapshot() {
+    var context = get();
+    return (fn, ...args) => {
+      var prev = get();
+      set(context);
+      try {
+        return fn(...args);
+      } catch (error) {
+        throw error;
+      } finally {
+        set(prev);
+      }
+    };
   }
   enterWith(store) {
-    return this.#store = store, notImplemented(), this;
+    cleanupLater();
+    var context = get();
+    if (!context) {
+      set([this, store]);
+      return;
+    }
+    var { length } = context;
+    for (var i = 0;i < length; i += 2)
+      if (context[i] === this) {
+        const clone = context.slice();
+        clone[i + 1] = store, set(clone);
+        return;
+      }
+    set(context.concat(this, store));
   }
   exit(cb, ...args) {
-    this.#store = null, notImplemented(), typeof cb === "function" && cb(...args);
+    return this.run(void 0, cb, ...args);
   }
   run(store, callback, ...args) {
-    if (typeof callback !== "function")
-      throw new TypeError("ERR_INVALID_CALLBACK");
-    var result, err;
-    if (process.nextTick((store2) => {
-      const prev = this.#store;
-      this.enterWith(store2);
-      try {
-        result = callback(...args);
-      } catch (e) {
-        err = e;
-      } finally {
-        this.#store = prev;
+    var context = get(), hasPrevious = !1, previous, i = 0, contextWasInit = !context;
+    if (contextWasInit)
+      set(context = [this, store]);
+    else {
+      if (context = context.slice(), i = context.indexOf(this), i > -1)
+        hasPrevious = !0, previous = context[i + 1], context[i + 1] = store;
+      else
+        context.push(this, store);
+      set(context);
+    }
+    try {
+      return callback(...args);
+    } catch (e) {
+      throw e;
+    } finally {
+      if (!this.#disableCalled) {
+        var context2 = get();
+        if (context2 === context && contextWasInit)
+          set(void 0);
+        else if (context2 = context2.slice(), hasPrevious)
+          context2[i + 1] = previous, set(context2);
+        else
+          context2.splice(i, 2), set(context2.length ? context2 : void 0);
       }
-    }, store), drainMicrotasks(), typeof err !== "undefined")
-      throw err;
-    return result;
+    }
+  }
+  disable() {
+    if (!this.#disableCalled) {
+      var context = get();
+      if (context) {
+        var { length } = context;
+        for (var i = 0;i < length; i += 2)
+          if (context[i] === this) {
+            context.splice(i, 2), set(context.length ? context : void 0);
+            break;
+          }
+      }
+      this.#disableCalled = !0;
+    }
   }
   getStore() {
-    return this.#store;
+    var context = get();
+    if (!context)
+      return;
+    var { length } = context;
+    for (var i = 0;i < length; i += 2)
+      if (context[i] === this)
+        return context[i + 1];
   }
 }
-var asyncWrapProviders = {
+
+class AsyncResource {
+  type;
+  #snapshot;
+  constructor(type, options) {
+    if (typeof type !== "string")
+      throw new TypeError('The "type" argument must be of type string. Received type ' + typeof type);
+    this.type = type, this.#snapshot = get();
+  }
+  emitBefore() {
+    return !0;
+  }
+  emitAfter() {
+    return !0;
+  }
+  asyncId() {
+    return 0;
+  }
+  triggerAsyncId() {
+    return 0;
+  }
+  emitDestroy() {
+  }
+  runInAsyncScope(fn, thisArg, ...args) {
+    var prev = get();
+    set(this.#snapshot);
+    try {
+      return fn.apply(thisArg, args);
+    } catch (error) {
+      throw error;
+    } finally {
+      set(prev);
+    }
+  }
+}
+var createHookNotImpl = createWarning("async_hooks.createHook is not implemented in Bun. Hooks can still be created but will never be called."), executionAsyncIdNotImpl = createWarning("async_hooks.executionAsyncId/triggerAsyncId are not implemented in Bun. It will return 0 every time."), executionAsyncResourceWarning = createWarning("async_hooks.executionAsyncResource is not implemented in Bun. It returns a reference to process.stdin every time."), asyncWrapProviders = {
   NONE: 0,
   DIRHANDLE: 1,
   DNSCHANNEL: 2,
@@ -113,40 +207,6 @@ var asyncWrapProviders = {
   VERIFYREQUEST: 56,
   INSPECTORJSBINDING: 57
 };
-
-class AsyncResource {
-  constructor(type, triggerAsyncId2) {
-    if (this.type = type, this.triggerAsyncId = triggerAsyncId2, AsyncResource.allowedRunInAsyncScope.has(type))
-      this.runInAsyncScope = this.#runInAsyncScope;
-  }
-  static allowedRunInAsyncScope = new Set(["prisma-client-request"]);
-  type;
-  triggerAsyncId;
-  emitBefore() {
-    return !0;
-  }
-  emitAfter() {
-    return !0;
-  }
-  emitDestroy() {
-  }
-  runInAsyncScope;
-  #runInAsyncScope(fn, ...args) {
-    var result, err;
-    if (process.nextTick((fn2) => {
-      try {
-        result = fn2(...args);
-      } catch (err2) {
-        err = err2;
-      }
-    }, fn), drainMicrotasks(), err)
-      throw err;
-    return result;
-  }
-  asyncId() {
-    return 0;
-  }
-}
 var async_hooks_default = {
   AsyncLocalStorage,
   createHook,
@@ -155,7 +215,6 @@ var async_hooks_default = {
   executionAsyncResource,
   asyncWrapProviders,
   AsyncResource,
-  [Symbol.toStringTag]: "Module (not implemented yet)",
   [Symbol.for("CommonJS")]: 0
 };
 export {

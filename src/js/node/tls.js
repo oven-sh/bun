@@ -677,7 +677,7 @@ function convertALPNProtocols(protocols, out) {
     out.ALPNProtocols = protocols;
   }
 }
-
+var rootCertificates = $lazy("rootCertificates");
 var exports = {
   [Symbol.for("CommonJS")]: 0,
   CLIENT_RENEG_LIMIT,
@@ -698,6 +698,7 @@ var exports = {
   Server,
   TLSSocket,
   checkServerIdentity,
+  rootCertificates,
 };
 
 export {
@@ -719,5 +720,6 @@ export {
   checkServerIdentity,
   Server,
   TLSSocket,
+  rootCertificates,
   exports as default,
 };

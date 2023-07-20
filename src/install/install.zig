@@ -2601,7 +2601,9 @@ pub const PackageManager = struct {
             },
             .workspace => {
                 // relative to cwd
-                const res = FolderResolution.getOrPut(.{ .relative = .workspace }, version, this.lockfile.str(&version.value.workspace), this);
+                const workspace_path: *const String = this.lockfile.workspace_paths.getPtr(@truncate(String.Builder.stringHash(this.lockfile.str(&version.value.workspace)))) orelse &version.value.workspace;
+
+                const res = FolderResolution.getOrPut(.{ .relative = .workspace }, version, this.lockfile.str(workspace_path), this);
 
                 switch (res) {
                     .err => |err| return err,
@@ -3166,7 +3168,7 @@ pub const PackageManager = struct {
                     this.enqueueNetworkTask(network_task);
                 }
             },
-            .symlink, .workspace => {
+            inline .symlink, .workspace => |dependency_tag| {
                 const _result = this.getOrPutResolvedPackage(
                     name_hash,
                     name,
@@ -3183,7 +3185,15 @@ pub const PackageManager = struct {
                     return err;
                 };
 
-                const not_found_fmt =
+                const workspace_not_found_fmt =
+                    \\workspace dependency "{[name]s}" not found
+                    \\
+                    \\Searched in <b>{[search_path]}<r>
+                    \\
+                    \\Workspace documentation: https://bun.sh/docs/install/workspaces
+                    \\
+                ;
+                const link_not_found_fmt =
                     \\package "{[name]s}" is not linked
                     \\
                     \\To install a linked package:
@@ -3214,25 +3224,51 @@ pub const PackageManager = struct {
                     // should not trigger a network call
                     if (comptime Environment.allow_assert) std.debug.assert(result.network_task == null);
                 } else if (dependency.behavior.isRequired()) {
-                    this.log.addErrorFmt(
-                        null,
-                        logger.Loc.Empty,
-                        this.allocator,
-                        not_found_fmt,
-                        .{
-                            .name = this.lockfile.str(&name),
-                        },
-                    ) catch unreachable;
+                    if (comptime dependency_tag == .workspace) {
+                        this.log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            this.allocator,
+                            workspace_not_found_fmt,
+                            .{
+                                .name = this.lockfile.str(&name),
+                                .search_path = FolderResolution.PackageWorkspaceSearchPathFormatter{ .manager = this, .version = version },
+                            },
+                        ) catch unreachable;
+                    } else {
+                        this.log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            this.allocator,
+                            link_not_found_fmt,
+                            .{
+                                .name = this.lockfile.str(&name),
+                            },
+                        ) catch unreachable;
+                    }
                 } else if (this.options.log_level.isVerbose()) {
-                    this.log.addWarningFmt(
-                        null,
-                        logger.Loc.Empty,
-                        this.allocator,
-                        not_found_fmt,
-                        .{
-                            .name = this.lockfile.str(&name),
-                        },
-                    ) catch unreachable;
+                    if (comptime dependency_tag == .workspace) {
+                        this.log.addWarningFmt(
+                            null,
+                            logger.Loc.Empty,
+                            this.allocator,
+                            workspace_not_found_fmt,
+                            .{
+                                .name = this.lockfile.str(&name),
+                                .search_path = FolderResolution.PackageWorkspaceSearchPathFormatter{ .manager = this, .version = version },
+                            },
+                        ) catch unreachable;
+                    } else {
+                        this.log.addWarningFmt(
+                            null,
+                            logger.Loc.Empty,
+                            this.allocator,
+                            link_not_found_fmt,
+                            .{
+                                .name = this.lockfile.str(&name),
+                            },
+                        ) catch unreachable;
+                    }
                 }
             },
             .tarball => {

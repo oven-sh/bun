@@ -695,7 +695,8 @@ const Parser = struct {
         end = start;
         while (end < this.src.len) : (end += 1) {
             switch (this.src[end]) {
-                '#', '\r', '\n' => break,
+                '#' => if (comptime !is_process) break,
+                '\r', '\n' => break,
                 else => {},
             }
         }

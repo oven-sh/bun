@@ -14,8 +14,8 @@ const templateStringTests: Record<string, TemplateStringTest> = {
   // note for writing tests: .print is .trim()'ed due to how run.stdout works
   Empty: { expr: '""', captureRaw: '""' },
   NullByte: { expr: '"hello\0"', captureRaw: '"hello\0"' },
-  EmptyTemplate: { expr: "``", captureRaw: "``" },
-  ConstantTemplate: { expr: "`asdf`", captureRaw: "`asdf`" },
+  EmptyTemplate: { expr: "``", captureRaw: '""' },
+  ConstantTemplate: { expr: "`asdf`", captureRaw: '"asdf"' },
   AddConstant: { expr: "`${7 + 6}`", capture: true },
   AddConstant2: { expr: "`${7 + 6 + 96}`", capture: true },
   AddConstant3: { expr: "`${0.1 + 0.2}`", print: true },
@@ -80,8 +80,8 @@ const templateStringTests: Record<string, TemplateStringTest> = {
   FoldNested4: { expr: "`a${`b`}c${`${`${`${'d'}`}`}`}e`", capture: true },
   FoldNested5: { expr: "`\\$${`d`}`", print: true }, // could be captured
   FoldNested6: { expr: "`a\0${5}c\\${{$${`d`}e`", print: true },
-  EscapedDollar: { expr: "`\\${'a'}`", captureRaw: "`\\${'a'}`" },
-  EscapedDollar2: { expr: "`\\${'a'}\\${'b'}`", captureRaw: "`\\${'a'}\\${'b'}`" },
+  EscapedDollar: { expr: "`\\${'a'}`", captureRaw: "\"${'a'}\"" },
+  EscapedDollar2: { expr: "`\\${'a'}\\${'b'}`", captureRaw: "\"${'a'}${'b'}\"" },
 };
 
 describe("bundler", () => {

@@ -2592,7 +2592,7 @@ fn NewPrinter(
                     p.addSourceMapping(expr.loc);
 
                     // If this was originally a template literal, print it as one as long as we're not minifying
-                    if (e.prefer_template) {
+                    if (e.prefer_template and !p.options.minify_syntax) {
                         p.print("`");
                         p.printStringContent(e, '`');
                         p.print("`");
@@ -3065,6 +3065,17 @@ fn NewPrinter(
             while (i < len) {
                 switch (utf8[i]) {
                     '\\' => i += 2,
+                    '$' => {
+                        if (comptime c == '`') {
+                            p.print(utf8[0..i]);
+                            p.print("\\$");
+                            utf8 = utf8[i + 1 ..];
+                            len = utf8.len;
+                            i = 0;
+                        } else {
+                            i += 1;
+                        }
+                    },
                     c => {
                         p.print(utf8[0..i]);
                         p.print("\\" ++ &[_]u8{c});

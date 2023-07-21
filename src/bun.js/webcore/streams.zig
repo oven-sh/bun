@@ -4579,12 +4579,12 @@ pub fn NewReadyWatcher(
                 return this.is_fifo;
             }
 
-            if (this.poll_ref != null) {
-                return true;
+            if (this.poll_ref) |_poll_ref| {
+                return _poll_ref.flags.contains(.fifo);
             }
 
             if (comptime @hasField(Context, "mode")) {
-                return std.os.S.ISFIFO(this.mode) or std.os.S.ISCHR(this.mode);
+                return std.os.S.ISFIFO(this.mode);
             }
 
             return false;

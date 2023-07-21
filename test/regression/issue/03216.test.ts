@@ -3,7 +3,7 @@ import { test, expect } from "bun:test";
 import { tmpdir } from "os";
 import { mkdtempSync, writeFileSync } from "fs";
 import { join } from "path";
-import { bunExe } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 test("runtime directory caching gets invalidated", () => {
   const tmp = mkdtempSync(join(tmpdir(), "bun-test-"));
@@ -33,9 +33,8 @@ try {
   const result = Bun.spawnSync({
     cmd: [bunExe(), "run", join(tmp, "index.ts")],
     cwd: tmp,
+    env: bunEnv,
   });
-
-  console.log(bunExe(), join(tmp, "index.ts"), result.stdout.toString("utf-8"));
 
   expect(result.exitCode).toBe(0);
   expect(result.stdout.toString("utf-8")).toBe("1\n");

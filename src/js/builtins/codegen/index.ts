@@ -229,7 +229,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     const finalReplacement =
       (fn.directives.sloppy ? captured : captured.replace(/function\s*\(.*?\)\s*{/, '$&"use strict";'))
         .replace(/^\((async )?function\(/, "($1function (")
-        .replace(/__intrinsic__lazy/g, "globalThis[globalThis.Symbol.for('Bun.lazy')]")
+        .replace(/__intrinsic__lazy\(/g, "globalThis[globalThis.Symbol.for('Bun.lazy')](")
         .replace(/__intrinsic__/g, "@") + "\n";
 
     bundledFunctions.push({

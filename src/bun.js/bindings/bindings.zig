@@ -5397,6 +5397,21 @@ pub const URL = opaque {
     extern fn URL__port(*URL) String;
     extern fn URL__deinit(*URL) void;
     extern fn URL__pathname(*URL) String;
+    extern fn URL__getHrefFromJS(JSValue, *JSC.JSGlobalObject) String;
+    extern fn URL__getHref(*String) String;
+    pub fn hrefFromString(str: bun.String) String {
+        JSC.markBinding(@src());
+        var input = str;
+        return URL__getHref(&input);
+    }
+
+    /// This percent-encodes the URL, punycode-encodes the hostname, and returns the result
+    /// If it fails, the tag is marked Dead
+    pub fn hrefFromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) String {
+        JSC.markBinding(@src());
+        return URL__getHrefFromJS(value, globalObject);
+    }
+
     pub fn fromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) ?*URL {
         JSC.markBinding(@src());
         return URL__fromJS(value, globalObject);

@@ -1147,17 +1147,17 @@ pub const Fetch = struct {
 
                     if (options.get(globalThis, "proxy")) |proxy_arg| {
                         if (proxy_arg.isString() and proxy_arg.getLength(ctx) > 0) {
-                            var wtf_proxy_url = JSC.URL.fromJS(proxy_arg, globalThis) orelse {
+                            var href = JSC.URL.hrefFromJS(proxy_arg, globalThis);
+                            if (href.tag == .Dead) {
                                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{}, ctx);
                                 // clean hostname if any
                                 if (hostname) |host| {
                                     bun.default_allocator.free(host);
                                 }
-                                return JSPromise.rejectedPromiseValue(globalThis, err);
-                            };
-                            defer wtf_proxy_url.deinit();
+                                bun.default_allocator.free(url_proxy_buffer);
 
-                            var href = wtf_proxy_url.href();
+                                return JSPromise.rejectedPromiseValue(globalThis, err);
+                            }
                             defer href.deref();
                             var buffer = std.fmt.allocPrint(bun.default_allocator, "{s}{}", .{ url_proxy_buffer, href }) catch {
                                 globalThis.throwOutOfMemory();
@@ -1165,6 +1165,7 @@ pub const Fetch = struct {
                             };
                             url = ZigURL.parse(buffer[0..url.href.len]);
                             proxy = ZigURL.parse(buffer[url.href.len..]);
+                            bun.default_allocator.free(url_proxy_buffer);
                             url_proxy_buffer = buffer;
                         }
                     }
@@ -1281,17 +1282,17 @@ pub const Fetch = struct {
 
                     if (options.getTruthy(globalThis, "proxy")) |proxy_arg| {
                         if (proxy_arg.isString() and proxy_arg.getLength(globalThis) > 0) {
-                            var wtf_proxy_url = JSC.URL.fromJS(proxy_arg, globalThis) orelse {
+                            var href = JSC.URL.hrefFromJS(proxy_arg, globalThis);
+                            if (href.tag == .Dead) {
                                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{}, ctx);
                                 // clean hostname if any
                                 if (hostname) |host| {
                                     bun.default_allocator.free(host);
                                 }
-                                return JSPromise.rejectedPromiseValue(globalThis, err);
-                            };
-                            defer wtf_proxy_url.deinit();
+                                bun.default_allocator.free(url_proxy_buffer);
 
-                            var href = wtf_proxy_url.href();
+                                return JSPromise.rejectedPromiseValue(globalThis, err);
+                            }
                             defer href.deref();
                             var buffer = std.fmt.allocPrint(bun.default_allocator, "{s}{}", .{ url_proxy_buffer, href }) catch {
                                 globalThis.throwOutOfMemory();
@@ -1299,6 +1300,7 @@ pub const Fetch = struct {
                             };
                             url = ZigURL.parse(buffer[0..url.href.len]);
                             proxy = ZigURL.parse(buffer[url.href.len..]);
+                            bun.default_allocator.free(url_proxy_buffer);
                             url_proxy_buffer = buffer;
                         }
                     }

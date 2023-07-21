@@ -37,21 +37,20 @@ pub const URL = struct {
     port_was_automatically_set: bool = false,
 
     pub fn fromJS(js_value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator) !URL {
-        var wtf_url = JSC.URL.fromJS(js_value, globalObject) orelse {
-            return error.JSError;
-        };
-        defer wtf_url.deinit();
-        const href = wtf_url.href();
-        defer href.deref();
+        var href = JSC.URL.hrefFromJS(globalObject, js_value);
+        if (href.tag == .Dead) {
+            return error.InvalidURL;
+        }
+
         return URL.parse(try href.toOwnedSlice(allocator));
     }
 
     pub fn fromString(allocator: std.mem.Allocator, input: bun.String) !URL {
-        var wtf_url = JSC.URL.fromString(input) orelse {
+        var href = JSC.URL.hrefFromString(input);
+        if (href.tag == .Dead) {
             return error.InvalidURL;
-        };
-        defer wtf_url.deinit();
-        const href = wtf_url.href();
+        }
+
         defer href.deref();
         return URL.parse(try href.toOwnedSlice(allocator));
     }

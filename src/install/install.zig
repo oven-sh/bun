@@ -4604,23 +4604,20 @@ pub const PackageManager = struct {
                             {
                                 const prev_scope = this.scope;
                                 var api_registry = std.mem.zeroes(Api.NpmRegistry);
-                                if (bun.JSC.URL.fromUTF8(registry_)) |url| {
-                                    defer url.deinit();
-
-                                    api_registry.token = prev_scope.token;
-                                    this.scope = try Npm.Registry.Scope.fromAPI("", api_registry, allocator, env);
-                                    var href = url.href();
-                                    defer href.deref();
-                                    api_registry.url = try href.toOwnedSlice(bun.default_allocator);
-                                    did_set = true;
-                                    // stage1 bug: break inside inline is broken
-                                    // break :load_registry;
-                                } else {
+                                var href = bun.JSC.URL.hrefFromString(bun.String.fromUTF8(registry_));
+                                if (href.tag == .Dead) {
                                     try log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "${s} has invalid URL {}", .{
                                         registry_key, strings.QuotedFormatter{
                                             .text = registry_,
                                         },
                                     });
+                                } else {
+                                    defer href.deref();
+
+                                    api_registry.token = prev_scope.token;
+                                    this.scope = try Npm.Registry.Scope.fromAPI("", api_registry, allocator, env);
+                                    api_registry.url = try href.toOwnedSlice(bun.default_allocator);
+                                    did_set = true;
                                 }
                             }
                         }
@@ -4654,12 +4651,9 @@ pub const PackageManager = struct {
                 if (cli.registry.len > 0 and strings.startsWith(cli.registry, "https://") or
                     strings.startsWith(cli.registry, "http://"))
                 {
-                    if (bun.JSC.URL.fromUTF8(cli.registry)) |url| {
-                        defer url.deinit();
-                        var href = url.href();
-                        defer href.deref();
-                        this.scope.url = URL.parse(try href.toOwnedSlice(bun.default_allocator));
-                    } else {
+                    if (URL.fromUTF8(instance.allocator, cli.registry)) |url| {
+                        this.scope.url = url;
+                    } else |_| {
                         try log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "--registry has invalid URL {}", .{
                             strings.QuotedFormatter{
                                 .text = cli.registry,

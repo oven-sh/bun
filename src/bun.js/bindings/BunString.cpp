@@ -316,6 +316,33 @@ extern "C" WTF::URL* URL__fromJS(EncodedJSValue encodedValue, JSC::JSGlobalObjec
     return new WTF::URL(WTFMove(url));
 }
 
+extern "C" BunString URL__getHrefFromJS(EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
+{
+    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    auto str = value.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, { BunStringTag::Dead });
+    if (str.isEmpty()) {
+        return { BunStringTag::Dead };
+    }
+
+    auto url = WTF::URL(str);
+    if (!url.isValid() || url.isEmpty())
+        return { BunStringTag::Dead };
+
+    return Bun::toStringRef(url.string());
+}
+
+extern "C" BunString URL__getHref(BunString* input)
+{
+    auto str = Bun::toWTFString(*input);
+    auto url = WTF::URL(str);
+    if (!url.isValid() || url.isEmpty())
+        return { BunStringTag::Dead };
+
+    return Bun::toStringRef(url.string());
+}
+
 extern "C" WTF::URL* URL__fromString(BunString* input)
 {
     auto str = Bun::toWTFString(*input);

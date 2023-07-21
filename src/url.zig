@@ -11,6 +11,7 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
+const JSC = bun.JSC;
 
 // This is close to WHATWG URL, but we don't want the validation errors
 pub const URL = struct {
@@ -34,6 +35,30 @@ pub const URL = struct {
     searchParams: ?QueryStringMap = null,
     username: string = "",
     port_was_automatically_set: bool = false,
+
+    pub fn fromJS(js_value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator) !URL {
+        var wtf_url = JSC.URL.fromJS(js_value, globalObject) orelse {
+            return error.JSError;
+        };
+        defer wtf_url.deinit();
+        const href = wtf_url.href();
+        defer href.deref();
+        return URL.parse(try href.toOwnedSlice(allocator));
+    }
+
+    pub fn fromString(allocator: std.mem.Allocator, input: bun.String) !URL {
+        var wtf_url = JSC.URL.fromString(input) orelse {
+            return error.InvalidURL;
+        };
+        defer wtf_url.deinit();
+        const href = wtf_url.href();
+        defer href.deref();
+        return URL.parse(try href.toOwnedSlice(allocator));
+    }
+
+    pub fn fromUTF8(allocator: std.mem.Allocator, input: []const u8) !URL {
+        return fromString(allocator, bun.String.fromUTF8(input));
+    }
 
     pub fn isLocalhost(this: *const URL) bool {
         return this.hostname.len == 0 or strings.eqlComptime(this.hostname, "localhost") or strings.eqlComptime(this.hostname, "0.0.0.0");
@@ -197,8 +222,7 @@ pub const URL = struct {
         }
     }
 
-    pub fn parse(base_: string) URL {
-        const base = std.mem.trim(u8, base_, &std.ascii.whitespace);
+    pub fn parse(base: string) URL {
         if (base.len == 0) return URL{};
         var url = URL{};
         url.href = base;
@@ -970,7 +994,6 @@ pub const FormData = struct {
             .Multipart => |boundary| return toJSFromMultipartData(globalThis, input, boundary),
         }
     }
-    const JSC = bun.JSC;
 
     pub fn jsFunctionFromMultipartData(
         globalThis: *JSC.JSGlobalObject,

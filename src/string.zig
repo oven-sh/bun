@@ -280,15 +280,15 @@ pub const String = extern struct {
         switch (this.tag) {
             .ZigString => return try this.value.ZigString.toOwnedSlice(allocator),
             .WTFStringImpl => {
-                var utf8_slice = this.value.WTFStringImpl.toUTF8(allocator);
+                var utf8_slice = this.value.WTFStringImpl.toUTF8WithoutRef(allocator);
 
                 if (utf8_slice.allocator.get()) |alloc| {
-                    if (isWTFAllocator(alloc)) {
-                        return @constCast((try utf8_slice.clone(allocator)).slice());
+                    if (!isWTFAllocator(alloc)) {
+                        return @constCast(utf8_slice.slice());
                     }
                 }
 
-                return @constCast(utf8_slice.slice());
+                return @constCast((try utf8_slice.clone(allocator)).slice());
             },
             .StaticZigString => return try this.value.StaticZigString.toOwnedSlice(allocator),
             .Empty => return &[_]u8{},

@@ -298,3 +298,85 @@ extern "C" void BunString__toWTFString(BunString* bunString)
         bunString->tag = BunStringTag::WTFStringImpl;
     }
 }
+
+extern "C" WTF::URL* URL__fromJS(EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
+{
+    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    auto str = value.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, nullptr);
+    if (str.isEmpty()) {
+        return nullptr;
+    }
+
+    auto url = WTF::URL(str);
+    if (!url.isValid() || url.isNull())
+        return nullptr;
+
+    return new WTF::URL(WTFMove(url));
+}
+
+extern "C" WTF::URL* URL__fromString(BunString* input)
+{
+    auto str = Bun::toWTFString(*input);
+    auto url = WTF::URL(str);
+    if (!url.isValid())
+        return nullptr;
+
+    return new WTF::URL(WTFMove(url));
+}
+
+extern "C" BunString URL__protocol(WTF::URL* url)
+{
+    return Bun::toStringRef(url->protocol().toStringWithoutCopying());
+}
+
+extern "C" void URL__deinit(WTF::URL* url)
+{
+    delete url;
+}
+
+extern "C" BunString URL__href(WTF::URL* url)
+{
+    return Bun::toStringRef(url->string());
+}
+
+extern "C" BunString URL__username(WTF::URL* url)
+{
+    return Bun::toStringRef(url->user());
+}
+
+extern "C" BunString URL__password(WTF::URL* url)
+{
+    return Bun::toStringRef(url->password());
+}
+
+extern "C" BunString URL__search(WTF::URL* url)
+{
+    return Bun::toStringRef(url->query().toStringWithoutCopying());
+}
+
+extern "C" BunString URL__host(WTF::URL* url)
+{
+    return Bun::toStringRef(url->host().toStringWithoutCopying());
+}
+extern "C" BunString URL__hostname(WTF::URL* url)
+{
+    return Bun::toStringRef(url->hostAndPort());
+}
+
+extern "C" uint32_t URL__port(WTF::URL* url)
+{
+    auto port = url->port();
+
+    if (port.has_value()) {
+        return port.value();
+    }
+
+    return std::numeric_limits<uint32_t>::max();
+}
+
+extern "C" BunString URL__pathname(WTF::URL* url)
+{
+    return Bun::toStringRef(url->path().toStringWithoutCopying());
+}

@@ -4475,7 +4475,23 @@ pub const PackageManager = struct {
                     for (scoped.scopes, 0..) |name, i| {
                         var registry = scoped.registries[i];
                         if (registry.url.len == 0) registry.url = base.url;
-                        try this.registries.put(allocator, Npm.Registry.Scope.hash(name), try Npm.Registry.Scope.fromAPI(name, registry, allocator, env));
+                        try this.registries.put(allocator, Npm.Registry.Scope.hash(name), Npm.Registry.Scope.fromAPI(name, registry, allocator, env) catch |err| {
+                            if (err == error.InvalidURL) {
+                                log.addErrorFmt(
+                                    null,
+                                    logger.Loc.Empty,
+                                    allocator,
+                                    "{} is not a valid registry URL",
+                                    .{
+                                        strings.QuotedFormatter{
+                                            .text = registry.url,
+                                        },
+                                    },
+                                ) catch unreachable;
+                            }
+
+                            return err;
+                        });
                     }
                 }
 
@@ -4588,12 +4604,24 @@ pub const PackageManager = struct {
                             {
                                 const prev_scope = this.scope;
                                 var api_registry = std.mem.zeroes(Api.NpmRegistry);
-                                api_registry.url = registry_;
-                                api_registry.token = prev_scope.token;
-                                this.scope = try Npm.Registry.Scope.fromAPI("", api_registry, allocator, env);
-                                did_set = true;
-                                // stage1 bug: break inside inline is broken
-                                // break :load_registry;
+                                if (bun.JSC.URL.fromUTF8(registry_)) |url| {
+                                    defer url.deinit();
+
+                                    api_registry.token = prev_scope.token;
+                                    this.scope = try Npm.Registry.Scope.fromAPI("", api_registry, allocator, env);
+                                    var href = url.href();
+                                    defer href.deref();
+                                    api_registry.url = try href.toOwnedSlice(bun.default_allocator);
+                                    did_set = true;
+                                    // stage1 bug: break inside inline is broken
+                                    // break :load_registry;
+                                } else {
+                                    try log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "${s} has invalid URL {}", .{
+                                        registry_key, strings.QuotedFormatter{
+                                            .text = registry_,
+                                        },
+                                    });
+                                }
                             }
                         }
                     }
@@ -4626,7 +4654,18 @@ pub const PackageManager = struct {
                 if (cli.registry.len > 0 and strings.startsWith(cli.registry, "https://") or
                     strings.startsWith(cli.registry, "http://"))
                 {
-                    this.scope.url = URL.parse(cli.registry);
+                    if (bun.JSC.URL.fromUTF8(cli.registry)) |url| {
+                        defer url.deinit();
+                        var href = url.href();
+                        defer href.deref();
+                        this.scope.url = URL.parse(try href.toOwnedSlice(bun.default_allocator));
+                    } else {
+                        try log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "--registry has invalid URL {}", .{
+                            strings.QuotedFormatter{
+                                .text = cli.registry,
+                            },
+                        });
+                    }
                 }
 
                 if (cli.exact) {

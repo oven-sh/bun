@@ -2217,16 +2217,16 @@ pub const Process = struct {
         }
     }
 
-    pub fn exit(globalObject: *JSC.JSGlobalObject, code: i32) callconv(.C) void {
+    pub fn exit(globalObject: *JSC.JSGlobalObject, code: u8) callconv(.C) void {
         var vm = globalObject.bunVM();
         if (vm.worker) |worker| {
-            vm.exit_handler.exit_code = @as(u8, @truncate(@max(code, 0)));
+            vm.exit_handler.exit_code = code;
             worker.terminate();
             return;
         }
 
         vm.onExit();
-        std.os.exit(@as(u8, @truncate(@as(u32, @intCast(@max(code, 0))))));
+        std.os.exit(code);
     }
 
     pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;

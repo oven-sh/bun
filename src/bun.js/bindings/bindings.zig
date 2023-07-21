@@ -4892,6 +4892,7 @@ pub const JSValue = enum(JSValueReprInt) {
     // - Do not pass the callback as-is to JS; The wrapped object is NOT a function.
     // - If passed to C++, call it with AsyncContextFrame::call() instead of JSC::call()
     pub inline fn withAsyncContextIfNeeded(this: JSValue, global: *JSGlobalObject) JSValue {
+        JSC.markBinding(@src());
         return AsyncContextFrame__withAsyncContextIfNeeded(global, this);
     }
 };

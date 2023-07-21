@@ -32,10 +32,10 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
       label,
       async () => {
         const prisma = new Client();
-        const currenTestId = test_id.next().value;
-        await cleanTestId(prisma, currenTestId);
+        const currentTestId = test_id.next().value;
+        await cleanTestId(prisma, currentTestId);
         try {
-          await callback(prisma, currenTestId);
+          await callback(prisma, currentTestId);
         } finally {
           await prisma.$disconnect();
         }

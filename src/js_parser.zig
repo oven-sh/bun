@@ -213,6 +213,8 @@ fn foldStringAddition(lhs: Expr, rhs: Expr) ?Expr {
                     rhs_clone.data.e_string,
                 );
 
+                orig.prefer_template = orig.prefer_template or rhs_clone.data.e_string.prefer_template;
+
                 return Expr.init(E.String, orig, lhs.loc);
             }
         },

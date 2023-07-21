@@ -164,98 +164,74 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
     return JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr, 0));
 }
 
+JSC_DEFINE_CUSTOM_GETTER(jsRequireCacheGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = jsCast<Zig::GlobalObject*>(globalObject);
+    return JSValue::encode(thisObject->lazyRequireCacheObject());
+}
+
+JSC_DEFINE_CUSTOM_SETTER(jsRequireCacheSetter,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
+{
+    JSObject* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
+    if (!thisObject)
+        return false;
+
+    thisObject->putDirect(globalObject->vm(), propertyName, JSValue::decode(value), 0);
+    return true;
+}
+
 static const HashTableValue RequireResolveFunctionPrototypeValues[] = {
     { "paths"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, requireResolvePathsFunction, 1 } },
 };
 
-class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static RequireResolveFunctionPrototype* create(
-        JSC::JSGlobalObject* globalObject)
-    {
-        auto& vm = globalObject->vm();
-
-        auto* structure = RequireResolveFunctionPrototype::createStructure(vm, globalObject, globalObject->functionPrototype());
-        RequireResolveFunctionPrototype* prototype = new (NotNull, JSC::allocateCell<RequireResolveFunctionPrototype>(vm)) RequireResolveFunctionPrototype(vm, structure);
-        prototype->finishCreation(vm);
-        return prototype;
-    }
-
-    DECLARE_INFO;
-
-    RequireResolveFunctionPrototype(
-        JSC::VM& vm,
-        JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
-    }
-
-    void finishCreation(JSC::VM& vm);
-};
-
 static const HashTableValue RequireFunctionPrototypeValues[] = {
-    { "cache"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, Zig::jsRequireCacheGetter, Zig::jsRequireCacheSetter } },
+    { "cache"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsRequireCacheGetter, jsRequireCacheSetter } },
 };
 
-class RequireFunctionPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static RequireFunctionPrototype* create(
-        JSC::JSGlobalObject* globalObject)
-    {
-        auto& vm = globalObject->vm();
+RequireResolveFunctionPrototype* RequireResolveFunctionPrototype::create(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
 
-        auto* structure = RequireFunctionPrototype::createStructure(vm, globalObject, globalObject->functionPrototype());
-        RequireFunctionPrototype* prototype = new (NotNull, JSC::allocateCell<RequireFunctionPrototype>(vm)) RequireFunctionPrototype(vm, structure);
-        prototype->finishCreation(vm);
+    auto* structure = RequireResolveFunctionPrototype::createStructure(vm, globalObject, globalObject->functionPrototype());
+    RequireResolveFunctionPrototype* prototype = new (NotNull, JSC::allocateCell<RequireResolveFunctionPrototype>(vm)) RequireResolveFunctionPrototype(vm, structure);
+    prototype->finishCreation(vm);
+    return prototype;
+}
 
-        JSFunction* resolveFunction = JSFunction::create(vm, moduleRequireResolveCodeGenerator(vm), globalObject->globalScope(), JSFunction::createStructure(vm, globalObject, RequireResolveFunctionPrototype::create(globalObject)));
-        prototype->putDirect(vm, JSC::Identifier::fromString(vm, "resolve"_s), resolveFunction, PropertyAttribute::Function | 0);
+RequireFunctionPrototype* RequireFunctionPrototype::create(
+    JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
 
-        return prototype;
-    }
+    auto* structure = RequireFunctionPrototype::createStructure(vm, globalObject, globalObject->functionPrototype());
+    RequireFunctionPrototype* prototype = new (NotNull, JSC::allocateCell<RequireFunctionPrototype>(vm)) RequireFunctionPrototype(vm, structure);
+    prototype->finishCreation(vm);
 
-    RequireFunctionPrototype(
-        JSC::VM& vm,
-        JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
+    prototype->putDirect(vm, JSC::Identifier::fromString(vm, "resolve"_s), static_cast<Zig::GlobalObject*>(globalObject)->requireResolveFunctionUnbound(), PropertyAttribute::Function | 0);
 
-    DECLARE_INFO;
+    return prototype;
+}
 
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
-    }
+void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(vm, info()));
 
-    void finishCreation(JSC::VM& vm)
-    {
-        Base::finishCreation(vm);
-        ASSERT(inherits(vm, info()));
+    reifyStaticProperties(vm, info(), RequireFunctionPrototypeValues, *this);
+    JSC::JSFunction* requireDotMainFunction = JSFunction::create(
+        vm,
+        moduleMainCodeGenerator(vm),
+        globalObject()->globalScope());
 
-        reifyStaticProperties(vm, info(), RequireFunctionPrototypeValues, *this);
-        JSC::JSFunction* requireDotMainFunction = JSFunction::create(
-            vm,
-            moduleMainCodeGenerator(vm),
-            globalObject()->globalScope());
-
-        this->putDirect(
-            vm,
-            JSC::Identifier::fromString(vm, "main"_s),
-            JSC::GetterSetter::create(vm, globalObject(), requireDotMainFunction, JSValue()),
-            PropertyAttribute::Builtin | PropertyAttribute::Accessor | PropertyAttribute::ReadOnly | 0);
-        this->putDirect(vm, JSC::Identifier::fromString(vm, "extensions"_s), constructEmptyObject(globalObject()), 0);
-    }
-};
+    this->putDirect(
+        vm,
+        JSC::Identifier::fromString(vm, "main"_s),
+        JSC::GetterSetter::create(vm, globalObject(), requireDotMainFunction, JSValue()),
+        PropertyAttribute::Builtin | PropertyAttribute::Accessor | PropertyAttribute::ReadOnly | 0);
+    this->putDirect(vm, JSC::Identifier::fromString(vm, "extensions"_s), constructEmptyObject(globalObject()), 0);
+}
 
 JSC_DEFINE_CUSTOM_GETTER(getterFilename, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
@@ -406,13 +382,7 @@ public:
         ASSERT(inherits(vm, info()));
         reifyStaticProperties(vm, JSCommonJSModule::info(), JSCommonJSModulePrototypeTableValues, *this);
 
-        JSFunction* requireFunction = JSFunction::create(
-            vm,
-            moduleRequireCodeGenerator(vm),
-            globalObject->globalScope(),
-            JSFunction::createStructure(vm, globalObject, RequireFunctionPrototype::create(globalObject)));
-
-        this->putDirect(vm, clientData(vm)->builtinNames().requirePublicName(), requireFunction, PropertyAttribute::Builtin | PropertyAttribute::Function | 0);
+        this->putDirect(vm, clientData(vm)->builtinNames().requirePublicName(), (static_cast<Zig::GlobalObject*>(globalObject))->requireFunctionUnbound(), PropertyAttribute::Builtin | PropertyAttribute::Function | 0);
 
         this->putDirectNativeFunction(
             vm,
@@ -485,7 +455,6 @@ JSCommonJSModule* JSCommonJSModule::create(
     JSString* requireMapKey = JSC::jsStringWithCache(vm, key);
     auto index = key.reverseFind('/', key.length());
     JSString* dirname = jsEmptyString(vm);
-    JSString* filename = requireMapKey;
     if (index != WTF::notFound) {
         dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
     }
@@ -493,7 +462,7 @@ JSCommonJSModule* JSCommonJSModule::create(
     auto* out = JSCommonJSModule::create(
         vm,
         globalObject->CommonJSModuleObjectStructure(),
-        requireMapKey, filename, dirname, nullptr);
+        requireMapKey, requireMapKey, dirname, nullptr);
 
     out->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), exportsObject, exportsObject.isCell() && exportsObject.isCallable() ? JSC::PropertyAttribute::Function | 0 : 0);
     out->hasEvaluated = hasEvaluated;
@@ -969,4 +938,40 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             sourceOrigin,
             sourceURL));
 }
+
+JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString)
+{
+    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+
+    JSString* filename = JSC::jsStringWithCache(vm, pathString);
+    auto index = pathString.reverseFind('/', pathString.length());
+    JSString* dirname = jsEmptyString(vm);
+    if (index != WTF::notFound) {
+        dirname = JSC::jsSubstring(globalObject, filename, 0, index);
+    }
+
+    auto moduleObject = Bun::JSCommonJSModule::create(
+        vm,
+        globalObject->CommonJSModuleObjectStructure(),
+        filename, filename, dirname, nullptr);
+
+    auto& builtinNames = WebCore::builtinNames(vm);
+
+    JSFunction* requireFunction = JSC::JSBoundFunction::create(vm,
+        globalObject,
+        globalObject->requireFunctionUnbound(),
+        moduleObject,
+        ArgList(), 1, jsString(vm, String("require"_s)));
+
+    JSFunction* resolveFunction = JSC::JSBoundFunction::create(vm,
+        globalObject,
+        globalObject->requireResolveFunctionUnbound(),
+        moduleObject,
+        ArgList(), 1, jsString(vm, String("require"_s)));
+
+    requireFunction->putDirect(vm, builtinNames.resolvePublicName(), resolveFunction, PropertyAttribute::Function | 0);
+
+    return requireFunction;
 }
+
+} // namespace Bun

@@ -2809,7 +2809,7 @@ console.log(foo, array);
 
       expectPrinted("'string' + `template`", `"stringtemplate"`);
 
-      expectPrinted("`template` + 'string'", "`templatestring`");
+      expectPrinted("`template` + 'string'", '"templatestring"');
 
       // TODO: string template simplification
       // expectPrinted("'string' + `a${foo}b`", "`stringa${foo}b`");
@@ -3088,7 +3088,7 @@ console.log(foo, array);
       expectPrinted_('const x = `str` + "``";', "const x = `str\\`\\``");
       expectPrinted_('const x = `` + "`";', "const x = `\\``");
       expectPrinted_('const x = `` + "``";', "const x = `\\`\\``");
-      expectPrinted_('const x = "``" + ``;', 'const x = "``"');
+      expectPrinted_('const x = "``" + ``;', "const x = `\\`\\``");
     });
   });
 

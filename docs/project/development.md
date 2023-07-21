@@ -260,6 +260,37 @@ $ git checkout <hash>
 
 ## Troubleshooting
 
+### 'span' file not found
+
+On Linux systems, the Clang compiler typically uses the `libstdc++` C++ standard library by default. `libstdc++` is the default C++ Standard Library implementation provided by the GNU Compiler Collection (GCC). While Clang may link against the `libc++` library, this requires explicitly providing the `-stdlib` flag when running Clang.
+
+Bun relies on C++20 features like `std::span`, which are not available in GCC versions lower than 11. GCC 10 doesn't have all of the C++20 features implemented. As a result, running `make setup` may fail with the following error:
+
+```bash
+fatal error: 'span' file not found
+#include <span>
+         ^~~~~~
+```
+
+To fix the error, we need to update the GCC version to 11. To do this, we'll need to check if the latest version is available in the distribution's official repositories or use a third-party repository that provides GCC 11 packages. Here are general steps:
+
+```bash
+$ sudo apt update
+$ sudo apt install gcc-11 g++-11
+# If the above command fails with `Unable to locate package gcc-11` we need
+# to add the APT repository
+$ sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+# Now run `apt install` again
+$ sudo apt install gcc-11 g++-11
+```
+
+Now, we need to set GCC 11 as the default compiler:
+
+```bash
+$ sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
+$ sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
+```
+
 ### libarchive
 
 If you see an error when compiling `libarchive`, run this:

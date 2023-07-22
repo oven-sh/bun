@@ -431,7 +431,7 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObje
     // This must happen before JSVMClientData::create
     vm.heap.acquireAccess();
 
-    WebCore::JSVMClientData::create(&vm);
+    WebCore::JSVMClientData::create(&vm, Bun__getVM());
 
     JSC::JSLockHolder locker(vm);
     Zig::GlobalObject* globalObject;

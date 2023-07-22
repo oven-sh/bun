@@ -148,7 +148,9 @@ tildify() {
     fi
 }
 
-success "bun was installed successfully to $Bold_Green$(tildify "$exe")"
+latest_release=$(curl --silent "https://api.github.com/repos/oven-sh/bun/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+
+success "$latest_release was installed successfully to $Bold_Green$(tildify "$exe")"
 
 if command -v bun >/dev/null; then
     # Install completions, but we don't care if it fails

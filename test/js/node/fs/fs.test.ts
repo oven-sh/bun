@@ -548,7 +548,12 @@ describe("writeFileSync", () => {
 
     expect(readFileSync(path, "utf8")).toBe("File written successfully");
   });
-
+  it("write file with mode, issue #3740", () => {
+    const path = `${tmpdir()}/${Date.now()}.writeFileSyncWithMode.txt`;
+    writeFileSync(path, "bun", { mode: 33188 });
+    const stat = fs.statSync(path);
+    expect(stat.mode).toBe(33188);
+  });
   it("returning Buffer works", () => {
     const buffer = new Buffer([
       70, 105, 108, 101, 32, 119, 114, 105, 116, 116, 101, 110, 32, 115, 117, 99, 99, 101, 115, 115, 102, 117, 108, 108,

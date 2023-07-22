@@ -1005,12 +1005,12 @@ pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.
         };
     };
 
-    if (mode_int < 0 or mode_int > 0o777) {
-        JSC.throwInvalidArguments("Invalid mode: must be an octal number", .{}, ctx, exception);
+    if (mode_int < 0) {
+        JSC.throwInvalidArguments("Invalid mode: must be greater than or equal to 0.", .{}, ctx, exception);
         return null;
     }
 
-    return mode_int;
+    return mode_int & 0o777;
 }
 
 pub const PathOrFileDescriptor = union(Tag) {

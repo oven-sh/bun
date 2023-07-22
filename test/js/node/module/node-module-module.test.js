@@ -1,6 +1,22 @@
 import { expect, test } from "bun:test";
-import { _nodeModulePaths } from "module";
+import { _nodeModulePaths, builtinModules, isBuiltin } from "module";
 import Module from "module";
+
+test("builtinModules exists", () => {
+  expect(Array.isArray(builtinModules)).toBe(true);
+  expect(builtinModules).toHaveLength(77);
+});
+
+test("isBuiltin() works", () => {
+  expect(isBuiltin("fs")).toBe(true);
+  expect(isBuiltin("path")).toBe(true);
+  expect(isBuiltin("crypto")).toBe(true);
+  expect(isBuiltin("assert")).toBe(true);
+  expect(isBuiltin("util")).toBe(true);
+  expect(isBuiltin("events")).toBe(true);
+  expect(isBuiltin("node:events")).toBe(true);
+  expect(isBuiltin("node:bacon")).toBe(false);
+});
 
 test("module.globalPaths exists", () => {
   expect(Array.isArray(require("module").globalPaths)).toBe(true);

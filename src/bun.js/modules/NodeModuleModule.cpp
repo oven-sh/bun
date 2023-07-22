@@ -8,6 +8,116 @@
 using namespace Zig;
 using namespace JSC;
 
+// This is a mix of bun's builtin module names and also the ones reported by
+// node v20.4.0
+static constexpr ASCIILiteral builtinModuleNames[] = {
+    "_http_agent"_s,
+    "_http_client"_s,
+    "_http_common"_s,
+    "_http_incoming"_s,
+    "_http_outgoing"_s,
+    "_http_server"_s,
+    "_stream_duplex"_s,
+    "_stream_passthrough"_s,
+    "_stream_readable"_s,
+    "_stream_transform"_s,
+    "_stream_wrap"_s,
+    "_stream_writable"_s,
+    "_tls_common"_s,
+    "_tls_wrap"_s,
+    "assert"_s,
+    "assert/strict"_s,
+    "async_hooks"_s,
+    "buffer"_s,
+    "bun"_s,
+    "bun:events_native"_s,
+    "bun:ffi"_s,
+    "bun:jsc"_s,
+    "bun:sqlite"_s,
+    "bun:wrap"_s,
+    "child_process"_s,
+    "cluster"_s,
+    "console"_s,
+    "constants"_s,
+    "crypto"_s,
+    "detect-libc"_s,
+    "dgram"_s,
+    "diagnostics_channel"_s,
+    "dns"_s,
+    "dns/promises"_s,
+    "domain"_s,
+    "events"_s,
+    "fs"_s,
+    "fs/promises"_s,
+    "http"_s,
+    "http2"_s,
+    "https"_s,
+    "inspector"_s,
+    "inspector/promises"_s,
+    "module"_s,
+    "net"_s,
+    "os"_s,
+    "path"_s,
+    "path/posix"_s,
+    "path/win32"_s,
+    "perf_hooks"_s,
+    "process"_s,
+    "punycode"_s,
+    "querystring"_s,
+    "readline"_s,
+    "readline/promises"_s,
+    "repl"_s,
+    "stream"_s,
+    "stream/consumers"_s,
+    "stream/promises"_s,
+    "stream/web"_s,
+    "string_decoder"_s,
+    "sys"_s,
+    "timers"_s,
+    "timers/promises"_s,
+    "tls"_s,
+    "trace_events"_s,
+    "tty"_s,
+    "undici"_s,
+    "url"_s,
+    "util"_s,
+    "util/types"_s,
+    "v8"_s,
+    "vm"_s,
+    "wasi"_s,
+    "worker_threads"_s,
+    "ws"_s,
+    "zlib"_s,
+};
+
+static bool isBuiltinModule(const String &namePossiblyWithNodePrefix) {
+  String name = namePossiblyWithNodePrefix;
+  if (name.startsWith("node:"_s))
+    name = name.substringSharingImpl(5);
+
+  for (auto &builtinModule : builtinModuleNames) {
+    if (name == builtinModule)
+      return true;
+  }
+  return false;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsBuiltinModule,
+                         (JSC::JSGlobalObject * globalObject,
+                          JSC::CallFrame *callFrame)) {
+  JSC::VM &vm = globalObject->vm();
+  auto scope = DECLARE_THROW_SCOPE(vm);
+  JSValue moduleName = callFrame->argument(0);
+  if (!moduleName.isString()) {
+    return JSValue::encode(jsBoolean(false));
+  }
+
+  auto moduleStr = moduleName.toWTFString(globalObject);
+  RETURN_IF_EXCEPTION(scope, JSValue::encode(jsBoolean(false)));
+
+  return JSValue::encode(jsBoolean(isBuiltinModule(moduleStr)));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
                          (JSC::JSGlobalObject * globalObject,
                           JSC::CallFrame *callFrame)) {
@@ -95,6 +205,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
   }
   }
 }
+template <std::size_t N, class T> consteval std::size_t countof(T (&)[N]) {
+  return N;
+}
 
 namespace Zig {
 void generateNodeModuleModule(JSC::JSGlobalObject *globalObject,
@@ -135,6 +248,12 @@ void generateNodeModuleModule(JSC::JSGlobalObject *globalObject,
                             ImplementationVisibility::Public, NoIntrinsic,
                             jsFunctionSourceMap, nullptr));
 
+  append(Identifier::fromString(vm, "isBuiltin"_s),
+         JSFunction::create(vm, globalObject, 1, String("isBuiltin"_s),
+                            jsFunctionIsBuiltinModule,
+                            ImplementationVisibility::Public, NoIntrinsic,
+                            jsFunctionIsBuiltinModule, nullptr));
+
   append(JSC::Identifier::fromString(vm, "_resolveFilename"_s),
          JSFunction::create(vm, globalObject, 3, String("_resolveFilename"_s),
                             jsFunctionResolveFileName,
@@ -158,21 +277,12 @@ void generateNodeModuleModule(JSC::JSGlobalObject *globalObject,
       vm,
       globalObject->arrayStructureForIndexingTypeDuringAllocation(
           ArrayWithContiguous),
-      7);
-  builtinModules->putDirectIndex(globalObject, 0,
-                                 JSC::jsString(vm, String("node:assert"_s)));
-  builtinModules->putDirectIndex(globalObject, 1,
-                                 JSC::jsString(vm, String("node:buffer"_s)));
-  builtinModules->putDirectIndex(globalObject, 2,
-                                 JSC::jsString(vm, String("node:events"_s)));
-  builtinModules->putDirectIndex(globalObject, 3,
-                                 JSC::jsString(vm, String("node:util"_s)));
-  builtinModules->putDirectIndex(globalObject, 4,
-                                 JSC::jsString(vm, String("node:path"_s)));
-  builtinModules->putDirectIndex(globalObject, 5,
-                                 JSC::jsString(vm, String("bun:ffi"_s)));
-  builtinModules->putDirectIndex(globalObject, 6,
-                                 JSC::jsString(vm, String("bun:sqlite"_s)));
+      countof(builtinModuleNames));
+
+  for (unsigned i = 0; i < countof(builtinModuleNames); ++i) {
+    builtinModules->putDirectIndex(
+        globalObject, i, JSC::jsString(vm, String(builtinModuleNames[i])));
+  }
 
   append(JSC::Identifier::fromString(vm, "builtinModules"_s), builtinModules);
 

@@ -329,13 +329,24 @@ pub const Loader = struct {
     pub fn loadProcess(this: *Loader) void {
         if (this.did_load_process) return;
 
-        // This is a little weird because it's evidently stored line-by-line
-        var source = logger.Source.initPathString("process.env", "");
-
         this.map.map.ensureTotalCapacity(std.os.environ.len) catch unreachable;
-        for (std.os.environ) |env| {
-            source.contents = bun.span(env);
-            Parser.parse(&source, this.allocator, this.map, true, true);
+        for (std.os.environ) |_env| {
+            var env = bun.span(_env);
+            if (strings.indexOfChar(env, '=')) |i| {
+                var key = env[0..i];
+                var value = env[i + 1 ..];
+                if (key.len > 0) {
+                    if (value.len > 0) {
+                        this.map.put(key, value) catch unreachable;
+                    } else {
+                        this.map.put(key, empty_string_value) catch unreachable;
+                    }
+                }
+            } else {
+                if (env.len > 0) {
+                    this.map.put(env, empty_string_value) catch unreachable;
+                }
+            }
         }
         this.did_load_process = true;
 

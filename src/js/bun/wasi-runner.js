@@ -11,7 +11,12 @@ if (!filePath) {
 
 // The module specifier is the resolved path to the wasm file
 
-var { WASM_CWD = process.cwd(), WASM_ROOT_DIR = "/", WASM_ENV_STR = undefined, WASM_USE_ASYNC_INIT = "" } = process.env;
+var {
+  WASM_CWD = process.cwd(),
+  WASM_ROOT_DIR = "/",
+  WASM_ENV_STR = undefined,
+  WASM_USE_ASYNC_INIT = "1",
+} = process.env;
 
 var env = process.env;
 if (WASM_ENV_STR?.length) {
@@ -34,10 +39,12 @@ if (!source) {
   source = fs.readFileSync(file);
 }
 
-const wasm = new WebAssembly.Module(source);
-const instance = !WASM_USE_ASYNC_INIT
+const wasm = await WebAssembly.compile(source);
+
+const instance = !Number(WASM_USE_ASYNC_INIT)
   ? new WebAssembly.Instance(wasm, wasi.getImports(wasm))
   : await WebAssembly.instantiate(wasm, wasi.getImports(wasm));
+
 wasi.start(instance);
 
-process.exit(0);
+process.reallyExit(0);

@@ -5083,14 +5083,6 @@ pub const VM = extern struct {
         });
     }
 
-    pub fn doWork(
-        vm: *VM,
-    ) void {
-        return cppFn("doWork", .{
-            vm,
-        });
-    }
-
     pub fn externalMemorySize(vm: *VM) usize {
         return cppFn("externalMemorySize", .{vm});
     }
@@ -5101,7 +5093,7 @@ pub const VM = extern struct {
         return cppFn("blockBytesAllocated", .{vm});
     }
 
-    pub const Extern = [_][]const u8{ "collectAsync", "externalMemorySize", "blockBytesAllocated", "heapSize", "releaseWeakRefs", "throwError", "doWork", "deferGC", "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
+    pub const Extern = [_][]const u8{ "collectAsync", "externalMemorySize", "blockBytesAllocated", "heapSize", "releaseWeakRefs", "throwError", "deferGC", "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
 };
 
 pub const ThrowScope = extern struct {

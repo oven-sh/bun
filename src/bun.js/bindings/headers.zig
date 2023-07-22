@@ -313,7 +313,6 @@ pub extern fn JSC__VM__create(HeapType0: u8) *bindings.VM;
 pub extern fn JSC__VM__deferGC(arg0: *bindings.VM, arg1: ?*anyopaque, ArgFn2: ?*const fn (?*anyopaque) callconv(.C) void) void;
 pub extern fn JSC__VM__deinit(arg0: *bindings.VM, arg1: *bindings.JSGlobalObject) void;
 pub extern fn JSC__VM__deleteAllCode(arg0: *bindings.VM, arg1: *bindings.JSGlobalObject) void;
-pub extern fn JSC__VM__doWork(arg0: *bindings.VM) void;
 pub extern fn JSC__VM__drainMicrotasks(arg0: *bindings.VM) void;
 pub extern fn JSC__VM__executionForbidden(arg0: *bindings.VM) bool;
 pub extern fn JSC__VM__externalMemorySize(arg0: *bindings.VM) usize;

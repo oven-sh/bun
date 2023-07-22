@@ -4168,7 +4168,7 @@ pub const File = struct {
 
         pub fn scheduleMainThreadTask(this: *File) void {
             this.concurrent.main_thread_task.ctx = this;
-            this.loop.enqueueTaskConcurrent(this.concurrent.concurrent_task.from(&this.concurrent.main_thread_task));
+            this.loop.enqueueTaskConcurrent(this.concurrent.concurrent_task.from(&this.concurrent.main_thread_task, .manual_deinit));
         }
 
         fn runAsync(this: *File) void {

@@ -419,7 +419,6 @@ CPP_DECL JSC__VM* JSC__VM__create(unsigned char HeapType0);
 CPP_DECL void JSC__VM__deferGC(JSC__VM* arg0, void* arg1, void(* ArgFn2)(void* arg0)) __attribute__((nonnull (2)));
 CPP_DECL void JSC__VM__deinit(JSC__VM* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL void JSC__VM__deleteAllCode(JSC__VM* arg0, JSC__JSGlobalObject* arg1);
-CPP_DECL void JSC__VM__doWork(JSC__VM* arg0);
 CPP_DECL void JSC__VM__drainMicrotasks(JSC__VM* arg0);
 CPP_DECL bool JSC__VM__executionForbidden(JSC__VM* arg0);
 CPP_DECL size_t JSC__VM__externalMemorySize(JSC__VM* arg0);

@@ -979,7 +979,7 @@ pub const Fetch = struct {
         pub fn callback(task: *FetchTasklet, result: HTTPClient.HTTPClientResult) void {
             task.response_buffer = result.body.?.*;
             task.result = result;
-            task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task));
+            task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
         }
     };
 

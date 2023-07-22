@@ -962,7 +962,7 @@ pub const napi_async_work = struct {
         this.execute.?(this.global, this.ctx);
         this.status.store(@intFromEnum(Status.completed), .SeqCst);
 
-        this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this));
+        this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
     }
 
     pub fn schedule(this: *napi_async_work) void {
@@ -1338,7 +1338,7 @@ pub const ThreadSafeFunction = struct {
             }
         }
 
-        this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this));
+        this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
     }
 
     pub fn finalize(opaq: *anyopaque) void {
@@ -1387,7 +1387,7 @@ pub const ThreadSafeFunction = struct {
 
         if (this.owning_threads.count() == 0) {
             this.finalizer_task = JSC.AnyTask{ .ctx = this, .callback = finalize };
-            this.event_loop.enqueueTaskConcurrent(this.concurrent_finalizer_task.from(&this.finalizer_task));
+            this.event_loop.enqueueTaskConcurrent(this.concurrent_finalizer_task.from(&this.finalizer_task, .manual_deinit));
             return;
         }
     }

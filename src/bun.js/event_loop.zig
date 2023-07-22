@@ -73,7 +73,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
 
         pub fn onFinish(this: *This) void {
-            this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this));
+            this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
         }
 
         pub fn deinit(this: *This) void {
@@ -136,7 +136,7 @@ pub fn WorkTask(comptime Context: type, comptime async_io: bool) type {
         }
 
         pub fn onFinish(this: *This) void {
-            this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this));
+            this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
         }
 
         pub fn deinit(this: *This) void {
@@ -241,7 +241,7 @@ pub const JSCScheduler = struct {
         JSC.markBinding(@src());
         var loop = jsc_vm.eventLoop();
         var concurrent_task = bun.default_allocator.create(ConcurrentTask) catch @panic("out of memory!");
-        loop.enqueueTaskConcurrent(concurrent_task.from((task)));
+        loop.enqueueTaskConcurrent(concurrent_task.from(task, .auto_deinit));
     }
 
     comptime {
@@ -287,11 +287,15 @@ pub const ConcurrentTask = struct {
 
     pub const Queue = UnboundedQueue(ConcurrentTask, .next);
 
-    pub fn from(this: *ConcurrentTask, of: anytype) *ConcurrentTask {
+    pub const AutoDeinit = enum {
+        manual_deinit,
+        auto_deinit,
+    };
+    pub fn from(this: *ConcurrentTask, of: anytype, auto_deinit: AutoDeinit) *ConcurrentTask {
         this.* = .{
             .task = Task.init(of),
             .next = null,
-            .auto_delete = true,
+            .auto_delete = auto_deinit == .auto_deinit,
         };
         return this;
     }

@@ -1,1 +1,47 @@
-var s=(i)=>{return import.meta.require(i)};var r=function(i){return{basename:i.basename.bind(i),dirname:i.dirname.bind(i),extname:i.extname.bind(i),format:i.format.bind(i),isAbsolute:i.isAbsolute.bind(i),join:i.join.bind(i),normalize:i.normalize.bind(i),parse:i.parse.bind(i),relative:i.relative.bind(i),resolve:i.resolve.bind(i),toNamespacedPath:i.toNamespacedPath.bind(i),sep:i.sep,delimiter:i.delimiter}},e=r(Bun._Path(!0)),{basename:c,dirname:d,extname:f,format:g,isAbsolute:k,join:l,normalize:m,parse:n,relative:q,resolve:v,toNamespacedPath:w,sep:x,delimiter:y}=e,A=e;export{w as toNamespacedPath,x as sep,v as resolve,q as relative,n as parse,m as normalize,l as join,k as isAbsolute,g as format,f as extname,d as dirname,y as delimiter,A as default,c as basename};
+var bound = function(obj) {
+  return {
+    basename: obj.basename.bind(obj),
+    dirname: obj.dirname.bind(obj),
+    extname: obj.extname.bind(obj),
+    format: obj.format.bind(obj),
+    isAbsolute: obj.isAbsolute.bind(obj),
+    join: obj.join.bind(obj),
+    normalize: obj.normalize.bind(obj),
+    parse: obj.parse.bind(obj),
+    relative: obj.relative.bind(obj),
+    resolve: obj.resolve.bind(obj),
+    toNamespacedPath: obj.toNamespacedPath.bind(obj),
+    sep: obj.sep,
+    delimiter: obj.delimiter
+  };
+}, path = bound(Bun._Path(!0)), {
+  basename,
+  dirname,
+  extname,
+  format,
+  isAbsolute,
+  join,
+  normalize,
+  parse,
+  relative,
+  resolve,
+  toNamespacedPath,
+  sep,
+  delimiter
+} = path, path_win32_default = path;
+export {
+  toNamespacedPath,
+  sep,
+  resolve,
+  relative,
+  parse,
+  normalize,
+  join,
+  isAbsolute,
+  format,
+  extname,
+  dirname,
+  delimiter,
+  path_win32_default as default,
+  basename
+};

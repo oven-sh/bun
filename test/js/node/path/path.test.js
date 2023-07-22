@@ -1,6 +1,6 @@
 const { file } = import.meta;
 
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, test } from "bun:test";
 import path from "node:path";
 import assert from "assert";
 import { hideFromStackTrace } from "harness";
@@ -585,4 +585,8 @@ it("path.parse", () => {
     ext: "",
     name: "another_dir",
   });
+});
+
+test("path.format works for vite's example", () => {
+  expect(path.format({ root: "", dir: "", name: "index", base: undefined, ext: ".css" })).toBe("index.css");
 });

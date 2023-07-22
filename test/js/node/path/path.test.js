@@ -586,3 +586,7 @@ it("path.parse", () => {
     name: "another_dir",
   });
 });
+
+test("path.format works for vite's example", () => {
+  expect(path.format({ root: "", dir: "", name: "index", base: undefined, ext: ".css" })).toBe("index.css");
+});

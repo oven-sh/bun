@@ -1,1 +1,49 @@
-var d=(e)=>{return import.meta.require(e)};var r=function(e){return{basename:e.basename.bind(e),dirname:e.dirname.bind(e),extname:e.extname.bind(e),format:e.format.bind(e),isAbsolute:e.isAbsolute.bind(e),join:e.join.bind(e),normalize:e.normalize.bind(e),parse:e.parse.bind(e),relative:e.relative.bind(e),resolve:e.resolve.bind(e),toNamespacedPath:e.toNamespacedPath.bind(e),sep:e.sep,delimiter:e.delimiter}},i=r(Bun._Path(!1));i[Symbol.for("CommonJS")]=0;var{basename:s,dirname:c,extname:f,format:g,isAbsolute:k,join:m,normalize:q,parse:t,relative:v,resolve:w,toNamespacedPath:x,sep:y,delimiter:z}=i,B=i;export{x as toNamespacedPath,y as sep,w as resolve,v as relative,t as parse,q as normalize,m as join,k as isAbsolute,g as format,f as extname,c as dirname,z as delimiter,B as default,s as basename};
+var bound = function(obj) {
+  return {
+    basename: obj.basename.bind(obj),
+    dirname: obj.dirname.bind(obj),
+    extname: obj.extname.bind(obj),
+    format: obj.format.bind(obj),
+    isAbsolute: obj.isAbsolute.bind(obj),
+    join: obj.join.bind(obj),
+    normalize: obj.normalize.bind(obj),
+    parse: obj.parse.bind(obj),
+    relative: obj.relative.bind(obj),
+    resolve: obj.resolve.bind(obj),
+    toNamespacedPath: obj.toNamespacedPath.bind(obj),
+    sep: obj.sep,
+    delimiter: obj.delimiter
+  };
+}, path = bound(Bun._Path(!1));
+path[Symbol.for("CommonJS")] = 0;
+var {
+  basename,
+  dirname,
+  extname,
+  format,
+  isAbsolute,
+  join,
+  normalize,
+  parse,
+  relative,
+  resolve,
+  toNamespacedPath,
+  sep,
+  delimiter
+} = path, path_posix_default = path;
+export {
+  toNamespacedPath,
+  sep,
+  resolve,
+  relative,
+  parse,
+  normalize,
+  join,
+  isAbsolute,
+  format,
+  extname,
+  dirname,
+  delimiter,
+  path_posix_default as default,
+  basename
+};

@@ -1423,9 +1423,11 @@ pub const Bundler = struct {
                 opts.filepath_hash_for_hmr = file_hash orelse 0;
                 opts.features.auto_import_jsx = bundler.options.auto_import_jsx;
                 opts.warn_about_unbundled_modules = target.isNotBun();
-                opts.features.jsx_optimization_inline = opts.features.allow_runtime and (bundler.options.jsx_optimization_inline orelse (target.isBun() and jsx.parse and
+                opts.features.jsx_optimization_inline = opts.features.allow_runtime and
+                    (bundler.options.jsx_optimization_inline orelse (target.isBun() and jsx.parse and
                     !jsx.development)) and
-                    (jsx.runtime == .automatic or jsx.runtime == .classic);
+                    (jsx.runtime == .automatic or jsx.runtime == .classic) and
+                    strings.eqlComptime(jsx.import_source.production, "react/jsx-runtime");
 
                 opts.features.jsx_optimization_hoist = bundler.options.jsx_optimization_hoist orelse opts.features.jsx_optimization_inline;
                 opts.features.hoist_bun_plugin = this_parse.hoist_bun_plugin;

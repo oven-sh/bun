@@ -1,15 +1,14 @@
-# es-module-lexer
+## es-module-lexer test
 
-To install dependencies:
+The purpose of this test is to check that event loop tasks scheduled from
+JavaScriptCore (rather than Bun) keep the process alive.
 
-```bash
-bun install
-```
+The problem used to be that Bun may close prematurely when async work was
+scheduled by JavaScriptCore (rather than IO work).
 
-To run:
+At the time of writing, that list is:
 
-```bash
-bun run index.ts
-```
+- WebAssembly compilation
+- Atomics
 
-This project was created using `bun init` in bun v0.6.0. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
+FinalizationRegistry is also scheduled by JSC, but that doesn't need to keep the process alive.

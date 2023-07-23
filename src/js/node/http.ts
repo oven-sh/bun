@@ -316,6 +316,11 @@ export class Agent extends EventEmitter {
 function emitListeningNextTick(self, onListen, err, hostname, port) {
   if (typeof onListen === "function") {
     try {
+      if (err?.message.includes(`Is port ${port} in use`)) {
+        err.code = "EADDRINUSE";
+        err.address = hostname;
+        err.port = port;
+      }
       onListen(err, hostname, port);
     } catch (err) {
       self.emit("error", err);

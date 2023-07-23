@@ -691,13 +691,9 @@ pub const Blob = struct {
 
         if (destination_type == .file and source_type == .bytes) {
             var write_file_promise = bun.default_allocator.create(WriteFilePromise) catch unreachable;
-            var promise = JSC.JSPromise.create(ctx.ptr());
-            const promise_value = promise.asValue(ctx);
             write_file_promise.* = .{
                 .globalThis = ctx.ptr(),
             };
-            write_file_promise.promise.strong.set(ctx, promise_value);
-            promise_value.ensureStillAlive();
 
             var file_copier = Store.WriteFile.create(
                 bun.default_allocator,
@@ -708,6 +704,12 @@ pub const Blob = struct {
                 WriteFilePromise.run,
             ) catch unreachable;
             var task = Store.WriteFile.WriteFileTask.createOnJSThread(bun.default_allocator, ctx.ptr(), file_copier) catch unreachable;
+
+            // Defer promise creation until we're just about to schedule the task
+            var promise = JSC.JSPromise.create(ctx.ptr());
+            const promise_value = promise.asValue(ctx);
+            write_file_promise.promise.strong.set(ctx, promise_value);
+            promise_value.ensureStillAlive();
             task.schedule();
             return promise_value.asObjectRef();
         }

@@ -1738,23 +1738,23 @@ pub const Path = struct {
         var name_with_ext = JSC.ZigString.Empty;
 
         var insert_separator = true;
-        if (path_object.get(globalThis, "dir")) |prop| {
+        if (path_object.getTruthy(globalThis, "dir")) |prop| {
             prop.toZigString(&dir, globalThis);
             insert_separator = !dir.isEmpty();
-        } else if (path_object.get(globalThis, "root")) |prop| {
+        } else if (path_object.getTruthy(globalThis, "root")) |prop| {
             prop.toZigString(&dir, globalThis);
         }
 
-        if (path_object.get(globalThis, "base")) |prop| {
+        if (path_object.getTruthy(globalThis, "base")) |prop| {
             prop.toZigString(&name_with_ext, globalThis);
         } else {
             var had_ext = false;
-            if (path_object.get(globalThis, "ext")) |prop| {
+            if (path_object.getTruthy(globalThis, "ext")) |prop| {
                 prop.toZigString(&ext, globalThis);
                 had_ext = !ext.isEmpty();
             }
 
-            if (path_object.get(globalThis, "name")) |prop| {
+            if (path_object.getTruthy(globalThis, "name")) |prop| {
                 if (had_ext) {
                     prop.toZigString(&name_, globalThis);
                 } else {

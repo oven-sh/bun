@@ -1,1 +1,59 @@
-var y=(i)=>{return import.meta.require(i)};var g=function(i){var m=k({basename:i.basename.bind(i),dirname:i.dirname.bind(i),extname:i.extname.bind(i),format:i.format.bind(i),isAbsolute:i.isAbsolute.bind(i),join:i.join.bind(i),normalize:i.normalize.bind(i),parse:i.parse.bind(i),relative:i.relative.bind(i),resolve:i.resolve.bind(i),toNamespacedPath:i.toNamespacedPath.bind(i),sep:i.sep,delimiter:i.delimiter});return m.default=m,m},k=(i)=>Object.assign(Object.create(null),i),f=g(Bun._Path()),q=g(Bun._Path(!1)),v=g(Bun._Path(!0));f.win32=v;f.posix=q;var{basename:A,dirname:B,extname:C,format:D,isAbsolute:E,join:F,normalize:G,parse:H,relative:I,resolve:J,toNamespacedPath:K,sep:L,delimiter:N,__esModule:O}=f;f[Symbol.for("CommonJS")]=0;f.__esModule=!0;var Q=f;export{v as win32,K as toNamespacedPath,L as sep,J as resolve,I as relative,q as posix,H as parse,G as normalize,F as join,E as isAbsolute,D as format,C as extname,B as dirname,N as delimiter,Q as default,k as createModule,A as basename,O as __esModule};
+var bound = function(obj) {
+  var result = createModule({
+    basename: obj.basename.bind(obj),
+    dirname: obj.dirname.bind(obj),
+    extname: obj.extname.bind(obj),
+    format: obj.format.bind(obj),
+    isAbsolute: obj.isAbsolute.bind(obj),
+    join: obj.join.bind(obj),
+    normalize: obj.normalize.bind(obj),
+    parse: obj.parse.bind(obj),
+    relative: obj.relative.bind(obj),
+    resolve: obj.resolve.bind(obj),
+    toNamespacedPath: obj.toNamespacedPath.bind(obj),
+    sep: obj.sep,
+    delimiter: obj.delimiter
+  });
+  return result.default = result, result;
+}, createModule = (obj) => Object.assign(Object.create(null), obj), path = bound(Bun._Path()), posix = bound(Bun._Path(!1)), win32 = bound(Bun._Path(!0));
+path.win32 = win32;
+path.posix = posix;
+var {
+  basename,
+  dirname,
+  extname,
+  format,
+  isAbsolute,
+  join,
+  normalize,
+  parse,
+  relative,
+  resolve,
+  toNamespacedPath,
+  sep,
+  delimiter,
+  __esModule
+} = path;
+path[Symbol.for("CommonJS")] = 0;
+path.__esModule = !0;
+var path_default = path;
+export {
+  win32,
+  toNamespacedPath,
+  sep,
+  resolve,
+  relative,
+  posix,
+  parse,
+  normalize,
+  join,
+  isAbsolute,
+  format,
+  extname,
+  dirname,
+  delimiter,
+  path_default as default,
+  createModule,
+  basename,
+  __esModule
+};

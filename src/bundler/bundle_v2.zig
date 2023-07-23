@@ -360,7 +360,7 @@ pub const BundleV2 = struct {
             redirect_map: PathToSourceIndexMap,
             dynamic_import_entry_points: *std.AutoArrayHashMap(Index.Int, void),
 
-            const MAX_REDIRECTS: usize = 20;
+            const MAX_REDIRECTS: usize = 64;
 
             // Find all files reachable from all entry points. This order should be
             // deterministic given that the entry point order is deterministic, since the
@@ -396,6 +396,12 @@ pub const BundleV2 = struct {
                                 if (redirect_count == MAX_REDIRECTS) {
                                     import_record.path.is_disabled = true;
                                     import_record.source_index = Index.invalid;
+                                    break;
+                                }
+
+                                // Handle redirects to a builtin or external module
+                                // https://github.com/oven-sh/bun/issues/3764
+                                if (!other_source.isValid()) {
                                     break;
                                 }
                             }

@@ -398,6 +398,12 @@ pub const BundleV2 = struct {
                                     import_record.source_index = Index.invalid;
                                     break;
                                 }
+
+                                // Handle redirects to a builtin or external module
+                                // https://github.com/oven-sh/bun/issues/3764
+                                if (!other_source.isValid()) {
+                                    break;
+                                }
                             }
 
                             v.visit(import_record.source_index, check_dynamic_imports and import_record.kind == .dynamic, check_dynamic_imports);

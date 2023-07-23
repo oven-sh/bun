@@ -1,10 +1,27 @@
 {
   "name": "bun-plugin-lightningcss",
-  "version": "0.0.1-alpha.0",
+  "version": "0.0.1",
   "module": "index.ts",
   "type": "module",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "require": "./src/index.ts",
+      "default": "./src/index.js",
+      "types": "./modules.d.ts"
+    },
+    "./package.json": "./package.json"
+  },
   "files": [
-    "index.ts",
+    "src",
     "package.json"
-  ]
+  ],
+  "dependencies": {
+    "browserslist": "^4.21.9",
+    "lightningcss": "^1.21.5"
+  },
+  "devDependencies": {
+    "bun-types": "canary"
+  }
 }

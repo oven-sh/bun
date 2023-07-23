@@ -5213,7 +5213,7 @@ pub const PackageManager = struct {
                 initializeStore();
                 const json = try json_parser.ParseJSONUTF8(&json_source, ctx.log, ctx.allocator);
                 if (json.asProperty("workspaces")) |prop| {
-                    var workspace_names = bun.StringMap.init(ctx.allocator, true);
+                    var workspace_names = Package.WorkspaceMap.init(ctx.allocator);
                     defer workspace_names.deinit();
                     const json_array = switch (prop.expr.data) {
                         .e_array => |arr| arr,

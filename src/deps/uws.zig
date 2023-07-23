@@ -285,6 +285,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             ctx: Context,
             comptime socket_field_name: []const u8,
         ) ?*Context {
+            debug("connect({s}, {d})", .{ host, port });
+
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
             var host_ = allocator.dupeZ(u8, host) catch return null;
@@ -333,6 +335,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             socket_ctx: *SocketContext,
             ctx: *anyopaque,
         ) ?ThisSocket {
+            debug("connect(unix:{s})", .{path});
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
             var path_ = allocator.dupeZ(u8, path) catch return null;
@@ -356,6 +359,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             socket_ctx: *SocketContext,
             ptr: *anyopaque,
         ) ?ThisSocket {
+            debug("connect({s}, {d})", .{ host, port });
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
             var host_ = allocator.dupeZ(u8, host) catch return null;

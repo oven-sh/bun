@@ -73,7 +73,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
 
         pub fn onFinish(this: *This) void {
-            this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this));
+            this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
         }
 
         pub fn deinit(this: *This) void {
@@ -136,7 +136,7 @@ pub fn WorkTask(comptime Context: type, comptime async_io: bool) type {
         }
 
         pub fn onFinish(this: *This) void {
-            this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this));
+            this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
         }
 
         pub fn deinit(this: *This) void {
@@ -221,6 +221,35 @@ pub const CppTask = opaque {
         Bun__performTask(global, this);
     }
 };
+pub const JSCScheduler = struct {
+    pub const JSCDeferredWorkTask = opaque {
+        extern fn Bun__runDeferredWork(task: *JSCScheduler.JSCDeferredWorkTask) void;
+        pub const run = Bun__runDeferredWork;
+    };
+
+    export fn Bun__eventLoop__incrementRefConcurrently(jsc_vm: *VirtualMachine, delta: c_int) void {
+        JSC.markBinding(@src());
+
+        if (delta > 0) {
+            jsc_vm.uws_event_loop.?.refConcurrently();
+        } else {
+            jsc_vm.uws_event_loop.?.unrefConcurrently();
+        }
+    }
+
+    export fn Bun__queueJSCDeferredWorkTaskConcurrently(jsc_vm: *VirtualMachine, task: *JSCScheduler.JSCDeferredWorkTask) void {
+        JSC.markBinding(@src());
+        var loop = jsc_vm.eventLoop();
+        var concurrent_task = bun.default_allocator.create(ConcurrentTask) catch @panic("out of memory!");
+        loop.enqueueTaskConcurrent(concurrent_task.from(task, .auto_deinit));
+    }
+
+    comptime {
+        _ = Bun__eventLoop__incrementRefConcurrently;
+        _ = Bun__queueJSCDeferredWorkTaskConcurrently;
+    }
+};
+
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const MicrotaskForDefaultGlobalObject = JSC.MicrotaskForDefaultGlobalObject;
 const HotReloadTask = JSC.HotReloader.HotReloadTask;
@@ -228,6 +257,7 @@ const FSWatchTask = JSC.Node.FSWatcher.FSWatchTask;
 const PollPendingModulesTask = JSC.ModuleLoader.AsyncModule.Queue;
 // const PromiseTask = JSInternalPromise.Completion.PromiseTask;
 const GetAddrInfoRequestTask = JSC.DNS.GetAddrInfoRequest.Task;
+const JSCDeferredWorkTask = JSCScheduler.JSCDeferredWorkTask;
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
     Microtask,
@@ -244,6 +274,8 @@ pub const Task = TaggedPointerUnion(.{
     PollPendingModulesTask,
     GetAddrInfoRequestTask,
     FSWatchTask,
+    JSCDeferredWorkTask,
+
     // PromiseTask,
     // TimeoutTasklet,
 });
@@ -255,10 +287,15 @@ pub const ConcurrentTask = struct {
 
     pub const Queue = UnboundedQueue(ConcurrentTask, .next);
 
-    pub fn from(this: *ConcurrentTask, of: anytype) *ConcurrentTask {
+    pub const AutoDeinit = enum {
+        manual_deinit,
+        auto_deinit,
+    };
+    pub fn from(this: *ConcurrentTask, of: anytype, auto_deinit: AutoDeinit) *ConcurrentTask {
         this.* = .{
             .task = Task.init(of),
             .next = null,
+            .auto_delete = auto_deinit == .auto_deinit,
         };
         return this;
     }
@@ -457,6 +494,11 @@ pub const EventLoop = struct {
                     transform_task.*.runFromJS();
                     transform_task.deinit();
                 },
+                @field(Task.Tag, bun.meta.typeBaseName(@typeName(JSCDeferredWorkTask))) => {
+                    var jsc_task: *JSCDeferredWorkTask = task.get(JSCDeferredWorkTask).?;
+                    JSC.markBinding(@src());
+                    jsc_task.run();
+                },
                 @field(Task.Tag, @typeName(WriteFileTask)) => {
                     var transform_task: *WriteFileTask = task.get(WriteFileTask).?;
                     transform_task.*.runFromJS();
@@ -626,10 +668,6 @@ pub const EventLoop = struct {
             }
             break;
         }
-
-        // TODO: unify the event loops
-        // This needs a hook into JSC to schedule timers
-        this.global.vm().doWork();
 
         while (this.tickWithCount() > 0) {
             this.tickConcurrent();

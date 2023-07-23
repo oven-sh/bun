@@ -121,7 +121,7 @@ const BlobFileContentResult = struct {
 
 pub const ServerConfig = struct {
     port: u16 = 0,
-    hostname: [*:0]const u8 = "localhost",
+    hostname: ?[*:0]const u8 = null,
 
     // TODO: use webkit URL parser instead of bun's
     base_url: URL = URL{},
@@ -658,7 +658,7 @@ pub const ServerConfig = struct {
 
         var args = ServerConfig{
             .port = 3000,
-            .hostname = "0.0.0.0",
+            .hostname = null,
             .development = true,
         };
         var has_hostname = false;
@@ -795,15 +795,17 @@ pub const ServerConfig = struct {
                     }
                     return args;
                 }
-                JSC.C.JSValueProtect(global, onError.asObjectRef());
-                args.onError = onError;
+                const onErrorSnapshot = onError.withAsyncContextIfNeeded(global);
+                args.onError = onErrorSnapshot;
+                onErrorSnapshot.protect();
             }
 
-            if (arg.getTruthy(global, "fetch")) |onRequest| {
-                if (!onRequest.isCallable(global.vm())) {
+            if (arg.getTruthy(global, "fetch")) |onRequest_| {
+                if (!onRequest_.isCallable(global.vm())) {
                     JSC.throwInvalidArguments("Expected fetch() to be a function", .{}, global, exception);
                     return args;
                 }
+                const onRequest = onRequest_.withAsyncContextIfNeeded(global);
                 JSC.C.JSValueProtect(global, onRequest.asObjectRef());
                 args.onRequest = onRequest;
             } else {
@@ -872,7 +874,7 @@ pub const ServerConfig = struct {
             }
         } else {
             const hostname: string =
-                if (has_hostname and std.mem.span(args.hostname).len > 0) std.mem.span(args.hostname) else "0.0.0.0";
+                if (has_hostname and std.mem.span(args.hostname.?).len > 0) std.mem.span(args.hostname.?) else "0.0.0.0";
 
             const needsBrackets: bool = strings.isIPV6Address(hostname) and hostname[0] != '[';
 
@@ -2643,8 +2645,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             JSC.markBinding(@src());
             if (!this.server.config.onError.isEmpty() and !this.flags.has_called_error_handler) {
                 this.flags.has_called_error_handler = true;
-                var args = [_]JSC.C.JSValueRef{value.asObjectRef()};
-                const result = JSC.C.JSObjectCallAsFunctionReturnValue(this.server.globalThis, this.server.config.onError.asObjectRef(), this.server.thisObject.asObjectRef(), 1, &args);
+                const result = this.server.config.onError.callWithThis(
+                    this.server.globalThis,
+                    this.server.thisObject,
+                    &.{value},
+                );
                 defer result.ensureStillAlive();
                 if (!result.isEmptyOrUndefinedOrNull()) {
                     if (result.toError()) |err| {
@@ -3010,54 +3015,58 @@ pub const WebSocketServer = struct {
             var vm = globalObject.vm();
             var valid = false;
 
-            if (object.getTruthy(globalObject, "message")) |message| {
-                if (!message.isCallable(vm)) {
+            if (object.getTruthy(globalObject, "message")) |message_| {
+                if (!message_.isCallable(vm)) {
                     globalObject.throwInvalidArguments("websocket expects a function for the message option", .{});
                     return null;
                 }
+                const message = message_.withAsyncContextIfNeeded(globalObject);
                 handler.onMessage = message;
                 message.ensureStillAlive();
                 valid = true;
             }
 
-            if (object.getTruthy(globalObject, "open")) |open| {
-                if (!open.isCallable(vm)) {
+            if (object.getTruthy(globalObject, "open")) |open_| {
+                if (!open_.isCallable(vm)) {
                     globalObject.throwInvalidArguments("websocket expects a function for the open option", .{});
                     return null;
                 }
+                const open = open_.withAsyncContextIfNeeded(globalObject);
                 handler.onOpen = open;
                 open.ensureStillAlive();
                 valid = true;
             }
 
-            if (object.getTruthy(globalObject, "close")) |close| {
-                if (!close.isCallable(vm)) {
+            if (object.getTruthy(globalObject, "close")) |close_| {
+                if (!close_.isCallable(vm)) {
                     globalObject.throwInvalidArguments("websocket expects a function for the close option", .{});
                     return null;
                 }
+                const close = close_.withAsyncContextIfNeeded(globalObject);
                 handler.onClose = close;
                 close.ensureStillAlive();
                 valid = true;
             }
 
-            if (object.getTruthy(globalObject, "drain")) |drain| {
-                if (!drain.isCallable(vm)) {
+            if (object.getTruthy(globalObject, "drain")) |drain_| {
+                if (!drain_.isCallable(vm)) {
                     globalObject.throwInvalidArguments("websocket expects a function for the drain option", .{});
                     return null;
                 }
+                const drain = drain_.withAsyncContextIfNeeded(globalObject);
                 handler.onDrain = drain;
                 drain.ensureStillAlive();
                 valid = true;
             }
 
-            if (object.getTruthy(globalObject, "error")) |cb| {
-                if (!cb.isCallable(vm)) {
-                    globalObject.throwInvalidArguments("websocket expects a function for the error option", .{});
+            if (object.getTruthy(globalObject, "onError")) |onError_| {
+                if (!onError_.isCallable(vm)) {
+                    globalObject.throwInvalidArguments("websocket expects a function for the onError option", .{});
                     return null;
                 }
-                handler.onError = cb;
-                cb.ensureStillAlive();
-                valid = true;
+                const onError = onError_.withAsyncContextIfNeeded(globalObject);
+                handler.onError = onError;
+                onError.ensureStillAlive();
             }
 
             if (object.getTruthy(globalObject, "ping")) |cb| {
@@ -4519,6 +4528,9 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         poll_ref: JSC.PollRef = .{},
         temporary_url_buffer: std.ArrayListUnmanaged(u8) = .{},
 
+        cached_hostname: bun.String = bun.String.empty,
+        cached_protocol: bun.String = bun.String.empty,
+
         flags: packed struct(u3) {
             deinit_scheduled: bool = false,
             terminated: bool = false,
@@ -4912,8 +4924,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             var args_ = [_]JSC.C.JSValueRef{request.toJS(this.globalThis).asObjectRef()};
             const response_value = JSC.C.JSObjectCallAsFunctionReturnValue(
                 this.globalThis,
-                this.config.onRequest.asObjectRef(),
-                this.thisObject.asObjectRef(),
+                this.config.onRequest,
+                this.thisObject,
                 1,
                 &args_,
             );
@@ -4969,15 +4981,29 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
-            return ZigString.init(bun.span(this.config.hostname)).toValue(globalThis);
+            if (this.cached_hostname.isEmpty()) {
+                if (this.listener) |listener| {
+                    var buf: [1024]u8 = [_]u8{0} ** 1024;
+                    var len: i32 = 1024;
+                    listener.socket().remoteAddress(&buf, &len);
+                    if (len > 0) {
+                        this.cached_hostname = bun.String.create(buf[0..@as(usize, @intCast(len))]);
+                    }
+                }
+
+                if (this.cached_hostname.isEmpty())
+                    this.cached_hostname = bun.String.create(bun.span(this.config.hostname orelse "localhost"));
+            }
+
+            return this.cached_hostname.toJS(globalThis);
         }
 
-        pub fn getProtocol(_: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
-            if (comptime ssl_enabled) {
-                return ZigString.init("https:").toValue(globalThis);
-            } else {
-                return ZigString.init("http:").toValue(globalThis);
+        pub fn getProtocol(this: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
+            if (this.cached_protocol.isEmpty()) {
+                this.cached_protocol = bun.String.create(if (ssl_enabled) "https" else "http");
             }
+
+            return this.cached_protocol.toJS(globalThis);
         }
 
         pub fn getDevelopment(
@@ -5055,6 +5081,17 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
         pub fn deinit(this: *ThisServer) void {
             httplog("deinit", .{});
+            this.cached_hostname.deref();
+            this.cached_protocol.deref();
+
+            if (this.config.hostname) |host| {
+                bun.default_allocator.destroy(host);
+            }
+
+            if (this.config.base_url.href.len > 0) {
+                bun.default_allocator.free(this.config.base_url.href);
+            }
+
             this.app.destroy();
             const allocator = this.allocator;
             allocator.destroy(this);
@@ -5429,22 +5466,18 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
                 this.app.get("/src:/*", *ThisServer, this, onSrcRequest);
             }
-
-            const hostname = bun.span(this.config.hostname);
-
-            // When "localhost" is specified, we omit the hostname entirely
-            // Otherwise, "curl http://localhost:3000" doesn't actually work due to IPV6 vs IPV4 issues
-            // This prints a spurious log si_destination_compare on macOS but only when debugger is connected
-            var host: [*:0]const u8 = undefined;
+            var host: ?[*:0]const u8 = null;
             var host_buff: [1024:0]u8 = undefined;
 
-            if (hostname.len == 0 or (!ssl_enabled and strings.eqlComptime(hostname, "localhost"))) {
-                host = "";
-            } else if (hostname.len > 2 and hostname[0] == '[') {
-                // remove "[" and "]" from hostname
-                host = std.fmt.bufPrintZ(&host_buff, "{s}", .{hostname[1 .. hostname.len - 1]}) catch unreachable;
-            } else {
-                host = this.config.hostname;
+            if (this.config.hostname) |existing| {
+                const hostname = bun.span(existing);
+
+                if (hostname.len > 2 and hostname[0] == '[') {
+                    // remove "[" and "]" from hostname
+                    host = std.fmt.bufPrintZ(&host_buff, "{s}", .{hostname[1 .. hostname.len - 1]}) catch unreachable;
+                } else {
+                    host = this.config.hostname;
+                }
             }
 
             this.ref();

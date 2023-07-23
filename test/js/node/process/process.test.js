@@ -242,7 +242,6 @@ describe("process.exitCode", () => {
     expect(() => (process.exitCode = NaN)).toThrow('The "code" argument must be an integer');
     expect(() => (process.exitCode = Infinity)).toThrow('The "code" argument must be an integer');
     expect(() => (process.exitCode = -Infinity)).toThrow('The "code" argument must be an integer');
-    expect(() => (process.exitCode = -1)).toThrow("exitCode must be between 0 and 127");
   });
 
   it("works with implicit process.exit", () => {
@@ -455,9 +454,9 @@ for (const stub of arrayStubs) {
   });
 }
 
-const emptyObjectStubs = ["_preload_modules"];
+const emptyObjectStubs = [];
 const emptySetStubs = ["allowedNodeEnvironmentFlags"];
-const emptyArrayStubs = ["moduleLoadList"];
+const emptyArrayStubs = ["moduleLoadList", "_preload_modules"];
 
 for (const stub of emptyObjectStubs) {
   it(`process.${stub}`, () => {

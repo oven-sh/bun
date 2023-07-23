@@ -691,13 +691,9 @@ pub const Blob = struct {
 
         if (destination_type == .file and source_type == .bytes) {
             var write_file_promise = bun.default_allocator.create(WriteFilePromise) catch unreachable;
-            var promise = JSC.JSPromise.create(ctx.ptr());
-            const promise_value = promise.asValue(ctx);
             write_file_promise.* = .{
                 .globalThis = ctx.ptr(),
             };
-            write_file_promise.promise.strong.set(ctx, promise_value);
-            promise_value.ensureStillAlive();
 
             var file_copier = Store.WriteFile.create(
                 bun.default_allocator,
@@ -708,6 +704,12 @@ pub const Blob = struct {
                 WriteFilePromise.run,
             ) catch unreachable;
             var task = Store.WriteFile.WriteFileTask.createOnJSThread(bun.default_allocator, ctx.ptr(), file_copier) catch unreachable;
+
+            // Defer promise creation until we're just about to schedule the task
+            var promise = JSC.JSPromise.create(ctx.ptr());
+            const promise_value = promise.asValue(ctx);
+            write_file_promise.promise.strong.set(ctx, promise_value);
+            promise_value.ensureStillAlive();
             task.schedule();
             return promise_value.asObjectRef();
         }
@@ -787,6 +789,10 @@ pub const Blob = struct {
                 }
             }
         }
+
+        var input_store: ?*Store = if (path_or_blob == .blob) path_or_blob.blob.store else null;
+        if (input_store) |st| st.ref();
+        defer if (input_store) |st| st.deref();
 
         var needs_async = false;
 
@@ -970,6 +976,17 @@ pub const Blob = struct {
                 return null;
             };
         };
+
+        var destination_store = destination_blob.store;
+        if (destination_store) |store| {
+            store.ref();
+        }
+
+        defer {
+            if (destination_store) |store| {
+                store.deref();
+            }
+        }
 
         return writeFileWithSourceDestination(ctx, &source_blob, &destination_blob);
     }
@@ -2501,6 +2518,9 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
+        var store = this.store;
+        if (store) |st| st.ref();
+        defer if (store) |st| st.deref();
         return promisified(this.toString(globalThis, .clone), globalThis);
     }
 
@@ -2508,6 +2528,9 @@ pub const Blob = struct {
         this: *Blob,
         globalObject: *JSC.JSGlobalObject,
     ) JSC.JSValue {
+        var store = this.store;
+        if (store) |st| st.ref();
+        defer if (store) |st| st.deref();
         return promisified(this.toString(globalObject, .transfer), globalObject);
     }
 
@@ -2516,6 +2539,10 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
+        var store = this.store;
+        if (store) |st| st.ref();
+        defer if (store) |st| st.deref();
+
         return promisified(this.toJSON(globalThis, .share), globalThis);
     }
 
@@ -2523,6 +2550,10 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
+        var store = this.store;
+        if (store) |st| st.ref();
+        defer if (store) |st| st.deref();
+
         return promisified(this.toArrayBuffer(globalThis, .transfer), globalThis);
     }
 
@@ -2531,6 +2562,9 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSValue {
+        var store = this.store;
+        if (store) |st| st.ref();
+        defer if (store) |st| st.deref();
         return promisified(this.toArrayBuffer(globalThis, .clone), globalThis);
     }
 
@@ -2539,6 +2573,10 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSValue {
+        var store = this.store;
+        if (store) |st| st.ref();
+        defer if (store) |st| st.deref();
+
         return promisified(this.toFormData(globalThis, .temporary), globalThis);
     }
 
@@ -3246,29 +3284,34 @@ pub const Blob = struct {
         bloblog("doReadFile", .{});
 
         const Handler = NewReadFileHandler(Function);
-        var promise = JSPromise.create(global);
-
-        var handler = Handler{
+        var handler = bun.default_allocator.create(Handler) catch unreachable;
+        handler.* = Handler{
             .context = this.*,
             .globalThis = global,
         };
-        const promise_value = promise.asValue(global);
-        promise_value.ensureStillAlive();
-        handler.promise.strong.set(global, promise_value);
 
-        var ptr = bun.default_allocator.create(Handler) catch unreachable;
-        ptr.* = handler;
         var file_read = Store.ReadFile.create(
             bun.default_allocator,
             this.store.?,
             this.offset,
             this.size,
             *Handler,
-            ptr,
+            handler,
             Handler.run,
         ) catch unreachable;
         var read_file_task = Store.ReadFile.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch unreachable;
+
+        // Create the Promise only after the store has been ref()'d.
+        // The garbage collector runs on memory allocations
+        // The JSPromise is the next GC'd memory allocation.
+        // This shouldn't really fix anything, but it's a little safer.
+        var promise = JSPromise.create(global);
+        const promise_value = promise.asValue(global);
+        promise_value.ensureStillAlive();
+        handler.promise.strong.set(global, promise_value);
+
         read_file_task.schedule();
+
         bloblog("doReadFile: read_file_task scheduled", .{});
         return promise_value;
     }

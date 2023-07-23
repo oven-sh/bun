@@ -882,7 +882,7 @@ pub const SignalCode = enum(u8) {
     }
 
     pub fn from(value: anytype) SignalCode {
-        return @as(SignalCode, @enumFromInt(@as(u7, @truncate(std.mem.asBytes(&value)[0]))));
+        return @enumFromInt(std.mem.asBytes(&value)[0]);
     }
 
     pub fn format(self: SignalCode, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {

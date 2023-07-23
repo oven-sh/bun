@@ -159,6 +159,10 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
         pub inline fn init(_ptr: anytype) This {
             const Type = std.meta.Child(@TypeOf(_ptr));
+            return initWithType(Type, _ptr);
+        }
+
+        pub inline fn initWithType(comptime Type: type, _ptr: anytype) This {
             const name = comptime typeBaseName(@typeName(Type));
 
             // there will be a compiler error if the passed in type doesn't exist in the enum

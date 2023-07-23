@@ -1,4 +1,5 @@
 #include "Process.h"
+#include "JavaScriptCore/InternalFieldTuple.h"
 #include "JavaScriptCore/JSMicrotask.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/NumberPrototype.h"
@@ -179,22 +180,19 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
     }
 
     Zig::GlobalObject* global = JSC::jsCast<Zig::GlobalObject*>(globalObject);
+    JSC::JSValue asyncContextValue = globalObject->m_asyncContextData.get()->getInternalField(0);
 
     switch (callFrame->argumentCount()) {
     case 1: {
-        global->queueMicrotask(global->performMicrotaskFunction(), job, JSC::JSValue {}, JSC::JSValue {}, JSC::JSValue {});
+        global->queueMicrotask(global->performMicrotaskFunction(), job, asyncContextValue, JSC::JSValue {}, JSC::JSValue {});
         break;
     }
     case 2: {
-        global->queueMicrotask(global->performMicrotaskFunction(), job, callFrame->uncheckedArgument(1), JSC::JSValue {}, JSC::JSValue {});
+        global->queueMicrotask(global->performMicrotaskFunction(), job, asyncContextValue, callFrame->uncheckedArgument(1), JSC::JSValue {});
         break;
     }
     case 3: {
-        global->queueMicrotask(global->performMicrotaskFunction(), job, callFrame->uncheckedArgument(1), callFrame->uncheckedArgument(2), JSC::JSValue {});
-        break;
-    }
-    case 4: {
-        global->queueMicrotask(global->performMicrotaskFunction(), job, callFrame->uncheckedArgument(1), callFrame->uncheckedArgument(2), callFrame->uncheckedArgument(3));
+        global->queueMicrotask(global->performMicrotaskFunction(), job, asyncContextValue, callFrame->uncheckedArgument(1), callFrame->uncheckedArgument(2));
         break;
     }
     default: {
@@ -210,7 +208,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
         }
 
         global->queueMicrotask(
-            global->performMicrotaskVariadicFunction(), job, args, JSValue {}, JSC::JSValue {});
+            global->performMicrotaskVariadicFunction(), job, args, asyncContextValue, JSC::JSValue {});
 
         break;
     }
@@ -381,13 +379,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
             return JSC::JSValue::encode(JSC::JSValue {});
         }
 
-        int extiCode32 = arg0.toInt32(globalObject);
+        int extiCode32 = arg0.toInt32(globalObject) % 256;
         RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
-
-        if (extiCode32 < 0 || extiCode32 > 127) {
-            throwRangeError(globalObject, throwScope, "The \"code\" argument must be an integer between 0 and 127"_s);
-            return JSC::JSValue::encode(JSC::JSValue {});
-        }
 
         exitCode = static_cast<uint8_t>(extiCode32);
     } else if (!arg0.isUndefinedOrNull()) {
@@ -1144,13 +1137,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
             return JSC::JSValue::encode(JSC::JSValue {});
         }
 
-        int extiCode32 = arg0.toInt32(globalObject);
+        int extiCode32 = arg0.toInt32(globalObject) % 256;
         RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
-
-        if (extiCode32 < 0 || extiCode32 > 127) {
-            throwRangeError(globalObject, throwScope, "The \"code\" argument must be an integer between 0 and 127"_s);
-            return JSC::JSValue::encode(JSC::JSValue {});
-        }
 
         exitCode = static_cast<uint8_t>(extiCode32);
     } else if (!arg0.isUndefinedOrNull()) {
@@ -1777,7 +1765,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
   _getActiveRequests               Process_stubFunctionReturningArray       Function 0
   _getActiveHandles                Process_stubFunctionReturningArray       Function 0
   _linkedBinding                   Process_stubEmptyFunction                Function 0
-  _preload_modules                 Process_stubEmptyObject                  PropertyCallback
+  _preload_modules                 Process_stubEmptyArray                   PropertyCallback
   _rawDebug                        Process_stubEmptyFunction                Function 0
   _startProfilerIdleNotifier       Process_stubEmptyFunction                Function 0
   _stopProfilerIdleNotifier        Process_stubEmptyFunction                Function 0

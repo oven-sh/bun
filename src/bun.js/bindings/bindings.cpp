@@ -9,7 +9,6 @@
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "JavaScriptCore/CodeBlock.h"
 #include "JavaScriptCore/Completion.h"
-#include "JavaScriptCore/DeferredWorkTimer.h"
 #include "JavaScriptCore/ErrorInstance.h"
 #include "JavaScriptCore/ExceptionHelpers.h"
 #include "JavaScriptCore/ExceptionScope.h"
@@ -94,6 +93,9 @@
 
 #include <JavaScriptCore/JSWeakMap.h>
 #include "JSURLSearchParams.h"
+
+#include "AsyncContextFrame.h"
+#include "JavaScriptCore/InternalFieldTuple.h"
 
 template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
@@ -1734,22 +1736,27 @@ bool JSC__JSValue__jestDeepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, J
 
 // This is the same as the C API version, except it returns a JSValue which may be a *Exception
 // We want that so we can return stack traces.
-JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSObjectRef object,
-    JSObjectRef thisObject, size_t argumentCount,
-    const JSValueRef* arguments);
-
-JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSObjectRef object,
-    JSObjectRef thisObject, size_t argumentCount,
+extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSC__JSValue object,
+    JSC__JSValue thisObject, size_t argumentCount,
     const JSValueRef* arguments)
 {
     JSC::JSGlobalObject* globalObject = toJS(ctx);
     JSC::VM& vm = globalObject->vm();
 
-    if (!object)
+    if (UNLIKELY(!object))
         return JSC::JSValue::encode(JSC::JSValue());
 
-    JSC::JSObject* jsObject = toJS(object);
-    JSC::JSObject* jsThisObject = toJS(thisObject);
+    JSC::JSValue jsObject = JSValue::decode(object);
+    JSC::JSValue jsThisObject = JSValue::decode(thisObject);
+
+    JSValue restoreAsyncContext;
+    InternalFieldTuple* asyncContextData = nullptr;
+    if (auto* wrapper = jsDynamicCast<AsyncContextFrame*>(jsObject)) {
+        jsObject = jsCast<JSC::JSObject*>(wrapper->callback.get());
+        asyncContextData = globalObject->m_asyncContextData.get();
+        restoreAsyncContext = asyncContextData->getInternalField(0);
+        asyncContextData->putInternalField(vm, 0, wrapper->context.get());
+    }
 
     if (!jsThisObject)
         jsThisObject = globalObject->globalThis();
@@ -1765,17 +1772,16 @@ JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSObjectRef obj
     NakedPtr<JSC::Exception> returnedException = nullptr;
     auto result = JSC::call(globalObject, jsObject, callData, jsThisObject, argList, returnedException);
 
+    if (asyncContextData) {
+        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+    }
+
     if (returnedException.get()) {
         return JSC::JSValue::encode(JSC::JSValue(returnedException.get()));
     }
 
     return JSC::JSValue::encode(result);
 }
-
-JSC__JSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef ctx, JSObjectRef object,
-    JSObjectRef thisObject,
-    size_t argumentCount,
-    const JSValueRef* arguments);
 
 JSC__JSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef ctx, JSObjectRef object,
     JSObjectRef thisObject,
@@ -2543,9 +2549,9 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC__JSPromise* promise, JSC__J
         globalObject->queueMicrotask(
             globalObject->performMicrotaskFunction(),
             globalObject->rejectPromiseFunction(),
+            globalObject->m_asyncContextData.get()->getInternalField(0),
             promise,
-            value,
-            JSValue {});
+            value);
         RETURN_IF_EXCEPTION(scope, void());
     }
 }
@@ -3886,11 +3892,6 @@ void JSC__VM__deleteAllCode(JSC__VM* arg1, JSC__JSGlobalObject* globalObject)
     arg1->heap.reportAbandonedObjectGraph();
 }
 
-void JSC__VM__doWork(JSC__VM* vm)
-{
-    vm->deferredWorkTimer->doWork(*vm);
-}
-
 void JSC__VM__deinit(JSC__VM* arg1, JSC__JSGlobalObject* globalObject) {}
 void JSC__VM__drainMicrotasks(JSC__VM* arg0) { arg0->drainMicrotasks(); }
 
@@ -4331,14 +4332,14 @@ extern "C" size_t JSC__VM__externalMemorySize(JSC__VM* vm)
 #endif
 }
 
-extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue JSValue2, JSC__JSValue JSValue3, JSC__JSValue JSValue4)
+extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue JSValue3, JSC__JSValue JSValue4)
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
     JSC::VM& vm = globalObject->vm();
     globalObject->queueMicrotask(
         JSValue(globalObject->performMicrotaskFunction()),
         JSC::JSValue::decode(JSValue1),
-        JSC::JSValue::decode(JSValue2),
+        globalObject->m_asyncContextData.get()->getInternalField(0),
         JSC::JSValue::decode(JSValue3),
         JSC::JSValue::decode(JSValue4));
 }

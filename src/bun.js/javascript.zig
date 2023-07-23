@@ -1239,8 +1239,8 @@ pub const VirtualMachine = struct {
         if (strings.hasPrefixComptime(specifier, "file://")) specifier = specifier["file://".len..];
 
         if (strings.indexOfChar(specifier, '?')) |i| {
-            specifier = specifier[0..i];
             query_string.* = specifier[i..];
+            specifier = specifier[0..i];
         }
 
         return specifier;
@@ -1298,7 +1298,10 @@ pub const VirtualMachine = struct {
             jsc_vm.bundler.fs.top_level_dir;
 
         const result: Resolver.Result = try brk: {
-            var retry_on_not_found = query_string.len > 0;
+            // TODO: We only want to retry on not found only when the directories we searched for were cached.
+            // This fixes an issue where new files created in cached directories were not picked up.
+            // See https://github.com/oven-sh/bun/issues/3216
+            var retry_on_not_found = true;
             while (true) {
                 break :brk switch (jsc_vm.bundler.resolver.resolveAndAutoInstall(
                     source_to_use,
@@ -1323,6 +1326,7 @@ pub const VirtualMachine = struct {
                             var parts = [_]string{
                                 source_to_use,
                                 normalized_specifier,
+                                "../",
                             };
 
                             break :name bun.path.joinAbsStringBuf(
@@ -1866,6 +1870,16 @@ pub const VirtualMachine = struct {
         }
 
         return promise;
+    }
+
+    // worker dont has bun_watcher and also we dont wanna call autoTick before dispatchOnline
+    pub fn loadEntryPointForWebWorker(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
+        var promise = try this.reloadEntryPoint(entry_path);
+        this.eventLoop().performGC();
+        this.waitForPromise(JSC.AnyPromise{
+            .Internal = promise,
+        });
+        return this.pending_internal_promise;
     }
 
     pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
@@ -2597,7 +2611,7 @@ pub const EventListenerMixin = struct {
 
         for (listeners.items) |listener_ref| {
             vm.tick();
-            var result = js.JSObjectCallAsFunctionReturnValue(vm.global, listener_ref, null, 1, &fetch_args);
+            var result = js.JSObjectCallAsFunctionReturnValue(vm.global, JSValue.fromRef(listener_ref), JSValue.zero, 1, &fetch_args);
             vm.tick();
             var promise = JSInternalPromise.resolvedPromise(vm.global, result);
 

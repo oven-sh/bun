@@ -86,6 +86,7 @@ public:
         , m_globalObject(globalObject)
         , m_identifier(identifier)
     {
+        addToContextsMap();
     }
 
     static ScriptExecutionContextIdentifier generateIdentifier();
@@ -183,6 +184,7 @@ public:
     void setGlobalObject(JSC::JSGlobalObject* globalObject)
     {
         m_globalObject = globalObject;
+        m_vm = &globalObject->vm();
     }
 
 private:

@@ -285,7 +285,7 @@ CPP_DECL JSC__JSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC__JSGlobalObj
 CPP_DECL JSC__JSValue JSC__JSGlobalObject__getCachedObject(JSC__JSGlobalObject* arg0, const ZigString* arg1);
 CPP_DECL void JSC__JSGlobalObject__handleRejectedPromises(JSC__JSGlobalObject* arg0);
 CPP_DECL JSC__JSValue JSC__JSGlobalObject__putCachedObject(JSC__JSGlobalObject* arg0, const ZigString* arg1, JSC__JSValue JSValue2);
-CPP_DECL void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue JSValue2, JSC__JSValue JSValue3, JSC__JSValue JSValue4);
+CPP_DECL void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue JSValue2, JSC__JSValue JSValue3);
 CPP_DECL void JSC__JSGlobalObject__reload(JSC__JSGlobalObject* arg0);
 CPP_DECL bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* arg0, unsigned char* arg1, uint16_t arg2);
 CPP_DECL JSC__VM* JSC__JSGlobalObject__vm(JSC__JSGlobalObject* arg0);
@@ -419,7 +419,6 @@ CPP_DECL JSC__VM* JSC__VM__create(unsigned char HeapType0);
 CPP_DECL void JSC__VM__deferGC(JSC__VM* arg0, void* arg1, void(* ArgFn2)(void* arg0)) __attribute__((nonnull (2)));
 CPP_DECL void JSC__VM__deinit(JSC__VM* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL void JSC__VM__deleteAllCode(JSC__VM* arg0, JSC__JSGlobalObject* arg1);
-CPP_DECL void JSC__VM__doWork(JSC__VM* arg0);
 CPP_DECL void JSC__VM__drainMicrotasks(JSC__VM* arg0);
 CPP_DECL bool JSC__VM__executionForbidden(JSC__VM* arg0);
 CPP_DECL size_t JSC__VM__externalMemorySize(JSC__VM* arg0);
@@ -759,7 +758,7 @@ ZIG_DECL void Bun__WebSocketClientTLS__writeString(WebSocketClientTLS* arg0, con
 
 #ifdef __cplusplus
 
-ZIG_DECL void Bun__Process__exit(JSC__JSGlobalObject* arg0, int32_t arg1);
+ZIG_DECL void Bun__Process__exit(JSC__JSGlobalObject* arg0, unsigned char arg1);
 ZIG_DECL JSC__JSValue Bun__Process__getArgv(JSC__JSGlobalObject* arg0);
 ZIG_DECL JSC__JSValue Bun__Process__getArgv0(JSC__JSGlobalObject* arg0);
 ZIG_DECL JSC__JSValue Bun__Process__getCwd(JSC__JSGlobalObject* arg0);

@@ -106,6 +106,13 @@ describe("Bun.Transpiler", () => {
       ts.expectPrinted_("import Foo = Baz.Bar;\nexport default Foo;", "const Foo = Baz.Bar;\nexport default Foo");
     });
 
+    it("ternary should parse correctly when parsing typescript fails", () => {
+      ts.expectPrinted_(
+        "var c = Math.random() ? ({ ...{} }) : ({ ...{} })",
+        "var c = Math.random() ? { ...{} } : { ...{} }",
+      );
+    });
+
     it.todo("instantiation expressions", async () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
@@ -2802,7 +2809,7 @@ console.log(foo, array);
 
       expectPrinted("'string' + `template`", `"stringtemplate"`);
 
-      expectPrinted("`template` + 'string'", "`templatestring`");
+      expectPrinted("`template` + 'string'", '"templatestring"');
 
       // TODO: string template simplification
       // expectPrinted("'string' + `a${foo}b`", "`stringa${foo}b`");
@@ -3081,7 +3088,7 @@ console.log(foo, array);
       expectPrinted_('const x = `str` + "``";', "const x = `str\\`\\``");
       expectPrinted_('const x = `` + "`";', "const x = `\\``");
       expectPrinted_('const x = `` + "``";', "const x = `\\`\\``");
-      expectPrinted_('const x = "``" + ``;', 'const x = "``"');
+      expectPrinted_('const x = "``" + ``;', "const x = `\\`\\``");
     });
   });
 

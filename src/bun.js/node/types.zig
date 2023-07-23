@@ -1005,12 +1005,12 @@ pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.
         };
     };
 
-    if (mode_int < 0 or mode_int > 0o777) {
-        JSC.throwInvalidArguments("Invalid mode: must be an octal number", .{}, ctx, exception);
+    if (mode_int < 0) {
+        JSC.throwInvalidArguments("Invalid mode: must be greater than or equal to 0.", .{}, ctx, exception);
         return null;
     }
 
-    return mode_int;
+    return mode_int & 0o777;
 }
 
 pub const PathOrFileDescriptor = union(Tag) {
@@ -1738,23 +1738,23 @@ pub const Path = struct {
         var name_with_ext = JSC.ZigString.Empty;
 
         var insert_separator = true;
-        if (path_object.get(globalThis, "dir")) |prop| {
+        if (path_object.getTruthy(globalThis, "dir")) |prop| {
             prop.toZigString(&dir, globalThis);
             insert_separator = !dir.isEmpty();
-        } else if (path_object.get(globalThis, "root")) |prop| {
+        } else if (path_object.getTruthy(globalThis, "root")) |prop| {
             prop.toZigString(&dir, globalThis);
         }
 
-        if (path_object.get(globalThis, "base")) |prop| {
+        if (path_object.getTruthy(globalThis, "base")) |prop| {
             prop.toZigString(&name_with_ext, globalThis);
         } else {
             var had_ext = false;
-            if (path_object.get(globalThis, "ext")) |prop| {
+            if (path_object.getTruthy(globalThis, "ext")) |prop| {
                 prop.toZigString(&ext, globalThis);
                 had_ext = !ext.isEmpty();
             }
 
-            if (path_object.get(globalThis, "name")) |prop| {
+            if (path_object.getTruthy(globalThis, "name")) |prop| {
                 if (had_ext) {
                     prop.toZigString(&name_, globalThis);
                 } else {
@@ -2217,16 +2217,16 @@ pub const Process = struct {
         }
     }
 
-    pub fn exit(globalObject: *JSC.JSGlobalObject, code: i32) callconv(.C) void {
+    pub fn exit(globalObject: *JSC.JSGlobalObject, code: u8) callconv(.C) void {
         var vm = globalObject.bunVM();
         if (vm.worker) |worker| {
-            vm.exit_handler.exit_code = @as(u8, @truncate(@max(code, 0)));
+            vm.exit_handler.exit_code = code;
             worker.terminate();
             return;
         }
 
         vm.onExit();
-        std.os.exit(@as(u8, @truncate(@as(u32, @intCast(@max(code, 0))))));
+        std.os.exit(code);
     }
 
     pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;

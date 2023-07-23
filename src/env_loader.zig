@@ -329,13 +329,24 @@ pub const Loader = struct {
     pub fn loadProcess(this: *Loader) void {
         if (this.did_load_process) return;
 
-        // This is a little weird because it's evidently stored line-by-line
-        var source = logger.Source.initPathString("process.env", "");
-
         this.map.map.ensureTotalCapacity(std.os.environ.len) catch unreachable;
-        for (std.os.environ) |env| {
-            source.contents = bun.span(env);
-            Parser.parse(&source, this.allocator, this.map, true, true);
+        for (std.os.environ) |_env| {
+            var env = bun.span(_env);
+            if (strings.indexOfChar(env, '=')) |i| {
+                var key = env[0..i];
+                var value = env[i + 1 ..];
+                if (key.len > 0) {
+                    if (value.len > 0) {
+                        this.map.put(key, value) catch unreachable;
+                    } else {
+                        this.map.put(key, empty_string_value) catch unreachable;
+                    }
+                }
+            } else {
+                if (env.len > 0) {
+                    this.map.put(env, empty_string_value) catch unreachable;
+                }
+            }
         }
         this.did_load_process = true;
 
@@ -484,12 +495,12 @@ pub const Loader = struct {
 
         var file = dir.openFile(base, .{ .mode = .read_only }) catch |err| {
             switch (err) {
-                error.FileNotFound => {
+                error.IsDir, error.FileNotFound => {
                     // prevent retrying
                     @field(this, base) = logger.Source.initPathString(base, "");
                     return;
                 },
-                error.FileBusy, error.DeviceBusy, error.AccessDenied, error.IsDir => {
+                error.Unexpected, error.FileBusy, error.DeviceBusy, error.AccessDenied => {
                     if (!this.quiet) {
                         Output.prettyErrorln("<r><red>{s}<r> error loading {s} file", .{ @errorName(err), base });
                     }
@@ -508,14 +519,27 @@ pub const Loader = struct {
         const stat = try file.stat();
         const end = stat.size;
 
-        if (end == 0) {
+        if (end == 0 or stat.kind != .file) {
             @field(this, base) = logger.Source.initPathString(base, "");
             return;
         }
 
         var buf = try this.allocator.alloc(u8, end + 1);
         errdefer this.allocator.free(buf);
-        const amount_read = try file.readAll(buf[0..end]);
+        const amount_read = file.readAll(buf[0..end]) catch |err| switch (err) {
+            error.Unexpected, error.SystemResources, error.OperationAborted, error.BrokenPipe, error.AccessDenied, error.IsDir => {
+                if (!this.quiet) {
+                    Output.prettyErrorln("<r><red>{s}<r> error loading {s} file", .{ @errorName(err), base });
+                }
+
+                // prevent retrying
+                @field(this, base) = logger.Source.initPathString(base, "");
+                return;
+            },
+            else => {
+                return err;
+            },
+        };
 
         // The null byte here is mostly for debugging purposes.
         buf[end] = 0;

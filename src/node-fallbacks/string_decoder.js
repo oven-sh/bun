@@ -1,2 +1,1 @@
-export * from "string_decoder";
-export * as default from "string_decoder";
+export { StringDecoder, StringDecoder as default } from "string_decoder";

@@ -200,7 +200,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_tls" %} [`node:tls`](https://nodejs.org/api/tls.html) {% /anchor %}
 - 🟡
-- Missing `tls.createSecurePair` `tls.rootCertificates`
+- Missing `tls.createSecurePair`
 
 ---
 
@@ -592,8 +592,8 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 ---
 
 - {% anchor id="node_structuredclone" %} [`structuredClone()`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone) {% /anchor %}
-- 🔴
-- Not implemented.
+- 🟢
+- Fully implemented.
 
 ---
 

@@ -230,6 +230,14 @@ test(".env comments", () => {
   expect(stdout).toBe("foo bar");
 });
 
+test(".env process variables no comments", () => {
+  const dir = tempDirWithFiles("env-no-comments", {
+    "index.ts": "console.log(process.env.TEST1, process.env.TEST2);",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`, { TEST1: "test#1", TEST2: '"test#2"' });
+  expect(stdout).toBe('test#1 "test#2"');
+});
+
 test(".env escaped dollar sign", () => {
   const dir = tempDirWithFiles("dotenv-dollar", {
     ".env": "FOO=foo\nBAR=\\$FOO",
@@ -317,4 +325,16 @@ test(".env with zero length strings", () => {
   });
   const { stdout } = bunRun(`${dir}/index.ts`);
   expect(stdout).toBe("||0|0");
+});
+
+test(".env in a folder doesn't throw an error", () => {
+  const dir = tempDirWithFiles("dotenv-issue-3670", {
+    ".env": {
+      ".env.local": "FOO=''\n",
+    },
+    "index.ts": "console.write('hey')",
+    "package.json": '{ "name": ' + '"test"' + " }",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(stdout).toBe("hey");
 });

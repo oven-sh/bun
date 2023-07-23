@@ -806,7 +806,6 @@ pub const TestCommand = struct {
                     vm.global.vm().drainMicrotasks();
                     vm.global.handleRejectedPromises();
                 }
-                vm.global.vm().doWork();
             }
 
             const file_end = reporter.jest.files.len;
@@ -846,7 +845,6 @@ pub const TestCommand = struct {
                 }
             }
 
-            vm.global.vm().clearMicrotaskCallback();
             vm.global.handleRejectedPromises();
             if (repeat_index > 0) {
                 vm.clearEntryPoint();

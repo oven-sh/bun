@@ -32,6 +32,26 @@ The "naked" `bun` command is equivalent to `bun run`.
 $ bun index.tsx
 ```
 
+### `--watch`
+
+To run a file in watch mode, use the `--watch` flag.
+
+```bash
+$ bun --watch run index.tsx
+```
+
+### `--smol`
+
+{% callout %}
+Added in Bun v0.7.0.
+{% /callout %}
+
+In memory-constrained environments, use the `--smol` flag to reduce memory usage at a cost to performance.
+
+```bash
+$ bun --smol run index.tsx
+```
+
 ## Run a `package.json` script
 
 {% note %}

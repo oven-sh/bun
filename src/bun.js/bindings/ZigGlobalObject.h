@@ -133,9 +133,9 @@ public:
         return ptr;
     }
 
-    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, WebCore::ScriptExecutionContext* scriptExecutionContext)
+    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId)
     {
-        GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, scriptExecutionContext);
+        GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, scriptExecutionContextId);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -277,6 +277,7 @@ public:
     JSObject* lazyPreloadTestModuleObject() { return m_lazyPreloadTestModuleObject.getInitializedOnMainThread(this); }
     Structure* CommonJSModuleObjectStructure() { return m_commonJSModuleObjectStructure.getInitializedOnMainThread(this); }
     Structure* ImportMetaObjectStructure() { return m_importMetaObjectStructure.getInitializedOnMainThread(this); }
+    Structure* AsyncContextFrameStructure() { return m_asyncBoundFunctionStructure.getInitializedOnMainThread(this); }
 
     Structure* commonJSFunctionArgumentsStructure() { return m_commonJSFunctionArgumentsStructure.getInitializedOnMainThread(this); }
 
@@ -312,8 +313,8 @@ public:
 
     EncodedJSValue assignToStream(JSValue stream, JSValue controller);
 
-    Ref<WebCore::EventTarget> eventTarget();
-    Ref<Bun::GlobalScope> globalEventScope;
+    WebCore::EventTarget& eventTarget();
+    Bun::GlobalScope& globalEventScope;
 
     enum class PromiseFunctions : uint8_t {
         Bun__HTTPRequestContext__onReject,
@@ -376,6 +377,7 @@ public:
     mutable WriteBarrier<JSFunction> m_readableStreamToBlob;
     mutable WriteBarrier<JSFunction> m_readableStreamToJSON;
     mutable WriteBarrier<JSFunction> m_readableStreamToText;
+    mutable WriteBarrier<JSFunction> m_readableStreamToFormData;
     mutable WriteBarrier<Unknown> m_JSBufferSetterValue;
     mutable WriteBarrier<Unknown> m_JSFetchHeadersSetterValue;
     mutable WriteBarrier<Unknown> m_JSMessageEventSetterValue;
@@ -448,7 +450,7 @@ private:
     friend void WebCore::JSBuiltinInternalFunctions::initialize(Zig::GlobalObject&);
     WebCore::JSBuiltinInternalFunctions m_builtinInternalFunctions;
     GlobalObject(JSC::VM& vm, JSC::Structure* structure);
-    GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::ScriptExecutionContext*);
+    GlobalObject(JSC::VM& vm, JSC::Structure* structure, uint32_t);
     std::unique_ptr<WebCore::DOMConstructors> m_constructors;
     uint8_t m_worldIsNormal;
     JSDOMStructureMap m_structures WTF_GUARDED_BY_LOCK(m_gcLock);
@@ -524,6 +526,7 @@ private:
     LazyProperty<JSGlobalObject, JSC::JSObject> m_importMetaRequireFunctionUnbound;
     LazyProperty<JSGlobalObject, JSC::JSObject> m_importMetaRequireResolveFunctionUnbound;
     LazyProperty<JSGlobalObject, JSC::Structure> m_importMetaObjectStructure;
+    LazyProperty<JSGlobalObject, JSC::Structure> m_asyncBoundFunctionStructure;
 
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     void* m_bunVM;

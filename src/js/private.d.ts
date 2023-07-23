@@ -95,6 +95,7 @@ declare module "bun" {
   };
   function fs(): BunFS;
   function _Os(): typeof import("node:os");
+  function _Path(isWindows?: boolean): typeof import("node:path");
   function jest(): typeof import("bun:test");
   var main: string;
   var tty: Array<{ hasColors: boolean }>;
@@ -186,6 +187,11 @@ interface BunLazyModules {
     function: any;
     functionRegular: any;
     callback: any;
+  };
+  "async_hooks": {
+    get: typeof import("./builtins/AsyncContext").getAsyncContext;
+    set: typeof import("./builtins/AsyncContext").setAsyncContext;
+    cleanupLater: () => void;
   };
 
   // ReadableStream related

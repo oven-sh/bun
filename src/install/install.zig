@@ -2601,7 +2601,9 @@ pub const PackageManager = struct {
             },
             .workspace => {
                 // relative to cwd
-                const res = FolderResolution.getOrPut(.{ .relative = .workspace }, version, this.lockfile.str(&version.value.workspace), this);
+                const workspace_path: *const String = this.lockfile.workspace_paths.getPtr(@truncate(String.Builder.stringHash(this.lockfile.str(&version.value.workspace)))) orelse &version.value.workspace;
+
+                const res = FolderResolution.getOrPut(.{ .relative = .workspace }, version, this.lockfile.str(workspace_path), this);
 
                 switch (res) {
                     .err => |err| return err,
@@ -3166,7 +3168,7 @@ pub const PackageManager = struct {
                     this.enqueueNetworkTask(network_task);
                 }
             },
-            .symlink, .workspace => {
+            inline .symlink, .workspace => |dependency_tag| {
                 const _result = this.getOrPutResolvedPackage(
                     name_hash,
                     name,
@@ -3183,7 +3185,15 @@ pub const PackageManager = struct {
                     return err;
                 };
 
-                const not_found_fmt =
+                const workspace_not_found_fmt =
+                    \\workspace dependency "{[name]s}" not found
+                    \\
+                    \\Searched in <b>{[search_path]}<r>
+                    \\
+                    \\Workspace documentation: https://bun.sh/docs/install/workspaces
+                    \\
+                ;
+                const link_not_found_fmt =
                     \\package "{[name]s}" is not linked
                     \\
                     \\To install a linked package:
@@ -3214,25 +3224,51 @@ pub const PackageManager = struct {
                     // should not trigger a network call
                     if (comptime Environment.allow_assert) std.debug.assert(result.network_task == null);
                 } else if (dependency.behavior.isRequired()) {
-                    this.log.addErrorFmt(
-                        null,
-                        logger.Loc.Empty,
-                        this.allocator,
-                        not_found_fmt,
-                        .{
-                            .name = this.lockfile.str(&name),
-                        },
-                    ) catch unreachable;
+                    if (comptime dependency_tag == .workspace) {
+                        this.log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            this.allocator,
+                            workspace_not_found_fmt,
+                            .{
+                                .name = this.lockfile.str(&name),
+                                .search_path = FolderResolution.PackageWorkspaceSearchPathFormatter{ .manager = this, .version = version },
+                            },
+                        ) catch unreachable;
+                    } else {
+                        this.log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            this.allocator,
+                            link_not_found_fmt,
+                            .{
+                                .name = this.lockfile.str(&name),
+                            },
+                        ) catch unreachable;
+                    }
                 } else if (this.options.log_level.isVerbose()) {
-                    this.log.addWarningFmt(
-                        null,
-                        logger.Loc.Empty,
-                        this.allocator,
-                        not_found_fmt,
-                        .{
-                            .name = this.lockfile.str(&name),
-                        },
-                    ) catch unreachable;
+                    if (comptime dependency_tag == .workspace) {
+                        this.log.addWarningFmt(
+                            null,
+                            logger.Loc.Empty,
+                            this.allocator,
+                            workspace_not_found_fmt,
+                            .{
+                                .name = this.lockfile.str(&name),
+                                .search_path = FolderResolution.PackageWorkspaceSearchPathFormatter{ .manager = this, .version = version },
+                            },
+                        ) catch unreachable;
+                    } else {
+                        this.log.addWarningFmt(
+                            null,
+                            logger.Loc.Empty,
+                            this.allocator,
+                            link_not_found_fmt,
+                            .{
+                                .name = this.lockfile.str(&name),
+                            },
+                        ) catch unreachable;
+                    }
                 }
             },
             .tarball => {
@@ -4439,7 +4475,23 @@ pub const PackageManager = struct {
                     for (scoped.scopes, 0..) |name, i| {
                         var registry = scoped.registries[i];
                         if (registry.url.len == 0) registry.url = base.url;
-                        try this.registries.put(allocator, Npm.Registry.Scope.hash(name), try Npm.Registry.Scope.fromAPI(name, registry, allocator, env));
+                        try this.registries.put(allocator, Npm.Registry.Scope.hash(name), Npm.Registry.Scope.fromAPI(name, registry, allocator, env) catch |err| {
+                            if (err == error.InvalidURL) {
+                                log.addErrorFmt(
+                                    null,
+                                    logger.Loc.Empty,
+                                    allocator,
+                                    "{} is not a valid registry URL",
+                                    .{
+                                        strings.QuotedFormatter{
+                                            .text = registry.url,
+                                        },
+                                    },
+                                ) catch unreachable;
+                            }
+
+                            return err;
+                        });
                     }
                 }
 
@@ -4552,12 +4604,21 @@ pub const PackageManager = struct {
                             {
                                 const prev_scope = this.scope;
                                 var api_registry = std.mem.zeroes(Api.NpmRegistry);
-                                api_registry.url = registry_;
-                                api_registry.token = prev_scope.token;
-                                this.scope = try Npm.Registry.Scope.fromAPI("", api_registry, allocator, env);
-                                did_set = true;
-                                // stage1 bug: break inside inline is broken
-                                // break :load_registry;
+                                var href = bun.JSC.URL.hrefFromString(bun.String.fromUTF8(registry_));
+                                if (href.tag == .Dead) {
+                                    try log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "${s} has invalid URL {}", .{
+                                        registry_key, strings.QuotedFormatter{
+                                            .text = registry_,
+                                        },
+                                    });
+                                } else {
+                                    defer href.deref();
+
+                                    api_registry.token = prev_scope.token;
+                                    this.scope = try Npm.Registry.Scope.fromAPI("", api_registry, allocator, env);
+                                    api_registry.url = try href.toOwnedSlice(bun.default_allocator);
+                                    did_set = true;
+                                }
                             }
                         }
                     }
@@ -4590,7 +4651,15 @@ pub const PackageManager = struct {
                 if (cli.registry.len > 0 and strings.startsWith(cli.registry, "https://") or
                     strings.startsWith(cli.registry, "http://"))
                 {
-                    this.scope.url = URL.parse(cli.registry);
+                    if (URL.fromUTF8(instance.allocator, cli.registry)) |url| {
+                        this.scope.url = url;
+                    } else |_| {
+                        try log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "--registry has invalid URL {}", .{
+                            strings.QuotedFormatter{
+                                .text = cli.registry,
+                            },
+                        });
+                    }
                 }
 
                 if (cli.exact) {
@@ -5144,7 +5213,7 @@ pub const PackageManager = struct {
                 initializeStore();
                 const json = try json_parser.ParseJSONUTF8(&json_source, ctx.log, ctx.allocator);
                 if (json.asProperty("workspaces")) |prop| {
-                    var workspace_names = bun.StringMap.init(ctx.allocator, true);
+                    var workspace_names = Package.WorkspaceMap.init(ctx.allocator);
                     defer workspace_names.deinit();
                     const json_array = switch (prop.expr.data) {
                         .e_array => |arr| arr,

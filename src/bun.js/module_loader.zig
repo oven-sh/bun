@@ -1525,12 +1525,14 @@ pub const ModuleLoader = struct {
         var slice = slice_;
         if (slice.len == 0) return slice;
         var was_http = false;
-        if (strings.hasPrefixComptime(slice, "https://")) {
-            slice = slice["https://".len..];
-            was_http = true;
-        } else if (strings.hasPrefixComptime(slice, "http://")) {
-            slice = slice["http://".len..];
-            was_http = true;
+        if (jsc_vm.bundler.options.serve) {
+            if (strings.hasPrefixComptime(slice, "https://")) {
+                slice = slice["https://".len..];
+                was_http = true;
+            } else if (strings.hasPrefixComptime(slice, "http://")) {
+                slice = slice["http://".len..];
+                was_http = true;
+            }
         }
 
         if (strings.hasPrefix(slice, jsc_vm.origin.host)) {
@@ -1697,6 +1699,12 @@ pub const ModuleLoader = struct {
                 // so it consistently handles bundled imports
                 // we can't take the shortcut of just directly importing the file, sadly.
                 .@"bun:main" => {
+                    defer {
+                        if (jsc_vm.worker) |worker| {
+                            worker.queueInitialTask();
+                        }
+                    }
+
                     if (comptime disable_transpilying) {
                         return ResolvedSource{
                             .allocator = null,
@@ -1807,7 +1815,7 @@ pub const ModuleLoader = struct {
                 .@"node:tty" => return jsSyntheticModule(.@"node:tty", specifier),
                 .@"node:util/types" => return jsSyntheticModule(.@"node:util/types", specifier),
                 .@"bun:events_native" => return jsSyntheticModule(.@"bun:events_native", specifier),
-
+                .@"node:constants" => return jsSyntheticModule(.@"node:constants", specifier),
                 .@"node:fs/promises" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -2021,6 +2029,7 @@ pub const HardcodedModule = enum {
     @"node:buffer",
     @"node:child_process",
     @"node:crypto",
+    @"node:constants",
     @"node:dns",
     @"node:dns/promises",
     @"node:events",
@@ -2086,6 +2095,7 @@ pub const HardcodedModule = enum {
             .{ "node:child_process", HardcodedModule.@"node:child_process" },
             .{ "node:cluster", HardcodedModule.@"node:cluster" },
             .{ "node:crypto", HardcodedModule.@"node:crypto" },
+            .{ "node:constants", HardcodedModule.@"node:constants" },
             .{ "node:dgram", HardcodedModule.@"node:dgram" },
             .{ "node:diagnostics_channel", HardcodedModule.@"node:diagnostics_channel" },
             .{ "node:dns", HardcodedModule.@"node:dns" },
@@ -2148,6 +2158,7 @@ pub const HardcodedModule = enum {
             .{ "bun:events_native", .{ .path = "bun:events_native" } },
             .{ "child_process", .{ .path = "node:child_process" } },
             .{ "crypto", .{ .path = "node:crypto" } },
+            .{ "constants", .{ .path = "node:constants" } },
             .{ "detect-libc", .{ .path = "detect-libc" } },
             .{ "detect-libc/lib/detect-libc.js", .{ .path = "detect-libc" } },
             .{ "dns", .{ .path = "node:dns" } },
@@ -2166,6 +2177,7 @@ pub const HardcodedModule = enum {
             .{ "node:buffer", .{ .path = "node:buffer" } },
             .{ "node:child_process", .{ .path = "node:child_process" } },
             .{ "node:crypto", .{ .path = "node:crypto" } },
+            .{ "node:constants", .{ .path = "node:constants" } },
             .{ "node:dns", .{ .path = "node:dns" } },
             .{ "node:dns/promises", .{ .path = "node:dns/promises" } },
             .{ "node:events", .{ .path = "node:events" } },

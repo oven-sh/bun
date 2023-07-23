@@ -1499,7 +1499,7 @@ pub fn toUTF8ListWithType(list_: std.ArrayList(u8), comptime Type: type, utf16: 
     if (bun.FeatureFlags.use_simdutf and comptime Type == []const u16) {
         var list = list_;
         const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
-        try list.ensureTotalCapacityPrecise(length);
+        try list.ensureTotalCapacityPrecise(length + 16);
         return convertUTF16ToUTF8(list, Type, utf16);
     }
 

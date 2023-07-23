@@ -18,6 +18,14 @@ const ZigString = JSC.ZigString;
 const BoringSSL = bun.BoringSSL;
 const X509 = @import("./x509.zig");
 
+fn normalizeListeningHost(host: [:0]const u8) ?[*:0]const u8 {
+    if (host.len == 0 or strings.eqlComptime(host, "0.0.0.0")) {
+        return null;
+    }
+
+    return host.ptr;
+}
+
 // const Corker = struct {
 //     ptr: ?*[16384]u8 = null,
 //     holder: ?*anyopaque = null,
@@ -643,7 +651,7 @@ pub const Listener = struct {
                     const socket = uws.us_socket_context_listen(
                         @intFromBool(ssl_enabled),
                         socket_context,
-                        if (host.len > 0) normalizeHost(@as([:0]const u8, host)) else null,
+                        normalizeListeningHost(host),
                         c.port,
                         socket_flags,
                         8,

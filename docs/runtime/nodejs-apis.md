@@ -592,8 +592,8 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 ---
 
 - {% anchor id="node_structuredclone" %} [`structuredClone()`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone) {% /anchor %}
-- 🔴
-- Not implemented.
+- 🟢
+- Fully implemented.
 
 ---
 

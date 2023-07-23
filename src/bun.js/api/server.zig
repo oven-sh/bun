@@ -4981,15 +4981,19 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
-            return ZigString.init(bun.span(this.config.hostname)).toValue(globalThis);
+            if (this.cached_hostname.isEmpty()) {
+                this.cached_hostname = bun.String.create(bun.span(this.config.hostname orelse "0.0.0.0"));
+            }
+
+            return this.cached_hostname.toJS(globalThis);
         }
 
-        pub fn getProtocol(_: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
-            if (comptime ssl_enabled) {
-                return ZigString.init("https:").toValue(globalThis);
-            } else {
-                return ZigString.init("http:").toValue(globalThis);
+        pub fn getProtocol(this: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
+            if (this.cached_protocol.isEmpty()) {
+                this.cached_protocol = bun.String.static(if (ssl_enabled) "https" else "http");
             }
+
+            return this.cached_protocol.toJS(globalThis);
         }
 
         pub fn getDevelopment(

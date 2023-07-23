@@ -1245,7 +1245,21 @@ JSC_DEFINE_HOST_FUNCTION(NapiClass_ConstructorFunction,
 
     JSObject* newTarget = asObject(callFrame->newTarget());
 
-    NapiClass* napi = jsDynamicCast<NapiClass*>(newTarget);
+    NapiClass* napi = nullptr;
+    if (newTarget->inherits<NapiClass>()) {
+        napi = jsCast<NapiClass*>(newTarget);
+    } else {
+        // The `new.target` may not necessarily inherit from the `NapiClass`, as the
+        // `inherits` method checks whether the class inherits a particular class in
+        // the internal class hierarchy of JavaScriptCore.
+        JSC::JSValue prototype = newTarget->getPrototype(vm, globalObject);
+        // Check the prototype chain until we get a valid pointer to `NapiClass`.
+        while (UNLIKELY(!napi) && prototype.isObject()) {
+            napi = jsDynamicCast<NapiClass*>(prototype);
+            prototype = prototype.getPrototype(globalObject);
+        }
+    }
+
     if (UNLIKELY(!napi)) {
         JSC::throwVMError(globalObject, scope, JSC::createTypeError(globalObject, "NapiClass constructor called on an object that is not a NapiClass"_s));
         return JSC::JSValue::encode(JSC::jsUndefined());

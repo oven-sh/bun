@@ -4982,7 +4982,17 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
         pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
             if (this.cached_hostname.isEmpty()) {
-                this.cached_hostname = bun.String.create(bun.span(this.config.hostname orelse "0.0.0.0"));
+                if (this.listener) |listener| {
+                    var buf: [1024]u8 = [_]u8{0} ** 1024;
+                    var len: i32 = 1024;
+                    listener.socket().remoteAddress(&buf, &len);
+                    if (len > 0) {
+                        this.cached_hostname = bun.String.create(buf[0..@as(usize, @intCast(len))]);
+                    }
+                }
+
+                if (this.cached_hostname.isEmpty())
+                    this.cached_hostname = bun.String.create(bun.span(this.config.hostname orelse "localhost"));
             }
 
             return this.cached_hostname.toJS(globalThis);
@@ -4990,7 +5000,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
         pub fn getProtocol(this: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
             if (this.cached_protocol.isEmpty()) {
-                this.cached_protocol = bun.String.static(if (ssl_enabled) "https" else "http");
+                this.cached_protocol = bun.String.create(if (ssl_enabled) "https" else "http");
             }
 
             return this.cached_protocol.toJS(globalThis);
@@ -5073,6 +5083,14 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             httplog("deinit", .{});
             this.cached_hostname.deref();
             this.cached_protocol.deref();
+
+            if (this.config.hostname) |host| {
+                bun.default_allocator.destroy(host);
+            }
+
+            if (this.config.base_url.href.len > 0) {
+                bun.default_allocator.free(this.config.base_url.href);
+            }
 
             this.app.destroy();
             const allocator = this.allocator;

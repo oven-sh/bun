@@ -956,9 +956,9 @@ extern fn us_socket_context_on_connect_error(ssl: i32, context: ?*SocketContext,
 extern fn us_socket_context_on_end(ssl: i32, context: ?*SocketContext, on_end: *const fn (*Socket) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_ext(ssl: i32, context: ?*SocketContext) ?*anyopaque;
 
-pub extern fn us_socket_context_listen(ssl: i32, context: ?*SocketContext, host: [*c]const u8, port: i32, options: i32, socket_ext_size: i32) ?*ListenSocket;
+pub extern fn us_socket_context_listen(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, options: i32, socket_ext_size: i32) ?*ListenSocket;
 pub extern fn us_socket_context_listen_unix(ssl: i32, context: ?*SocketContext, path: [*c]const u8, options: i32, socket_ext_size: i32) ?*ListenSocket;
-pub extern fn us_socket_context_connect(ssl: i32, context: ?*SocketContext, host: [*c]const u8, port: i32, source_host: [*c]const u8, options: i32, socket_ext_size: i32) ?*Socket;
+pub extern fn us_socket_context_connect(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, source_host: [*c]const u8, options: i32, socket_ext_size: i32) ?*Socket;
 pub extern fn us_socket_context_connect_unix(ssl: i32, context: ?*SocketContext, path: [*c]const u8, options: i32, socket_ext_size: i32) ?*Socket;
 pub extern fn us_socket_is_established(ssl: i32, s: ?*Socket) i32;
 pub extern fn us_socket_close_connecting(ssl: i32, s: ?*Socket) ?*Socket;
@@ -1434,6 +1434,10 @@ pub fn NewApp(comptime ssl: bool) type {
                     unreachable;
                 }
                 return us_socket_local_port(ssl_flag, @as(*uws.Socket, @ptrCast(this)));
+            }
+
+            pub fn socket(this: *@This()) NewSocketHandler(ssl) {
+                return .{ .socket = @ptrCast(this) };
             }
         };
 
@@ -2019,7 +2023,7 @@ extern fn uws_app_listen_with_config(
 extern fn uws_constructor_failed(ssl: i32, app: *uws_app_t) bool;
 extern fn uws_num_subscribers(ssl: i32, app: *uws_app_t, topic: [*c]const u8, topic_length: usize) c_uint;
 extern fn uws_publish(ssl: i32, app: *uws_app_t, topic: [*c]const u8, topic_length: usize, message: [*c]const u8, message_length: usize, opcode: Opcode, compress: bool) bool;
-extern fn uws_get_native_handle(ssl: i32, app: *uws_app_t) ?*anyopaque;
+extern fn uws_get_native_handle(ssl: i32, app: *anyopaque) ?*anyopaque;
 extern fn uws_remove_server_name(ssl: i32, app: *uws_app_t, hostname_pattern: [*c]const u8) void;
 extern fn uws_add_server_name(ssl: i32, app: *uws_app_t, hostname_pattern: [*c]const u8) void;
 extern fn uws_add_server_name_with_options(ssl: i32, app: *uws_app_t, hostname_pattern: [*c]const u8, options: us_bun_socket_context_options_t) void;

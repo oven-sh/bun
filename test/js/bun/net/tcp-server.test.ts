@@ -33,7 +33,7 @@ it("remoteAddress works", async () => {
       data() {},
     },
     port: 0,
-    hostname: "localhost",
+    hostname: "127.0.0.1",
   });
 
   await Bun.connect({

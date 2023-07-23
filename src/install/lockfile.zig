@@ -86,6 +86,7 @@ const MetaHash = [std.crypto.hash.sha2.Sha512256.digest_length]u8;
 const zero_hash = std.mem.zeroes(MetaHash);
 const NameHashMap = std.ArrayHashMapUnmanaged(u32, String, ArrayIdentityContext, false);
 const NameHashSet = std.ArrayHashMapUnmanaged(u32, void, ArrayIdentityContext, false);
+const VersionHashMap = std.ArrayHashMapUnmanaged(u32, Semver.Version, ArrayIdentityContext, false);
 
 // Serialized data
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
@@ -106,6 +107,7 @@ scratch: Scratch = .{},
 scripts: Scripts = .{},
 trusted_dependencies: NameHashSet = .{},
 workspace_paths: NameHashMap = .{},
+workspace_versions: VersionHashMap = .{},
 
 const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
@@ -199,6 +201,7 @@ pub fn loadFromBytes(this: *Lockfile, buf: []u8, allocator: Allocator, log: *log
     this.scripts = .{};
     this.trusted_dependencies = .{};
     this.workspace_paths = .{};
+    this.workspace_versions = .{};
 
     Lockfile.Serializer.load(this, &stream, allocator, log) catch |err| {
         return LoadFromDiskResult{ .err = .{ .step = .parse_file, .value = err } };
@@ -1516,6 +1519,7 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) !void {
         .scripts = .{},
         .trusted_dependencies = .{},
         .workspace_paths = .{},
+        .workspace_versions = .{},
     };
 }
 
@@ -2494,6 +2498,7 @@ pub const Package = extern struct {
         in_workspace: bool,
         tag: ?Dependency.Version.Tag,
         workspace_path: ?String,
+        workspace_version: ?Semver.Version,
         external_name: ExternalString,
         version: string,
         key_loc: logger.Loc,
@@ -2529,52 +2534,91 @@ pub const Package = extern struct {
                     ),
                 );
             },
+            .npm => if (workspace_version) |ver| {
+                if (dependency_version.value.npm.version.satisfies(ver)) {
+                    for (package_dependencies[0..dependencies_count]) |dep| {
+                        // `dependencies` & `workspaces` defined within the same `package.json`
+                        if (dep.version.tag == .workspace and dep.name_hash == external_name.hash) {
+                            return null;
+                        }
+                    }
+
+                    const path = workspace_path.?.sliced(buf);
+                    if (Dependency.parseWithTag(
+                        allocator,
+                        external_name.value,
+                        path.slice,
+                        .workspace,
+                        &path,
+                        log,
+                    )) |dep| {
+                        dependency_version = dep;
+                    }
+                }
+            },
             .workspace => if (workspace_path) |path| {
                 dependency_version.value.workspace = path;
             } else {
-                const workspace = dependency_version.value.workspace.slice(buf);
-                var path = string_builder.append(
-                    String,
-                    if (strings.eqlComptime(workspace, "*")) "*" else Path.relative(
-                        FileSystem.instance.top_level_dir,
-                        Path.joinAbsString(
+                {
+                    const workspace = dependency_version.value.workspace.slice(buf);
+                    var path = string_builder.append(
+                        String,
+                        if (strings.eqlComptime(workspace, "*")) "*" else Path.relative(
                             FileSystem.instance.top_level_dir,
-                            &[_]string{
-                                source.path.name.dir,
-                                workspace,
-                            },
-                            .posix,
+                            Path.joinAbsString(
+                                FileSystem.instance.top_level_dir,
+                                &[_]string{
+                                    source.path.name.dir,
+                                    workspace,
+                                },
+                                .posix,
+                            ),
                         ),
-                    ),
-                );
-                defer dependency_version.value.workspace = path;
-                var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, @as(u32, @truncate(external_name.hash)));
-                if (workspace_entry.found_existing) {
-                    const old_path = workspace_entry.value_ptr.*;
+                    );
+                    defer dependency_version.value.workspace = path;
+                    var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, @truncate(external_name.hash));
+                    if (workspace_entry.found_existing) {
+                        const old_path = workspace_entry.value_ptr.*;
 
-                    if (strings.eqlComptime(workspace, "*")) {
-                        path = old_path;
-                        return null;
-                    } else if (strings.eqlComptime(old_path.slice(buf), "*")) brk: {
-                        workspace_entry.value_ptr.* = path;
-                        for (package_dependencies[0..dependencies_count]) |*package_dep| {
-                            if (package_dep.name_hash == external_name.hash) {
-                                if (package_dep.version.tag != .workspace) break :brk;
-                                package_dep.version.value.workspace = path;
-                                return null;
+                        if (strings.eqlComptime(workspace, "*")) {
+                            path = old_path;
+                            return null;
+                        } else if (strings.eqlComptime(old_path.slice(buf), "*")) brk: {
+                            workspace_entry.value_ptr.* = path;
+                            for (package_dependencies[0..dependencies_count]) |*package_dep| {
+                                if (package_dep.name_hash == external_name.hash) {
+                                    if (package_dep.version.tag != .workspace) break :brk;
+                                    package_dep.version.value.workspace = path;
+                                    return null;
+                                }
                             }
+                            return error.InstallFailed;
+                        } else if (strings.eql(old_path.slice(buf), path.slice(buf))) {
+                            return null;
+                        } else {
+                            log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Workspace name \"{s}\" already exists", .{
+                                external_name.slice(buf),
+                            }) catch {};
+                            return error.InstallFailed;
                         }
-                        return error.InstallFailed;
-                    } else if (strings.eql(old_path.slice(buf), path.slice(buf))) {
-                        return null;
-                    } else {
-                        log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Workspace name \"{s}\" already exists", .{
-                            external_name.slice(buf),
-                        }) catch {};
-                        return error.InstallFailed;
+                    }
+                    workspace_entry.value_ptr.* = path;
+                }
+
+                if (workspace_version) |ver| {
+                    try lockfile.workspace_versions.put(allocator, @truncate(external_name.hash), ver);
+
+                    for (package_dependencies[0..dependencies_count]) |*package_dep| {
+                        // `dependencies` & `workspaces` defined within the same `package.json`
+                        if (package_dep.version.tag == .npm and
+                            package_dep.name_hash == external_name.hash and
+                            package_dep.version.value.npm.version.satisfies(ver))
+                        {
+                            package_dep.version = dependency_version;
+                            return null;
+                        }
                     }
                 }
-                workspace_entry.value_ptr.* = path;
             },
             else => {},
         }
@@ -2586,7 +2630,7 @@ pub const Package = extern struct {
             .version = dependency_version,
         };
 
-        // peerDependencies may be specified on on existing dependencies
+        // `peerDependencies` may be specified on existing dependencies
         if (comptime features.check_for_duplicate_dependencies and !group.behavior.isPeer()) {
             var entry = lockfile.scratch.duplicate_checker_map.getOrPutAssumeCapacity(external_name.hash);
             if (entry.found_existing) {
@@ -2624,11 +2668,68 @@ pub const Package = extern struct {
         return this_dep;
     }
 
-    const WorkspaceIterator = struct {
+    pub const WorkspaceMap = struct {
+        map: Map,
+
+        const Map = bun.StringArrayHashMap(Entry);
         pub const Entry = struct {
-            path: []const u8 = "",
-            name: []const u8 = "",
+            name: string,
+            version: ?Semver.Version,
         };
+
+        pub fn init(allocator: std.mem.Allocator) WorkspaceMap {
+            return .{
+                .map = Map.init(allocator),
+            };
+        }
+
+        pub fn keys(self: WorkspaceMap) []const string {
+            return self.map.keys();
+        }
+
+        pub fn values(self: WorkspaceMap) []const Entry {
+            return self.map.values();
+        }
+
+        pub fn count(self: WorkspaceMap) usize {
+            return self.map.count();
+        }
+
+        pub fn insert(self: *WorkspaceMap, key: string, value: Entry) !void {
+            var entry = try self.map.getOrPut(key);
+            if (!entry.found_existing) {
+                entry.key_ptr.* = try self.map.allocator.dupe(u8, key);
+            } else {
+                self.map.allocator.free(entry.value_ptr.name);
+            }
+
+            entry.value_ptr.* = .{
+                .name = try self.map.allocator.dupe(u8, value.name),
+                .version = value.version,
+            };
+        }
+
+        pub fn sort(self: *WorkspaceMap, sort_ctx: anytype) void {
+            self.map.sort(sort_ctx);
+        }
+
+        pub fn deinit(self: *WorkspaceMap) void {
+            for (self.map.values()) |value| {
+                self.map.allocator.free(value.name);
+            }
+
+            for (self.map.keys()) |key| {
+                self.map.allocator.free(key);
+            }
+
+            self.map.deinit();
+        }
+    };
+
+    const WorkspaceEntry = struct {
+        path: []const u8 = "",
+        name: []const u8 = "",
+        version: ?Semver.Version = null,
     };
 
     fn processWorkspaceName(
@@ -2639,7 +2740,7 @@ pub const Package = extern struct {
         path_buf: *[bun.MAX_PATH_BYTES]u8,
         name_to_copy: *[1024]u8,
         log: *logger.Log,
-    ) !WorkspaceIterator.Entry {
+    ) !WorkspaceEntry {
         const path_to_use = if (path.len == 0) "package.json" else brk: {
             const paths = [_]string{ path, "package.json" };
             break :brk bun.path.joinStringBuf(path_buf, &paths, .auto);
@@ -2658,14 +2759,22 @@ pub const Package = extern struct {
             return error.MissingPackageName;
         }
         bun.copy(u8, name_to_copy[0..], workspace_json.found_name);
-        return WorkspaceIterator.Entry{
+        var entry = WorkspaceEntry{
             .name = name_to_copy[0..workspace_json.found_name.len],
             .path = path_to_use,
         };
+        if (workspace_json.has_found_version) {
+            const version = SlicedString.init(workspace_json.found_version, workspace_json.found_version);
+            const result = Semver.Version.parse(version, allocator);
+            if (result.valid and result.wildcard == .none) {
+                entry.version = result.version.fill();
+            }
+        }
+        return entry;
     }
 
     pub fn processWorkspaceNamesArray(
-        workspace_names: *bun.StringMap,
+        workspace_names: *WorkspaceMap,
         allocator: Allocator,
         log: *logger.Log,
         arr: *JSAst.E.Array,
@@ -2776,7 +2885,10 @@ pub const Package = extern struct {
                 builder.cap += bun.MAX_PATH_BYTES;
             }
 
-            try workspace_names.insert(input_path, workspace_entry.name);
+            try workspace_names.insert(input_path, .{
+                .name = workspace_entry.name,
+                .version = workspace_entry.version,
+            });
         }
 
         if (asterisked_workspace_paths.items.len > 0) {
@@ -2910,7 +3022,10 @@ pub const Package = extern struct {
                         break :brk relative;
                     } else bun.span(entry_path);
 
-                    try workspace_names.insert(workspace_path, workspace_entry.name);
+                    try workspace_names.insert(workspace_path, .{
+                        .name = workspace_entry.name,
+                        .version = workspace_entry.version,
+                    });
                 }
             }
         }
@@ -2919,13 +3034,13 @@ pub const Package = extern struct {
 
         // Sort the names for determinism
         workspace_names.sort(struct {
-            values: []const string,
+            values: []const WorkspaceMap.Entry,
             pub fn lessThan(
                 self: @This(),
                 a: usize,
                 b: usize,
             ) bool {
-                return std.mem.order(u8, self.values[a], self.values[b]) == .lt;
+                return std.mem.order(u8, self.values[a].name, self.values[b].name) == .lt;
             }
         }{
             .values = workspace_names.values(),
@@ -3039,7 +3154,7 @@ pub const Package = extern struct {
             break :brk out_groups;
         };
 
-        var workspace_names = bun.StringMap.init(allocator, true);
+        var workspace_names = WorkspaceMap.init(allocator);
         defer workspace_names.deinit();
 
         inline for (dependency_groups) |group| {
@@ -3317,8 +3432,8 @@ pub const Package = extern struct {
 
         inline for (dependency_groups) |group| {
             if (group.behavior.isWorkspace()) {
-                for (workspace_names.values(), workspace_names.keys()) |name, path| {
-                    const external_name = string_builder.append(ExternalString, name);
+                for (workspace_names.values(), workspace_names.keys()) |entry, path| {
+                    const external_name = string_builder.append(ExternalString, entry.name);
 
                     if (try parseDependency(
                         lockfile,
@@ -3333,6 +3448,7 @@ pub const Package = extern struct {
                         in_workspace,
                         .workspace,
                         null,
+                        entry.version,
                         external_name,
                         path,
                         logger.Loc.Empty,
@@ -3351,13 +3467,6 @@ pub const Package = extern struct {
                                 const value = item.value.?;
                                 const external_name = string_builder.append(ExternalString, key.asString(allocator).?);
                                 const version = value.asString(allocator) orelse "";
-                                var tag: ?Dependency.Version.Tag = null;
-                                var workspace_path: ?String = null;
-
-                                if (lockfile.workspace_paths.get(@as(u32, @truncate(external_name.hash)))) |path| {
-                                    tag = .workspace;
-                                    workspace_path = path;
-                                }
 
                                 if (try parseDependency(
                                     lockfile,
@@ -3370,8 +3479,9 @@ pub const Package = extern struct {
                                     package_dependencies,
                                     total_dependencies_count,
                                     in_workspace,
-                                    tag,
-                                    workspace_path,
+                                    null,
+                                    lockfile.workspace_paths.get(@truncate(external_name.hash)),
+                                    lockfile.workspace_versions.get(@truncate(external_name.hash)),
                                     external_name,
                                     version,
                                     key.loc,
@@ -3587,6 +3697,7 @@ pub fn deinit(this: *Lockfile) void {
     this.scripts.deinit(this.allocator);
     this.trusted_dependencies.deinit(this.allocator);
     this.workspace_paths.deinit(this.allocator);
+    this.workspace_versions.deinit(this.allocator);
 }
 
 const Buffers = struct {

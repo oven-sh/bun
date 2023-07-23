@@ -790,14 +790,9 @@ pub const Blob = struct {
             }
         }
 
-        if (path_or_blob == .blob) {
-            path_or_blob.blob.store.?.ref();
-        }
-        defer {
-            if (path_or_blob == .blob) {
-                path_or_blob.blob.store.?.deref();
-            }
-        }
+        var input_store: ?*Store = if (path_or_blob == .blob) path_or_blob.blob.store else null;
+        if (input_store) |st| st.ref();
+        defer if (input_store) |st| st.deref();
 
         var needs_async = false;
 

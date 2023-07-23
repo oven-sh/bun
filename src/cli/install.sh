@@ -148,9 +148,9 @@ tildify() {
     fi
 }
 
-latest_release=$(bun -v)
+latest_release_version=$(bun -v)
 
-success "Bun $latest_release was installed successfully to $Bold_Green$(tildify "$exe")"
+success "Bun $latest_release_version was installed successfully to $Bold_Green$(tildify "$exe")"
 
 if command -v bun >/dev/null; then
     # Install completions, but we don't care if it fails

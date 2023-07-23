@@ -360,7 +360,7 @@ pub const BundleV2 = struct {
             redirect_map: PathToSourceIndexMap,
             dynamic_import_entry_points: *std.AutoArrayHashMap(Index.Int, void),
 
-            const MAX_REDIRECTS: usize = 20;
+            const MAX_REDIRECTS: usize = 64;
 
             // Find all files reachable from all entry points. This order should be
             // deterministic given that the entry point order is deterministic, since the

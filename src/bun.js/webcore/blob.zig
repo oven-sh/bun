@@ -790,6 +790,10 @@ pub const Blob = struct {
             }
         }
 
+        var input_store: ?*Store = if (path_or_blob == .blob) path_or_blob.blob.store else null;
+        if (input_store) |st| st.ref();
+        defer if (input_store) |st| st.deref();
+
         var needs_async = false;
 
         if (data.isString()) {
@@ -972,6 +976,17 @@ pub const Blob = struct {
                 return null;
             };
         };
+
+        var destination_store = destination_blob.store;
+        if (destination_store) |store| {
+            store.ref();
+        }
+
+        defer {
+            if (destination_store) |store| {
+                store.deref();
+            }
+        }
 
         return writeFileWithSourceDestination(ctx, &source_blob, &destination_blob);
     }
@@ -2503,6 +2518,9 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
+        var store = this.store;
+        if (store) |st| st.ref();
+        defer if (store) |st| st.deref();
         return promisified(this.toString(globalThis, .clone), globalThis);
     }
 
@@ -2510,6 +2528,9 @@ pub const Blob = struct {
         this: *Blob,
         globalObject: *JSC.JSGlobalObject,
     ) JSC.JSValue {
+        var store = this.store;
+        if (store) |st| st.ref();
+        defer if (store) |st| st.deref();
         return promisified(this.toString(globalObject, .transfer), globalObject);
     }
 
@@ -2518,6 +2539,10 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
+        var store = this.store;
+        if (store) |st| st.ref();
+        defer if (store) |st| st.deref();
+
         return promisified(this.toJSON(globalThis, .share), globalThis);
     }
 
@@ -2525,6 +2550,10 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
+        var store = this.store;
+        if (store) |st| st.ref();
+        defer if (store) |st| st.deref();
+
         return promisified(this.toArrayBuffer(globalThis, .transfer), globalThis);
     }
 
@@ -2533,6 +2562,9 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSValue {
+        var store = this.store;
+        if (store) |st| st.ref();
+        defer if (store) |st| st.deref();
         return promisified(this.toArrayBuffer(globalThis, .clone), globalThis);
     }
 
@@ -2541,6 +2573,10 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSValue {
+        var store = this.store;
+        if (store) |st| st.ref();
+        defer if (store) |st| st.deref();
+
         return promisified(this.toFormData(globalThis, .temporary), globalThis);
     }
 

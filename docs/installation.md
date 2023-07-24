@@ -8,12 +8,12 @@ Bun ships as a single executable that can be installed a few different ways.
 
 {% codetabs %}
 
-```bash#NPM
-$ npm install -g bun # the last `npm` command you'll ever need
-```
-
 ```bash#Native
 $ curl -fsSL https://bun.sh/install | bash # for macOS, Linux, and WSL
+```
+
+```bash#NPM
+$ npm install -g bun # the last `npm` command you'll ever need
 ```
 
 ```bash#Homebrew

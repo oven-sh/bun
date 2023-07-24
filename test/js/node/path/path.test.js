@@ -19,26 +19,93 @@ it("should not inherit Object.prototype", () => {
   expect(path).not.toHaveProperty("toString");
 });
 
-it("path.dirname", () => {
-  const fixtures = [
-    ["yo", "."],
-    ["/yo", "/"],
-    ["/yo/", "/"],
-    ["/yo/123", "/yo"],
-    [".", "."],
-    ["../", "."],
-    ["../../", ".."],
-    ["../../foo", "../.."],
-    ["../../foo/../", "../../foo"],
-    ["/foo/../", "/foo"],
-    ["../../foo/../bar", "../../foo/.."],
-  ];
-  for (const [input, expected] of fixtures) {
-    expect(path.posix.dirname(input)).toBe(expected);
-    if (process.platform !== "win32") {
-      expect(path.dirname(input)).toBe(expected);
+describe("dirname", () => {
+  it("path.dirname", () => {
+    const fixtures = [
+      ["yo", "."],
+      ["/yo", "/"],
+      ["/yo/", "/"],
+      ["/yo/123", "/yo"],
+      [".", "."],
+      ["../", "."],
+      ["../../", ".."],
+      ["../../foo", "../.."],
+      ["../../foo/../", "../../foo"],
+      ["/foo/../", "/foo"],
+      ["../../foo/../bar", "../../foo/.."],
+    ];
+    for (const [input, expected] of fixtures) {
+      expect(path.posix.dirname(input)).toBe(expected);
+      if (process.platform !== "win32") {
+        expect(path.dirname(input)).toBe(expected);
+      }
     }
-  }
+  });
+  it("path.posix.dirname", () => {
+    expect(path.posix.dirname("/a/b/")).toBe("/a");
+    expect(path.posix.dirname("/a/b")).toBe("/a");
+    expect(path.posix.dirname("/a")).toBe("/");
+    expect(path.posix.dirname("/a/")).toBe("/");
+    expect(path.posix.dirname("")).toBe(".");
+    expect(path.posix.dirname("/")).toBe("/");
+    expect(path.posix.dirname("//")).toBe("/");
+    expect(path.posix.dirname("///")).toBe("/");
+    expect(path.posix.dirname("////")).toBe("/");
+    expect(path.posix.dirname("//a")).toBe("//");
+    expect(path.posix.dirname("//ab")).toBe("//");
+    expect(path.posix.dirname("///a")).toBe("//");
+    expect(path.posix.dirname("////a")).toBe("///");
+    expect(path.posix.dirname("/////a")).toBe("////");
+    expect(path.posix.dirname("foo")).toBe(".");
+    expect(path.posix.dirname("foo/")).toBe(".");
+    expect(path.posix.dirname("a/b")).toBe("a");
+    expect(path.posix.dirname("a/")).toBe(".");
+    expect(path.posix.dirname("a///b")).toBe("a//");
+    expect(path.posix.dirname("a//b")).toBe("a/");
+    expect(path.posix.dirname("\\")).toBe(".");
+    expect(path.posix.dirname("\\a")).toBe(".");
+    expect(path.posix.dirname("a")).toBe(".");
+    expect(path.posix.dirname("/a/b//c")).toBe("/a/b/");
+  });
+  it("path.win32.dirname", () => {
+    expect(path.win32.dirname("c:\\")).toBe("c:\\");
+    expect(path.win32.dirname("c:\\foo")).toBe("c:\\");
+    expect(path.win32.dirname("c:\\foo\\")).toBe("c:\\");
+    expect(path.win32.dirname("c:\\foo\\bar")).toBe("c:\\foo");
+    expect(path.win32.dirname("c:\\foo\\bar\\")).toBe("c:\\foo");
+    expect(path.win32.dirname("c:\\foo\\bar\\baz")).toBe("c:\\foo\\bar");
+    expect(path.win32.dirname("c:\\foo bar\\baz")).toBe("c:\\foo bar");
+    expect(path.win32.dirname("c:\\\\foo")).toBe("c:\\");
+    expect(path.win32.dirname("\\")).toBe("\\");
+    expect(path.win32.dirname("\\foo")).toBe("\\");
+    expect(path.win32.dirname("\\foo\\")).toBe("\\");
+    expect(path.win32.dirname("\\foo\\bar")).toBe("\\foo");
+    expect(path.win32.dirname("\\foo\\bar\\")).toBe("\\foo");
+    expect(path.win32.dirname("\\foo\\bar\\baz")).toBe("\\foo\\bar");
+    expect(path.win32.dirname("\\foo bar\\baz")).toBe("\\foo bar");
+    expect(path.win32.dirname("c:")).toBe("c:");
+    expect(path.win32.dirname("c:foo")).toBe("c:");
+    expect(path.win32.dirname("c:foo\\")).toBe("c:");
+    expect(path.win32.dirname("c:foo\\bar")).toBe("c:foo");
+    expect(path.win32.dirname("c:foo\\bar\\")).toBe("c:foo");
+    expect(path.win32.dirname("c:foo\\bar\\baz")).toBe("c:foo\\bar");
+    expect(path.win32.dirname("c:foo bar\\baz")).toBe("c:foo bar");
+    expect(path.win32.dirname("file:stream")).toBe(".");
+    expect(path.win32.dirname("dir\\file:stream")).toBe("dir");
+    expect(path.win32.dirname("\\\\unc\\share")).toBe("\\\\unc\\share");
+    expect(path.win32.dirname("\\\\unc\\share\\foo")).toBe("\\\\unc\\share\\");
+    expect(path.win32.dirname("\\\\unc\\share\\foo\\")).toBe("\\\\unc\\share\\");
+    expect(path.win32.dirname("\\\\unc\\share\\foo\\bar")).toBe("\\\\unc\\share\\foo");
+    expect(path.win32.dirname("\\\\unc\\share\\foo\\bar\\")).toBe("\\\\unc\\share\\foo");
+    expect(path.win32.dirname("\\\\unc\\share\\foo\\bar\\baz")).toBe("\\\\unc\\share\\foo\\bar");
+    expect(path.win32.dirname("/a/b/")).toBe("/a");
+    expect(path.win32.dirname("/a/b")).toBe("/a");
+    expect(path.win32.dirname("/a")).toBe("/");
+    expect(path.win32.dirname("")).toBe(".");
+    expect(path.win32.dirname("/")).toBe("/");
+    expect(path.win32.dirname("////")).toBe("/");
+    expect(path.win32.dirname("foo")).toBe(".");
+  });
 });
 
 it("path.parse().name", () => {

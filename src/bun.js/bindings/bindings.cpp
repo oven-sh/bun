@@ -1256,7 +1256,7 @@ void WebCore__DOMURL__pathname_(WebCore__DOMURL* domURL, ZigString* arg1)
 BunString WebCore__DOMURL__fileSystemPath(WebCore__DOMURL* arg0)
 {
     const WTF::URL& url = arg0->href();
-    if (url.isLocalFile()) {
+    if (url.protocolIsFile()) {
         return Bun::toString(url.fileSystemPath());
     }
 

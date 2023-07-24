@@ -41,7 +41,7 @@ export function closed() {
   if (!$isWritableStreamDefaultWriter(this))
     return Promise.$reject($makeGetterTypeError("WritableStreamDefaultWriter", "closed"));
 
-  return $getByIdDirectPrivate(this, "closedPromise").$promise;
+  return $getByIdDirectPrivate(this, "closedPromise").promise;
 }
 
 $getter;
@@ -58,7 +58,7 @@ export function ready() {
   if (!$isWritableStreamDefaultWriter(this))
     return Promise.$reject($makeThisTypeError("WritableStreamDefaultWriter", "ready"));
 
-  return $getByIdDirectPrivate(this, "readyPromise").$promise;
+  return $getByIdDirectPrivate(this, "readyPromise").promise;
 }
 
 export function abort(reason) {

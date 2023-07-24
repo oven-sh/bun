@@ -70,8 +70,10 @@ export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
 
     entry.dependencies = dependencies;
     // All dependencies resolved, set instantiate and satisfy field directly.
-    entry.instantiate = Promise.resolve(entry);
-    entry.satisfy = Promise.resolve(entry);
+    entry.instantiate = Promise.$resolve(entry);
+    entry.satisfy = Promise.$resolve(entry);
+    entry.isSatisfied = true;
+
     key = queue.shift();
     while (key && (loader.registry.$get(key)?.state ?? $ModuleFetch) >= $ModuleLink) {
       key = queue.shift();

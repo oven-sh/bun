@@ -2528,7 +2528,7 @@ public:
         Vector<std::unique_ptr<DetachedRTCDataChannel>>&& detachedRTCDataChannels
 #endif
         ,
-        ArrayBufferContentsArray* arrayBufferContentsArray, const Span<uint8_t>& buffer, const Vector<String>& blobURLs, const Vector<String> blobFilePaths, ArrayBufferContentsArray* sharedBuffers
+        ArrayBufferContentsArray* arrayBufferContentsArray, const std::span<uint8_t>& buffer, const Vector<String>& blobURLs, const Vector<String> blobFilePaths, ArrayBufferContentsArray* sharedBuffers
 #if ENABLE(WEBASSEMBLY)
         ,
         WasmModuleArray* wasmModules, WasmMemoryHandleArray* wasmMemoryHandles
@@ -2541,7 +2541,7 @@ public:
     {
         if (!buffer.size())
             return std::make_pair(jsNull(), SerializationReturnCode::UnspecifiedError);
-        CloneDeserializer deserializer(lexicalGlobalObject, globalObject, arrayBufferContentsArray, Span<uint8_t> { buffer.begin(), buffer.end() }, blobURLs, blobFilePaths, sharedBuffers
+        CloneDeserializer deserializer(lexicalGlobalObject, globalObject, arrayBufferContentsArray, std::span<uint8_t> { buffer.begin(), buffer.end() }, blobURLs, blobFilePaths, sharedBuffers
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
             ,
             WTFMove(detachedOffscreenCanvases)
@@ -2675,7 +2675,7 @@ private:
     //             m_version = 0xFFFFFFFF;
     //     }
 
-    CloneDeserializer(JSGlobalObject* lexicalGlobalObject, JSGlobalObject* globalObject, ArrayBufferContentsArray* arrayBufferContents, const Span<uint8_t>& buffer
+    CloneDeserializer(JSGlobalObject* lexicalGlobalObject, JSGlobalObject* globalObject, ArrayBufferContentsArray* arrayBufferContents, const std::span<uint8_t>& buffer
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
         ,
         Vector<std::unique_ptr<DetachedOffscreenCanvas>>&& detachedOffscreenCanvases = {}
@@ -2781,7 +2781,7 @@ private:
     //             m_version = 0xFFFFFFFF;
     //     }
 
-    CloneDeserializer(JSGlobalObject* lexicalGlobalObject, JSGlobalObject* globalObject, ArrayBufferContentsArray* arrayBufferContents, const Span<uint8_t>& buffer, const Vector<String>& blobURLs, const Vector<String> blobFilePaths, ArrayBufferContentsArray* sharedBuffers
+    CloneDeserializer(JSGlobalObject* lexicalGlobalObject, JSGlobalObject* globalObject, ArrayBufferContentsArray* arrayBufferContents, const std::span<uint8_t>& buffer, const Vector<String>& blobURLs, const Vector<String> blobFilePaths, ArrayBufferContentsArray* sharedBuffers
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
         ,
         Vector<std::unique_ptr<DetachedOffscreenCanvas>>&& detachedOffscreenCanvases
@@ -5406,7 +5406,7 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
 
     auto* data = static_cast<uint8_t*>(arrayBuffer->data()) + byteOffset;
     auto size = std::min(arrayBuffer->byteLength(), maxByteLength);
-    auto span = Span<uint8_t> { data, size };
+    auto span = std::span<uint8_t> { data, size };
 
     auto result = CloneDeserializer::deserialize(&domGlobal, globalObject, nullptr, span, blobURLs, blobFiles, nullptr
 #if ENABLE(WEBASSEMBLY)

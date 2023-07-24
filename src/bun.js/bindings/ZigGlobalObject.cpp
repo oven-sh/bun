@@ -1312,7 +1312,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
         return JSC::JSValue::encode(JSC::jsEmptyString(vm));
     }
 
-    if (!encodedString.isAllLatin1()) {
+    if (!encodedString.containsOnlyLatin1()) {
         throwException(globalObject, throwScope, createDOMException(globalObject, InvalidCharacterError));
         return JSC::JSValue::encode(JSC::JSValue {});
     }

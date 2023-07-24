@@ -45,7 +45,6 @@ export const globalsToPrefix = [
   "WritableStreamDefaultController",
   "WritableStreamDefaultWriter",
   "isFinite",
-  "isNaN",
   "undefined",
 ];
 

@@ -127,11 +127,23 @@ bool isValidHTTPHeaderValue(const String& value)
     c = value[value.length() - 1];
     if (isTabOrSpace(c))
         return false;
-    for (unsigned i = 0; i < value.length(); ++i) {
-        c = value[i];
-        if (c == 0x00 || c == 0x0A || c == 0x0D)
-            return false;
+    if (value.is8Bit()) {
+        const LChar* end = value.characters8() + value.length();
+        for (const LChar* p = value.characters8(); p != end; ++p) {
+            if (UNLIKELY(*p <= 13)) {
+                LChar c = *p;
+                if (c == 0x00 || c == 0x0A || c == 0x0D)
+                    return false;
+            }
+        }
+    } else {
+        for (unsigned i = 0; i < value.length(); ++i) {
+            c = value[i];
+            if (c == 0x00 || c == 0x0A || c == 0x0D || c > 0x7F)
+                return false;
+        }
     }
+
     return true;
 }
 

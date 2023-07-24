@@ -160,6 +160,29 @@ plugin({
   },
 });
 
+plugin({
+  name: "instant rejected load promise",
+  setup(builder) {
+    builder.onResolve({ filter: /.*/, namespace: "rejected-promise" }, ({ path }) => ({
+      namespace: "rejected-promise",
+      path,
+    }));
+
+    builder.onLoad({ filter: /.*/, namespace: "rejected-promise" }, async ({ path }) => {
+      throw new Error("Rejected Promise");
+    });
+
+    builder.onResolve({ filter: /.*/, namespace: "rejected-promise2" }, ({ path }) => ({
+      namespace: "rejected-promise2",
+      path,
+    }));
+
+    builder.onLoad({ filter: /.*/, namespace: "rejected-promise2" }, ({ path }) => {
+      return Promise.reject(new Error("Rejected Promise"));
+    });
+  },
+});
+
 // This is to test that it works when imported from a separate file
 import "../../third_party/svelte";
 
@@ -326,12 +349,23 @@ describe("errors", () => {
     }
   });
 
-  it.todo("async transpiler errors work", async () => {
+  it("async transpiler errors work", async () => {
     expect(async () => {
       globalThis.asyncOnLoad = `const x: string = -NaNAn../!!;`;
       await import("async:fail");
       throw -1;
-    }).toThrow('Cannot find package "');
+    }).toThrow('4 errors building "async:fail"');
+  });
+
+  it("onLoad returns the rejected promise", async () => {
+    expect(async () => {
+      await import("rejected-promise:hi");
+      throw -1;
+    }).toThrow("Rejected Promise");
+    expect(async () => {
+      await import("rejected-promise2:hi");
+      throw -1;
+    }).toThrow("Rejected Promise");
   });
 
   it("can work with http urls", async () => {

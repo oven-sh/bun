@@ -421,14 +421,19 @@ JSValue fetchCommonJSModule(
     }
 
     if (JSC::JSValue virtualModuleResult = JSValue::decode(Bun__runVirtualModule(globalObject, specifier))) {
-        JSInternalPromise* promise = jsCast<JSInternalPromise*>(handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer));
+        JSPromise* promise = jsCast<JSPromise*>(handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer));
         switch (promise->status(vm)) {
-        case JSPromise::Status::Rejected:
-        case JSPromise::Status::Pending:
-            // CommonJS must be sync. TODO: throw
+        case JSPromise::Status::Rejected: {
+            uint32_t promiseFlags = promise->internalField(JSPromise::Field::Flags).get().asUInt32AsAnyInt();
+            promise->internalField(JSPromise::Field::Flags).set(vm, promise, jsNumber(promiseFlags | JSPromise::isHandledFlag));
+            JSC::throwException(globalObject, scope, promise->result(vm));
+            RELEASE_AND_RETURN(scope, JSValue {});
+        }
+        case JSPromise::Status::Pending: {
             JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, Bun::toWTFString(*specifier), "\" is unsupported. use \"await import()\" instead."_s));
             RELEASE_AND_RETURN(scope, JSValue {});
-        case JSPromise::Status::Fulfilled:
+        }
+        case JSPromise::Status::Fulfilled: {
             if (!res->success) {
                 throwException(scope, res->result.err, globalObject);
                 RELEASE_AND_RETURN(scope, {});
@@ -437,6 +442,7 @@ JSValue fetchCommonJSModule(
             globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, jsSourceCode->sourceCode());
             RETURN_IF_EXCEPTION(scope, {});
             RELEASE_AND_RETURN(scope, jsNumber(-1));
+        }
         }
     }
 

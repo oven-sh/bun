@@ -1693,7 +1693,7 @@ pub const VirtualMachine = struct {
                         &ZigString.init(
                             std.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{}\"", .{
                                 errors.len,
-                                referrer,
+                                specifier,
                             }) catch unreachable,
                         ),
                     ).asVoid(),

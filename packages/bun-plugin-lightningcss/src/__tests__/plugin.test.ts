@@ -6,7 +6,7 @@ import { LightningCSSPlugin } from "../plugin";
 const OUTPUT_DIR = path.join(import.meta.dir, "output");
 
 beforeAll(async () => {
-  await fs.rm(OUTPUT_DIR, { recursive: true });
+  await fs.rm(OUTPUT_DIR, { recursive: true, force: true });
 });
 
 function casesDir(...filePath: string[]) {
@@ -31,6 +31,16 @@ test("can import css modules", async () => {
   const output = await Bun.build({
     entrypoints: [casesDir("css-modules", "app.ts")],
     outdir: outDir("css-modules"),
+    plugins: [LightningCSSPlugin()],
+  });
+  expect(output.success).toBeTrue();
+  expect(output.outputs).toHaveLength(2);
+});
+
+test.only("can import many css modules, outputs one single stylesheet", async () => {
+  const output = await Bun.build({
+    entrypoints: [casesDir("css-many-modules", "app.ts")],
+    outdir: outDir("css-many-modules"),
     plugins: [LightningCSSPlugin()],
   });
   expect(output.success).toBeTrue();

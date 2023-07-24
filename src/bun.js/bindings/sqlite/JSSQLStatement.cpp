@@ -1103,7 +1103,8 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
                     const void* blob = len > 0 ? sqlite3_column_blob(stmt, i) : nullptr;
                     JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), len);
 
-                    memcpy(array->vector(), blob, len);
+                    if (LIKELY(blob && len))
+                        memcpy(array->vector(), blob, len);
 
                     *value = array;
                     break;
@@ -1166,7 +1167,10 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
                 size_t len = sqlite3_column_bytes(stmt, i);
                 const void* blob = len > 0 ? sqlite3_column_blob(stmt, i) : nullptr;
                 JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), len);
-                memcpy(array->vector(), blob, len);
+
+                if (LIKELY(blob && len))
+                    memcpy(array->vector(), blob, len);
+
                 result->putDirect(vm, name, array, 0);
                 break;
             }

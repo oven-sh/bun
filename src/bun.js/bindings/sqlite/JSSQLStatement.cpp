@@ -1290,8 +1290,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
 
             JSC::JSArray* resultArray = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
             {
-                JSC::ObjectInitializationScope initializationScope(vm);
-                JSC::GCDeferralContext deferralContext(vm);
 
                 while (status == SQLITE_ROW) {
                     JSC::JSValue result = constructResultObject(lexicalGlobalObject, castedThis);

@@ -5080,7 +5080,7 @@ fn NewParser_(
                 }
 
                 const import_record_index = p.addImportRecord(.dynamic, arg.loc, arg.data.e_string.slice(p.allocator));
-                p.import_records.items[import_record_index].handles_import_errors = (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target;
+                p.import_records.items[import_record_index].handles_import_errors = p.options.bundle and ((state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target);
                 p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
                 return p.newExpr(E.Import{
                     .expr = arg,
@@ -5112,7 +5112,7 @@ fn NewParser_(
                 }
 
                 const import_record_index = p.addImportRecord(.require, arg.loc, arg.data.e_string.string(p.allocator) catch unreachable);
-                p.import_records.items[import_record_index].handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
+                p.import_records.items[import_record_index].handles_import_errors = p.options.bundle and p.fn_or_arrow_data_visit.try_body_count != 0;
                 p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
                 return p.newExpr(
                     E.RequireResolveString{
@@ -5147,7 +5147,7 @@ fn NewParser_(
                     const pathname = str.string(p.allocator) catch unreachable;
                     const path = fs.Path.init(pathname);
 
-                    const handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
+                    const handles_import_errors = p.options.bundle and p.fn_or_arrow_data_visit.try_body_count != 0;
 
                     if (
                     // For unwrapping CommonJS into ESM to fully work

@@ -19,30 +19,31 @@ export async function loader(args: OnLoadArgs, config: OnLoadConfig): Promise<On
   });
 
   if (config.sourcemap === "inline") {
-    // TODO inline source map with CSS
+    return inlineSourcemap(code, map);
   }
   if (config.sourcemap === "external") {
     // TODO dump sourcemap to separate file
+    if (!map) {
+      throw new Error("No source map generated");
+    }
   }
 
-  // TODO figure out where to dump the code to a file
-  console.log({ code, map, cssModuleExports });
-
   if (config?.cssModules && cssModuleExports) {
+    // TODO where to put the generated css?
     return {
       exports: cssModuleExports,
       loader: "object",
     };
   }
 
-  // CSS without modules shouldn't have exports
   return {
-    loader: "object",
-    exports: {},
+    contents: code.toString(),
+    // TODO css loader doesn't exist in Bun yet
+    loader: "css",
   };
 }
 
-export function shouldMinify(minify: BuildConfig["minify"]) {
+function shouldMinify(minify: BuildConfig["minify"]) {
   if (minify === undefined) {
     return false;
   }
@@ -54,4 +55,18 @@ export function shouldMinify(minify: BuildConfig["minify"]) {
     return true;
   }
   return false;
+}
+
+function inlineSourcemap(code: Buffer, map: void | Buffer): OnLoadResult {
+  if (!map) {
+    throw new Error("No source map generated");
+  }
+  const codeWithMap = `${code.toString("utf8")}/*# sourceMappingURL=data:application/json;base64,${map.toString(
+    "base64",
+  )} */`;
+  return {
+    contents: codeWithMap,
+    // TODO css loader doesn't exist in Bun yet
+    loader: "css",
+  };
 }

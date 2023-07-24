@@ -24,8 +24,7 @@ test("can import css", async () => {
     plugins: [LightningCSSPlugin()],
   });
   expect(output.success).toBeTrue();
-
-  console.log(output.outputs);
+  expect(output.outputs).toHaveLength(2);
 });
 
 test("can import css modules", async () => {
@@ -35,8 +34,7 @@ test("can import css modules", async () => {
     plugins: [LightningCSSPlugin()],
   });
   expect(output.success).toBeTrue();
-
-  console.log(output.outputs);
+  expect(output.outputs).toHaveLength(2);
 });
 
 test("bundles css imports", async () => {
@@ -46,8 +44,7 @@ test("bundles css imports", async () => {
     plugins: [LightningCSSPlugin()],
   });
   expect(output.success).toBeTrue();
-
-  console.log(output.outputs);
+  expect(output.outputs).toHaveLength(2);
 });
 
 test("minifies css if minify config is set", async () => {
@@ -58,8 +55,7 @@ test("minifies css if minify config is set", async () => {
     plugins: [LightningCSSPlugin()],
   });
   expect(output.success).toBeTrue();
-
-  console.log(output.outputs);
+  expect(output.outputs).toHaveLength(2);
 });
 
 describe("produces a source map if sourcemap config is set", async () => {
@@ -71,8 +67,7 @@ describe("produces a source map if sourcemap config is set", async () => {
       plugins: [LightningCSSPlugin()],
     });
     expect(output.success).toBeTrue();
-
-    console.log(output.outputs);
+    expect(output.outputs).toHaveLength(2);
   });
 
   test("external", async () => {
@@ -83,7 +78,6 @@ describe("produces a source map if sourcemap config is set", async () => {
       plugins: [LightningCSSPlugin()],
     });
     expect(output.success).toBeTrue();
-
-    console.log(output.outputs);
+    expect(output.outputs).toHaveLength(4);
   });
 });

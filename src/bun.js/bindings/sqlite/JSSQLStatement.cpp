@@ -235,75 +235,94 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
     if (count == 0)
         return;
 
-    if (count > 63) {
-        JSC::ObjectInitializationScope initializationScope(vm);
-
-        // 64 is the maximum we can preallocate here
-        // see https://github.com/oven-sh/bun/issues/987
-        JSC::JSObject* object = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(count, 64));
-
-        for (int i = 0; i < count; i++) {
-            const char* name = sqlite3_column_name(stmt, i);
-
-            if (name == nullptr)
-                break;
-
-            size_t len = strlen(name);
-            if (len == 0)
-                break;
-
-            auto wtfString = WTF::String::fromUTF8(name, len);
-            auto str = JSValue(jsString(vm, wtfString));
-            auto key = str.toPropertyKey(lexicalGlobalObject);
-            JSC::JSValue primitive = JSC::jsUndefined();
-            auto decl = sqlite3_column_decltype(stmt, i);
-            if (decl != nullptr) {
-                switch (decl[0]) {
-                case 'F':
-                case 'D':
-                case 'I': {
-                    primitive = jsNumber(0);
-                    break;
-                }
-                case 'V':
-                case 'T': {
-                    primitive = jsEmptyString(vm);
-                    break;
-                }
-                }
-            }
-
-            object->putDirect(vm, key, primitive, 0);
-            castedThis->columnNames->add(key);
-        }
-        castedThis->_prototype.set(vm, castedThis, object);
-    } else {
+    // Fast path:
+    if (count < 64) {
         // 64 is the maximum we can preallocate here
         // see https://github.com/oven-sh/bun/issues/987
         // also see https://github.com/oven-sh/bun/issues/1646
         auto& globalObject = *lexicalGlobalObject;
         PropertyOffset offset;
         auto columnNames = castedThis->columnNames.get();
-
+        bool anyHoles = false;
         for (int i = 0; i < count; i++) {
             const char* name = sqlite3_column_name(stmt, i);
 
-            if (name == nullptr)
-                continue;
+            if (name == nullptr) {
+                anyHoles = true;
+                break;
+            }
 
             size_t len = strlen(name);
-            if (len == 0)
-                continue;
+            if (len == 0) {
+                anyHoles = true;
+                break;
+            }
 
             columnNames->add(Identifier::fromString(vm, WTF::String::fromUTF8(name, len)));
         }
 
-        Structure* structure = globalObject.structureCache().emptyObjectStructureForPrototype(&globalObject, globalObject.objectPrototype(), columnNames->size());
-        for (const auto& propertyName : *columnNames) {
-            structure = Structure::addPropertyTransition(vm, structure, propertyName, 0, offset);
+        if (LIKELY(!anyHoles)) {
+            Structure* structure = globalObject.structureCache().emptyObjectStructureForPrototype(&globalObject, globalObject.objectPrototype(), columnNames->size());
+            for (const auto& propertyName : *columnNames) {
+                structure = Structure::addPropertyTransition(vm, structure, propertyName, 0, offset);
+            }
+            castedThis->_structure.set(vm, castedThis, structure);
+
+            // We are done.
+            return;
+        } else {
+            // If for any reason we do not have column names, disable the fast path.
+            columnNames->releaseData();
+            castedThis->columnNames.reset(new PropertyNameArray(
+                castedThis->columnNames->vm(),
+                castedThis->columnNames->propertyNameMode(),
+                castedThis->columnNames->privateSymbolMode()));
         }
-        castedThis->_structure.set(vm, castedThis, structure);
     }
+
+    // Slow path:
+
+    JSC::ObjectInitializationScope initializationScope(vm);
+
+    // 64 is the maximum we can preallocate here
+    // see https://github.com/oven-sh/bun/issues/987
+    JSC::JSObject* object = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(count, 64));
+
+    for (int i = 0; i < count; i++) {
+        const char* name = sqlite3_column_name(stmt, i);
+
+        if (name == nullptr)
+            break;
+
+        size_t len = strlen(name);
+        if (len == 0)
+            break;
+
+        auto wtfString = WTF::String::fromUTF8(name, len);
+        auto str = JSValue(jsString(vm, wtfString));
+        auto key = str.toPropertyKey(lexicalGlobalObject);
+        JSC::JSValue primitive = JSC::jsUndefined();
+        auto decl = sqlite3_column_decltype(stmt, i);
+        if (decl != nullptr) {
+            switch (decl[0]) {
+            case 'F':
+            case 'D':
+            case 'I': {
+                primitive = jsNumber(0);
+                break;
+            }
+            case 'V':
+            case 'T': {
+                primitive = jsEmptyString(vm);
+                break;
+            }
+            }
+        }
+
+        object->putDirect(vm, key, primitive, 0);
+        castedThis->columnNames->add(key);
+    }
+    castedThis->_prototype.set(vm, castedThis, object);
 }
 
 void JSSQLStatement::destroy(JSC::JSCell* cell)
@@ -1290,7 +1309,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
 
             JSC::JSArray* resultArray = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
             {
-
                 while (status == SQLITE_ROW) {
                     JSC::JSValue result = constructResultObject(lexicalGlobalObject, castedThis);
                     resultArray->push(lexicalGlobalObject, result);
@@ -1573,8 +1591,17 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnNames, (JSGlobalObject * lexical
         initializeColumnNames(lexicalGlobalObject, castedThis);
     }
     JSC::JSArray* array;
-    if (castedThis->columnNames->size() > 0) {
-        array = ownPropertyKeys(lexicalGlobalObject, castedThis->_prototype.get(), PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude);
+    auto* columnNames = castedThis->columnNames.get();
+    if (columnNames->size() > 0) {
+        if (castedThis->_prototype) {
+            array = ownPropertyKeys(lexicalGlobalObject, castedThis->_prototype.get(), PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude);
+        } else {
+            array = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, columnNames->size());
+            unsigned int i = 0;
+            for (const auto column : *columnNames) {
+                array->putDirectIndex(lexicalGlobalObject, i++, jsString(vm, column.string()));
+            }
+        }
     } else {
         array = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
     }

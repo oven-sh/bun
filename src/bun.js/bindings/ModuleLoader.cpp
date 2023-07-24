@@ -420,9 +420,26 @@ JSValue fetchCommonJSModule(
         }
     }
 
-    // if (JSC::JSValue virtualModuleResult = JSValue::decode(Bun__runVirtualModule(globalObject, specifier))) {
-    //     return handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer);
-    // }
+    if (JSC::JSValue virtualModuleResult = JSValue::decode(Bun__runVirtualModule(globalObject, specifier))) {
+        JSInternalPromise* promise = jsCast<JSInternalPromise*>(handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer));
+        switch (promise->status(vm)) {
+        case JSPromise::Status::Rejected:
+        case JSPromise::Status::Pending:
+            // CommonJS must be sync. TODO: throw
+            JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, Bun::toWTFString(*specifier), "\" is unsupported. use \"await import()\" instead."_s));
+            RELEASE_AND_RETURN(scope, JSValue {});
+        case JSPromise::Status::Fulfilled:
+            if (!res->success) {
+                throwException(scope, res->result.err, globalObject);
+                RELEASE_AND_RETURN(scope, {});
+            }
+            auto* jsSourceCode = jsCast<JSSourceCode*>(promise->result(vm));
+            globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, jsSourceCode->sourceCode());
+            RETURN_IF_EXCEPTION(scope, {});
+            RELEASE_AND_RETURN(scope, jsNumber(-1));
+        }
+    }
+
     auto* loader = globalObject->moduleLoader();
     JSMap* registry = jsCast<JSMap*>(loader->getDirect(vm, Identifier::fromString(vm, "registry"_s)));
 

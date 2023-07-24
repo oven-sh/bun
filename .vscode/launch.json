@@ -242,6 +242,16 @@
       "console": "internalConsole",
       "env": {}
     },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun build debug STDOUT (--target=bun)",
+      "program": "bun-debug",
+      "args": ["bun", "${file}", "--target=bun", "--minify"],
+      "cwd": "${file}/../",
+      "console": "internalConsole",
+      "env": {}
+    },
 
     {
       "type": "lldb",

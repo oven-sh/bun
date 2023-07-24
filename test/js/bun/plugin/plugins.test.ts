@@ -326,7 +326,7 @@ describe("errors", () => {
     }
   });
 
-  it.skip("async transpiler errors work", async () => {
+  it.todo("async transpiler errors work", async () => {
     expect(async () => {
       globalThis.asyncOnLoad = `const x: string = -NaNAn../!!;`;
       await import("async:fail");

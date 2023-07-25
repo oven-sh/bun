@@ -2807,6 +2807,18 @@ console.log(foo, array);
       expectPrinted("'a' + 1", '"a" + 1');
       expectPrinted("x * 'a' + 'b'", 'x * "a" + "b"');
 
+      // rope string push another rope string
+      expectPrinted("'a' + ('b' + 'c') + 'd'", '"abcd"');
+      expectPrinted("('a' + 'b') + 'c'", '"abc"');
+      expectPrinted("'a' + ('b' + 'c')", '"abc"');
+      expectPrinted("'a' + ('b' + ('c' + 'd')) + 'e'", '"abcde"');
+      expectPrinted("'a' + ('b' + ('c' + ('d' + 'e')))", '"abcde"');
+      expectPrinted("('a' + ('b' + ('c' + 'd'))) + 'e'", '"abcde"');
+      expectPrinted("('a' + ('b' + 'c')) + ('d' + 'e')", '"abcde"');
+      expectPrinted("('a' + 'b') + ('c' + 'd')", '"abcd"');
+      expectPrinted("'a' + ('b' + 'c') + 'd'", '"abcd"');
+      expectPrinted("'a' + ('b' + ('c' + 'd'))", '"abcd"');
+
       expectPrinted("'string' + `template`", `"stringtemplate"`);
 
       expectPrinted("`template` + 'string'", '"templatestring"');

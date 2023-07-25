@@ -208,6 +208,7 @@ pub const Os = struct {
         return values;
     }
 
+    extern fn bun_sysconf__SC_CLK_TCK() isize;
     fn cpusImplDarwin(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
         const local_bindings = @import("../../darwin_c.zig");
         const c = std.c;
@@ -252,10 +253,7 @@ pub const Os = struct {
         }
 
         // Get the multiplier; this is the number of ms/tick
-        const unistd = @cImport({
-            @cInclude("unistd.h");
-        });
-        const ticks: i64 = unistd.sysconf(unistd._SC_CLK_TCK);
+        const ticks: i64 = bun_sysconf__SC_CLK_TCK();
         const multiplier = 1000 / @as(u64, @intCast(ticks));
 
         // Set up each CPU value in the return

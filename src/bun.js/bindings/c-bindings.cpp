@@ -41,3 +41,11 @@ extern "C" void bun_ignore_sigpipe()
     // ignore SIGPIPE
     signal(SIGPIPE, SIG_IGN);
 }
+extern "C" ssize_t bun_sysconf__SC_CLK_TCK()
+{
+#ifdef __APPLE__
+    return sysconf(_SC_CLK_TCK);
+#else
+    return 0;
+#endif
+}

@@ -1298,7 +1298,10 @@ pub const VirtualMachine = struct {
             jsc_vm.bundler.fs.top_level_dir;
 
         const result: Resolver.Result = try brk: {
-            var retry_on_not_found = query_string.len > 0;
+            // TODO: We only want to retry on not found only when the directories we searched for were cached.
+            // This fixes an issue where new files created in cached directories were not picked up.
+            // See https://github.com/oven-sh/bun/issues/3216
+            var retry_on_not_found = true;
             while (true) {
                 break :brk switch (jsc_vm.bundler.resolver.resolveAndAutoInstall(
                     source_to_use,
@@ -1690,7 +1693,7 @@ pub const VirtualMachine = struct {
                         &ZigString.init(
                             std.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{}\"", .{
                                 errors.len,
-                                referrer,
+                                specifier,
                             }) catch unreachable,
                         ),
                     ).asVoid(),
@@ -1867,6 +1870,16 @@ pub const VirtualMachine = struct {
         }
 
         return promise;
+    }
+
+    // worker dont has bun_watcher and also we dont wanna call autoTick before dispatchOnline
+    pub fn loadEntryPointForWebWorker(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
+        var promise = try this.reloadEntryPoint(entry_path);
+        this.eventLoop().performGC();
+        this.waitForPromise(JSC.AnyPromise{
+            .Internal = promise,
+        });
+        return this.pending_internal_promise;
     }
 
     pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {

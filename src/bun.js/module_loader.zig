@@ -1525,12 +1525,14 @@ pub const ModuleLoader = struct {
         var slice = slice_;
         if (slice.len == 0) return slice;
         var was_http = false;
-        if (strings.hasPrefixComptime(slice, "https://")) {
-            slice = slice["https://".len..];
-            was_http = true;
-        } else if (strings.hasPrefixComptime(slice, "http://")) {
-            slice = slice["http://".len..];
-            was_http = true;
+        if (jsc_vm.bundler.options.serve) {
+            if (strings.hasPrefixComptime(slice, "https://")) {
+                slice = slice["https://".len..];
+                was_http = true;
+            } else if (strings.hasPrefixComptime(slice, "http://")) {
+                slice = slice["http://".len..];
+                was_http = true;
+            }
         }
 
         if (strings.hasPrefix(slice, jsc_vm.origin.host)) {

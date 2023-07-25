@@ -121,7 +121,7 @@ const BlobFileContentResult = struct {
 
 pub const ServerConfig = struct {
     port: u16 = 0,
-    hostname: [*:0]const u8 = "localhost",
+    hostname: ?[*:0]const u8 = null,
 
     // TODO: use webkit URL parser instead of bun's
     base_url: URL = URL{},
@@ -658,7 +658,7 @@ pub const ServerConfig = struct {
 
         var args = ServerConfig{
             .port = 3000,
-            .hostname = "0.0.0.0",
+            .hostname = null,
             .development = true,
         };
         var has_hostname = false;
@@ -874,7 +874,7 @@ pub const ServerConfig = struct {
             }
         } else {
             const hostname: string =
-                if (has_hostname and std.mem.span(args.hostname).len > 0) std.mem.span(args.hostname) else "0.0.0.0";
+                if (has_hostname and std.mem.span(args.hostname.?).len > 0) std.mem.span(args.hostname.?) else "0.0.0.0";
 
             const needsBrackets: bool = strings.isIPV6Address(hostname) and hostname[0] != '[';
 
@@ -4528,6 +4528,9 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         poll_ref: JSC.PollRef = .{},
         temporary_url_buffer: std.ArrayListUnmanaged(u8) = .{},
 
+        cached_hostname: bun.String = bun.String.empty,
+        cached_protocol: bun.String = bun.String.empty,
+
         flags: packed struct(u3) {
             deinit_scheduled: bool = false,
             terminated: bool = false,
@@ -4978,15 +4981,29 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
-            return ZigString.init(bun.span(this.config.hostname)).toValue(globalThis);
+            if (this.cached_hostname.isEmpty()) {
+                if (this.listener) |listener| {
+                    var buf: [1024]u8 = [_]u8{0} ** 1024;
+                    var len: i32 = 1024;
+                    listener.socket().remoteAddress(&buf, &len);
+                    if (len > 0) {
+                        this.cached_hostname = bun.String.create(buf[0..@as(usize, @intCast(len))]);
+                    }
+                }
+
+                if (this.cached_hostname.isEmpty())
+                    this.cached_hostname = bun.String.create(bun.span(this.config.hostname orelse "localhost"));
+            }
+
+            return this.cached_hostname.toJS(globalThis);
         }
 
-        pub fn getProtocol(_: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
-            if (comptime ssl_enabled) {
-                return ZigString.init("https:").toValue(globalThis);
-            } else {
-                return ZigString.init("http:").toValue(globalThis);
+        pub fn getProtocol(this: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
+            if (this.cached_protocol.isEmpty()) {
+                this.cached_protocol = bun.String.create(if (ssl_enabled) "https" else "http");
             }
+
+            return this.cached_protocol.toJS(globalThis);
         }
 
         pub fn getDevelopment(
@@ -5064,6 +5081,17 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
         pub fn deinit(this: *ThisServer) void {
             httplog("deinit", .{});
+            this.cached_hostname.deref();
+            this.cached_protocol.deref();
+
+            if (this.config.hostname) |host| {
+                bun.default_allocator.destroy(host);
+            }
+
+            if (this.config.base_url.href.len > 0) {
+                bun.default_allocator.free(this.config.base_url.href);
+            }
+
             this.app.destroy();
             const allocator = this.allocator;
             allocator.destroy(this);
@@ -5438,22 +5466,18 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
                 this.app.get("/src:/*", *ThisServer, this, onSrcRequest);
             }
-
-            const hostname = bun.span(this.config.hostname);
-
-            // When "localhost" is specified, we omit the hostname entirely
-            // Otherwise, "curl http://localhost:3000" doesn't actually work due to IPV6 vs IPV4 issues
-            // This prints a spurious log si_destination_compare on macOS but only when debugger is connected
-            var host: [*:0]const u8 = undefined;
+            var host: ?[*:0]const u8 = null;
             var host_buff: [1024:0]u8 = undefined;
 
-            if (hostname.len == 0 or (!ssl_enabled and strings.eqlComptime(hostname, "localhost"))) {
-                host = "";
-            } else if (hostname.len > 2 and hostname[0] == '[') {
-                // remove "[" and "]" from hostname
-                host = std.fmt.bufPrintZ(&host_buff, "{s}", .{hostname[1 .. hostname.len - 1]}) catch unreachable;
-            } else {
-                host = this.config.hostname;
+            if (this.config.hostname) |existing| {
+                const hostname = bun.span(existing);
+
+                if (hostname.len > 2 and hostname[0] == '[') {
+                    // remove "[" and "]" from hostname
+                    host = std.fmt.bufPrintZ(&host_buff, "{s}", .{hostname[1 .. hostname.len - 1]}) catch unreachable;
+                } else {
+                    host = this.config.hostname;
+                }
             }
 
             this.ref();

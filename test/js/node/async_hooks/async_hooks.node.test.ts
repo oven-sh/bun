@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "async_hooks";
 import assert from "assert";
 
-test("node async_hooks.AsyncLocalStorage enable disable", async () => {
+test("node async_hooks.AsyncLocalStorage enable disable", async done => {
   const asyncLocalStorage = new AsyncLocalStorage();
 
   asyncLocalStorage.run(new Map(), () => {

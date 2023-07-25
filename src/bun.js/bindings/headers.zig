@@ -191,7 +191,7 @@ pub extern fn JSC__JSGlobalObject__generateHeapSnapshot(arg0: *bindings.JSGlobal
 pub extern fn JSC__JSGlobalObject__getCachedObject(arg0: *bindings.JSGlobalObject, arg1: [*c]const ZigString) JSC__JSValue;
 pub extern fn JSC__JSGlobalObject__handleRejectedPromises(arg0: *bindings.JSGlobalObject) void;
 pub extern fn JSC__JSGlobalObject__putCachedObject(arg0: *bindings.JSGlobalObject, arg1: [*c]const ZigString, JSValue2: JSC__JSValue) JSC__JSValue;
-pub extern fn JSC__JSGlobalObject__queueMicrotaskJob(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue, JSValue3: JSC__JSValue, JSValue4: JSC__JSValue) void;
+pub extern fn JSC__JSGlobalObject__queueMicrotaskJob(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue, JSValue2: JSC__JSValue, JSValue3: JSC__JSValue) void;
 pub extern fn JSC__JSGlobalObject__reload(arg0: *bindings.JSGlobalObject) void;
 pub extern fn JSC__JSGlobalObject__startRemoteInspector(arg0: *bindings.JSGlobalObject, arg1: [*c]u8, arg2: u16) bool;
 pub extern fn JSC__JSGlobalObject__vm(arg0: *bindings.JSGlobalObject) *bindings.VM;
@@ -313,7 +313,6 @@ pub extern fn JSC__VM__create(HeapType0: u8) *bindings.VM;
 pub extern fn JSC__VM__deferGC(arg0: *bindings.VM, arg1: ?*anyopaque, ArgFn2: ?*const fn (?*anyopaque) callconv(.C) void) void;
 pub extern fn JSC__VM__deinit(arg0: *bindings.VM, arg1: *bindings.JSGlobalObject) void;
 pub extern fn JSC__VM__deleteAllCode(arg0: *bindings.VM, arg1: *bindings.JSGlobalObject) void;
-pub extern fn JSC__VM__doWork(arg0: *bindings.VM) void;
 pub extern fn JSC__VM__drainMicrotasks(arg0: *bindings.VM) void;
 pub extern fn JSC__VM__executionForbidden(arg0: *bindings.VM) bool;
 pub extern fn JSC__VM__externalMemorySize(arg0: *bindings.VM) usize;

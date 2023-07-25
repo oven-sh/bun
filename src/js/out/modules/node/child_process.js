@@ -188,7 +188,7 @@ function spawnSync(file, args, options) {
     else if (typeof input === "string")
       bunStdio[0] = Buffer.from(input, encoding || "utf8");
     else
-      throw new ERR_INVALID_ARG_TYPE(`options.stdio[0]`, ["Buffer", "TypedArray", "DataView", "string"], input);
+      throw new ERR_INVALID_ARG_TYPE("options.stdio[0]", ["Buffer", "TypedArray", "DataView", "string"], input);
   const { stdout, stderr, success, exitCode } = Bun.spawnSync({
     cmd: options.args,
     env: options.env || void 0,

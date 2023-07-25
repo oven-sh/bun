@@ -14,6 +14,26 @@ declare global {
 }
 
 plugin({
+  name: "url text file loader",
+  setup(builder) {
+    builder.onResolve({ namespace: "http", filter: /.*/ }, ({ path }) => {
+      return {
+        path,
+        namespace: "url",
+      };
+    });
+
+    builder.onLoad({ filter: /.*/, namespace: "url" }, async ({ path, namespace }) => {
+      const res = await fetch("http://" + path);
+      return {
+        exports: { default: await res.text() },
+        loader: "object",
+      };
+    });
+  },
+});
+
+plugin({
   name: "boop beep beep",
   setup(builder) {
     builder.onResolve({ filter: /boop/, namespace: "beep" }, () => ({
@@ -136,6 +156,29 @@ plugin({
       await 100;
       await Promise.resolve(10);
       return await globalThis.asyncret;
+    });
+  },
+});
+
+plugin({
+  name: "instant rejected load promise",
+  setup(builder) {
+    builder.onResolve({ filter: /.*/, namespace: "rejected-promise" }, ({ path }) => ({
+      namespace: "rejected-promise",
+      path,
+    }));
+
+    builder.onLoad({ filter: /.*/, namespace: "rejected-promise" }, async ({ path }) => {
+      throw new Error("Rejected Promise");
+    });
+
+    builder.onResolve({ filter: /.*/, namespace: "rejected-promise2" }, ({ path }) => ({
+      namespace: "rejected-promise2",
+      path,
+    }));
+
+    builder.onLoad({ filter: /.*/, namespace: "rejected-promise2" }, ({ path }) => {
+      return Promise.reject(new Error("Rejected Promise"));
     });
   },
 });
@@ -306,11 +349,55 @@ describe("errors", () => {
     }
   });
 
-  it.skip("async transpiler errors work", async () => {
+  it("async transpiler errors work", async () => {
     expect(async () => {
       globalThis.asyncOnLoad = `const x: string = -NaNAn../!!;`;
       await import("async:fail");
       throw -1;
-    }).toThrow('Cannot find package "');
+    }).toThrow('4 errors building "async:fail"');
+  });
+
+  it("onLoad returns the rejected promise", async () => {
+    expect(async () => {
+      await import("rejected-promise:hi");
+      throw -1;
+    }).toThrow("Rejected Promise");
+    expect(async () => {
+      await import("rejected-promise2:hi");
+      throw -1;
+    }).toThrow("Rejected Promise");
+  });
+
+  it("can work with http urls", async () => {
+    const result = `The Mysterious Affair at Styles
+    The Secret Adversary
+    The Murder on the Links
+    The Man in the Brown Suit
+    The Secret of Chimneys
+    The Murder of Roger Ackroyd
+    The Big Four
+    The Mystery of the Blue Train
+    The Seven Dials Mystery
+    The Murder at the Vicarage
+    Giant's Bread
+    The Floating Admiral
+    The Sittaford Mystery
+    Peril at End House
+    Lord Edgware Dies
+    Murder on the Orient Express
+    Unfinished Portrait
+    Why Didn't They Ask Evans?
+    Three Act Tragedy
+    Death in the Clouds`;
+
+    const server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        server.stop();
+        return new Response(result);
+      },
+    });
+    const { default: text } = await import(`http://${server.hostname}:${server.port}/hey.txt`);
+    expect(text).toBe(result);
   });
 });

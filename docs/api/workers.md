@@ -1,5 +1,5 @@
 {% callout %}
-`Worker` support was added in Bun v0.6.15.
+`Worker` support was added in Bun v0.7.0.
 {% /callout %}
 
 [`Worker`](https://developer.mozilla.org/en-US/docs/Web/API/Worker) lets you start and communicate with a new JavaScript instance running on a separate thread while sharing I/O resources with the main thread.
@@ -132,9 +132,7 @@ Alternatively, you can also pass an `options` object to `Worker`:
 
 ```ts
 const worker = new Worker(new URL("worker.ts", import.meta.url).href, {
-  bun: {
-    ref: true,
-  },
+  ref: true,
 });
 ```
 
@@ -157,9 +155,7 @@ JavaScript instances can use a lot of memory. Bun's `Worker` supports a `smol` m
 
 ```js
 const worker = new Worker("./i-am-smol.ts", {
-  bun: {
-    smol: true,
-  },
+  smol: true,
 });
 ```
 

@@ -609,12 +609,16 @@ it("should run beforeAll() & afterAll() even without tests", async () => {
     await writeFile(
       join(test_dir, "empty.test.js"),
       `
-beforeAll(() => console.log("???BEFORE ALL???"));
-afterAll(() => console.log("!!!AFTER ALL!!!"));
+beforeAll(() => console.log("before all"));
+beforeEach(() => console.log("before each"));
+afterEach(() => console.log("after each"));
+afterAll(() => console.log("after all"));
 
 describe("empty", () => {
-  beforeAll(() => console.log(">>>BEFORE ALL>>>"));
-  afterAll(() => console.log("<<<AFTER ALL<<<"));
+  beforeAll(() => console.log("before all scoped"));
+  beforeEach(() => console.log("before each scoped"));
+  afterEach(() => console.log("after each scoped"));
+  afterAll(() => console.log("after all scoped"));
 });
     `,
     );
@@ -632,13 +636,7 @@ describe("empty", () => {
     expect(err).toContain("0 fail");
     expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
-    expect(out.split(/\r?\n/)).toEqual([
-      "???BEFORE ALL???",
-      ">>>BEFORE ALL>>>",
-      "<<<AFTER ALL<<<",
-      "!!!AFTER ALL!!!",
-      "",
-    ]);
+    expect(out.split(/\r?\n/)).toEqual(["before all", "before all scoped", "after all scoped", "after all", ""]);
     expect(await exited).toBe(0);
   } finally {
     await rm(test_dir, { force: true, recursive: true });

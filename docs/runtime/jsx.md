@@ -67,7 +67,14 @@ How JSX constructs are transformed into vanilla JavaScript internally. The table
 
 - ```tsx
   import { jsxDEV } from "react/jsx-dev-runtime";
-  jsxDEV("Box", { width: 5, children: "Hello" }, undefined, false, undefined, this);
+  jsxDEV(
+    "Box",
+    { width: 5, children: "Hello" },
+    undefined,
+    false,
+    undefined,
+    this,
+  );
   ```
 
   The `jsxDEV` variable name is a convention used by React. The `DEV` suffix is a visible way to indicate that the code is intended for use in development. The development version of React is slowers and includes additional validity checks & debugging tools.
@@ -133,7 +140,7 @@ The function name used to represent JSX constructs. Default value is `"createEle
   ```
 
 - ```tsx
-  import { createhElement } from "react";
+  import { h } from "react";
   h("Box", { width: 5 }, "Hello");
   ```
 
@@ -227,7 +234,14 @@ The module from which the component factory function (`createElement`, `jsx`, `j
 - ```tsx
   // /jsx-runtime is automatically appended
   import { jsxDEV } from "preact/jsx-dev-runtime";
-  jsxDEV("Box", { width: 5, children: "Hello" }, undefined, false, undefined, this);
+  jsxDEV(
+    "Box",
+    { width: 5, children: "Hello" },
+    undefined,
+    false,
+    undefined,
+    this,
+  );
   ```
 
 {% /table %}

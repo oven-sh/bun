@@ -141,7 +141,7 @@ pub const WebWorker = struct {
         var any_task = bun.default_allocator.create(JSC.AnyTask) catch @panic("OOM");
         any_task.* = AnyTask.init(this);
         var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch @panic("OOM");
-        this.parent.eventLoop().enqueueTaskConcurrent(concurrent_task.from(any_task));
+        this.parent.eventLoop().enqueueTaskConcurrent(concurrent_task.from(any_task, .auto_deinit));
     }
 
     pub fn startWithErrorHandling(
@@ -266,7 +266,7 @@ pub const WebWorker = struct {
         std.debug.assert(this.status == .start);
         this.setStatus(.starting);
 
-        var promise = vm.loadEntryPoint(this.specifier) catch {
+        var promise = vm.loadEntryPointForWebWorker(this.specifier) catch {
             this.flushLogs();
             this.onTerminate();
             return;
@@ -298,8 +298,10 @@ pub const WebWorker = struct {
             vm.global.vm().releaseWeakRefs();
             _ = vm.arena.gc(false);
             _ = vm.global.vm().runGC(false);
-            vm.tick();
         }
+
+        // always doing a first tick so we call CppTask without delay after dispatchOnline
+        vm.tick();
 
         {
             while (true) {
@@ -411,7 +413,7 @@ pub const WebWorker = struct {
         var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch @panic("OOM");
         var task = bun.default_allocator.create(JSC.AnyTask) catch @panic("OOM");
         task.* = JSC.AnyTask.New(WebWorker, onTerminate).init(this);
-        vm.eventLoop().enqueueTaskConcurrent(concurrent_task.from(task));
+        vm.eventLoop().enqueueTaskConcurrent(concurrent_task.from(task, .auto_deinit));
         return true;
     }
 };

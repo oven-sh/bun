@@ -806,7 +806,6 @@ pub const TestCommand = struct {
                     vm.global.vm().drainMicrotasks();
                     vm.global.handleRejectedPromises();
                 }
-                vm.global.vm().doWork();
             }
 
             const file_end = reporter.jest.files.len;

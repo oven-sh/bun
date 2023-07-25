@@ -213,6 +213,8 @@ fn foldStringAddition(lhs: Expr, rhs: Expr) ?Expr {
                     rhs_clone.data.e_string,
                 );
 
+                orig.prefer_template = orig.prefer_template or rhs_clone.data.e_string.prefer_template;
+
                 return Expr.init(E.String, orig, lhs.loc);
             }
         },
@@ -5141,6 +5143,7 @@ fn NewParser_(
                         return Expr{ .data = nullExprData, .loc = arg.loc };
                     }
 
+                    str.resolveRopeIfNeeded(p.allocator);
                     const pathname = str.string(p.allocator) catch unreachable;
                     const path = fs.Path.init(pathname);
 
@@ -19516,7 +19519,8 @@ fn NewParser_(
                                 .e_number => |k| p.newExpr(E.Number{ .value = k.value }, loc),
                                 .e_string => |k| p.newExpr(E.String{ .data = k.data }, loc),
                                 .e_index => |k| p.newExpr(E.Index{ .target = k.target, .index = k.index }, loc),
-                                else => unreachable,
+                                .e_private_identifier => |k| p.newExpr(E.PrivateIdentifier{ .ref = k.ref }, loc),
+                                else => bun.unreachablePanic("Unexpected AST node type {any}", .{prop.key.?}),
                             };
 
                             const descriptor_kind: f64 = if (!prop.flags.contains(.is_method)) 2 else 1;

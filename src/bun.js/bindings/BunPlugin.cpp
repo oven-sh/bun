@@ -405,13 +405,9 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunStri
 
     if (auto* promise = JSC::jsDynamicCast<JSPromise*>(result)) {
         switch (promise->status(vm)) {
+        case JSPromise::Status::Rejected:
         case JSPromise::Status::Pending: {
             return JSValue::encode(promise);
-        }
-        case JSPromise::Status::Rejected: {
-            promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
-            result = promise->result(vm);
-            return JSValue::encode(result);
         }
         case JSPromise::Status::Fulfilled: {
             result = promise->result(vm);

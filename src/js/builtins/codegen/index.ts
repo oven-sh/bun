@@ -39,7 +39,7 @@ console.log("Bundling Bun builtins...");
 
 const MINIFY = process.argv.includes("--minify") || process.argv.includes("-m");
 const PARALLEL = process.argv.includes("--parallel") || process.argv.includes("-p");
-const KEEP_TMP = process.argv.includes("--keep-tmp") || process.argv.includes("-k");
+const KEEP_TMP = process.argv.includes("--keep-tmp") || process.argv.includes("-k") || true;
 
 const SRC_DIR = path.join(import.meta.dir, "../");
 const OUT_DIR = path.join(SRC_DIR, "../out");
@@ -52,7 +52,6 @@ const define = {
   "process.env.NODE_ENV": "development",
   "process.platform": process.platform,
   "process.arch": process.arch,
-  "$lazy": "___BUN_LAZY___",
 };
 
 for (const name in enums) {
@@ -230,8 +229,8 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     const finalReplacement =
       (fn.directives.sloppy ? captured : captured.replace(/function\s*\(.*?\)\s*{/, '$&"use strict";'))
         .replace(/^\((async )?function\(/, "($1function (")
-        .replace(/__intrinsic__/g, "@")
-        .replace(/___BUN_LAZY___/g, "globalThis[globalThis.Symbol.for('Bun.lazy')]") + "\n";
+        .replace(/__intrinsic__lazy\(/g, "globalThis[globalThis.Symbol.for('Bun.lazy')](")
+        .replace(/__intrinsic__/g, "@") + "\n";
 
     bundledFunctions.push({
       name: fn.name,

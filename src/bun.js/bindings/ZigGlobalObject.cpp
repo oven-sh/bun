@@ -431,7 +431,7 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObje
     // This must happen before JSVMClientData::create
     vm.heap.acquireAccess();
 
-    WebCore::JSVMClientData::create(&vm);
+    WebCore::JSVMClientData::create(&vm, Bun__getVM());
 
     JSC::JSLockHolder locker(vm);
     Zig::GlobalObject* globalObject;
@@ -1312,7 +1312,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
         return JSC::JSValue::encode(JSC::jsEmptyString(vm));
     }
 
-    if (!encodedString.isAllLatin1()) {
+    if (!encodedString.containsOnlyLatin1()) {
         throwException(globalObject, throwScope, createDOMException(globalObject, InvalidCharacterError));
         return JSC::JSValue::encode(JSC::JSValue {});
     }
@@ -1661,7 +1661,7 @@ JSC:
             return JSValue::encode(obj);
         }
 
-        if(string == "rootCertificates"_s) {
+        if (string == "rootCertificates"_s) {
             auto sourceOrigin = callFrame->callerSourceOrigin(vm).url();
             bool isBuiltin = sourceOrigin.protocolIs("builtin"_s);
             if (!isBuiltin) {
@@ -1673,7 +1673,7 @@ JSC:
                 return JSValue::encode(JSC::jsUndefined());
             }
             auto rootCertificates = JSC::JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), size);
-            for(auto i = 0; i < size; i++) {
+            for (auto i = 0; i < size; i++) {
                 auto raw = out[i];
                 auto str = WTF::String::fromUTF8(raw.str, raw.len);
                 rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
@@ -2575,7 +2575,6 @@ extern "C" JSC__JSValue Bun__Jest__testModuleObject(Zig::GlobalObject* globalObj
     return JSValue::encode(globalObject->lazyTestModuleObject());
 }
 
-static inline JSC__JSValue ZigGlobalObject__readableStreamToArrayBufferBody(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue);
 static inline JSC__JSValue ZigGlobalObject__readableStreamToArrayBufferBody(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
 {
     auto& vm = globalObject->vm();
@@ -2602,7 +2601,6 @@ static inline JSC__JSValue ZigGlobalObject__readableStreamToArrayBufferBody(Zig:
         return JSValue::encode(result);
 
     if (UNLIKELY(!object)) {
-
         auto throwScope = DECLARE_THROW_SCOPE(vm);
         throwTypeError(globalObject, throwScope, "Expected object"_s);
         return JSValue::encode(jsUndefined());
@@ -2643,6 +2641,30 @@ extern "C" JSC__JSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject*
 
     JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
     arguments.append(JSValue::decode(readableStreamValue));
+
+    auto callData = JSC::getCallData(function);
+    return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
+}
+
+extern "C" JSC__JSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue, JSC__JSValue contentTypeValue)
+{
+    auto& vm = globalObject->vm();
+
+    auto clientData = WebCore::clientData(vm);
+    auto& builtinNames = WebCore::builtinNames(vm);
+
+    JSC::JSFunction* function = nullptr;
+    if (auto readableStreamToFormData = globalObject->m_readableStreamToFormData.get()) {
+        function = readableStreamToFormData;
+    } else {
+        function = JSFunction::create(vm, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToFormDataCodeGenerator(vm)), globalObject);
+
+        globalObject->m_readableStreamToFormData.set(vm, globalObject, function);
+    }
+
+    JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
+    arguments.append(JSValue::decode(readableStreamValue));
+    arguments.append(JSValue::decode(contentTypeValue));
 
     auto callData = JSC::getCallData(function);
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
@@ -3426,15 +3448,23 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(structure);
         });
 
-    m_importMetaRequireFunctionUnbound.initLater(
+    m_requireFunctionUnbound.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
             init.set(
-                Zig::ImportMetaObject::createRequireFunctionUnbound(init.vm, init.owner));
+                JSFunction::create(
+                    init.vm,
+                    moduleRequireCodeGenerator(init.vm),
+                    init.owner->globalScope(),
+                    JSFunction::createStructure(init.vm, init.owner, RequireFunctionPrototype::create(init.owner))));
         });
-    m_importMetaRequireResolveFunctionUnbound.initLater(
+    m_requireResolveFunctionUnbound.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
             init.set(
-                Zig::ImportMetaObject::createRequireResolveFunctionUnbound(init.vm, init.owner));
+                JSFunction::create(
+                    init.vm,
+                    moduleRequireResolveCodeGenerator(init.vm),
+                    init.owner->globalScope(),
+                    JSFunction::createStructure(init.vm, init.owner, RequireResolveFunctionPrototype::create(init.owner))));
         });
 
     m_importMetaObjectStructure.initLater(
@@ -4085,7 +4115,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectBuiltinFunction(vm, this, builtinNames.createNativeReadableStreamPrivateName(), readableStreamCreateNativeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
     putDirectBuiltinFunction(vm, this, builtinNames.requireESMPrivateName(), importMetaObjectRequireESMCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    putDirectBuiltinFunction(vm, this, builtinNames.requirePrivateName(), importMetaObjectRequireCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.loadCJS2ESMPrivateName(), importMetaObjectLoadCJS2ESMCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.internalRequirePrivateName(), importMetaObjectInternalRequireCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
@@ -4331,6 +4360,12 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         }
 
         {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "readableStreamToFormData"_s);
+            object->putDirectBuiltinFunction(vm, this, identifier, readableStreamReadableStreamToFormDataCodeGenerator(vm),
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        }
+
+        {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "readableStreamToText"_s);
             object->putDirectBuiltinFunction(vm, this, identifier, readableStreamReadableStreamToTextCodeGenerator(vm),
                 JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
@@ -4546,6 +4581,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_readableStreamToBlob);
     visitor.append(thisObject->m_readableStreamToJSON);
     visitor.append(thisObject->m_readableStreamToText);
+    visitor.append(thisObject->m_readableStreamToFormData);
 
     visitor.append(thisObject->m_JSTextDecoderSetterValue);
     visitor.append(thisObject->m_JSResponseSetterValue);
@@ -4593,8 +4629,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_emitReadableNextTickFunction.visit(visitor);
     thisObject->m_JSBufferSubclassStructure.visit(visitor);
 
-    thisObject->m_importMetaRequireFunctionUnbound.visit(visitor);
-    thisObject->m_importMetaRequireResolveFunctionUnbound.visit(visitor);
+    thisObject->m_requireFunctionUnbound.visit(visitor);
+    thisObject->m_requireResolveFunctionUnbound.visit(visitor);
     thisObject->m_importMetaObjectStructure.visit(visitor);
     thisObject->m_asyncBoundFunctionStructure.visit(visitor);
 

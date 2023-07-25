@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "bun:test";
 import type { Server, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
 import { bunEnv, bunExe, nodeExe } from "harness";
-
+import { isIP } from "node:net";
 const strings = [
   {
     label: "string (ascii)",
@@ -219,7 +219,7 @@ describe("ServerWebSocket", () => {
   }));
   test("remoteAddress", done => ({
     open(ws) {
-      expect(ws.remoteAddress).toMatch(/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/);
+      expect(isIP(ws.remoteAddress)).toBeGreaterThan(0);
       done();
     },
   }));

@@ -1,1 +1,59 @@
-var g=function(i){var m=k({basename:i.basename.bind(i),dirname:i.dirname.bind(i),extname:i.extname.bind(i),format:i.format.bind(i),isAbsolute:i.isAbsolute.bind(i),join:i.join.bind(i),normalize:i.normalize.bind(i),parse:i.parse.bind(i),relative:i.relative.bind(i),resolve:i.resolve.bind(i),toNamespacedPath:i.toNamespacedPath.bind(i),sep:i.sep,delimiter:i.delimiter});return m.default=m,m},k=(i)=>Object.assign(Object.create(null),i),f=g(Bun._Path()),q=g(Bun._Path(!1)),v=g(Bun._Path(!0));f.win32=v;f.posix=q;var{basename:y,dirname:z,extname:A,format:B,isAbsolute:C,join:D,normalize:E,parse:F,relative:G,resolve:H,toNamespacedPath:I,sep:J,delimiter:K,__esModule:L}=f;f[Symbol.for("CommonJS")]=0;f.__esModule=!0;var O=f;export{v as win32,I as toNamespacedPath,J as sep,H as resolve,G as relative,q as posix,F as parse,E as normalize,D as join,C as isAbsolute,B as format,A as extname,z as dirname,K as delimiter,O as default,k as createModule,y as basename,L as __esModule};
+var bound = function(obj) {
+  var result = createModule({
+    basename: obj.basename.bind(obj),
+    dirname: obj.dirname.bind(obj),
+    extname: obj.extname.bind(obj),
+    format: obj.format.bind(obj),
+    isAbsolute: obj.isAbsolute.bind(obj),
+    join: obj.join.bind(obj),
+    normalize: obj.normalize.bind(obj),
+    parse: obj.parse.bind(obj),
+    relative: obj.relative.bind(obj),
+    resolve: obj.resolve.bind(obj),
+    toNamespacedPath: obj.toNamespacedPath.bind(obj),
+    sep: obj.sep,
+    delimiter: obj.delimiter
+  });
+  return result.default = result, result;
+}, createModule = (obj) => Object.assign(Object.create(null), obj), path = bound(Bun._Path()), posix = bound(Bun._Path(!1)), win32 = bound(Bun._Path(!0));
+path.win32 = win32;
+path.posix = posix;
+var {
+  basename,
+  dirname,
+  extname,
+  format,
+  isAbsolute,
+  join,
+  normalize,
+  parse,
+  relative,
+  resolve,
+  toNamespacedPath,
+  sep,
+  delimiter,
+  __esModule
+} = path;
+path[Symbol.for("CommonJS")] = 0;
+path.__esModule = !0;
+var path_default = path;
+export {
+  win32,
+  toNamespacedPath,
+  sep,
+  resolve,
+  relative,
+  posix,
+  parse,
+  normalize,
+  join,
+  isAbsolute,
+  format,
+  extname,
+  dirname,
+  delimiter,
+  path_default as default,
+  createModule,
+  basename,
+  __esModule
+};

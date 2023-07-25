@@ -4168,7 +4168,7 @@ pub const File = struct {
 
         pub fn scheduleMainThreadTask(this: *File) void {
             this.concurrent.main_thread_task.ctx = this;
-            this.loop.enqueueTaskConcurrent(this.concurrent.concurrent_task.from(&this.concurrent.main_thread_task));
+            this.loop.enqueueTaskConcurrent(this.concurrent.concurrent_task.from(&this.concurrent.main_thread_task, .manual_deinit));
         }
 
         fn runAsync(this: *File) void {
@@ -4579,12 +4579,12 @@ pub fn NewReadyWatcher(
                 return this.is_fifo;
             }
 
-            if (this.poll_ref != null) {
-                return true;
+            if (this.poll_ref) |_poll_ref| {
+                return _poll_ref.flags.contains(.fifo);
             }
 
             if (comptime @hasField(Context, "mode")) {
-                return std.os.S.ISFIFO(this.mode) or std.os.S.ISCHR(this.mode);
+                return std.os.S.ISFIFO(this.mode);
             }
 
             return false;

@@ -262,8 +262,8 @@ public:
 
     JSC::JSFunction* emitReadableNextTickFunction() { return m_emitReadableNextTickFunction.getInitializedOnMainThread(this); }
 
-    JSObject* importMetaRequireFunctionUnbound() { return m_importMetaRequireFunctionUnbound.getInitializedOnMainThread(this); }
-    JSObject* importMetaRequireResolveFunctionUnbound() { return m_importMetaRequireResolveFunctionUnbound.getInitializedOnMainThread(this); }
+    JSObject* requireFunctionUnbound() { return m_requireFunctionUnbound.getInitializedOnMainThread(this); }
+    JSObject* requireResolveFunctionUnbound() { return m_requireResolveFunctionUnbound.getInitializedOnMainThread(this); }
 
     JSObject* lazyRequireCacheObject() { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
 
@@ -377,6 +377,7 @@ public:
     mutable WriteBarrier<JSFunction> m_readableStreamToBlob;
     mutable WriteBarrier<JSFunction> m_readableStreamToJSON;
     mutable WriteBarrier<JSFunction> m_readableStreamToText;
+    mutable WriteBarrier<JSFunction> m_readableStreamToFormData;
     mutable WriteBarrier<Unknown> m_JSBufferSetterValue;
     mutable WriteBarrier<Unknown> m_JSFetchHeadersSetterValue;
     mutable WriteBarrier<Unknown> m_JSMessageEventSetterValue;
@@ -522,8 +523,8 @@ private:
     LazyProperty<JSGlobalObject, Structure> m_commonJSModuleObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSFunctionArgumentsStructure;
 
-    LazyProperty<JSGlobalObject, JSC::JSObject> m_importMetaRequireFunctionUnbound;
-    LazyProperty<JSGlobalObject, JSC::JSObject> m_importMetaRequireResolveFunctionUnbound;
+    LazyProperty<JSGlobalObject, JSC::JSObject> m_requireFunctionUnbound;
+    LazyProperty<JSGlobalObject, JSC::JSObject> m_requireResolveFunctionUnbound;
     LazyProperty<JSGlobalObject, JSC::Structure> m_importMetaObjectStructure;
     LazyProperty<JSGlobalObject, JSC::Structure> m_asyncBoundFunctionStructure;
 

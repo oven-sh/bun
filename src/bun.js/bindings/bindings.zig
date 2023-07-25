@@ -2890,6 +2890,7 @@ pub const JSGlobalObject = extern struct {
     extern fn ZigGlobalObject__readableStreamToArrayBuffer(*JSGlobalObject, JSValue) JSValue;
     extern fn ZigGlobalObject__readableStreamToText(*JSGlobalObject, JSValue) JSValue;
     extern fn ZigGlobalObject__readableStreamToJSON(*JSGlobalObject, JSValue) JSValue;
+    extern fn ZigGlobalObject__readableStreamToFormData(*JSGlobalObject, JSValue, JSValue) JSValue;
     extern fn ZigGlobalObject__readableStreamToBlob(*JSGlobalObject, JSValue) JSValue;
 
     pub fn readableStreamToArrayBuffer(this: *JSGlobalObject, value: JSValue) JSValue {
@@ -2910,6 +2911,11 @@ pub const JSGlobalObject = extern struct {
     pub fn readableStreamToBlob(this: *JSGlobalObject, value: JSValue) JSValue {
         if (comptime is_bindgen) unreachable;
         return ZigGlobalObject__readableStreamToBlob(this, value);
+    }
+
+    pub fn readableStreamToFormData(this: *JSGlobalObject, value: JSValue, content_type: JSValue) JSValue {
+        if (comptime is_bindgen) unreachable;
+        return ZigGlobalObject__readableStreamToFormData(this, value, content_type);
     }
 
     pub const Extern = [_][]const u8{
@@ -4886,6 +4892,7 @@ pub const JSValue = enum(JSValueReprInt) {
     // - Do not pass the callback as-is to JS; The wrapped object is NOT a function.
     // - If passed to C++, call it with AsyncContextFrame::call() instead of JSC::call()
     pub inline fn withAsyncContextIfNeeded(this: JSValue, global: *JSGlobalObject) JSValue {
+        JSC.markBinding(@src());
         return AsyncContextFrame__withAsyncContextIfNeeded(global, this);
     }
 };
@@ -5076,14 +5083,6 @@ pub const VM = extern struct {
         });
     }
 
-    pub fn doWork(
-        vm: *VM,
-    ) void {
-        return cppFn("doWork", .{
-            vm,
-        });
-    }
-
     pub fn externalMemorySize(vm: *VM) usize {
         return cppFn("externalMemorySize", .{vm});
     }
@@ -5094,7 +5093,7 @@ pub const VM = extern struct {
         return cppFn("blockBytesAllocated", .{vm});
     }
 
-    pub const Extern = [_][]const u8{ "collectAsync", "externalMemorySize", "blockBytesAllocated", "heapSize", "releaseWeakRefs", "throwError", "doWork", "deferGC", "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
+    pub const Extern = [_][]const u8{ "collectAsync", "externalMemorySize", "blockBytesAllocated", "heapSize", "releaseWeakRefs", "throwError", "deferGC", "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
 };
 
 pub const ThrowScope = extern struct {
@@ -5376,6 +5375,89 @@ pub fn untrackFunction(
     JSC.markBinding(@src());
     return private.Bun__untrackFFIFunction(globalObject, value);
 }
+
+pub const URL = opaque {
+    extern fn URL__fromJS(JSValue, *JSC.JSGlobalObject) ?*URL;
+    extern fn URL__fromString(*bun.String) ?*URL;
+    extern fn URL__protocol(*URL) String;
+    extern fn URL__href(*URL) String;
+    extern fn URL__username(*URL) String;
+    extern fn URL__password(*URL) String;
+    extern fn URL__search(*URL) String;
+    extern fn URL__host(*URL) String;
+    extern fn URL__hostname(*URL) String;
+    extern fn URL__port(*URL) String;
+    extern fn URL__deinit(*URL) void;
+    extern fn URL__pathname(*URL) String;
+    extern fn URL__getHrefFromJS(JSValue, *JSC.JSGlobalObject) String;
+    extern fn URL__getHref(*String) String;
+    pub fn hrefFromString(str: bun.String) String {
+        JSC.markBinding(@src());
+        var input = str;
+        return URL__getHref(&input);
+    }
+
+    /// This percent-encodes the URL, punycode-encodes the hostname, and returns the result
+    /// If it fails, the tag is marked Dead
+    pub fn hrefFromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) String {
+        JSC.markBinding(@src());
+        return URL__getHrefFromJS(value, globalObject);
+    }
+
+    pub fn fromJS(value: JSValue, globalObject: *JSC.JSGlobalObject) ?*URL {
+        JSC.markBinding(@src());
+        return URL__fromJS(value, globalObject);
+    }
+
+    pub fn fromUTF8(input: []const u8) ?*URL {
+        return fromString(String.fromUTF8(input));
+    }
+    pub fn fromString(str: bun.String) ?*URL {
+        JSC.markBinding(@src());
+        var input = str;
+        return URL__fromString(&input);
+    }
+    pub fn protocol(url: *URL) String {
+        JSC.markBinding(@src());
+        return URL__protocol(url);
+    }
+    pub fn href(url: *URL) String {
+        JSC.markBinding(@src());
+        return URL__href(url);
+    }
+    pub fn username(url: *URL) String {
+        JSC.markBinding(@src());
+        return URL__username(url);
+    }
+    pub fn password(url: *URL) String {
+        JSC.markBinding(@src());
+        return URL__password(url);
+    }
+    pub fn search(url: *URL) String {
+        JSC.markBinding(@src());
+        return URL__search(url);
+    }
+    pub fn host(url: *URL) String {
+        JSC.markBinding(@src());
+        return URL__host(url);
+    }
+    pub fn hostname(url: *URL) String {
+        JSC.markBinding(@src());
+        return URL__hostname(url);
+    }
+    pub fn port(url: *URL) String {
+        JSC.markBinding(@src());
+        return URL__port(url);
+    }
+    pub fn deinit(url: *URL) void {
+        JSC.markBinding(@src());
+        return URL__deinit(url);
+    }
+    pub fn pathname(url: *URL) String {
+        JSC.markBinding(@src());
+        return URL__pathname(url);
+    }
+};
 
 pub const URLSearchParams = opaque {
     extern fn URLSearchParams__create(globalObject: *JSGlobalObject, *const ZigString) JSValue;

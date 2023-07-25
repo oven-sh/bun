@@ -143,7 +143,7 @@ describe("readline.clearLine()", () => {
     }, /ERR_INVALID_ARG_TYPE/);
   });
 
-  it("shouldn't throw on on null or undefined stream", done => {
+  it("should not throw on null or undefined stream", done => {
     const { mustCall } = createCallCheckCtx(done);
     // Verify that clearLine() does not throw on null or undefined stream.
     assert.strictEqual(readline.clearLine(null, 0), true);

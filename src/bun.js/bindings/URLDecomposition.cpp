@@ -62,7 +62,7 @@ String URLDecomposition::username() const
 void URLDecomposition::setUsername(StringView user)
 {
     auto fullURL = this->fullURL();
-    if (fullURL.host().isEmpty() || fullURL.cannotBeABaseURL() || fullURL.protocolIs("file"_s))
+    if (fullURL.host().isEmpty() || fullURL.protocolIsFile())
         return;
     fullURL.setUser(user);
     setFullURL(fullURL);
@@ -76,7 +76,7 @@ String URLDecomposition::password() const
 void URLDecomposition::setPassword(StringView password)
 {
     auto fullURL = this->fullURL();
-    if (fullURL.host().isEmpty() || fullURL.cannotBeABaseURL() || fullURL.protocolIs("file"_s))
+    if (fullURL.host().isEmpty() || fullURL.protocolIsFile())
         return;
     fullURL.setPassword(password);
     setFullURL(fullURL);
@@ -100,14 +100,14 @@ static unsigned countASCIIDigits(StringView string)
 void URLDecomposition::setHost(StringView value)
 {
     auto fullURL = this->fullURL();
-    if (value.isEmpty() && !fullURL.protocolIs("file"_s) && fullURL.hasSpecialScheme())
+    if (value.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
         return;
 
     size_t separator = value.reverseFind(':');
     if (!separator)
         return;
 
-    if (fullURL.cannotBeABaseURL() || !fullURL.canSetHostOrPort())
+    if (fullURL.hasOpaquePath())
         return;
 
     // No port if no colon or rightmost colon is within the IPv6 section.
@@ -120,13 +120,13 @@ void URLDecomposition::setHost(StringView value)
             return;
         unsigned portLength = countASCIIDigits(value.substring(separator + 1));
         if (!portLength) {
-            fullURL.setHost(value.substring(0, separator));
+            fullURL.setHost(value.left(separator));
         } else {
             auto portNumber = parseInteger<uint16_t>(value.substring(separator + 1, portLength));
             if (portNumber && WTF::isDefaultPortForProtocol(*portNumber, fullURL.protocol()))
-                fullURL.setHostAndPort(value.substring(0, separator));
+                fullURL.setHostAndPort(value.left(separator));
             else
-                fullURL.setHostAndPort(value.substring(0, separator + 1 + portLength));
+                fullURL.setHostAndPort(value.left(separator + 1 + portLength));
         }
     }
     if (fullURL.isValid())
@@ -138,24 +138,12 @@ String URLDecomposition::hostname() const
     return fullURL().host().toString();
 }
 
-static StringView removeAllLeadingSolidusCharacters(StringView string)
-{
-    unsigned i;
-    unsigned length = string.length();
-    for (i = 0; i < length; ++i) {
-        if (string[i] != '/')
-            break;
-    }
-    return string.substring(i);
-}
-
-void URLDecomposition::setHostname(StringView value)
+void URLDecomposition::setHostname(StringView host)
 {
     auto fullURL = this->fullURL();
-    auto host = removeAllLeadingSolidusCharacters(value);
-    if (host.isEmpty() && !fullURL.protocolIs("file"_s) && fullURL.hasSpecialScheme())
+    if (host.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
         return;
-    if (fullURL.cannotBeABaseURL() || !fullURL.canSetHostOrPort())
+    if (fullURL.hasOpaquePath())
         return;
     fullURL.setHost(host);
     if (fullURL.isValid())
@@ -200,7 +188,7 @@ static std::optional<std::optional<uint16_t>> parsePort(StringView string, Strin
 void URLDecomposition::setPort(StringView value)
 {
     auto fullURL = this->fullURL();
-    if (fullURL.host().isEmpty() || fullURL.cannotBeABaseURL() || fullURL.protocolIs("file"_s) || !fullURL.canSetHostOrPort())
+    if (fullURL.host().isEmpty() || fullURL.protocolIsFile())
         return;
     auto port = parsePort(value, fullURL.protocol());
     if (!port)
@@ -217,7 +205,7 @@ String URLDecomposition::pathname() const
 void URLDecomposition::setPathname(StringView value)
 {
     auto fullURL = this->fullURL();
-    if (fullURL.cannotBeABaseURL() || !fullURL.canSetPathname())
+    if (fullURL.hasOpaquePath())
         return;
     fullURL.setPath(value);
     setFullURL(fullURL);
@@ -236,7 +224,6 @@ void URLDecomposition::setSearch(const String& value)
         // If the given value is the empty string, set url's query to null.
         fullURL.setQuery({});
     } else {
-        String newSearch = value;
         // Make sure that '#' in the query does not leak to the hash.
         fullURL.setQuery(makeStringByReplacingAll(value, '#', "%23"_s));
     }

@@ -34,6 +34,4 @@ For example, when the client sends `"foo"`, the server sends back `"John: foo"` 
 
 The client script waits until it receives all the messages for each client before sending the next batch of messages.
 
-TODO: once Deno lands their performance improvements, increase the client count (it was originally going to be 32 or 64, but that would've exluded Deno from the benchmark)
-
 This project was created using `bun init` in bun v0.2.1. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.

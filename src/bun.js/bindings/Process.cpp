@@ -379,13 +379,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
             return JSC::JSValue::encode(JSC::JSValue {});
         }
 
-        int extiCode32 = arg0.toInt32(globalObject);
+        int extiCode32 = arg0.toInt32(globalObject) % 256;
         RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
-
-        if (extiCode32 < 0 || extiCode32 > 127) {
-            throwRangeError(globalObject, throwScope, "The \"code\" argument must be an integer between 0 and 127"_s);
-            return JSC::JSValue::encode(JSC::JSValue {});
-        }
 
         exitCode = static_cast<uint8_t>(extiCode32);
     } else if (!arg0.isUndefinedOrNull()) {
@@ -1142,13 +1137,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
             return JSC::JSValue::encode(JSC::JSValue {});
         }
 
-        int extiCode32 = arg0.toInt32(globalObject);
+        int extiCode32 = arg0.toInt32(globalObject) % 256;
         RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
-
-        if (extiCode32 < 0 || extiCode32 > 127) {
-            throwRangeError(globalObject, throwScope, "The \"code\" argument must be an integer between 0 and 127"_s);
-            return JSC::JSValue::encode(JSC::JSValue {});
-        }
 
         exitCode = static_cast<uint8_t>(extiCode32);
     } else if (!arg0.isUndefinedOrNull()) {
@@ -1775,7 +1765,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
   _getActiveRequests               Process_stubFunctionReturningArray       Function 0
   _getActiveHandles                Process_stubFunctionReturningArray       Function 0
   _linkedBinding                   Process_stubEmptyFunction                Function 0
-  _preload_modules                 Process_stubEmptyObject                  PropertyCallback
+  _preload_modules                 Process_stubEmptyArray                   PropertyCallback
   _rawDebug                        Process_stubEmptyFunction                Function 0
   _startProfilerIdleNotifier       Process_stubEmptyFunction                Function 0
   _stopProfilerIdleNotifier        Process_stubEmptyFunction                Function 0

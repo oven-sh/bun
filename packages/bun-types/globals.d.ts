@@ -3545,23 +3545,27 @@ declare var Worker: {
 
 interface WorkerOptions {
   name?: string;
-  bun?: {
-    /**
-     * Use less memory, but make the worker slower.
-     *
-     * Internally, this sets the heap size configuration in JavaScriptCore to be
-     * the small heap instead of the large heap.
-     */
-    smol?: boolean;
 
-    /**
-     * When `true`, the worker will keep the parent thread alive until the worker is terminated or `unref`'d.
-     * When `false`, the worker will not keep the parent thread alive.
-     *
-     * By default, this is `false`.
-     */
-    ref?: boolean;
-  };
+  /**
+   * Use less memory, but make the worker slower.
+   *
+   * Internally, this sets the heap size configuration in JavaScriptCore to be
+   * the small heap instead of the large heap.
+   */
+  smol?: boolean;
+
+  /**
+   * When `true`, the worker will keep the parent thread alive until the worker is terminated or `unref`'d.
+   * When `false`, the worker will not keep the parent thread alive.
+   *
+   * By default, this is `false`.
+   */
+  ref?: boolean;
+
+  /**
+   * Does nothing in Bun
+   */
+  type?: string
 }
 
 interface WorkerEventMap {

@@ -137,19 +137,15 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::const
             }
         }
 
-        if (auto bunValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "bun"_s))) {
-            if (bunValue.isObject()) {
-                if (auto* bunObject = bunValue.getObject()) {
-                    if (auto miniModeValue = bunObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "smol"_s))) {
-                        options.bun.mini = miniModeValue.toBoolean(lexicalGlobalObject);
-                        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-                    }
+        if (auto* bunObject = optionsObject) {
+            if (auto miniModeValue = bunObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "smol"_s))) {
+                options.bun.mini = miniModeValue.toBoolean(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+            }
 
-                    if (auto ref = bunObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "ref"_s))) {
-                        options.bun.unref = !ref.toBoolean(lexicalGlobalObject);
-                        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-                    }
-                }
+            if (auto ref = bunObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "ref"_s))) {
+                options.bun.unref = !ref.toBoolean(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
             }
         }
     }

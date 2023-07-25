@@ -1005,12 +1005,12 @@ pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.
         };
     };
 
-    if (mode_int < 0 or mode_int > 0o777) {
-        JSC.throwInvalidArguments("Invalid mode: must be an octal number", .{}, ctx, exception);
+    if (mode_int < 0) {
+        JSC.throwInvalidArguments("Invalid mode: must be greater than or equal to 0.", .{}, ctx, exception);
         return null;
     }
 
-    return mode_int;
+    return mode_int & 0o777;
 }
 
 pub const PathOrFileDescriptor = union(Tag) {
@@ -1682,6 +1682,87 @@ pub const Path = struct {
 
         return JSC.ZigString.init(out).withEncoding().toValueGC(globalThis);
     }
+
+    fn dirnameWindows(path: []const u8) []const u8 {
+        if (path.len == 0)
+            return ".";
+
+        const root_slice = std.fs.path.diskDesignatorWindows(path);
+        if (path.len == root_slice.len)
+            return root_slice;
+
+        const have_root_slash = path.len > root_slice.len and (path[root_slice.len] == '/' or path[root_slice.len] == '\\');
+
+        var end_index: usize = path.len - 1;
+
+        while (path[end_index] == '/' or path[end_index] == '\\') {
+            // e.g. '\\' => "\\"
+            if (end_index == 0) {
+                return path[0..1];
+            }
+            end_index -= 1;
+        }
+
+        while (path[end_index] != '/' and path[end_index] != '\\') {
+            if (end_index == 0) {
+                if (root_slice.len == 0) {
+                    return ".";
+                }
+                if (have_root_slash) {
+                    // e.g. "c:\\" => "c:\\"
+                    return path[0 .. root_slice.len + 1];
+                } else {
+                    // e.g. "c:foo" => "c:"
+                    return root_slice;
+                }
+            }
+            end_index -= 1;
+        }
+
+        if (have_root_slash and end_index == root_slice.len) {
+            end_index += 1;
+        }
+
+        return path[0..end_index];
+    }
+
+    fn dirnamePosix(path: []const u8) []const u8 {
+        if (path.len == 0)
+            return ".";
+
+        var end_index: usize = path.len - 1;
+
+        while (path[end_index] == '/') {
+            // e.g. "////" => "/"
+            if (end_index == 0) {
+                return "/";
+            }
+            end_index -= 1;
+        }
+
+        while (path[end_index] != '/') {
+            if (end_index == 0) {
+                // e.g. "a/", "a"
+                return ".";
+            }
+            end_index -= 1;
+        }
+
+        // e.g. "/a/" => "/"
+        if (end_index == 0 and path[0] == '/') {
+            return "/";
+        }
+
+        // "a/b" => "a" or "//b" => "//"
+        if (end_index <= 1) {
+            if (path[0] == '/' and path[1] == '/') {
+                end_index += 1;
+            }
+        }
+
+        return path[0..end_index];
+    }
+
     pub fn dirname(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
         if (args_len == 0) {
@@ -1697,11 +1778,11 @@ pub const Path = struct {
         const base_slice = path.slice();
 
         const out = if (isWindows)
-            std.fs.path.dirnameWindows(base_slice) orelse "."
+            @This().dirnameWindows(base_slice)
         else
-            std.fs.path.dirnamePosix(base_slice) orelse ".";
+            @This().dirnamePosix(base_slice);
 
-        return JSC.ZigString.init(out).toValueGC(globalThis);
+        return JSC.ZigString.init(out).withEncoding().toValueGC(globalThis);
     }
     pub fn extname(globalThis: *JSC.JSGlobalObject, _: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
@@ -1738,23 +1819,23 @@ pub const Path = struct {
         var name_with_ext = JSC.ZigString.Empty;
 
         var insert_separator = true;
-        if (path_object.get(globalThis, "dir")) |prop| {
+        if (path_object.getTruthy(globalThis, "dir")) |prop| {
             prop.toZigString(&dir, globalThis);
             insert_separator = !dir.isEmpty();
-        } else if (path_object.get(globalThis, "root")) |prop| {
+        } else if (path_object.getTruthy(globalThis, "root")) |prop| {
             prop.toZigString(&dir, globalThis);
         }
 
-        if (path_object.get(globalThis, "base")) |prop| {
+        if (path_object.getTruthy(globalThis, "base")) |prop| {
             prop.toZigString(&name_with_ext, globalThis);
         } else {
             var had_ext = false;
-            if (path_object.get(globalThis, "ext")) |prop| {
+            if (path_object.getTruthy(globalThis, "ext")) |prop| {
                 prop.toZigString(&ext, globalThis);
                 had_ext = !ext.isEmpty();
             }
 
-            if (path_object.get(globalThis, "name")) |prop| {
+            if (path_object.getTruthy(globalThis, "name")) |prop| {
                 if (had_ext) {
                     prop.toZigString(&name_, globalThis);
                 } else {
@@ -2217,16 +2298,16 @@ pub const Process = struct {
         }
     }
 
-    pub fn exit(globalObject: *JSC.JSGlobalObject, code: i32) callconv(.C) void {
+    pub fn exit(globalObject: *JSC.JSGlobalObject, code: u8) callconv(.C) void {
         var vm = globalObject.bunVM();
         if (vm.worker) |worker| {
-            vm.exit_handler.exit_code = @as(u8, @truncate(@max(code, 0)));
+            vm.exit_handler.exit_code = code;
             worker.terminate();
             return;
         }
 
         vm.onExit();
-        std.os.exit(@as(u8, @truncate(@as(u32, @intCast(@max(code, 0))))));
+        std.os.exit(code);
     }
 
     pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;

@@ -68,7 +68,7 @@ pub const Registry = struct {
 
         pub fn fromAPI(name: string, registry_: Api.NpmRegistry, allocator: std.mem.Allocator, env: *DotEnv.Loader) !Scope {
             var registry = registry_;
-            var url = URL.parse(registry.url);
+            var url = try URL.fromUTF8(bun.default_allocator, registry.url);
             var auth: string = "";
 
             if (registry.token.len == 0) {

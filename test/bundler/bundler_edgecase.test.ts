@@ -21,6 +21,24 @@ describe("bundler", () => {
       stdout: "object",
     },
   });
+  itBundled("edgecase/NestedRedirectToABuiltin", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as path from './module.cjs';
+        console.log(path.join('a', 'b'))
+      `,
+      "/module.cjs": /* js */ `
+        module.exports = require('./2nd')
+      `,
+      "/2nd.js": /* js */ `
+        module.exports = require('path')
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: "a/b",
+    },
+  });
   itBundled("edgecase/ImportStarFunction", {
     files: {
       "/entry.js": /* js */ `

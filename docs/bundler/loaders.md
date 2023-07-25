@@ -10,7 +10,7 @@ Bun uses the file extension to determine which built-in _loader_ should be used 
 
 **JavaScript**. Default for `.cjs` and `.mjs`.
 
-Parses the code and applies a set if default transforms, like dead-code elimination, tree shaking, and environment variable inlining. Note that Bun does not attempt to down-convert syntax at the moment.
+Parses the code and applies a set of default transforms, like dead-code elimination, tree shaking, and environment variable inlining. Note that Bun does not attempt to down-convert syntax at the moment.
 
 ### `jsx`
 

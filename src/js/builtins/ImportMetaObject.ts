@@ -214,10 +214,6 @@ export function createRequireCache() {
   });
 }
 
-export function require(this: string, name) {
-  return $internalRequire($resolveSync(name, $toString(this), false));
-}
-
 $getter;
 export function main(this: ImportMetaObject) {
   return this.path === Bun.main;

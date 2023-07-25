@@ -2,6 +2,7 @@
 
 #include "./NodeModuleModule.h"
 
+#include "CommonJSModuleRecord.h"
 #include "ImportMetaObject.h"
 #include "JavaScriptCore/JSBoundFunction.h"
 #include "JavaScriptCore/ObjectConstructor.h"
@@ -126,14 +127,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
   if (callFrame->argumentCount() < 1) {
     throwTypeError(globalObject, scope,
                    "createRequire() requires at least one argument"_s);
-    return JSC::JSValue::encode(JSC::jsUndefined());
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsUndefined()));
   }
 
   auto val = callFrame->uncheckedArgument(0).toWTFString(globalObject);
   RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-  auto clientData = WebCore::clientData(vm);
   RELEASE_AND_RETURN(
-      scope, JSValue::encode(Zig::ImportMetaObject::createRequireFunction(
+      scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(
                  vm, globalObject, val)));
 }
 extern "C" EncodedJSValue Resolver__nodeModulePathsForJS(JSGlobalObject *,

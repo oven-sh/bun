@@ -1682,9 +1682,9 @@ fn NewPrinter(
         }
 
         pub fn printRequireError(p: *Printer, text: string) void {
-            p.print("(() => { throw (new Error(`Cannot require module ");
+            p.print("(()=>{ throw new Error(`Cannot require module ");
             p.printQuotedUTF8(text, false);
-            p.print("`)); } )()");
+            p.print("`);})()");
         }
 
         pub inline fn importRecord(
@@ -4826,7 +4826,7 @@ fn NewPrinter(
         }
 
         inline fn printDisabledImport(p: *Printer) void {
-            p.print("(() => ({}))");
+            p.print("(()=>({}))");
         }
 
         pub fn printLoadFromBundleWithoutCall(p: *Printer, import_record_index: u32) void {

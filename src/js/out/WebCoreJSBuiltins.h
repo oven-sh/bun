@@ -4172,14 +4172,6 @@ extern const JSC::ConstructAbility s_importMetaObjectCreateRequireCacheCodeConst
 extern const JSC::ConstructorKind s_importMetaObjectCreateRequireCacheCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_importMetaObjectCreateRequireCacheCodeImplementationVisibility;
 
-// require
-#define WEBCORE_BUILTIN_IMPORTMETAOBJECT_REQUIRE 1
-extern const char* const s_importMetaObjectRequireCode;
-extern const int s_importMetaObjectRequireCodeLength;
-extern const JSC::ConstructAbility s_importMetaObjectRequireCodeConstructAbility;
-extern const JSC::ConstructorKind s_importMetaObjectRequireCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_importMetaObjectRequireCodeImplementationVisibility;
-
 // main
 #define WEBCORE_BUILTIN_IMPORTMETAOBJECT_MAIN 1
 extern const char* const s_importMetaObjectMainCode;
@@ -4193,7 +4185,6 @@ extern const JSC::ImplementationVisibility s_importMetaObjectMainCodeImplementat
     macro(requireESM, importMetaObjectRequireESM, 1) \
     macro(internalRequire, importMetaObjectInternalRequire, 1) \
     macro(createRequireCache, importMetaObjectCreateRequireCache, 0) \
-    macro(require, importMetaObjectRequire, 1) \
     macro(main, importMetaObjectMain, 0) \
 
 #define WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(macro) \
@@ -4201,7 +4192,6 @@ extern const JSC::ImplementationVisibility s_importMetaObjectMainCodeImplementat
     macro(importMetaObjectRequireESMCode, requireESM, ASCIILiteral(), s_importMetaObjectRequireESMCodeLength) \
     macro(importMetaObjectInternalRequireCode, internalRequire, ASCIILiteral(), s_importMetaObjectInternalRequireCodeLength) \
     macro(importMetaObjectCreateRequireCacheCode, createRequireCache, ASCIILiteral(), s_importMetaObjectCreateRequireCacheCodeLength) \
-    macro(importMetaObjectRequireCode, require, ASCIILiteral(), s_importMetaObjectRequireCodeLength) \
     macro(importMetaObjectMainCode, main, "get main"_s, s_importMetaObjectMainCodeLength) \
 
 #define WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_FUNCTION_NAME(macro) \
@@ -4209,7 +4199,6 @@ extern const JSC::ImplementationVisibility s_importMetaObjectMainCodeImplementat
     macro(requireESM) \
     macro(internalRequire) \
     macro(createRequireCache) \
-    macro(require) \
     macro(main) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \

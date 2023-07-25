@@ -2284,14 +2284,6 @@ const int s_importMetaObjectCreateRequireCacheCodeLength = 854;
 static const JSC::Intrinsic s_importMetaObjectCreateRequireCacheCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_importMetaObjectCreateRequireCacheCode = "(function (){\"use strict\";var c=new Map,L={};return new Proxy(L,{get(f,_){const h=@requireMap.@get(_);if(h)return h;const t=@Loader.registry.@get(_);if(t\?.evaluated){const u=@Loader.getModuleNamespaceObject(t.module),g=u[@commonJSSymbol]===0||u.default\?.[@commonJSSymbol]\?u.default:u,b=@createCommonJSModule(_,g,!0);return @requireMap.@set(_,b),b}return L[_]},set(f,_,h){return @requireMap.@set(_,h),!0},has(f,_){return @requireMap.@has(_)||@Loader.registry.@has(_)},deleteProperty(f,_){return c.@delete(_),@requireMap.@delete(_),@Loader.registry.@delete(_),!0},ownKeys(f){var _=[...@requireMap.@keys()];const h=[...@Loader.registry.@keys()];for(let t of h)if(!_.includes(t))@arrayPush(_,t);return _},getPrototypeOf(f){return null},getOwnPropertyDescriptor(f,_){if(@requireMap.@has(_)||@Loader.registry.@has(_))return{configurable:!0,enumerable:!0}}})})\n";
 
-// require
-const JSC::ConstructAbility s_importMetaObjectRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_importMetaObjectRequireCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_importMetaObjectRequireCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_importMetaObjectRequireCodeLength = 89;
-static const JSC::Intrinsic s_importMetaObjectRequireCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_importMetaObjectRequireCode = "(function (l){\"use strict\";return @internalRequire(@resolveSync(l,@toString(this),!1))})\n";
-
 // main
 const JSC::ConstructAbility s_importMetaObjectMainCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_importMetaObjectMainCodeConstructorKind = JSC::ConstructorKind::None;

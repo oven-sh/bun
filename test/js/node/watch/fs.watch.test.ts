@@ -344,6 +344,11 @@ describe("fs.watch", () => {
     });
   });
 
+  test("immediately closing works correctly", async () => {
+    for (let i = 0; i < 100; i++) fs.watch(testDir, { persistent: true }).close();
+    for (let i = 0; i < 100; i++) fs.watch(testDir, { persistent: false }).close();
+  });
+
   test("should work with symlink", async () => {
     const filepath = path.join(testDir, "sym-symlink2.txt");
     await fs.promises.symlink(path.join(testDir, "sym-sync.txt"), filepath);

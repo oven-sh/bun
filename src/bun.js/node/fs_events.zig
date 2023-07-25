@@ -414,6 +414,7 @@ pub const FSEventsLoop = struct {
         this.mutex.lock();
         defer this.mutex.unlock();
         this.has_scheduled_watchers = false;
+        const watcher_count = this.watcher_count;
 
         var watchers = this.watchers.slice();
 
@@ -439,7 +440,11 @@ pub const FSEventsLoop = struct {
             CF.Release(cf);
         }
 
-        const paths = bun.default_allocator.alloc(?*anyopaque, this.watcher_count) catch unreachable;
+        if (watcher_count == 0) {
+            return;
+        }
+
+        const paths = bun.default_allocator.alloc(?*anyopaque, watcher_count) catch unreachable;
         var count: u32 = 0;
         for (watchers) |w| {
             if (w) |watcher| {

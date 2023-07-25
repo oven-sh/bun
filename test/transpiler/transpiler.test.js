@@ -2819,6 +2819,16 @@ console.log(foo, array);
       expectPrinted("'a' + ('b' + 'c') + 'd'", '"abcd"');
       expectPrinted("'a' + ('b' + ('c' + 'd'))", '"abcd"');
 
+      function check(input, output) {
+        expect(transpiler.transformSync(input)).toEqual(output);
+      }
+
+      var output = `var boop = "bcd";\nconst ropy = "a" + boop + "d", ropy2 = "b" + boop;\n`;
+      check(`var boop = ('b' + 'c') + 'd'; const ropy = "a" + boop + 'd'; const ropy2 = 'b' + boop;`, output);
+
+      output = `var boop = "fbcd", ropy = "a" + boop + "d", ropy2 = "b" + (ropy + "d");\n`;
+      check(`var boop = "f" + ("b" + "c") + "d";var ropy = "a" + boop + "d";var ropy2 = "b" + (ropy + "d")`, output);
+
       expectPrinted("'string' + `template`", `"stringtemplate"`);
 
       expectPrinted("`template` + 'string'", '"templatestring"');

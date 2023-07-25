@@ -432,7 +432,7 @@ pub const FSEventsLoop = struct {
         // clean old paths
         if (this.paths) |p| {
             this.paths = null;
-            bun.default_allocator.destroy(p);
+            bun.default_allocator.free(p);
         }
         if (this.cf_paths) |cf| {
             this.cf_paths = null;

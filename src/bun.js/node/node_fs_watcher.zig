@@ -879,13 +879,11 @@ pub const FSWatcher = struct {
 
             default_watcher.addFile(fs_type.fd, file_path_clone, FSWatcher.Watcher.getHash(file_path), options.Loader.file, 0, null, false) catch |err| {
                 ctx.deinit();
-                default_watcher.deinit(true);
                 return err;
             };
         } else {
             addDirectory(ctx, default_watcher, fs_type.fd, file_path, args.recursive, &buf, true) catch |err| {
                 ctx.deinit();
-                default_watcher.deinit(true);
                 return err;
             };
         }

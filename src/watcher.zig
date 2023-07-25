@@ -382,6 +382,8 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         pub fn init(ctx: ContextType, fs: *Fs.FileSystem, allocator: std.mem.Allocator) !*Watcher {
             var watcher = try allocator.create(Watcher);
+            errdefer allocator.destroy(watcher);
+
             if (!PlatformWatcher.isRunning()) {
                 try PlatformWatcher.init();
             }

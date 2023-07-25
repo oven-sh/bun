@@ -763,7 +763,7 @@ pub const Resolver = struct {
         kind: ast.ImportKind,
         global_cache: GlobalCache,
     ) Result.Union {
-        const tracer = bun.tracy.traceNamed(@src(), "Resolver.resolveAndAutoInstall");
+        const tracer = bun.tracy.traceNamed(@src(), "ModuleResolver.resolve");
         defer tracer.end();
 
         const original_order = r.extension_order;

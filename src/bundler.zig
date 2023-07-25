@@ -1147,7 +1147,7 @@ pub const Bundler = struct {
         comptime enable_source_map: bool,
         source_map_context: ?js_printer.SourceMapHandler,
     ) !usize {
-        const tracer = bun.tracy.traceNamed(@src(), "Printer.printWithSourceMapMaybe");
+        const tracer = bun.tracy.traceNamed(@src(), if (enable_source_map) "JSPrinter.printWithSourceMap" else "JSPrinter.print");
         defer tracer.end();
 
         var symbols = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{ast.symbols});

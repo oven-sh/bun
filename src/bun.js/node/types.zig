@@ -1782,7 +1782,7 @@ pub const Path = struct {
         else
             @This().dirnamePosix(base_slice);
 
-        return JSC.ZigString.init(out).toValueGC(globalThis);
+        return JSC.ZigString.init(out).withEncoding().toValueGC(globalThis);
     }
     pub fn extname(globalThis: *JSC.JSGlobalObject, _: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();

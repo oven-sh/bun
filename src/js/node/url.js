@@ -823,26 +823,12 @@ function urlToHttpOptions(url) {
 const lazy = $lazy;
 const pathToFileURL = lazy("pathToFileURL");
 const fileURLToPath = lazy("fileURLToPath");
-const defaultObject = {
+
+export default {
   parse: urlParse,
   resolve: urlResolve,
   resolveObject: urlResolveObject,
   format: urlFormat,
-  Url,
-  URLSearchParams,
-  URL,
-  pathToFileURL,
-  fileURLToPath,
-  urlToHttpOptions,
-  [Symbol.for("CommonJS")]: 0,
-};
-
-export {
-  defaultObject as default,
-  urlParse as parse,
-  urlResolve as resolve,
-  urlResolveObject as resolveObject,
-  urlFormat as format,
   Url,
   URLSearchParams,
   URL,

@@ -21,7 +21,15 @@
 // AsyncContextData is an immutable array managed in here, formatted [key, value, key, value] where
 // each key is an AsyncLocalStorage object and the value is the associated value.
 //
-const { get, set, cleanupLater } = $lazy("async_hooks");
+const { cleanupLater } = $lazy("async_hooks");
+
+function get(): ReadonlyArray<any> | undefined {
+  return $getInternalField($asyncContext, 0);
+}
+
+function set(contextValue: ReadonlyArray<any> | undefined) {
+  return $putInternalField($asyncContext, 0, contextValue);
+}
 
 class AsyncLocalStorage {
   #disableCalled = false;
@@ -92,6 +100,7 @@ class AsyncLocalStorage {
       set(context);
     }
     try {
+      $debug("Running with context value", get());
       return callback(...args);
     } catch (e) {
       throw e;
@@ -298,16 +307,6 @@ const asyncWrapProviders = {
   INSPECTORJSBINDING: 57,
 };
 
-export {
-  AsyncLocalStorage,
-  createHook,
-  executionAsyncId,
-  triggerAsyncId,
-  executionAsyncResource,
-  asyncWrapProviders,
-  AsyncResource,
-};
-
 export default {
   AsyncLocalStorage,
   createHook,
@@ -316,5 +315,4 @@ export default {
   executionAsyncResource,
   asyncWrapProviders,
   AsyncResource,
-  [Symbol.for("CommonJS")]: 0,
 };

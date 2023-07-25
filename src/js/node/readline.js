@@ -25,10 +25,8 @@
 // ----------------------------------------------------------------------------
 // Section: Imports
 // ----------------------------------------------------------------------------
-var { Array, RegExp, String, Bun } = $lazy("primordials");
-import { EventEmitter } from "node:events";
-import { clearTimeout, setTimeout } from "timers";
-import { StringDecoder } from "string_decoder";
+const EventEmitter = require("node:events");
+const { StringDecoder } = require("node:string_decoder");
 var isWritable;
 
 var { inspect } = Bun;
@@ -2957,7 +2955,7 @@ class Readline {
   #todo = [];
 
   constructor(stream, options = undefined) {
-    isWritable ??= import.meta.require("node:stream").isWritable;
+    isWritable ??= require("node:stream").isWritable;
     if (!isWritable(stream)) throw new ERR_INVALID_ARG_TYPE("stream", "Writable", stream);
     this.#stream = stream;
     if (options?.autoCommit != null) {
@@ -3101,21 +3099,6 @@ var PromisesInterface = class Interface extends _Interface {
 // ----------------------------------------------------------------------------
 // Exports
 // ----------------------------------------------------------------------------
-export var Interface = Interface;
-export var clearLine = clearLine;
-export var clearScreenDown = clearScreenDown;
-export var createInterface = createInterface;
-export var cursorTo = cursorTo;
-export var emitKeypressEvents = emitKeypressEvents;
-export var moveCursor = moveCursor;
-export var promises = {
-  Readline,
-  Interface: PromisesInterface,
-  createInterface(input, output, completer, terminal) {
-    return new PromisesInterface(input, output, completer, terminal);
-  },
-};
-
 export default {
   Interface,
   clearLine,
@@ -3124,7 +3107,13 @@ export default {
   cursorTo,
   emitKeypressEvents,
   moveCursor,
-  promises,
+  promises: {
+    Readline,
+    Interface: PromisesInterface,
+    createInterface(input, output, completer, terminal) {
+      return new PromisesInterface(input, output, completer, terminal);
+    },
+  },
 
   [SymbolFor("__BUN_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__")]: {
     CSI,
@@ -3133,5 +3122,4 @@ export default {
       stripVTControlCharacters,
     },
   },
-  [SymbolFor("CommonJS")]: 0,
 };

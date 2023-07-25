@@ -264,18 +264,7 @@ typedef struct {
     bool shared;
 } Bun__ArrayBuffer;
 
-enum SyntheticModuleType : uint64_t {
-    ObjectModule = 2,
-
-    Buffer = 1024,
-    Process = 1025,
-    Events = 1026,
-    StringDecoder = 1027,
-    Module = 1028,
-    TTY = 1029,
-    NodeUtilTypes = 1030,
-    Constants = 1031,
-};
+#include "../../../js/out/SyntheticModuleType.h"
 
 extern "C" const char* Bun__userAgent;
 

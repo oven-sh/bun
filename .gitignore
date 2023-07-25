@@ -122,6 +122,8 @@ cold-jsc-start.d
 
 /test.ts
 
-src/js/out/modules_dev
+src/js/out/modules*
+src/js/out/functions*
+src/js/out/tmp
 
 make-dev-stats.csv

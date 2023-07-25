@@ -138,7 +138,8 @@
       "cwd": "${fileDirname}",
       "env": {
         "FORCE_COLOR": "1",
-        "BUN_DEBUG_QUIET_LOGS": "1"
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_JSC_useDollarVM": "1"
       },
       "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"

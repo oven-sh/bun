@@ -1371,6 +1371,14 @@ extern const JSC::ConstructAbility s_moduleRequireCodeConstructAbility;
 extern const JSC::ConstructorKind s_moduleRequireCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_moduleRequireCodeImplementationVisibility;
 
+// requireBuiltin
+#define WEBCORE_BUILTIN_MODULE_REQUIREBUILTIN 1
+extern const char* const s_moduleRequireBuiltinCode;
+extern const int s_moduleRequireBuiltinCodeLength;
+extern const JSC::ConstructAbility s_moduleRequireBuiltinCodeConstructAbility;
+extern const JSC::ConstructorKind s_moduleRequireBuiltinCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_moduleRequireBuiltinCodeImplementationVisibility;
+
 // requireResolve
 #define WEBCORE_BUILTIN_MODULE_REQUIRERESOLVE 1
 extern const char* const s_moduleRequireResolveCode;
@@ -1382,16 +1390,19 @@ extern const JSC::ImplementationVisibility s_moduleRequireResolveCodeImplementat
 #define WEBCORE_FOREACH_MODULE_BUILTIN_DATA(macro) \
     macro(main, moduleMain, 0) \
     macro(require, moduleRequire, 1) \
+    macro(requireBuiltin, moduleRequireBuiltin, 0) \
     macro(requireResolve, moduleRequireResolve, 1) \
 
 #define WEBCORE_FOREACH_MODULE_BUILTIN_CODE(macro) \
     macro(moduleMainCode, main, "get main"_s, s_moduleMainCodeLength) \
     macro(moduleRequireCode, require, ASCIILiteral(), s_moduleRequireCodeLength) \
+    macro(moduleRequireBuiltinCode, requireBuiltin, ASCIILiteral(), s_moduleRequireBuiltinCodeLength) \
     macro(moduleRequireResolveCode, requireResolve, ASCIILiteral(), s_moduleRequireResolveCodeLength) \
 
 #define WEBCORE_FOREACH_MODULE_BUILTIN_FUNCTION_NAME(macro) \
     macro(main) \
     macro(require) \
+    macro(requireBuiltin) \
     macro(requireResolve) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \

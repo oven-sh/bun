@@ -1,13 +1,9 @@
-export var ReadStream;
-export var WriteStream;
-
-import { EventEmitter } from "node:events";
-
 // Hardcoded module "node:fs"
-var { direct, isPromise, isCallable } = $lazy("primordials");
-import promises from "node:fs/promises";
-export { default as promises } from "node:fs/promises";
-import * as Stream from "node:stream";
+var ReadStream;
+var WriteStream;
+const EventEmitter = require("node:events");
+const promises = require("node:fs/promises");
+const Stream = require("node:stream");
 
 var fs = Bun.fs();
 var debug = process.env.DEBUG ? console.log : () => {};
@@ -68,7 +64,7 @@ class FSWatcher extends EventEmitter {
     this.#watcher?.unref();
   }
 }
-export var access = function access(...args) {
+var access = function access(...args) {
     callbackify(fs.accessSync, args);
   },
   appendFile = function appendFile(...args) {
@@ -419,7 +415,7 @@ ReadStream = (function (InternalReadStream) {
       // Get the stream controller
       // We need the pointer to the underlying stream controller for the NativeReadable
       var stream = fileRef.stream();
-      var native = direct(stream);
+      var native = $direct(stream);
       if (!native) {
         debug("no native readable stream");
         throw new Error("no native readable stream");
@@ -600,9 +596,9 @@ ReadStream = (function (InternalReadStream) {
       this[kIoDone] = false;
       var res = super._read(n);
       debug("res -- undefined? why?", res);
-      if (isPromise(res)) {
+      if ($isPromise(res)) {
         var then = res?.then;
-        if (then && isCallable(then)) {
+        if (then && $isCallable(then)) {
           then(
             () => {
               this[kIoDone] = true;
@@ -671,7 +667,7 @@ ReadStream = (function (InternalReadStream) {
   },
 );
 
-export function createReadStream(path, options) {
+function createReadStream(path, options) {
   return new ReadStream(path, options);
 }
 
@@ -993,7 +989,7 @@ WriteStream = (function (InternalWriteStream) {
   },
 );
 
-export function createWriteStream(path, options) {
+function createWriteStream(path, options) {
   // const WriteStream = getLazyWriteStream();
   return new WriteStream(path, options);
 }
@@ -1043,7 +1039,6 @@ realpath.native = realpath;
 realpathSync.native = realpathSync;
 
 export default {
-  [Symbol.for("CommonJS")]: 0,
   access,
   accessSync,
   appendFile,
@@ -1141,5 +1136,3 @@ export default {
   //   return getLazyReadStream();
   // },
 };
-
-export { constants } from "node:fs/promises";

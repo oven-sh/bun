@@ -32,10 +32,7 @@ export function binding(bindingName) {
   var cache = globalThis.Symbol.for("process.bindings.constants");
   var constants = globalThis[cache];
   if (!constants) {
-    // TODO: make this less hacky.
-    // This calls require("node:fs").constants
-    // except, outside an ESM module.
-    const { constants: fs } = $lazy("createImportMeta", "node:process").require("node:fs");
+    const { constants: fs } = $requireBuiltin("node:fs");
     constants = {
       fs,
       zlib: {},
@@ -48,16 +45,10 @@ export function binding(bindingName) {
 }
 
 export function getStdioWriteStream(fd_, getWindowSize) {
-  var require = path => {
-    var existing = $requireMap.get(path);
-    if (existing) return existing.exports;
-
-    return $internalRequire(path);
-  };
-  var module = { path: "node:process", require };
+  var EventEmitter = $requireBuiltin("node:events");
 
   function createStdioWriteStream(fd_) {
-    var { Duplex, eos, destroy } = require("node:stream");
+    var { Duplex, eos, destroy } = $requireBuiltin("node:stream");
     var StdioWriteStream = class StdioWriteStream extends Duplex {
       #writeStream;
       #readStream;
@@ -73,7 +64,7 @@ export function getStdioWriteStream(fd_, getWindowSize) {
       #isTTY;
 
       get isTTY() {
-        return (this.#isTTY ??= require("node:tty").isatty(fd_));
+        return (this.#isTTY ??= $requireBuiltin("node:tty").isatty(fd_));
       }
 
       get fd() {
@@ -212,8 +203,6 @@ export function getStdioWriteStream(fd_, getWindowSize) {
     };
     return new StdioWriteStream(fd_);
   }
-
-  var { EventEmitter } = require("node:events");
 
   function isFastEncoding(encoding) {
     if (!encoding) return true;
@@ -502,11 +491,9 @@ export function getStdinStream(fd_) {
   var require = path => {
     var existing = $requireMap.get(path);
     if (existing) return existing.exports;
-
     return $internalRequire(path);
   };
 
-  var module = { path: "node:process", require: require };
   var { Duplex, eos, destroy } = require("node:stream");
 
   var StdinStream = class StdinStream extends Duplex {

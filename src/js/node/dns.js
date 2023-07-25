@@ -1,7 +1,6 @@
 // Hardcoded module "node:dns"
 // only resolve4, resolve, lookup, resolve6 and resolveSrv are implemented.
-
-const { dns } = globalThis.Bun;
+const dns = Bun.dns;
 
 function lookup(domain, options, callback) {
   if (typeof options == "function") {
@@ -435,7 +434,7 @@ function Resolver(options) {
 Object.setPrototypeOf(Resolver.prototype, InternalResolver.prototype);
 Object.setPrototypeOf(Resolver, InternalResolver);
 
-export var {
+var {
   resolve,
   resolve4,
   resolve6,
@@ -478,7 +477,7 @@ const promisifyResolveX = res => {
 };
 
 // promisified versions
-export const promises = {
+const promises = {
   lookup(domain, options) {
     if (options?.all) {
       return dns.lookup(domain, options).then(promisifyLookupAll);
@@ -633,7 +632,7 @@ for (const key of ["resolveAny", "reverse"]) {
   promises[key] = () => Promise.resolve(undefined);
 }
 
-const exports = {
+export default {
   // these are wrong
   ADDRCONFIG: 0,
   ALL: 1,
@@ -685,36 +684,4 @@ const exports = {
   resolveTxt,
   resolveNaptr,
   promises,
-  [Symbol.for("CommonJS")]: 0,
 };
-export default exports;
-export const {
-  ADDRCONFIG,
-  ALL,
-  V4MAPPED,
-  NODATA,
-  FORMERR,
-  SERVFAIL,
-  NOTFOUND,
-  NOTIMP,
-  REFUSED,
-  BADQUERY,
-  BADNAME,
-  BADFAMILY,
-  BADRESP,
-  CONNREFUSED,
-  TIMEOUT,
-  EOF,
-  FILE,
-  NOMEM,
-  DESTRUCTION,
-  BADSTR,
-  BADFLAGS,
-  NONAME,
-  BADHINTS,
-  NOTINITIALIZED,
-  LOADIPHLPAPI,
-  ADDRGETNETWORKPARAMS,
-  CANCELLED,
-} = exports;
-export { lookup, lookupService, Resolver, setServers, setDefaultResultOrder };

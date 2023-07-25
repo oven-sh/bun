@@ -2,11 +2,14 @@
 declare const FFIType: typeof import("bun:ffi").FFIType;
 declare const suffix: typeof import("bun:ffi").suffix;
 
+declare const __GlobalBunFFIPtrFunctionForWrapper: typeof ptr;
+declare const __GlobalBunCString: typeof CString;
+
 var ffi = globalThis.Bun.FFI;
-export const ptr = (arg1, arg2) => (typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2));
-export const toBuffer = ffi.toBuffer;
-export const toArrayBuffer = ffi.toArrayBuffer;
-export const viewSource = ffi.viewSource;
+const ptr = (arg1, arg2) => (typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2));
+const toBuffer = ffi.toBuffer;
+const toArrayBuffer = ffi.toArrayBuffer;
+const viewSource = ffi.viewSource;
 
 const BunCString = ffi.CString;
 const nativeLinkSymbols = ffi.linkSymbols;
@@ -16,7 +19,7 @@ const closeCallback = ffi.closeCallback;
 delete ffi.callback;
 delete ffi.closeCallback;
 
-export class JSCallback {
+class JSCallback {
   constructor(cb, options) {
     const { ctx, ptr } = nativeCallback(options, cb);
     this.#ctx = ctx;
@@ -48,8 +51,8 @@ export class JSCallback {
   }
 }
 
-export class CString extends String {
-  constructor(ptr, byteOffset, byteLength) {
+class CString extends String {
+  constructor(ptr, byteOffset?, byteLength?) {
     super(
       ptr
         ? typeof byteLength === "number" && Number.isSafeInteger(byteLength)
@@ -316,14 +319,14 @@ function FFIBuilder(params, returnType, functionToCall, name) {
   return wrap;
 }
 
-export const native = {
+const native = {
   dlopen: nativeDLOpen,
   callback: () => {
     throw new Error("Deprecated. Use new JSCallback(options, fn) instead");
   },
 };
 
-export function dlopen(path, options) {
+function dlopen(path, options) {
   const result = nativeDLOpen(path, options);
 
   for (let key in result.symbols) {
@@ -349,7 +352,7 @@ export function dlopen(path, options) {
   return result;
 }
 
-export function linkSymbols(options) {
+function linkSymbols(options) {
   const result = nativeLinkSymbols(options);
 
   for (let key in result.symbols) {
@@ -370,7 +373,7 @@ var cFunctionRegistry;
 function onCloseCFunction(close) {
   close();
 }
-export function CFunction(options) {
+function CFunction(options) {
   const identifier = `CFunction${cFunctionI++}`;
   var result = linkSymbols({
     [identifier]: options,
@@ -390,4 +393,20 @@ export function CFunction(options) {
   return result.symbols[identifier];
 }
 
-export const read = ffi.read;
+const read = ffi.read;
+
+export default {
+  CFunction,
+  CString,
+  FFIType,
+  JSCallback,
+  dlopen,
+  linkSymbols,
+  native,
+  ptr,
+  read,
+  suffix,
+  toArrayBuffer,
+  toBuffer,
+  viewSource,
+};

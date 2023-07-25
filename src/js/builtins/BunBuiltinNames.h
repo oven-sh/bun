@@ -1,5 +1,5 @@
+// clang-format off
 #pragma once
-
 
 #ifdef ASSERT_ENABLED
 #if ASSERT_ENABLED
@@ -9,17 +9,12 @@
 #endif
 #endif
 
-
 #include "JavaScriptCore/BuiltinUtils.h"
 #include "root.h"
 
 namespace WebCore {
 
 using namespace JSC;
-
-#if !defined(BUN_ADDITIONAL_PRIVATE_IDENTIFIERS)
-#define BUN_ADDITIONAL_PRIVATE_IDENTIFIERS(macro)
-#endif
 
 #define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
     macro(AbortSignal) \
@@ -66,7 +61,6 @@ using namespace JSC;
     macro(closedPromise) \
     macro(closedPromiseCapability) \
     macro(code) \
-    macro(commonJSSymbol) \
     macro(connect) \
     macro(consumeReadableStream) \
     macro(controlledReadableStream) \
@@ -250,7 +244,9 @@ using namespace JSC;
     macro(writer) \
     macro(writing) \
     macro(written) \
-    BUN_ADDITIONAL_PRIVATE_IDENTIFIERS(macro) \
+    macro(requireBuiltin) \
+    macro(requireId) \
+    macro(createAndLoadBuiltinModule) \
 
 class BunBuiltinNames {
 public:

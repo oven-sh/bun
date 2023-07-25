@@ -14,25 +14,25 @@ namespace WebCore {
 const JSC::ConstructAbility s_bundlerPluginRunSetupFunctionCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_bundlerPluginRunSetupFunctionCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_bundlerPluginRunSetupFunctionCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_bundlerPluginRunSetupFunctionCodeLength = 2165;
+const int s_bundlerPluginRunSetupFunctionCodeLength = 4233;
 static const JSC::Intrinsic s_bundlerPluginRunSetupFunctionCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_bundlerPluginRunSetupFunctionCode = "(function (J,_){\"use strict\";var D=new Map,F=new Map;function H(q,h,E){if(!q||!@isObject(q))@throwTypeError('Expected an object with \"filter\" RegExp');if(!h||!@isCallable(h))@throwTypeError(\"callback must be a function\");var{filter:w,namespace:z=\"file\"}=q;if(!w)@throwTypeError('Expected an object with \"filter\" RegExp');if(!@isRegExpObject(w))@throwTypeError(\"filter must be a RegExp\");if(z&&typeof z!==\"string\")@throwTypeError(\"namespace must be a string\");if((z\?.length\?\?0)===0)z=\"file\";if(!/^([/@a-zA-Z0-9_\\\\-]+)$/.test(z))@throwTypeError(\"namespace can only contain $a-zA-Z0-9_\\\\-\");var A=E.@get(z);if(!A)E.@set(z,[[w,h]]);else @arrayPush(A,[w,h])}function K(q,h){H(q,h,D)}function M(q,h){H(q,h,F)}const I=()=>{var q=!1,h=!1;for(var[E,w]of D.entries())for(var[z]of w)this.addFilter(z,E,1),q=!0;for(var[E,w]of F.entries())for(var[z]of w)this.addFilter(z,E,0),h=!0;if(h){var A=this.onResolve;if(!A)this.onResolve=F;else for(var[E,w]of F.entries()){var C=A.@get(E);if(!C)A.@set(E,w);else A.@set(E,C.concat(w))}}if(q){var G=this.onLoad;if(!G)this.onLoad=D;else for(var[E,w]of D.entries()){var C=G.@get(E);if(!C)G.@set(E,w);else G.@set(E,C.concat(w))}}return q||h};var B=J({config:_,onDispose:()=>@throwTypeError(\"@{@2} is not implemented yet. See https://github.com/oven-sh/bun/issues/@1\"),onEnd:()=>@throwTypeError(\"@{@2} is not implemented yet. See https://github.com/oven-sh/bun/issues/@1\"),onLoad:K,onResolve:M,onStart:()=>@throwTypeError(\"@{@2} is not implemented yet. See https://github.com/oven-sh/bun/issues/@1\"),resolve:()=>@throwTypeError(\"@{@2} is not implemented yet. See https://github.com/oven-sh/bun/issues/@1\"),initialOptions:{..._,bundle:!0,entryPoints:_.entrypoints\?\?_.entryPoints\?\?[],minify:typeof _.minify===\"boolean\"\?_.minify:!1,minifyIdentifiers:_.minify===!0||_.minify\?.identifiers,minifyWhitespace:_.minify===!0||_.minify\?.whitespace,minifySyntax:_.minify===!0||_.minify\?.syntax,outbase:_.root,platform:_.target===\"bun\"\?\"node\":_.target},esbuild:{}});if(B&&@isPromise(B))if(@getPromiseInternalField(B,@promiseFieldFlags)&@promiseStateFulfilled)B=@getPromiseInternalField(B,@promiseFieldReactionsOrResult);else return B.@then(I);return I()})\n";
+const char* const s_bundlerPluginRunSetupFunctionCode = "(function (setup, config) {\"use strict\";\n  var onLoadPlugins = new Map;\n  var onResolvePlugins = new Map;\n  function validate(filterObject, callback, map) {\n    if (!filterObject || !@isObject(filterObject)) {\n      @throwTypeError('Expected an object with \"filter\" RegExp');\n    }\n    if (!callback || !@isCallable(callback)) {\n      @throwTypeError(\"callback must be a function\");\n    }\n    var { filter, namespace = \"file\" } = filterObject;\n    if (!filter) {\n      @throwTypeError('Expected an object with \"filter\" RegExp');\n    }\n    if (!@isRegExpObject(filter)) {\n      @throwTypeError(\"filter must be a RegExp\");\n    }\n    if (namespace && !(typeof namespace === \"string\")) {\n      @throwTypeError(\"namespace must be a string\");\n    }\n    if ((namespace\?.length \?\? 0) === 0) {\n      namespace = \"file\";\n    }\n    if (!/^([/@a-zA-Z0-9_\\\\-]+)$/.test(namespace)) {\n      @throwTypeError(\"namespace can only contain $a-zA-Z0-9_\\\\-\");\n    }\n    var callbacks = map.@get(namespace);\n    if (!callbacks) {\n      map.@set(namespace, [[filter, callback]]);\n    } else {\n      @arrayPush(callbacks, [filter, callback]);\n    }\n  }\n  function onLoad(filterObject, callback) {\n    validate(filterObject, callback, onLoadPlugins);\n  }\n  function onResolve(filterObject, callback) {\n    validate(filterObject, callback, onResolvePlugins);\n  }\n  const processSetupResult = () => {\n    var anyOnLoad = false, anyOnResolve = false;\n    for (var [namespace, callbacks] of onLoadPlugins.entries()) {\n      for (var [filter] of callbacks) {\n        this.addFilter(filter, namespace, 1);\n        anyOnLoad = true;\n      }\n    }\n    for (var [namespace, callbacks] of onResolvePlugins.entries()) {\n      for (var [filter] of callbacks) {\n        this.addFilter(filter, namespace, 0);\n        anyOnResolve = true;\n      }\n    }\n    if (anyOnResolve) {\n      var onResolveObject = this.onResolve;\n      if (!onResolveObject) {\n        this.onResolve = onResolvePlugins;\n      } else {\n        for (var [namespace, callbacks] of onResolvePlugins.entries()) {\n          var existing = onResolveObject.@get(namespace);\n          if (!existing) {\n            onResolveObject.@set(namespace, callbacks);\n          } else {\n            onResolveObject.@set(namespace, existing.concat(callbacks));\n          }\n        }\n      }\n    }\n    if (anyOnLoad) {\n      var onLoadObject = this.onLoad;\n      if (!onLoadObject) {\n        this.onLoad = onLoadPlugins;\n      } else {\n        for (var [namespace, callbacks] of onLoadPlugins.entries()) {\n          var existing = onLoadObject.@get(namespace);\n          if (!existing) {\n            onLoadObject.@set(namespace, callbacks);\n          } else {\n            onLoadObject.@set(namespace, existing.concat(callbacks));\n          }\n        }\n      }\n    }\n    return anyOnLoad || anyOnResolve;\n  };\n  var setupResult = setup({\n    config,\n    onDispose: () => @throwTypeError(`@{@2} is not implemented yet. See https://github.com/oven-sh/bun/issues/@1`),\n    onEnd: () => @throwTypeError(`@{@2} is not implemented yet. See https://github.com/oven-sh/bun/issues/@1`),\n    onLoad,\n    onResolve,\n    onStart: () => @throwTypeError(`@{@2} is not implemented yet. See https://github.com/oven-sh/bun/issues/@1`),\n    resolve: () => @throwTypeError(`@{@2} is not implemented yet. See https://github.com/oven-sh/bun/issues/@1`),\n    initialOptions: {\n      ...config,\n      bundle: true,\n      entryPoints: config.entrypoints \?\? config.entryPoints \?\? [],\n      minify: typeof config.minify === \"boolean\" \? config.minify : false,\n      minifyIdentifiers: config.minify === true || config.minify\?.identifiers,\n      minifyWhitespace: config.minify === true || config.minify\?.whitespace,\n      minifySyntax: config.minify === true || config.minify\?.syntax,\n      outbase: config.root,\n      platform: config.target === \"bun\" \? \"node\" : config.target\n    },\n    esbuild: {}\n  });\n  if (setupResult && @isPromise(setupResult)) {\n    if (@getPromiseInternalField(setupResult, @promiseFieldFlags) & @promiseStateFulfilled) {\n      setupResult = @getPromiseInternalField(setupResult, @promiseFieldReactionsOrResult);\n    } else {\n      return setupResult.@then(processSetupResult);\n    }\n  }\n  return processSetupResult();\n})\n";
 
 // runOnResolvePlugins
 const JSC::ConstructAbility s_bundlerPluginRunOnResolvePluginsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_bundlerPluginRunOnResolvePluginsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_bundlerPluginRunOnResolvePluginsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_bundlerPluginRunOnResolvePluginsCodeLength = 1711;
+const int s_bundlerPluginRunOnResolvePluginsCodeLength = 3203;
 static const JSC::Intrinsic s_bundlerPluginRunOnResolvePluginsCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_bundlerPluginRunOnResolvePluginsCode = "(function (C,E,F,b,G){\"use strict\";const H=[\"entry-point\",\"import-statement\",\"require-call\",\"dynamic-import\",\"require-resolve\",\"import-rule\",\"url-token\",\"internal\"][G];var g=(async(j,q,J,K)=>{var{onResolve:M,onLoad:A}=this,B=M.@get(q);if(!B)return this.onResolveAsync(b,null,null,null),null;for(let[O,Q]of B)if(O.test(j)){var _=Q({path:j,importer:J,namespace:q,kind:K});while(_&&@isPromise(_)&&(@getPromiseInternalField(_,@promiseFieldFlags)&@promiseStateMask)===@promiseStateFulfilled)_=@getPromiseInternalField(_,@promiseFieldReactionsOrResult);if(_&&@isPromise(_))_=await _;if(!_||!@isObject(_))continue;var{path:y,namespace:w=q,external:z}=_;if(typeof y!==\"string\"||typeof w!==\"string\")@throwTypeError(\"onResolve plugins must return an object with a string 'path' and string 'loader' field\");if(!y)continue;if(!w)w=q;if(typeof z!==\"boolean\"&&!@isUndefinedOrNull(z))@throwTypeError('onResolve plugins \"external\" field must be boolean or unspecified');if(!z){if(w===\"file\"){if(darwin!==\"win32\"){if(y[0]!==\"/\"||y.includes(\"..\"))@throwTypeError('onResolve plugin \"path\" must be absolute when the namespace is \"file\"')}}if(w===\"dataurl\"){if(!y.startsWith(\"data:\"))@throwTypeError('onResolve plugin \"path\" must start with \"data:\" when the namespace is \"dataurl\"')}if(w&&w!==\"file\"&&(!A||!A.@has(w)))@throwTypeError(`Expected onLoad plugin for namespace ${w} to exist`)}return this.onResolveAsync(b,y,w,z),null}return this.onResolveAsync(b,null,null,null),null})(C,E,F,H);while(g&&@isPromise(g)&&(@getPromiseInternalField(g,@promiseFieldFlags)&@promiseStateMask)===@promiseStateFulfilled)g=@getPromiseInternalField(g,@promiseFieldReactionsOrResult);if(g&&@isPromise(g))g.then(()=>{},(j)=>{this.addError(b,j,0)})})\n";
+const char* const s_bundlerPluginRunOnResolvePluginsCode = "(function (specifier, inputNamespace, importer, internalID, kindId) {\"use strict\";\n  const kind = [\"entry-point\", \"import-statement\", \"require-call\", \"dynamic-import\", \"require-resolve\", \"import-rule\", \"url-token\", \"internal\"][kindId];\n  var promiseResult = (async (inputPath, inputNamespace2, importer2, kind2) => {\n    var { onResolve, onLoad } = this;\n    var results = onResolve.@get(inputNamespace2);\n    if (!results) {\n      this.onResolveAsync(internalID, null, null, null);\n      return null;\n    }\n    for (let [filter, callback] of results) {\n      if (filter.test(inputPath)) {\n        var result = callback({\n          path: inputPath,\n          importer: importer2,\n          namespace: inputNamespace2,\n          kind: kind2\n        });\n        while (result && @isPromise(result) && (@getPromiseInternalField(result, @promiseFieldFlags) & @promiseStateMask) === @promiseStateFulfilled) {\n          result = @getPromiseInternalField(result, @promiseFieldReactionsOrResult);\n        }\n        if (result && @isPromise(result)) {\n          result = await result;\n        }\n        if (!result || !@isObject(result)) {\n          continue;\n        }\n        var { path, namespace: userNamespace = inputNamespace2, external } = result;\n        if (!(typeof path === \"string\") || !(typeof userNamespace === \"string\")) {\n          @throwTypeError(\"onResolve plugins must return an object with a string 'path' and string 'loader' field\");\n        }\n        if (!path) {\n          continue;\n        }\n        if (!userNamespace) {\n          userNamespace = inputNamespace2;\n        }\n        if (typeof external !== \"boolean\" && !@isUndefinedOrNull(external)) {\n          @throwTypeError('onResolve plugins \"external\" field must be boolean or unspecified');\n        }\n        if (!external) {\n          if (userNamespace === \"file\") {\n            if (darwin !== \"win32\") {\n              if (path[0] !== \"/\" || path.includes(\"..\")) {\n                @throwTypeError('onResolve plugin \"path\" must be absolute when the namespace is \"file\"');\n              }\n            } else {\n            }\n          }\n          if (userNamespace === \"dataurl\") {\n            if (!path.startsWith(\"data:\")) {\n              @throwTypeError('onResolve plugin \"path\" must start with \"data:\" when the namespace is \"dataurl\"');\n            }\n          }\n          if (userNamespace && userNamespace !== \"file\" && (!onLoad || !onLoad.@has(userNamespace))) {\n            @throwTypeError(`Expected onLoad plugin for namespace ${userNamespace} to exist`);\n          }\n        }\n        this.onResolveAsync(internalID, path, userNamespace, external);\n        return null;\n      }\n    }\n    this.onResolveAsync(internalID, null, null, null);\n    return null;\n  })(specifier, inputNamespace, importer, kind);\n  while (promiseResult && @isPromise(promiseResult) && (@getPromiseInternalField(promiseResult, @promiseFieldFlags) & @promiseStateMask) === @promiseStateFulfilled) {\n    promiseResult = @getPromiseInternalField(promiseResult, @promiseFieldReactionsOrResult);\n  }\n  if (promiseResult && @isPromise(promiseResult)) {\n    promiseResult.then(() => {\n    }, (e) => {\n      this.addError(internalID, e, 0);\n    });\n  }\n})\n";
 
 // runOnLoadPlugins
 const JSC::ConstructAbility s_bundlerPluginRunOnLoadPluginsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_bundlerPluginRunOnLoadPluginsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_bundlerPluginRunOnLoadPluginsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_bundlerPluginRunOnLoadPluginsCodeLength = 1325;
+const int s_bundlerPluginRunOnLoadPluginsCodeLength = 2400;
 static const JSC::Intrinsic s_bundlerPluginRunOnLoadPluginsCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_bundlerPluginRunOnLoadPluginsCode = "(function (w,F,G,H){\"use strict\";const J={jsx:0,js:1,ts:2,tsx:3,css:4,file:5,json:6,toml:7,wasm:8,napi:9,base64:10,dataurl:11,text:12},K=[\"jsx\",\"js\",\"ts\",\"tsx\",\"css\",\"file\",\"json\",\"toml\",\"wasm\",\"napi\",\"base64\",\"dataurl\",\"text\"][H];var g=(async(j,x,y,z)=>{var B=this.onLoad.@get(y);if(!B)return this.onLoadAsync(j,null,null),null;for(let[Q,T]of B)if(Q.test(x)){var b=T({path:x,namespace:y,loader:z});while(b&&@isPromise(b)&&(@getPromiseInternalField(b,@promiseFieldFlags)&@promiseStateMask)===@promiseStateFulfilled)b=@getPromiseInternalField(b,@promiseFieldReactionsOrResult);if(b&&@isPromise(b))b=await b;if(!b||!@isObject(b))continue;var{contents:q,loader:v=z}=b;if(typeof q!==\"string\"&&!@isTypedArrayView(q))@throwTypeError('onLoad plugins must return an object with \"contents\" as a string or Uint8Array');if(typeof v!==\"string\")@throwTypeError('onLoad plugins must return an object with \"loader\" as a string');const C=J[v];if(C===@undefined)@throwTypeError(`Loader ${v} is not supported.`);return this.onLoadAsync(j,q,C),null}return this.onLoadAsync(j,null,null),null})(w,F,G,K);while(g&&@isPromise(g)&&(@getPromiseInternalField(g,@promiseFieldFlags)&@promiseStateMask)===@promiseStateFulfilled)g=@getPromiseInternalField(g,@promiseFieldReactionsOrResult);if(g&&@isPromise(g))g.then(()=>{},(j)=>{this.addError(w,j,1)})})\n";
+const char* const s_bundlerPluginRunOnLoadPluginsCode = "(function (internalID, path, namespace, defaultLoaderId) {\"use strict\";\n  const LOADERS_MAP = { jsx: 0, js: 1, ts: 2, tsx: 3, css: 4, file: 5, json: 6, toml: 7, wasm: 8, napi: 9, base64: 10, dataurl: 11, text: 12 };\n  const loaderName = [\"jsx\", \"js\", \"ts\", \"tsx\", \"css\", \"file\", \"json\", \"toml\", \"wasm\", \"napi\", \"base64\", \"dataurl\", \"text\"][defaultLoaderId];\n  var promiseResult = (async (internalID2, path2, namespace2, defaultLoader) => {\n    var results = this.onLoad.@get(namespace2);\n    if (!results) {\n      this.onLoadAsync(internalID2, null, null);\n      return null;\n    }\n    for (let [filter, callback] of results) {\n      if (filter.test(path2)) {\n        var result = callback({\n          path: path2,\n          namespace: namespace2,\n          loader: defaultLoader\n        });\n        while (result && @isPromise(result) && (@getPromiseInternalField(result, @promiseFieldFlags) & @promiseStateMask) === @promiseStateFulfilled) {\n          result = @getPromiseInternalField(result, @promiseFieldReactionsOrResult);\n        }\n        if (result && @isPromise(result)) {\n          result = await result;\n        }\n        if (!result || !@isObject(result)) {\n          continue;\n        }\n        var { contents, loader = defaultLoader } = result;\n        if (!(typeof contents === \"string\") && !@isTypedArrayView(contents)) {\n          @throwTypeError('onLoad plugins must return an object with \"contents\" as a string or Uint8Array');\n        }\n        if (!(typeof loader === \"string\")) {\n          @throwTypeError('onLoad plugins must return an object with \"loader\" as a string');\n        }\n        const chosenLoader = LOADERS_MAP[loader];\n        if (chosenLoader === @undefined) {\n          @throwTypeError(`Loader ${loader} is not supported.`);\n        }\n        this.onLoadAsync(internalID2, contents, chosenLoader);\n        return null;\n      }\n    }\n    this.onLoadAsync(internalID2, null, null);\n    return null;\n  })(internalID, path, namespace, loaderName);\n  while (promiseResult && @isPromise(promiseResult) && (@getPromiseInternalField(promiseResult, @promiseFieldFlags) & @promiseStateMask) === @promiseStateFulfilled) {\n    promiseResult = @getPromiseInternalField(promiseResult, @promiseFieldReactionsOrResult);\n  }\n  if (promiseResult && @isPromise(promiseResult)) {\n    promiseResult.then(() => {\n    }, (e) => {\n      this.addError(internalID, e, 1);\n    });\n  }\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -48,25 +48,25 @@ WEBCORE_FOREACH_BUNDLERPLUGIN_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 const JSC::ConstructAbility s_byteLengthQueuingStrategyHighWaterMarkCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_byteLengthQueuingStrategyHighWaterMarkCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_byteLengthQueuingStrategyHighWaterMarkCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_byteLengthQueuingStrategyHighWaterMarkCodeLength = 210;
+const int s_byteLengthQueuingStrategyHighWaterMarkCodeLength = 269;
 static const JSC::Intrinsic s_byteLengthQueuingStrategyHighWaterMarkCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_byteLengthQueuingStrategyHighWaterMarkCode = "(function (){\"use strict\";const c=@getByIdDirectPrivate(this,\"highWaterMark\");if(c===@undefined)@throwTypeError(\"ByteLengthQueuingStrategy.highWaterMark getter called on incompatible |this| value.\");return c})\n";
+const char* const s_byteLengthQueuingStrategyHighWaterMarkCode = "(function () {\"use strict\";\n  const highWaterMark = @getByIdDirectPrivate(this, \"highWaterMark\");\n  if (highWaterMark === @undefined)\n    @throwTypeError(\"ByteLengthQueuingStrategy.highWaterMark getter called on incompatible |this| value.\");\n  return highWaterMark;\n})\n";
 
 // size
 const JSC::ConstructAbility s_byteLengthQueuingStrategySizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_byteLengthQueuingStrategySizeCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_byteLengthQueuingStrategySizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_byteLengthQueuingStrategySizeCodeLength = 49;
+const int s_byteLengthQueuingStrategySizeCodeLength = 63;
 static const JSC::Intrinsic s_byteLengthQueuingStrategySizeCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_byteLengthQueuingStrategySizeCode = "(function (e){\"use strict\";return e.byteLength})\n";
+const char* const s_byteLengthQueuingStrategySizeCode = "(function (chunk) {\"use strict\";\n  return chunk.byteLength;\n})\n";
 
 // initializeByteLengthQueuingStrategy
 const JSC::ConstructAbility s_byteLengthQueuingStrategyInitializeByteLengthQueuingStrategyCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_byteLengthQueuingStrategyInitializeByteLengthQueuingStrategyCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_byteLengthQueuingStrategyInitializeByteLengthQueuingStrategyCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_byteLengthQueuingStrategyInitializeByteLengthQueuingStrategyCodeLength = 121;
+const int s_byteLengthQueuingStrategyInitializeByteLengthQueuingStrategyCodeLength = 147;
 static const JSC::Intrinsic s_byteLengthQueuingStrategyInitializeByteLengthQueuingStrategyCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_byteLengthQueuingStrategyInitializeByteLengthQueuingStrategyCode = "(function (c){\"use strict\";@putByIdDirectPrivate(this,\"highWaterMark\",@extractHighWaterMarkFromQueuingStrategyInit(c))})\n";
+const char* const s_byteLengthQueuingStrategyInitializeByteLengthQueuingStrategyCode = "(function (parameters) {\"use strict\";\n  @putByIdDirectPrivate(this, \"highWaterMark\", @extractHighWaterMarkFromQueuingStrategyInit(parameters));\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -82,393 +82,393 @@ WEBCORE_FOREACH_BYTELENGTHQUEUINGSTRATEGY_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 const JSC::ConstructAbility s_writableStreamInternalsIsWritableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsIsWritableStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsIsWritableStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsIsWritableStreamCodeLength = 94;
+const int s_writableStreamInternalsIsWritableStreamCodeLength = 118;
 static const JSC::Intrinsic s_writableStreamInternalsIsWritableStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsIsWritableStreamCode = "(function (i){\"use strict\";return @isObject(i)&&!!@getByIdDirectPrivate(i,\"underlyingSink\")})\n";
+const char* const s_writableStreamInternalsIsWritableStreamCode = "(function (stream) {\"use strict\";\n  return @isObject(stream) && !!@getByIdDirectPrivate(stream, \"underlyingSink\");\n})\n";
 
 // isWritableStreamDefaultWriter
 const JSC::ConstructAbility s_writableStreamInternalsIsWritableStreamDefaultWriterCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsIsWritableStreamDefaultWriterCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsIsWritableStreamDefaultWriterCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsIsWritableStreamDefaultWriterCodeLength = 93;
+const int s_writableStreamInternalsIsWritableStreamDefaultWriterCodeLength = 117;
 static const JSC::Intrinsic s_writableStreamInternalsIsWritableStreamDefaultWriterCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsIsWritableStreamDefaultWriterCode = "(function (d){\"use strict\";return @isObject(d)&&!!@getByIdDirectPrivate(d,\"closedPromise\")})\n";
+const char* const s_writableStreamInternalsIsWritableStreamDefaultWriterCode = "(function (writer) {\"use strict\";\n  return @isObject(writer) && !!@getByIdDirectPrivate(writer, \"closedPromise\");\n})\n";
 
 // acquireWritableStreamDefaultWriter
 const JSC::ConstructAbility s_writableStreamInternalsAcquireWritableStreamDefaultWriterCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsAcquireWritableStreamDefaultWriterCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsAcquireWritableStreamDefaultWriterCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsAcquireWritableStreamDefaultWriterCodeLength = 72;
+const int s_writableStreamInternalsAcquireWritableStreamDefaultWriterCodeLength = 88;
 static const JSC::Intrinsic s_writableStreamInternalsAcquireWritableStreamDefaultWriterCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsAcquireWritableStreamDefaultWriterCode = "(function (b){\"use strict\";return new @WritableStreamDefaultWriter(b)})\n";
+const char* const s_writableStreamInternalsAcquireWritableStreamDefaultWriterCode = "(function (stream) {\"use strict\";\n  return new @WritableStreamDefaultWriter(stream);\n})\n";
 
 // createWritableStream
 const JSC::ConstructAbility s_writableStreamInternalsCreateWritableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsCreateWritableStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsCreateWritableStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsCreateWritableStreamCodeLength = 273;
+const int s_writableStreamInternalsCreateWritableStreamCodeLength = 591;
 static const JSC::Intrinsic s_writableStreamInternalsCreateWritableStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsCreateWritableStreamCode = "(function (j,p,q,u,d,v){\"use strict\";@assert(typeof d===\"number\"&&d===d&&d>=0);const f={};@initializeWritableStreamSlots(f,{});const x=new @WritableStreamDefaultController;return @setUpWritableStreamDefaultController(f,x,j,p,q,u,d,v),@createWritableStreamFromInternal(f)})\n";
+const char* const s_writableStreamInternalsCreateWritableStreamCode = "(function (startAlgorithm, writeAlgorithm, closeAlgorithm, abortAlgorithm, highWaterMark, sizeAlgorithm) {\"use strict\";\n  @assert(typeof highWaterMark === \"number\" && highWaterMark === highWaterMark && highWaterMark >= 0);\n  const internalStream = {};\n  @initializeWritableStreamSlots(internalStream, {});\n  const controller = new @WritableStreamDefaultController;\n  @setUpWritableStreamDefaultController(internalStream, controller, startAlgorithm, writeAlgorithm, closeAlgorithm, abortAlgorithm, highWaterMark, sizeAlgorithm);\n  return @createWritableStreamFromInternal(internalStream);\n})\n";
 
 // createInternalWritableStreamFromUnderlyingSink
 const JSC::ConstructAbility s_writableStreamInternalsCreateInternalWritableStreamFromUnderlyingSinkCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsCreateInternalWritableStreamFromUnderlyingSinkCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsCreateInternalWritableStreamFromUnderlyingSinkCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsCreateInternalWritableStreamFromUnderlyingSinkCodeLength = 920;
+const int s_writableStreamInternalsCreateInternalWritableStreamFromUnderlyingSinkCodeLength = 1648;
 static const JSC::Intrinsic s_writableStreamInternalsCreateInternalWritableStreamFromUnderlyingSinkCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsCreateInternalWritableStreamFromUnderlyingSinkCode = "(function (f,w){\"use strict\";const C={};if(f===@undefined)f={};if(w===@undefined)w={};if(!@isObject(f))@throwTypeError(\"WritableStream constructor takes an object as first argument\");if(\"type\"in f)@throwRangeError(\"Invalid type is specified\");const E=@extractSizeAlgorithm(w),_=@extractHighWaterMark(w,1),o={};if(\"start\"in f){if(o.start=f.start,typeof o.start!==\"function\")@throwTypeError(\"underlyingSink.start should be a function\")}if(\"write\"in f){if(o.write=f.write,typeof o.write!==\"function\")@throwTypeError(\"underlyingSink.write should be a function\")}if(\"close\"in f){if(o.close=f.close,typeof o.close!==\"function\")@throwTypeError(\"underlyingSink.close should be a function\")}if(\"abort\"in f){if(o.abort=f.abort,typeof o.abort!==\"function\")@throwTypeError(\"underlyingSink.abort should be a function\")}return @initializeWritableStreamSlots(C,f),@setUpWritableStreamDefaultControllerFromUnderlyingSink(C,f,o,_,E),C})\n";
+const char* const s_writableStreamInternalsCreateInternalWritableStreamFromUnderlyingSinkCode = "(function (underlyingSink, strategy) {\"use strict\";\n  const stream = {};\n  if (underlyingSink === @undefined)\n    underlyingSink = {};\n  if (strategy === @undefined)\n    strategy = {};\n  if (!@isObject(underlyingSink))\n    @throwTypeError(\"WritableStream constructor takes an object as first argument\");\n  if (\"type\" in underlyingSink)\n    @throwRangeError(\"Invalid type is specified\");\n  const sizeAlgorithm = @extractSizeAlgorithm(strategy);\n  const highWaterMark = @extractHighWaterMark(strategy, 1);\n  const underlyingSinkDict = {};\n  if (\"start\" in underlyingSink) {\n    underlyingSinkDict[\"start\"] = underlyingSink[\"start\"];\n    if (typeof underlyingSinkDict[\"start\"] !== \"function\")\n      @throwTypeError(\"underlyingSink.start should be a function\");\n  }\n  if (\"write\" in underlyingSink) {\n    underlyingSinkDict[\"write\"] = underlyingSink[\"write\"];\n    if (typeof underlyingSinkDict[\"write\"] !== \"function\")\n      @throwTypeError(\"underlyingSink.write should be a function\");\n  }\n  if (\"close\" in underlyingSink) {\n    underlyingSinkDict[\"close\"] = underlyingSink[\"close\"];\n    if (typeof underlyingSinkDict[\"close\"] !== \"function\")\n      @throwTypeError(\"underlyingSink.close should be a function\");\n  }\n  if (\"abort\" in underlyingSink) {\n    underlyingSinkDict[\"abort\"] = underlyingSink[\"abort\"];\n    if (typeof underlyingSinkDict[\"abort\"] !== \"function\")\n      @throwTypeError(\"underlyingSink.abort should be a function\");\n  }\n  @initializeWritableStreamSlots(stream, underlyingSink);\n  @setUpWritableStreamDefaultControllerFromUnderlyingSink(stream, underlyingSink, underlyingSinkDict, highWaterMark, sizeAlgorithm);\n  return stream;\n})\n";
 
 // initializeWritableStreamSlots
 const JSC::ConstructAbility s_writableStreamInternalsInitializeWritableStreamSlotsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsInitializeWritableStreamSlotsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsInitializeWritableStreamSlotsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsInitializeWritableStreamSlotsCodeLength = 588;
+const int s_writableStreamInternalsInitializeWritableStreamSlotsCodeLength = 736;
 static const JSC::Intrinsic s_writableStreamInternalsInitializeWritableStreamSlotsCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsInitializeWritableStreamSlotsCode = "(function (_,c){\"use strict\";@putByIdDirectPrivate(_,\"state\",\"writable\"),@putByIdDirectPrivate(_,\"storedError\",@undefined),@putByIdDirectPrivate(_,\"writer\",@undefined),@putByIdDirectPrivate(_,\"controller\",@undefined),@putByIdDirectPrivate(_,\"inFlightWriteRequest\",@undefined),@putByIdDirectPrivate(_,\"closeRequest\",@undefined),@putByIdDirectPrivate(_,\"inFlightCloseRequest\",@undefined),@putByIdDirectPrivate(_,\"pendingAbortRequest\",@undefined),@putByIdDirectPrivate(_,\"writeRequests\",@createFIFO()),@putByIdDirectPrivate(_,\"backpressure\",!1),@putByIdDirectPrivate(_,\"underlyingSink\",c)})\n";
+const char* const s_writableStreamInternalsInitializeWritableStreamSlotsCode = "(function (stream, underlyingSink) {\"use strict\";\n  @putByIdDirectPrivate(stream, \"state\", \"writable\");\n  @putByIdDirectPrivate(stream, \"storedError\", @undefined);\n  @putByIdDirectPrivate(stream, \"writer\", @undefined);\n  @putByIdDirectPrivate(stream, \"controller\", @undefined);\n  @putByIdDirectPrivate(stream, \"inFlightWriteRequest\", @undefined);\n  @putByIdDirectPrivate(stream, \"closeRequest\", @undefined);\n  @putByIdDirectPrivate(stream, \"inFlightCloseRequest\", @undefined);\n  @putByIdDirectPrivate(stream, \"pendingAbortRequest\", @undefined);\n  @putByIdDirectPrivate(stream, \"writeRequests\", @createFIFO());\n  @putByIdDirectPrivate(stream, \"backpressure\", false);\n  @putByIdDirectPrivate(stream, \"underlyingSink\", underlyingSink);\n})\n";
 
 // writableStreamCloseForBindings
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamCloseForBindingsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamCloseForBindingsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamCloseForBindingsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamCloseForBindingsCodeLength = 370;
+const int s_writableStreamInternalsWritableStreamCloseForBindingsCodeLength = 414;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamCloseForBindingsCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamCloseForBindingsCode = "(function (_){\"use strict\";if(@isWritableStreamLocked(_))return @Promise.@reject(@makeTypeError(\"WritableStream.close method can only be used on non locked WritableStream\"));if(@writableStreamCloseQueuedOrInFlight(_))return @Promise.@reject(@makeTypeError(\"WritableStream.close method can only be used on a being close WritableStream\"));return @writableStreamClose(_)})\n";
+const char* const s_writableStreamInternalsWritableStreamCloseForBindingsCode = "(function (stream) {\"use strict\";\n  if (@isWritableStreamLocked(stream))\n    return @Promise.@reject(@makeTypeError(\"WritableStream.close method can only be used on non locked WritableStream\"));\n  if (@writableStreamCloseQueuedOrInFlight(stream))\n    return @Promise.@reject(@makeTypeError(\"WritableStream.close method can only be used on a being close WritableStream\"));\n  return @writableStreamClose(stream);\n})\n";
 
 // writableStreamAbortForBindings
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamAbortForBindingsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamAbortForBindingsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamAbortForBindingsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamAbortForBindingsCodeLength = 211;
+const int s_writableStreamInternalsWritableStreamAbortForBindingsCodeLength = 253;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamAbortForBindingsCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamAbortForBindingsCode = "(function (d,h){\"use strict\";if(@isWritableStreamLocked(d))return @Promise.@reject(@makeTypeError(\"WritableStream.abort method can only be used on non locked WritableStream\"));return @writableStreamAbort(d,h)})\n";
+const char* const s_writableStreamInternalsWritableStreamAbortForBindingsCode = "(function (stream, reason) {\"use strict\";\n  if (@isWritableStreamLocked(stream))\n    return @Promise.@reject(@makeTypeError(\"WritableStream.abort method can only be used on non locked WritableStream\"));\n  return @writableStreamAbort(stream, reason);\n})\n";
 
 // isWritableStreamLocked
 const JSC::ConstructAbility s_writableStreamInternalsIsWritableStreamLockedCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsIsWritableStreamLockedCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsIsWritableStreamLockedCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsIsWritableStreamLockedCodeLength = 83;
+const int s_writableStreamInternalsIsWritableStreamLockedCodeLength = 102;
 static const JSC::Intrinsic s_writableStreamInternalsIsWritableStreamLockedCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsIsWritableStreamLockedCode = "(function (i){\"use strict\";return @getByIdDirectPrivate(i,\"writer\")!==@undefined})\n";
+const char* const s_writableStreamInternalsIsWritableStreamLockedCode = "(function (stream) {\"use strict\";\n  return @getByIdDirectPrivate(stream, \"writer\") !== @undefined;\n})\n";
 
 // setUpWritableStreamDefaultWriter
 const JSC::ConstructAbility s_writableStreamInternalsSetUpWritableStreamDefaultWriterCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsSetUpWritableStreamDefaultWriterCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsSetUpWritableStreamDefaultWriterCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsSetUpWritableStreamDefaultWriterCodeLength = 878;
+const int s_writableStreamInternalsSetUpWritableStreamDefaultWriterCodeLength = 1442;
 static const JSC::Intrinsic s_writableStreamInternalsSetUpWritableStreamDefaultWriterCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsSetUpWritableStreamDefaultWriterCode = "(function (g,n){\"use strict\";if(@isWritableStreamLocked(n))@throwTypeError(\"WritableStream is locked\");@putByIdDirectPrivate(g,\"stream\",n),@putByIdDirectPrivate(n,\"writer\",g);const B=@newPromiseCapability(@Promise),h=@newPromiseCapability(@Promise);@putByIdDirectPrivate(g,\"readyPromise\",B),@putByIdDirectPrivate(g,\"closedPromise\",h);const k=@getByIdDirectPrivate(n,\"state\");if(k===\"writable\"){if(@writableStreamCloseQueuedOrInFlight(n)||!@getByIdDirectPrivate(n,\"backpressure\"))B.resolve.@call()}else if(k===\"erroring\")B.reject.@call(@undefined,@getByIdDirectPrivate(n,\"storedError\")),@markPromiseAsHandled(B.promise);else if(k===\"closed\")B.resolve.@call(),h.resolve.@call();else{@assert(k===\"errored\");const u=@getByIdDirectPrivate(n,\"storedError\");B.reject.@call(@undefined,u),@markPromiseAsHandled(B.promise),h.reject.@call(@undefined,u),@markPromiseAsHandled(h.promise)}})\n";
+const char* const s_writableStreamInternalsSetUpWritableStreamDefaultWriterCode = "(function (writer, stream) {\"use strict\";\n  if (@isWritableStreamLocked(stream))\n    @throwTypeError(\"WritableStream is locked\");\n  @putByIdDirectPrivate(writer, \"stream\", stream);\n  @putByIdDirectPrivate(stream, \"writer\", writer);\n  const readyPromiseCapability = @newPromiseCapability(@Promise);\n  const closedPromiseCapability = @newPromiseCapability(@Promise);\n  @putByIdDirectPrivate(writer, \"readyPromise\", readyPromiseCapability);\n  @putByIdDirectPrivate(writer, \"closedPromise\", closedPromiseCapability);\n  const state = @getByIdDirectPrivate(stream, \"state\");\n  if (state === \"writable\") {\n    if (@writableStreamCloseQueuedOrInFlight(stream) || !@getByIdDirectPrivate(stream, \"backpressure\"))\n      readyPromiseCapability.resolve.@call();\n  } else if (state === \"erroring\") {\n    readyPromiseCapability.reject.@call(@undefined, @getByIdDirectPrivate(stream, \"storedError\"));\n    @markPromiseAsHandled(readyPromiseCapability.promise);\n  } else if (state === \"closed\") {\n    readyPromiseCapability.resolve.@call();\n    closedPromiseCapability.resolve.@call();\n  } else {\n    @assert(state === \"errored\");\n    const storedError = @getByIdDirectPrivate(stream, \"storedError\");\n    readyPromiseCapability.reject.@call(@undefined, storedError);\n    @markPromiseAsHandled(readyPromiseCapability.promise);\n    closedPromiseCapability.reject.@call(@undefined, storedError);\n    @markPromiseAsHandled(closedPromiseCapability.promise);\n  }\n})\n";
 
 // writableStreamAbort
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamAbortCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamAbortCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamAbortCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamAbortCodeLength = 499;
+const int s_writableStreamInternalsWritableStreamAbortCodeLength = 856;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamAbortCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamAbortCode = "(function (h,B){\"use strict\";const c=@getByIdDirectPrivate(h,\"state\");if(c===\"closed\"||c===\"errored\")return @Promise.@resolve();const f=@getByIdDirectPrivate(h,\"pendingAbortRequest\");if(f!==@undefined)return f.promise.promise;@assert(c===\"writable\"||c===\"erroring\");let _=!1;if(c===\"erroring\")_=!0,B=@undefined;const j=@newPromiseCapability(@Promise);if(@putByIdDirectPrivate(h,\"pendingAbortRequest\",{promise:j,reason:B,wasAlreadyErroring:_}),!_)@writableStreamStartErroring(h,B);return j.promise})\n";
+const char* const s_writableStreamInternalsWritableStreamAbortCode = "(function (stream, reason) {\"use strict\";\n  const state = @getByIdDirectPrivate(stream, \"state\");\n  if (state === \"closed\" || state === \"errored\")\n    return @Promise.@resolve();\n  const pendingAbortRequest = @getByIdDirectPrivate(stream, \"pendingAbortRequest\");\n  if (pendingAbortRequest !== @undefined)\n    return pendingAbortRequest.promise.promise;\n  @assert(state === \"writable\" || state === \"erroring\");\n  let wasAlreadyErroring = false;\n  if (state === \"erroring\") {\n    wasAlreadyErroring = true;\n    reason = @undefined;\n  }\n  const abortPromiseCapability = @newPromiseCapability(@Promise);\n  @putByIdDirectPrivate(stream, \"pendingAbortRequest\", {\n    promise: abortPromiseCapability,\n    reason,\n    wasAlreadyErroring\n  });\n  if (!wasAlreadyErroring)\n    @writableStreamStartErroring(stream, reason);\n  return abortPromiseCapability.promise;\n})\n";
 
 // writableStreamClose
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamCloseCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamCloseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamCloseCodeLength = 640;
+const int s_writableStreamInternalsWritableStreamCloseCodeLength = 855;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamCloseCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamCloseCode = "(function (n){\"use strict\";const _=@getByIdDirectPrivate(n,\"state\");if(_===\"closed\"||_===\"errored\")return @Promise.@reject(@makeTypeError(\"Cannot close a writable stream that is closed or errored\"));@assert(_===\"writable\"||_===\"erroring\"),@assert(!@writableStreamCloseQueuedOrInFlight(n));const d=@newPromiseCapability(@Promise);@putByIdDirectPrivate(n,\"closeRequest\",d);const h=@getByIdDirectPrivate(n,\"writer\");if(h!==@undefined&&@getByIdDirectPrivate(n,\"backpressure\")&&_===\"writable\")@getByIdDirectPrivate(h,\"readyPromise\").resolve.@call();return @writableStreamDefaultControllerClose(@getByIdDirectPrivate(n,\"controller\")),d.promise})\n";
+const char* const s_writableStreamInternalsWritableStreamCloseCode = "(function (stream) {\"use strict\";\n  const state = @getByIdDirectPrivate(stream, \"state\");\n  if (state === \"closed\" || state === \"errored\")\n    return @Promise.@reject(@makeTypeError(\"Cannot close a writable stream that is closed or errored\"));\n  @assert(state === \"writable\" || state === \"erroring\");\n  @assert(!@writableStreamCloseQueuedOrInFlight(stream));\n  const closePromiseCapability = @newPromiseCapability(@Promise);\n  @putByIdDirectPrivate(stream, \"closeRequest\", closePromiseCapability);\n  const writer = @getByIdDirectPrivate(stream, \"writer\");\n  if (writer !== @undefined && @getByIdDirectPrivate(stream, \"backpressure\") && state === \"writable\")\n    @getByIdDirectPrivate(writer, \"readyPromise\").resolve.@call();\n  @writableStreamDefaultControllerClose(@getByIdDirectPrivate(stream, \"controller\"));\n  return closePromiseCapability.promise;\n})\n";
 
 // writableStreamAddWriteRequest
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamAddWriteRequestCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamAddWriteRequestCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamAddWriteRequestCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamAddWriteRequestCodeLength = 226;
+const int s_writableStreamInternalsWritableStreamAddWriteRequestCodeLength = 372;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamAddWriteRequestCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamAddWriteRequestCode = "(function (c){\"use strict\";@assert(@isWritableStreamLocked(c)),@assert(@getByIdDirectPrivate(c,\"state\")===\"writable\");const _=@newPromiseCapability(@Promise);return @getByIdDirectPrivate(c,\"writeRequests\").push(_),_.promise})\n";
+const char* const s_writableStreamInternalsWritableStreamAddWriteRequestCode = "(function (stream) {\"use strict\";\n  @assert(@isWritableStreamLocked(stream));\n  @assert(@getByIdDirectPrivate(stream, \"state\") === \"writable\");\n  const writePromiseCapability = @newPromiseCapability(@Promise);\n  const writeRequests = @getByIdDirectPrivate(stream, \"writeRequests\");\n  writeRequests.push(writePromiseCapability);\n  return writePromiseCapability.promise;\n})\n";
 
 // writableStreamCloseQueuedOrInFlight
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamCloseQueuedOrInFlightCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamCloseQueuedOrInFlightCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamCloseQueuedOrInFlightCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamCloseQueuedOrInFlightCodeLength = 151;
+const int s_writableStreamInternalsWritableStreamCloseQueuedOrInFlightCodeLength = 180;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamCloseQueuedOrInFlightCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamCloseQueuedOrInFlightCode = "(function (i){\"use strict\";return @getByIdDirectPrivate(i,\"closeRequest\")!==@undefined||@getByIdDirectPrivate(i,\"inFlightCloseRequest\")!==@undefined})\n";
+const char* const s_writableStreamInternalsWritableStreamCloseQueuedOrInFlightCode = "(function (stream) {\"use strict\";\n  return @getByIdDirectPrivate(stream, \"closeRequest\") !== @undefined || @getByIdDirectPrivate(stream, \"inFlightCloseRequest\") !== @undefined;\n})\n";
 
 // writableStreamDealWithRejection
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDealWithRejectionCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDealWithRejectionCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamDealWithRejectionCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamDealWithRejectionCodeLength = 189;
+const int s_writableStreamInternalsWritableStreamDealWithRejectionCodeLength = 269;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDealWithRejectionCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamDealWithRejectionCode = "(function (i,c){\"use strict\";const n=@getByIdDirectPrivate(i,\"state\");if(n===\"writable\"){@writableStreamStartErroring(i,c);return}@assert(n===\"erroring\"),@writableStreamFinishErroring(i)})\n";
+const char* const s_writableStreamInternalsWritableStreamDealWithRejectionCode = "(function (stream, error) {\"use strict\";\n  const state = @getByIdDirectPrivate(stream, \"state\");\n  if (state === \"writable\") {\n    @writableStreamStartErroring(stream, error);\n    return;\n  }\n  @assert(state === \"erroring\");\n  @writableStreamFinishErroring(stream);\n})\n";
 
 // writableStreamFinishErroring
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamFinishErroringCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamFinishErroringCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamFinishErroringCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamFinishErroringCodeLength = 1054;
+const int s_writableStreamInternalsWritableStreamFinishErroringCodeLength = 1474;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamFinishErroringCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamFinishErroringCode = "(function (i){\"use strict\";@assert(@getByIdDirectPrivate(i,\"state\")===\"erroring\"),@assert(!@writableStreamHasOperationMarkedInFlight(i)),@putByIdDirectPrivate(i,\"state\",\"errored\");const d=@getByIdDirectPrivate(i,\"controller\");@getByIdDirectPrivate(d,\"errorSteps\").@call();const h=@getByIdDirectPrivate(i,\"storedError\"),j=@getByIdDirectPrivate(i,\"writeRequests\");for(var f=j.shift();f;f=j.shift())f.reject.@call(@undefined,h);@putByIdDirectPrivate(i,\"writeRequests\",@createFIFO());const _=@getByIdDirectPrivate(i,\"pendingAbortRequest\");if(_===@undefined){@writableStreamRejectCloseAndClosedPromiseIfNeeded(i);return}if(@putByIdDirectPrivate(i,\"pendingAbortRequest\",@undefined),_.wasAlreadyErroring){_.promise.reject.@call(@undefined,h),@writableStreamRejectCloseAndClosedPromiseIfNeeded(i);return}@getByIdDirectPrivate(d,\"abortSteps\").@call(@undefined,_.reason).@then(()=>{_.promise.resolve.@call(),@writableStreamRejectCloseAndClosedPromiseIfNeeded(i)},(v)=>{_.promise.reject.@call(@undefined,v),@writableStreamRejectCloseAndClosedPromiseIfNeeded(i)})})\n";
+const char* const s_writableStreamInternalsWritableStreamFinishErroringCode = "(function (stream) {\"use strict\";\n  @assert(@getByIdDirectPrivate(stream, \"state\") === \"erroring\");\n  @assert(!@writableStreamHasOperationMarkedInFlight(stream));\n  @putByIdDirectPrivate(stream, \"state\", \"errored\");\n  const controller = @getByIdDirectPrivate(stream, \"controller\");\n  @getByIdDirectPrivate(controller, \"errorSteps\").@call();\n  const storedError = @getByIdDirectPrivate(stream, \"storedError\");\n  const requests = @getByIdDirectPrivate(stream, \"writeRequests\");\n  for (var request = requests.shift();request; request = requests.shift())\n    request.reject.@call(@undefined, storedError);\n  @putByIdDirectPrivate(stream, \"writeRequests\", @createFIFO());\n  const abortRequest = @getByIdDirectPrivate(stream, \"pendingAbortRequest\");\n  if (abortRequest === @undefined) {\n    @writableStreamRejectCloseAndClosedPromiseIfNeeded(stream);\n    return;\n  }\n  @putByIdDirectPrivate(stream, \"pendingAbortRequest\", @undefined);\n  if (abortRequest.wasAlreadyErroring) {\n    abortRequest.promise.reject.@call(@undefined, storedError);\n    @writableStreamRejectCloseAndClosedPromiseIfNeeded(stream);\n    return;\n  }\n  @getByIdDirectPrivate(controller, \"abortSteps\").@call(@undefined, abortRequest.reason).@then(() => {\n    abortRequest.promise.resolve.@call();\n    @writableStreamRejectCloseAndClosedPromiseIfNeeded(stream);\n  }, (reason) => {\n    abortRequest.promise.reject.@call(@undefined, reason);\n    @writableStreamRejectCloseAndClosedPromiseIfNeeded(stream);\n  });\n})\n";
 
 // writableStreamFinishInFlightClose
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamFinishInFlightCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamFinishInFlightCloseCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamFinishInFlightCloseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamFinishInFlightCloseCodeLength = 748;
+const int s_writableStreamInternalsWritableStreamFinishInFlightCloseCodeLength = 1040;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamFinishInFlightCloseCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamFinishInFlightCloseCode = "(function (_){\"use strict\";@getByIdDirectPrivate(_,\"inFlightCloseRequest\").resolve.@call(),@putByIdDirectPrivate(_,\"inFlightCloseRequest\",@undefined);const d=@getByIdDirectPrivate(_,\"state\");if(@assert(d===\"writable\"||d===\"erroring\"),d===\"erroring\"){@putByIdDirectPrivate(_,\"storedError\",@undefined);const n=@getByIdDirectPrivate(_,\"pendingAbortRequest\");if(n!==@undefined)n.promise.resolve.@call(),@putByIdDirectPrivate(_,\"pendingAbortRequest\",@undefined)}@putByIdDirectPrivate(_,\"state\",\"closed\");const i=@getByIdDirectPrivate(_,\"writer\");if(i!==@undefined)@getByIdDirectPrivate(i,\"closedPromise\").resolve.@call();@assert(@getByIdDirectPrivate(_,\"pendingAbortRequest\")===@undefined),@assert(@getByIdDirectPrivate(_,\"storedError\")===@undefined)})\n";
+const char* const s_writableStreamInternalsWritableStreamFinishInFlightCloseCode = "(function (stream) {\"use strict\";\n  const inFlightCloseRequest = @getByIdDirectPrivate(stream, \"inFlightCloseRequest\");\n  inFlightCloseRequest.resolve.@call();\n  @putByIdDirectPrivate(stream, \"inFlightCloseRequest\", @undefined);\n  const state = @getByIdDirectPrivate(stream, \"state\");\n  @assert(state === \"writable\" || state === \"erroring\");\n  if (state === \"erroring\") {\n    @putByIdDirectPrivate(stream, \"storedError\", @undefined);\n    const abortRequest = @getByIdDirectPrivate(stream, \"pendingAbortRequest\");\n    if (abortRequest !== @undefined) {\n      abortRequest.promise.resolve.@call();\n      @putByIdDirectPrivate(stream, \"pendingAbortRequest\", @undefined);\n    }\n  }\n  @putByIdDirectPrivate(stream, \"state\", \"closed\");\n  const writer = @getByIdDirectPrivate(stream, \"writer\");\n  if (writer !== @undefined)\n    @getByIdDirectPrivate(writer, \"closedPromise\").resolve.@call();\n  @assert(@getByIdDirectPrivate(stream, \"pendingAbortRequest\") === @undefined);\n  @assert(@getByIdDirectPrivate(stream, \"storedError\") === @undefined);\n})\n";
 
 // writableStreamFinishInFlightCloseWithError
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamFinishInFlightCloseWithErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamFinishInFlightCloseWithErrorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamFinishInFlightCloseWithErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamFinishInFlightCloseWithErrorCodeLength = 486;
+const int s_writableStreamInternalsWritableStreamFinishInFlightCloseWithErrorCodeLength = 713;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamFinishInFlightCloseWithErrorCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamFinishInFlightCloseWithErrorCode = "(function (c,d){\"use strict\";const p=@getByIdDirectPrivate(c,\"inFlightCloseRequest\");@assert(p!==@undefined),p.reject.@call(@undefined,d),@putByIdDirectPrivate(c,\"inFlightCloseRequest\",@undefined);const _=@getByIdDirectPrivate(c,\"state\");@assert(_===\"writable\"||_===\"erroring\");const f=@getByIdDirectPrivate(c,\"pendingAbortRequest\");if(f!==@undefined)f.promise.reject.@call(@undefined,d),@putByIdDirectPrivate(c,\"pendingAbortRequest\",@undefined);@writableStreamDealWithRejection(c,d)})\n";
+const char* const s_writableStreamInternalsWritableStreamFinishInFlightCloseWithErrorCode = "(function (stream, error) {\"use strict\";\n  const inFlightCloseRequest = @getByIdDirectPrivate(stream, \"inFlightCloseRequest\");\n  @assert(inFlightCloseRequest !== @undefined);\n  inFlightCloseRequest.reject.@call(@undefined, error);\n  @putByIdDirectPrivate(stream, \"inFlightCloseRequest\", @undefined);\n  const state = @getByIdDirectPrivate(stream, \"state\");\n  @assert(state === \"writable\" || state === \"erroring\");\n  const abortRequest = @getByIdDirectPrivate(stream, \"pendingAbortRequest\");\n  if (abortRequest !== @undefined) {\n    abortRequest.promise.reject.@call(@undefined, error);\n    @putByIdDirectPrivate(stream, \"pendingAbortRequest\", @undefined);\n  }\n  @writableStreamDealWithRejection(stream, error);\n})\n";
 
 // writableStreamFinishInFlightWrite
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamFinishInFlightWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamFinishInFlightWriteCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamFinishInFlightWriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamFinishInFlightWriteCodeLength = 186;
+const int s_writableStreamInternalsWritableStreamFinishInFlightWriteCodeLength = 280;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamFinishInFlightWriteCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamFinishInFlightWriteCode = "(function (d){\"use strict\";const b=@getByIdDirectPrivate(d,\"inFlightWriteRequest\");@assert(b!==@undefined),b.resolve.@call(),@putByIdDirectPrivate(d,\"inFlightWriteRequest\",@undefined)})\n";
+const char* const s_writableStreamInternalsWritableStreamFinishInFlightWriteCode = "(function (stream) {\"use strict\";\n  const inFlightWriteRequest = @getByIdDirectPrivate(stream, \"inFlightWriteRequest\");\n  @assert(inFlightWriteRequest !== @undefined);\n  inFlightWriteRequest.resolve.@call();\n  @putByIdDirectPrivate(stream, \"inFlightWriteRequest\", @undefined);\n})\n";
 
 // writableStreamFinishInFlightWriteWithError
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamFinishInFlightWriteWithErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamFinishInFlightWriteWithErrorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamFinishInFlightWriteWithErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamFinishInFlightWriteWithErrorCodeLength = 318;
+const int s_writableStreamInternalsWritableStreamFinishInFlightWriteWithErrorCodeLength = 467;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamFinishInFlightWriteWithErrorCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamFinishInFlightWriteWithErrorCode = "(function (c,b){\"use strict\";const d=@getByIdDirectPrivate(c,\"inFlightWriteRequest\");@assert(d!==@undefined),d.reject.@call(@undefined,b),@putByIdDirectPrivate(c,\"inFlightWriteRequest\",@undefined);const f=@getByIdDirectPrivate(c,\"state\");@assert(f===\"writable\"||f===\"erroring\"),@writableStreamDealWithRejection(c,b)})\n";
+const char* const s_writableStreamInternalsWritableStreamFinishInFlightWriteWithErrorCode = "(function (stream, error) {\"use strict\";\n  const inFlightWriteRequest = @getByIdDirectPrivate(stream, \"inFlightWriteRequest\");\n  @assert(inFlightWriteRequest !== @undefined);\n  inFlightWriteRequest.reject.@call(@undefined, error);\n  @putByIdDirectPrivate(stream, \"inFlightWriteRequest\", @undefined);\n  const state = @getByIdDirectPrivate(stream, \"state\");\n  @assert(state === \"writable\" || state === \"erroring\");\n  @writableStreamDealWithRejection(stream, error);\n})\n";
 
 // writableStreamHasOperationMarkedInFlight
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamHasOperationMarkedInFlightCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamHasOperationMarkedInFlightCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamHasOperationMarkedInFlightCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamHasOperationMarkedInFlightCodeLength = 159;
+const int s_writableStreamInternalsWritableStreamHasOperationMarkedInFlightCodeLength = 188;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamHasOperationMarkedInFlightCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamHasOperationMarkedInFlightCode = "(function (n){\"use strict\";return @getByIdDirectPrivate(n,\"inFlightWriteRequest\")!==@undefined||@getByIdDirectPrivate(n,\"inFlightCloseRequest\")!==@undefined})\n";
+const char* const s_writableStreamInternalsWritableStreamHasOperationMarkedInFlightCode = "(function (stream) {\"use strict\";\n  return @getByIdDirectPrivate(stream, \"inFlightWriteRequest\") !== @undefined || @getByIdDirectPrivate(stream, \"inFlightCloseRequest\") !== @undefined;\n})\n";
 
 // writableStreamMarkCloseRequestInFlight
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamMarkCloseRequestInFlightCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamMarkCloseRequestInFlightCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamMarkCloseRequestInFlightCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamMarkCloseRequestInFlightCodeLength = 272;
+const int s_writableStreamInternalsWritableStreamMarkCloseRequestInFlightCodeLength = 360;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamMarkCloseRequestInFlightCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamMarkCloseRequestInFlightCode = "(function (i){\"use strict\";const d=@getByIdDirectPrivate(i,\"closeRequest\");@assert(@getByIdDirectPrivate(i,\"inFlightCloseRequest\")===@undefined),@assert(d!==@undefined),@putByIdDirectPrivate(i,\"inFlightCloseRequest\",d),@putByIdDirectPrivate(i,\"closeRequest\",@undefined)})\n";
+const char* const s_writableStreamInternalsWritableStreamMarkCloseRequestInFlightCode = "(function (stream) {\"use strict\";\n  const closeRequest = @getByIdDirectPrivate(stream, \"closeRequest\");\n  @assert(@getByIdDirectPrivate(stream, \"inFlightCloseRequest\") === @undefined);\n  @assert(closeRequest !== @undefined);\n  @putByIdDirectPrivate(stream, \"inFlightCloseRequest\", closeRequest);\n  @putByIdDirectPrivate(stream, \"closeRequest\", @undefined);\n})\n";
 
 // writableStreamMarkFirstWriteRequestInFlight
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamMarkFirstWriteRequestInFlightCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamMarkFirstWriteRequestInFlightCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamMarkFirstWriteRequestInFlightCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamMarkFirstWriteRequestInFlightCodeLength = 240;
+const int s_writableStreamInternalsWritableStreamMarkFirstWriteRequestInFlightCodeLength = 346;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamMarkFirstWriteRequestInFlightCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamMarkFirstWriteRequestInFlightCode = "(function (c){\"use strict\";const d=@getByIdDirectPrivate(c,\"writeRequests\");@assert(@getByIdDirectPrivate(c,\"inFlightWriteRequest\")===@undefined),@assert(d.isNotEmpty());const h=d.shift();@putByIdDirectPrivate(c,\"inFlightWriteRequest\",h)})\n";
+const char* const s_writableStreamInternalsWritableStreamMarkFirstWriteRequestInFlightCode = "(function (stream) {\"use strict\";\n  const writeRequests = @getByIdDirectPrivate(stream, \"writeRequests\");\n  @assert(@getByIdDirectPrivate(stream, \"inFlightWriteRequest\") === @undefined);\n  @assert(writeRequests.isNotEmpty());\n  const writeRequest = writeRequests.shift();\n  @putByIdDirectPrivate(stream, \"inFlightWriteRequest\", writeRequest);\n})\n";
 
 // writableStreamRejectCloseAndClosedPromiseIfNeeded
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamRejectCloseAndClosedPromiseIfNeededCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamRejectCloseAndClosedPromiseIfNeededCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamRejectCloseAndClosedPromiseIfNeededCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamRejectCloseAndClosedPromiseIfNeededCodeLength = 513;
+const int s_writableStreamInternalsWritableStreamRejectCloseAndClosedPromiseIfNeededCodeLength = 757;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamRejectCloseAndClosedPromiseIfNeededCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamRejectCloseAndClosedPromiseIfNeededCode = "(function (n){\"use strict\";@assert(@getByIdDirectPrivate(n,\"state\")===\"errored\");const _=@getByIdDirectPrivate(n,\"storedError\"),h=@getByIdDirectPrivate(n,\"closeRequest\");if(h!==@undefined)@assert(@getByIdDirectPrivate(n,\"inFlightCloseRequest\")===@undefined),h.reject.@call(@undefined,_),@putByIdDirectPrivate(n,\"closeRequest\",@undefined);const i=@getByIdDirectPrivate(n,\"writer\");if(i!==@undefined){const p=@getByIdDirectPrivate(i,\"closedPromise\");p.reject.@call(@undefined,_),@markPromiseAsHandled(p.promise)}})\n";
+const char* const s_writableStreamInternalsWritableStreamRejectCloseAndClosedPromiseIfNeededCode = "(function (stream) {\"use strict\";\n  @assert(@getByIdDirectPrivate(stream, \"state\") === \"errored\");\n  const storedError = @getByIdDirectPrivate(stream, \"storedError\");\n  const closeRequest = @getByIdDirectPrivate(stream, \"closeRequest\");\n  if (closeRequest !== @undefined) {\n    @assert(@getByIdDirectPrivate(stream, \"inFlightCloseRequest\") === @undefined);\n    closeRequest.reject.@call(@undefined, storedError);\n    @putByIdDirectPrivate(stream, \"closeRequest\", @undefined);\n  }\n  const writer = @getByIdDirectPrivate(stream, \"writer\");\n  if (writer !== @undefined) {\n    const closedPromise = @getByIdDirectPrivate(writer, \"closedPromise\");\n    closedPromise.reject.@call(@undefined, storedError);\n    @markPromiseAsHandled(closedPromise.promise);\n  }\n})\n";
 
 // writableStreamStartErroring
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamStartErroringCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamStartErroringCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamStartErroringCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamStartErroringCodeLength = 544;
+const int s_writableStreamInternalsWritableStreamStartErroringCodeLength = 715;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamStartErroringCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamStartErroringCode = "(function (i,_){\"use strict\";@assert(@getByIdDirectPrivate(i,\"storedError\")===@undefined),@assert(@getByIdDirectPrivate(i,\"state\")===\"writable\");const d=@getByIdDirectPrivate(i,\"controller\");@assert(d!==@undefined),@putByIdDirectPrivate(i,\"state\",\"erroring\"),@putByIdDirectPrivate(i,\"storedError\",_);const h=@getByIdDirectPrivate(i,\"writer\");if(h!==@undefined)@writableStreamDefaultWriterEnsureReadyPromiseRejected(h,_);if(!@writableStreamHasOperationMarkedInFlight(i)&&@getByIdDirectPrivate(d,\"started\")===1)@writableStreamFinishErroring(i)})\n";
+const char* const s_writableStreamInternalsWritableStreamStartErroringCode = "(function (stream, reason) {\"use strict\";\n  @assert(@getByIdDirectPrivate(stream, \"storedError\") === @undefined);\n  @assert(@getByIdDirectPrivate(stream, \"state\") === \"writable\");\n  const controller = @getByIdDirectPrivate(stream, \"controller\");\n  @assert(controller !== @undefined);\n  @putByIdDirectPrivate(stream, \"state\", \"erroring\");\n  @putByIdDirectPrivate(stream, \"storedError\", reason);\n  const writer = @getByIdDirectPrivate(stream, \"writer\");\n  if (writer !== @undefined)\n    @writableStreamDefaultWriterEnsureReadyPromiseRejected(writer, reason);\n  if (!@writableStreamHasOperationMarkedInFlight(stream) && @getByIdDirectPrivate(controller, \"started\") === 1)\n    @writableStreamFinishErroring(stream);\n})\n";
 
 // writableStreamUpdateBackpressure
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamUpdateBackpressureCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamUpdateBackpressureCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamUpdateBackpressureCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamUpdateBackpressureCodeLength = 421;
+const int s_writableStreamInternalsWritableStreamUpdateBackpressureCodeLength = 583;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamUpdateBackpressureCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamUpdateBackpressureCode = "(function (n,_){\"use strict\";@assert(@getByIdDirectPrivate(n,\"state\")===\"writable\"),@assert(!@writableStreamCloseQueuedOrInFlight(n));const d=@getByIdDirectPrivate(n,\"writer\");if(d!==@undefined&&_!==@getByIdDirectPrivate(n,\"backpressure\"))if(_)@putByIdDirectPrivate(d,\"readyPromise\",@newPromiseCapability(@Promise));else @getByIdDirectPrivate(d,\"readyPromise\").resolve.@call();@putByIdDirectPrivate(n,\"backpressure\",_)})\n";
+const char* const s_writableStreamInternalsWritableStreamUpdateBackpressureCode = "(function (stream, backpressure) {\"use strict\";\n  @assert(@getByIdDirectPrivate(stream, \"state\") === \"writable\");\n  @assert(!@writableStreamCloseQueuedOrInFlight(stream));\n  const writer = @getByIdDirectPrivate(stream, \"writer\");\n  if (writer !== @undefined && backpressure !== @getByIdDirectPrivate(stream, \"backpressure\")) {\n    if (backpressure)\n      @putByIdDirectPrivate(writer, \"readyPromise\", @newPromiseCapability(@Promise));\n    else\n      @getByIdDirectPrivate(writer, \"readyPromise\").resolve.@call();\n  }\n  @putByIdDirectPrivate(stream, \"backpressure\", backpressure);\n})\n";
 
 // writableStreamDefaultWriterAbort
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultWriterAbortCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultWriterAbortCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamDefaultWriterAbortCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamDefaultWriterAbortCodeLength = 130;
+const int s_writableStreamInternalsWritableStreamDefaultWriterAbortCodeLength = 184;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultWriterAbortCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamDefaultWriterAbortCode = "(function (d,f){\"use strict\";const c=@getByIdDirectPrivate(d,\"stream\");return @assert(c!==@undefined),@writableStreamAbort(c,f)})\n";
+const char* const s_writableStreamInternalsWritableStreamDefaultWriterAbortCode = "(function (writer, reason) {\"use strict\";\n  const stream = @getByIdDirectPrivate(writer, \"stream\");\n  @assert(stream !== @undefined);\n  return @writableStreamAbort(stream, reason);\n})\n";
 
 // writableStreamDefaultWriterClose
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultWriterCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultWriterCloseCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamDefaultWriterCloseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamDefaultWriterCloseCodeLength = 126;
+const int s_writableStreamInternalsWritableStreamDefaultWriterCloseCodeLength = 168;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultWriterCloseCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamDefaultWriterCloseCode = "(function (c){\"use strict\";const _=@getByIdDirectPrivate(c,\"stream\");return @assert(_!==@undefined),@writableStreamClose(_)})\n";
+const char* const s_writableStreamInternalsWritableStreamDefaultWriterCloseCode = "(function (writer) {\"use strict\";\n  const stream = @getByIdDirectPrivate(writer, \"stream\");\n  @assert(stream !== @undefined);\n  return @writableStreamClose(stream);\n})\n";
 
 // writableStreamDefaultWriterCloseWithErrorPropagation
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultWriterCloseWithErrorPropagationCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultWriterCloseWithErrorPropagationCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamDefaultWriterCloseWithErrorPropagationCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamDefaultWriterCloseWithErrorPropagationCodeLength = 385;
+const int s_writableStreamInternalsWritableStreamDefaultWriterCloseWithErrorPropagationCodeLength = 502;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultWriterCloseWithErrorPropagationCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamDefaultWriterCloseWithErrorPropagationCode = "(function (u){\"use strict\";const c=@getByIdDirectPrivate(u,\"stream\");@assert(c!==@undefined);const l=@getByIdDirectPrivate(c,\"state\");if(@writableStreamCloseQueuedOrInFlight(c)||l===\"closed\")return @Promise.@resolve();if(l===\"errored\")return @Promise.@reject(@getByIdDirectPrivate(c,\"storedError\"));return @assert(l===\"writable\"||l===\"erroring\"),@writableStreamDefaultWriterClose(u)})\n";
+const char* const s_writableStreamInternalsWritableStreamDefaultWriterCloseWithErrorPropagationCode = "(function (writer) {\"use strict\";\n  const stream = @getByIdDirectPrivate(writer, \"stream\");\n  @assert(stream !== @undefined);\n  const state = @getByIdDirectPrivate(stream, \"state\");\n  if (@writableStreamCloseQueuedOrInFlight(stream) || state === \"closed\")\n    return @Promise.@resolve();\n  if (state === \"errored\")\n    return @Promise.@reject(@getByIdDirectPrivate(stream, \"storedError\"));\n  @assert(state === \"writable\" || state === \"erroring\");\n  return @writableStreamDefaultWriterClose(writer);\n})\n";
 
 // writableStreamDefaultWriterEnsureClosedPromiseRejected
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultWriterEnsureClosedPromiseRejectedCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultWriterEnsureClosedPromiseRejectedCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamDefaultWriterEnsureClosedPromiseRejectedCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamDefaultWriterEnsureClosedPromiseRejectedCodeLength = 326;
+const int s_writableStreamInternalsWritableStreamDefaultWriterEnsureClosedPromiseRejectedCodeLength = 591;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultWriterEnsureClosedPromiseRejectedCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamDefaultWriterEnsureClosedPromiseRejectedCode = "(function (h,n){\"use strict\";let _=@getByIdDirectPrivate(h,\"closedPromise\"),f=_.promise;if((@getPromiseInternalField(f,@promiseFieldFlags)&@promiseStateMask)!==@promiseStatePending)_=@newPromiseCapability(@Promise),f=_.promise,@putByIdDirectPrivate(h,\"closedPromise\",_);_.reject.@call(@undefined,n),@markPromiseAsHandled(f)})\n";
+const char* const s_writableStreamInternalsWritableStreamDefaultWriterEnsureClosedPromiseRejectedCode = "(function (writer, error) {\"use strict\";\n  let closedPromiseCapability = @getByIdDirectPrivate(writer, \"closedPromise\");\n  let closedPromise = closedPromiseCapability.promise;\n  if ((@getPromiseInternalField(closedPromise, @promiseFieldFlags) & @promiseStateMask) !== @promiseStatePending) {\n    closedPromiseCapability = @newPromiseCapability(@Promise);\n    closedPromise = closedPromiseCapability.promise;\n    @putByIdDirectPrivate(writer, \"closedPromise\", closedPromiseCapability);\n  }\n  closedPromiseCapability.reject.@call(@undefined, error);\n  @markPromiseAsHandled(closedPromise);\n})\n";
 
 // writableStreamDefaultWriterEnsureReadyPromiseRejected
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultWriterEnsureReadyPromiseRejectedCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultWriterEnsureReadyPromiseRejectedCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamDefaultWriterEnsureReadyPromiseRejectedCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamDefaultWriterEnsureReadyPromiseRejectedCodeLength = 324;
+const int s_writableStreamInternalsWritableStreamDefaultWriterEnsureReadyPromiseRejectedCodeLength = 579;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultWriterEnsureReadyPromiseRejectedCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamDefaultWriterEnsureReadyPromiseRejectedCode = "(function (h,n){\"use strict\";let _=@getByIdDirectPrivate(h,\"readyPromise\"),g=_.promise;if((@getPromiseInternalField(g,@promiseFieldFlags)&@promiseStateMask)!==@promiseStatePending)_=@newPromiseCapability(@Promise),g=_.promise,@putByIdDirectPrivate(h,\"readyPromise\",_);_.reject.@call(@undefined,n),@markPromiseAsHandled(g)})\n";
+const char* const s_writableStreamInternalsWritableStreamDefaultWriterEnsureReadyPromiseRejectedCode = "(function (writer, error) {\"use strict\";\n  let readyPromiseCapability = @getByIdDirectPrivate(writer, \"readyPromise\");\n  let readyPromise = readyPromiseCapability.promise;\n  if ((@getPromiseInternalField(readyPromise, @promiseFieldFlags) & @promiseStateMask) !== @promiseStatePending) {\n    readyPromiseCapability = @newPromiseCapability(@Promise);\n    readyPromise = readyPromiseCapability.promise;\n    @putByIdDirectPrivate(writer, \"readyPromise\", readyPromiseCapability);\n  }\n  readyPromiseCapability.reject.@call(@undefined, error);\n  @markPromiseAsHandled(readyPromise);\n})\n";
 
 // writableStreamDefaultWriterGetDesiredSize
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultWriterGetDesiredSizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultWriterGetDesiredSizeCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamDefaultWriterGetDesiredSizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamDefaultWriterGetDesiredSizeCodeLength = 299;
+const int s_writableStreamInternalsWritableStreamDefaultWriterGetDesiredSizeCodeLength = 395;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultWriterGetDesiredSizeCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamDefaultWriterGetDesiredSizeCode = "(function (_){\"use strict\";const c=@getByIdDirectPrivate(_,\"stream\");@assert(c!==@undefined);const l=@getByIdDirectPrivate(c,\"state\");if(l===\"errored\"||l===\"erroring\")return null;if(l===\"closed\")return 0;return @writableStreamDefaultControllerGetDesiredSize(@getByIdDirectPrivate(c,\"controller\"))})\n";
+const char* const s_writableStreamInternalsWritableStreamDefaultWriterGetDesiredSizeCode = "(function (writer) {\"use strict\";\n  const stream = @getByIdDirectPrivate(writer, \"stream\");\n  @assert(stream !== @undefined);\n  const state = @getByIdDirectPrivate(stream, \"state\");\n  if (state === \"errored\" || state === \"erroring\")\n    return null;\n  if (state === \"closed\")\n    return 0;\n  return @writableStreamDefaultControllerGetDesiredSize(@getByIdDirectPrivate(stream, \"controller\"));\n})\n";
 
 // writableStreamDefaultWriterRelease
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultWriterReleaseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultWriterReleaseCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamDefaultWriterReleaseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamDefaultWriterReleaseCodeLength = 414;
+const int s_writableStreamInternalsWritableStreamDefaultWriterReleaseCodeLength = 543;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultWriterReleaseCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamDefaultWriterReleaseCode = "(function (_){\"use strict\";const c=@getByIdDirectPrivate(_,\"stream\");@assert(c!==@undefined),@assert(@getByIdDirectPrivate(c,\"writer\")===_);const h=@makeTypeError(\"writableStreamDefaultWriterRelease\");@writableStreamDefaultWriterEnsureReadyPromiseRejected(_,h),@writableStreamDefaultWriterEnsureClosedPromiseRejected(_,h),@putByIdDirectPrivate(c,\"writer\",@undefined),@putByIdDirectPrivate(_,\"stream\",@undefined)})\n";
+const char* const s_writableStreamInternalsWritableStreamDefaultWriterReleaseCode = "(function (writer) {\"use strict\";\n  const stream = @getByIdDirectPrivate(writer, \"stream\");\n  @assert(stream !== @undefined);\n  @assert(@getByIdDirectPrivate(stream, \"writer\") === writer);\n  const releasedError = @makeTypeError(\"writableStreamDefaultWriterRelease\");\n  @writableStreamDefaultWriterEnsureReadyPromiseRejected(writer, releasedError);\n  @writableStreamDefaultWriterEnsureClosedPromiseRejected(writer, releasedError);\n  @putByIdDirectPrivate(stream, \"writer\", @undefined);\n  @putByIdDirectPrivate(writer, \"stream\", @undefined);\n})\n";
 
 // writableStreamDefaultWriterWrite
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultWriterWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultWriterWriteCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamDefaultWriterWriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamDefaultWriterWriteCodeLength = 919;
+const int s_writableStreamInternalsWritableStreamDefaultWriterWriteCodeLength = 1202;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultWriterWriteCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamDefaultWriterWriteCode = "(function (W,_){\"use strict\";const d=@getByIdDirectPrivate(W,\"stream\");@assert(d!==@undefined);const P=@getByIdDirectPrivate(d,\"controller\");@assert(P!==@undefined);const b=@writableStreamDefaultControllerGetChunkSize(P,_);if(d!==@getByIdDirectPrivate(W,\"stream\"))return @Promise.@reject(@makeTypeError(\"writer is not stream's writer\"));const g=@getByIdDirectPrivate(d,\"state\");if(g===\"errored\")return @Promise.@reject(@getByIdDirectPrivate(d,\"storedError\"));if(@writableStreamCloseQueuedOrInFlight(d)||g===\"closed\")return @Promise.@reject(@makeTypeError(\"stream is closing or closed\"));if(@writableStreamCloseQueuedOrInFlight(d)||g===\"closed\")return @Promise.@reject(@makeTypeError(\"stream is closing or closed\"));if(g===\"erroring\")return @Promise.@reject(@getByIdDirectPrivate(d,\"storedError\"));@assert(g===\"writable\");const f=@writableStreamAddWriteRequest(d);return @writableStreamDefaultControllerWrite(P,_,b),f})\n";
+const char* const s_writableStreamInternalsWritableStreamDefaultWriterWriteCode = "(function (writer, chunk) {\"use strict\";\n  const stream = @getByIdDirectPrivate(writer, \"stream\");\n  @assert(stream !== @undefined);\n  const controller = @getByIdDirectPrivate(stream, \"controller\");\n  @assert(controller !== @undefined);\n  const chunkSize = @writableStreamDefaultControllerGetChunkSize(controller, chunk);\n  if (stream !== @getByIdDirectPrivate(writer, \"stream\"))\n    return @Promise.@reject(@makeTypeError(\"writer is not stream's writer\"));\n  const state = @getByIdDirectPrivate(stream, \"state\");\n  if (state === \"errored\")\n    return @Promise.@reject(@getByIdDirectPrivate(stream, \"storedError\"));\n  if (@writableStreamCloseQueuedOrInFlight(stream) || state === \"closed\")\n    return @Promise.@reject(@makeTypeError(\"stream is closing or closed\"));\n  if (@writableStreamCloseQueuedOrInFlight(stream) || state === \"closed\")\n    return @Promise.@reject(@makeTypeError(\"stream is closing or closed\"));\n  if (state === \"erroring\")\n    return @Promise.@reject(@getByIdDirectPrivate(stream, \"storedError\"));\n  @assert(state === \"writable\");\n  const promise = @writableStreamAddWriteRequest(stream);\n  @writableStreamDefaultControllerWrite(controller, chunk, chunkSize);\n  return promise;\n})\n";
 
 // setUpWritableStreamDefaultController
 const JSC::ConstructAbility s_writableStreamInternalsSetUpWritableStreamDefaultControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsSetUpWritableStreamDefaultControllerCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsSetUpWritableStreamDefaultControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsSetUpWritableStreamDefaultControllerCodeLength = 700;
+const int s_writableStreamInternalsSetUpWritableStreamDefaultControllerCodeLength = 1101;
 static const JSC::Intrinsic s_writableStreamInternalsSetUpWritableStreamDefaultControllerCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsSetUpWritableStreamDefaultControllerCode = "(function (B,_,v,P,U,d,f,j){\"use strict\";@assert(@isWritableStream(B)),@assert(@getByIdDirectPrivate(B,\"controller\")===@undefined),@putByIdDirectPrivate(_,\"stream\",B),@putByIdDirectPrivate(B,\"controller\",_),@resetQueue(@getByIdDirectPrivate(_,\"queue\")),@putByIdDirectPrivate(_,\"started\",-1),@putByIdDirectPrivate(_,\"startAlgorithm\",v),@putByIdDirectPrivate(_,\"strategySizeAlgorithm\",j),@putByIdDirectPrivate(_,\"strategyHWM\",f),@putByIdDirectPrivate(_,\"writeAlgorithm\",P),@putByIdDirectPrivate(_,\"closeAlgorithm\",U),@putByIdDirectPrivate(_,\"abortAlgorithm\",d);const q=@writableStreamDefaultControllerGetBackpressure(_);@writableStreamUpdateBackpressure(B,q),@writableStreamDefaultControllerStart(_)})\n";
+const char* const s_writableStreamInternalsSetUpWritableStreamDefaultControllerCode = "(function (stream, controller, startAlgorithm, writeAlgorithm, closeAlgorithm, abortAlgorithm, highWaterMark, sizeAlgorithm) {\"use strict\";\n  @assert(@isWritableStream(stream));\n  @assert(@getByIdDirectPrivate(stream, \"controller\") === @undefined);\n  @putByIdDirectPrivate(controller, \"stream\", stream);\n  @putByIdDirectPrivate(stream, \"controller\", controller);\n  @resetQueue(@getByIdDirectPrivate(controller, \"queue\"));\n  @putByIdDirectPrivate(controller, \"started\", -1);\n  @putByIdDirectPrivate(controller, \"startAlgorithm\", startAlgorithm);\n  @putByIdDirectPrivate(controller, \"strategySizeAlgorithm\", sizeAlgorithm);\n  @putByIdDirectPrivate(controller, \"strategyHWM\", highWaterMark);\n  @putByIdDirectPrivate(controller, \"writeAlgorithm\", writeAlgorithm);\n  @putByIdDirectPrivate(controller, \"closeAlgorithm\", closeAlgorithm);\n  @putByIdDirectPrivate(controller, \"abortAlgorithm\", abortAlgorithm);\n  const backpressure = @writableStreamDefaultControllerGetBackpressure(controller);\n  @writableStreamUpdateBackpressure(stream, backpressure);\n  @writableStreamDefaultControllerStart(controller);\n})\n";
 
 // writableStreamDefaultControllerStart
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerStartCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerStartCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamDefaultControllerStartCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamDefaultControllerStartCodeLength = 647;
+const int s_writableStreamInternalsWritableStreamDefaultControllerStartCodeLength = 922;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerStartCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamDefaultControllerStartCode = "(function (i){\"use strict\";if(@getByIdDirectPrivate(i,\"started\")!==-1)return;@putByIdDirectPrivate(i,\"started\",0);const p=@getByIdDirectPrivate(i,\"startAlgorithm\");@putByIdDirectPrivate(i,\"startAlgorithm\",@undefined);const d=@getByIdDirectPrivate(i,\"stream\");return @Promise.@resolve(p.@call()).@then(()=>{const _=@getByIdDirectPrivate(d,\"state\");@assert(_===\"writable\"||_===\"erroring\"),@putByIdDirectPrivate(i,\"started\",1),@writableStreamDefaultControllerAdvanceQueueIfNeeded(i)},(_)=>{const u=@getByIdDirectPrivate(d,\"state\");@assert(u===\"writable\"||u===\"erroring\"),@putByIdDirectPrivate(i,\"started\",1),@writableStreamDealWithRejection(d,_)})})\n";
+const char* const s_writableStreamInternalsWritableStreamDefaultControllerStartCode = "(function (controller) {\"use strict\";\n  if (@getByIdDirectPrivate(controller, \"started\") !== -1)\n    return;\n  @putByIdDirectPrivate(controller, \"started\", 0);\n  const startAlgorithm = @getByIdDirectPrivate(controller, \"startAlgorithm\");\n  @putByIdDirectPrivate(controller, \"startAlgorithm\", @undefined);\n  const stream = @getByIdDirectPrivate(controller, \"stream\");\n  return @Promise.@resolve(startAlgorithm.@call()).@then(() => {\n    const state = @getByIdDirectPrivate(stream, \"state\");\n    @assert(state === \"writable\" || state === \"erroring\");\n    @putByIdDirectPrivate(controller, \"started\", 1);\n    @writableStreamDefaultControllerAdvanceQueueIfNeeded(controller);\n  }, (error) => {\n    const state = @getByIdDirectPrivate(stream, \"state\");\n    @assert(state === \"writable\" || state === \"erroring\");\n    @putByIdDirectPrivate(controller, \"started\", 1);\n    @writableStreamDealWithRejection(stream, error);\n  });\n})\n";
 
 // setUpWritableStreamDefaultControllerFromUnderlyingSink
 const JSC::ConstructAbility s_writableStreamInternalsSetUpWritableStreamDefaultControllerFromUnderlyingSinkCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsSetUpWritableStreamDefaultControllerFromUnderlyingSinkCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsSetUpWritableStreamDefaultControllerFromUnderlyingSinkCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsSetUpWritableStreamDefaultControllerFromUnderlyingSinkCodeLength = 561;
+const int s_writableStreamInternalsSetUpWritableStreamDefaultControllerFromUnderlyingSinkCodeLength = 1344;
 static const JSC::Intrinsic s_writableStreamInternalsSetUpWritableStreamDefaultControllerFromUnderlyingSinkCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsSetUpWritableStreamDefaultControllerFromUnderlyingSinkCode = "(function (C,O,_,E,F){\"use strict\";const f=new @WritableStreamDefaultController;let q=()=>{},v=()=>{return @Promise.@resolve()},x=()=>{return @Promise.@resolve()},B=()=>{return @Promise.@resolve()};if(\"start\"in _){const p=_.start;q=()=>@promiseInvokeOrNoopMethodNoCatch(O,p,[f])}if(\"write\"in _){const p=_.write;v=(j)=>@promiseInvokeOrNoopMethod(O,p,[j,f])}if(\"close\"in _){const p=_.close;x=()=>@promiseInvokeOrNoopMethod(O,p,[])}if(\"abort\"in _){const p=_.abort;B=(j)=>@promiseInvokeOrNoopMethod(O,p,[j])}@setUpWritableStreamDefaultController(C,f,q,v,x,B,E,F)})\n";
+const char* const s_writableStreamInternalsSetUpWritableStreamDefaultControllerFromUnderlyingSinkCode = "(function (stream, underlyingSink, underlyingSinkDict, highWaterMark, sizeAlgorithm) {\"use strict\";\n  const controller = new @WritableStreamDefaultController;\n  let startAlgorithm = () => {\n  };\n  let writeAlgorithm = () => {\n    return @Promise.@resolve();\n  };\n  let closeAlgorithm = () => {\n    return @Promise.@resolve();\n  };\n  let abortAlgorithm = () => {\n    return @Promise.@resolve();\n  };\n  if (\"start\" in underlyingSinkDict) {\n    const startMethod = underlyingSinkDict[\"start\"];\n    startAlgorithm = () => @promiseInvokeOrNoopMethodNoCatch(underlyingSink, startMethod, [controller]);\n  }\n  if (\"write\" in underlyingSinkDict) {\n    const writeMethod = underlyingSinkDict[\"write\"];\n    writeAlgorithm = (chunk) => @promiseInvokeOrNoopMethod(underlyingSink, writeMethod, [chunk, controller]);\n  }\n  if (\"close\" in underlyingSinkDict) {\n    const closeMethod = underlyingSinkDict[\"close\"];\n    closeAlgorithm = () => @promiseInvokeOrNoopMethod(underlyingSink, closeMethod, []);\n  }\n  if (\"abort\" in underlyingSinkDict) {\n    const abortMethod = underlyingSinkDict[\"abort\"];\n    abortAlgorithm = (reason) => @promiseInvokeOrNoopMethod(underlyingSink, abortMethod, [reason]);\n  }\n  @setUpWritableStreamDefaultController(stream, controller, startAlgorithm, writeAlgorithm, closeAlgorithm, abortAlgorithm, highWaterMark, sizeAlgorithm);\n})\n";
 
 // writableStreamDefaultControllerAdvanceQueueIfNeeded
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeLength = 582;
+const int s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeLength = 819;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCode = "(function (_){\"use strict\";const d=@getByIdDirectPrivate(_,\"stream\");if(@getByIdDirectPrivate(_,\"started\")!==1)return;if(@assert(d!==@undefined),@getByIdDirectPrivate(d,\"inFlightWriteRequest\")!==@undefined)return;const f=@getByIdDirectPrivate(d,\"state\");if(@assert(f!==\"closed\"||f!==\"errored\"),f===\"erroring\"){@writableStreamFinishErroring(d);return}const h=@getByIdDirectPrivate(_,\"queue\");if(h.content\?.isEmpty()\?\?!1)return;const i=@peekQueueValue(h);if(i===@isCloseSentinel)@writableStreamDefaultControllerProcessClose(_);else @writableStreamDefaultControllerProcessWrite(_,i)})\n";
+const char* const s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCode = "(function (controller) {\"use strict\";\n  const stream = @getByIdDirectPrivate(controller, \"stream\");\n  if (@getByIdDirectPrivate(controller, \"started\") !== 1)\n    return;\n  @assert(stream !== @undefined);\n  if (@getByIdDirectPrivate(stream, \"inFlightWriteRequest\") !== @undefined)\n    return;\n  const state = @getByIdDirectPrivate(stream, \"state\");\n  @assert(state !== \"closed\" || state !== \"errored\");\n  if (state === \"erroring\") {\n    @writableStreamFinishErroring(stream);\n    return;\n  }\n  const queue = @getByIdDirectPrivate(controller, \"queue\");\n  if (queue.content\?.isEmpty() \?\? false)\n    return;\n  const value = @peekQueueValue(queue);\n  if (value === @isCloseSentinel)\n    @writableStreamDefaultControllerProcessClose(controller);\n  else\n    @writableStreamDefaultControllerProcessWrite(controller, value);\n})\n";
 
 // isCloseSentinel
 const JSC::ConstructAbility s_writableStreamInternalsIsCloseSentinelCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsIsCloseSentinelCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsIsCloseSentinelCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsIsCloseSentinelCodeLength = 29;
+const int s_writableStreamInternalsIsCloseSentinelCodeLength = 31;
 static const JSC::Intrinsic s_writableStreamInternalsIsCloseSentinelCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsIsCloseSentinelCode = "(function (){\"use strict\";})\n";
+const char* const s_writableStreamInternalsIsCloseSentinelCode = "(function () {\"use strict\";\n})\n";
 
 // writableStreamDefaultControllerClearAlgorithms
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerClearAlgorithmsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerClearAlgorithmsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamDefaultControllerClearAlgorithmsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamDefaultControllerClearAlgorithmsCodeLength = 248;
+const int s_writableStreamInternalsWritableStreamDefaultControllerClearAlgorithmsCodeLength = 316;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerClearAlgorithmsCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamDefaultControllerClearAlgorithmsCode = "(function (h){\"use strict\";@putByIdDirectPrivate(h,\"writeAlgorithm\",@undefined),@putByIdDirectPrivate(h,\"closeAlgorithm\",@undefined),@putByIdDirectPrivate(h,\"abortAlgorithm\",@undefined),@putByIdDirectPrivate(h,\"strategySizeAlgorithm\",@undefined)})\n";
+const char* const s_writableStreamInternalsWritableStreamDefaultControllerClearAlgorithmsCode = "(function (controller) {\"use strict\";\n  @putByIdDirectPrivate(controller, \"writeAlgorithm\", @undefined);\n  @putByIdDirectPrivate(controller, \"closeAlgorithm\", @undefined);\n  @putByIdDirectPrivate(controller, \"abortAlgorithm\", @undefined);\n  @putByIdDirectPrivate(controller, \"strategySizeAlgorithm\", @undefined);\n})\n";
 
 // writableStreamDefaultControllerClose
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerCloseCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamDefaultControllerCloseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamDefaultControllerCloseCodeLength = 160;
+const int s_writableStreamInternalsWritableStreamDefaultControllerCloseCodeLength = 199;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerCloseCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamDefaultControllerCloseCode = "(function (_){\"use strict\";@enqueueValueWithSize(@getByIdDirectPrivate(_,\"queue\"),@isCloseSentinel,0),@writableStreamDefaultControllerAdvanceQueueIfNeeded(_)})\n";
+const char* const s_writableStreamInternalsWritableStreamDefaultControllerCloseCode = "(function (controller) {\"use strict\";\n  @enqueueValueWithSize(@getByIdDirectPrivate(controller, \"queue\"), @isCloseSentinel, 0);\n  @writableStreamDefaultControllerAdvanceQueueIfNeeded(controller);\n})\n";
 
 // writableStreamDefaultControllerError
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerErrorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamDefaultControllerErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamDefaultControllerErrorCodeLength = 237;
+const int s_writableStreamInternalsWritableStreamDefaultControllerErrorCodeLength = 320;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerErrorCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamDefaultControllerErrorCode = "(function (h,b){\"use strict\";const i=@getByIdDirectPrivate(h,\"stream\");@assert(i!==@undefined),@assert(@getByIdDirectPrivate(i,\"state\")===\"writable\"),@writableStreamDefaultControllerClearAlgorithms(h),@writableStreamStartErroring(i,b)})\n";
+const char* const s_writableStreamInternalsWritableStreamDefaultControllerErrorCode = "(function (controller, error) {\"use strict\";\n  const stream = @getByIdDirectPrivate(controller, \"stream\");\n  @assert(stream !== @undefined);\n  @assert(@getByIdDirectPrivate(stream, \"state\") === \"writable\");\n  @writableStreamDefaultControllerClearAlgorithms(controller);\n  @writableStreamStartErroring(stream, error);\n})\n";
 
 // writableStreamDefaultControllerErrorIfNeeded
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerErrorIfNeededCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerErrorIfNeededCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamDefaultControllerErrorIfNeededCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamDefaultControllerErrorIfNeededCodeLength = 165;
+const int s_writableStreamInternalsWritableStreamDefaultControllerErrorIfNeededCodeLength = 233;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerErrorIfNeededCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamDefaultControllerErrorIfNeededCode = "(function (d,h){\"use strict\";const i=@getByIdDirectPrivate(d,\"stream\");if(@getByIdDirectPrivate(i,\"state\")===\"writable\")@writableStreamDefaultControllerError(d,h)})\n";
+const char* const s_writableStreamInternalsWritableStreamDefaultControllerErrorIfNeededCode = "(function (controller, error) {\"use strict\";\n  const stream = @getByIdDirectPrivate(controller, \"stream\");\n  if (@getByIdDirectPrivate(stream, \"state\") === \"writable\")\n    @writableStreamDefaultControllerError(controller, error);\n})\n";
 
 // writableStreamDefaultControllerGetBackpressure
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerGetBackpressureCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerGetBackpressureCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamDefaultControllerGetBackpressureCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamDefaultControllerGetBackpressureCodeLength = 89;
+const int s_writableStreamInternalsWritableStreamDefaultControllerGetBackpressureCodeLength = 150;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerGetBackpressureCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamDefaultControllerGetBackpressureCode = "(function (d){\"use strict\";return @writableStreamDefaultControllerGetDesiredSize(d)<=0})\n";
+const char* const s_writableStreamInternalsWritableStreamDefaultControllerGetBackpressureCode = "(function (controller) {\"use strict\";\n  const desiredSize = @writableStreamDefaultControllerGetDesiredSize(controller);\n  return desiredSize <= 0;\n})\n";
 
 // writableStreamDefaultControllerGetChunkSize
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerGetChunkSizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerGetChunkSizeCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamDefaultControllerGetChunkSizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamDefaultControllerGetChunkSizeCodeLength = 181;
+const int s_writableStreamInternalsWritableStreamDefaultControllerGetChunkSizeCodeLength = 252;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerGetChunkSizeCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamDefaultControllerGetChunkSizeCode = "(function (a,i){\"use strict\";try{return @getByIdDirectPrivate(a,\"strategySizeAlgorithm\").@call(@undefined,i)}catch(d){return @writableStreamDefaultControllerErrorIfNeeded(a,d),1}})\n";
+const char* const s_writableStreamInternalsWritableStreamDefaultControllerGetChunkSizeCode = "(function (controller, chunk) {\"use strict\";\n  try {\n    return @getByIdDirectPrivate(controller, \"strategySizeAlgorithm\").@call(@undefined, chunk);\n  } catch (e) {\n    @writableStreamDefaultControllerErrorIfNeeded(controller, e);\n    return 1;\n  }\n})\n";
 
 // writableStreamDefaultControllerGetDesiredSize
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerGetDesiredSizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerGetDesiredSizeCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamDefaultControllerGetDesiredSizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamDefaultControllerGetDesiredSizeCodeLength = 113;
+const int s_writableStreamInternalsWritableStreamDefaultControllerGetDesiredSizeCodeLength = 150;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerGetDesiredSizeCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamDefaultControllerGetDesiredSizeCode = "(function (i){\"use strict\";return @getByIdDirectPrivate(i,\"strategyHWM\")-@getByIdDirectPrivate(i,\"queue\").size})\n";
+const char* const s_writableStreamInternalsWritableStreamDefaultControllerGetDesiredSizeCode = "(function (controller) {\"use strict\";\n  return @getByIdDirectPrivate(controller, \"strategyHWM\") - @getByIdDirectPrivate(controller, \"queue\").size;\n})\n";
 
 // writableStreamDefaultControllerProcessClose
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerProcessCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerProcessCloseCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamDefaultControllerProcessCloseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamDefaultControllerProcessCloseCodeLength = 441;
+const int s_writableStreamInternalsWritableStreamDefaultControllerProcessCloseCodeLength = 611;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerProcessCloseCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamDefaultControllerProcessCloseCode = "(function (i){\"use strict\";const _=@getByIdDirectPrivate(i,\"stream\");@writableStreamMarkCloseRequestInFlight(_),@dequeueValue(@getByIdDirectPrivate(i,\"queue\")),@assert(@getByIdDirectPrivate(i,\"queue\").content\?.isEmpty());const d=@getByIdDirectPrivate(i,\"closeAlgorithm\").@call();@writableStreamDefaultControllerClearAlgorithms(i),d.@then(()=>{@writableStreamFinishInFlightClose(_)},(h)=>{@writableStreamFinishInFlightCloseWithError(_,h)})})\n";
+const char* const s_writableStreamInternalsWritableStreamDefaultControllerProcessCloseCode = "(function (controller) {\"use strict\";\n  const stream = @getByIdDirectPrivate(controller, \"stream\");\n  @writableStreamMarkCloseRequestInFlight(stream);\n  @dequeueValue(@getByIdDirectPrivate(controller, \"queue\"));\n  @assert(@getByIdDirectPrivate(controller, \"queue\").content\?.isEmpty());\n  const sinkClosePromise = @getByIdDirectPrivate(controller, \"closeAlgorithm\").@call();\n  @writableStreamDefaultControllerClearAlgorithms(controller);\n  sinkClosePromise.@then(() => {\n    @writableStreamFinishInFlightClose(stream);\n  }, (reason) => {\n    @writableStreamFinishInFlightCloseWithError(stream, reason);\n  });\n})\n";
 
 // writableStreamDefaultControllerProcessWrite
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerProcessWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerProcessWriteCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamDefaultControllerProcessWriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamDefaultControllerProcessWriteCodeLength = 734;
+const int s_writableStreamInternalsWritableStreamDefaultControllerProcessWriteCodeLength = 1085;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerProcessWriteCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamDefaultControllerProcessWriteCode = "(function (d,v){\"use strict\";const i=@getByIdDirectPrivate(d,\"stream\");@writableStreamMarkFirstWriteRequestInFlight(i),@getByIdDirectPrivate(d,\"writeAlgorithm\").@call(@undefined,v).@then(()=>{@writableStreamFinishInFlightWrite(i);const _=@getByIdDirectPrivate(i,\"state\");if(@assert(_===\"writable\"||_===\"erroring\"),@dequeueValue(@getByIdDirectPrivate(d,\"queue\")),!@writableStreamCloseQueuedOrInFlight(i)&&_===\"writable\"){const q=@writableStreamDefaultControllerGetBackpressure(d);@writableStreamUpdateBackpressure(i,q)}@writableStreamDefaultControllerAdvanceQueueIfNeeded(d)},(_)=>{if(@getByIdDirectPrivate(i,\"state\")===\"writable\")@writableStreamDefaultControllerClearAlgorithms(d);@writableStreamFinishInFlightWriteWithError(i,_)})})\n";
+const char* const s_writableStreamInternalsWritableStreamDefaultControllerProcessWriteCode = "(function (controller, chunk) {\"use strict\";\n  const stream = @getByIdDirectPrivate(controller, \"stream\");\n  @writableStreamMarkFirstWriteRequestInFlight(stream);\n  const sinkWritePromise = @getByIdDirectPrivate(controller, \"writeAlgorithm\").@call(@undefined, chunk);\n  sinkWritePromise.@then(() => {\n    @writableStreamFinishInFlightWrite(stream);\n    const state = @getByIdDirectPrivate(stream, \"state\");\n    @assert(state === \"writable\" || state === \"erroring\");\n    @dequeueValue(@getByIdDirectPrivate(controller, \"queue\"));\n    if (!@writableStreamCloseQueuedOrInFlight(stream) && state === \"writable\") {\n      const backpressure = @writableStreamDefaultControllerGetBackpressure(controller);\n      @writableStreamUpdateBackpressure(stream, backpressure);\n    }\n    @writableStreamDefaultControllerAdvanceQueueIfNeeded(controller);\n  }, (reason) => {\n    const state = @getByIdDirectPrivate(stream, \"state\");\n    if (state === \"writable\")\n      @writableStreamDefaultControllerClearAlgorithms(controller);\n    @writableStreamFinishInFlightWriteWithError(stream, reason);\n  });\n})\n";
 
 // writableStreamDefaultControllerWrite
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerWriteCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamDefaultControllerWriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamDefaultControllerWriteCodeLength = 450;
+const int s_writableStreamInternalsWritableStreamDefaultControllerWriteCodeLength = 672;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerWriteCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamInternalsWritableStreamDefaultControllerWriteCode = "(function (d,B,D){\"use strict\";try{@enqueueValueWithSize(@getByIdDirectPrivate(d,\"queue\"),B,D);const y=@getByIdDirectPrivate(d,\"stream\"),I=@getByIdDirectPrivate(y,\"state\");if(!@writableStreamCloseQueuedOrInFlight(y)&&I===\"writable\"){const _=@writableStreamDefaultControllerGetBackpressure(d);@writableStreamUpdateBackpressure(y,_)}@writableStreamDefaultControllerAdvanceQueueIfNeeded(d)}catch(y){@writableStreamDefaultControllerErrorIfNeeded(d,y)}})\n";
+const char* const s_writableStreamInternalsWritableStreamDefaultControllerWriteCode = "(function (controller, chunk, chunkSize) {\"use strict\";\n  try {\n    @enqueueValueWithSize(@getByIdDirectPrivate(controller, \"queue\"), chunk, chunkSize);\n    const stream = @getByIdDirectPrivate(controller, \"stream\");\n    const state = @getByIdDirectPrivate(stream, \"state\");\n    if (!@writableStreamCloseQueuedOrInFlight(stream) && state === \"writable\") {\n      const backpressure = @writableStreamDefaultControllerGetBackpressure(controller);\n      @writableStreamUpdateBackpressure(stream, backpressure);\n    }\n    @writableStreamDefaultControllerAdvanceQueueIfNeeded(controller);\n  } catch (e) {\n    @writableStreamDefaultControllerErrorIfNeeded(controller, e);\n  }\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -484,145 +484,163 @@ WEBCORE_FOREACH_WRITABLESTREAMINTERNALS_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 const JSC::ConstructAbility s_transformStreamInternalsIsTransformStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsIsTransformStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamInternalsIsTransformStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsIsTransformStreamCodeLength = 88;
+const int s_transformStreamInternalsIsTransformStreamCodeLength = 112;
 static const JSC::Intrinsic s_transformStreamInternalsIsTransformStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsIsTransformStreamCode = "(function (d){\"use strict\";return @isObject(d)&&!!@getByIdDirectPrivate(d,\"readable\")})\n";
+const char* const s_transformStreamInternalsIsTransformStreamCode = "(function (stream) {\"use strict\";\n  return @isObject(stream) && !!@getByIdDirectPrivate(stream, \"readable\");\n})\n";
 
 // isTransformStreamDefaultController
 const JSC::ConstructAbility s_transformStreamInternalsIsTransformStreamDefaultControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsIsTransformStreamDefaultControllerCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamInternalsIsTransformStreamDefaultControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsIsTransformStreamDefaultControllerCodeLength = 98;
+const int s_transformStreamInternalsIsTransformStreamDefaultControllerCodeLength = 134;
 static const JSC::Intrinsic s_transformStreamInternalsIsTransformStreamDefaultControllerCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsIsTransformStreamDefaultControllerCode = "(function (a){\"use strict\";return @isObject(a)&&!!@getByIdDirectPrivate(a,\"transformAlgorithm\")})\n";
+const char* const s_transformStreamInternalsIsTransformStreamDefaultControllerCode = "(function (controller) {\"use strict\";\n  return @isObject(controller) && !!@getByIdDirectPrivate(controller, \"transformAlgorithm\");\n})\n";
 
 // createTransformStream
 const JSC::ConstructAbility s_transformStreamInternalsCreateTransformStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsCreateTransformStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamInternalsCreateTransformStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsCreateTransformStreamCodeLength = 510;
+const int s_transformStreamInternalsCreateTransformStreamCodeLength = 1262;
 static const JSC::Intrinsic s_transformStreamInternalsCreateTransformStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsCreateTransformStreamCode = "(function (D,E,F,_,j,c,q){\"use strict\";if(_===@undefined)_=1;if(j===@undefined)j=()=>1;if(c===@undefined)c=0;if(q===@undefined)q=()=>1;@assert(_>=0),@assert(c>=0);const B={};@putByIdDirectPrivate(B,\"TransformStream\",!0);const v=new @TransformStream(B),x=@newPromiseCapability(@Promise);@initializeTransformStream(v,x.promise,_,j,c,q);const G=new @TransformStreamDefaultController;return @setUpTransformStreamDefaultController(v,G,E,F),D().@then(()=>{x.resolve.@call()},(I)=>{x.reject.@call(@undefined,I)}),v})\n";
+const char* const s_transformStreamInternalsCreateTransformStreamCode = "(function (startAlgorithm, transformAlgorithm, flushAlgorithm, writableHighWaterMark, writableSizeAlgorithm, readableHighWaterMark, readableSizeAlgorithm) {\"use strict\";\n  if (writableHighWaterMark === @undefined)\n    writableHighWaterMark = 1;\n  if (writableSizeAlgorithm === @undefined)\n    writableSizeAlgorithm = () => 1;\n  if (readableHighWaterMark === @undefined)\n    readableHighWaterMark = 0;\n  if (readableSizeAlgorithm === @undefined)\n    readableSizeAlgorithm = () => 1;\n  @assert(writableHighWaterMark >= 0);\n  @assert(readableHighWaterMark >= 0);\n  const transform = {};\n  @putByIdDirectPrivate(transform, \"TransformStream\", true);\n  const stream = new @TransformStream(transform);\n  const startPromiseCapability = @newPromiseCapability(@Promise);\n  @initializeTransformStream(stream, startPromiseCapability.promise, writableHighWaterMark, writableSizeAlgorithm, readableHighWaterMark, readableSizeAlgorithm);\n  const controller = new @TransformStreamDefaultController;\n  @setUpTransformStreamDefaultController(stream, controller, transformAlgorithm, flushAlgorithm);\n  startAlgorithm().@then(() => {\n    startPromiseCapability.resolve.@call();\n  }, (error) => {\n    startPromiseCapability.reject.@call(@undefined, error);\n  });\n  return stream;\n})\n";
 
 // initializeTransformStream
 const JSC::ConstructAbility s_transformStreamInternalsInitializeTransformStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsInitializeTransformStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamInternalsInitializeTransformStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsInitializeTransformStreamCodeLength = 1015;
+const int s_transformStreamInternalsInitializeTransformStreamCodeLength = 1834;
 static const JSC::Intrinsic s_transformStreamInternalsInitializeTransformStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsInitializeTransformStreamCode = "(function (f,x,C,D,E,F){\"use strict\";const q=()=>{return x},G=(B)=>{return @transformStreamDefaultSinkWriteAlgorithm(f,B)},I=(B)=>{return @transformStreamDefaultSinkAbortAlgorithm(f,B)},J=()=>{return @transformStreamDefaultSinkCloseAlgorithm(f)},v=@createWritableStream(q,G,J,I,C,D),K=()=>{return @transformStreamDefaultSourcePullAlgorithm(f)},L=(B)=>{return @transformStreamErrorWritableAndUnblockWrite(f,B),@Promise.@resolve()},T={};@putByIdDirectPrivate(T,\"start\",q),@putByIdDirectPrivate(T,\"pull\",K),@putByIdDirectPrivate(T,\"cancel\",L);const j={};@putByIdDirectPrivate(j,\"size\",F),@putByIdDirectPrivate(j,\"highWaterMark\",E);const N=new @ReadableStream(T,j);@putByIdDirectPrivate(f,\"writable\",v),@putByIdDirectPrivate(f,\"internalWritable\",@getInternalWritableStream(v)),@putByIdDirectPrivate(f,\"readable\",N),@putByIdDirectPrivate(f,\"backpressure\",@undefined),@putByIdDirectPrivate(f,\"backpressureChangePromise\",@undefined),@transformStreamSetBackpressure(f,!0),@putByIdDirectPrivate(f,\"controller\",@undefined)})\n";
+const char* const s_transformStreamInternalsInitializeTransformStreamCode = "(function (stream, startPromise, writableHighWaterMark, writableSizeAlgorithm, readableHighWaterMark, readableSizeAlgorithm) {\"use strict\";\n  const startAlgorithm = () => {\n    return startPromise;\n  };\n  const writeAlgorithm = (chunk) => {\n    return @transformStreamDefaultSinkWriteAlgorithm(stream, chunk);\n  };\n  const abortAlgorithm = (reason) => {\n    return @transformStreamDefaultSinkAbortAlgorithm(stream, reason);\n  };\n  const closeAlgorithm = () => {\n    return @transformStreamDefaultSinkCloseAlgorithm(stream);\n  };\n  const writable = @createWritableStream(startAlgorithm, writeAlgorithm, closeAlgorithm, abortAlgorithm, writableHighWaterMark, writableSizeAlgorithm);\n  const pullAlgorithm = () => {\n    return @transformStreamDefaultSourcePullAlgorithm(stream);\n  };\n  const cancelAlgorithm = (reason) => {\n    @transformStreamErrorWritableAndUnblockWrite(stream, reason);\n    return @Promise.@resolve();\n  };\n  const underlyingSource = {};\n  @putByIdDirectPrivate(underlyingSource, \"start\", startAlgorithm);\n  @putByIdDirectPrivate(underlyingSource, \"pull\", pullAlgorithm);\n  @putByIdDirectPrivate(underlyingSource, \"cancel\", cancelAlgorithm);\n  const options = {};\n  @putByIdDirectPrivate(options, \"size\", readableSizeAlgorithm);\n  @putByIdDirectPrivate(options, \"highWaterMark\", readableHighWaterMark);\n  const readable = new @ReadableStream(underlyingSource, options);\n  @putByIdDirectPrivate(stream, \"writable\", writable);\n  @putByIdDirectPrivate(stream, \"internalWritable\", @getInternalWritableStream(writable));\n  @putByIdDirectPrivate(stream, \"readable\", readable);\n  @putByIdDirectPrivate(stream, \"backpressure\", @undefined);\n  @putByIdDirectPrivate(stream, \"backpressureChangePromise\", @undefined);\n  @transformStreamSetBackpressure(stream, true);\n  @putByIdDirectPrivate(stream, \"controller\", @undefined);\n})\n";
 
 // transformStreamError
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamErrorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsTransformStreamErrorCodeLength = 222;
+const int s_transformStreamInternalsTransformStreamErrorCodeLength = 315;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamErrorCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsTransformStreamErrorCode = "(function (f,i){\"use strict\";const n=@getByIdDirectPrivate(f,\"readable\"),_=@getByIdDirectPrivate(n,\"readableStreamController\");@readableStreamDefaultControllerError(_,i),@transformStreamErrorWritableAndUnblockWrite(f,i)})\n";
+const char* const s_transformStreamInternalsTransformStreamErrorCode = "(function (stream, e) {\"use strict\";\n  const readable = @getByIdDirectPrivate(stream, \"readable\");\n  const readableController = @getByIdDirectPrivate(readable, \"readableStreamController\");\n  @readableStreamDefaultControllerError(readableController, e);\n  @transformStreamErrorWritableAndUnblockWrite(stream, e);\n})\n";
 
 // transformStreamErrorWritableAndUnblockWrite
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamErrorWritableAndUnblockWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamErrorWritableAndUnblockWriteCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamErrorWritableAndUnblockWriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsTransformStreamErrorWritableAndUnblockWriteCodeLength = 339;
+const int s_transformStreamInternalsTransformStreamErrorWritableAndUnblockWriteCodeLength = 411;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamErrorWritableAndUnblockWriteCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsTransformStreamErrorWritableAndUnblockWriteCode = "(function (_,n){\"use strict\";@transformStreamDefaultControllerClearAlgorithms(@getByIdDirectPrivate(_,\"controller\"));const o=@getByIdDirectPrivate(_,\"internalWritable\");if(@writableStreamDefaultControllerErrorIfNeeded(@getByIdDirectPrivate(o,\"controller\"),n),@getByIdDirectPrivate(_,\"backpressure\"))@transformStreamSetBackpressure(_,!1)})\n";
+const char* const s_transformStreamInternalsTransformStreamErrorWritableAndUnblockWriteCode = "(function (stream, e) {\"use strict\";\n  @transformStreamDefaultControllerClearAlgorithms(@getByIdDirectPrivate(stream, \"controller\"));\n  const writable = @getByIdDirectPrivate(stream, \"internalWritable\");\n  @writableStreamDefaultControllerErrorIfNeeded(@getByIdDirectPrivate(writable, \"controller\"), e);\n  if (@getByIdDirectPrivate(stream, \"backpressure\"))\n    @transformStreamSetBackpressure(stream, false);\n})\n";
 
 // transformStreamSetBackpressure
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamSetBackpressureCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamSetBackpressureCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamSetBackpressureCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsTransformStreamSetBackpressureCodeLength = 308;
+const int s_transformStreamInternalsTransformStreamSetBackpressureCodeLength = 475;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamSetBackpressureCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsTransformStreamSetBackpressureCode = "(function (_,d){\"use strict\";@assert(@getByIdDirectPrivate(_,\"backpressure\")!==d);const i=@getByIdDirectPrivate(_,\"backpressureChangePromise\");if(i!==@undefined)i.resolve.@call();@putByIdDirectPrivate(_,\"backpressureChangePromise\",@newPromiseCapability(@Promise)),@putByIdDirectPrivate(_,\"backpressure\",d)})\n";
+const char* const s_transformStreamInternalsTransformStreamSetBackpressureCode = "(function (stream, backpressure) {\"use strict\";\n  @assert(@getByIdDirectPrivate(stream, \"backpressure\") !== backpressure);\n  const backpressureChangePromise = @getByIdDirectPrivate(stream, \"backpressureChangePromise\");\n  if (backpressureChangePromise !== @undefined)\n    backpressureChangePromise.resolve.@call();\n  @putByIdDirectPrivate(stream, \"backpressureChangePromise\", @newPromiseCapability(@Promise));\n  @putByIdDirectPrivate(stream, \"backpressure\", backpressure);\n})\n";
 
 // setUpTransformStreamDefaultController
 const JSC::ConstructAbility s_transformStreamInternalsSetUpTransformStreamDefaultControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsSetUpTransformStreamDefaultControllerCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamInternalsSetUpTransformStreamDefaultControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsSetUpTransformStreamDefaultControllerCodeLength = 294;
+const int s_transformStreamInternalsSetUpTransformStreamDefaultControllerCodeLength = 459;
 static const JSC::Intrinsic s_transformStreamInternalsSetUpTransformStreamDefaultControllerCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsSetUpTransformStreamDefaultControllerCode = "(function (d,P,_,b){\"use strict\";@assert(@isTransformStream(d)),@assert(@getByIdDirectPrivate(d,\"controller\")===@undefined),@putByIdDirectPrivate(P,\"stream\",d),@putByIdDirectPrivate(d,\"controller\",P),@putByIdDirectPrivate(P,\"transformAlgorithm\",_),@putByIdDirectPrivate(P,\"flushAlgorithm\",b)})\n";
+const char* const s_transformStreamInternalsSetUpTransformStreamDefaultControllerCode = "(function (stream, controller, transformAlgorithm, flushAlgorithm) {\"use strict\";\n  @assert(@isTransformStream(stream));\n  @assert(@getByIdDirectPrivate(stream, \"controller\") === @undefined);\n  @putByIdDirectPrivate(controller, \"stream\", stream);\n  @putByIdDirectPrivate(stream, \"controller\", controller);\n  @putByIdDirectPrivate(controller, \"transformAlgorithm\", transformAlgorithm);\n  @putByIdDirectPrivate(controller, \"flushAlgorithm\", flushAlgorithm);\n})\n";
 
 // setUpTransformStreamDefaultControllerFromTransformer
 const JSC::ConstructAbility s_transformStreamInternalsSetUpTransformStreamDefaultControllerFromTransformerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsSetUpTransformStreamDefaultControllerFromTransformerCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamInternalsSetUpTransformStreamDefaultControllerFromTransformerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsSetUpTransformStreamDefaultControllerFromTransformerCodeLength = 443;
+const int s_transformStreamInternalsSetUpTransformStreamDefaultControllerFromTransformerCodeLength = 863;
 static const JSC::Intrinsic s_transformStreamInternalsSetUpTransformStreamDefaultControllerFromTransformerCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsSetUpTransformStreamDefaultControllerFromTransformerCode = "(function (q,v,_){\"use strict\";const d=new @TransformStreamDefaultController;let b=(p)=>{try{@transformStreamDefaultControllerEnqueue(d,p)}catch(w){return @Promise.@reject(w)}return @Promise.@resolve()},j=()=>{return @Promise.@resolve()};if(\"transform\"in _)b=(p)=>{return @promiseInvokeOrNoopMethod(v,_.transform,[p,d])};if(\"flush\"in _)j=()=>{return @promiseInvokeOrNoopMethod(v,_.flush,[d])};@setUpTransformStreamDefaultController(q,d,b,j)})\n";
+const char* const s_transformStreamInternalsSetUpTransformStreamDefaultControllerFromTransformerCode = "(function (stream, transformer, transformerDict) {\"use strict\";\n  const controller = new @TransformStreamDefaultController;\n  let transformAlgorithm = (chunk) => {\n    try {\n      @transformStreamDefaultControllerEnqueue(controller, chunk);\n    } catch (e) {\n      return @Promise.@reject(e);\n    }\n    return @Promise.@resolve();\n  };\n  let flushAlgorithm = () => {\n    return @Promise.@resolve();\n  };\n  if (\"transform\" in transformerDict)\n    transformAlgorithm = (chunk) => {\n      return @promiseInvokeOrNoopMethod(transformer, transformerDict[\"transform\"], [chunk, controller]);\n    };\n  if (\"flush\" in transformerDict) {\n    flushAlgorithm = () => {\n      return @promiseInvokeOrNoopMethod(transformer, transformerDict[\"flush\"], [controller]);\n    };\n  }\n  @setUpTransformStreamDefaultController(stream, controller, transformAlgorithm, flushAlgorithm);\n})\n";
 
 // transformStreamDefaultControllerClearAlgorithms
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultControllerClearAlgorithmsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultControllerClearAlgorithmsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultControllerClearAlgorithmsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsTransformStreamDefaultControllerClearAlgorithmsCodeLength = 131;
+const int s_transformStreamInternalsTransformStreamDefaultControllerClearAlgorithmsCodeLength = 173;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultControllerClearAlgorithmsCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsTransformStreamDefaultControllerClearAlgorithmsCode = "(function (_){\"use strict\";@putByIdDirectPrivate(_,\"transformAlgorithm\",!0),@putByIdDirectPrivate(_,\"flushAlgorithm\",@undefined)})\n";
+const char* const s_transformStreamInternalsTransformStreamDefaultControllerClearAlgorithmsCode = "(function (controller) {\"use strict\";\n  @putByIdDirectPrivate(controller, \"transformAlgorithm\", true);\n  @putByIdDirectPrivate(controller, \"flushAlgorithm\", @undefined);\n})\n";
 
 // transformStreamDefaultControllerEnqueue
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultControllerEnqueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultControllerEnqueueCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultControllerEnqueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsTransformStreamDefaultControllerEnqueueCodeLength = 622;
+const int s_transformStreamInternalsTransformStreamDefaultControllerEnqueueCodeLength = 924;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultControllerEnqueueCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsTransformStreamDefaultControllerEnqueueCode = "(function (g,i){\"use strict\";const _=@getByIdDirectPrivate(g,\"stream\"),W=@getByIdDirectPrivate(_,\"readable\"),S=@getByIdDirectPrivate(W,\"readableStreamController\");if(@assert(S!==@undefined),!@readableStreamDefaultControllerCanCloseOrEnqueue(S))@throwTypeError(\"TransformStream.readable cannot close or enqueue\");try{@readableStreamDefaultControllerEnqueue(S,i)}catch(j){throw @transformStreamErrorWritableAndUnblockWrite(_,j),@getByIdDirectPrivate(W,\"storedError\")}const f=!@readableStreamDefaultControllerShouldCallPull(S);if(f!==@getByIdDirectPrivate(_,\"backpressure\"))@assert(f),@transformStreamSetBackpressure(_,!0)})\n";
+const char* const s_transformStreamInternalsTransformStreamDefaultControllerEnqueueCode = "(function (controller, chunk) {\"use strict\";\n  const stream = @getByIdDirectPrivate(controller, \"stream\");\n  const readable = @getByIdDirectPrivate(stream, \"readable\");\n  const readableController = @getByIdDirectPrivate(readable, \"readableStreamController\");\n  @assert(readableController !== @undefined);\n  if (!@readableStreamDefaultControllerCanCloseOrEnqueue(readableController))\n    @throwTypeError(\"TransformStream.readable cannot close or enqueue\");\n  try {\n    @readableStreamDefaultControllerEnqueue(readableController, chunk);\n  } catch (e) {\n    @transformStreamErrorWritableAndUnblockWrite(stream, e);\n    throw @getByIdDirectPrivate(readable, \"storedError\");\n  }\n  const backpressure = !@readableStreamDefaultControllerShouldCallPull(readableController);\n  if (backpressure !== @getByIdDirectPrivate(stream, \"backpressure\")) {\n    @assert(backpressure);\n    @transformStreamSetBackpressure(stream, true);\n  }\n})\n";
 
 // transformStreamDefaultControllerError
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultControllerErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultControllerErrorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultControllerErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsTransformStreamDefaultControllerErrorCodeLength = 90;
+const int s_transformStreamInternalsTransformStreamDefaultControllerErrorCodeLength = 117;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultControllerErrorCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsTransformStreamDefaultControllerErrorCode = "(function (a,d){\"use strict\";@transformStreamError(@getByIdDirectPrivate(a,\"stream\"),d)})\n";
+const char* const s_transformStreamInternalsTransformStreamDefaultControllerErrorCode = "(function (controller, e) {\"use strict\";\n  @transformStreamError(@getByIdDirectPrivate(controller, \"stream\"), e);\n})\n";
 
 // transformStreamDefaultControllerPerformTransform
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultControllerPerformTransformCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultControllerPerformTransformCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultControllerPerformTransformCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+<<<<<<< HEAD
 const int s_transformStreamInternalsTransformStreamDefaultControllerPerformTransformCodeLength = 274;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultControllerPerformTransformCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamInternalsTransformStreamDefaultControllerPerformTransformCode = "(function (d,g){\"use strict\";const _=@newPromiseCapability(@Promise);return @getByIdDirectPrivate(d,\"transformAlgorithm\").@call(@undefined,g).@then(()=>{_.resolve()},(f)=>{@transformStreamError(@getByIdDirectPrivate(d,\"stream\"),f),_.reject.@call(@undefined,f)}),_.promise})\n";
+=======
+const int s_transformStreamInternalsTransformStreamDefaultControllerPerformTransformCodeLength = 467;
+static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultControllerPerformTransformCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_transformStreamInternalsTransformStreamDefaultControllerPerformTransformCode = "(function (controller, chunk) {\"use strict\";\n  const promiseCapability = @newPromiseCapability(@Promise);\n  const transformPromise = @getByIdDirectPrivate(controller, \"transformAlgorithm\").@call(@undefined, chunk);\n  transformPromise.@then(() => {\n    promiseCapability.@resolve();\n  }, (r) => {\n    @transformStreamError(@getByIdDirectPrivate(controller, \"stream\"), r);\n    promiseCapability.reject.@call(@undefined, r);\n  });\n  return promiseCapability.promise;\n})\n";
+>>>>>>> 0ed39c721 (stfdsafsd)
 
 // transformStreamDefaultControllerTerminate
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultControllerTerminateCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultControllerTerminateCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultControllerTerminateCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsTransformStreamDefaultControllerTerminateCodeLength = 367;
+const int s_transformStreamInternalsTransformStreamDefaultControllerTerminateCodeLength = 524;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultControllerTerminateCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsTransformStreamDefaultControllerTerminateCode = "(function (f){\"use strict\";const i=@getByIdDirectPrivate(f,\"stream\"),k=@getByIdDirectPrivate(i,\"readable\"),_=@getByIdDirectPrivate(k,\"readableStreamController\");if(@readableStreamDefaultControllerCanCloseOrEnqueue(_))@readableStreamDefaultControllerClose(_);const u=@makeTypeError(\"the stream has been terminated\");@transformStreamErrorWritableAndUnblockWrite(i,u)})\n";
+const char* const s_transformStreamInternalsTransformStreamDefaultControllerTerminateCode = "(function (controller) {\"use strict\";\n  const stream = @getByIdDirectPrivate(controller, \"stream\");\n  const readable = @getByIdDirectPrivate(stream, \"readable\");\n  const readableController = @getByIdDirectPrivate(readable, \"readableStreamController\");\n  if (@readableStreamDefaultControllerCanCloseOrEnqueue(readableController))\n    @readableStreamDefaultControllerClose(readableController);\n  const error = @makeTypeError(\"the stream has been terminated\");\n  @transformStreamErrorWritableAndUnblockWrite(stream, error);\n})\n";
 
 // transformStreamDefaultSinkWriteAlgorithm
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultSinkWriteAlgorithmCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultSinkWriteAlgorithmCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultSinkWriteAlgorithmCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+<<<<<<< HEAD
 const int s_transformStreamInternalsTransformStreamDefaultSinkWriteAlgorithmCodeLength = 758;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultSinkWriteAlgorithmCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamInternalsTransformStreamDefaultSinkWriteAlgorithmCode = "(function (d,q){\"use strict\";const j=@getByIdDirectPrivate(d,\"internalWritable\");@assert(@getByIdDirectPrivate(j,\"state\")===\"writable\");const v=@getByIdDirectPrivate(d,\"controller\");if(@getByIdDirectPrivate(d,\"backpressure\")){const _=@newPromiseCapability(@Promise),x=@getByIdDirectPrivate(d,\"backpressureChangePromise\");return @assert(x!==@undefined),x.promise.@then(()=>{const f=@getByIdDirectPrivate(j,\"state\");if(f===\"erroring\"){_.reject.@call(@undefined,@getByIdDirectPrivate(j,\"storedError\"));return}@assert(f===\"writable\"),@transformStreamDefaultControllerPerformTransform(v,q).@then(()=>{_.resolve()},(z)=>{_.reject.@call(@undefined,z)})},(f)=>{_.reject.@call(@undefined,f)}),_.promise}return @transformStreamDefaultControllerPerformTransform(v,q)})\n";
+=======
+const int s_transformStreamInternalsTransformStreamDefaultSinkWriteAlgorithmCodeLength = 1236;
+static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultSinkWriteAlgorithmCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_transformStreamInternalsTransformStreamDefaultSinkWriteAlgorithmCode = "(function (stream, chunk) {\"use strict\";\n  const writable = @getByIdDirectPrivate(stream, \"internalWritable\");\n  @assert(@getByIdDirectPrivate(writable, \"state\") === \"writable\");\n  const controller = @getByIdDirectPrivate(stream, \"controller\");\n  if (@getByIdDirectPrivate(stream, \"backpressure\")) {\n    const promiseCapability = @newPromiseCapability(@Promise);\n    const backpressureChangePromise = @getByIdDirectPrivate(stream, \"backpressureChangePromise\");\n    @assert(backpressureChangePromise !== @undefined);\n    backpressureChangePromise.promise.@then(() => {\n      const state = @getByIdDirectPrivate(writable, \"state\");\n      if (state === \"erroring\") {\n        promiseCapability.reject.@call(@undefined, @getByIdDirectPrivate(writable, \"storedError\"));\n        return;\n      }\n      @assert(state === \"writable\");\n      @transformStreamDefaultControllerPerformTransform(controller, chunk).@then(() => {\n        promiseCapability.@resolve();\n      }, (e) => {\n        promiseCapability.reject.@call(@undefined, e);\n      });\n    }, (e) => {\n      promiseCapability.reject.@call(@undefined, e);\n    });\n    return promiseCapability.promise;\n  }\n  return @transformStreamDefaultControllerPerformTransform(controller, chunk);\n})\n";
+>>>>>>> 0ed39c721 (stfdsafsd)
 
 // transformStreamDefaultSinkAbortAlgorithm
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultSinkAbortAlgorithmCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultSinkAbortAlgorithmCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultSinkAbortAlgorithmCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsTransformStreamDefaultSinkAbortAlgorithmCodeLength = 85;
+const int s_transformStreamInternalsTransformStreamDefaultSinkAbortAlgorithmCodeLength = 116;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultSinkAbortAlgorithmCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsTransformStreamDefaultSinkAbortAlgorithmCode = "(function (d,t){\"use strict\";return @transformStreamError(d,t),@Promise.@resolve()})\n";
+const char* const s_transformStreamInternalsTransformStreamDefaultSinkAbortAlgorithmCode = "(function (stream, reason) {\"use strict\";\n  @transformStreamError(stream, reason);\n  return @Promise.@resolve();\n})\n";
 
 // transformStreamDefaultSinkCloseAlgorithm
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultSinkCloseAlgorithmCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultSinkCloseAlgorithmCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultSinkCloseAlgorithmCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+<<<<<<< HEAD
 const int s_transformStreamInternalsTransformStreamDefaultSinkCloseAlgorithmCodeLength = 785;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultSinkCloseAlgorithmCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamInternalsTransformStreamDefaultSinkCloseAlgorithmCode = "(function (S){\"use strict\";const _=@getByIdDirectPrivate(S,\"readable\"),u=@getByIdDirectPrivate(S,\"controller\"),c=@getByIdDirectPrivate(_,\"readableStreamController\"),g=@getByIdDirectPrivate(u,\"flushAlgorithm\");@assert(g!==@undefined);const j=@getByIdDirectPrivate(u,\"flushAlgorithm\").@call();@transformStreamDefaultControllerClearAlgorithms(u);const I=@newPromiseCapability(@Promise);return j.@then(()=>{if(@getByIdDirectPrivate(_,\"state\")===@streamErrored){I.reject.@call(@undefined,@getByIdDirectPrivate(_,\"storedError\"));return}if(@readableStreamDefaultControllerCanCloseOrEnqueue(c))@readableStreamDefaultControllerClose(c);I.resolve()},(k)=>{@transformStreamError(@getByIdDirectPrivate(u,\"stream\"),k),I.reject.@call(@undefined,@getByIdDirectPrivate(_,\"storedError\"))}),I.promise})\n";
+=======
+const int s_transformStreamInternalsTransformStreamDefaultSinkCloseAlgorithmCodeLength = 1207;
+static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultSinkCloseAlgorithmCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_transformStreamInternalsTransformStreamDefaultSinkCloseAlgorithmCode = "(function (stream) {\"use strict\";\n  const readable = @getByIdDirectPrivate(stream, \"readable\");\n  const controller = @getByIdDirectPrivate(stream, \"controller\");\n  const readableController = @getByIdDirectPrivate(readable, \"readableStreamController\");\n  const flushAlgorithm = @getByIdDirectPrivate(controller, \"flushAlgorithm\");\n  @assert(flushAlgorithm !== @undefined);\n  const flushPromise = @getByIdDirectPrivate(controller, \"flushAlgorithm\").@call();\n  @transformStreamDefaultControllerClearAlgorithms(controller);\n  const promiseCapability = @newPromiseCapability(@Promise);\n  flushPromise.@then(() => {\n    if (@getByIdDirectPrivate(readable, \"state\") === @streamErrored) {\n      promiseCapability.reject.@call(@undefined, @getByIdDirectPrivate(readable, \"storedError\"));\n      return;\n    }\n    if (@readableStreamDefaultControllerCanCloseOrEnqueue(readableController))\n      @readableStreamDefaultControllerClose(readableController);\n    promiseCapability.@resolve();\n  }, (r) => {\n    @transformStreamError(@getByIdDirectPrivate(controller, \"stream\"), r);\n    promiseCapability.reject.@call(@undefined, @getByIdDirectPrivate(readable, \"storedError\"));\n  });\n  return promiseCapability.promise;\n})\n";
+>>>>>>> 0ed39c721 (stfdsafsd)
 
 // transformStreamDefaultSourcePullAlgorithm
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultSourcePullAlgorithmCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultSourcePullAlgorithmCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultSourcePullAlgorithmCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInternalsTransformStreamDefaultSourcePullAlgorithmCodeLength = 259;
+const int s_transformStreamInternalsTransformStreamDefaultSourcePullAlgorithmCodeLength = 308;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultSourcePullAlgorithmCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInternalsTransformStreamDefaultSourcePullAlgorithmCode = "(function (i){\"use strict\";return @assert(@getByIdDirectPrivate(i,\"backpressure\")),@assert(@getByIdDirectPrivate(i,\"backpressureChangePromise\")!==@undefined),@transformStreamSetBackpressure(i,!1),@getByIdDirectPrivate(i,\"backpressureChangePromise\").promise})\n";
+const char* const s_transformStreamInternalsTransformStreamDefaultSourcePullAlgorithmCode = "(function (stream) {\"use strict\";\n  @assert(@getByIdDirectPrivate(stream, \"backpressure\"));\n  @assert(@getByIdDirectPrivate(stream, \"backpressureChangePromise\") !== @undefined);\n  @transformStreamSetBackpressure(stream, false);\n  return @getByIdDirectPrivate(stream, \"backpressureChangePromise\").promise;\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -638,25 +656,25 @@ WEBCORE_FOREACH_TRANSFORMSTREAMINTERNALS_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 const JSC::ConstructAbility s_processObjectInternalsBindingCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_processObjectInternalsBindingCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_processObjectInternalsBindingCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_processObjectInternalsBindingCodeLength = 473;
+const int s_processObjectInternalsBindingCodeLength = 572;
 static const JSC::Intrinsic s_processObjectInternalsBindingCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_processObjectInternalsBindingCode = "(function (u){\"use strict\";if(u!==\"constants\")@throwTypeError(\"process.binding() is not supported in Bun. If that breaks something, please file an issue and include a reproducible code sample.\");var p=globalThis.Symbol.for(\"process.bindings.constants\"),r=globalThis[p];if(!r){const{constants:I}=globalThis[globalThis.Symbol.for('Bun.lazy')](\"createImportMeta\",\"node:process\").require(\"node:fs\");r={fs:I,zlib:{},crypto:{},os:@Bun._Os().constants},globalThis[p]=r}return r})\n";
+const char* const s_processObjectInternalsBindingCode = "(function (bindingName) {\"use strict\";\n  if (bindingName !== \"constants\")\n    @throwTypeError(\"process.binding() is not supported in Bun. If that breaks something, please file an issue and include a reproducible code sample.\");\n  var cache = globalThis.Symbol.for(\"process.bindings.constants\");\n  var constants = globalThis[cache];\n  if (!constants) {\n    const { constants: fs } = @requireBuiltin(\"node:fs\");\n    constants = {\n      fs,\n      zlib: {},\n      crypto: {},\n      os: @Bun._Os().constants\n    };\n    globalThis[cache] = constants;\n  }\n  return constants;\n})\n";
 
 // getStdioWriteStream
 const JSC::ConstructAbility s_processObjectInternalsGetStdioWriteStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_processObjectInternalsGetStdioWriteStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_processObjectInternalsGetStdioWriteStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_processObjectInternalsGetStdioWriteStreamCodeLength = 4505;
+const int s_processObjectInternalsGetStdioWriteStreamCodeLength = 11499;
 static const JSC::Intrinsic s_processObjectInternalsGetStdioWriteStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_processObjectInternalsGetStdioWriteStreamCode = "(function (X,Z){\"use strict\";var N=(J)=>{var L=@requireMap.get(J);if(L)return L.exports;return @internalRequire(J)},I={path:\"node:process\",require:N};function q(J){var{Duplex:L,eos:j,destroy:B}=N(\"node:stream\"),K=class Q extends L{#j;#$;#N=!0;#O=!0;#J;#B;#L;#G;#H;#K;get isTTY(){return this.#K\?\?=N(\"node:tty\").isatty(J)}get fd(){return J}constructor(G){super({readable:!0,writable:!0});this.#J=`/dev/fd/${G}`}#M(G){const H=this.#B;if(this.#B=null,H)H(G);else if(G)this.destroy(G);else if(!this.#N&&!this.#O)this.destroy()}_destroy(G,H){if(!G&&this.#B!==null){var O=class P extends Error{code;name;constructor(V=\"The operation was aborted\",M=void 0){if(M!==void 0&&typeof M!==\"object\")throw new Error(`Invalid AbortError options:\\n\\n${JSON.stringify(M,null,2)}`);super(V,M);this.code=\"ABORT_ERR\",this.name=\"AbortError\"}};G=new O}if(this.#L=null,this.#G=null,this.#B===null)H(G);else{if(this.#B=H,this.#j)B(this.#j,G);if(this.#$)B(this.#$,G)}}_write(G,H,O){if(!this.#j){var{createWriteStream:P}=N(\"node:fs\"),V=this.#j=P(this.#J);V.on(\"finish\",()=>{if(this.#G){const M=this.#G;this.#G=null,M()}}),V.on(\"drain\",()=>{if(this.#L){const M=this.#L;this.#L=null,M()}}),j(V,(M)=>{if(this.#O=!1,M)B(V,M);this.#M(M)})}if(V.write(G,H))O();else this.#L=O}_final(G){this.#j&&this.#j.end(),this.#G=G}#Q(){var{createReadStream:G}=N(\"node:fs\"),H=this.#$=G(this.#J);return H.on(\"readable\",()=>{if(this.#H){const O=this.#H;this.#H=null,O()}else this.read()}),H.on(\"end\",()=>{this.push(null)}),j(H,(O)=>{if(this.#N=!1,O)B(H,O);this.#M(O)}),H}_read(){var G=this.#$;if(!G)G=this.#Q();while(!0){const H=G.read();if(H===null||!this.push(H))return}}};return new K(J)}var{EventEmitter:x}=N(\"node:events\");function Y(J){if(!J)return!0;var L=J.toLowerCase();return L===\"utf8\"||L===\"utf-8\"||L===\"buffer\"||L===\"binary\"}var T,U=[0,0],D=class J extends x{#j;#$;#N;#O;bytesWritten=0;setDefaultEncoding(L){if(this.#$||!Y(L))return this.#L(),this.#$.setDefaultEncoding(L)}#J(){switch(this.#j){case 1:{var L=@Bun.stdout.writer({highWaterMark:0});return L.unref(),L}case 2:{var L=@Bun.stderr.writer({highWaterMark:0});return L.unref(),L}default:throw new Error(\"Unsupported writer\")}}#B(){return this.#N\?\?=this.#J()}constructor(L){super();this.#j=L}get fd(){return this.#j}ref(){this.#B().ref()}unref(){this.#B().unref()}on(L,j){if(L===\"close\"||L===\"finish\")return this.#L(),this.#$.on(L,j);if(L===\"drain\")return super.on(\"drain\",j);if(L===\"error\")return super.on(\"error\",j);return super.on(L,j)}get _writableState(){return this.#L(),this.#$._writableState}get _readableState(){return this.#L(),this.#$._readableState}pipe(L){return this.#L(),this.#$.pipe(L)}unpipe(L){return this.#L(),this.#$.unpipe(L)}#L(){if(this.#$)return;this.#$=q(this.#j);const L=this.eventNames();for(let j of L)this.#$.on(j,(...B)=>{this.emit(j,...B)})}#G(L){var j=this.#B();const B=j.write(L);this.bytesWritten+=B;const K=j.flush(!1);return!!(B||K)}#H(L,j){if(!Y(j))return this.#L(),this.#$.write(L,j);return this.#G(L)}#K(L,j){if(j)this.emit(\"error\",j);try{L(j\?j:null)}catch(B){this.emit(\"error\",B)}}#M(L,j,B){if(!Y(j))return this.#L(),this.#$.write(L,j,B);var K=this.#B();const Q=K.write(L),G=K.flush(!0);if(G\?.then)return G.then(()=>{this.#K(B),this.emit(\"drain\")},(H)=>this.#K(B,H)),!1;return queueMicrotask(()=>{this.#K(B)}),!!(Q||G)}get isTTY(){return!1}write(L,j,B){const K=this._write(L,j,B);if(K)this.emit(\"drain\");return K}get hasColors(){return @Bun.tty[this.#j].hasColors}_write(L,j,B){var K=this.#$;if(K)return K.write(L,j,B);switch(arguments.length){case 0:{var Q=new Error(\"Invalid arguments\");throw Q.code=\"ERR_INVALID_ARG_TYPE\",Q}case 1:return this.#G(L);case 2:if(typeof j===\"function\")return this.#M(L,\"\",j);else if(typeof j===\"string\")return this.#H(L,j);default:{if(typeof j!==\"undefined\"&&typeof j!==\"string\"||typeof B!==\"undefined\"&&typeof B!==\"function\"){var Q=new Error(\"Invalid arguments\");throw Q.code=\"ERR_INVALID_ARG_TYPE\",Q}if(typeof B===\"undefined\")return this.#H(L,j);return this.#M(L,j,B)}}}destroy(){return this}end(){return this}};if(Z(X,U)){var C=class J extends D{get isTTY(){return!0}cursorTo(L,j,B){return(T\?\?=N(\"node:readline\")).cursorTo(this,L,j,B)}moveCursor(L,j,B){return(T\?\?=N(\"node:readline\")).moveCursor(this,L,j,B)}clearLine(L,j){return(T\?\?=N(\"node:readline\")).clearLine(this,L,j)}clearScreenDown(L){return(T\?\?=N(\"node:readline\")).clearScreenDown(this,L)}getWindowSize(){if(Z(X,U)===!0)return[U[0],U[1]]}get columns(){if(Z(X,U)===!0)return U[0]}get rows(){if(Z(X,U)===!0)return U[1]}};return new C(X)}return new D(X)})\n";
+const char* const s_processObjectInternalsGetStdioWriteStreamCode = "(function (fd_, getWindowSize) {\"use strict\";\n    var EventEmitter = @requireBuiltin(\"node:events\");\n    function createStdioWriteStream(fd_2) {\n      var { Duplex, eos, destroy } = @requireBuiltin(\"node:stream\");\n      var StdioWriteStream = class StdioWriteStream2 extends Duplex {\n        #writeStream;\n        #readStream;\n        #readable = true;\n        #writable = true;\n        #fdPath;\n        #onClose;\n        #onDrain;\n        #onFinish;\n        #onReadable;\n        #isTTY;\n        get isTTY() {\n          return this.#isTTY \?\?= @requireBuiltin(\"node:tty\").isatty(fd_2);\n        }\n        get fd() {\n          return fd_2;\n        }\n        constructor(fd) {\n          super({ readable: true, writable: true });\n          this.#fdPath = `/dev/fd/${fd}`;\n        }\n        #onFinished(err) {\n          const cb = this.#onClose;\n          this.#onClose = null;\n          if (cb) {\n            cb(err);\n          } else if (err) {\n            this.destroy(err);\n          } else if (!this.#readable && !this.#writable) {\n            this.destroy();\n          }\n        }\n        _destroy(err, callback) {\n          if (!err && this.#onClose !== null) {\n            var AbortError = class AbortError2 extends Error {\n              code;\n              name;\n              constructor(message = \"The operation was aborted\", options = undefined) {\n                if (options !== undefined && typeof options !== \"object\") {\n                  throw new Error(`Invalid AbortError options:\\n\\n${JSON.stringify(options, null, 2)}`);\n                }\n                super(message, options);\n                this.code = \"ABORT_ERR\";\n                this.name = \"AbortError\";\n              }\n            };\n            err = new AbortError;\n          }\n          this.#onDrain = null;\n          this.#onFinish = null;\n          if (this.#onClose === null) {\n            callback(err);\n          } else {\n            this.#onClose = callback;\n            if (this.#writeStream)\n              destroy(this.#writeStream, err);\n            if (this.#readStream)\n              destroy(this.#readStream, err);\n          }\n        }\n        _write(chunk, encoding, callback) {\n          if (!this.#writeStream) {\n            var { createWriteStream } = (() => ({}));\n            var stream = this.#writeStream = createWriteStream(this.#fdPath);\n            stream.on(\"finish\", () => {\n              if (this.#onFinish) {\n                const cb = this.#onFinish;\n                this.#onFinish = null;\n                cb();\n              }\n            });\n            stream.on(\"drain\", () => {\n              if (this.#onDrain) {\n                const cb = this.#onDrain;\n                this.#onDrain = null;\n                cb();\n              }\n            });\n            eos(stream, (err) => {\n              this.#writable = false;\n              if (err) {\n                destroy(stream, err);\n              }\n              this.#onFinished(err);\n            });\n          }\n          if (stream.write(chunk, encoding)) {\n            callback();\n          } else {\n            this.#onDrain = callback;\n          }\n        }\n        _final(callback) {\n          this.#writeStream && this.#writeStream.end();\n          this.#onFinish = callback;\n        }\n        #loadReadStream() {\n          var { createReadStream } = (() => ({}));\n          var readStream = this.#readStream = createReadStream(this.#fdPath);\n          readStream.on(\"readable\", () => {\n            if (this.#onReadable) {\n              const cb = this.#onReadable;\n              this.#onReadable = null;\n              cb();\n            } else {\n              this.read();\n            }\n          });\n          readStream.on(\"end\", () => {\n            this.push(null);\n          });\n          eos(readStream, (err) => {\n            this.#readable = false;\n            if (err) {\n              destroy(readStream, err);\n            }\n            this.#onFinished(err);\n          });\n          return readStream;\n        }\n        _read() {\n          var stream = this.#readStream;\n          if (!stream) {\n            stream = this.#loadReadStream();\n          }\n          while (true) {\n            const buf = stream.read();\n            if (buf === null || !this.push(buf)) {\n              return;\n            }\n          }\n        }\n      };\n      return new StdioWriteStream(fd_2);\n    }\n    function isFastEncoding(encoding) {\n      if (!encoding)\n        return true;\n      var normalied = encoding.toLowerCase();\n      return normalied === \"utf8\" || normalied === \"utf-8\" || normalied === \"buffer\" || normalied === \"binary\";\n    }\n    var readline;\n    var windowSizeArray = [0, 0];\n    var FastStdioWriteStreamInternal = class StdioWriteStream extends EventEmitter {\n      #fd;\n      #innerStream;\n      #writer;\n      #isTTY;\n      bytesWritten = 0;\n      setDefaultEncoding(encoding) {\n        if (this.#innerStream || !isFastEncoding(encoding)) {\n          this.#ensureInnerStream();\n          return this.#innerStream.setDefaultEncoding(encoding);\n        }\n      }\n      #createWriter() {\n        switch (this.#fd) {\n          case 1: {\n            var writer = @Bun.stdout.writer({ highWaterMark: 0 });\n            writer.unref();\n            return writer;\n          }\n          case 2: {\n            var writer = @Bun.stderr.writer({ highWaterMark: 0 });\n            writer.unref();\n            return writer;\n          }\n          default: {\n            throw new Error(\"Unsupported writer\");\n          }\n        }\n      }\n      #getWriter() {\n        return this.#writer \?\?= this.#createWriter();\n      }\n      constructor(fd_2) {\n        super();\n        this.#fd = fd_2;\n      }\n      get fd() {\n        return this.#fd;\n      }\n      ref() {\n        this.#getWriter().ref();\n      }\n      unref() {\n        this.#getWriter().unref();\n      }\n      on(event, listener) {\n        if (event === \"close\" || event === \"finish\") {\n          this.#ensureInnerStream();\n          return this.#innerStream.on(event, listener);\n        }\n        if (event === \"drain\") {\n          return super.on(\"drain\", listener);\n        }\n        if (event === \"error\") {\n          return super.on(\"error\", listener);\n        }\n        return super.on(event, listener);\n      }\n      get _writableState() {\n        this.#ensureInnerStream();\n        return this.#innerStream._writableState;\n      }\n      get _readableState() {\n        this.#ensureInnerStream();\n        return this.#innerStream._readableState;\n      }\n      pipe(destination) {\n        this.#ensureInnerStream();\n        return this.#innerStream.pipe(destination);\n      }\n      unpipe(destination) {\n        this.#ensureInnerStream();\n        return this.#innerStream.unpipe(destination);\n      }\n      #ensureInnerStream() {\n        if (this.#innerStream)\n          return;\n        this.#innerStream = createStdioWriteStream(this.#fd);\n        const events = this.eventNames();\n        for (const event of events) {\n          this.#innerStream.on(event, (...args) => {\n            this.emit(event, ...args);\n          });\n        }\n      }\n      #write1(chunk) {\n        var writer = this.#getWriter();\n        const writeResult = writer.write(chunk);\n        this.bytesWritten += writeResult;\n        const flushResult = writer.flush(false);\n        return !!(writeResult || flushResult);\n      }\n      #writeWithEncoding(chunk, encoding) {\n        if (!isFastEncoding(encoding)) {\n          this.#ensureInnerStream();\n          return this.#innerStream.write(chunk, encoding);\n        }\n        return this.#write1(chunk);\n      }\n      #performCallback(cb, err) {\n        if (err) {\n          this.emit(\"error\", err);\n        }\n        try {\n          cb(err \? err : null);\n        } catch (err2) {\n          this.emit(\"error\", err2);\n        }\n      }\n      #writeWithCallbackAndEncoding(chunk, encoding, callback) {\n        if (!isFastEncoding(encoding)) {\n          this.#ensureInnerStream();\n          return this.#innerStream.write(chunk, encoding, callback);\n        }\n        var writer = this.#getWriter();\n        const writeResult = writer.write(chunk);\n        const flushResult = writer.flush(true);\n        if (flushResult\?.then) {\n          flushResult.then(() => {\n            this.#performCallback(callback);\n            this.emit(\"drain\");\n          }, (err) => this.#performCallback(callback, err));\n          return false;\n        }\n        queueMicrotask(() => {\n          this.#performCallback(callback);\n        });\n        return !!(writeResult || flushResult);\n      }\n      get isTTY() {\n        return false;\n      }\n      write(chunk, encoding, callback) {\n        const result = this._write(chunk, encoding, callback);\n        if (result) {\n          this.emit(\"drain\");\n        }\n        return result;\n      }\n      get hasColors() {\n        return @Bun.tty[this.#fd].hasColors;\n      }\n      _write(chunk, encoding, callback) {\n        var inner = this.#innerStream;\n        if (inner) {\n          return inner.write(chunk, encoding, callback);\n        }\n        switch (arguments.length) {\n          case 0: {\n            var error = new Error(\"Invalid arguments\");\n            error.code = \"ERR_INVALID_ARG_TYPE\";\n            throw error;\n          }\n          case 1: {\n            return this.#write1(chunk);\n          }\n          case 2: {\n            if (typeof encoding === \"function\") {\n              return this.#writeWithCallbackAndEncoding(chunk, \"\", encoding);\n            } else if (typeof encoding === \"string\") {\n              return this.#writeWithEncoding(chunk, encoding);\n            }\n          }\n          default: {\n            if (typeof encoding !== \"undefined\" && typeof encoding !== \"string\" || typeof callback !== \"undefined\" && typeof callback !== \"function\") {\n              var error = new Error(\"Invalid arguments\");\n              error.code = \"ERR_INVALID_ARG_TYPE\";\n              throw error;\n            }\n            if (typeof callback === \"undefined\") {\n              return this.#writeWithEncoding(chunk, encoding);\n            }\n            return this.#writeWithCallbackAndEncoding(chunk, encoding, callback);\n          }\n        }\n      }\n      destroy() {\n        return this;\n      }\n      end() {\n        return this;\n      }\n    };\n    if (getWindowSize(fd_, windowSizeArray)) {\n      var WriteStream = class WriteStream2 extends FastStdioWriteStreamInternal {\n        get isTTY() {\n          return true;\n        }\n        cursorTo(x, y, callback) {\n          return (readline \?\?= (() => ({}))).cursorTo(this, x, y, callback);\n        }\n        moveCursor(dx, dy, callback) {\n          return (readline \?\?= (() => ({}))).moveCursor(this, dx, dy, callback);\n        }\n        clearLine(dir, callback) {\n          return (readline \?\?= (() => ({}))).clearLine(this, dir, callback);\n        }\n        clearScreenDown(callback) {\n          return (readline \?\?= (() => ({}))).clearScreenDown(this, callback);\n        }\n        getWindowSize() {\n          if (getWindowSize(fd_, windowSizeArray) === true) {\n            return [windowSizeArray[0], windowSizeArray[1]];\n          }\n        }\n        get columns() {\n          if (getWindowSize(fd_, windowSizeArray) === true) {\n            return windowSizeArray[0];\n          }\n        }\n        get rows() {\n          if (getWindowSize(fd_, windowSizeArray) === true) {\n            return windowSizeArray[1];\n          }\n        }\n      };\n      return new WriteStream(fd_);\n    }\n    return new FastStdioWriteStreamInternal(fd_);\n  })\n";
 
 // getStdinStream
 const JSC::ConstructAbility s_processObjectInternalsGetStdinStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_processObjectInternalsGetStdinStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_processObjectInternalsGetStdinStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_processObjectInternalsGetStdinStreamCodeLength = 1866;
+const int s_processObjectInternalsGetStdinStreamCodeLength = 4243;
 static const JSC::Intrinsic s_processObjectInternalsGetStdinStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_processObjectInternalsGetStdinStreamCode = "(function (L){\"use strict\";var H=(J)=>{var j=@requireMap.get(J);if(j)return j.exports;return @internalRequire(J)},T={path:\"node:process\",require:H},{Duplex:N,eos:P,destroy:M}=H(\"node:stream\"),Q=class J extends N{#K;#I;#$;#G=!0;#H=!1;#L=!0;#z;#j;#B;get isTTY(){return H(\"node:tty\").isatty(L)}get fd(){return L}constructor(){super({readable:!0,writable:!0})}#J(j){const I=this.#j;if(this.#j=null,I)I(j);else if(j)this.destroy(j);else if(!this.#G&&!this.#L)this.destroy()}_destroy(j,I){if(!j&&this.#j!==null){var z=class B extends Error{constructor(G=\"The operation was aborted\",K=void 0){if(K!==void 0&&typeof K!==\"object\")throw new Error(`Invalid AbortError options:\\n\\n${JSON.stringify(K,null,2)}`);super(G,K);this.code=\"ABORT_ERR\",this.name=\"AbortError\"}};j=new z}if(this.#j===null)I(j);else if(this.#j=I,this.#$)M(this.#$,j)}setRawMode(j){}on(j,I){if(j===\"readable\")this.ref(),this.#H=!0;return super.on(j,I)}pause(){return this.unref(),super.pause()}resume(){return this.ref(),super.resume()}ref(){this.#K\?\?=@Bun.stdin.stream().getReader(),this.#I\?\?=setInterval(()=>{},1<<30)}unref(){if(this.#I)clearInterval(this.#I),this.#I=null}async#M(){try{var j,I;const z=this.#K.readMany();if(!z\?.then)({done:j,value:I}=z);else({done:j,value:I}=await z);if(!j){this.push(I[0]);const B=I.length;for(let G=1;G<B;G++)this.push(I[G])}else this.push(null),this.pause(),this.#G=!1,this.#J()}catch(z){this.#G=!1,this.#J(z)}}_read(j){if(this.#H)this.unref(),this.#H=!1;this.#M()}#N(){var{createWriteStream:j}=H(\"node:fs\"),I=this.#$=j(\"/dev/fd/0\");return I.on(\"finish\",()=>{if(this.#z){const z=this.#z;this.#z=null,z()}}),I.on(\"drain\",()=>{if(this.#B){const z=this.#B;this.#B=null,z()}}),P(I,(z)=>{if(this.#L=!1,z)M(I,z);this.#J(z)}),I}_write(j,I,z){var B=this.#$;if(!B)B=this.#N();if(B.write(j,I))z();else this.#B=z}_final(j){this.#$.end(),this.#z=(...I)=>j(...I)}};return new Q})\n";
+const char* const s_processObjectInternalsGetStdinStreamCode = "(function (fd_) {\"use strict\";\n  var require2 = (path) => {\n    var existing = @requireMap.get(path);\n    if (existing)\n      return existing.exports;\n    return @internalRequire(path);\n  };\n  var { Duplex, eos, destroy } = require2(\"node:stream\");\n  var StdinStream = class StdinStream2 extends Duplex {\n    #reader;\n    #readRef;\n    #writeStream;\n    #readable = true;\n    #unrefOnRead = false;\n    #writable = true;\n    #onFinish;\n    #onClose;\n    #onDrain;\n    get isTTY() {\n      return require2(\"node:tty\").isatty(fd_);\n    }\n    get fd() {\n      return fd_;\n    }\n    constructor() {\n      super({ readable: true, writable: true });\n    }\n    #onFinished(err) {\n      const cb = this.#onClose;\n      this.#onClose = null;\n      if (cb) {\n        cb(err);\n      } else if (err) {\n        this.destroy(err);\n      } else if (!this.#readable && !this.#writable) {\n        this.destroy();\n      }\n    }\n    _destroy(err, callback) {\n      if (!err && this.#onClose !== null) {\n        var AbortError = class AbortError2 extends Error {\n          constructor(message = \"The operation was aborted\", options = undefined) {\n            if (options !== undefined && typeof options !== \"object\") {\n              throw new Error(`Invalid AbortError options:\\n\\n${JSON.stringify(options, null, 2)}`);\n            }\n            super(message, options);\n            this.code = \"ABORT_ERR\";\n            this.name = \"AbortError\";\n          }\n        };\n        err = new AbortError;\n      }\n      if (this.#onClose === null) {\n        callback(err);\n      } else {\n        this.#onClose = callback;\n        if (this.#writeStream)\n          destroy(this.#writeStream, err);\n      }\n    }\n    setRawMode(mode) {\n    }\n    on(name, callback) {\n      if (name === \"readable\") {\n        this.ref();\n        this.#unrefOnRead = true;\n      }\n      return super.on(name, callback);\n    }\n    pause() {\n      this.unref();\n      return super.pause();\n    }\n    resume() {\n      this.ref();\n      return super.resume();\n    }\n    ref() {\n      this.#reader \?\?= @Bun.stdin.stream().getReader();\n      this.#readRef \?\?= setInterval(() => {\n      }, 1 << 30);\n    }\n    unref() {\n      if (this.#readRef) {\n        clearInterval(this.#readRef);\n        this.#readRef = null;\n      }\n    }\n    async#readInternal() {\n      try {\n        var done, value;\n        const read = this.#reader.readMany();\n        if (!read\?.then) {\n          ({ done, value } = read);\n        } else {\n          ({ done, value } = await read);\n        }\n        if (!done) {\n          this.push(value[0]);\n          const length = value.length;\n          for (let i = 1;i < length; i++) {\n            this.push(value[i]);\n          }\n        } else {\n          this.push(null);\n          this.pause();\n          this.#readable = false;\n          this.#onFinished();\n        }\n      } catch (err) {\n        this.#readable = false;\n        this.#onFinished(err);\n      }\n    }\n    _read(size) {\n      if (this.#unrefOnRead) {\n        this.unref();\n        this.#unrefOnRead = false;\n      }\n      this.#readInternal();\n    }\n    #constructWriteStream() {\n      var { createWriteStream } = require2(\"node:fs\");\n      var writeStream = this.#writeStream = createWriteStream(\"/dev/fd/0\");\n      writeStream.on(\"finish\", () => {\n        if (this.#onFinish) {\n          const cb = this.#onFinish;\n          this.#onFinish = null;\n          cb();\n        }\n      });\n      writeStream.on(\"drain\", () => {\n        if (this.#onDrain) {\n          const cb = this.#onDrain;\n          this.#onDrain = null;\n          cb();\n        }\n      });\n      eos(writeStream, (err) => {\n        this.#writable = false;\n        if (err) {\n          destroy(writeStream, err);\n        }\n        this.#onFinished(err);\n      });\n      return writeStream;\n    }\n    _write(chunk, encoding, callback) {\n      var writeStream = this.#writeStream;\n      if (!writeStream) {\n        writeStream = this.#constructWriteStream();\n      }\n      if (writeStream.write(chunk, encoding)) {\n        callback();\n      } else {\n        this.#onDrain = callback;\n      }\n    }\n    _final(callback) {\n      this.#writeStream.end();\n      this.#onFinish = (...args) => callback(...args);\n    }\n  };\n  return new StdinStream;\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -672,25 +690,25 @@ WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 const JSC::ConstructAbility s_transformStreamInitializeTransformStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInitializeTransformStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamInitializeTransformStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamInitializeTransformStreamCodeLength = 1300;
+const int s_transformStreamInitializeTransformStreamCodeLength = 2484;
 static const JSC::Intrinsic s_transformStreamInitializeTransformStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamInitializeTransformStreamCode = "(function (){\"use strict\";let _=arguments[0];if(@isObject(_)&&@getByIdDirectPrivate(_,\"TransformStream\"))return this;let u=arguments[1],U=arguments[2];if(_===@undefined)_=null;if(U===@undefined)U={};if(u===@undefined)u={};let j={};if(_!==null){if(\"start\"in _){if(j.start=_.start,typeof j.start!==\"function\")@throwTypeError(\"transformer.start should be a function\")}if(\"transform\"in _){if(j.transform=_.transform,typeof j.transform!==\"function\")@throwTypeError(\"transformer.transform should be a function\")}if(\"flush\"in _){if(j.flush=_.flush,typeof j.flush!==\"function\")@throwTypeError(\"transformer.flush should be a function\")}if(\"readableType\"in _)@throwRangeError(\"TransformStream transformer has a readableType\");if(\"writableType\"in _)@throwRangeError(\"TransformStream transformer has a writableType\")}const v=@extractHighWaterMark(U,0),x=@extractSizeAlgorithm(U),B=@extractHighWaterMark(u,1),E=@extractSizeAlgorithm(u),q=@newPromiseCapability(@Promise);if(@initializeTransformStream(this,q.promise,B,E,v,x),@setUpTransformStreamDefaultControllerFromTransformer(this,_,j),(\"start\"in j)){const F=@getByIdDirectPrivate(this,\"controller\");(()=>@promiseInvokeOrNoopMethodNoCatch(_,j.start,[F]))().@then(()=>{q.resolve.@call()},(G)=>{q.reject.@call(@undefined,G)})}else q.resolve.@call();return this})\n";
+const char* const s_transformStreamInitializeTransformStreamCode = "(function () {\"use strict\";\n  let transformer = arguments[0];\n  if (@isObject(transformer) && @getByIdDirectPrivate(transformer, \"TransformStream\"))\n    return this;\n  let writableStrategy = arguments[1];\n  let readableStrategy = arguments[2];\n  if (transformer === @undefined)\n    transformer = null;\n  if (readableStrategy === @undefined)\n    readableStrategy = {};\n  if (writableStrategy === @undefined)\n    writableStrategy = {};\n  let transformerDict = {};\n  if (transformer !== null) {\n    if (\"start\" in transformer) {\n      transformerDict[\"start\"] = transformer[\"start\"];\n      if (typeof transformerDict[\"start\"] !== \"function\")\n        @throwTypeError(\"transformer.start should be a function\");\n    }\n    if (\"transform\" in transformer) {\n      transformerDict[\"transform\"] = transformer[\"transform\"];\n      if (typeof transformerDict[\"transform\"] !== \"function\")\n        @throwTypeError(\"transformer.transform should be a function\");\n    }\n    if (\"flush\" in transformer) {\n      transformerDict[\"flush\"] = transformer[\"flush\"];\n      if (typeof transformerDict[\"flush\"] !== \"function\")\n        @throwTypeError(\"transformer.flush should be a function\");\n    }\n    if (\"readableType\" in transformer)\n      @throwRangeError(\"TransformStream transformer has a readableType\");\n    if (\"writableType\" in transformer)\n      @throwRangeError(\"TransformStream transformer has a writableType\");\n  }\n  const readableHighWaterMark = @extractHighWaterMark(readableStrategy, 0);\n  const readableSizeAlgorithm = @extractSizeAlgorithm(readableStrategy);\n  const writableHighWaterMark = @extractHighWaterMark(writableStrategy, 1);\n  const writableSizeAlgorithm = @extractSizeAlgorithm(writableStrategy);\n  const startPromiseCapability = @newPromiseCapability(@Promise);\n  @initializeTransformStream(this, startPromiseCapability.promise, writableHighWaterMark, writableSizeAlgorithm, readableHighWaterMark, readableSizeAlgorithm);\n  @setUpTransformStreamDefaultControllerFromTransformer(this, transformer, transformerDict);\n  if (\"start\" in transformerDict) {\n    const controller = @getByIdDirectPrivate(this, \"controller\");\n    const startAlgorithm = () => @promiseInvokeOrNoopMethodNoCatch(transformer, transformerDict[\"start\"], [controller]);\n    startAlgorithm().@then(() => {\n      startPromiseCapability.resolve.@call();\n    }, (error) => {\n      startPromiseCapability.reject.@call(@undefined, error);\n    });\n  } else\n    startPromiseCapability.resolve.@call();\n  return this;\n})\n";
 
 // readable
 const JSC::ConstructAbility s_transformStreamReadableCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamReadableCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamReadableCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamReadableCodeLength = 158;
+const int s_transformStreamReadableCodeLength = 175;
 static const JSC::Intrinsic s_transformStreamReadableCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamReadableCode = "(function (){\"use strict\";if(!@isTransformStream(this))throw @makeThisTypeError(\"TransformStream\",\"readable\");return @getByIdDirectPrivate(this,\"readable\")})\n";
+const char* const s_transformStreamReadableCode = "(function () {\"use strict\";\n  if (!@isTransformStream(this))\n    throw @makeThisTypeError(\"TransformStream\", \"readable\");\n  return @getByIdDirectPrivate(this, \"readable\");\n})\n";
 
 // writable
 const JSC::ConstructAbility s_transformStreamWritableCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamWritableCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamWritableCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamWritableCodeLength = 158;
+const int s_transformStreamWritableCodeLength = 175;
 static const JSC::Intrinsic s_transformStreamWritableCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamWritableCode = "(function (){\"use strict\";if(!@isTransformStream(this))throw @makeThisTypeError(\"TransformStream\",\"writable\");return @getByIdDirectPrivate(this,\"writable\")})\n";
+const char* const s_transformStreamWritableCode = "(function () {\"use strict\";\n  if (!@isTransformStream(this))\n    throw @makeThisTypeError(\"TransformStream\", \"writable\");\n  return @getByIdDirectPrivate(this, \"writable\");\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -706,25 +724,33 @@ WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 const JSC::ConstructAbility s_moduleMainCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_moduleMainCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_moduleMainCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_moduleMainCodeLength = 63;
+const int s_moduleMainCodeLength = 69;
 static const JSC::Intrinsic s_moduleMainCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_moduleMainCode = "(function (){\"use strict\";return @requireMap.@get(@Bun.main)})\n";
+const char* const s_moduleMainCode = "(function () {\"use strict\";\n  return @requireMap.@get(@Bun.main);\n})\n";
 
 // require
 const JSC::ConstructAbility s_moduleRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_moduleRequireCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_moduleRequireCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_moduleRequireCodeLength = 1035;
+const int s_moduleRequireCodeLength = 1352;
 static const JSC::Intrinsic s_moduleRequireCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_moduleRequireCode = "(function (_){\"use strict\";const b=@requireMap.@get(_)||@requireMap.@get(_=@resolveSync(_,this.path,!1));if(b)return @evaluateCommonJSModule(b),b.exports;if(_.endsWith(\".json\")||_.endsWith(\".toml\")||_.endsWith(\".node\"))return @internalRequire(_);let S=@Loader.registry.@get(_);if(S\?.evaluated&&(S.state\?\?0)>=@ModuleReady){const M=S.module,f=@Loader.getModuleNamespaceObject(M),r=f\?.[@commonJSSymbol]===0||f\?.default\?.[@commonJSSymbol]===0\?f.default:f.__esModule\?f:Object.create(f,{__esModule:{value:!0}});return @requireMap.@set(_,@createCommonJSModule(_,r,!0)),r}const L=@createCommonJSModule(_,{},!1);@requireMap.@set(_,L);var h=this.@require(_,L);if(h===-1){try{h=@requireESM(_)}catch(M){throw @requireMap.@delete(_),M}if(S=@Loader.registry.@get(_),S\?.evaluated&&(S.state\?\?0)>=@ModuleReady){const M=@Loader.getModuleNamespaceObject(S.module);return L.exports=M\?.[@commonJSSymbol]===0||M\?.default\?.[@commonJSSymbol]===0\?M.default:M.__esModule\?M:Object.create(M,{__esModule:{value:!0}})}}return @evaluateCommonJSModule(L),L.exports})\n";
+const char* const s_moduleRequireCode = "(function (id) {\"use strict\";\n  const existing = @requireMap.@get(id) || @requireMap.@get(id = @resolveSync(id, this.path, false));\n  if (existing) {\n    @evaluateCommonJSModule(existing);\n    return existing.exports;\n  }\n  if (id.endsWith(\".json\") || id.endsWith(\".toml\") || id.endsWith(\".node\")) {\n    return @internalRequire(id);\n  }\n  let esm = @Loader.registry.@get(id);\n  if (esm\?.evaluated && (esm.state \?\? 0) >= @ModuleReady) {\n    const mod2 = esm.module;\n    const namespace = @Loader.getModuleNamespaceObject(mod2);\n    const exports = namespace.__esModule \? namespace : Object.create(namespace, { __esModule: { value: true } });\n    @requireMap.@set(id, @createCommonJSModule(id, exports, true));\n    return exports;\n  }\n  const mod = @createCommonJSModule(id, {}, false);\n  @requireMap.@set(id, mod);\n  var out = this.@require(id, mod);\n  if (out === -1) {\n    try {\n      out = @requireESM(id);\n    } catch (exception) {\n      @requireMap.@delete(id);\n      throw exception;\n    }\n    esm = @Loader.registry.@get(id);\n    if (esm\?.evaluated && (esm.state \?\? 0) >= @ModuleReady) {\n      const namespace = @Loader.getModuleNamespaceObject(esm.module);\n      return mod.exports = namespace.__esModule \? namespace : Object.create(namespace, { __esModule: { value: true } });\n    }\n  }\n  @evaluateCommonJSModule(mod);\n  return mod.exports;\n})\n";
+
+// requireBuiltin
+const JSC::ConstructAbility s_moduleRequireBuiltinCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_moduleRequireBuiltinCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_moduleRequireBuiltinCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_moduleRequireBuiltinCodeLength = 93;
+static const JSC::Intrinsic s_moduleRequireBuiltinCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_moduleRequireBuiltinCode = "(function () {\"use strict\";\n  throw new Error(\"TODO: moduleRequireBuiltinCodeGenerator\");\n})\n";
 
 // requireResolve
 const JSC::ConstructAbility s_moduleRequireResolveCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_moduleRequireResolveCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_moduleRequireResolveCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_moduleRequireResolveCodeLength = 65;
+const int s_moduleRequireResolveCodeLength = 78;
 static const JSC::Intrinsic s_moduleRequireResolveCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_moduleRequireResolveCode = "(function (n){\"use strict\";return @resolveSync(n,this.path,!1)})\n";
+const char* const s_moduleRequireResolveCode = "(function (id) {\"use strict\";\n  return @resolveSync(id, this.path, false);\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -740,529 +766,529 @@ WEBCORE_FOREACH_MODULE_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 const JSC::ConstructAbility s_jsBufferPrototypeSetBigUint64CodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeSetBigUint64CodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeSetBigUint64CodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeSetBigUint64CodeLength = 136;
+const int s_jsBufferPrototypeSetBigUint64CodeLength = 171;
 static const JSC::Intrinsic s_jsBufferPrototypeSetBigUint64CodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeSetBigUint64Code = "(function (d,r,t){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).setBigUint64(d,r,t)})\n";
+const char* const s_jsBufferPrototypeSetBigUint64Code = "(function (offset, value, le) {\"use strict\";\n  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigUint64(offset, value, le);\n})\n";
 
 // readInt8
 const JSC::ConstructAbility s_jsBufferPrototypeReadInt8CodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadInt8CodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadInt8CodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadInt8CodeLength = 123;
+const int s_jsBufferPrototypeReadInt8CodeLength = 144;
 static const JSC::Intrinsic s_jsBufferPrototypeReadInt8CodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeReadInt8Code = "(function (d){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).getInt8(d)})\n";
+const char* const s_jsBufferPrototypeReadInt8Code = "(function (offset) {\"use strict\";\n  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getInt8(offset);\n})\n";
 
 // readUInt8
 const JSC::ConstructAbility s_jsBufferPrototypeReadUInt8CodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadUInt8CodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadUInt8CodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadUInt8CodeLength = 124;
+const int s_jsBufferPrototypeReadUInt8CodeLength = 145;
 static const JSC::Intrinsic s_jsBufferPrototypeReadUInt8CodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeReadUInt8Code = "(function (d){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).getUint8(d)})\n";
+const char* const s_jsBufferPrototypeReadUInt8Code = "(function (offset) {\"use strict\";\n  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getUint8(offset);\n})\n";
 
 // readInt16LE
 const JSC::ConstructAbility s_jsBufferPrototypeReadInt16LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadInt16LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadInt16LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadInt16LECodeLength = 127;
+const int s_jsBufferPrototypeReadInt16LECodeLength = 151;
 static const JSC::Intrinsic s_jsBufferPrototypeReadInt16LECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeReadInt16LECode = "(function (r){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).getInt16(r,!0)})\n";
+const char* const s_jsBufferPrototypeReadInt16LECode = "(function (offset) {\"use strict\";\n  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getInt16(offset, true);\n})\n";
 
 // readInt16BE
 const JSC::ConstructAbility s_jsBufferPrototypeReadInt16BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadInt16BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadInt16BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadInt16BECodeLength = 127;
+const int s_jsBufferPrototypeReadInt16BECodeLength = 152;
 static const JSC::Intrinsic s_jsBufferPrototypeReadInt16BECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeReadInt16BECode = "(function (a){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).getInt16(a,!1)})\n";
+const char* const s_jsBufferPrototypeReadInt16BECode = "(function (offset) {\"use strict\";\n  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getInt16(offset, false);\n})\n";
 
 // readUInt16LE
 const JSC::ConstructAbility s_jsBufferPrototypeReadUInt16LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadUInt16LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadUInt16LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadUInt16LECodeLength = 128;
+const int s_jsBufferPrototypeReadUInt16LECodeLength = 152;
 static const JSC::Intrinsic s_jsBufferPrototypeReadUInt16LECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeReadUInt16LECode = "(function (r){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).getUint16(r,!0)})\n";
+const char* const s_jsBufferPrototypeReadUInt16LECode = "(function (offset) {\"use strict\";\n  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getUint16(offset, true);\n})\n";
 
 // readUInt16BE
 const JSC::ConstructAbility s_jsBufferPrototypeReadUInt16BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadUInt16BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadUInt16BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadUInt16BECodeLength = 128;
+const int s_jsBufferPrototypeReadUInt16BECodeLength = 153;
 static const JSC::Intrinsic s_jsBufferPrototypeReadUInt16BECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeReadUInt16BECode = "(function (a){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).getUint16(a,!1)})\n";
+const char* const s_jsBufferPrototypeReadUInt16BECode = "(function (offset) {\"use strict\";\n  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getUint16(offset, false);\n})\n";
 
 // readInt32LE
 const JSC::ConstructAbility s_jsBufferPrototypeReadInt32LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadInt32LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadInt32LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadInt32LECodeLength = 127;
+const int s_jsBufferPrototypeReadInt32LECodeLength = 151;
 static const JSC::Intrinsic s_jsBufferPrototypeReadInt32LECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeReadInt32LECode = "(function (r){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).getInt32(r,!0)})\n";
+const char* const s_jsBufferPrototypeReadInt32LECode = "(function (offset) {\"use strict\";\n  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getInt32(offset, true);\n})\n";
 
 // readInt32BE
 const JSC::ConstructAbility s_jsBufferPrototypeReadInt32BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadInt32BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadInt32BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadInt32BECodeLength = 127;
+const int s_jsBufferPrototypeReadInt32BECodeLength = 152;
 static const JSC::Intrinsic s_jsBufferPrototypeReadInt32BECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeReadInt32BECode = "(function (a){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).getInt32(a,!1)})\n";
+const char* const s_jsBufferPrototypeReadInt32BECode = "(function (offset) {\"use strict\";\n  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getInt32(offset, false);\n})\n";
 
 // readUInt32LE
 const JSC::ConstructAbility s_jsBufferPrototypeReadUInt32LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadUInt32LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadUInt32LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadUInt32LECodeLength = 128;
+const int s_jsBufferPrototypeReadUInt32LECodeLength = 152;
 static const JSC::Intrinsic s_jsBufferPrototypeReadUInt32LECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeReadUInt32LECode = "(function (r){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).getUint32(r,!0)})\n";
+const char* const s_jsBufferPrototypeReadUInt32LECode = "(function (offset) {\"use strict\";\n  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getUint32(offset, true);\n})\n";
 
 // readUInt32BE
 const JSC::ConstructAbility s_jsBufferPrototypeReadUInt32BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadUInt32BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadUInt32BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadUInt32BECodeLength = 128;
+const int s_jsBufferPrototypeReadUInt32BECodeLength = 153;
 static const JSC::Intrinsic s_jsBufferPrototypeReadUInt32BECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeReadUInt32BECode = "(function (a){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).getUint32(a,!1)})\n";
+const char* const s_jsBufferPrototypeReadUInt32BECode = "(function (offset) {\"use strict\";\n  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getUint32(offset, false);\n})\n";
 
 // readIntLE
 const JSC::ConstructAbility s_jsBufferPrototypeReadIntLECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadIntLECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadIntLECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadIntLECodeLength = 528;
+const int s_jsBufferPrototypeReadIntLECodeLength = 874;
 static const JSC::Intrinsic s_jsBufferPrototypeReadIntLECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeReadIntLECode = "(function (d,u){\"use strict\";const r=this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength);switch(u){case 1:return r.getInt8(d);case 2:return r.getInt16(d,!0);case 3:{const _=r.getUint16(d,!0)+r.getUint8(d+2)*65536;return _|(_&8388608)*510}case 4:return r.getInt32(d,!0);case 5:{const _=r.getUint8(d+4);return(_|(_&128)*33554430)*4294967296+r.getUint32(d,!0)}case 6:{const _=r.getUint16(d+4,!0);return(_|(_&32768)*131070)*4294967296+r.getUint32(d,!0)}}@throwRangeError(\"byteLength must be >= 1 and <= 6\")})\n";
+const char* const s_jsBufferPrototypeReadIntLECode = "(function (offset, byteLength) {\"use strict\";\n  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);\n  switch (byteLength) {\n    case 1: {\n      return view.getInt8(offset);\n    }\n    case 2: {\n      return view.getInt16(offset, true);\n    }\n    case 3: {\n      const val = view.getUint16(offset, true) + view.getUint8(offset + 2) * 65536;\n      return val | (val & 8388608) * 510;\n    }\n    case 4: {\n      return view.getInt32(offset, true);\n    }\n    case 5: {\n      const last = view.getUint8(offset + 4);\n      return (last | (last & 128) * 33554430) * 4294967296 + view.getUint32(offset, true);\n    }\n    case 6: {\n      const last = view.getUint16(offset + 4, true);\n      return (last | (last & 32768) * 131070) * 4294967296 + view.getUint32(offset, true);\n    }\n  }\n  @throwRangeError(\"byteLength must be >= 1 and <= 6\");\n})\n";
 
 // readIntBE
 const JSC::ConstructAbility s_jsBufferPrototypeReadIntBECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadIntBECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadIntBECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadIntBECodeLength = 528;
+const int s_jsBufferPrototypeReadIntBECodeLength = 880;
 static const JSC::Intrinsic s_jsBufferPrototypeReadIntBECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeReadIntBECode = "(function (r,c){\"use strict\";const d=this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength);switch(c){case 1:return d.getInt8(r);case 2:return d.getInt16(r,!1);case 3:{const u=d.getUint16(r+1,!1)+d.getUint8(r)*65536;return u|(u&8388608)*510}case 4:return d.getInt32(r,!1);case 5:{const u=d.getUint8(r);return(u|(u&128)*33554430)*4294967296+d.getUint32(r+1,!1)}case 6:{const u=d.getUint16(r,!1);return(u|(u&32768)*131070)*4294967296+d.getUint32(r+2,!1)}}@throwRangeError(\"byteLength must be >= 1 and <= 6\")})\n";
+const char* const s_jsBufferPrototypeReadIntBECode = "(function (offset, byteLength) {\"use strict\";\n  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);\n  switch (byteLength) {\n    case 1: {\n      return view.getInt8(offset);\n    }\n    case 2: {\n      return view.getInt16(offset, false);\n    }\n    case 3: {\n      const val = view.getUint16(offset + 1, false) + view.getUint8(offset) * 65536;\n      return val | (val & 8388608) * 510;\n    }\n    case 4: {\n      return view.getInt32(offset, false);\n    }\n    case 5: {\n      const last = view.getUint8(offset);\n      return (last | (last & 128) * 33554430) * 4294967296 + view.getUint32(offset + 1, false);\n    }\n    case 6: {\n      const last = view.getUint16(offset, false);\n      return (last | (last & 32768) * 131070) * 4294967296 + view.getUint32(offset + 2, false);\n    }\n  }\n  @throwRangeError(\"byteLength must be >= 1 and <= 6\");\n})\n";
 
 // readUIntLE
 const JSC::ConstructAbility s_jsBufferPrototypeReadUIntLECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadUIntLECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadUIntLECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadUIntLECodeLength = 445;
+const int s_jsBufferPrototypeReadUIntLECodeLength = 724;
 static const JSC::Intrinsic s_jsBufferPrototypeReadUIntLECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeReadUIntLECode = "(function (a,r){\"use strict\";const d=this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength);switch(r){case 1:return d.getUint8(a);case 2:return d.getUint16(a,!0);case 3:return d.getUint16(a,!0)+d.getUint8(a+2)*65536;case 4:return d.getUint32(a,!0);case 5:return d.getUint8(a+4)*4294967296+d.getUint32(a,!0);case 6:return d.getUint16(a+4,!0)*4294967296+d.getUint32(a,!0)}@throwRangeError(\"byteLength must be >= 1 and <= 6\")})\n";
+const char* const s_jsBufferPrototypeReadUIntLECode = "(function (offset, byteLength) {\"use strict\";\n  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);\n  switch (byteLength) {\n    case 1: {\n      return view.getUint8(offset);\n    }\n    case 2: {\n      return view.getUint16(offset, true);\n    }\n    case 3: {\n      return view.getUint16(offset, true) + view.getUint8(offset + 2) * 65536;\n    }\n    case 4: {\n      return view.getUint32(offset, true);\n    }\n    case 5: {\n      return view.getUint8(offset + 4) * 4294967296 + view.getUint32(offset, true);\n    }\n    case 6: {\n      return view.getUint16(offset + 4, true) * 4294967296 + view.getUint32(offset, true);\n    }\n  }\n  @throwRangeError(\"byteLength must be >= 1 and <= 6\");\n})\n";
 
 // readUIntBE
 const JSC::ConstructAbility s_jsBufferPrototypeReadUIntBECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadUIntBECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadUIntBECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadUIntBECodeLength = 504;
+const int s_jsBufferPrototypeReadUIntBECodeLength = 836;
 static const JSC::Intrinsic s_jsBufferPrototypeReadUIntBECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeReadUIntBECode = "(function (d,p){\"use strict\";const r=this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength);switch(p){case 1:return r.getUint8(d);case 2:return r.getUint16(d,!1);case 3:return r.getUint16(d+1,!1)+r.getUint8(d)*65536;case 4:return r.getUint32(d,!1);case 5:{const c=r.getUint8(d);return(c|(c&128)*33554430)*4294967296+r.getUint32(d+1,!1)}case 6:{const c=r.getUint16(d,!1);return(c|(c&32768)*131070)*4294967296+r.getUint32(d+2,!1)}}@throwRangeError(\"byteLength must be >= 1 and <= 6\")})\n";
+const char* const s_jsBufferPrototypeReadUIntBECode = "(function (offset, byteLength) {\"use strict\";\n  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);\n  switch (byteLength) {\n    case 1: {\n      return view.getUint8(offset);\n    }\n    case 2: {\n      return view.getUint16(offset, false);\n    }\n    case 3: {\n      return view.getUint16(offset + 1, false) + view.getUint8(offset) * 65536;\n    }\n    case 4: {\n      return view.getUint32(offset, false);\n    }\n    case 5: {\n      const last = view.getUint8(offset);\n      return (last | (last & 128) * 33554430) * 4294967296 + view.getUint32(offset + 1, false);\n    }\n    case 6: {\n      const last = view.getUint16(offset, false);\n      return (last | (last & 32768) * 131070) * 4294967296 + view.getUint32(offset + 2, false);\n    }\n  }\n  @throwRangeError(\"byteLength must be >= 1 and <= 6\");\n})\n";
 
 // readFloatLE
 const JSC::ConstructAbility s_jsBufferPrototypeReadFloatLECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadFloatLECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadFloatLECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadFloatLECodeLength = 129;
+const int s_jsBufferPrototypeReadFloatLECodeLength = 153;
 static const JSC::Intrinsic s_jsBufferPrototypeReadFloatLECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeReadFloatLECode = "(function (r){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).getFloat32(r,!0)})\n";
+const char* const s_jsBufferPrototypeReadFloatLECode = "(function (offset) {\"use strict\";\n  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getFloat32(offset, true);\n})\n";
 
 // readFloatBE
 const JSC::ConstructAbility s_jsBufferPrototypeReadFloatBECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadFloatBECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadFloatBECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadFloatBECodeLength = 129;
+const int s_jsBufferPrototypeReadFloatBECodeLength = 154;
 static const JSC::Intrinsic s_jsBufferPrototypeReadFloatBECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeReadFloatBECode = "(function (a){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).getFloat32(a,!1)})\n";
+const char* const s_jsBufferPrototypeReadFloatBECode = "(function (offset) {\"use strict\";\n  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getFloat32(offset, false);\n})\n";
 
 // readDoubleLE
 const JSC::ConstructAbility s_jsBufferPrototypeReadDoubleLECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadDoubleLECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadDoubleLECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadDoubleLECodeLength = 129;
+const int s_jsBufferPrototypeReadDoubleLECodeLength = 153;
 static const JSC::Intrinsic s_jsBufferPrototypeReadDoubleLECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeReadDoubleLECode = "(function (r){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).getFloat64(r,!0)})\n";
+const char* const s_jsBufferPrototypeReadDoubleLECode = "(function (offset) {\"use strict\";\n  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getFloat64(offset, true);\n})\n";
 
 // readDoubleBE
 const JSC::ConstructAbility s_jsBufferPrototypeReadDoubleBECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadDoubleBECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadDoubleBECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadDoubleBECodeLength = 129;
+const int s_jsBufferPrototypeReadDoubleBECodeLength = 154;
 static const JSC::Intrinsic s_jsBufferPrototypeReadDoubleBECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeReadDoubleBECode = "(function (a){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).getFloat64(a,!1)})\n";
+const char* const s_jsBufferPrototypeReadDoubleBECode = "(function (offset) {\"use strict\";\n  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getFloat64(offset, false);\n})\n";
 
 // readBigInt64LE
 const JSC::ConstructAbility s_jsBufferPrototypeReadBigInt64LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadBigInt64LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadBigInt64LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadBigInt64LECodeLength = 130;
+const int s_jsBufferPrototypeReadBigInt64LECodeLength = 154;
 static const JSC::Intrinsic s_jsBufferPrototypeReadBigInt64LECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeReadBigInt64LECode = "(function (r){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).getBigInt64(r,!0)})\n";
+const char* const s_jsBufferPrototypeReadBigInt64LECode = "(function (offset) {\"use strict\";\n  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getBigInt64(offset, true);\n})\n";
 
 // readBigInt64BE
 const JSC::ConstructAbility s_jsBufferPrototypeReadBigInt64BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadBigInt64BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadBigInt64BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadBigInt64BECodeLength = 130;
+const int s_jsBufferPrototypeReadBigInt64BECodeLength = 155;
 static const JSC::Intrinsic s_jsBufferPrototypeReadBigInt64BECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeReadBigInt64BECode = "(function (a){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).getBigInt64(a,!1)})\n";
+const char* const s_jsBufferPrototypeReadBigInt64BECode = "(function (offset) {\"use strict\";\n  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getBigInt64(offset, false);\n})\n";
 
 // readBigUInt64LE
 const JSC::ConstructAbility s_jsBufferPrototypeReadBigUInt64LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadBigUInt64LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadBigUInt64LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadBigUInt64LECodeLength = 131;
+const int s_jsBufferPrototypeReadBigUInt64LECodeLength = 155;
 static const JSC::Intrinsic s_jsBufferPrototypeReadBigUInt64LECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeReadBigUInt64LECode = "(function (r){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).getBigUint64(r,!0)})\n";
+const char* const s_jsBufferPrototypeReadBigUInt64LECode = "(function (offset) {\"use strict\";\n  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getBigUint64(offset, true);\n})\n";
 
 // readBigUInt64BE
 const JSC::ConstructAbility s_jsBufferPrototypeReadBigUInt64BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadBigUInt64BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadBigUInt64BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadBigUInt64BECodeLength = 131;
+const int s_jsBufferPrototypeReadBigUInt64BECodeLength = 156;
 static const JSC::Intrinsic s_jsBufferPrototypeReadBigUInt64BECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeReadBigUInt64BECode = "(function (a){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).getBigUint64(a,!1)})\n";
+const char* const s_jsBufferPrototypeReadBigUInt64BECode = "(function (offset) {\"use strict\";\n  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getBigUint64(offset, false);\n})\n";
 
 // writeInt8
 const JSC::ConstructAbility s_jsBufferPrototypeWriteInt8CodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteInt8CodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteInt8CodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteInt8CodeLength = 131;
+const int s_jsBufferPrototypeWriteInt8CodeLength = 172;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteInt8CodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeWriteInt8Code = "(function (r,d){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).setInt8(d,r),d+1})\n";
+const char* const s_jsBufferPrototypeWriteInt8Code = "(function (value, offset) {\"use strict\";\n  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt8(offset, value);\n  return offset + 1;\n})\n";
 
 // writeUInt8
 const JSC::ConstructAbility s_jsBufferPrototypeWriteUInt8CodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteUInt8CodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteUInt8CodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteUInt8CodeLength = 132;
+const int s_jsBufferPrototypeWriteUInt8CodeLength = 173;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteUInt8CodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeWriteUInt8Code = "(function (d,c){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).setUint8(c,d),c+1})\n";
+const char* const s_jsBufferPrototypeWriteUInt8Code = "(function (value, offset) {\"use strict\";\n  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint8(offset, value);\n  return offset + 1;\n})\n";
 
 // writeInt16LE
 const JSC::ConstructAbility s_jsBufferPrototypeWriteInt16LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteInt16LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteInt16LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteInt16LECodeLength = 135;
+const int s_jsBufferPrototypeWriteInt16LECodeLength = 179;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteInt16LECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeWriteInt16LECode = "(function (d,c){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).setInt16(c,d,!0),c+2})\n";
+const char* const s_jsBufferPrototypeWriteInt16LECode = "(function (value, offset) {\"use strict\";\n  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt16(offset, value, true);\n  return offset + 2;\n})\n";
 
 // writeInt16BE
 const JSC::ConstructAbility s_jsBufferPrototypeWriteInt16BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteInt16BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteInt16BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteInt16BECodeLength = 135;
+const int s_jsBufferPrototypeWriteInt16BECodeLength = 180;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteInt16BECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeWriteInt16BECode = "(function (d,c){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).setInt16(c,d,!1),c+2})\n";
+const char* const s_jsBufferPrototypeWriteInt16BECode = "(function (value, offset) {\"use strict\";\n  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt16(offset, value, false);\n  return offset + 2;\n})\n";
 
 // writeUInt16LE
 const JSC::ConstructAbility s_jsBufferPrototypeWriteUInt16LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteUInt16LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteUInt16LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteUInt16LECodeLength = 136;
+const int s_jsBufferPrototypeWriteUInt16LECodeLength = 180;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteUInt16LECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeWriteUInt16LECode = "(function (d,c){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).setUint16(c,d,!0),c+2})\n";
+const char* const s_jsBufferPrototypeWriteUInt16LECode = "(function (value, offset) {\"use strict\";\n  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint16(offset, value, true);\n  return offset + 2;\n})\n";
 
 // writeUInt16BE
 const JSC::ConstructAbility s_jsBufferPrototypeWriteUInt16BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteUInt16BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteUInt16BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteUInt16BECodeLength = 136;
+const int s_jsBufferPrototypeWriteUInt16BECodeLength = 181;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteUInt16BECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeWriteUInt16BECode = "(function (d,c){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).setUint16(c,d,!1),c+2})\n";
+const char* const s_jsBufferPrototypeWriteUInt16BECode = "(function (value, offset) {\"use strict\";\n  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint16(offset, value, false);\n  return offset + 2;\n})\n";
 
 // writeInt32LE
 const JSC::ConstructAbility s_jsBufferPrototypeWriteInt32LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteInt32LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteInt32LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteInt32LECodeLength = 135;
+const int s_jsBufferPrototypeWriteInt32LECodeLength = 179;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteInt32LECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeWriteInt32LECode = "(function (d,c){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).setInt32(c,d,!0),c+4})\n";
+const char* const s_jsBufferPrototypeWriteInt32LECode = "(function (value, offset) {\"use strict\";\n  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt32(offset, value, true);\n  return offset + 4;\n})\n";
 
 // writeInt32BE
 const JSC::ConstructAbility s_jsBufferPrototypeWriteInt32BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteInt32BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteInt32BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteInt32BECodeLength = 135;
+const int s_jsBufferPrototypeWriteInt32BECodeLength = 180;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteInt32BECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeWriteInt32BECode = "(function (d,c){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).setInt32(c,d,!1),c+4})\n";
+const char* const s_jsBufferPrototypeWriteInt32BECode = "(function (value, offset) {\"use strict\";\n  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt32(offset, value, false);\n  return offset + 4;\n})\n";
 
 // writeUInt32LE
 const JSC::ConstructAbility s_jsBufferPrototypeWriteUInt32LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteUInt32LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteUInt32LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteUInt32LECodeLength = 136;
+const int s_jsBufferPrototypeWriteUInt32LECodeLength = 180;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteUInt32LECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeWriteUInt32LECode = "(function (d,c){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).setUint32(c,d,!0),c+4})\n";
+const char* const s_jsBufferPrototypeWriteUInt32LECode = "(function (value, offset) {\"use strict\";\n  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint32(offset, value, true);\n  return offset + 4;\n})\n";
 
 // writeUInt32BE
 const JSC::ConstructAbility s_jsBufferPrototypeWriteUInt32BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteUInt32BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteUInt32BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteUInt32BECodeLength = 136;
+const int s_jsBufferPrototypeWriteUInt32BECodeLength = 181;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteUInt32BECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeWriteUInt32BECode = "(function (d,c){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).setUint32(c,d,!1),c+4})\n";
+const char* const s_jsBufferPrototypeWriteUInt32BECode = "(function (value, offset) {\"use strict\";\n  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint32(offset, value, false);\n  return offset + 4;\n})\n";
 
 // writeIntLE
 const JSC::ConstructAbility s_jsBufferPrototypeWriteIntLECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteIntLECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteIntLECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteIntLECodeLength = 573;
+const int s_jsBufferPrototypeWriteIntLECodeLength = 995;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteIntLECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeWriteIntLECode = "(function (r,d,j){\"use strict\";const c=this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength);switch(j){case 1:{c.setInt8(d,r);break}case 2:{c.setInt16(d,r,!0);break}case 3:{c.setUint16(d,r&65535,!0),c.setInt8(d+2,Math.floor(r*0.0000152587890625));break}case 4:{c.setInt32(d,r,!0);break}case 5:{c.setUint32(d,r|0,!0),c.setInt8(d+4,Math.floor(r*0.00000000023283064365386964));break}case 6:{c.setUint32(d,r|0,!0),c.setInt16(d+4,Math.floor(r*0.00000000023283064365386964),!0);break}default:@throwRangeError(\"byteLength must be >= 1 and <= 6\")}return d+j})\n";
+const char* const s_jsBufferPrototypeWriteIntLECode = "(function (value, offset, byteLength) {\"use strict\";\n  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);\n  switch (byteLength) {\n    case 1: {\n      view.setInt8(offset, value);\n      break;\n    }\n    case 2: {\n      view.setInt16(offset, value, true);\n      break;\n    }\n    case 3: {\n      view.setUint16(offset, value & 65535, true);\n      view.setInt8(offset + 2, Math.floor(value * 0.0000152587890625));\n      break;\n    }\n    case 4: {\n      view.setInt32(offset, value, true);\n      break;\n    }\n    case 5: {\n      view.setUint32(offset, value | 0, true);\n      view.setInt8(offset + 4, Math.floor(value * 0.00000000023283064365386964));\n      break;\n    }\n    case 6: {\n      view.setUint32(offset, value | 0, true);\n      view.setInt16(offset + 4, Math.floor(value * 0.00000000023283064365386964), true);\n      break;\n    }\n    default: {\n      @throwRangeError(\"byteLength must be >= 1 and <= 6\");\n    }\n  }\n  return offset + byteLength;\n})\n";
 
 // writeIntBE
 const JSC::ConstructAbility s_jsBufferPrototypeWriteIntBECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteIntBECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteIntBECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteIntBECodeLength = 573;
+const int s_jsBufferPrototypeWriteIntBECodeLength = 1001;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteIntBECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeWriteIntBECode = "(function (r,d,c){\"use strict\";const E=this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength);switch(c){case 1:{E.setInt8(d,r);break}case 2:{E.setInt16(d,r,!1);break}case 3:{E.setUint16(d+1,r&65535,!1),E.setInt8(d,Math.floor(r*0.0000152587890625));break}case 4:{E.setInt32(d,r,!1);break}case 5:{E.setUint32(d+1,r|0,!1),E.setInt8(d,Math.floor(r*0.00000000023283064365386964));break}case 6:{E.setUint32(d+2,r|0,!1),E.setInt16(d,Math.floor(r*0.00000000023283064365386964),!1);break}default:@throwRangeError(\"byteLength must be >= 1 and <= 6\")}return d+c})\n";
+const char* const s_jsBufferPrototypeWriteIntBECode = "(function (value, offset, byteLength) {\"use strict\";\n  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);\n  switch (byteLength) {\n    case 1: {\n      view.setInt8(offset, value);\n      break;\n    }\n    case 2: {\n      view.setInt16(offset, value, false);\n      break;\n    }\n    case 3: {\n      view.setUint16(offset + 1, value & 65535, false);\n      view.setInt8(offset, Math.floor(value * 0.0000152587890625));\n      break;\n    }\n    case 4: {\n      view.setInt32(offset, value, false);\n      break;\n    }\n    case 5: {\n      view.setUint32(offset + 1, value | 0, false);\n      view.setInt8(offset, Math.floor(value * 0.00000000023283064365386964));\n      break;\n    }\n    case 6: {\n      view.setUint32(offset + 2, value | 0, false);\n      view.setInt16(offset, Math.floor(value * 0.00000000023283064365386964), false);\n      break;\n    }\n    default: {\n      @throwRangeError(\"byteLength must be >= 1 and <= 6\");\n    }\n  }\n  return offset + byteLength;\n})\n";
 
 // writeUIntLE
 const JSC::ConstructAbility s_jsBufferPrototypeWriteUIntLECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteUIntLECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteUIntLECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteUIntLECodeLength = 579;
+const int s_jsBufferPrototypeWriteUIntLECodeLength = 1001;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteUIntLECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeWriteUIntLECode = "(function (r,d,c){\"use strict\";const E=this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength);switch(c){case 1:{E.setUint8(d,r);break}case 2:{E.setUint16(d,r,!0);break}case 3:{E.setUint16(d,r&65535,!0),E.setUint8(d+2,Math.floor(r*0.0000152587890625));break}case 4:{E.setUint32(d,r,!0);break}case 5:{E.setUint32(d,r|0,!0),E.setUint8(d+4,Math.floor(r*0.00000000023283064365386964));break}case 6:{E.setUint32(d,r|0,!0),E.setUint16(d+4,Math.floor(r*0.00000000023283064365386964),!0);break}default:@throwRangeError(\"byteLength must be >= 1 and <= 6\")}return d+c})\n";
+const char* const s_jsBufferPrototypeWriteUIntLECode = "(function (value, offset, byteLength) {\"use strict\";\n  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);\n  switch (byteLength) {\n    case 1: {\n      view.setUint8(offset, value);\n      break;\n    }\n    case 2: {\n      view.setUint16(offset, value, true);\n      break;\n    }\n    case 3: {\n      view.setUint16(offset, value & 65535, true);\n      view.setUint8(offset + 2, Math.floor(value * 0.0000152587890625));\n      break;\n    }\n    case 4: {\n      view.setUint32(offset, value, true);\n      break;\n    }\n    case 5: {\n      view.setUint32(offset, value | 0, true);\n      view.setUint8(offset + 4, Math.floor(value * 0.00000000023283064365386964));\n      break;\n    }\n    case 6: {\n      view.setUint32(offset, value | 0, true);\n      view.setUint16(offset + 4, Math.floor(value * 0.00000000023283064365386964), true);\n      break;\n    }\n    default: {\n      @throwRangeError(\"byteLength must be >= 1 and <= 6\");\n    }\n  }\n  return offset + byteLength;\n})\n";
 
 // writeUIntBE
 const JSC::ConstructAbility s_jsBufferPrototypeWriteUIntBECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteUIntBECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteUIntBECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteUIntBECodeLength = 579;
+const int s_jsBufferPrototypeWriteUIntBECodeLength = 1007;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteUIntBECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeWriteUIntBECode = "(function (r,d,_){\"use strict\";const p=this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength);switch(_){case 1:{p.setUint8(d,r);break}case 2:{p.setUint16(d,r,!1);break}case 3:{p.setUint16(d+1,r&65535,!1),p.setUint8(d,Math.floor(r*0.0000152587890625));break}case 4:{p.setUint32(d,r,!1);break}case 5:{p.setUint32(d+1,r|0,!1),p.setUint8(d,Math.floor(r*0.00000000023283064365386964));break}case 6:{p.setUint32(d+2,r|0,!1),p.setUint16(d,Math.floor(r*0.00000000023283064365386964),!1);break}default:@throwRangeError(\"byteLength must be >= 1 and <= 6\")}return d+_})\n";
+const char* const s_jsBufferPrototypeWriteUIntBECode = "(function (value, offset, byteLength) {\"use strict\";\n  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);\n  switch (byteLength) {\n    case 1: {\n      view.setUint8(offset, value);\n      break;\n    }\n    case 2: {\n      view.setUint16(offset, value, false);\n      break;\n    }\n    case 3: {\n      view.setUint16(offset + 1, value & 65535, false);\n      view.setUint8(offset, Math.floor(value * 0.0000152587890625));\n      break;\n    }\n    case 4: {\n      view.setUint32(offset, value, false);\n      break;\n    }\n    case 5: {\n      view.setUint32(offset + 1, value | 0, false);\n      view.setUint8(offset, Math.floor(value * 0.00000000023283064365386964));\n      break;\n    }\n    case 6: {\n      view.setUint32(offset + 2, value | 0, false);\n      view.setUint16(offset, Math.floor(value * 0.00000000023283064365386964), false);\n      break;\n    }\n    default: {\n      @throwRangeError(\"byteLength must be >= 1 and <= 6\");\n    }\n  }\n  return offset + byteLength;\n})\n";
 
 // writeFloatLE
 const JSC::ConstructAbility s_jsBufferPrototypeWriteFloatLECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteFloatLECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteFloatLECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteFloatLECodeLength = 137;
+const int s_jsBufferPrototypeWriteFloatLECodeLength = 181;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteFloatLECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeWriteFloatLECode = "(function (d,c){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).setFloat32(c,d,!0),c+4})\n";
+const char* const s_jsBufferPrototypeWriteFloatLECode = "(function (value, offset) {\"use strict\";\n  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat32(offset, value, true);\n  return offset + 4;\n})\n";
 
 // writeFloatBE
 const JSC::ConstructAbility s_jsBufferPrototypeWriteFloatBECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteFloatBECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteFloatBECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteFloatBECodeLength = 137;
+const int s_jsBufferPrototypeWriteFloatBECodeLength = 182;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteFloatBECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeWriteFloatBECode = "(function (d,c){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).setFloat32(c,d,!1),c+4})\n";
+const char* const s_jsBufferPrototypeWriteFloatBECode = "(function (value, offset) {\"use strict\";\n  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat32(offset, value, false);\n  return offset + 4;\n})\n";
 
 // writeDoubleLE
 const JSC::ConstructAbility s_jsBufferPrototypeWriteDoubleLECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteDoubleLECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteDoubleLECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteDoubleLECodeLength = 137;
+const int s_jsBufferPrototypeWriteDoubleLECodeLength = 181;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteDoubleLECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeWriteDoubleLECode = "(function (d,c){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).setFloat64(c,d,!0),c+8})\n";
+const char* const s_jsBufferPrototypeWriteDoubleLECode = "(function (value, offset) {\"use strict\";\n  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat64(offset, value, true);\n  return offset + 8;\n})\n";
 
 // writeDoubleBE
 const JSC::ConstructAbility s_jsBufferPrototypeWriteDoubleBECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteDoubleBECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteDoubleBECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteDoubleBECodeLength = 137;
+const int s_jsBufferPrototypeWriteDoubleBECodeLength = 182;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteDoubleBECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeWriteDoubleBECode = "(function (d,c){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).setFloat64(c,d,!1),c+8})\n";
+const char* const s_jsBufferPrototypeWriteDoubleBECode = "(function (value, offset) {\"use strict\";\n  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat64(offset, value, false);\n  return offset + 8;\n})\n";
 
 // writeBigInt64LE
 const JSC::ConstructAbility s_jsBufferPrototypeWriteBigInt64LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteBigInt64LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteBigInt64LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteBigInt64LECodeLength = 138;
+const int s_jsBufferPrototypeWriteBigInt64LECodeLength = 182;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteBigInt64LECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeWriteBigInt64LECode = "(function (d,c){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).setBigInt64(c,d,!0),c+8})\n";
+const char* const s_jsBufferPrototypeWriteBigInt64LECode = "(function (value, offset) {\"use strict\";\n  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigInt64(offset, value, true);\n  return offset + 8;\n})\n";
 
 // writeBigInt64BE
 const JSC::ConstructAbility s_jsBufferPrototypeWriteBigInt64BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteBigInt64BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteBigInt64BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteBigInt64BECodeLength = 138;
+const int s_jsBufferPrototypeWriteBigInt64BECodeLength = 183;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteBigInt64BECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeWriteBigInt64BECode = "(function (d,c){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).setBigInt64(c,d,!1),c+8})\n";
+const char* const s_jsBufferPrototypeWriteBigInt64BECode = "(function (value, offset) {\"use strict\";\n  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigInt64(offset, value, false);\n  return offset + 8;\n})\n";
 
 // writeBigUInt64LE
 const JSC::ConstructAbility s_jsBufferPrototypeWriteBigUInt64LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteBigUInt64LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteBigUInt64LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteBigUInt64LECodeLength = 139;
+const int s_jsBufferPrototypeWriteBigUInt64LECodeLength = 183;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteBigUInt64LECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeWriteBigUInt64LECode = "(function (d,c){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).setBigUint64(c,d,!0),c+8})\n";
+const char* const s_jsBufferPrototypeWriteBigUInt64LECode = "(function (value, offset) {\"use strict\";\n  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigUint64(offset, value, true);\n  return offset + 8;\n})\n";
 
 // writeBigUInt64BE
 const JSC::ConstructAbility s_jsBufferPrototypeWriteBigUInt64BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteBigUInt64BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteBigUInt64BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteBigUInt64BECodeLength = 139;
+const int s_jsBufferPrototypeWriteBigUInt64BECodeLength = 184;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteBigUInt64BECodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeWriteBigUInt64BECode = "(function (d,c){\"use strict\";return(this.@dataView||=new DataView(this.buffer,this.byteOffset,this.byteLength)).setBigUint64(c,d,!1),c+8})\n";
+const char* const s_jsBufferPrototypeWriteBigUInt64BECode = "(function (value, offset) {\"use strict\";\n  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigUint64(offset, value, false);\n  return offset + 8;\n})\n";
 
 // utf8Write
 const JSC::ConstructAbility s_jsBufferPrototypeUtf8WriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeUtf8WriteCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeUtf8WriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeUtf8WriteCodeLength = 65;
+const int s_jsBufferPrototypeUtf8WriteCodeLength = 102;
 static const JSC::Intrinsic s_jsBufferPrototypeUtf8WriteCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeUtf8WriteCode = "(function (d,r,a){\"use strict\";return this.write(d,r,a,\"utf8\")})\n";
+const char* const s_jsBufferPrototypeUtf8WriteCode = "(function (text, offset, length) {\"use strict\";\n  return this.write(text, offset, length, \"utf8\");\n})\n";
 
 // ucs2Write
 const JSC::ConstructAbility s_jsBufferPrototypeUcs2WriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeUcs2WriteCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeUcs2WriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeUcs2WriteCodeLength = 65;
+const int s_jsBufferPrototypeUcs2WriteCodeLength = 102;
 static const JSC::Intrinsic s_jsBufferPrototypeUcs2WriteCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeUcs2WriteCode = "(function (c,d,r){\"use strict\";return this.write(c,d,r,\"ucs2\")})\n";
+const char* const s_jsBufferPrototypeUcs2WriteCode = "(function (text, offset, length) {\"use strict\";\n  return this.write(text, offset, length, \"ucs2\");\n})\n";
 
 // utf16leWrite
 const JSC::ConstructAbility s_jsBufferPrototypeUtf16leWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeUtf16leWriteCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeUtf16leWriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeUtf16leWriteCodeLength = 68;
+const int s_jsBufferPrototypeUtf16leWriteCodeLength = 105;
 static const JSC::Intrinsic s_jsBufferPrototypeUtf16leWriteCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeUtf16leWriteCode = "(function (d,r,a){\"use strict\";return this.write(d,r,a,\"utf16le\")})\n";
+const char* const s_jsBufferPrototypeUtf16leWriteCode = "(function (text, offset, length) {\"use strict\";\n  return this.write(text, offset, length, \"utf16le\");\n})\n";
 
 // latin1Write
 const JSC::ConstructAbility s_jsBufferPrototypeLatin1WriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeLatin1WriteCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeLatin1WriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeLatin1WriteCodeLength = 67;
+const int s_jsBufferPrototypeLatin1WriteCodeLength = 104;
 static const JSC::Intrinsic s_jsBufferPrototypeLatin1WriteCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeLatin1WriteCode = "(function (a,d,r){\"use strict\";return this.write(a,d,r,\"latin1\")})\n";
+const char* const s_jsBufferPrototypeLatin1WriteCode = "(function (text, offset, length) {\"use strict\";\n  return this.write(text, offset, length, \"latin1\");\n})\n";
 
 // asciiWrite
 const JSC::ConstructAbility s_jsBufferPrototypeAsciiWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeAsciiWriteCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeAsciiWriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeAsciiWriteCodeLength = 66;
+const int s_jsBufferPrototypeAsciiWriteCodeLength = 103;
 static const JSC::Intrinsic s_jsBufferPrototypeAsciiWriteCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeAsciiWriteCode = "(function (c,d,i){\"use strict\";return this.write(c,d,i,\"ascii\")})\n";
+const char* const s_jsBufferPrototypeAsciiWriteCode = "(function (text, offset, length) {\"use strict\";\n  return this.write(text, offset, length, \"ascii\");\n})\n";
 
 // base64Write
 const JSC::ConstructAbility s_jsBufferPrototypeBase64WriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeBase64WriteCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeBase64WriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeBase64WriteCodeLength = 67;
+const int s_jsBufferPrototypeBase64WriteCodeLength = 104;
 static const JSC::Intrinsic s_jsBufferPrototypeBase64WriteCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeBase64WriteCode = "(function (a,d,r){\"use strict\";return this.write(a,d,r,\"base64\")})\n";
+const char* const s_jsBufferPrototypeBase64WriteCode = "(function (text, offset, length) {\"use strict\";\n  return this.write(text, offset, length, \"base64\");\n})\n";
 
 // base64urlWrite
 const JSC::ConstructAbility s_jsBufferPrototypeBase64urlWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeBase64urlWriteCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeBase64urlWriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeBase64urlWriteCodeLength = 70;
+const int s_jsBufferPrototypeBase64urlWriteCodeLength = 107;
 static const JSC::Intrinsic s_jsBufferPrototypeBase64urlWriteCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeBase64urlWriteCode = "(function (a,d,r){\"use strict\";return this.write(a,d,r,\"base64url\")})\n";
+const char* const s_jsBufferPrototypeBase64urlWriteCode = "(function (text, offset, length) {\"use strict\";\n  return this.write(text, offset, length, \"base64url\");\n})\n";
 
 // hexWrite
 const JSC::ConstructAbility s_jsBufferPrototypeHexWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeHexWriteCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeHexWriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeHexWriteCodeLength = 64;
+const int s_jsBufferPrototypeHexWriteCodeLength = 101;
 static const JSC::Intrinsic s_jsBufferPrototypeHexWriteCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeHexWriteCode = "(function (d,r,a){\"use strict\";return this.write(d,r,a,\"hex\")})\n";
+const char* const s_jsBufferPrototypeHexWriteCode = "(function (text, offset, length) {\"use strict\";\n  return this.write(text, offset, length, \"hex\");\n})\n";
 
 // utf8Slice
 const JSC::ConstructAbility s_jsBufferPrototypeUtf8SliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeUtf8SliceCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeUtf8SliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeUtf8SliceCodeLength = 64;
+const int s_jsBufferPrototypeUtf8SliceCodeLength = 85;
 static const JSC::Intrinsic s_jsBufferPrototypeUtf8SliceCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeUtf8SliceCode = "(function (g,u){\"use strict\";return this.toString(\"utf8\",g,u)})\n";
+const char* const s_jsBufferPrototypeUtf8SliceCode = "(function (start, end) {\"use strict\";\n  return this.toString(\"utf8\", start, end);\n})\n";
 
 // ucs2Slice
 const JSC::ConstructAbility s_jsBufferPrototypeUcs2SliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeUcs2SliceCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeUcs2SliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeUcs2SliceCodeLength = 64;
+const int s_jsBufferPrototypeUcs2SliceCodeLength = 85;
 static const JSC::Intrinsic s_jsBufferPrototypeUcs2SliceCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeUcs2SliceCode = "(function (g,u){\"use strict\";return this.toString(\"ucs2\",g,u)})\n";
+const char* const s_jsBufferPrototypeUcs2SliceCode = "(function (start, end) {\"use strict\";\n  return this.toString(\"ucs2\", start, end);\n})\n";
 
 // utf16leSlice
 const JSC::ConstructAbility s_jsBufferPrototypeUtf16leSliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeUtf16leSliceCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeUtf16leSliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeUtf16leSliceCodeLength = 67;
+const int s_jsBufferPrototypeUtf16leSliceCodeLength = 88;
 static const JSC::Intrinsic s_jsBufferPrototypeUtf16leSliceCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeUtf16leSliceCode = "(function (g,p){\"use strict\";return this.toString(\"utf16le\",g,p)})\n";
+const char* const s_jsBufferPrototypeUtf16leSliceCode = "(function (start, end) {\"use strict\";\n  return this.toString(\"utf16le\", start, end);\n})\n";
 
 // latin1Slice
 const JSC::ConstructAbility s_jsBufferPrototypeLatin1SliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeLatin1SliceCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeLatin1SliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeLatin1SliceCodeLength = 66;
+const int s_jsBufferPrototypeLatin1SliceCodeLength = 87;
 static const JSC::Intrinsic s_jsBufferPrototypeLatin1SliceCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeLatin1SliceCode = "(function (g,p){\"use strict\";return this.toString(\"latin1\",g,p)})\n";
+const char* const s_jsBufferPrototypeLatin1SliceCode = "(function (start, end) {\"use strict\";\n  return this.toString(\"latin1\", start, end);\n})\n";
 
 // asciiSlice
 const JSC::ConstructAbility s_jsBufferPrototypeAsciiSliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeAsciiSliceCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeAsciiSliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeAsciiSliceCodeLength = 65;
+const int s_jsBufferPrototypeAsciiSliceCodeLength = 86;
 static const JSC::Intrinsic s_jsBufferPrototypeAsciiSliceCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeAsciiSliceCode = "(function (g,u){\"use strict\";return this.toString(\"ascii\",g,u)})\n";
+const char* const s_jsBufferPrototypeAsciiSliceCode = "(function (start, end) {\"use strict\";\n  return this.toString(\"ascii\", start, end);\n})\n";
 
 // base64Slice
 const JSC::ConstructAbility s_jsBufferPrototypeBase64SliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeBase64SliceCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeBase64SliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeBase64SliceCodeLength = 66;
+const int s_jsBufferPrototypeBase64SliceCodeLength = 87;
 static const JSC::Intrinsic s_jsBufferPrototypeBase64SliceCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeBase64SliceCode = "(function (g,p){\"use strict\";return this.toString(\"base64\",g,p)})\n";
+const char* const s_jsBufferPrototypeBase64SliceCode = "(function (start, end) {\"use strict\";\n  return this.toString(\"base64\", start, end);\n})\n";
 
 // base64urlSlice
 const JSC::ConstructAbility s_jsBufferPrototypeBase64urlSliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeBase64urlSliceCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeBase64urlSliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeBase64urlSliceCodeLength = 69;
+const int s_jsBufferPrototypeBase64urlSliceCodeLength = 90;
 static const JSC::Intrinsic s_jsBufferPrototypeBase64urlSliceCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeBase64urlSliceCode = "(function (c,g){\"use strict\";return this.toString(\"base64url\",c,g)})\n";
+const char* const s_jsBufferPrototypeBase64urlSliceCode = "(function (start, end) {\"use strict\";\n  return this.toString(\"base64url\", start, end);\n})\n";
 
 // hexSlice
 const JSC::ConstructAbility s_jsBufferPrototypeHexSliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeHexSliceCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeHexSliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeHexSliceCodeLength = 63;
+const int s_jsBufferPrototypeHexSliceCodeLength = 84;
 static const JSC::Intrinsic s_jsBufferPrototypeHexSliceCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeHexSliceCode = "(function (g,_){\"use strict\";return this.toString(\"hex\",g,_)})\n";
+const char* const s_jsBufferPrototypeHexSliceCode = "(function (start, end) {\"use strict\";\n  return this.toString(\"hex\", start, end);\n})\n";
 
 // toJSON
 const JSC::ConstructAbility s_jsBufferPrototypeToJSONCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeToJSONCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeToJSONCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeToJSONCodeLength = 73;
+const int s_jsBufferPrototypeToJSONCodeLength = 115;
 static const JSC::Intrinsic s_jsBufferPrototypeToJSONCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeToJSONCode = "(function (){\"use strict\";return{type:\"Buffer\",data:@Array.from(this)}})\n";
+const char* const s_jsBufferPrototypeToJSONCode = "(function () {\"use strict\";\n  const type = \"Buffer\";\n  const data = @Array.from(this);\n  return { type, data };\n})\n";
 
 // slice
 const JSC::ConstructAbility s_jsBufferPrototypeSliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeSliceCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeSliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeSliceCodeLength = 256;
+const int s_jsBufferPrototypeSliceCodeLength = 596;
 static const JSC::Intrinsic s_jsBufferPrototypeSliceCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeSliceCode = "(function (v,m){\"use strict\";var{buffer:w,byteOffset:x,byteLength:p}=this;function q(c,k){if(c=@trunc(c),c===0||c!==c)return 0;else if(c<0)return c+=k,c>0\?c:0;else return c<k\?c:k}var i=q(v,p),u=m!==@undefined\?q(m,p):p;return new @Buffer(w,x+i,u>i\?u-i:0)})\n";
+const char* const s_jsBufferPrototypeSliceCode = "(function (start, end) {\"use strict\";\n  var { buffer, byteOffset, byteLength } = this;\n  function adjustOffset(offset, length) {\n    offset = @trunc(offset);\n    if (offset === 0 || offset !== offset) {\n      return 0;\n    } else if (offset < 0) {\n      offset += length;\n      return offset > 0 \? offset : 0;\n    } else {\n      return offset < length \? offset : length;\n    }\n  }\n  var start_ = adjustOffset(start, byteLength);\n  var end_ = end !== @undefined \? adjustOffset(end, byteLength) : byteLength;\n  return new @Buffer(buffer, byteOffset + start_, end_ > start_ \? end_ - start_ : 0);\n})\n";
 
 // parent
 const JSC::ConstructAbility s_jsBufferPrototypeParentCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeParentCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeParentCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeParentCodeLength = 99;
+const int s_jsBufferPrototypeParentCodeLength = 111;
 static const JSC::Intrinsic s_jsBufferPrototypeParentCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeParentCode = "(function (){\"use strict\";return @isObject(this)&&this instanceof @Buffer\?this.buffer:@undefined})\n";
+const char* const s_jsBufferPrototypeParentCode = "(function () {\"use strict\";\n  return @isObject(this) && this instanceof @Buffer \? this.buffer : @undefined;\n})\n";
 
 // offset
 const JSC::ConstructAbility s_jsBufferPrototypeOffsetCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeOffsetCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeOffsetCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeOffsetCodeLength = 103;
+const int s_jsBufferPrototypeOffsetCodeLength = 115;
 static const JSC::Intrinsic s_jsBufferPrototypeOffsetCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeOffsetCode = "(function (){\"use strict\";return @isObject(this)&&this instanceof @Buffer\?this.byteOffset:@undefined})\n";
+const char* const s_jsBufferPrototypeOffsetCode = "(function () {\"use strict\";\n  return @isObject(this) && this instanceof @Buffer \? this.byteOffset : @undefined;\n})\n";
 
 // inspect
 const JSC::ConstructAbility s_jsBufferPrototypeInspectCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeInspectCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeInspectCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeInspectCodeLength = 57;
+const int s_jsBufferPrototypeInspectCodeLength = 77;
 static const JSC::Intrinsic s_jsBufferPrototypeInspectCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeInspectCode = "(function (c,d){\"use strict\";return @Bun.inspect(this)})\n";
+const char* const s_jsBufferPrototypeInspectCode = "(function (recurseTimes, ctx) {\"use strict\";\n  return @Bun.inspect(this);\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -1278,49 +1304,49 @@ WEBCORE_FOREACH_JSBUFFERPROTOTYPE_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 const JSC::ConstructAbility s_readableByteStreamControllerInitializeReadableByteStreamControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamControllerInitializeReadableByteStreamControllerCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamControllerInitializeReadableByteStreamControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamControllerInitializeReadableByteStreamControllerCodeLength = 253;
+const int s_readableByteStreamControllerInitializeReadableByteStreamControllerCodeLength = 351;
 static const JSC::Intrinsic s_readableByteStreamControllerInitializeReadableByteStreamControllerCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamControllerInitializeReadableByteStreamControllerCode = "(function (f,l,p){\"use strict\";if(arguments.length!==4&&arguments[3]!==@isReadableStream)@throwTypeError(\"ReadableByteStreamController constructor should not be called directly\");return @privateInitializeReadableByteStreamController.@call(this,f,l,p)})\n";
+const char* const s_readableByteStreamControllerInitializeReadableByteStreamControllerCode = "(function (stream, underlyingByteSource, highWaterMark) {\"use strict\";\n  if (arguments.length !== 4 && arguments[3] !== @isReadableStream)\n    @throwTypeError(\"ReadableByteStreamController constructor should not be called directly\");\n  return @privateInitializeReadableByteStreamController.@call(this, stream, underlyingByteSource, highWaterMark);\n})\n";
 
 // enqueue
 const JSC::ConstructAbility s_readableByteStreamControllerEnqueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamControllerEnqueueCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamControllerEnqueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamControllerEnqueueCodeLength = 562;
+const int s_readableByteStreamControllerEnqueueCodeLength = 629;
 static const JSC::Intrinsic s_readableByteStreamControllerEnqueueCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamControllerEnqueueCode = "(function (r){\"use strict\";if(!@isReadableByteStreamController(this))throw @makeThisTypeError(\"ReadableByteStreamController\",\"enqueue\");if(@getByIdDirectPrivate(this,\"closeRequested\"))@throwTypeError(\"ReadableByteStreamController is requested to close\");if(@getByIdDirectPrivate(@getByIdDirectPrivate(this,\"controlledReadableStream\"),\"state\")!==@streamReadable)@throwTypeError(\"ReadableStream is not readable\");if(!@isObject(r)||!@ArrayBuffer.@isView(r))@throwTypeError(\"Provided chunk is not a TypedArray\");return @readableByteStreamControllerEnqueue(this,r)})\n";
+const char* const s_readableByteStreamControllerEnqueueCode = "(function (chunk) {\"use strict\";\n  if (!@isReadableByteStreamController(this))\n    throw @makeThisTypeError(\"ReadableByteStreamController\", \"enqueue\");\n  if (@getByIdDirectPrivate(this, \"closeRequested\"))\n    @throwTypeError(\"ReadableByteStreamController is requested to close\");\n  if (@getByIdDirectPrivate(@getByIdDirectPrivate(this, \"controlledReadableStream\"), \"state\") !== @streamReadable)\n    @throwTypeError(\"ReadableStream is not readable\");\n  if (!@isObject(chunk) || !@ArrayBuffer.@isView(chunk))\n    @throwTypeError(\"Provided chunk is not a TypedArray\");\n  return @readableByteStreamControllerEnqueue(this, chunk);\n})\n";
 
 // error
 const JSC::ConstructAbility s_readableByteStreamControllerErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamControllerErrorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamControllerErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamControllerErrorCodeLength = 336;
+const int s_readableByteStreamControllerErrorCodeLength = 374;
 static const JSC::Intrinsic s_readableByteStreamControllerErrorCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamControllerErrorCode = "(function (a){\"use strict\";if(!@isReadableByteStreamController(this))throw @makeThisTypeError(\"ReadableByteStreamController\",\"error\");if(@getByIdDirectPrivate(@getByIdDirectPrivate(this,\"controlledReadableStream\"),\"state\")!==@streamReadable)@throwTypeError(\"ReadableStream is not readable\");@readableByteStreamControllerError(this,a)})\n";
+const char* const s_readableByteStreamControllerErrorCode = "(function (error) {\"use strict\";\n  if (!@isReadableByteStreamController(this))\n    throw @makeThisTypeError(\"ReadableByteStreamController\", \"error\");\n  if (@getByIdDirectPrivate(@getByIdDirectPrivate(this, \"controlledReadableStream\"), \"state\") !== @streamReadable)\n    @throwTypeError(\"ReadableStream is not readable\");\n  @readableByteStreamControllerError(this, error);\n})\n";
 
 // close
 const JSC::ConstructAbility s_readableByteStreamControllerCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamControllerCloseCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamControllerCloseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamControllerCloseCodeLength = 433;
+const int s_readableByteStreamControllerCloseCodeLength = 472;
 static const JSC::Intrinsic s_readableByteStreamControllerCloseCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamControllerCloseCode = "(function (){\"use strict\";if(!@isReadableByteStreamController(this))throw @makeThisTypeError(\"ReadableByteStreamController\",\"close\");if(@getByIdDirectPrivate(this,\"closeRequested\"))@throwTypeError(\"Close has already been requested\");if(@getByIdDirectPrivate(@getByIdDirectPrivate(this,\"controlledReadableStream\"),\"state\")!==@streamReadable)@throwTypeError(\"ReadableStream is not readable\");@readableByteStreamControllerClose(this)})\n";
+const char* const s_readableByteStreamControllerCloseCode = "(function () {\"use strict\";\n  if (!@isReadableByteStreamController(this))\n    throw @makeThisTypeError(\"ReadableByteStreamController\", \"close\");\n  if (@getByIdDirectPrivate(this, \"closeRequested\"))\n    @throwTypeError(\"Close has already been requested\");\n  if (@getByIdDirectPrivate(@getByIdDirectPrivate(this, \"controlledReadableStream\"), \"state\") !== @streamReadable)\n    @throwTypeError(\"ReadableStream is not readable\");\n  @readableByteStreamControllerClose(this);\n})\n";
 
 // byobRequest
 const JSC::ConstructAbility s_readableByteStreamControllerByobRequestCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamControllerByobRequestCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamControllerByobRequestCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamControllerByobRequestCodeLength = 523;
+const int s_readableByteStreamControllerByobRequestCodeLength = 738;
 static const JSC::Intrinsic s_readableByteStreamControllerByobRequestCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamControllerByobRequestCode = "(function (){\"use strict\";if(!@isReadableByteStreamController(this))throw @makeGetterTypeError(\"ReadableByteStreamController\",\"byobRequest\");var a=@getByIdDirectPrivate(this,\"byobRequest\");if(a===@undefined){var l=@getByIdDirectPrivate(this,\"pendingPullIntos\");const _=l.peek();if(_){const m=new @Uint8Array(_.buffer,_.byteOffset+_.bytesFilled,_.byteLength-_.bytesFilled);@putByIdDirectPrivate(this,\"byobRequest\",new @ReadableStreamBYOBRequest(this,m,@isReadableStream))}}return @getByIdDirectPrivate(this,\"byobRequest\")})\n";
+const char* const s_readableByteStreamControllerByobRequestCode = "(function () {\"use strict\";\n  if (!@isReadableByteStreamController(this))\n    throw @makeGetterTypeError(\"ReadableByteStreamController\", \"byobRequest\");\n  var request = @getByIdDirectPrivate(this, \"byobRequest\");\n  if (request === @undefined) {\n    var pending = @getByIdDirectPrivate(this, \"pendingPullIntos\");\n    const firstDescriptor = pending.peek();\n    if (firstDescriptor) {\n      const view = new @Uint8Array(firstDescriptor.buffer, firstDescriptor.byteOffset + firstDescriptor.bytesFilled, firstDescriptor.byteLength - firstDescriptor.bytesFilled);\n      @putByIdDirectPrivate(this, \"byobRequest\", new @ReadableStreamBYOBRequest(this, view, @isReadableStream));\n    }\n  }\n  return @getByIdDirectPrivate(this, \"byobRequest\");\n})\n";
 
 // desiredSize
 const JSC::ConstructAbility s_readableByteStreamControllerDesiredSizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamControllerDesiredSizeCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamControllerDesiredSizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamControllerDesiredSizeCodeLength = 200;
+const int s_readableByteStreamControllerDesiredSizeCodeLength = 216;
 static const JSC::Intrinsic s_readableByteStreamControllerDesiredSizeCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamControllerDesiredSizeCode = "(function (){\"use strict\";if(!@isReadableByteStreamController(this))throw @makeGetterTypeError(\"ReadableByteStreamController\",\"desiredSize\");return @readableByteStreamControllerGetDesiredSize(this)})\n";
+const char* const s_readableByteStreamControllerDesiredSizeCode = "(function () {\"use strict\";\n  if (!@isReadableByteStreamController(this))\n    throw @makeGetterTypeError(\"ReadableByteStreamController\", \"desiredSize\");\n  return @readableByteStreamControllerGetDesiredSize(this);\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -1336,17 +1362,17 @@ WEBCORE_FOREACH_READABLEBYTESTREAMCONTROLLER_BUILTIN_CODE(DEFINE_BUILTIN_GENERAT
 const JSC::ConstructAbility s_consoleObjectAsyncIteratorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_consoleObjectAsyncIteratorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_consoleObjectAsyncIteratorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_consoleObjectAsyncIteratorCodeLength = 577;
+const int s_consoleObjectAsyncIteratorCodeLength = 1535;
 static const JSC::Intrinsic s_consoleObjectAsyncIteratorCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_consoleObjectAsyncIteratorCode = "(function (){\"use strict\";const D=async function*L(){var F=@Bun.stdin.stream().getReader(),G=new globalThis.TextDecoder(\"utf-8\",{fatal:!1}),z,H=@Bun.indexOfLine;try{while(!0){var A,B,w;const m=F.readMany();if(@isPromise(m))({done:A,value:B}=await m);else({done:A,value:B}=m);if(A){if(w)yield G.decode(w);return}var _;for(let J of B){if(_=J,w)_=@Buffer.concat([w,J]),w=null;var j=0,q=H(_,j);while(q!==-1)yield G.decode(_.subarray(j,q)),j=q+1,q=H(_,j);w=_.subarray(j)}}}catch(m){z=m}finally{if(F.releaseLock(),z)throw z}},K=globalThis.Symbol.asyncIterator;return this[K]=D,D()})\n";
+const char* const s_consoleObjectAsyncIteratorCode = "(function () {\"use strict\";\n  const Iterator = async function* ConsoleAsyncIterator() {\n    const stream = @Bun.stdin.stream();\n    var reader = stream.getReader();\n    var decoder = new globalThis.TextDecoder(\"utf-8\", { fatal: false });\n    var deferredError;\n    var indexOf = @Bun.indexOfLine;\n    try {\n      while (true) {\n        var done, value;\n        var pendingChunk;\n        const firstResult = reader.readMany();\n        if (@isPromise(firstResult)) {\n          ({ done, value } = await firstResult);\n        } else {\n          ({ done, value } = firstResult);\n        }\n        if (done) {\n          if (pendingChunk) {\n            yield decoder.decode(pendingChunk);\n          }\n          return;\n        }\n        var actualChunk;\n        for (const chunk of value) {\n          actualChunk = chunk;\n          if (pendingChunk) {\n            actualChunk = @Buffer.concat([pendingChunk, chunk]);\n            pendingChunk = null;\n          }\n          var last = 0;\n          var i = indexOf(actualChunk, last);\n          while (i !== -1) {\n            yield decoder.decode(actualChunk.subarray(last, i));\n            last = i + 1;\n            i = indexOf(actualChunk, last);\n          }\n          pendingChunk = actualChunk.subarray(last);\n        }\n      }\n    } catch (e) {\n      deferredError = e;\n    } finally {\n      reader.releaseLock();\n      if (deferredError) {\n        throw deferredError;\n      }\n    }\n  };\n  const symbol = globalThis.Symbol.asyncIterator;\n  this[symbol] = Iterator;\n  return Iterator();\n})\n";
 
 // write
 const JSC::ConstructAbility s_consoleObjectWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_consoleObjectWriteCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_consoleObjectWriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_consoleObjectWriteCodeLength = 310;
+const int s_consoleObjectWriteCodeLength = 482;
 static const JSC::Intrinsic s_consoleObjectWriteCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_consoleObjectWriteCode = "(function (_){\"use strict\";var a=@getByIdDirectPrivate(this,\"writer\");if(!a){var b=@toLength(_\?.length\?\?0);a=@Bun.stdout.writer({highWaterMark:b>65536\?b:65536}),@putByIdDirectPrivate(this,\"writer\",a)}var c=a.write(_);const f=@argumentCount();for(var d=1;d<f;d++)c+=a.write(@argument(d));return a.flush(!0),c})\n";
+const char* const s_consoleObjectWriteCode = "(function (input) {\"use strict\";\n  var writer = @getByIdDirectPrivate(this, \"writer\");\n  if (!writer) {\n    var length = @toLength(input\?.length \?\? 0);\n    writer = @Bun.stdout.writer({ highWaterMark: length > 65536 \? length : 65536 });\n    @putByIdDirectPrivate(this, \"writer\", writer);\n  }\n  var wrote = writer.write(input);\n  const count = @argumentCount();\n  for (var i = 1;i < count; i++) {\n    wrote += writer.write(@argument(i));\n  }\n  writer.flush(true);\n  return wrote;\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -1362,513 +1388,513 @@ WEBCORE_FOREACH_CONSOLEOBJECT_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamReaderGenericInitializeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamReaderGenericInitializeCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamReaderGenericInitializeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamReaderGenericInitializeCodeLength = 583;
+const int s_readableStreamInternalsReadableStreamReaderGenericInitializeCodeLength = 740;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamReaderGenericInitializeCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamReaderGenericInitializeCode = "(function (l,i){\"use strict\";if(@putByIdDirectPrivate(l,\"ownerReadableStream\",i),@putByIdDirectPrivate(i,\"reader\",l),@getByIdDirectPrivate(i,\"state\")===@streamReadable)@putByIdDirectPrivate(l,\"closedPromiseCapability\",@newPromiseCapability(@Promise));else if(@getByIdDirectPrivate(i,\"state\")===@streamClosed)@putByIdDirectPrivate(l,\"closedPromiseCapability\",{promise:@Promise.@resolve()});else @assert(@getByIdDirectPrivate(i,\"state\")===@streamErrored),@putByIdDirectPrivate(l,\"closedPromiseCapability\",{promise:@newHandledRejectedPromise(@getByIdDirectPrivate(i,\"storedError\"))})})\n";
+const char* const s_readableStreamInternalsReadableStreamReaderGenericInitializeCode = "(function (reader, stream) {\"use strict\";\n  @putByIdDirectPrivate(reader, \"ownerReadableStream\", stream);\n  @putByIdDirectPrivate(stream, \"reader\", reader);\n  if (@getByIdDirectPrivate(stream, \"state\") === @streamReadable)\n    @putByIdDirectPrivate(reader, \"closedPromiseCapability\", @newPromiseCapability(@Promise));\n  else if (@getByIdDirectPrivate(stream, \"state\") === @streamClosed)\n    @putByIdDirectPrivate(reader, \"closedPromiseCapability\", {\n      promise: @Promise.@resolve()\n    });\n  else {\n    @assert(@getByIdDirectPrivate(stream, \"state\") === @streamErrored);\n    @putByIdDirectPrivate(reader, \"closedPromiseCapability\", {\n      promise: @newHandledRejectedPromise(@getByIdDirectPrivate(stream, \"storedError\"))\n    });\n  }\n})\n";
 
 // privateInitializeReadableStreamDefaultController
 const JSC::ConstructAbility s_readableStreamInternalsPrivateInitializeReadableStreamDefaultControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPrivateInitializeReadableStreamDefaultControllerCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsPrivateInitializeReadableStreamDefaultControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsPrivateInitializeReadableStreamDefaultControllerCodeLength = 675;
+const int s_readableStreamInternalsPrivateInitializeReadableStreamDefaultControllerCodeLength = 835;
 static const JSC::Intrinsic s_readableStreamInternalsPrivateInitializeReadableStreamDefaultControllerCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsPrivateInitializeReadableStreamDefaultControllerCode = "(function (d,P,_,b){\"use strict\";if(!@isReadableStream(d))@throwTypeError(\"ReadableStreamDefaultController needs a ReadableStream\");if(@getByIdDirectPrivate(d,\"readableStreamController\")!==null)@throwTypeError(\"ReadableStream already has a controller\");return @putByIdDirectPrivate(this,\"controlledReadableStream\",d),@putByIdDirectPrivate(this,\"underlyingSource\",P),@putByIdDirectPrivate(this,\"queue\",@newQueue()),@putByIdDirectPrivate(this,\"started\",-1),@putByIdDirectPrivate(this,\"closeRequested\",!1),@putByIdDirectPrivate(this,\"pullAgain\",!1),@putByIdDirectPrivate(this,\"pulling\",!1),@putByIdDirectPrivate(this,\"strategy\",@validateAndNormalizeQueuingStrategy(_,b)),this})\n";
+const char* const s_readableStreamInternalsPrivateInitializeReadableStreamDefaultControllerCode = "(function (stream, underlyingSource, size, highWaterMark) {\"use strict\";\n  if (!@isReadableStream(stream))\n    @throwTypeError(\"ReadableStreamDefaultController needs a ReadableStream\");\n  if (@getByIdDirectPrivate(stream, \"readableStreamController\") !== null)\n    @throwTypeError(\"ReadableStream already has a controller\");\n  @putByIdDirectPrivate(this, \"controlledReadableStream\", stream);\n  @putByIdDirectPrivate(this, \"underlyingSource\", underlyingSource);\n  @putByIdDirectPrivate(this, \"queue\", @newQueue());\n  @putByIdDirectPrivate(this, \"started\", -1);\n  @putByIdDirectPrivate(this, \"closeRequested\", false);\n  @putByIdDirectPrivate(this, \"pullAgain\", false);\n  @putByIdDirectPrivate(this, \"pulling\", false);\n  @putByIdDirectPrivate(this, \"strategy\", @validateAndNormalizeQueuingStrategy(size, highWaterMark));\n  return this;\n})\n";
 
 // readableStreamDefaultControllerError
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerErrorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefaultControllerErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamDefaultControllerErrorCodeLength = 223;
+const int s_readableStreamInternalsReadableStreamDefaultControllerErrorCodeLength = 304;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerErrorCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamDefaultControllerErrorCode = "(function (i,d){\"use strict\";const u=@getByIdDirectPrivate(i,\"controlledReadableStream\");if(@getByIdDirectPrivate(u,\"state\")!==@streamReadable)return;@putByIdDirectPrivate(i,\"queue\",@newQueue()),@readableStreamError(u,d)})\n";
+const char* const s_readableStreamInternalsReadableStreamDefaultControllerErrorCode = "(function (controller, error) {\"use strict\";\n  const stream = @getByIdDirectPrivate(controller, \"controlledReadableStream\");\n  if (@getByIdDirectPrivate(stream, \"state\") !== @streamReadable)\n    return;\n  @putByIdDirectPrivate(controller, \"queue\", @newQueue());\n  @readableStreamError(stream, error);\n})\n";
 
 // readableStreamPipeTo
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamPipeToCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamPipeToCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamPipeToCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamPipeToCodeLength = 426;
+const int s_readableStreamInternalsReadableStreamPipeToCodeLength = 671;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamPipeToCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamPipeToCode = "(function (S,y){\"use strict\";@assert(@isReadableStream(S));const _=new @ReadableStreamDefaultReader(S);@getByIdDirectPrivate(_,\"closedPromiseCapability\").promise.@then(()=>{},(h)=>{y.error(h)});function b(){@readableStreamDefaultReaderRead(_).@then(function(h){if(h.done){y.close();return}try{y.enqueue(h.value)}catch(c){y.error(\"ReadableStream chunk enqueueing in the sink failed\");return}b()},function(h){y.error(h)})}b()})\n";
+const char* const s_readableStreamInternalsReadableStreamPipeToCode = "(function (stream, sink) {\"use strict\";\n  @assert(@isReadableStream(stream));\n  const reader = new @ReadableStreamDefaultReader(stream);\n  @getByIdDirectPrivate(reader, \"closedPromiseCapability\").promise.@then(() => {\n  }, (e) => {\n    sink.error(e);\n  });\n  function doPipe() {\n    @readableStreamDefaultReaderRead(reader).@then(function(result) {\n      if (result.done) {\n        sink.close();\n        return;\n      }\n      try {\n        sink.enqueue(result.value);\n      } catch (e) {\n        sink.error(\"ReadableStream chunk enqueueing in the sink failed\");\n        return;\n      }\n      doPipe();\n    }, function(e) {\n      sink.error(e);\n    });\n  }\n  doPipe();\n})\n";
 
 // acquireReadableStreamDefaultReader
 const JSC::ConstructAbility s_readableStreamInternalsAcquireReadableStreamDefaultReaderCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsAcquireReadableStreamDefaultReaderCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsAcquireReadableStreamDefaultReaderCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsAcquireReadableStreamDefaultReaderCodeLength = 127;
+const int s_readableStreamInternalsAcquireReadableStreamDefaultReaderCodeLength = 186;
 static const JSC::Intrinsic s_readableStreamInternalsAcquireReadableStreamDefaultReaderCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsAcquireReadableStreamDefaultReaderCode = "(function (c){\"use strict\";var d=@getByIdDirectPrivate(c,\"start\");if(d)d.@call(c);return new @ReadableStreamDefaultReader(c)})\n";
+const char* const s_readableStreamInternalsAcquireReadableStreamDefaultReaderCode = "(function (stream) {\"use strict\";\n  var start = @getByIdDirectPrivate(stream, \"start\");\n  if (start) {\n    start.@call(stream);\n  }\n  return new @ReadableStreamDefaultReader(stream);\n})\n";
 
 // setupReadableStreamDefaultController
 const JSC::ConstructAbility s_readableStreamInternalsSetupReadableStreamDefaultControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsSetupReadableStreamDefaultControllerCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsSetupReadableStreamDefaultControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsSetupReadableStreamDefaultControllerCodeLength = 726;
+const int s_readableStreamInternalsSetupReadableStreamDefaultControllerCodeLength = 1226;
 static const JSC::Intrinsic s_readableStreamInternalsSetupReadableStreamDefaultControllerCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsSetupReadableStreamDefaultControllerCode = "(function (I,f,w,B,J,D,j){\"use strict\";const _=new @ReadableStreamDefaultController(I,f,w,B,@isReadableStream);var q=I.@asyncContext;const E=()=>@promiseInvokeOrNoopMethod(f,D,[_]),F=q\?(b)=>{var G=@getInternalField(@asyncContext,0);@putInternalField(@asyncContext,0,q);var H=@promiseInvokeOrNoopMethod(f,j,[b]);return @putInternalField(@asyncContext,0,G),H}:(b)=>@promiseInvokeOrNoopMethod(f,j,[b]);@putByIdDirectPrivate(_,\"pullAlgorithm\",E),@putByIdDirectPrivate(_,\"cancelAlgorithm\",F),@putByIdDirectPrivate(_,\"pull\",@readableStreamDefaultControllerPull),@putByIdDirectPrivate(_,\"cancel\",@readableStreamDefaultControllerCancel),@putByIdDirectPrivate(I,\"readableStreamController\",_),@readableStreamDefaultControllerStart(_)})\n";
+const char* const s_readableStreamInternalsSetupReadableStreamDefaultControllerCode = "(function (stream, underlyingSource, size, highWaterMark, startMethod, pullMethod, cancelMethod) {\"use strict\";\n  const controller = new @ReadableStreamDefaultController(stream, underlyingSource, size, highWaterMark, @isReadableStream);\n  var asyncContext = stream.@asyncContext;\n  const pullAlgorithm = () => @promiseInvokeOrNoopMethod(underlyingSource, pullMethod, [controller]);\n  const cancelAlgorithm = asyncContext \? (reason) => {\n    var prev = @getInternalField(@asyncContext, 0);\n    @putInternalField(@asyncContext, 0, asyncContext);\n    var result = @promiseInvokeOrNoopMethod(underlyingSource, cancelMethod, [reason]);\n    @putInternalField(@asyncContext, 0, prev);\n    return result;\n  } : (reason) => @promiseInvokeOrNoopMethod(underlyingSource, cancelMethod, [reason]);\n  @putByIdDirectPrivate(controller, \"pullAlgorithm\", pullAlgorithm);\n  @putByIdDirectPrivate(controller, \"cancelAlgorithm\", cancelAlgorithm);\n  @putByIdDirectPrivate(controller, \"pull\", @readableStreamDefaultControllerPull);\n  @putByIdDirectPrivate(controller, \"cancel\", @readableStreamDefaultControllerCancel);\n  @putByIdDirectPrivate(stream, \"readableStreamController\", controller);\n  @readableStreamDefaultControllerStart(controller);\n})\n";
 
 // createReadableStreamController
 const JSC::ConstructAbility s_readableStreamInternalsCreateReadableStreamControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsCreateReadableStreamControllerCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsCreateReadableStreamControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsCreateReadableStreamControllerCodeLength = 671;
+const int s_readableStreamInternalsCreateReadableStreamControllerCodeLength = 1085;
 static const JSC::Intrinsic s_readableStreamInternalsCreateReadableStreamControllerCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsCreateReadableStreamControllerCode = "(function (w,v,f){\"use strict\";const A=v.type,C=@toString(A);if(C===\"bytes\"){if(f.highWaterMark===@undefined)f.highWaterMark=0;if(f.size!==@undefined)@throwRangeError(\"Strategy for a ReadableByteStreamController cannot have a size\");@putByIdDirectPrivate(w,\"readableStreamController\",new @ReadableByteStreamController(w,v,f.highWaterMark,@isReadableStream))}else if(C===\"direct\"){var b=f\?.highWaterMark;@initializeArrayBufferStream.@call(w,v,b)}else if(A===@undefined){if(f.highWaterMark===@undefined)f.highWaterMark=1;@setupReadableStreamDefaultController(w,v,f.size,f.highWaterMark,v.start,v.pull,v.cancel)}else @throwRangeError(\"Invalid type for underlying source\")})\n";
+const char* const s_readableStreamInternalsCreateReadableStreamControllerCode = "(function (stream, underlyingSource, strategy) {\"use strict\";\n  const type = underlyingSource.type;\n  const typeString = @toString(type);\n  if (typeString === \"bytes\") {\n    if (strategy.highWaterMark === @undefined)\n      strategy.highWaterMark = 0;\n    if (strategy.size !== @undefined)\n      @throwRangeError(\"Strategy for a ReadableByteStreamController cannot have a size\");\n    @putByIdDirectPrivate(stream, \"readableStreamController\", new @ReadableByteStreamController(stream, underlyingSource, strategy.highWaterMark, @isReadableStream));\n  } else if (typeString === \"direct\") {\n    var highWaterMark = strategy\?.highWaterMark;\n    @initializeArrayBufferStream.@call(stream, underlyingSource, highWaterMark);\n  } else if (type === @undefined) {\n    if (strategy.highWaterMark === @undefined)\n      strategy.highWaterMark = 1;\n    @setupReadableStreamDefaultController(stream, underlyingSource, strategy.size, strategy.highWaterMark, underlyingSource.start, underlyingSource.pull, underlyingSource.cancel);\n  } else\n    @throwRangeError(\"Invalid type for underlying source\");\n})\n";
 
 // readableStreamDefaultControllerStart
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerStartCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerStartCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefaultControllerStartCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamDefaultControllerStartCodeLength = 465;
+const int s_readableStreamInternalsReadableStreamDefaultControllerStartCodeLength = 713;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerStartCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamDefaultControllerStartCode = "(function (m){\"use strict\";if(@getByIdDirectPrivate(m,\"started\")!==-1)return;const B=@getByIdDirectPrivate(m,\"underlyingSource\"),a=B.start;@putByIdDirectPrivate(m,\"started\",0),@promiseInvokeOrNoopMethodNoCatch(B,a,[m]).@then(()=>{@putByIdDirectPrivate(m,\"started\",1),@assert(!@getByIdDirectPrivate(m,\"pulling\")),@assert(!@getByIdDirectPrivate(m,\"pullAgain\")),@readableStreamDefaultControllerCallPullIfNeeded(m)},(p)=>{@readableStreamDefaultControllerError(m,p)})})\n";
+const char* const s_readableStreamInternalsReadableStreamDefaultControllerStartCode = "(function (controller) {\"use strict\";\n  if (@getByIdDirectPrivate(controller, \"started\") !== -1)\n    return;\n  const underlyingSource = @getByIdDirectPrivate(controller, \"underlyingSource\");\n  const startMethod = underlyingSource.start;\n  @putByIdDirectPrivate(controller, \"started\", 0);\n  @promiseInvokeOrNoopMethodNoCatch(underlyingSource, startMethod, [controller]).@then(() => {\n    @putByIdDirectPrivate(controller, \"started\", 1);\n    @assert(!@getByIdDirectPrivate(controller, \"pulling\"));\n    @assert(!@getByIdDirectPrivate(controller, \"pullAgain\"));\n    @readableStreamDefaultControllerCallPullIfNeeded(controller);\n  }, (error) => {\n    @readableStreamDefaultControllerError(controller, error);\n  });\n})\n";
 
 // readableStreamPipeToWritableStream
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeLength = 1625;
+const int s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeLength = 2815;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamPipeToWritableStreamCode = "(function (E,k,F,G,H,f){\"use strict\";if(@assert(@isReadableStream(E)),@assert(@isWritableStream(k)),@assert(!@isReadableStreamLocked(E)),@assert(!@isWritableStreamLocked(k)),@assert(f===@undefined||@isAbortSignal(f)),@getByIdDirectPrivate(E,\"underlyingByteSource\")!==@undefined)return @Promise.@reject(\"Piping to a readable bytestream is not supported\");let _={source:E,destination:k,preventAbort:G,preventCancel:H,preventClose:F,signal:f};if(_.reader=@acquireReadableStreamDefaultReader(E),_.writer=@acquireWritableStreamDefaultWriter(k),@putByIdDirectPrivate(E,\"disturbed\",!0),_.finalized=!1,_.shuttingDown=!1,_.promiseCapability=@newPromiseCapability(@Promise),_.pendingReadPromiseCapability=@newPromiseCapability(@Promise),_.pendingReadPromiseCapability.resolve.@call(),_.pendingWritePromise=@Promise.@resolve(),f!==@undefined){const I=(q)=>{if(_.finalized)return;@pipeToShutdownWithAction(_,()=>{const J=!_.preventAbort&&@getByIdDirectPrivate(_.destination,\"state\")===\"writable\"\?@writableStreamAbort(_.destination,q):@Promise.@resolve(),K=!_.preventCancel&&@getByIdDirectPrivate(_.source,\"state\")===@streamReadable\?@readableStreamCancel(_.source,q):@Promise.@resolve();let w=@newPromiseCapability(@Promise),x=!0,z=()=>{if(x){x=!1;return}w.resolve.@call()},B=(L)=>{w.reject.@call(@undefined,L)};return J.@then(z,B),K.@then(z,B),w.promise},q)};if(@whenSignalAborted(f,I))return _.promiseCapability.promise}return @pipeToErrorsMustBePropagatedForward(_),@pipeToErrorsMustBePropagatedBackward(_),@pipeToClosingMustBePropagatedForward(_),@pipeToClosingMustBePropagatedBackward(_),@pipeToLoop(_),_.promiseCapability.promise})\n";
+const char* const s_readableStreamInternalsReadableStreamPipeToWritableStreamCode = "(function (source, destination, preventClose, preventAbort, preventCancel, signal) {\"use strict\";\n  @assert(@isReadableStream(source));\n  @assert(@isWritableStream(destination));\n  @assert(!@isReadableStreamLocked(source));\n  @assert(!@isWritableStreamLocked(destination));\n  @assert(signal === @undefined || @isAbortSignal(signal));\n  if (@getByIdDirectPrivate(source, \"underlyingByteSource\") !== @undefined)\n    return @Promise.@reject(\"Piping to a readable bytestream is not supported\");\n  let pipeState = {\n    source,\n    destination,\n    preventAbort,\n    preventCancel,\n    preventClose,\n    signal\n  };\n  pipeState.reader = @acquireReadableStreamDefaultReader(source);\n  pipeState.writer = @acquireWritableStreamDefaultWriter(destination);\n  @putByIdDirectPrivate(source, \"disturbed\", true);\n  pipeState.finalized = false;\n  pipeState.shuttingDown = false;\n  pipeState.promiseCapability = @newPromiseCapability(@Promise);\n  pipeState.pendingReadPromiseCapability = @newPromiseCapability(@Promise);\n  pipeState.pendingReadPromiseCapability.resolve.@call();\n  pipeState.pendingWritePromise = @Promise.@resolve();\n  if (signal !== @undefined) {\n    const algorithm = (reason) => {\n      if (pipeState.finalized)\n        return;\n      @pipeToShutdownWithAction(pipeState, () => {\n        const shouldAbortDestination = !pipeState.preventAbort && @getByIdDirectPrivate(pipeState.destination, \"state\") === \"writable\";\n        const promiseDestination = shouldAbortDestination \? @writableStreamAbort(pipeState.destination, reason) : @Promise.@resolve();\n        const shouldAbortSource = !pipeState.preventCancel && @getByIdDirectPrivate(pipeState.source, \"state\") === @streamReadable;\n        const promiseSource = shouldAbortSource \? @readableStreamCancel(pipeState.source, reason) : @Promise.@resolve();\n        let promiseCapability = @newPromiseCapability(@Promise);\n        let shouldWait = true;\n        let handleResolvedPromise = () => {\n          if (shouldWait) {\n            shouldWait = false;\n            return;\n          }\n          promiseCapability.resolve.@call();\n        };\n        let handleRejectedPromise = (e) => {\n          promiseCapability.reject.@call(@undefined, e);\n        };\n        promiseDestination.@then(handleResolvedPromise, handleRejectedPromise);\n        promiseSource.@then(handleResolvedPromise, handleRejectedPromise);\n        return promiseCapability.promise;\n      }, reason);\n    };\n    if (@whenSignalAborted(signal, algorithm))\n      return pipeState.promiseCapability.promise;\n  }\n  @pipeToErrorsMustBePropagatedForward(pipeState);\n  @pipeToErrorsMustBePropagatedBackward(pipeState);\n  @pipeToClosingMustBePropagatedForward(pipeState);\n  @pipeToClosingMustBePropagatedBackward(pipeState);\n  @pipeToLoop(pipeState);\n  return pipeState.promiseCapability.promise;\n})\n";
 
 // pipeToLoop
 const JSC::ConstructAbility s_readableStreamInternalsPipeToLoopCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPipeToLoopCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsPipeToLoopCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsPipeToLoopCodeLength = 110;
+const int s_readableStreamInternalsPipeToLoopCodeLength = 186;
 static const JSC::Intrinsic s_readableStreamInternalsPipeToLoopCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsPipeToLoopCode = "(function (c){\"use strict\";if(c.shuttingDown)return;@pipeToDoReadWrite(c).@then((d)=>{if(d)@pipeToLoop(c)})})\n";
+const char* const s_readableStreamInternalsPipeToLoopCode = "(function (pipeState) {\"use strict\";\n  if (pipeState.shuttingDown)\n    return;\n  @pipeToDoReadWrite(pipeState).@then((result) => {\n    if (result)\n      @pipeToLoop(pipeState);\n  });\n})\n";
 
 // pipeToDoReadWrite
 const JSC::ConstructAbility s_readableStreamInternalsPipeToDoReadWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPipeToDoReadWriteCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsPipeToDoReadWriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsPipeToDoReadWriteCodeLength = 725;
+const int s_readableStreamInternalsPipeToDoReadWriteCodeLength = 1026;
 static const JSC::Intrinsic s_readableStreamInternalsPipeToDoReadWriteCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsPipeToDoReadWriteCode = "(function (d){\"use strict\";return @assert(!d.shuttingDown),d.pendingReadPromiseCapability=@newPromiseCapability(@Promise),@getByIdDirectPrivate(d.writer,\"readyPromise\").promise.@then(()=>{if(d.shuttingDown){d.pendingReadPromiseCapability.resolve.@call(@undefined,!1);return}@readableStreamDefaultReaderRead(d.reader).@then((m)=>{const g=!m.done&&@getByIdDirectPrivate(d.writer,\"stream\")!==@undefined;if(d.pendingReadPromiseCapability.resolve.@call(@undefined,g),!g)return;d.pendingWritePromise=@writableStreamDefaultWriterWrite(d.writer,m.value)},(m)=>{d.pendingReadPromiseCapability.resolve.@call(@undefined,!1)})},(m)=>{d.pendingReadPromiseCapability.resolve.@call(@undefined,!1)}),d.pendingReadPromiseCapability.promise})\n";
+const char* const s_readableStreamInternalsPipeToDoReadWriteCode = "(function (pipeState) {\"use strict\";\n  @assert(!pipeState.shuttingDown);\n  pipeState.pendingReadPromiseCapability = @newPromiseCapability(@Promise);\n  @getByIdDirectPrivate(pipeState.writer, \"readyPromise\").promise.@then(() => {\n    if (pipeState.shuttingDown) {\n      pipeState.pendingReadPromiseCapability.resolve.@call(@undefined, false);\n      return;\n    }\n    @readableStreamDefaultReaderRead(pipeState.reader).@then((result) => {\n      const canWrite = !result.done && @getByIdDirectPrivate(pipeState.writer, \"stream\") !== @undefined;\n      pipeState.pendingReadPromiseCapability.resolve.@call(@undefined, canWrite);\n      if (!canWrite)\n        return;\n      pipeState.pendingWritePromise = @writableStreamDefaultWriterWrite(pipeState.writer, result.value);\n    }, (e) => {\n      pipeState.pendingReadPromiseCapability.resolve.@call(@undefined, false);\n    });\n  }, (e) => {\n    pipeState.pendingReadPromiseCapability.resolve.@call(@undefined, false);\n  });\n  return pipeState.pendingReadPromiseCapability.promise;\n})\n";
 
 // pipeToErrorsMustBePropagatedForward
 const JSC::ConstructAbility s_readableStreamInternalsPipeToErrorsMustBePropagatedForwardCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPipeToErrorsMustBePropagatedForwardCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsPipeToErrorsMustBePropagatedForwardCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsPipeToErrorsMustBePropagatedForwardCodeLength = 436;
+const int s_readableStreamInternalsPipeToErrorsMustBePropagatedForwardCodeLength = 635;
 static const JSC::Intrinsic s_readableStreamInternalsPipeToErrorsMustBePropagatedForwardCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsPipeToErrorsMustBePropagatedForwardCode = "(function (s){\"use strict\";const _=()=>{s.pendingReadPromiseCapability.resolve.@call(@undefined,!1);const g=@getByIdDirectPrivate(s.source,\"storedError\");if(!s.preventAbort){@pipeToShutdownWithAction(s,()=>@writableStreamAbort(s.destination,g),g);return}@pipeToShutdown(s,g)};if(@getByIdDirectPrivate(s.source,\"state\")===@streamErrored){_();return}@getByIdDirectPrivate(s.reader,\"closedPromiseCapability\").promise.@then(@undefined,_)})\n";
+const char* const s_readableStreamInternalsPipeToErrorsMustBePropagatedForwardCode = "(function (pipeState) {\"use strict\";\n  const action = () => {\n    pipeState.pendingReadPromiseCapability.resolve.@call(@undefined, false);\n    const error = @getByIdDirectPrivate(pipeState.source, \"storedError\");\n    if (!pipeState.preventAbort) {\n      @pipeToShutdownWithAction(pipeState, () => @writableStreamAbort(pipeState.destination, error), error);\n      return;\n    }\n    @pipeToShutdown(pipeState, error);\n  };\n  if (@getByIdDirectPrivate(pipeState.source, \"state\") === @streamErrored) {\n    action();\n    return;\n  }\n  @getByIdDirectPrivate(pipeState.reader, \"closedPromiseCapability\").promise.@then(@undefined, action);\n})\n";
 
 // pipeToErrorsMustBePropagatedBackward
 const JSC::ConstructAbility s_readableStreamInternalsPipeToErrorsMustBePropagatedBackwardCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPipeToErrorsMustBePropagatedBackwardCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsPipeToErrorsMustBePropagatedBackwardCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsPipeToErrorsMustBePropagatedBackwardCodeLength = 368;
+const int s_readableStreamInternalsPipeToErrorsMustBePropagatedBackwardCodeLength = 550;
 static const JSC::Intrinsic s_readableStreamInternalsPipeToErrorsMustBePropagatedBackwardCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsPipeToErrorsMustBePropagatedBackwardCode = "(function (m){\"use strict\";const h=()=>{const d=@getByIdDirectPrivate(m.destination,\"storedError\");if(!m.preventCancel){@pipeToShutdownWithAction(m,()=>@readableStreamCancel(m.source,d),d);return}@pipeToShutdown(m,d)};if(@getByIdDirectPrivate(m.destination,\"state\")===\"errored\"){h();return}@getByIdDirectPrivate(m.writer,\"closedPromise\").promise.@then(@undefined,h)})\n";
+const char* const s_readableStreamInternalsPipeToErrorsMustBePropagatedBackwardCode = "(function (pipeState) {\"use strict\";\n  const action = () => {\n    const error = @getByIdDirectPrivate(pipeState.destination, \"storedError\");\n    if (!pipeState.preventCancel) {\n      @pipeToShutdownWithAction(pipeState, () => @readableStreamCancel(pipeState.source, error), error);\n      return;\n    }\n    @pipeToShutdown(pipeState, error);\n  };\n  if (@getByIdDirectPrivate(pipeState.destination, \"state\") === \"errored\") {\n    action();\n    return;\n  }\n  @getByIdDirectPrivate(pipeState.writer, \"closedPromise\").promise.@then(@undefined, action);\n})\n";
 
 // pipeToClosingMustBePropagatedForward
 const JSC::ConstructAbility s_readableStreamInternalsPipeToClosingMustBePropagatedForwardCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPipeToClosingMustBePropagatedForwardCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsPipeToClosingMustBePropagatedForwardCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsPipeToClosingMustBePropagatedForwardCodeLength = 403;
+const int s_readableStreamInternalsPipeToClosingMustBePropagatedForwardCodeLength = 567;
 static const JSC::Intrinsic s_readableStreamInternalsPipeToClosingMustBePropagatedForwardCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsPipeToClosingMustBePropagatedForwardCode = "(function (_){\"use strict\";const r=()=>{if(_.pendingReadPromiseCapability.resolve.@call(@undefined,!1),!_.preventClose){@pipeToShutdownWithAction(_,()=>@writableStreamDefaultWriterCloseWithErrorPropagation(_.writer));return}@pipeToShutdown(_)};if(@getByIdDirectPrivate(_.source,\"state\")===@streamClosed){r();return}@getByIdDirectPrivate(_.reader,\"closedPromiseCapability\").promise.@then(r,@undefined)})\n";
+const char* const s_readableStreamInternalsPipeToClosingMustBePropagatedForwardCode = "(function (pipeState) {\"use strict\";\n  const action = () => {\n    pipeState.pendingReadPromiseCapability.resolve.@call(@undefined, false);\n    if (!pipeState.preventClose) {\n      @pipeToShutdownWithAction(pipeState, () => @writableStreamDefaultWriterCloseWithErrorPropagation(pipeState.writer));\n      return;\n    }\n    @pipeToShutdown(pipeState);\n  };\n  if (@getByIdDirectPrivate(pipeState.source, \"state\") === @streamClosed) {\n    action();\n    return;\n  }\n  @getByIdDirectPrivate(pipeState.reader, \"closedPromiseCapability\").promise.@then(action, @undefined);\n})\n";
 
 // pipeToClosingMustBePropagatedBackward
 const JSC::ConstructAbility s_readableStreamInternalsPipeToClosingMustBePropagatedBackwardCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPipeToClosingMustBePropagatedBackwardCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsPipeToClosingMustBePropagatedBackwardCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsPipeToClosingMustBePropagatedBackwardCodeLength = 324;
+const int s_readableStreamInternalsPipeToClosingMustBePropagatedBackwardCodeLength = 446;
 static const JSC::Intrinsic s_readableStreamInternalsPipeToClosingMustBePropagatedBackwardCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsPipeToClosingMustBePropagatedBackwardCode = "(function (k){\"use strict\";if(!@writableStreamCloseQueuedOrInFlight(k.destination)&&@getByIdDirectPrivate(k.destination,\"state\")!==\"closed\")return;const m=@makeTypeError(\"closing is propagated backward\");if(!k.preventCancel){@pipeToShutdownWithAction(k,()=>@readableStreamCancel(k.source,m),m);return}@pipeToShutdown(k,m)})\n";
+const char* const s_readableStreamInternalsPipeToClosingMustBePropagatedBackwardCode = "(function (pipeState) {\"use strict\";\n  if (!@writableStreamCloseQueuedOrInFlight(pipeState.destination) && @getByIdDirectPrivate(pipeState.destination, \"state\") !== \"closed\")\n    return;\n  const error = @makeTypeError(\"closing is propagated backward\");\n  if (!pipeState.preventCancel) {\n    @pipeToShutdownWithAction(pipeState, () => @readableStreamCancel(pipeState.source, error), error);\n    return;\n  }\n  @pipeToShutdown(pipeState, error);\n})\n";
 
 // pipeToShutdownWithAction
 const JSC::ConstructAbility s_readableStreamInternalsPipeToShutdownWithActionCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPipeToShutdownWithActionCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsPipeToShutdownWithActionCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsPipeToShutdownWithActionCodeLength = 457;
+const int s_readableStreamInternalsPipeToShutdownWithActionCodeLength = 799;
 static const JSC::Intrinsic s_readableStreamInternalsPipeToShutdownWithActionCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsPipeToShutdownWithActionCode = "(function (_,u){\"use strict\";if(_.shuttingDown)return;_.shuttingDown=!0;const b=arguments.length>2,g=arguments[2],d=()=>{u().@then(()=>{if(b)@pipeToFinalize(_,g);else @pipeToFinalize(_)},(h)=>{@pipeToFinalize(_,h)})};if(@getByIdDirectPrivate(_.destination,\"state\")===\"writable\"&&!@writableStreamCloseQueuedOrInFlight(_.destination)){_.pendingReadPromiseCapability.promise.@then(()=>{_.pendingWritePromise.@then(d,d)},(m)=>@pipeToFinalize(_,m));return}d()})\n";
+const char* const s_readableStreamInternalsPipeToShutdownWithActionCode = "(function (pipeState, action) {\"use strict\";\n  if (pipeState.shuttingDown)\n    return;\n  pipeState.shuttingDown = true;\n  const hasError = arguments.length > 2;\n  const error = arguments[2];\n  const finalize = () => {\n    const promise = action();\n    promise.@then(() => {\n      if (hasError)\n        @pipeToFinalize(pipeState, error);\n      else\n        @pipeToFinalize(pipeState);\n    }, (e) => {\n      @pipeToFinalize(pipeState, e);\n    });\n  };\n  if (@getByIdDirectPrivate(pipeState.destination, \"state\") === \"writable\" && !@writableStreamCloseQueuedOrInFlight(pipeState.destination)) {\n    pipeState.pendingReadPromiseCapability.promise.@then(() => {\n      pipeState.pendingWritePromise.@then(finalize, finalize);\n    }, (e) => @pipeToFinalize(pipeState, e));\n    return;\n  }\n  finalize();\n})\n";
 
 // pipeToShutdown
 const JSC::ConstructAbility s_readableStreamInternalsPipeToShutdownCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPipeToShutdownCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsPipeToShutdownCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsPipeToShutdownCodeLength = 410;
+const int s_readableStreamInternalsPipeToShutdownCodeLength = 666;
 static const JSC::Intrinsic s_readableStreamInternalsPipeToShutdownCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsPipeToShutdownCode = "(function (_){\"use strict\";if(_.shuttingDown)return;_.shuttingDown=!0;const d=arguments.length>1,m=arguments[1],c=()=>{if(d)@pipeToFinalize(_,m);else @pipeToFinalize(_)};if(@getByIdDirectPrivate(_.destination,\"state\")===\"writable\"&&!@writableStreamCloseQueuedOrInFlight(_.destination)){_.pendingReadPromiseCapability.promise.@then(()=>{_.pendingWritePromise.@then(c,c)},(u)=>@pipeToFinalize(_,u));return}c()})\n";
+const char* const s_readableStreamInternalsPipeToShutdownCode = "(function (pipeState) {\"use strict\";\n  if (pipeState.shuttingDown)\n    return;\n  pipeState.shuttingDown = true;\n  const hasError = arguments.length > 1;\n  const error = arguments[1];\n  const finalize = () => {\n    if (hasError)\n      @pipeToFinalize(pipeState, error);\n    else\n      @pipeToFinalize(pipeState);\n  };\n  if (@getByIdDirectPrivate(pipeState.destination, \"state\") === \"writable\" && !@writableStreamCloseQueuedOrInFlight(pipeState.destination)) {\n    pipeState.pendingReadPromiseCapability.promise.@then(() => {\n      pipeState.pendingWritePromise.@then(finalize, finalize);\n    }, (e) => @pipeToFinalize(pipeState, e));\n    return;\n  }\n  finalize();\n})\n";
 
 // pipeToFinalize
 const JSC::ConstructAbility s_readableStreamInternalsPipeToFinalizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPipeToFinalizeCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsPipeToFinalizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsPipeToFinalizeCodeLength = 257;
+const int s_readableStreamInternalsPipeToFinalizeCodeLength = 340;
 static const JSC::Intrinsic s_readableStreamInternalsPipeToFinalizeCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsPipeToFinalizeCode = "(function (l){\"use strict\";if(@writableStreamDefaultWriterRelease(l.writer),@readableStreamReaderGenericRelease(l.reader),l.finalized=!0,arguments.length>1)l.promiseCapability.reject.@call(@undefined,arguments[1]);else l.promiseCapability.resolve.@call()})\n";
+const char* const s_readableStreamInternalsPipeToFinalizeCode = "(function (pipeState) {\"use strict\";\n  @writableStreamDefaultWriterRelease(pipeState.writer);\n  @readableStreamReaderGenericRelease(pipeState.reader);\n  pipeState.finalized = true;\n  if (arguments.length > 1)\n    pipeState.promiseCapability.reject.@call(@undefined, arguments[1]);\n  else\n    pipeState.promiseCapability.resolve.@call();\n})\n";
 
 // readableStreamTee
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamTeeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamTeeCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamTeeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamTeeCodeLength = 1102;
+const int s_readableStreamInternalsReadableStreamTeeCodeLength = 1695;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamTeeCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamTeeCode = "(function (i,q){\"use strict\";@assert(@isReadableStream(i)),@assert(typeof q===\"boolean\");var v=@getByIdDirectPrivate(i,\"start\");if(v)@putByIdDirectPrivate(i,\"start\",@undefined),v();const w=new @ReadableStreamDefaultReader(i),_={closedOrErrored:!1,canceled1:!1,canceled2:!1,reason1:@undefined,reason2:@undefined};_.cancelPromiseCapability=@newPromiseCapability(@Promise);const x=@readableStreamTeePullFunction(_,w,q),f={};@putByIdDirectPrivate(f,\"pull\",x),@putByIdDirectPrivate(f,\"cancel\",@readableStreamTeeBranch1CancelFunction(_,i));const g={};@putByIdDirectPrivate(g,\"pull\",x),@putByIdDirectPrivate(g,\"cancel\",@readableStreamTeeBranch2CancelFunction(_,i));const j=new @ReadableStream(f),k=new @ReadableStream(g);return @getByIdDirectPrivate(w,\"closedPromiseCapability\").promise.@then(@undefined,function(y){if(_.closedOrErrored)return;if(@readableStreamDefaultControllerError(j.@readableStreamController,y),@readableStreamDefaultControllerError(k.@readableStreamController,y),_.closedOrErrored=!0,!_.canceled1||!_.canceled2)_.cancelPromiseCapability.resolve.@call()}),_.branch1=j,_.branch2=k,[j,k]})\n";
+const char* const s_readableStreamInternalsReadableStreamTeeCode = "(function (stream, shouldClone) {\"use strict\";\n  @assert(@isReadableStream(stream));\n  @assert(typeof shouldClone === \"boolean\");\n  var start_ = @getByIdDirectPrivate(stream, \"start\");\n  if (start_) {\n    @putByIdDirectPrivate(stream, \"start\", @undefined);\n    start_();\n  }\n  const reader = new @ReadableStreamDefaultReader(stream);\n  const teeState = {\n    closedOrErrored: false,\n    canceled1: false,\n    canceled2: false,\n    reason1: @undefined,\n    reason2: @undefined\n  };\n  teeState.cancelPromiseCapability = @newPromiseCapability(@Promise);\n  const pullFunction = @readableStreamTeePullFunction(teeState, reader, shouldClone);\n  const branch1Source = {};\n  @putByIdDirectPrivate(branch1Source, \"pull\", pullFunction);\n  @putByIdDirectPrivate(branch1Source, \"cancel\", @readableStreamTeeBranch1CancelFunction(teeState, stream));\n  const branch2Source = {};\n  @putByIdDirectPrivate(branch2Source, \"pull\", pullFunction);\n  @putByIdDirectPrivate(branch2Source, \"cancel\", @readableStreamTeeBranch2CancelFunction(teeState, stream));\n  const branch1 = new @ReadableStream(branch1Source);\n  const branch2 = new @ReadableStream(branch2Source);\n  @getByIdDirectPrivate(reader, \"closedPromiseCapability\").promise.@then(@undefined, function(e) {\n    if (teeState.closedOrErrored)\n      return;\n    @readableStreamDefaultControllerError(branch1.@readableStreamController, e);\n    @readableStreamDefaultControllerError(branch2.@readableStreamController, e);\n    teeState.closedOrErrored = true;\n    if (!teeState.canceled1 || !teeState.canceled2)\n      teeState.cancelPromiseCapability.resolve.@call();\n  });\n  teeState.branch1 = branch1;\n  teeState.branch2 = branch2;\n  return [branch1, branch2];\n})\n";
 
 // readableStreamTeePullFunction
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamTeePullFunctionCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamTeePullFunctionCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamTeePullFunctionCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamTeePullFunctionCodeLength = 763;
+const int s_readableStreamInternalsReadableStreamTeePullFunctionCodeLength = 1129;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamTeePullFunctionCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamTeePullFunctionCode = "(function (_,c,f){\"use strict\";return function(){@Promise.prototype.@then.@call(@readableStreamDefaultReaderRead(c),function(i){if(@assert(@isObject(i)),@assert(typeof i.done===\"boolean\"),i.done&&!_.closedOrErrored){if(!_.canceled1)@readableStreamDefaultControllerClose(_.branch1.@readableStreamController);if(!_.canceled2)@readableStreamDefaultControllerClose(_.branch2.@readableStreamController);if(_.closedOrErrored=!0,!_.canceled1||!_.canceled2)_.cancelPromiseCapability.resolve.@call()}if(_.closedOrErrored)return;if(!_.canceled1)@readableStreamDefaultControllerEnqueue(_.branch1.@readableStreamController,i.value);if(!_.canceled2)@readableStreamDefaultControllerEnqueue(_.branch2.@readableStreamController,f\?@structuredCloneForStream(i.value):i.value)})}})\n";
+const char* const s_readableStreamInternalsReadableStreamTeePullFunctionCode = "(function (teeState, reader, shouldClone) {\"use strict\";\n  return function() {\n    @Promise.prototype.@then.@call(@readableStreamDefaultReaderRead(reader), function(result) {\n      @assert(@isObject(result));\n      @assert(typeof result.done === \"boolean\");\n      if (result.done && !teeState.closedOrErrored) {\n        if (!teeState.canceled1)\n          @readableStreamDefaultControllerClose(teeState.branch1.@readableStreamController);\n        if (!teeState.canceled2)\n          @readableStreamDefaultControllerClose(teeState.branch2.@readableStreamController);\n        teeState.closedOrErrored = true;\n        if (!teeState.canceled1 || !teeState.canceled2)\n          teeState.cancelPromiseCapability.resolve.@call();\n      }\n      if (teeState.closedOrErrored)\n        return;\n      if (!teeState.canceled1)\n        @readableStreamDefaultControllerEnqueue(teeState.branch1.@readableStreamController, result.value);\n      if (!teeState.canceled2)\n        @readableStreamDefaultControllerEnqueue(teeState.branch2.@readableStreamController, shouldClone \? @structuredCloneForStream(result.value) : result.value);\n    });\n  };\n})\n";
 
 // readableStreamTeeBranch1CancelFunction
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamTeeBranch1CancelFunctionCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamTeeBranch1CancelFunctionCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamTeeBranch1CancelFunctionCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamTeeBranch1CancelFunctionCodeLength = 257;
+const int s_readableStreamInternalsReadableStreamTeeBranch1CancelFunctionCodeLength = 387;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamTeeBranch1CancelFunctionCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamTeeBranch1CancelFunctionCode = "(function (d,i){\"use strict\";return function(n){if(d.canceled1=!0,d.reason1=n,d.canceled2)@readableStreamCancel(i,[d.reason1,d.reason2]).@then(d.cancelPromiseCapability.@resolve,d.cancelPromiseCapability.@reject);return d.cancelPromiseCapability.promise}})\n";
+const char* const s_readableStreamInternalsReadableStreamTeeBranch1CancelFunctionCode = "(function (teeState, stream) {\"use strict\";\n  return function(r) {\n    teeState.canceled1 = true;\n    teeState.reason1 = r;\n    if (teeState.canceled2) {\n      @readableStreamCancel(stream, [teeState.reason1, teeState.reason2]).@then(teeState.cancelPromiseCapability.@resolve, teeState.cancelPromiseCapability.@reject);\n    }\n    return teeState.cancelPromiseCapability.promise;\n  };\n})\n";
 
 // readableStreamTeeBranch2CancelFunction
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamTeeBranch2CancelFunctionCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamTeeBranch2CancelFunctionCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamTeeBranch2CancelFunctionCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamTeeBranch2CancelFunctionCodeLength = 257;
+const int s_readableStreamInternalsReadableStreamTeeBranch2CancelFunctionCodeLength = 387;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamTeeBranch2CancelFunctionCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamTeeBranch2CancelFunctionCode = "(function (d,i){\"use strict\";return function(n){if(d.canceled2=!0,d.reason2=n,d.canceled1)@readableStreamCancel(i,[d.reason1,d.reason2]).@then(d.cancelPromiseCapability.@resolve,d.cancelPromiseCapability.@reject);return d.cancelPromiseCapability.promise}})\n";
+const char* const s_readableStreamInternalsReadableStreamTeeBranch2CancelFunctionCode = "(function (teeState, stream) {\"use strict\";\n  return function(r) {\n    teeState.canceled2 = true;\n    teeState.reason2 = r;\n    if (teeState.canceled1) {\n      @readableStreamCancel(stream, [teeState.reason1, teeState.reason2]).@then(teeState.cancelPromiseCapability.@resolve, teeState.cancelPromiseCapability.@reject);\n    }\n    return teeState.cancelPromiseCapability.promise;\n  };\n})\n";
 
 // isReadableStream
 const JSC::ConstructAbility s_readableStreamInternalsIsReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsIsReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsIsReadableStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsIsReadableStreamCodeLength = 115;
+const int s_readableStreamInternalsIsReadableStreamCodeLength = 141;
 static const JSC::Intrinsic s_readableStreamInternalsIsReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsIsReadableStreamCode = "(function (d){\"use strict\";return @isObject(d)&&@getByIdDirectPrivate(d,\"readableStreamController\")!==@undefined})\n";
+const char* const s_readableStreamInternalsIsReadableStreamCode = "(function (stream) {\"use strict\";\n  return @isObject(stream) && @getByIdDirectPrivate(stream, \"readableStreamController\") !== @undefined;\n})\n";
 
 // isReadableStreamDefaultReader
 const JSC::ConstructAbility s_readableStreamInternalsIsReadableStreamDefaultReaderCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsIsReadableStreamDefaultReaderCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsIsReadableStreamDefaultReaderCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsIsReadableStreamDefaultReaderCodeLength = 92;
+const int s_readableStreamInternalsIsReadableStreamDefaultReaderCodeLength = 116;
 static const JSC::Intrinsic s_readableStreamInternalsIsReadableStreamDefaultReaderCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsIsReadableStreamDefaultReaderCode = "(function (i){\"use strict\";return @isObject(i)&&!!@getByIdDirectPrivate(i,\"readRequests\")})\n";
+const char* const s_readableStreamInternalsIsReadableStreamDefaultReaderCode = "(function (reader) {\"use strict\";\n  return @isObject(reader) && !!@getByIdDirectPrivate(reader, \"readRequests\");\n})\n";
 
 // isReadableStreamDefaultController
 const JSC::ConstructAbility s_readableStreamInternalsIsReadableStreamDefaultControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsIsReadableStreamDefaultControllerCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsIsReadableStreamDefaultControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsIsReadableStreamDefaultControllerCodeLength = 96;
+const int s_readableStreamInternalsIsReadableStreamDefaultControllerCodeLength = 132;
 static const JSC::Intrinsic s_readableStreamInternalsIsReadableStreamDefaultControllerCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsIsReadableStreamDefaultControllerCode = "(function (i){\"use strict\";return @isObject(i)&&!!@getByIdDirectPrivate(i,\"underlyingSource\")})\n";
+const char* const s_readableStreamInternalsIsReadableStreamDefaultControllerCode = "(function (controller) {\"use strict\";\n  return @isObject(controller) && !!@getByIdDirectPrivate(controller, \"underlyingSource\");\n})\n";
 
 // readDirectStream
 const JSC::ConstructAbility s_readableStreamInternalsReadDirectStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadDirectStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadDirectStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadDirectStreamCodeLength = 916;
+const int s_readableStreamInternalsReadDirectStreamCodeLength = 1595;
 static const JSC::Intrinsic s_readableStreamInternalsReadDirectStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadDirectStreamCode = "(function (_,q,f){\"use strict\";@putByIdDirectPrivate(_,\"underlyingSource\",@undefined),@putByIdDirectPrivate(_,\"start\",@undefined);function w(j,v){if(v&&f\?.cancel){try{var A=f.cancel(v);@markPromiseAsHandled(A)}catch(B){}f=@undefined}if(j){if(@putByIdDirectPrivate(j,\"readableStreamController\",@undefined),@putByIdDirectPrivate(j,\"reader\",@undefined),v)@putByIdDirectPrivate(j,\"state\",@streamErrored),@putByIdDirectPrivate(j,\"storedError\",v);else @putByIdDirectPrivate(j,\"state\",@streamClosed);j=@undefined}}if(!f.pull){w();return}if(!@isCallable(f.pull)){w(),@throwTypeError(\"pull is not a function\");return}@putByIdDirectPrivate(_,\"readableStreamController\",q);const x=@getByIdDirectPrivate(_,\"highWaterMark\");q.start({highWaterMark:!x||x<64\?64:x}),@startDirectStream.@call(q,_,f.pull,w,_.@asyncContext),@putByIdDirectPrivate(_,\"reader\",{});var z=f.pull(q);if(q=@undefined,z&&@isPromise(z))return z.@then(()=>{})})\n";
+const char* const s_readableStreamInternalsReadDirectStreamCode = "(function (stream, sink, underlyingSource) {\"use strict\";\n  @putByIdDirectPrivate(stream, \"underlyingSource\", @undefined);\n  @putByIdDirectPrivate(stream, \"start\", @undefined);\n  function close(stream2, reason) {\n    if (reason && underlyingSource\?.cancel) {\n      try {\n        var prom = underlyingSource.cancel(reason);\n        @markPromiseAsHandled(prom);\n      } catch (e) {\n      }\n      underlyingSource = @undefined;\n    }\n    if (stream2) {\n      @putByIdDirectPrivate(stream2, \"readableStreamController\", @undefined);\n      @putByIdDirectPrivate(stream2, \"reader\", @undefined);\n      if (reason) {\n        @putByIdDirectPrivate(stream2, \"state\", @streamErrored);\n        @putByIdDirectPrivate(stream2, \"storedError\", reason);\n      } else {\n        @putByIdDirectPrivate(stream2, \"state\", @streamClosed);\n      }\n      stream2 = @undefined;\n    }\n  }\n  if (!underlyingSource.pull) {\n    close();\n    return;\n  }\n  if (!@isCallable(underlyingSource.pull)) {\n    close();\n    @throwTypeError(\"pull is not a function\");\n    return;\n  }\n  @putByIdDirectPrivate(stream, \"readableStreamController\", sink);\n  const highWaterMark = @getByIdDirectPrivate(stream, \"highWaterMark\");\n  sink.start({\n    highWaterMark: !highWaterMark || highWaterMark < 64 \? 64 : highWaterMark\n  });\n  @startDirectStream.@call(sink, stream, underlyingSource.pull, close, stream.@asyncContext);\n  @putByIdDirectPrivate(stream, \"reader\", {});\n  var maybePromise = underlyingSource.pull(sink);\n  sink = @undefined;\n  if (maybePromise && @isPromise(maybePromise)) {\n    return maybePromise.@then(() => {\n    });\n  }\n})\n";
 
 // assignToStream
 const JSC::ConstructAbility s_readableStreamInternalsAssignToStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsAssignToStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsAssignToStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_readableStreamInternalsAssignToStreamCodeLength = 221;
+const int s_readableStreamInternalsAssignToStreamCodeLength = 417;
 static const JSC::Intrinsic s_readableStreamInternalsAssignToStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsAssignToStreamCode = "(function (h,_){\"use strict\";var b=@getByIdDirectPrivate(h,\"underlyingSource\");if(b)try{return @readDirectStream(h,_,b)}catch(f){throw f}finally{b=@undefined,h=@undefined,_=@undefined}return @readStreamIntoSink(h,_,!0)})\n";
+const char* const s_readableStreamInternalsAssignToStreamCode = "(function (stream, sink) {\"use strict\";\n  var underlyingSource = @getByIdDirectPrivate(stream, \"underlyingSource\");\n  if (underlyingSource) {\n    try {\n      return @readDirectStream(stream, sink, underlyingSource);\n    } catch (e) {\n      throw e;\n    } finally {\n      underlyingSource = @undefined;\n      stream = @undefined;\n      sink = @undefined;\n    }\n  }\n  return @readStreamIntoSink(stream, sink, true);\n})\n";
 
 // readStreamIntoSink
 const JSC::ConstructAbility s_readableStreamInternalsReadStreamIntoSinkCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadStreamIntoSinkCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadStreamIntoSinkCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadStreamIntoSinkCodeLength = 1411;
+const int s_readableStreamInternalsReadStreamIntoSinkCodeLength = 2636;
 static const JSC::Intrinsic s_readableStreamInternalsReadStreamIntoSinkCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadStreamIntoSinkCode = "(async function (_,c,B){\"use strict\";var j=!1,x=!1;try{var P=_.getReader(),D=P.readMany();if(D&&@isPromise(D))D=await D;if(D.done)return j=!0,c.end();var I=D.value.length;const f=@getByIdDirectPrivate(_,\"highWaterMark\");if(B)@startDirectStream.@call(c,_,@undefined,()=>!x&&@markPromiseAsHandled(_.cancel()),_.@asyncContext);c.start({highWaterMark:f||0});for(var z=0,E=D.value,F=D.value.length;z<F;z++)c.write(E[z]);var q=@getByIdDirectPrivate(_,\"state\");if(q===@streamClosed)return j=!0,c.end();while(!0){var{value:G,done:H}=await P.read();if(H)return j=!0,c.end();c.write(G)}}catch(f){x=!0;try{P=@undefined;const p=_.cancel(f);@markPromiseAsHandled(p)}catch(p){}if(c&&!j){j=!0;try{c.close(f)}catch(p){throw new globalThis.AggregateError([f,p])}}throw f}finally{if(P){try{P.releaseLock()}catch(p){}P=@undefined}c=@undefined;var q=@getByIdDirectPrivate(_,\"state\");if(_){var A=@getByIdDirectPrivate(_,\"readableStreamController\");if(A){if(@getByIdDirectPrivate(A,\"underlyingSource\"))@putByIdDirectPrivate(A,\"underlyingSource\",@undefined);if(@getByIdDirectPrivate(A,\"controlledReadableStream\"))@putByIdDirectPrivate(A,\"controlledReadableStream\",@undefined);if(@putByIdDirectPrivate(_,\"readableStreamController\",null),@getByIdDirectPrivate(_,\"underlyingSource\"))@putByIdDirectPrivate(_,\"underlyingSource\",@undefined);A=@undefined}if(!x&&q!==@streamClosed&&q!==@streamErrored)@readableStreamClose(_);_=@undefined}}})\n";
+const char* const s_readableStreamInternalsReadStreamIntoSinkCode = "(async function (stream, sink, isNative) {\"use strict\";\n  var didClose = false;\n  var didThrow = false;\n  try {\n    var reader = stream.getReader();\n    var many = reader.readMany();\n    if (many && @isPromise(many)) {\n      many = await many;\n    }\n    if (many.done) {\n      didClose = true;\n      return sink.end();\n    }\n    var wroteCount = many.value.length;\n    const highWaterMark = @getByIdDirectPrivate(stream, \"highWaterMark\");\n    if (isNative)\n      @startDirectStream.@call(sink, stream, @undefined, () => !didThrow && @markPromiseAsHandled(stream.cancel()), stream.@asyncContext);\n    sink.start({ highWaterMark: highWaterMark || 0 });\n    for (var i = 0, values = many.value, length = many.value.length;i < length; i++) {\n      sink.write(values[i]);\n    }\n    var streamState = @getByIdDirectPrivate(stream, \"state\");\n    if (streamState === @streamClosed) {\n      didClose = true;\n      return sink.end();\n    }\n    while (true) {\n      var { value, done } = await reader.read();\n      if (done) {\n        didClose = true;\n        return sink.end();\n      }\n      sink.write(value);\n    }\n  } catch (e) {\n    didThrow = true;\n    try {\n      reader = @undefined;\n      const prom = stream.cancel(e);\n      @markPromiseAsHandled(prom);\n    } catch (j) {\n    }\n    if (sink && !didClose) {\n      didClose = true;\n      try {\n        sink.close(e);\n      } catch (j) {\n        throw new globalThis.AggregateError([e, j]);\n      }\n    }\n    throw e;\n  } finally {\n    if (reader) {\n      try {\n        reader.releaseLock();\n      } catch (e) {\n      }\n      reader = @undefined;\n    }\n    sink = @undefined;\n    var streamState = @getByIdDirectPrivate(stream, \"state\");\n    if (stream) {\n      var readableStreamController = @getByIdDirectPrivate(stream, \"readableStreamController\");\n      if (readableStreamController) {\n        if (@getByIdDirectPrivate(readableStreamController, \"underlyingSource\"))\n          @putByIdDirectPrivate(readableStreamController, \"underlyingSource\", @undefined);\n        if (@getByIdDirectPrivate(readableStreamController, \"controlledReadableStream\"))\n          @putByIdDirectPrivate(readableStreamController, \"controlledReadableStream\", @undefined);\n        @putByIdDirectPrivate(stream, \"readableStreamController\", null);\n        if (@getByIdDirectPrivate(stream, \"underlyingSource\"))\n          @putByIdDirectPrivate(stream, \"underlyingSource\", @undefined);\n        readableStreamController = @undefined;\n      }\n      if (!didThrow && streamState !== @streamClosed && streamState !== @streamErrored) {\n        @readableStreamClose(stream);\n      }\n      stream = @undefined;\n    }\n  }\n})\n";
 
 // handleDirectStreamError
 const JSC::ConstructAbility s_readableStreamInternalsHandleDirectStreamErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsHandleDirectStreamErrorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsHandleDirectStreamErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsHandleDirectStreamErrorCodeLength = 496;
+const int s_readableStreamInternalsHandleDirectStreamErrorCodeLength = 763;
 static const JSC::Intrinsic s_readableStreamInternalsHandleDirectStreamErrorCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsHandleDirectStreamErrorCode = "(function (u){\"use strict\";var i=this,_=i.@sink;if(_){@putByIdDirectPrivate(i,\"sink\",@undefined);try{_.close(u)}catch(a){}}if(this.error=this.flush=this.write=this.close=this.end=@onReadableStreamDirectControllerClosed,typeof this.@underlyingSource.close===\"function\")try{this.@underlyingSource.close.@call(this.@underlyingSource,u)}catch(a){}try{var h=i._pendingRead;if(h)i._pendingRead=@undefined,@rejectPromise(h,u)}catch(a){}var R=i.@controlledReadableStream;if(R)@readableStreamError(R,u)})\n";
+const char* const s_readableStreamInternalsHandleDirectStreamErrorCode = "(function (e) {\"use strict\";\n  var controller = this;\n  var sink = controller.@sink;\n  if (sink) {\n    @putByIdDirectPrivate(controller, \"sink\", @undefined);\n    try {\n      sink.close(e);\n    } catch (f) {\n    }\n  }\n  this.error = this.flush = this.write = this.close = this.end = @onReadableStreamDirectControllerClosed;\n  if (typeof this.@underlyingSource.close === \"function\") {\n    try {\n      this.@underlyingSource.close.@call(this.@underlyingSource, e);\n    } catch (e2) {\n    }\n  }\n  try {\n    var pend = controller._pendingRead;\n    if (pend) {\n      controller._pendingRead = @undefined;\n      @rejectPromise(pend, e);\n    }\n  } catch (f) {\n  }\n  var stream = controller.@controlledReadableStream;\n  if (stream)\n    @readableStreamError(stream, e);\n})\n";
 
 // handleDirectStreamErrorReject
 const JSC::ConstructAbility s_readableStreamInternalsHandleDirectStreamErrorRejectCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsHandleDirectStreamErrorRejectCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsHandleDirectStreamErrorRejectCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsHandleDirectStreamErrorRejectCodeLength = 95;
+const int s_readableStreamInternalsHandleDirectStreamErrorRejectCodeLength = 105;
 static const JSC::Intrinsic s_readableStreamInternalsHandleDirectStreamErrorRejectCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsHandleDirectStreamErrorRejectCode = "(function (n){\"use strict\";return @handleDirectStreamError.@call(this,n),@Promise.@reject(n)})\n";
+const char* const s_readableStreamInternalsHandleDirectStreamErrorRejectCode = "(function (e) {\"use strict\";\n  @handleDirectStreamError.@call(this, e);\n  return @Promise.@reject(e);\n})\n";
 
 // onPullDirectStream
 const JSC::ConstructAbility s_readableStreamInternalsOnPullDirectStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsOnPullDirectStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsOnPullDirectStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsOnPullDirectStreamCodeLength = 929;
+const int s_readableStreamInternalsOnPullDirectStreamCodeLength = 1674;
 static const JSC::Intrinsic s_readableStreamInternalsOnPullDirectStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsOnPullDirectStreamCode = "(function (i){\"use strict\";var _=i.@controlledReadableStream;if(!_||@getByIdDirectPrivate(_,\"state\")!==@streamReadable)return;if(i._deferClose===-1)return;i._deferClose=-1,i._deferFlush=-1;var g,h,S=_.@asyncContext;if(S){var j=@getInternalField(@asyncContext,0);@putInternalField(@asyncContext,0,S)}try{var b=i.@underlyingSource.pull(i);if(b&&@isPromise(b)){if(i._handleError===@undefined)i._handleError=@handleDirectStreamErrorReject.bind(i);@Promise.prototype.catch.@call(b,i._handleError)}}catch(w){return @handleDirectStreamErrorReject.@call(i,w)}finally{if(g=i._deferClose,h=i._deferFlush,i._deferFlush=i._deferClose=0,S)@putInternalField(@asyncContext,0,j)}var k;if(i._pendingRead===@undefined)i._pendingRead=k=@newPromise();else k=@readableStreamAddReadRequest(_);if(g===1){var q=i._deferCloseReason;return i._deferCloseReason=@undefined,@onCloseDirectStream.@call(i,q),k}if(h===1)@onFlushDirectStream.@call(i);return k})\n";
+const char* const s_readableStreamInternalsOnPullDirectStreamCode = "(function (controller) {\"use strict\";\n  var stream = controller.@controlledReadableStream;\n  if (!stream || @getByIdDirectPrivate(stream, \"state\") !== @streamReadable)\n    return;\n  if (controller._deferClose === -1) {\n    return;\n  }\n  controller._deferClose = -1;\n  controller._deferFlush = -1;\n  var deferClose;\n  var deferFlush;\n  var asyncContext = stream.@asyncContext;\n  if (asyncContext) {\n    var prev = @getInternalField(@asyncContext, 0);\n    @putInternalField(@asyncContext, 0, asyncContext);\n  }\n  try {\n    var result = controller.@underlyingSource.pull(controller);\n    if (result && @isPromise(result)) {\n      if (controller._handleError === @undefined) {\n        controller._handleError = @handleDirectStreamErrorReject.bind(controller);\n      }\n      @Promise.prototype.catch.@call(result, controller._handleError);\n    }\n  } catch (e) {\n    return @handleDirectStreamErrorReject.@call(controller, e);\n  } finally {\n    deferClose = controller._deferClose;\n    deferFlush = controller._deferFlush;\n    controller._deferFlush = controller._deferClose = 0;\n    if (asyncContext) {\n      @putInternalField(@asyncContext, 0, prev);\n    }\n  }\n  var promiseToReturn;\n  if (controller._pendingRead === @undefined) {\n    controller._pendingRead = promiseToReturn = @newPromise();\n  } else {\n    promiseToReturn = @readableStreamAddReadRequest(stream);\n  }\n  if (deferClose === 1) {\n    var reason = controller._deferCloseReason;\n    controller._deferCloseReason = @undefined;\n    @onCloseDirectStream.@call(controller, reason);\n    return promiseToReturn;\n  }\n  if (deferFlush === 1) {\n    @onFlushDirectStream.@call(controller);\n  }\n  return promiseToReturn;\n})\n";
 
 // noopDoneFunction
 const JSC::ConstructAbility s_readableStreamInternalsNoopDoneFunctionCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsNoopDoneFunctionCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsNoopDoneFunctionCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsNoopDoneFunctionCodeLength = 81;
+const int s_readableStreamInternalsNoopDoneFunctionCodeLength = 94;
 static const JSC::Intrinsic s_readableStreamInternalsNoopDoneFunctionCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsNoopDoneFunctionCode = "(function (){\"use strict\";return @Promise.@resolve({value:@undefined,done:!0})})\n";
+const char* const s_readableStreamInternalsNoopDoneFunctionCode = "(function () {\"use strict\";\n  return @Promise.@resolve({ value: @undefined, done: true });\n})\n";
 
 // onReadableStreamDirectControllerClosed
 const JSC::ConstructAbility s_readableStreamInternalsOnReadableStreamDirectControllerClosedCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsOnReadableStreamDirectControllerClosedCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsOnReadableStreamDirectControllerClosedCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsOnReadableStreamDirectControllerClosedCodeLength = 93;
+const int s_readableStreamInternalsOnReadableStreamDirectControllerClosedCodeLength = 104;
 static const JSC::Intrinsic s_readableStreamInternalsOnReadableStreamDirectControllerClosedCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsOnReadableStreamDirectControllerClosedCode = "(function (e){\"use strict\";@throwTypeError(\"ReadableStreamDirectController is now closed\")})\n";
+const char* const s_readableStreamInternalsOnReadableStreamDirectControllerClosedCode = "(function (reason) {\"use strict\";\n  @throwTypeError(\"ReadableStreamDirectController is now closed\");\n})\n";
 
 // onCloseDirectStream
 const JSC::ConstructAbility s_readableStreamInternalsOnCloseDirectStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsOnCloseDirectStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsOnCloseDirectStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsOnCloseDirectStreamCodeLength = 1460;
+const int s_readableStreamInternalsOnCloseDirectStreamCodeLength = 2160;
 static const JSC::Intrinsic s_readableStreamInternalsOnCloseDirectStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsOnCloseDirectStreamCode = "(function (S){\"use strict\";var c=this.@controlledReadableStream;if(!c||@getByIdDirectPrivate(c,\"state\")!==@streamReadable)return;if(this._deferClose!==0){this._deferClose=1,this._deferCloseReason=S;return}if(@putByIdDirectPrivate(c,\"state\",@streamClosing),typeof this.@underlyingSource.close===\"function\")try{this.@underlyingSource.close.@call(this.@underlyingSource,S)}catch(b){}var v;try{v=this.@sink.end(),@putByIdDirectPrivate(this,\"sink\",@undefined)}catch(b){if(this._pendingRead){var y=this._pendingRead;this._pendingRead=@undefined,@rejectPromise(y,b)}@readableStreamError(c,b);return}this.error=this.flush=this.write=this.close=this.end=@onReadableStreamDirectControllerClosed;var B=@getByIdDirectPrivate(c,\"reader\");if(B&&@isReadableStreamDefaultReader(B)){var C=this._pendingRead;if(C&&@isPromise(C)&&v\?.byteLength){this._pendingRead=@undefined,@fulfillPromise(C,{value:v,done:!1}),@readableStreamClose(c);return}}if(v\?.byteLength){var j=@getByIdDirectPrivate(B,\"readRequests\");if(j\?.isNotEmpty()){@readableStreamFulfillReadRequest(c,v,!1),@readableStreamClose(c);return}@putByIdDirectPrivate(c,\"state\",@streamReadable),this.@pull=()=>{var b=@createFulfilledPromise({value:v,done:!1});return v=@undefined,@readableStreamClose(c),c=@undefined,b}}else if(this._pendingRead){var y=this._pendingRead;this._pendingRead=@undefined,@putByIdDirectPrivate(this,\"pull\",@noopDoneFunction),@fulfillPromise(y,{value:@undefined,done:!0})}@readableStreamClose(c)})\n";
+const char* const s_readableStreamInternalsOnCloseDirectStreamCode = "(function (reason) {\"use strict\";\n  var stream = this.@controlledReadableStream;\n  if (!stream || @getByIdDirectPrivate(stream, \"state\") !== @streamReadable)\n    return;\n  if (this._deferClose !== 0) {\n    this._deferClose = 1;\n    this._deferCloseReason = reason;\n    return;\n  }\n  @putByIdDirectPrivate(stream, \"state\", @streamClosing);\n  if (typeof this.@underlyingSource.close === \"function\") {\n    try {\n      this.@underlyingSource.close.@call(this.@underlyingSource, reason);\n    } catch (e) {\n    }\n  }\n  var flushed;\n  try {\n    flushed = this.@sink.end();\n    @putByIdDirectPrivate(this, \"sink\", @undefined);\n  } catch (e) {\n    if (this._pendingRead) {\n      var read = this._pendingRead;\n      this._pendingRead = @undefined;\n      @rejectPromise(read, e);\n    }\n    @readableStreamError(stream, e);\n    return;\n  }\n  this.error = this.flush = this.write = this.close = this.end = @onReadableStreamDirectControllerClosed;\n  var reader = @getByIdDirectPrivate(stream, \"reader\");\n  if (reader && @isReadableStreamDefaultReader(reader)) {\n    var _pendingRead = this._pendingRead;\n    if (_pendingRead && @isPromise(_pendingRead) && flushed\?.byteLength) {\n      this._pendingRead = @undefined;\n      @fulfillPromise(_pendingRead, { value: flushed, done: false });\n      @readableStreamClose(stream);\n      return;\n    }\n  }\n  if (flushed\?.byteLength) {\n    var requests = @getByIdDirectPrivate(reader, \"readRequests\");\n    if (requests\?.isNotEmpty()) {\n      @readableStreamFulfillReadRequest(stream, flushed, false);\n      @readableStreamClose(stream);\n      return;\n    }\n    @putByIdDirectPrivate(stream, \"state\", @streamReadable);\n    this.@pull = () => {\n      var thisResult = @createFulfilledPromise({\n        value: flushed,\n        done: false\n      });\n      flushed = @undefined;\n      @readableStreamClose(stream);\n      stream = @undefined;\n      return thisResult;\n    };\n  } else if (this._pendingRead) {\n    var read = this._pendingRead;\n    this._pendingRead = @undefined;\n    @putByIdDirectPrivate(this, \"pull\", @noopDoneFunction);\n    @fulfillPromise(read, { value: @undefined, done: true });\n  }\n  @readableStreamClose(stream);\n})\n";
 
 // onFlushDirectStream
 const JSC::ConstructAbility s_readableStreamInternalsOnFlushDirectStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsOnFlushDirectStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsOnFlushDirectStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsOnFlushDirectStreamCodeLength = 591;
+const int s_readableStreamInternalsOnFlushDirectStreamCodeLength = 900;
 static const JSC::Intrinsic s_readableStreamInternalsOnFlushDirectStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsOnFlushDirectStreamCode = "(function (){\"use strict\";var B=this.@controlledReadableStream,i=@getByIdDirectPrivate(B,\"reader\");if(!i||!@isReadableStreamDefaultReader(i))return;var b=this._pendingRead;if(this._pendingRead=@undefined,b&&@isPromise(b)){var c=this.@sink.flush();if(c\?.byteLength)this._pendingRead=@getByIdDirectPrivate(B,\"readRequests\")\?.shift(),@fulfillPromise(b,{value:c,done:!1});else this._pendingRead=b}else if(@getByIdDirectPrivate(B,\"readRequests\")\?.isNotEmpty()){var c=this.@sink.flush();if(c\?.byteLength)@readableStreamFulfillReadRequest(B,c,!1)}else if(this._deferFlush===-1)this._deferFlush=1})\n";
+const char* const s_readableStreamInternalsOnFlushDirectStreamCode = "(function () {\"use strict\";\n  var stream = this.@controlledReadableStream;\n  var reader = @getByIdDirectPrivate(stream, \"reader\");\n  if (!reader || !@isReadableStreamDefaultReader(reader)) {\n    return;\n  }\n  var _pendingRead = this._pendingRead;\n  this._pendingRead = @undefined;\n  if (_pendingRead && @isPromise(_pendingRead)) {\n    var flushed = this.@sink.flush();\n    if (flushed\?.byteLength) {\n      this._pendingRead = @getByIdDirectPrivate(stream, \"readRequests\")\?.shift();\n      @fulfillPromise(_pendingRead, { value: flushed, done: false });\n    } else {\n      this._pendingRead = _pendingRead;\n    }\n  } else if (@getByIdDirectPrivate(stream, \"readRequests\")\?.isNotEmpty()) {\n    var flushed = this.@sink.flush();\n    if (flushed\?.byteLength) {\n      @readableStreamFulfillReadRequest(stream, flushed, false);\n    }\n  } else if (this._deferFlush === -1) {\n    this._deferFlush = 1;\n  }\n})\n";
 
 // createTextStream
 const JSC::ConstructAbility s_readableStreamInternalsCreateTextStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsCreateTextStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsCreateTextStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsCreateTextStreamCodeLength = 983;
+const int s_readableStreamInternalsCreateTextStreamCodeLength = 2285;
 static const JSC::Intrinsic s_readableStreamInternalsCreateTextStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsCreateTextStreamCode = "(function (G){\"use strict\";var q,v=[],x=!1,z=!1,j=\"\",C=@toLength(0),F=@newPromiseCapability(@Promise),A=!1;return q={start(){},write(_){if(typeof _===\"string\"){var w=@toLength(_.length);if(w>0)j+=_,x=!0,C+=w;return w}if(!_||!(@ArrayBuffer.@isView(_)||_ instanceof @ArrayBuffer))@throwTypeError(\"Expected text, ArrayBuffer or ArrayBufferView\");const E=@toLength(_.byteLength);if(E>0)if(z=!0,j.length>0)@arrayPush(v,j,_),j=\"\";else @arrayPush(v,_);return C+=E,E},flush(){return 0},end(){if(A)return\"\";return q.fulfill()},fulfill(){A=!0;const _=q.finishInternal();return @fulfillPromise(F.promise,_),_},finishInternal(){if(!x&&!z)return\"\";if(x&&!z)return j;if(z&&!x)return new globalThis.TextDecoder().decode(@Bun.concatArrayBuffers(v));var _=new @Bun.ArrayBufferSink;_.start({highWaterMark:C,asUint8Array:!0});for(let w of v)_.write(w);if(v.length=0,j.length>0)_.write(j),j=\"\";return new globalThis.TextDecoder().decode(_.end())},close(){try{if(!A)A=!0,q.fulfill()}catch(_){}}},[q,F]})\n";
+const char* const s_readableStreamInternalsCreateTextStreamCode = "(function (highWaterMark) {\"use strict\";\n  var sink;\n  var array = [];\n  var hasString = false;\n  var hasBuffer = false;\n  var rope = \"\";\n  var estimatedLength = @toLength(0);\n  var capability = @newPromiseCapability(@Promise);\n  var calledDone = false;\n  sink = {\n    start() {\n    },\n    write(chunk) {\n      if (typeof chunk === \"string\") {\n        var chunkLength = @toLength(chunk.length);\n        if (chunkLength > 0) {\n          rope += chunk;\n          hasString = true;\n          estimatedLength += chunkLength;\n        }\n        return chunkLength;\n      }\n      if (!chunk || !(@ArrayBuffer.@isView(chunk) || chunk instanceof @ArrayBuffer)) {\n        @throwTypeError(\"Expected text, ArrayBuffer or ArrayBufferView\");\n      }\n      const byteLength = @toLength(chunk.byteLength);\n      if (byteLength > 0) {\n        hasBuffer = true;\n        if (rope.length > 0) {\n          @arrayPush(array, rope, chunk);\n          rope = \"\";\n        } else {\n          @arrayPush(array, chunk);\n        }\n      }\n      estimatedLength += byteLength;\n      return byteLength;\n    },\n    flush() {\n      return 0;\n    },\n    end() {\n      if (calledDone) {\n        return \"\";\n      }\n      return sink.fulfill();\n    },\n    fulfill() {\n      calledDone = true;\n      const result = sink.finishInternal();\n      @fulfillPromise(capability.promise, result);\n      return result;\n    },\n    finishInternal() {\n      if (!hasString && !hasBuffer) {\n        return \"\";\n      }\n      if (hasString && !hasBuffer) {\n        return rope;\n      }\n      if (hasBuffer && !hasString) {\n        return new globalThis.TextDecoder().decode(@Bun.concatArrayBuffers(array));\n      }\n      var arrayBufferSink = new @Bun.ArrayBufferSink;\n      arrayBufferSink.start({\n        highWaterMark: estimatedLength,\n        asUint8Array: true\n      });\n      for (let item of array) {\n        arrayBufferSink.write(item);\n      }\n      array.length = 0;\n      if (rope.length > 0) {\n        arrayBufferSink.write(rope);\n        rope = \"\";\n      }\n      return new globalThis.TextDecoder().decode(arrayBufferSink.end());\n    },\n    close() {\n      try {\n        if (!calledDone) {\n          calledDone = true;\n          sink.fulfill();\n        }\n      } catch (e) {\n      }\n    }\n  };\n  return [sink, capability];\n})\n";
 
 // initializeTextStream
 const JSC::ConstructAbility s_readableStreamInternalsInitializeTextStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsInitializeTextStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsInitializeTextStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsInitializeTextStreamCodeLength = 578;
+const int s_readableStreamInternalsInitializeTextStreamCodeLength = 816;
 static const JSC::Intrinsic s_readableStreamInternalsInitializeTextStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsInitializeTextStreamCode = "(function (m,p){\"use strict\";var[_,b]=@createTextStream(p),f={@underlyingSource:m,@pull:@onPullDirectStream,@controlledReadableStream:this,@sink:_,close:@onCloseDirectStream,write:_.write,error:@handleDirectStreamError,end:@onCloseDirectStream,@close:@onCloseDirectStream,flush:@onFlushDirectStream,_pendingRead:@undefined,_deferClose:0,_deferFlush:0,_deferCloseReason:@undefined,_handleError:@undefined};return @putByIdDirectPrivate(this,\"readableStreamController\",f),@putByIdDirectPrivate(this,\"underlyingSource\",@undefined),@putByIdDirectPrivate(this,\"start\",@undefined),b})\n";
+const char* const s_readableStreamInternalsInitializeTextStreamCode = "(function (underlyingSource, highWaterMark) {\"use strict\";\n  var [sink, closingPromise] = @createTextStream(highWaterMark);\n  var controller = {\n    @underlyingSource: underlyingSource,\n    @pull: @onPullDirectStream,\n    @controlledReadableStream: this,\n    @sink: sink,\n    close: @onCloseDirectStream,\n    write: sink.write,\n    error: @handleDirectStreamError,\n    end: @onCloseDirectStream,\n    @close: @onCloseDirectStream,\n    flush: @onFlushDirectStream,\n    _pendingRead: @undefined,\n    _deferClose: 0,\n    _deferFlush: 0,\n    _deferCloseReason: @undefined,\n    _handleError: @undefined\n  };\n  @putByIdDirectPrivate(this, \"readableStreamController\", controller);\n  @putByIdDirectPrivate(this, \"underlyingSource\", @undefined);\n  @putByIdDirectPrivate(this, \"start\", @undefined);\n  return closingPromise;\n})\n";
 
 // initializeArrayStream
 const JSC::ConstructAbility s_readableStreamInternalsInitializeArrayStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsInitializeArrayStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsInitializeArrayStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsInitializeArrayStreamCodeLength = 796;
+const int s_readableStreamInternalsInitializeArrayStreamCodeLength = 1321;
 static const JSC::Intrinsic s_readableStreamInternalsInitializeArrayStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsInitializeArrayStreamCode = "(function (v,x){\"use strict\";var _=[],b=@newPromiseCapability(@Promise),p=!1;function j(){return p=!0,b.resolve.@call(@undefined,_),_}var q={start(){},write(t){return @arrayPush(_,t),t.byteLength||t.length},flush(){return 0},end(){if(p)return[];return j()},close(){if(!p)j()}},w={@underlyingSource:v,@pull:@onPullDirectStream,@controlledReadableStream:this,@sink:q,close:@onCloseDirectStream,write:q.write,error:@handleDirectStreamError,end:@onCloseDirectStream,@close:@onCloseDirectStream,flush:@onFlushDirectStream,_pendingRead:@undefined,_deferClose:0,_deferFlush:0,_deferCloseReason:@undefined,_handleError:@undefined};return @putByIdDirectPrivate(this,\"readableStreamController\",w),@putByIdDirectPrivate(this,\"underlyingSource\",@undefined),@putByIdDirectPrivate(this,\"start\",@undefined),b})\n";
+const char* const s_readableStreamInternalsInitializeArrayStreamCode = "(function (underlyingSource, highWaterMark) {\"use strict\";\n  var array = [];\n  var closingPromise = @newPromiseCapability(@Promise);\n  var calledDone = false;\n  function fulfill() {\n    calledDone = true;\n    closingPromise.resolve.@call(@undefined, array);\n    return array;\n  }\n  var sink = {\n    start() {\n    },\n    write(chunk) {\n      @arrayPush(array, chunk);\n      return chunk.byteLength || chunk.length;\n    },\n    flush() {\n      return 0;\n    },\n    end() {\n      if (calledDone) {\n        return [];\n      }\n      return fulfill();\n    },\n    close() {\n      if (!calledDone) {\n        fulfill();\n      }\n    }\n  };\n  var controller = {\n    @underlyingSource: underlyingSource,\n    @pull: @onPullDirectStream,\n    @controlledReadableStream: this,\n    @sink: sink,\n    close: @onCloseDirectStream,\n    write: sink.write,\n    error: @handleDirectStreamError,\n    end: @onCloseDirectStream,\n    @close: @onCloseDirectStream,\n    flush: @onFlushDirectStream,\n    _pendingRead: @undefined,\n    _deferClose: 0,\n    _deferFlush: 0,\n    _deferCloseReason: @undefined,\n    _handleError: @undefined\n  };\n  @putByIdDirectPrivate(this, \"readableStreamController\", controller);\n  @putByIdDirectPrivate(this, \"underlyingSource\", @undefined);\n  @putByIdDirectPrivate(this, \"start\", @undefined);\n  return closingPromise;\n})\n";
 
 // initializeArrayBufferStream
 const JSC::ConstructAbility s_readableStreamInternalsInitializeArrayBufferStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsInitializeArrayBufferStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsInitializeArrayBufferStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsInitializeArrayBufferStreamCodeLength = 690;
+const int s_readableStreamInternalsInitializeArrayBufferStreamCodeLength = 954;
 static const JSC::Intrinsic s_readableStreamInternalsInitializeArrayBufferStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsInitializeArrayBufferStreamCode = "(function (w,m){\"use strict\";var D=m&&typeof m===\"number\"\?{highWaterMark:m,stream:!0,asUint8Array:!0}:{stream:!0,asUint8Array:!0},_=new @Bun.ArrayBufferSink;_.start(D);var b={@underlyingSource:w,@pull:@onPullDirectStream,@controlledReadableStream:this,@sink:_,close:@onCloseDirectStream,write:_.write.bind(_),error:@handleDirectStreamError,end:@onCloseDirectStream,@close:@onCloseDirectStream,flush:@onFlushDirectStream,_pendingRead:@undefined,_deferClose:0,_deferFlush:0,_deferCloseReason:@undefined,_handleError:@undefined};@putByIdDirectPrivate(this,\"readableStreamController\",b),@putByIdDirectPrivate(this,\"underlyingSource\",@undefined),@putByIdDirectPrivate(this,\"start\",@undefined)})\n";
+const char* const s_readableStreamInternalsInitializeArrayBufferStreamCode = "(function (underlyingSource, highWaterMark) {\"use strict\";\n  var opts = highWaterMark && typeof highWaterMark === \"number\" \? { highWaterMark, stream: true, asUint8Array: true } : { stream: true, asUint8Array: true };\n  var sink = new @Bun.ArrayBufferSink;\n  sink.start(opts);\n  var controller = {\n    @underlyingSource: underlyingSource,\n    @pull: @onPullDirectStream,\n    @controlledReadableStream: this,\n    @sink: sink,\n    close: @onCloseDirectStream,\n    write: sink.write.bind(sink),\n    error: @handleDirectStreamError,\n    end: @onCloseDirectStream,\n    @close: @onCloseDirectStream,\n    flush: @onFlushDirectStream,\n    _pendingRead: @undefined,\n    _deferClose: 0,\n    _deferFlush: 0,\n    _deferCloseReason: @undefined,\n    _handleError: @undefined\n  };\n  @putByIdDirectPrivate(this, \"readableStreamController\", controller);\n  @putByIdDirectPrivate(this, \"underlyingSource\", @undefined);\n  @putByIdDirectPrivate(this, \"start\", @undefined);\n})\n";
 
 // readableStreamError
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamErrorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamErrorCodeLength = 838;
+const int s_readableStreamInternalsReadableStreamErrorCodeLength = 1180;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamErrorCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamErrorCode = "(function (n,f){\"use strict\";@assert(@isReadableStream(n)),@assert(@getByIdDirectPrivate(n,\"state\")===@streamReadable),@putByIdDirectPrivate(n,\"state\",@streamErrored),@putByIdDirectPrivate(n,\"storedError\",f);const _=@getByIdDirectPrivate(n,\"reader\");if(!_)return;if(@isReadableStreamDefaultReader(_)){const c=@getByIdDirectPrivate(_,\"readRequests\");@putByIdDirectPrivate(_,\"readRequests\",@createFIFO());for(var i=c.shift();i;i=c.shift())@rejectPromise(i,f)}else{@assert(@isReadableStreamBYOBReader(_));const c=@getByIdDirectPrivate(_,\"readIntoRequests\");@putByIdDirectPrivate(_,\"readIntoRequests\",@createFIFO());for(var i=c.shift();i;i=c.shift())@rejectPromise(i,f)}@getByIdDirectPrivate(_,\"closedPromiseCapability\").reject.@call(@undefined,f);const h=@getByIdDirectPrivate(_,\"closedPromiseCapability\").promise;@markPromiseAsHandled(h)})\n";
+const char* const s_readableStreamInternalsReadableStreamErrorCode = "(function (stream, error) {\"use strict\";\n  @assert(@isReadableStream(stream));\n  @assert(@getByIdDirectPrivate(stream, \"state\") === @streamReadable);\n  @putByIdDirectPrivate(stream, \"state\", @streamErrored);\n  @putByIdDirectPrivate(stream, \"storedError\", error);\n  const reader = @getByIdDirectPrivate(stream, \"reader\");\n  if (!reader)\n    return;\n  if (@isReadableStreamDefaultReader(reader)) {\n    const requests = @getByIdDirectPrivate(reader, \"readRequests\");\n    @putByIdDirectPrivate(reader, \"readRequests\", @createFIFO());\n    for (var request = requests.shift();request; request = requests.shift())\n      @rejectPromise(request, error);\n  } else {\n    @assert(@isReadableStreamBYOBReader(reader));\n    const requests = @getByIdDirectPrivate(reader, \"readIntoRequests\");\n    @putByIdDirectPrivate(reader, \"readIntoRequests\", @createFIFO());\n    for (var request = requests.shift();request; request = requests.shift())\n      @rejectPromise(request, error);\n  }\n  @getByIdDirectPrivate(reader, \"closedPromiseCapability\").reject.@call(@undefined, error);\n  const promise = @getByIdDirectPrivate(reader, \"closedPromiseCapability\").promise;\n  @markPromiseAsHandled(promise);\n})\n";
 
 // readableStreamDefaultControllerShouldCallPull
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerShouldCallPullCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerShouldCallPullCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefaultControllerShouldCallPullCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamDefaultControllerShouldCallPullCodeLength = 477;
+const int s_readableStreamInternalsReadableStreamDefaultControllerShouldCallPullCodeLength = 653;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerShouldCallPullCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamDefaultControllerShouldCallPullCode = "(function (h){\"use strict\";const i=@getByIdDirectPrivate(h,\"controlledReadableStream\");if(!@readableStreamDefaultControllerCanCloseOrEnqueue(h))return!1;if(@getByIdDirectPrivate(h,\"started\")!==1)return!1;if((!@isReadableStreamLocked(i)||!@getByIdDirectPrivate(@getByIdDirectPrivate(i,\"reader\"),\"readRequests\")\?.isNotEmpty())&&@readableStreamDefaultControllerGetDesiredSize(h)<=0)return!1;const v=@readableStreamDefaultControllerGetDesiredSize(h);return @assert(v!==null),v>0})\n";
+const char* const s_readableStreamInternalsReadableStreamDefaultControllerShouldCallPullCode = "(function (controller) {\"use strict\";\n  const stream = @getByIdDirectPrivate(controller, \"controlledReadableStream\");\n  if (!@readableStreamDefaultControllerCanCloseOrEnqueue(controller))\n    return false;\n  if (!(@getByIdDirectPrivate(controller, \"started\") === 1))\n    return false;\n  if ((!@isReadableStreamLocked(stream) || !@getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readRequests\")\?.isNotEmpty()) && @readableStreamDefaultControllerGetDesiredSize(controller) <= 0)\n    return false;\n  const desiredSize = @readableStreamDefaultControllerGetDesiredSize(controller);\n  @assert(desiredSize !== null);\n  return desiredSize > 0;\n})\n";
 
 // readableStreamDefaultControllerCallPullIfNeeded
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerCallPullIfNeededCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerCallPullIfNeededCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefaultControllerCallPullIfNeededCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamDefaultControllerCallPullIfNeededCodeLength = 859;
+const int s_readableStreamInternalsReadableStreamDefaultControllerCallPullIfNeededCodeLength = 1167;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerCallPullIfNeededCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamDefaultControllerCallPullIfNeededCode = "(function (i){\"use strict\";const _=@getByIdDirectPrivate(i,\"controlledReadableStream\");if(!@readableStreamDefaultControllerCanCloseOrEnqueue(i))return;if(@getByIdDirectPrivate(i,\"started\")!==1)return;if((!@isReadableStreamLocked(_)||!@getByIdDirectPrivate(@getByIdDirectPrivate(_,\"reader\"),\"readRequests\")\?.isNotEmpty())&&@readableStreamDefaultControllerGetDesiredSize(i)<=0)return;if(@getByIdDirectPrivate(i,\"pulling\")){@putByIdDirectPrivate(i,\"pullAgain\",!0);return}@assert(!@getByIdDirectPrivate(i,\"pullAgain\")),@putByIdDirectPrivate(i,\"pulling\",!0),@getByIdDirectPrivate(i,\"pullAlgorithm\").@call(@undefined).@then(function(){if(@putByIdDirectPrivate(i,\"pulling\",!1),@getByIdDirectPrivate(i,\"pullAgain\"))@putByIdDirectPrivate(i,\"pullAgain\",!1),@readableStreamDefaultControllerCallPullIfNeeded(i)},function(d){@readableStreamDefaultControllerError(i,d)})})\n";
+const char* const s_readableStreamInternalsReadableStreamDefaultControllerCallPullIfNeededCode = "(function (controller) {\"use strict\";\n  const stream = @getByIdDirectPrivate(controller, \"controlledReadableStream\");\n  if (!@readableStreamDefaultControllerCanCloseOrEnqueue(controller))\n    return;\n  if (!(@getByIdDirectPrivate(controller, \"started\") === 1))\n    return;\n  if ((!@isReadableStreamLocked(stream) || !@getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readRequests\")\?.isNotEmpty()) && @readableStreamDefaultControllerGetDesiredSize(controller) <= 0)\n    return;\n  if (@getByIdDirectPrivate(controller, \"pulling\")) {\n    @putByIdDirectPrivate(controller, \"pullAgain\", true);\n    return;\n  }\n  @assert(!@getByIdDirectPrivate(controller, \"pullAgain\"));\n  @putByIdDirectPrivate(controller, \"pulling\", true);\n  @getByIdDirectPrivate(controller, \"pullAlgorithm\").@call(@undefined).@then(function() {\n    @putByIdDirectPrivate(controller, \"pulling\", false);\n    if (@getByIdDirectPrivate(controller, \"pullAgain\")) {\n      @putByIdDirectPrivate(controller, \"pullAgain\", false);\n      @readableStreamDefaultControllerCallPullIfNeeded(controller);\n    }\n  }, function(error) {\n    @readableStreamDefaultControllerError(controller, error);\n  });\n})\n";
 
 // isReadableStreamLocked
 const JSC::ConstructAbility s_readableStreamInternalsIsReadableStreamLockedCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsIsReadableStreamLockedCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsIsReadableStreamLockedCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsIsReadableStreamLockedCodeLength = 102;
+const int s_readableStreamInternalsIsReadableStreamLockedCodeLength = 127;
 static const JSC::Intrinsic s_readableStreamInternalsIsReadableStreamLockedCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsIsReadableStreamLockedCode = "(function (i){\"use strict\";return @assert(@isReadableStream(i)),!!@getByIdDirectPrivate(i,\"reader\")})\n";
+const char* const s_readableStreamInternalsIsReadableStreamLockedCode = "(function (stream) {\"use strict\";\n  @assert(@isReadableStream(stream));\n  return !!@getByIdDirectPrivate(stream, \"reader\");\n})\n";
 
 // readableStreamDefaultControllerGetDesiredSize
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerGetDesiredSizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerGetDesiredSizeCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefaultControllerGetDesiredSizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamDefaultControllerGetDesiredSizeCodeLength = 283;
+const int s_readableStreamInternalsReadableStreamDefaultControllerGetDesiredSizeCodeLength = 391;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerGetDesiredSizeCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamDefaultControllerGetDesiredSizeCode = "(function (i){\"use strict\";const g=@getByIdDirectPrivate(i,\"controlledReadableStream\"),d=@getByIdDirectPrivate(g,\"state\");if(d===@streamErrored)return null;if(d===@streamClosed)return 0;return @getByIdDirectPrivate(i,\"strategy\").highWaterMark-@getByIdDirectPrivate(i,\"queue\").size})\n";
+const char* const s_readableStreamInternalsReadableStreamDefaultControllerGetDesiredSizeCode = "(function (controller) {\"use strict\";\n  const stream = @getByIdDirectPrivate(controller, \"controlledReadableStream\");\n  const state = @getByIdDirectPrivate(stream, \"state\");\n  if (state === @streamErrored)\n    return null;\n  if (state === @streamClosed)\n    return 0;\n  return @getByIdDirectPrivate(controller, \"strategy\").highWaterMark - @getByIdDirectPrivate(controller, \"queue\").size;\n})\n";
 
 // readableStreamReaderGenericCancel
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamReaderGenericCancelCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamReaderGenericCancelCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamReaderGenericCancelCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamReaderGenericCancelCodeLength = 133;
+const int s_readableStreamInternalsReadableStreamReaderGenericCancelCodeLength = 185;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamReaderGenericCancelCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamReaderGenericCancelCode = "(function (h,i){\"use strict\";const c=@getByIdDirectPrivate(h,\"ownerReadableStream\");return @assert(!!c),@readableStreamCancel(c,i)})\n";
+const char* const s_readableStreamInternalsReadableStreamReaderGenericCancelCode = "(function (reader, reason) {\"use strict\";\n  const stream = @getByIdDirectPrivate(reader, \"ownerReadableStream\");\n  @assert(!!stream);\n  return @readableStreamCancel(stream, reason);\n})\n";
 
 // readableStreamCancel
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamCancelCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamCancelCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamCancelCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamCancelCodeLength = 509;
+const int s_readableStreamInternalsReadableStreamCancelCodeLength = 737;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamCancelCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamCancelCode = "(function (i,d){\"use strict\";@putByIdDirectPrivate(i,\"disturbed\",!0);const h=@getByIdDirectPrivate(i,\"state\");if(h===@streamClosed)return @Promise.@resolve();if(h===@streamErrored)return @Promise.@reject(@getByIdDirectPrivate(i,\"storedError\"));@readableStreamClose(i);var _=@getByIdDirectPrivate(i,\"readableStreamController\"),p=_.@cancel;if(p)return p(_,d).@then(function(){});var u=_.close;if(u)return @Promise.@resolve(_.close(d));@throwTypeError(\"ReadableStreamController has no cancel or close method\")})\n";
+const char* const s_readableStreamInternalsReadableStreamCancelCode = "(function (stream, reason) {\"use strict\";\n  @putByIdDirectPrivate(stream, \"disturbed\", true);\n  const state = @getByIdDirectPrivate(stream, \"state\");\n  if (state === @streamClosed)\n    return @Promise.@resolve();\n  if (state === @streamErrored)\n    return @Promise.@reject(@getByIdDirectPrivate(stream, \"storedError\"));\n  @readableStreamClose(stream);\n  var controller = @getByIdDirectPrivate(stream, \"readableStreamController\");\n  var cancel = controller.@cancel;\n  if (cancel) {\n    return cancel(controller, reason).@then(function() {\n    });\n  }\n  var close = controller.close;\n  if (close) {\n    return @Promise.@resolve(controller.close(reason));\n  }\n  @throwTypeError(\"ReadableStreamController has no cancel or close method\");\n})\n";
 
 // readableStreamDefaultControllerCancel
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerCancelCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerCancelCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefaultControllerCancelCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamDefaultControllerCancelCodeLength = 146;
+const int s_readableStreamInternalsReadableStreamDefaultControllerCancelCodeLength = 197;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerCancelCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamDefaultControllerCancelCode = "(function (_,d){\"use strict\";return @putByIdDirectPrivate(_,\"queue\",@newQueue()),@getByIdDirectPrivate(_,\"cancelAlgorithm\").@call(@undefined,d)})\n";
+const char* const s_readableStreamInternalsReadableStreamDefaultControllerCancelCode = "(function (controller, reason) {\"use strict\";\n  @putByIdDirectPrivate(controller, \"queue\", @newQueue());\n  return @getByIdDirectPrivate(controller, \"cancelAlgorithm\").@call(@undefined, reason);\n})\n";
 
 // readableStreamDefaultControllerPull
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerPullCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerPullCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefaultControllerPullCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamDefaultControllerPullCodeLength = 519;
+const int s_readableStreamInternalsReadableStreamDefaultControllerPullCodeLength = 710;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerPullCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamDefaultControllerPullCode = "(function (a){\"use strict\";var _=@getByIdDirectPrivate(a,\"queue\");if(_.content.isNotEmpty()){const f=@dequeueValue(_);if(@getByIdDirectPrivate(a,\"closeRequested\")&&_.content.isEmpty())@readableStreamClose(@getByIdDirectPrivate(a,\"controlledReadableStream\"));else @readableStreamDefaultControllerCallPullIfNeeded(a);return @createFulfilledPromise({value:f,done:!1})}const d=@readableStreamAddReadRequest(@getByIdDirectPrivate(a,\"controlledReadableStream\"));return @readableStreamDefaultControllerCallPullIfNeeded(a),d})\n";
+const char* const s_readableStreamInternalsReadableStreamDefaultControllerPullCode = "(function (controller) {\"use strict\";\n  var queue = @getByIdDirectPrivate(controller, \"queue\");\n  if (queue.content.isNotEmpty()) {\n    const chunk = @dequeueValue(queue);\n    if (@getByIdDirectPrivate(controller, \"closeRequested\") && queue.content.isEmpty())\n      @readableStreamClose(@getByIdDirectPrivate(controller, \"controlledReadableStream\"));\n    else\n      @readableStreamDefaultControllerCallPullIfNeeded(controller);\n    return @createFulfilledPromise({ value: chunk, done: false });\n  }\n  const pendingPromise = @readableStreamAddReadRequest(@getByIdDirectPrivate(controller, \"controlledReadableStream\"));\n  @readableStreamDefaultControllerCallPullIfNeeded(controller);\n  return pendingPromise;\n})\n";
 
 // readableStreamDefaultControllerClose
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerCloseCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefaultControllerCloseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamDefaultControllerCloseCodeLength = 266;
+const int s_readableStreamInternalsReadableStreamDefaultControllerCloseCodeLength = 335;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerCloseCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamDefaultControllerCloseCode = "(function (_){\"use strict\";if(@assert(@readableStreamDefaultControllerCanCloseOrEnqueue(_)),@putByIdDirectPrivate(_,\"closeRequested\",!0),@getByIdDirectPrivate(_,\"queue\")\?.content\?.isEmpty())@readableStreamClose(@getByIdDirectPrivate(_,\"controlledReadableStream\"))})\n";
+const char* const s_readableStreamInternalsReadableStreamDefaultControllerCloseCode = "(function (controller) {\"use strict\";\n  @assert(@readableStreamDefaultControllerCanCloseOrEnqueue(controller));\n  @putByIdDirectPrivate(controller, \"closeRequested\", true);\n  if (@getByIdDirectPrivate(controller, \"queue\")\?.content\?.isEmpty())\n    @readableStreamClose(@getByIdDirectPrivate(controller, \"controlledReadableStream\"));\n})\n";
 
 // readableStreamClose
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamCloseCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamCloseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamCloseCodeLength = 616;
+const int s_readableStreamInternalsReadableStreamCloseCodeLength = 808;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamCloseCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamCloseCode = "(function (d){\"use strict\";if(@assert(@getByIdDirectPrivate(d,\"state\")===@streamReadable),@putByIdDirectPrivate(d,\"state\",@streamClosed),!@getByIdDirectPrivate(d,\"reader\"))return;if(@isReadableStreamDefaultReader(@getByIdDirectPrivate(d,\"reader\"))){const _=@getByIdDirectPrivate(@getByIdDirectPrivate(d,\"reader\"),\"readRequests\");if(_.isNotEmpty()){@putByIdDirectPrivate(@getByIdDirectPrivate(d,\"reader\"),\"readRequests\",@createFIFO());for(var i=_.shift();i;i=_.shift())@fulfillPromise(i,{value:@undefined,done:!0})}}@getByIdDirectPrivate(@getByIdDirectPrivate(d,\"reader\"),\"closedPromiseCapability\").resolve.@call()})\n";
+const char* const s_readableStreamInternalsReadableStreamCloseCode = "(function (stream) {\"use strict\";\n  @assert(@getByIdDirectPrivate(stream, \"state\") === @streamReadable);\n  @putByIdDirectPrivate(stream, \"state\", @streamClosed);\n  if (!@getByIdDirectPrivate(stream, \"reader\"))\n    return;\n  if (@isReadableStreamDefaultReader(@getByIdDirectPrivate(stream, \"reader\"))) {\n    const requests = @getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readRequests\");\n    if (requests.isNotEmpty()) {\n      @putByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readRequests\", @createFIFO());\n      for (var request = requests.shift();request; request = requests.shift())\n        @fulfillPromise(request, { value: @undefined, done: true });\n    }\n  }\n  @getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"closedPromiseCapability\").resolve.@call();\n})\n";
 
 // readableStreamFulfillReadRequest
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamFulfillReadRequestCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamFulfillReadRequestCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamFulfillReadRequestCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamFulfillReadRequestCodeLength = 157;
+const int s_readableStreamInternalsReadableStreamFulfillReadRequestCodeLength = 216;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamFulfillReadRequestCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamFulfillReadRequestCode = "(function (i,p,y){\"use strict\";const _=@getByIdDirectPrivate(@getByIdDirectPrivate(i,\"reader\"),\"readRequests\").shift();@fulfillPromise(_,{value:p,done:y})})\n";
+const char* const s_readableStreamInternalsReadableStreamFulfillReadRequestCode = "(function (stream, chunk, done) {\"use strict\";\n  const readRequest = @getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readRequests\").shift();\n  @fulfillPromise(readRequest, { value: chunk, done });\n})\n";
 
 // readableStreamDefaultControllerEnqueue
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCodeLength = 659;
+const int s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCodeLength = 921;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCode = "(function (_,D){\"use strict\";const E=@getByIdDirectPrivate(_,\"controlledReadableStream\");if(@assert(@readableStreamDefaultControllerCanCloseOrEnqueue(_)),@isReadableStreamLocked(E)&&@getByIdDirectPrivate(@getByIdDirectPrivate(E,\"reader\"),\"readRequests\")\?.isNotEmpty()){@readableStreamFulfillReadRequest(E,D,!1),@readableStreamDefaultControllerCallPullIfNeeded(_);return}try{let d=1;if(@getByIdDirectPrivate(_,\"strategy\").size!==@undefined)d=@getByIdDirectPrivate(_,\"strategy\").size(D);@enqueueValueWithSize(@getByIdDirectPrivate(_,\"queue\"),D,d)}catch(d){throw @readableStreamDefaultControllerError(_,d),d}@readableStreamDefaultControllerCallPullIfNeeded(_)})\n";
+const char* const s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCode = "(function (controller, chunk) {\"use strict\";\n  const stream = @getByIdDirectPrivate(controller, \"controlledReadableStream\");\n  @assert(@readableStreamDefaultControllerCanCloseOrEnqueue(controller));\n  if (@isReadableStreamLocked(stream) && @getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readRequests\")\?.isNotEmpty()) {\n    @readableStreamFulfillReadRequest(stream, chunk, false);\n    @readableStreamDefaultControllerCallPullIfNeeded(controller);\n    return;\n  }\n  try {\n    let chunkSize = 1;\n    if (@getByIdDirectPrivate(controller, \"strategy\").size !== @undefined)\n      chunkSize = @getByIdDirectPrivate(controller, \"strategy\").size(chunk);\n    @enqueueValueWithSize(@getByIdDirectPrivate(controller, \"queue\"), chunk, chunkSize);\n  } catch (error) {\n    @readableStreamDefaultControllerError(controller, error);\n    throw error;\n  }\n  @readableStreamDefaultControllerCallPullIfNeeded(controller);\n})\n";
 
 // readableStreamDefaultReaderRead
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultReaderReadCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultReaderReadCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefaultReaderReadCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamDefaultReaderReadCodeLength = 491;
+const int s_readableStreamInternalsReadableStreamDefaultReaderReadCodeLength = 617;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultReaderReadCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamDefaultReaderReadCode = "(function (y){\"use strict\";const i=@getByIdDirectPrivate(y,\"ownerReadableStream\");@assert(!!i);const n=@getByIdDirectPrivate(i,\"state\");if(@putByIdDirectPrivate(i,\"disturbed\",!0),n===@streamClosed)return @createFulfilledPromise({value:@undefined,done:!0});if(n===@streamErrored)return @Promise.@reject(@getByIdDirectPrivate(i,\"storedError\"));return @assert(n===@streamReadable),@getByIdDirectPrivate(i,\"readableStreamController\").@pull(@getByIdDirectPrivate(i,\"readableStreamController\"))})\n";
+const char* const s_readableStreamInternalsReadableStreamDefaultReaderReadCode = "(function (reader) {\"use strict\";\n  const stream = @getByIdDirectPrivate(reader, \"ownerReadableStream\");\n  @assert(!!stream);\n  const state = @getByIdDirectPrivate(stream, \"state\");\n  @putByIdDirectPrivate(stream, \"disturbed\", true);\n  if (state === @streamClosed)\n    return @createFulfilledPromise({ value: @undefined, done: true });\n  if (state === @streamErrored)\n    return @Promise.@reject(@getByIdDirectPrivate(stream, \"storedError\"));\n  @assert(state === @streamReadable);\n  return @getByIdDirectPrivate(stream, \"readableStreamController\").@pull(@getByIdDirectPrivate(stream, \"readableStreamController\"));\n})\n";
 
 // readableStreamAddReadRequest
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamAddReadRequestCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamAddReadRequestCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamAddReadRequestCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamAddReadRequestCodeLength = 274;
+const int s_readableStreamInternalsReadableStreamAddReadRequestCodeLength = 350;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamAddReadRequestCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamAddReadRequestCode = "(function (h){\"use strict\";@assert(@isReadableStreamDefaultReader(@getByIdDirectPrivate(h,\"reader\"))),@assert(@getByIdDirectPrivate(h,\"state\")==@streamReadable);const i=@newPromise();return @getByIdDirectPrivate(@getByIdDirectPrivate(h,\"reader\"),\"readRequests\").push(i),i})\n";
+const char* const s_readableStreamInternalsReadableStreamAddReadRequestCode = "(function (stream) {\"use strict\";\n  @assert(@isReadableStreamDefaultReader(@getByIdDirectPrivate(stream, \"reader\")));\n  @assert(@getByIdDirectPrivate(stream, \"state\") == @streamReadable);\n  const readRequest = @newPromise();\n  @getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readRequests\").push(readRequest);\n  return readRequest;\n})\n";
 
 // isReadableStreamDisturbed
 const JSC::ConstructAbility s_readableStreamInternalsIsReadableStreamDisturbedCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsIsReadableStreamDisturbedCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsIsReadableStreamDisturbedCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsIsReadableStreamDisturbedCodeLength = 103;
+const int s_readableStreamInternalsIsReadableStreamDisturbedCodeLength = 128;
 static const JSC::Intrinsic s_readableStreamInternalsIsReadableStreamDisturbedCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsIsReadableStreamDisturbedCode = "(function (d){\"use strict\";return @assert(@isReadableStream(d)),@getByIdDirectPrivate(d,\"disturbed\")})\n";
+const char* const s_readableStreamInternalsIsReadableStreamDisturbedCode = "(function (stream) {\"use strict\";\n  @assert(@isReadableStream(stream));\n  return @getByIdDirectPrivate(stream, \"disturbed\");\n})\n";
 
 // readableStreamReaderGenericRelease
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamReaderGenericReleaseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamReaderGenericReleaseCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamReaderGenericReleaseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamReaderGenericReleaseCodeLength = 810;
+const int s_readableStreamInternalsReadableStreamReaderGenericReleaseCodeLength = 943;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamReaderGenericReleaseCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamReaderGenericReleaseCode = "(function (s){\"use strict\";if(@assert(!!@getByIdDirectPrivate(s,\"ownerReadableStream\")),@assert(@getByIdDirectPrivate(@getByIdDirectPrivate(s,\"ownerReadableStream\"),\"reader\")===s),@getByIdDirectPrivate(@getByIdDirectPrivate(s,\"ownerReadableStream\"),\"state\")===@streamReadable)@getByIdDirectPrivate(s,\"closedPromiseCapability\").reject.@call(@undefined,@makeTypeError(\"releasing lock of reader whose stream is still in readable state\"));else @putByIdDirectPrivate(s,\"closedPromiseCapability\",{promise:@newHandledRejectedPromise(@makeTypeError(\"reader released lock\"))});const t=@getByIdDirectPrivate(s,\"closedPromiseCapability\").promise;@markPromiseAsHandled(t),@putByIdDirectPrivate(@getByIdDirectPrivate(s,\"ownerReadableStream\"),\"reader\",@undefined),@putByIdDirectPrivate(s,\"ownerReadableStream\",@undefined)})\n";
+const char* const s_readableStreamInternalsReadableStreamReaderGenericReleaseCode = "(function (reader) {\"use strict\";\n  @assert(!!@getByIdDirectPrivate(reader, \"ownerReadableStream\"));\n  @assert(@getByIdDirectPrivate(@getByIdDirectPrivate(reader, \"ownerReadableStream\"), \"reader\") === reader);\n  if (@getByIdDirectPrivate(@getByIdDirectPrivate(reader, \"ownerReadableStream\"), \"state\") === @streamReadable)\n    @getByIdDirectPrivate(reader, \"closedPromiseCapability\").reject.@call(@undefined, @makeTypeError(\"releasing lock of reader whose stream is still in readable state\"));\n  else\n    @putByIdDirectPrivate(reader, \"closedPromiseCapability\", {\n      promise: @newHandledRejectedPromise(@makeTypeError(\"reader released lock\"))\n    });\n  const promise = @getByIdDirectPrivate(reader, \"closedPromiseCapability\").promise;\n  @markPromiseAsHandled(promise);\n  @putByIdDirectPrivate(@getByIdDirectPrivate(reader, \"ownerReadableStream\"), \"reader\", @undefined);\n  @putByIdDirectPrivate(reader, \"ownerReadableStream\", @undefined);\n})\n";
 
 // readableStreamDefaultControllerCanCloseOrEnqueue
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerCanCloseOrEnqueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerCanCloseOrEnqueueCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefaultControllerCanCloseOrEnqueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamDefaultControllerCanCloseOrEnqueueCodeLength = 180;
+const int s_readableStreamInternalsReadableStreamDefaultControllerCanCloseOrEnqueueCodeLength = 221;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerCanCloseOrEnqueueCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamDefaultControllerCanCloseOrEnqueueCode = "(function (a){\"use strict\";return!@getByIdDirectPrivate(a,\"closeRequested\")&&@getByIdDirectPrivate(@getByIdDirectPrivate(a,\"controlledReadableStream\"),\"state\")===@streamReadable})\n";
+const char* const s_readableStreamInternalsReadableStreamDefaultControllerCanCloseOrEnqueueCode = "(function (controller) {\"use strict\";\n  return !@getByIdDirectPrivate(controller, \"closeRequested\") && @getByIdDirectPrivate(@getByIdDirectPrivate(controller, \"controlledReadableStream\"), \"state\") === @streamReadable;\n})\n";
 
 // lazyLoadStream
 const JSC::ConstructAbility s_readableStreamInternalsLazyLoadStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsLazyLoadStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsLazyLoadStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsLazyLoadStreamCodeLength = 1589;
+const int s_readableStreamInternalsLazyLoadStreamCodeLength = 4023;
 static const JSC::Intrinsic s_readableStreamInternalsLazyLoadStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsLazyLoadStreamCode = "(function (J,P){\"use strict\";var G=@getByIdDirectPrivate(J,\"bunNativeType\"),B=@getByIdDirectPrivate(J,\"bunNativePtr\"),x=@lazyStreamPrototypeMap.@get(G);if(x===@undefined){let q=function(m){var{c:b,v:f}=this;this.c=@undefined,this.v=@undefined,I(m,b,f)},N=function(m){try{m.close()}catch(b){globalThis.reportError(b)}},O=function(m,b,f,j){j[0]=!1;var y;try{y=Q(m,f,j)}catch(Y){return b.error(Y)}return I(y,b,f)};var z=q,A=N,p=O,[Q,U,W,Z,D,K,X]=@lazyLoad(G),H=[!1],I;I=function m(b,f,j){if(b&&@isPromise(b))return b.then(q.bind({c:f,v:j}),(y)=>f.error(y));else if(typeof b===\"number\")if(j&&j.byteLength===b&&j.buffer===f.byobRequest\?.view\?.buffer)f.byobRequest.respondWithNewView(j);else f.byobRequest.respond(b);else if(b.constructor===@Uint8Array)f.enqueue(b);if(H[0]||b===!1)@enqueueJob(N,f),H[0]=!1};const F=D\?new FinalizationRegistry(D):null;x=class m{constructor(b,f,j){if(this.#f=b,this.#b={},this.pull=this.#j.bind(this),this.cancel=this.#m.bind(this),this.autoAllocateChunkSize=f,j!==@undefined)this.start=(y)=>{y.enqueue(j)};if(F)F.register(this,b,this.#b)}#b;pull;cancel;start;#f;type=\"bytes\";autoAllocateChunkSize=0;static startSync=U;#j(b){var f=this.#f;if(!f){b.close();return}O(f,b,b.byobRequest.view,H)}#m(b){var f=this.#f;F&&F.unregister(this.#b),K&&K(f,!1),W(f,b)}static deinit=D;static drain=X},@lazyStreamPrototypeMap.@set(G,x)}const L=x.startSync(B,P);var E;const{drain:M,deinit:_}=x;if(M)E=M(B);if(L===0){if(D&&B&&@enqueueJob(D,B),(E\?.byteLength\?\?0)>0)return{start(q){q.enqueue(E),q.close()},type:\"bytes\"};return{start(q){q.close()},type:\"bytes\"}}return new x(B,L,E)})\n";
+const char* const s_readableStreamInternalsLazyLoadStreamCode = "(function (stream, autoAllocateChunkSize) {\"use strict\";\n  var nativeType = @getByIdDirectPrivate(stream, \"bunNativeType\");\n  var nativePtr = @getByIdDirectPrivate(stream, \"bunNativePtr\");\n  var Prototype = @lazyStreamPrototypeMap.@get(nativeType);\n  if (Prototype === @undefined) {\n    let handleNativeReadableStreamPromiseResult2 = function(val) {\n      var { c, v } = this;\n      this.c = @undefined;\n      this.v = @undefined;\n      handleResult(val, c, v);\n    }, callClose2 = function(controller) {\n      try {\n        controller.close();\n      } catch (e) {\n        globalThis.reportError(e);\n      }\n    }, createResult2 = function(tag, controller, view, closer2) {\n      closer2[0] = false;\n      var result;\n      try {\n        result = pull(tag, view, closer2);\n      } catch (err) {\n        return controller.error(err);\n      }\n      return handleResult(result, controller, view);\n    };\n    var handleNativeReadableStreamPromiseResult = handleNativeReadableStreamPromiseResult2, callClose = callClose2, createResult = createResult2;\n    var [pull, start, cancel, setClose, deinit, setRefOrUnref, drain] = @lazyLoad(nativeType);\n    var closer = [false];\n    var handleResult;\n    handleResult = function handleResult(result, controller, view) {\n      if (result && @isPromise(result)) {\n        return result.then(handleNativeReadableStreamPromiseResult2.bind({\n          c: controller,\n          v: view\n        }), (err) => controller.error(err));\n      } else if (typeof result === \"number\") {\n        if (view && view.byteLength === result && view.buffer === controller.byobRequest\?.view\?.buffer) {\n          controller.byobRequest.respondWithNewView(view);\n        } else {\n          controller.byobRequest.respond(result);\n        }\n      } else if (result.constructor === @Uint8Array) {\n        controller.enqueue(result);\n      }\n      if (closer[0] || result === false) {\n        @enqueueJob(callClose2, controller);\n        closer[0] = false;\n      }\n    };\n    const registry = deinit \? new FinalizationRegistry(deinit) : null;\n    Prototype = class NativeReadableStreamSource {\n      constructor(tag, autoAllocateChunkSize2, drainValue2) {\n        this.#tag = tag;\n        this.#cancellationToken = {};\n        this.pull = this.#pull.bind(this);\n        this.cancel = this.#cancel.bind(this);\n        this.autoAllocateChunkSize = autoAllocateChunkSize2;\n        if (drainValue2 !== @undefined) {\n          this.start = (controller) => {\n            controller.enqueue(drainValue2);\n          };\n        }\n        if (registry) {\n          registry.register(this, tag, this.#cancellationToken);\n        }\n      }\n      #cancellationToken;\n      pull;\n      cancel;\n      start;\n      #tag;\n      type = \"bytes\";\n      autoAllocateChunkSize = 0;\n      static startSync = start;\n      #pull(controller) {\n        var tag = this.#tag;\n        if (!tag) {\n          controller.close();\n          return;\n        }\n        createResult2(tag, controller, controller.byobRequest.view, closer);\n      }\n      #cancel(reason) {\n        var tag = this.#tag;\n        registry && registry.unregister(this.#cancellationToken);\n        setRefOrUnref && setRefOrUnref(tag, false);\n        cancel(tag, reason);\n      }\n      static deinit = deinit;\n      static drain = drain;\n    };\n    @lazyStreamPrototypeMap.@set(nativeType, Prototype);\n  }\n  const chunkSize = Prototype.startSync(nativePtr, autoAllocateChunkSize);\n  var drainValue;\n  const { drain: drainFn, deinit: deinitFn } = Prototype;\n  if (drainFn) {\n    drainValue = drainFn(nativePtr);\n  }\n  if (chunkSize === 0) {\n    deinit && nativePtr && @enqueueJob(deinit, nativePtr);\n    if ((drainValue\?.byteLength \?\? 0) > 0) {\n      return {\n        start(controller) {\n          controller.enqueue(drainValue);\n          controller.close();\n        },\n        type: \"bytes\"\n      };\n    }\n    return {\n      start(controller) {\n        controller.close();\n      },\n      type: \"bytes\"\n    };\n  }\n  return new Prototype(nativePtr, chunkSize, drainValue);\n})\n";
 
 // readableStreamIntoArray
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamIntoArrayCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamIntoArrayCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamIntoArrayCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamIntoArrayCodeLength = 247;
+const int s_readableStreamInternalsReadableStreamIntoArrayCodeLength = 568;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamIntoArrayCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamIntoArrayCode = "(function (q){\"use strict\";var b=q.getReader(),f=b.readMany();async function g(j){if(j.done)return[];var _=j.value||[];while(!0){var p=await b.read();if(p.done)break;_=_.concat(p.value)}return _}if(f&&@isPromise(f))return f.@then(g);return g(f)})\n";
+const char* const s_readableStreamInternalsReadableStreamIntoArrayCode = "(function (stream) {\"use strict\";\n  var reader = stream.getReader();\n  var manyResult = reader.readMany();\n  async function processManyResult(result) {\n    if (result.done) {\n      return [];\n    }\n    var chunks = result.value || [];\n    while (true) {\n      var thisResult = await reader.read();\n      if (thisResult.done) {\n        break;\n      }\n      chunks = chunks.concat(thisResult.value);\n    }\n    return chunks;\n  }\n  if (manyResult && @isPromise(manyResult)) {\n    return manyResult.@then(processManyResult);\n  }\n  return processManyResult(manyResult);\n})\n";
 
 // readableStreamIntoText
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamIntoTextCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamIntoTextCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamIntoTextCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamIntoTextCodeLength = 212;
+const int s_readableStreamInternalsReadableStreamIntoTextCodeLength = 319;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamIntoTextCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamIntoTextCode = "(function (h){\"use strict\";const[_,T]=@createTextStream(@getByIdDirectPrivate(h,\"highWaterMark\")),i=@readStreamIntoSink(h,_,!1);if(i&&@isPromise(i))return @Promise.@resolve(i).@then(T.promise);return T.promise})\n";
+const char* const s_readableStreamInternalsReadableStreamIntoTextCode = "(function (stream) {\"use strict\";\n  const [textStream, closer] = @createTextStream(@getByIdDirectPrivate(stream, \"highWaterMark\"));\n  const prom = @readStreamIntoSink(stream, textStream, false);\n  if (prom && @isPromise(prom)) {\n    return @Promise.@resolve(prom).@then(closer.promise);\n  }\n  return closer.promise;\n})\n";
 
 // readableStreamToArrayBufferDirect
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamToArrayBufferDirectCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamToArrayBufferDirectCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamToArrayBufferDirectCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamToArrayBufferDirectCodeLength = 724;
+const int s_readableStreamInternalsReadableStreamToArrayBufferDirectCodeLength = 1533;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamToArrayBufferDirectCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamToArrayBufferDirectCode = "(function (j,B){\"use strict\";var q=new @Bun.ArrayBufferSink;@putByIdDirectPrivate(j,\"underlyingSource\",@undefined);var C=@getByIdDirectPrivate(j,\"highWaterMark\");q.start(C\?{highWaterMark:C}:{});var x=@newPromiseCapability(@Promise),v=!1,z=B.pull,w=B.close,A={start(){},close(_){if(!v){if(v=!0,w)w();@fulfillPromise(x.promise,q.end())}},end(){if(!v){if(v=!0,w)w();@fulfillPromise(x.promise,q.end())}},flush(){return 0},write:q.write.bind(q)},D=!1;try{const _=z(A);if(_&&@isObject(_)&&@isPromise(_))return async function(F,G,H){while(!v)await H(F);return await G}(A,promise,z);return x.promise}catch(_){return D=!0,@readableStreamError(j,_),@Promise.@reject(_)}finally{if(!D&&j)@readableStreamClose(j);A=w=q=z=j=@undefined}})\n";
+const char* const s_readableStreamInternalsReadableStreamToArrayBufferDirectCode = "(function (stream, underlyingSource) {\"use strict\";\n  var sink = new @Bun.ArrayBufferSink;\n  @putByIdDirectPrivate(stream, \"underlyingSource\", @undefined);\n  var highWaterMark = @getByIdDirectPrivate(stream, \"highWaterMark\");\n  sink.start(highWaterMark \? { highWaterMark } : {});\n  var capability = @newPromiseCapability(@Promise);\n  var ended = false;\n  var pull = underlyingSource.pull;\n  var close = underlyingSource.close;\n  var controller = {\n    start() {\n    },\n    close(reason) {\n      if (!ended) {\n        ended = true;\n        if (close) {\n          close();\n        }\n        @fulfillPromise(capability.promise, sink.end());\n      }\n    },\n    end() {\n      if (!ended) {\n        ended = true;\n        if (close) {\n          close();\n        }\n        @fulfillPromise(capability.promise, sink.end());\n      }\n    },\n    flush() {\n      return 0;\n    },\n    write: sink.write.bind(sink)\n  };\n  var didError = false;\n  try {\n    const firstPull = pull(controller);\n    if (firstPull && @isObject(firstPull) && @isPromise(firstPull)) {\n      return async function(controller2, promise2, pull2) {\n        while (!ended) {\n          await pull2(controller2);\n        }\n        return await promise2;\n      }(controller, promise, pull);\n    }\n    return capability.promise;\n  } catch (e) {\n    didError = true;\n    @readableStreamError(stream, e);\n    return @Promise.@reject(e);\n  } finally {\n    if (!didError && stream)\n      @readableStreamClose(stream);\n    controller = close = sink = pull = stream = @undefined;\n  }\n})\n";
 
 // readableStreamToTextDirect
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamToTextDirectCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamToTextDirectCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamToTextDirectCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamToTextDirectCodeLength = 277;
+const int s_readableStreamInternalsReadableStreamToTextDirectCodeLength = 476;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamToTextDirectCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamToTextDirectCode = "(async function (f,j){\"use strict\";const k=@initializeTextStream.@call(f,j,@undefined);var h=f.getReader();while(@getByIdDirectPrivate(f,\"state\")===@streamReadable){var q=await h.read();if(q.done)break}try{h.releaseLock()}catch(v){}return h=@undefined,f=@undefined,k.promise})\n";
+const char* const s_readableStreamInternalsReadableStreamToTextDirectCode = "(async function (stream, underlyingSource) {\"use strict\";\n  const capability = @initializeTextStream.@call(stream, underlyingSource, @undefined);\n  var reader = stream.getReader();\n  while (@getByIdDirectPrivate(stream, \"state\") === @streamReadable) {\n    var thisResult = await reader.read();\n    if (thisResult.done) {\n      break;\n    }\n  }\n  try {\n    reader.releaseLock();\n  } catch (e) {\n  }\n  reader = @undefined;\n  stream = @undefined;\n  return capability.promise;\n})\n";
 
 // readableStreamToArrayDirect
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamToArrayDirectCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamToArrayDirectCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamToArrayDirectCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamToArrayDirectCodeLength = 353;
+const int s_readableStreamInternalsReadableStreamToArrayDirectCodeLength = 635;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamToArrayDirectCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamToArrayDirectCode = "(async function (_,j){\"use strict\";const q=@initializeArrayStream.@call(_,j,@undefined);j=@undefined;var f=_.getReader();try{while(@getByIdDirectPrivate(_,\"state\")===@streamReadable){var v=await f.read();if(v.done)break}try{f.releaseLock()}catch(k){}return f=@undefined,@Promise.@resolve(q.promise)}catch(k){throw k}finally{_=@undefined,f=@undefined}})\n";
+const char* const s_readableStreamInternalsReadableStreamToArrayDirectCode = "(async function (stream, underlyingSource) {\"use strict\";\n  const capability = @initializeArrayStream.@call(stream, underlyingSource, @undefined);\n  underlyingSource = @undefined;\n  var reader = stream.getReader();\n  try {\n    while (@getByIdDirectPrivate(stream, \"state\") === @streamReadable) {\n      var thisResult = await reader.read();\n      if (thisResult.done) {\n        break;\n      }\n    }\n    try {\n      reader.releaseLock();\n    } catch (e) {\n    }\n    reader = @undefined;\n    return @Promise.@resolve(capability.promise);\n  } catch (e) {\n    throw e;\n  } finally {\n    stream = @undefined;\n    reader = @undefined;\n  }\n})\n";
 
 // readableStreamDefineLazyIterators
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeLength = 516;
+const int s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeLength = 1285;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsReadableStreamDefineLazyIteratorsCode = "(function (i){\"use strict\";var B=globalThis.Symbol.asyncIterator,w=async function*x(k,G){var z=k.getReader(),g;try{while(!0){var j,q;const h=z.readMany();if(@isPromise(h))({done:j,value:q}=await h);else({done:j,value:q}=h);if(j)return;yield*q}}catch(h){g=h}finally{if(z.releaseLock(),!G)k.cancel(g);if(g)throw g}},D=function x(){return w(this,!1)},F=function x({preventCancel:k=!1}={preventCancel:!1}){return w(this,k)};return @Object.@defineProperty(i,B,{value:D}),@Object.@defineProperty(i,\"values\",{value:F}),i})\n";
+const char* const s_readableStreamInternalsReadableStreamDefineLazyIteratorsCode = "(function (prototype) {\"use strict\";\n  var asyncIterator = globalThis.Symbol.asyncIterator;\n  var ReadableStreamAsyncIterator = async function* ReadableStreamAsyncIterator(stream, preventCancel) {\n    var reader = stream.getReader();\n    var deferredError;\n    try {\n      while (true) {\n        var done, value;\n        const firstResult = reader.readMany();\n        if (@isPromise(firstResult)) {\n          ({ done, value } = await firstResult);\n        } else {\n          ({ done, value } = firstResult);\n        }\n        if (done) {\n          return;\n        }\n        yield* value;\n      }\n    } catch (e) {\n      deferredError = e;\n    } finally {\n      reader.releaseLock();\n      if (!preventCancel) {\n        stream.cancel(deferredError);\n      }\n      if (deferredError) {\n        throw deferredError;\n      }\n    }\n  };\n  var createAsyncIterator = function asyncIterator() {\n    return ReadableStreamAsyncIterator(this, false);\n  };\n  var createValues = function values({ preventCancel = false } = { preventCancel: false }) {\n    return ReadableStreamAsyncIterator(this, preventCancel);\n  };\n  @Object.@defineProperty(prototype, asyncIterator, { value: createAsyncIterator });\n  @Object.@defineProperty(prototype, \"values\", { value: createValues });\n  return prototype;\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -1884,41 +1910,41 @@ WEBCORE_FOREACH_READABLESTREAMINTERNALS_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 const JSC::ConstructAbility s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeLength = 40;
+const int s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeLength = 46;
 static const JSC::Intrinsic s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCode = "(function (){\"use strict\";return this})\n";
+const char* const s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCode = "(function () {\"use strict\";\n  return this;\n})\n";
 
 // desiredSize
 const JSC::ConstructAbility s_transformStreamDefaultControllerDesiredSizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamDefaultControllerDesiredSizeCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamDefaultControllerDesiredSizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamDefaultControllerDesiredSizeCodeLength = 339;
+const int s_transformStreamDefaultControllerDesiredSizeCodeLength = 443;
 static const JSC::Intrinsic s_transformStreamDefaultControllerDesiredSizeCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamDefaultControllerDesiredSizeCode = "(function (){\"use strict\";if(!@isTransformStreamDefaultController(this))throw @makeThisTypeError(\"TransformStreamDefaultController\",\"enqueue\");const _=@getByIdDirectPrivate(this,\"stream\"),u=@getByIdDirectPrivate(_,\"readable\"),i=@getByIdDirectPrivate(u,\"readableStreamController\");return @readableStreamDefaultControllerGetDesiredSize(i)})\n";
+const char* const s_transformStreamDefaultControllerDesiredSizeCode = "(function () {\"use strict\";\n  if (!@isTransformStreamDefaultController(this))\n    throw @makeThisTypeError(\"TransformStreamDefaultController\", \"enqueue\");\n  const stream = @getByIdDirectPrivate(this, \"stream\");\n  const readable = @getByIdDirectPrivate(stream, \"readable\");\n  const readableController = @getByIdDirectPrivate(readable, \"readableStreamController\");\n  return @readableStreamDefaultControllerGetDesiredSize(readableController);\n})\n";
 
 // enqueue
 const JSC::ConstructAbility s_transformStreamDefaultControllerEnqueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamDefaultControllerEnqueueCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamDefaultControllerEnqueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamDefaultControllerEnqueueCodeLength = 195;
+const int s_transformStreamDefaultControllerEnqueueCodeLength = 220;
 static const JSC::Intrinsic s_transformStreamDefaultControllerEnqueueCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamDefaultControllerEnqueueCode = "(function (a){\"use strict\";if(!@isTransformStreamDefaultController(this))throw @makeThisTypeError(\"TransformStreamDefaultController\",\"enqueue\");@transformStreamDefaultControllerEnqueue(this,a)})\n";
+const char* const s_transformStreamDefaultControllerEnqueueCode = "(function (chunk) {\"use strict\";\n  if (!@isTransformStreamDefaultController(this))\n    throw @makeThisTypeError(\"TransformStreamDefaultController\", \"enqueue\");\n  @transformStreamDefaultControllerEnqueue(this, chunk);\n})\n";
 
 // error
 const JSC::ConstructAbility s_transformStreamDefaultControllerErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamDefaultControllerErrorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamDefaultControllerErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamDefaultControllerErrorCodeLength = 191;
+const int s_transformStreamDefaultControllerErrorCodeLength = 208;
 static const JSC::Intrinsic s_transformStreamDefaultControllerErrorCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamDefaultControllerErrorCode = "(function (t){\"use strict\";if(!@isTransformStreamDefaultController(this))throw @makeThisTypeError(\"TransformStreamDefaultController\",\"error\");@transformStreamDefaultControllerError(this,t)})\n";
+const char* const s_transformStreamDefaultControllerErrorCode = "(function (e) {\"use strict\";\n  if (!@isTransformStreamDefaultController(this))\n    throw @makeThisTypeError(\"TransformStreamDefaultController\", \"error\");\n  @transformStreamDefaultControllerError(this, e);\n})\n";
 
 // terminate
 const JSC::ConstructAbility s_transformStreamDefaultControllerTerminateCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamDefaultControllerTerminateCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_transformStreamDefaultControllerTerminateCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_transformStreamDefaultControllerTerminateCodeLength = 196;
+const int s_transformStreamDefaultControllerTerminateCodeLength = 212;
 static const JSC::Intrinsic s_transformStreamDefaultControllerTerminateCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_transformStreamDefaultControllerTerminateCode = "(function (){\"use strict\";if(!@isTransformStreamDefaultController(this))throw @makeThisTypeError(\"TransformStreamDefaultController\",\"terminate\");@transformStreamDefaultControllerTerminate(this)})\n";
+const char* const s_transformStreamDefaultControllerTerminateCode = "(function () {\"use strict\";\n  if (!@isTransformStreamDefaultController(this))\n    throw @makeThisTypeError(\"TransformStreamDefaultController\", \"terminate\");\n  @transformStreamDefaultControllerTerminate(this);\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -1934,17 +1960,17 @@ WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_CODE(DEFINE_BUILTIN_GEN
 const JSC::ConstructAbility s_asyncContextGetAsyncContextCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_asyncContextGetAsyncContextCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_asyncContextGetAsyncContextCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_asyncContextGetAsyncContextCodeLength = 70;
+const int s_asyncContextGetAsyncContextCodeLength = 77;
 static const JSC::Intrinsic s_asyncContextGetAsyncContextCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_asyncContextGetAsyncContextCode = "(function (){\"use strict\";return @getInternalField(@asyncContext,0)})\n";
+const char* const s_asyncContextGetAsyncContextCode = "(function () {\"use strict\";\n  return @getInternalField(@asyncContext, 0);\n})\n";
 
 // setAsyncContext
 const JSC::ConstructAbility s_asyncContextSetAsyncContextCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_asyncContextSetAsyncContextCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_asyncContextSetAsyncContextCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_asyncContextSetAsyncContextCodeLength = 73;
+const int s_asyncContextSetAsyncContextCodeLength = 103;
 static const JSC::Intrinsic s_asyncContextSetAsyncContextCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_asyncContextSetAsyncContextCode = "(function (r){\"use strict\";return @putInternalField(@asyncContext,0,r)})\n";
+const char* const s_asyncContextSetAsyncContextCode = "(function (contextValue) {\"use strict\";\n  return @putInternalField(@asyncContext, 0, contextValue);\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -1960,41 +1986,41 @@ WEBCORE_FOREACH_ASYNCCONTEXT_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 const JSC::ConstructAbility s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCodeLength = 485;
+const int s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCodeLength = 553;
 static const JSC::Intrinsic s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCode = "(function (n){\"use strict\";if(!@isReadableStream(n))@throwTypeError(\"ReadableStreamBYOBReader needs a ReadableStream\");if(!@isReadableByteStreamController(@getByIdDirectPrivate(n,\"readableStreamController\")))@throwTypeError(\"ReadableStreamBYOBReader needs a ReadableByteStreamController\");if(@isReadableStreamLocked(n))@throwTypeError(\"ReadableStream is locked\");return @readableStreamReaderGenericInitialize(this,n),@putByIdDirectPrivate(this,\"readIntoRequests\",@createFIFO()),this})\n";
+const char* const s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCode = "(function (stream) {\"use strict\";\n  if (!@isReadableStream(stream))\n    @throwTypeError(\"ReadableStreamBYOBReader needs a ReadableStream\");\n  if (!@isReadableByteStreamController(@getByIdDirectPrivate(stream, \"readableStreamController\")))\n    @throwTypeError(\"ReadableStreamBYOBReader needs a ReadableByteStreamController\");\n  if (@isReadableStreamLocked(stream))\n    @throwTypeError(\"ReadableStream is locked\");\n  @readableStreamReaderGenericInitialize(this, stream);\n  @putByIdDirectPrivate(this, \"readIntoRequests\", @createFIFO());\n  return this;\n})\n";
 
 // cancel
 const JSC::ConstructAbility s_readableStreamBYOBReaderCancelCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamBYOBReaderCancelCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamBYOBReaderCancelCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamBYOBReaderCancelCodeLength = 351;
+const int s_readableStreamBYOBReaderCancelCodeLength = 388;
 static const JSC::Intrinsic s_readableStreamBYOBReaderCancelCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamBYOBReaderCancelCode = "(function (t){\"use strict\";if(!@isReadableStreamBYOBReader(this))return @Promise.@reject(@makeThisTypeError(\"ReadableStreamBYOBReader\",\"cancel\"));if(!@getByIdDirectPrivate(this,\"ownerReadableStream\"))return @Promise.@reject(@makeTypeError(\"cancel() called on a reader owned by no readable stream\"));return @readableStreamReaderGenericCancel(this,t)})\n";
+const char* const s_readableStreamBYOBReaderCancelCode = "(function (reason) {\"use strict\";\n  if (!@isReadableStreamBYOBReader(this))\n    return @Promise.@reject(@makeThisTypeError(\"ReadableStreamBYOBReader\", \"cancel\"));\n  if (!@getByIdDirectPrivate(this, \"ownerReadableStream\"))\n    return @Promise.@reject(@makeTypeError(\"cancel() called on a reader owned by no readable stream\"));\n  return @readableStreamReaderGenericCancel(this, reason);\n})\n";
 
 // read
 const JSC::ConstructAbility s_readableStreamBYOBReaderReadCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamBYOBReaderReadCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamBYOBReaderReadCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamBYOBReaderReadCodeLength = 648;
+const int s_readableStreamBYOBReaderReadCodeLength = 719;
 static const JSC::Intrinsic s_readableStreamBYOBReaderReadCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamBYOBReaderReadCode = "(function (t){\"use strict\";if(!@isReadableStreamBYOBReader(this))return @Promise.@reject(@makeThisTypeError(\"ReadableStreamBYOBReader\",\"read\"));if(!@getByIdDirectPrivate(this,\"ownerReadableStream\"))return @Promise.@reject(@makeTypeError(\"read() called on a reader owned by no readable stream\"));if(!@isObject(t))return @Promise.@reject(@makeTypeError(\"Provided view is not an object\"));if(!@ArrayBuffer.@isView(t))return @Promise.@reject(@makeTypeError(\"Provided view is not an ArrayBufferView\"));if(t.byteLength===0)return @Promise.@reject(@makeTypeError(\"Provided view cannot have a 0 byteLength\"));return @readableStreamBYOBReaderRead(this,t)})\n";
+const char* const s_readableStreamBYOBReaderReadCode = "(function (view) {\"use strict\";\n  if (!@isReadableStreamBYOBReader(this))\n    return @Promise.@reject(@makeThisTypeError(\"ReadableStreamBYOBReader\", \"read\"));\n  if (!@getByIdDirectPrivate(this, \"ownerReadableStream\"))\n    return @Promise.@reject(@makeTypeError(\"read() called on a reader owned by no readable stream\"));\n  if (!@isObject(view))\n    return @Promise.@reject(@makeTypeError(\"Provided view is not an object\"));\n  if (!@ArrayBuffer.@isView(view))\n    return @Promise.@reject(@makeTypeError(\"Provided view is not an ArrayBufferView\"));\n  if (view.byteLength === 0)\n    return @Promise.@reject(@makeTypeError(\"Provided view cannot have a 0 byteLength\"));\n  return @readableStreamBYOBReaderRead(this, view);\n})\n";
 
 // releaseLock
 const JSC::ConstructAbility s_readableStreamBYOBReaderReleaseLockCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamBYOBReaderReleaseLockCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamBYOBReaderReleaseLockCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamBYOBReaderReleaseLockCodeLength = 382;
+const int s_readableStreamBYOBReaderReleaseLockCodeLength = 418;
 static const JSC::Intrinsic s_readableStreamBYOBReaderReleaseLockCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamBYOBReaderReleaseLockCode = "(function (){\"use strict\";if(!@isReadableStreamBYOBReader(this))throw @makeThisTypeError(\"ReadableStreamBYOBReader\",\"releaseLock\");if(!@getByIdDirectPrivate(this,\"ownerReadableStream\"))return;if(@getByIdDirectPrivate(this,\"readIntoRequests\")\?.isNotEmpty())@throwTypeError(\"There are still pending read requests, cannot release the lock\");@readableStreamReaderGenericRelease(this)})\n";
+const char* const s_readableStreamBYOBReaderReleaseLockCode = "(function () {\"use strict\";\n  if (!@isReadableStreamBYOBReader(this))\n    throw @makeThisTypeError(\"ReadableStreamBYOBReader\", \"releaseLock\");\n  if (!@getByIdDirectPrivate(this, \"ownerReadableStream\"))\n    return;\n  if (@getByIdDirectPrivate(this, \"readIntoRequests\")\?.isNotEmpty())\n    @throwTypeError(\"There are still pending read requests, cannot release the lock\");\n  @readableStreamReaderGenericRelease(this);\n})\n";
 
 // closed
 const JSC::ConstructAbility s_readableStreamBYOBReaderClosedCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamBYOBReaderClosedCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamBYOBReaderClosedCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamBYOBReaderClosedCodeLength = 218;
+const int s_readableStreamBYOBReaderClosedCodeLength = 235;
 static const JSC::Intrinsic s_readableStreamBYOBReaderClosedCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamBYOBReaderClosedCode = "(function (){\"use strict\";if(!@isReadableStreamBYOBReader(this))return @Promise.@reject(@makeGetterTypeError(\"ReadableStreamBYOBReader\",\"closed\"));return @getByIdDirectPrivate(this,\"closedPromiseCapability\").promise})\n";
+const char* const s_readableStreamBYOBReaderClosedCode = "(function () {\"use strict\";\n  if (!@isReadableStreamBYOBReader(this))\n    return @Promise.@reject(@makeGetterTypeError(\"ReadableStreamBYOBReader\", \"closed\"));\n  return @getByIdDirectPrivate(this, \"closedPromiseCapability\").promise;\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -2010,17 +2036,17 @@ WEBCORE_FOREACH_READABLESTREAMBYOBREADER_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 const JSC::ConstructAbility s_jsBufferConstructorFromCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferConstructorFromCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferConstructorFromCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferConstructorFromCodeLength = 1107;
+const int s_jsBufferConstructorFromCodeLength = 1639;
 static const JSC::Intrinsic s_jsBufferConstructorFromCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferConstructorFromCode = "(function (n){\"use strict\";if(@isUndefinedOrNull(n))@throwTypeError(\"The first argument must be one of type string, Buffer, ArrayBuffer, Array, or Array-like Object.\");if(typeof n===\"string\"||typeof n===\"object\"&&(@isTypedArrayView(n)||n instanceof @ArrayBuffer||n instanceof SharedArrayBuffer||n instanceof String))switch(@argumentCount()){case 1:return new @Buffer(n);case 2:return new @Buffer(n,@argument(1));default:return new @Buffer(n,@argument(1),@argument(2))}var d=@toObject(n,\"The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object.\");if(!@isJSArray(d)){const u=@tryGetByIdWithWellKnownSymbol(n,\"toPrimitive\");if(u){const f=u.@call(n,\"string\");if(typeof f===\"string\")switch(@argumentCount()){case 1:return new @Buffer(f);case 2:return new @Buffer(f,@argument(1));default:return new @Buffer(f,@argument(1),@argument(2))}}if(!(\"length\"in d)||@isCallable(d))@throwTypeError(\"The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object.\")}return new @Buffer(@Uint8Array.from(d).buffer)})\n";
+const char* const s_jsBufferConstructorFromCode = "(function (items) {\"use strict\";\n  if (@isUndefinedOrNull(items)) {\n    @throwTypeError(\"The first argument must be one of type string, Buffer, ArrayBuffer, Array, or Array-like Object.\");\n  }\n  if (typeof items === \"string\" || typeof items === \"object\" && (@isTypedArrayView(items) || items instanceof @ArrayBuffer || items instanceof SharedArrayBuffer || items instanceof String)) {\n    switch (@argumentCount()) {\n      case 1: {\n        return new @Buffer(items);\n      }\n      case 2: {\n        return new @Buffer(items, @argument(1));\n      }\n      default: {\n        return new @Buffer(items, @argument(1), @argument(2));\n      }\n    }\n  }\n  var arrayLike = @toObject(items, \"The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object.\");\n  if (!@isJSArray(arrayLike)) {\n    const toPrimitive = @tryGetByIdWithWellKnownSymbol(items, \"toPrimitive\");\n    if (toPrimitive) {\n      const primitive = toPrimitive.@call(items, \"string\");\n      if (typeof primitive === \"string\") {\n        switch (@argumentCount()) {\n          case 1: {\n            return new @Buffer(primitive);\n          }\n          case 2: {\n            return new @Buffer(primitive, @argument(1));\n          }\n          default: {\n            return new @Buffer(primitive, @argument(1), @argument(2));\n          }\n        }\n      }\n    }\n    if (!(\"length\" in arrayLike) || @isCallable(arrayLike)) {\n      @throwTypeError(\"The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object.\");\n    }\n  }\n  return new @Buffer(@Uint8Array.from(arrayLike).buffer);\n})\n";
 
 // isBuffer
 const JSC::ConstructAbility s_jsBufferConstructorIsBufferCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferConstructorIsBufferCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferConstructorIsBufferCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferConstructorIsBufferCodeLength = 57;
+const int s_jsBufferConstructorIsBufferCodeLength = 81;
 static const JSC::Intrinsic s_jsBufferConstructorIsBufferCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferConstructorIsBufferCode = "(function (a){\"use strict\";return a instanceof @Buffer})\n";
+const char* const s_jsBufferConstructorIsBufferCode = "(function (bufferlike) {\"use strict\";\n  return bufferlike instanceof @Buffer;\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -2036,49 +2062,53 @@ WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 const JSC::ConstructAbility s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeLength = 314;
+const int s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeLength = 367;
 static const JSC::Intrinsic s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCode = "(function (n){\"use strict\";if(!@isReadableStream(n))@throwTypeError(\"ReadableStreamDefaultReader needs a ReadableStream\");if(@isReadableStreamLocked(n))@throwTypeError(\"ReadableStream is locked\");return @readableStreamReaderGenericInitialize(this,n),@putByIdDirectPrivate(this,\"readRequests\",@createFIFO()),this})\n";
+const char* const s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCode = "(function (stream) {\"use strict\";\n  if (!@isReadableStream(stream))\n    @throwTypeError(\"ReadableStreamDefaultReader needs a ReadableStream\");\n  if (@isReadableStreamLocked(stream))\n    @throwTypeError(\"ReadableStream is locked\");\n  @readableStreamReaderGenericInitialize(this, stream);\n  @putByIdDirectPrivate(this, \"readRequests\", @createFIFO());\n  return this;\n})\n";
 
 // cancel
 const JSC::ConstructAbility s_readableStreamDefaultReaderCancelCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamDefaultReaderCancelCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamDefaultReaderCancelCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamDefaultReaderCancelCodeLength = 357;
+const int s_readableStreamDefaultReaderCancelCodeLength = 394;
 static const JSC::Intrinsic s_readableStreamDefaultReaderCancelCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamDefaultReaderCancelCode = "(function (i){\"use strict\";if(!@isReadableStreamDefaultReader(this))return @Promise.@reject(@makeThisTypeError(\"ReadableStreamDefaultReader\",\"cancel\"));if(!@getByIdDirectPrivate(this,\"ownerReadableStream\"))return @Promise.@reject(@makeTypeError(\"cancel() called on a reader owned by no readable stream\"));return @readableStreamReaderGenericCancel(this,i)})\n";
+const char* const s_readableStreamDefaultReaderCancelCode = "(function (reason) {\"use strict\";\n  if (!@isReadableStreamDefaultReader(this))\n    return @Promise.@reject(@makeThisTypeError(\"ReadableStreamDefaultReader\", \"cancel\"));\n  if (!@getByIdDirectPrivate(this, \"ownerReadableStream\"))\n    return @Promise.@reject(@makeTypeError(\"cancel() called on a reader owned by no readable stream\"));\n  return @readableStreamReaderGenericCancel(this, reason);\n})\n";
 
 // readMany
 const JSC::ConstructAbility s_readableStreamDefaultReaderReadManyCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamDefaultReaderReadManyCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamDefaultReaderReadManyCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamDefaultReaderReadManyCodeLength = 2598;
+const int s_readableStreamDefaultReaderReadManyCodeLength = 4069;
 static const JSC::Intrinsic s_readableStreamDefaultReaderReadManyCodeIntrinsic = JSC::NoIntrinsic;
+<<<<<<< HEAD
 const char* const s_readableStreamDefaultReaderReadManyCode = "(function (){\"use strict\";if(!@isReadableStreamDefaultReader(this))@throwTypeError(\"ReadableStreamDefaultReader.readMany() should not be called directly\");const k=@getByIdDirectPrivate(this,\"ownerReadableStream\");if(!k)@throwTypeError(\"readMany() called on a reader owned by no readable stream\");const H=@getByIdDirectPrivate(k,\"state\");if(@putByIdDirectPrivate(k,\"disturbed\",!0),H===@streamClosed)return{value:[],size:0,done:!0};else if(H===@streamErrored)throw @getByIdDirectPrivate(k,\"storedError\");var d=@getByIdDirectPrivate(k,\"readableStreamController\"),E=@getByIdDirectPrivate(d,\"queue\");if(!E)return d.@pull(d).@then(function({done:_,value:B}){return _\?{done:!0,value:[],size:0}:{value:[B],size:1,done:!1}});const L=E.content;var N=E.size,A=L.toArray(!1),C=A.length;if(C>0){var j=@newArrayWithSize(C);if(@isReadableByteStreamController(d)){{const _=A[0];if(!(@ArrayBuffer.@isView(_)||_ instanceof @ArrayBuffer))@putByValDirect(j,0,new @Uint8Array(_.buffer,_.byteOffset,_.byteLength));else @putByValDirect(j,0,_)}for(var w=1;w<C;w++){const _=A[w];if(!(@ArrayBuffer.@isView(_)||_ instanceof @ArrayBuffer))@putByValDirect(j,w,new @Uint8Array(_.buffer,_.byteOffset,_.byteLength));else @putByValDirect(j,w,_)}}else{@putByValDirect(j,0,A[0].value);for(var w=1;w<C;w++)@putByValDirect(j,w,A[w].value)}if(@resetQueue(@getByIdDirectPrivate(d,\"queue\")),@getByIdDirectPrivate(d,\"closeRequested\"))@readableStreamClose(@getByIdDirectPrivate(d,\"controlledReadableStream\"));else if(@isReadableStreamDefaultController(d))@readableStreamDefaultControllerCallPullIfNeeded(d);else if(@isReadableByteStreamController(d))@readableByteStreamControllerCallPullIfNeeded(d);return{value:j,size:N,done:!1}}var J=(_)=>{if(_.done)return{value:[],size:0,done:!0};var B=@getByIdDirectPrivate(k,\"readableStreamController\"),F=@getByIdDirectPrivate(B,\"queue\"),x=[_.value].concat(F.content.toArray(!1)),K=x.length;if(@isReadableByteStreamController(B))for(var I=0;I<K;I++){const G=x[I];if(!(@ArrayBuffer.@isView(G)||G instanceof @ArrayBuffer)){const{buffer:S,byteOffset:T,byteLength:U}=G;@putByValDirect(x,I,new @Uint8Array(S,T,U))}}else for(var I=1;I<K;I++)@putByValDirect(x,I,x[I].value);var Q=F.size;if(@resetQueue(F),@getByIdDirectPrivate(B,\"closeRequested\"))@readableStreamClose(@getByIdDirectPrivate(B,\"controlledReadableStream\"));else if(@isReadableStreamDefaultController(B))@readableStreamDefaultControllerCallPullIfNeeded(B);else if(@isReadableByteStreamController(B))@readableByteStreamControllerCallPullIfNeeded(B);return{value:x,size:Q,done:!1}},D=d.@pull(d);if(D&&@isPromise(D))return D.@then(J);return J(D)})\n";
+=======
+const char* const s_readableStreamDefaultReaderReadManyCode = "(function () {\"use strict\";\n  if (!@isReadableStreamDefaultReader(this))\n    @throwTypeError(\"ReadableStreamDefaultReader.readMany() should not be called directly\");\n  const stream = @getByIdDirectPrivate(this, \"ownerReadableStream\");\n  if (!stream)\n    @throwTypeError(\"readMany() called on a reader owned by no readable stream\");\n  const state = @getByIdDirectPrivate(stream, \"state\");\n  @putByIdDirectPrivate(stream, \"disturbed\", true);\n  if (state === @streamClosed)\n    return { value: [], size: 0, done: true };\n  else if (state === @streamErrored) {\n    throw @getByIdDirectPrivate(stream, \"storedError\");\n  }\n  var controller = @getByIdDirectPrivate(stream, \"readableStreamController\");\n  var queue = @getByIdDirectPrivate(controller, \"queue\");\n  if (!queue) {\n    return controller.@pull(controller).@then(function({ done, value }) {\n      return done \? { done: true, value: [], size: 0 } : { value: [value], size: 1, done: false };\n    });\n  }\n  const content = queue.content;\n  var size = queue.size;\n  var values = content.toArray(false);\n  var length = values.length;\n  if (length > 0) {\n    var outValues = @newArrayWithSize(length);\n    if (@isReadableByteStreamController(controller)) {\n      {\n        const buf = values[0];\n        if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {\n          @putByValDirect(outValues, 0, new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));\n        } else {\n          @putByValDirect(outValues, 0, buf);\n        }\n      }\n      for (var i = 1;i < length; i++) {\n        const buf = values[i];\n        if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {\n          @putByValDirect(outValues, i, new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));\n        } else {\n          @putByValDirect(outValues, i, buf);\n        }\n      }\n    } else {\n      @putByValDirect(outValues, 0, values[0].value);\n      for (var i = 1;i < length; i++) {\n        @putByValDirect(outValues, i, values[i].value);\n      }\n    }\n    @resetQueue(@getByIdDirectPrivate(controller, \"queue\"));\n    if (@getByIdDirectPrivate(controller, \"closeRequested\"))\n      @readableStreamClose(@getByIdDirectPrivate(controller, \"controlledReadableStream\"));\n    else if (@isReadableStreamDefaultController(controller))\n      @readableStreamDefaultControllerCallPullIfNeeded(controller);\n    else if (@isReadableByteStreamController(controller))\n      @readableByteStreamControllerCallPullIfNeeded(controller);\n    return { value: outValues, size, done: false };\n  }\n  var onPullMany = (result) => {\n    if (result.done) {\n      return { value: [], size: 0, done: true };\n    }\n    var controller2 = @getByIdDirectPrivate(stream, \"readableStreamController\");\n    var queue2 = @getByIdDirectPrivate(controller2, \"queue\");\n    var value = [result.value].concat(queue2.content.toArray(false));\n    var length2 = value.length;\n    if (@isReadableByteStreamController(controller2)) {\n      for (var i2 = 0;i2 < length2; i2++) {\n        const buf = value[i2];\n        if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {\n          const { buffer, byteOffset, byteLength } = buf;\n          @putByValDirect(value, i2, new @Uint8Array(buffer, byteOffset, byteLength));\n        }\n      }\n    } else {\n      for (var i2 = 1;i2 < length2; i2++) {\n        @putByValDirect(value, i2, value[i2].value);\n      }\n    }\n    var size2 = queue2.size;\n    @resetQueue(queue2);\n    if (@getByIdDirectPrivate(controller2, \"closeRequested\"))\n      @readableStreamClose(@getByIdDirectPrivate(controller2, \"controlledReadableStream\"));\n    else if (@isReadableStreamDefaultController(controller2))\n      @readableStreamDefaultControllerCallPullIfNeeded(controller2);\n    else if (@isReadableByteStreamController(controller2))\n      @readableByteStreamControllerCallPullIfNeeded(controller2);\n    return { value, size: size2, done: false };\n  };\n  var pullResult = controller.@pull(controller);\n  if (pullResult && @isPromise(pullResult)) {\n    return pullResult.@then(onPullMany);\n  }\n  return onPullMany(pullResult);\n})\n";
+>>>>>>> 0ed39c721 (stfdsafsd)
 
 // read
 const JSC::ConstructAbility s_readableStreamDefaultReaderReadCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamDefaultReaderReadCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamDefaultReaderReadCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamDefaultReaderReadCodeLength = 348;
+const int s_readableStreamDefaultReaderReadCodeLength = 374;
 static const JSC::Intrinsic s_readableStreamDefaultReaderReadCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamDefaultReaderReadCode = "(function (){\"use strict\";if(!@isReadableStreamDefaultReader(this))return @Promise.@reject(@makeThisTypeError(\"ReadableStreamDefaultReader\",\"read\"));if(!@getByIdDirectPrivate(this,\"ownerReadableStream\"))return @Promise.@reject(@makeTypeError(\"read() called on a reader owned by no readable stream\"));return @readableStreamDefaultReaderRead(this)})\n";
+const char* const s_readableStreamDefaultReaderReadCode = "(function () {\"use strict\";\n  if (!@isReadableStreamDefaultReader(this))\n    return @Promise.@reject(@makeThisTypeError(\"ReadableStreamDefaultReader\", \"read\"));\n  if (!@getByIdDirectPrivate(this, \"ownerReadableStream\"))\n    return @Promise.@reject(@makeTypeError(\"read() called on a reader owned by no readable stream\"));\n  return @readableStreamDefaultReaderRead(this);\n})\n";
 
 // releaseLock
 const JSC::ConstructAbility s_readableStreamDefaultReaderReleaseLockCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamDefaultReaderReleaseLockCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamDefaultReaderReleaseLockCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamDefaultReaderReleaseLockCodeLength = 384;
+const int s_readableStreamDefaultReaderReleaseLockCodeLength = 420;
 static const JSC::Intrinsic s_readableStreamDefaultReaderReleaseLockCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamDefaultReaderReleaseLockCode = "(function (){\"use strict\";if(!@isReadableStreamDefaultReader(this))throw @makeThisTypeError(\"ReadableStreamDefaultReader\",\"releaseLock\");if(!@getByIdDirectPrivate(this,\"ownerReadableStream\"))return;if(@getByIdDirectPrivate(this,\"readRequests\")\?.isNotEmpty())@throwTypeError(\"There are still pending read requests, cannot release the lock\");@readableStreamReaderGenericRelease(this)})\n";
+const char* const s_readableStreamDefaultReaderReleaseLockCode = "(function () {\"use strict\";\n  if (!@isReadableStreamDefaultReader(this))\n    throw @makeThisTypeError(\"ReadableStreamDefaultReader\", \"releaseLock\");\n  if (!@getByIdDirectPrivate(this, \"ownerReadableStream\"))\n    return;\n  if (@getByIdDirectPrivate(this, \"readRequests\")\?.isNotEmpty())\n    @throwTypeError(\"There are still pending read requests, cannot release the lock\");\n  @readableStreamReaderGenericRelease(this);\n})\n";
 
 // closed
 const JSC::ConstructAbility s_readableStreamDefaultReaderClosedCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamDefaultReaderClosedCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamDefaultReaderClosedCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamDefaultReaderClosedCodeLength = 224;
+const int s_readableStreamDefaultReaderClosedCodeLength = 241;
 static const JSC::Intrinsic s_readableStreamDefaultReaderClosedCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamDefaultReaderClosedCode = "(function (){\"use strict\";if(!@isReadableStreamDefaultReader(this))return @Promise.@reject(@makeGetterTypeError(\"ReadableStreamDefaultReader\",\"closed\"));return @getByIdDirectPrivate(this,\"closedPromiseCapability\").promise})\n";
+const char* const s_readableStreamDefaultReaderClosedCode = "(function () {\"use strict\";\n  if (!@isReadableStreamDefaultReader(this))\n    return @Promise.@reject(@makeGetterTypeError(\"ReadableStreamDefaultReader\", \"closed\"));\n  return @getByIdDirectPrivate(this, \"closedPromiseCapability\").promise;\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -2094,153 +2124,153 @@ WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_CODE(DEFINE_BUILTIN_GENERATO
 const JSC::ConstructAbility s_streamInternalsMarkPromiseAsHandledCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsMarkPromiseAsHandledCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsMarkPromiseAsHandledCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsMarkPromiseAsHandledCodeLength = 169;
+const int s_streamInternalsMarkPromiseAsHandledCodeLength = 207;
 static const JSC::Intrinsic s_streamInternalsMarkPromiseAsHandledCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsMarkPromiseAsHandledCode = "(function (n){\"use strict\";@assert(@isPromise(n)),@putPromiseInternalField(n,@promiseFieldFlags,@getPromiseInternalField(n,@promiseFieldFlags)|@promiseFlagsIsHandled)})\n";
+const char* const s_streamInternalsMarkPromiseAsHandledCode = "(function (promise) {\"use strict\";\n  @assert(@isPromise(promise));\n  @putPromiseInternalField(promise, @promiseFieldFlags, @getPromiseInternalField(promise, @promiseFieldFlags) | @promiseFlagsIsHandled);\n})\n";
 
 // shieldingPromiseResolve
 const JSC::ConstructAbility s_streamInternalsShieldingPromiseResolveCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsShieldingPromiseResolveCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsShieldingPromiseResolveCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsShieldingPromiseResolveCodeLength = 124;
+const int s_streamInternalsShieldingPromiseResolveCodeLength = 182;
 static const JSC::Intrinsic s_streamInternalsShieldingPromiseResolveCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsShieldingPromiseResolveCode = "(function (a){\"use strict\";const _=@Promise.@resolve(a);if(_.@then===@undefined)_.@then=@Promise.prototype.@then;return _})\n";
+const char* const s_streamInternalsShieldingPromiseResolveCode = "(function (result) {\"use strict\";\n  const promise = @Promise.@resolve(result);\n  if (promise.@then === @undefined)\n    promise.@then = @Promise.prototype.@then;\n  return promise;\n})\n";
 
 // promiseInvokeOrNoopMethodNoCatch
 const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeLength = 125;
+const int s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeLength = 176;
 static const JSC::Intrinsic s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCode = "(function (l,i,n){\"use strict\";if(i===@undefined)return @Promise.@resolve();return @shieldingPromiseResolve(i.@apply(l,n))})\n";
+const char* const s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCode = "(function (object, method, args) {\"use strict\";\n  if (method === @undefined)\n    return @Promise.@resolve();\n  return @shieldingPromiseResolve(method.@apply(object, args));\n})\n";
 
 // promiseInvokeOrNoopNoCatch
 const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopNoCatchCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopNoCatchCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopNoCatchCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsPromiseInvokeOrNoopNoCatchCodeLength = 84;
+const int s_streamInternalsPromiseInvokeOrNoopNoCatchCodeLength = 119;
 static const JSC::Intrinsic s_streamInternalsPromiseInvokeOrNoopNoCatchCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsPromiseInvokeOrNoopNoCatchCode = "(function (d,l,n){\"use strict\";return @promiseInvokeOrNoopMethodNoCatch(d,d[l],n)})\n";
+const char* const s_streamInternalsPromiseInvokeOrNoopNoCatchCode = "(function (object, key, args) {\"use strict\";\n  return @promiseInvokeOrNoopMethodNoCatch(object, object[key], args);\n})\n";
 
 // promiseInvokeOrNoopMethod
 const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopMethodCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopMethodCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopMethodCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsPromiseInvokeOrNoopMethodCodeLength = 122;
+const int s_streamInternalsPromiseInvokeOrNoopMethodCodeLength = 187;
 static const JSC::Intrinsic s_streamInternalsPromiseInvokeOrNoopMethodCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsPromiseInvokeOrNoopMethodCode = "(function (l,d,f){\"use strict\";try{return @promiseInvokeOrNoopMethodNoCatch(l,d,f)}catch(i){return @Promise.@reject(i)}})\n";
+const char* const s_streamInternalsPromiseInvokeOrNoopMethodCode = "(function (object, method, args) {\"use strict\";\n  try {\n    return @promiseInvokeOrNoopMethodNoCatch(object, method, args);\n  } catch (error) {\n    return @Promise.@reject(error);\n  }\n})\n";
 
 // promiseInvokeOrNoop
 const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsPromiseInvokeOrNoopCodeLength = 116;
+const int s_streamInternalsPromiseInvokeOrNoopCodeLength = 175;
 static const JSC::Intrinsic s_streamInternalsPromiseInvokeOrNoopCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsPromiseInvokeOrNoopCode = "(function (n,d,l){\"use strict\";try{return @promiseInvokeOrNoopNoCatch(n,d,l)}catch(m){return @Promise.@reject(m)}})\n";
+const char* const s_streamInternalsPromiseInvokeOrNoopCode = "(function (object, key, args) {\"use strict\";\n  try {\n    return @promiseInvokeOrNoopNoCatch(object, key, args);\n  } catch (error) {\n    return @Promise.@reject(error);\n  }\n})\n";
 
 // promiseInvokeOrFallbackOrNoop
 const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeLength = 198;
+const int s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeLength = 325;
 static const JSC::Intrinsic s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsPromiseInvokeOrFallbackOrNoopCode = "(function (_,l,p,u,v){\"use strict\";try{const n=_[l];if(n===@undefined)return @promiseInvokeOrNoopNoCatch(_,u,v);return @shieldingPromiseResolve(n.@apply(_,p))}catch(n){return @Promise.@reject(n)}})\n";
+const char* const s_streamInternalsPromiseInvokeOrFallbackOrNoopCode = "(function (object, key1, args1, key2, args2) {\"use strict\";\n  try {\n    const method = object[key1];\n    if (method === @undefined)\n      return @promiseInvokeOrNoopNoCatch(object, key2, args2);\n    return @shieldingPromiseResolve(method.@apply(object, args1));\n  } catch (error) {\n    return @Promise.@reject(error);\n  }\n})\n";
 
 // validateAndNormalizeQueuingStrategy
 const JSC::ConstructAbility s_streamInternalsValidateAndNormalizeQueuingStrategyCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsValidateAndNormalizeQueuingStrategyCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsValidateAndNormalizeQueuingStrategyCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsValidateAndNormalizeQueuingStrategyCodeLength = 259;
+const int s_streamInternalsValidateAndNormalizeQueuingStrategyCodeLength = 412;
 static const JSC::Intrinsic s_streamInternalsValidateAndNormalizeQueuingStrategyCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsValidateAndNormalizeQueuingStrategyCode = "(function (c,d){\"use strict\";if(c!==@undefined&&typeof c!==\"function\")@throwTypeError(\"size parameter must be a function\");const u=@toNumber(d);if(u!==u||u<0)@throwRangeError(\"highWaterMark value is negative or not a number\");return{size:c,highWaterMark:u}})\n";
+const char* const s_streamInternalsValidateAndNormalizeQueuingStrategyCode = "(function (size, highWaterMark) {\"use strict\";\n  if (size !== @undefined && typeof size !== \"function\")\n    @throwTypeError(\"size parameter must be a function\");\n  const newHighWaterMark = @toNumber(highWaterMark);\n  if (newHighWaterMark !== newHighWaterMark || newHighWaterMark < 0)\n    @throwRangeError(\"highWaterMark value is negative or not a number\");\n  return { size, highWaterMark: newHighWaterMark };\n})\n";
 
 // createFIFO
 const JSC::ConstructAbility s_streamInternalsCreateFIFOCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsCreateFIFOCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsCreateFIFOCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_streamInternalsCreateFIFOCodeLength = 1473;
+const int s_streamInternalsCreateFIFOCodeLength = 2446;
 static const JSC::Intrinsic s_streamInternalsCreateFIFOCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsCreateFIFOCode = "(function (){\"use strict\";var E=@Array.prototype.slice;class A{constructor(){this._head=0,this._tail=0,this._capacityMask=3,this._list=@newArrayWithSize(4)}_head;_tail;_capacityMask;_list;size(){if(this._head===this._tail)return 0;if(this._head<this._tail)return this._tail-this._head;else return this._capacityMask+1-(this._head-this._tail)}isEmpty(){return this.size()==0}isNotEmpty(){return this.size()>0}shift(){var{_head:g,_tail:b,_list:x,_capacityMask:M}=this;if(g===b)return @undefined;var w=x[g];if(@putByValDirect(x,g,@undefined),g=this._head=g+1&M,g<2&&b>1e4&&b<=x.length>>>2)this._shrinkArray();return w}peek(){if(this._head===this._tail)return @undefined;return this._list[this._head]}push(g){var b=this._tail;if(@putByValDirect(this._list,b,g),this._tail=b+1&this._capacityMask,this._tail===this._head)this._growArray()}toArray(g){var b=this._list,x=@toLength(b.length);if(g||this._head>this._tail){var M=@toLength(this._head),w=@toLength(this._tail),F=@toLength(x-M+w),z=@newArrayWithSize(F),B=0;for(var v=M;v<x;v++)@putByValDirect(z,B++,b[v]);for(var v=0;v<w;v++)@putByValDirect(z,B++,b[v]);return z}else return E.@call(b,this._head,this._tail)}clear(){this._head=0,this._tail=0,this._list.fill(@undefined)}_growArray(){if(this._head)this._list=this.toArray(!0),this._head=0;this._tail=@toLength(this._list.length),this._list.length<<=1,this._capacityMask=this._capacityMask<<1|1}_shrinkArray(){this._list.length>>>=1,this._capacityMask>>>=1}}return new A})\n";
+const char* const s_streamInternalsCreateFIFOCode = "(function () {\"use strict\";\n  var slice = @Array.prototype.slice;\n\n  class Denqueue {\n    constructor() {\n      this._head = 0;\n      this._tail = 0;\n      this._capacityMask = 3;\n      this._list = @newArrayWithSize(4);\n    }\n    _head;\n    _tail;\n    _capacityMask;\n    _list;\n    size() {\n      if (this._head === this._tail)\n        return 0;\n      if (this._head < this._tail)\n        return this._tail - this._head;\n      else\n        return this._capacityMask + 1 - (this._head - this._tail);\n    }\n    isEmpty() {\n      return this.size() == 0;\n    }\n    isNotEmpty() {\n      return this.size() > 0;\n    }\n    shift() {\n      var { _head: head, _tail, _list, _capacityMask } = this;\n      if (head === _tail)\n        return @undefined;\n      var item = _list[head];\n      @putByValDirect(_list, head, @undefined);\n      head = this._head = head + 1 & _capacityMask;\n      if (head < 2 && _tail > 1e4 && _tail <= _list.length >>> 2)\n        this._shrinkArray();\n      return item;\n    }\n    peek() {\n      if (this._head === this._tail)\n        return @undefined;\n      return this._list[this._head];\n    }\n    push(item) {\n      var tail = this._tail;\n      @putByValDirect(this._list, tail, item);\n      this._tail = tail + 1 & this._capacityMask;\n      if (this._tail === this._head) {\n        this._growArray();\n      }\n    }\n    toArray(fullCopy) {\n      var list = this._list;\n      var len = @toLength(list.length);\n      if (fullCopy || this._head > this._tail) {\n        var _head = @toLength(this._head);\n        var _tail = @toLength(this._tail);\n        var total = @toLength(len - _head + _tail);\n        var array = @newArrayWithSize(total);\n        var j = 0;\n        for (var i = _head;i < len; i++)\n          @putByValDirect(array, j++, list[i]);\n        for (var i = 0;i < _tail; i++)\n          @putByValDirect(array, j++, list[i]);\n        return array;\n      } else {\n        return slice.@call(list, this._head, this._tail);\n      }\n    }\n    clear() {\n      this._head = 0;\n      this._tail = 0;\n      this._list.fill(@undefined);\n    }\n    _growArray() {\n      if (this._head) {\n        this._list = this.toArray(true);\n        this._head = 0;\n      }\n      this._tail = @toLength(this._list.length);\n      this._list.length <<= 1;\n      this._capacityMask = this._capacityMask << 1 | 1;\n    }\n    _shrinkArray() {\n      this._list.length >>>= 1;\n      this._capacityMask >>>= 1;\n    }\n  }\n  return new Denqueue;\n})\n";
 
 // newQueue
 const JSC::ConstructAbility s_streamInternalsNewQueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsNewQueueCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsNewQueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsNewQueueCodeLength = 65;
+const int s_streamInternalsNewQueueCodeLength = 77;
 static const JSC::Intrinsic s_streamInternalsNewQueueCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsNewQueueCode = "(function (){\"use strict\";return{content:@createFIFO(),size:0}})\n";
+const char* const s_streamInternalsNewQueueCode = "(function () {\"use strict\";\n  return { content: @createFIFO(), size: 0 };\n})\n";
 
 // dequeueValue
 const JSC::ConstructAbility s_streamInternalsDequeueValueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsDequeueValueCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsDequeueValueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsDequeueValueCodeLength = 106;
+const int s_streamInternalsDequeueValueCodeLength = 170;
 static const JSC::Intrinsic s_streamInternalsDequeueValueCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsDequeueValueCode = "(function (l){\"use strict\";const p=l.content.shift();if(l.size-=p.size,l.size<0)l.size=0;return p.value})\n";
+const char* const s_streamInternalsDequeueValueCode = "(function (queue) {\"use strict\";\n  const record = queue.content.shift();\n  queue.size -= record.size;\n  if (queue.size < 0)\n    queue.size = 0;\n  return record.value;\n})\n";
 
 // enqueueValueWithSize
 const JSC::ConstructAbility s_streamInternalsEnqueueValueWithSizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsEnqueueValueWithSizeCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsEnqueueValueWithSizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsEnqueueValueWithSizeCodeLength = 161;
+const int s_streamInternalsEnqueueValueWithSizeCodeLength = 225;
 static const JSC::Intrinsic s_streamInternalsEnqueueValueWithSizeCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsEnqueueValueWithSizeCode = "(function (d,o,n){\"use strict\";if(n=@toNumber(n),!@isFinite(n)||n<0)@throwRangeError(\"size has an incorrect value\");d.content.push({value:o,size:n}),d.size+=n})\n";
+const char* const s_streamInternalsEnqueueValueWithSizeCode = "(function (queue, value, size) {\"use strict\";\n  size = @toNumber(size);\n  if (!@isFinite(size) || size < 0)\n    @throwRangeError(\"size has an incorrect value\");\n  queue.content.push({ value, size });\n  queue.size += size;\n})\n";
 
 // peekQueueValue
 const JSC::ConstructAbility s_streamInternalsPeekQueueValueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsPeekQueueValueCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsPeekQueueValueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsPeekQueueValueCodeLength = 60;
+const int s_streamInternalsPeekQueueValueCodeLength = 74;
 static const JSC::Intrinsic s_streamInternalsPeekQueueValueCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsPeekQueueValueCode = "(function (a){\"use strict\";return a.content.peek()\?.value})\n";
+const char* const s_streamInternalsPeekQueueValueCode = "(function (queue) {\"use strict\";\n  return queue.content.peek()\?.value;\n})\n";
 
 // resetQueue
 const JSC::ConstructAbility s_streamInternalsResetQueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsResetQueueCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsResetQueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsResetQueueCodeLength = 99;
+const int s_streamInternalsResetQueueCodeLength = 138;
 static const JSC::Intrinsic s_streamInternalsResetQueueCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsResetQueueCode = "(function (c){\"use strict\";@assert(\"content\"in c),@assert(\"size\"in c),c.content.clear(),c.size=0})\n";
+const char* const s_streamInternalsResetQueueCode = "(function (queue) {\"use strict\";\n  @assert(\"content\" in queue);\n  @assert(\"size\" in queue);\n  queue.content.clear();\n  queue.size = 0;\n})\n";
 
 // extractSizeAlgorithm
 const JSC::ConstructAbility s_streamInternalsExtractSizeAlgorithmCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsExtractSizeAlgorithmCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsExtractSizeAlgorithmCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsExtractSizeAlgorithmCodeLength = 176;
+const int s_streamInternalsExtractSizeAlgorithmCodeLength = 294;
 static const JSC::Intrinsic s_streamInternalsExtractSizeAlgorithmCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsExtractSizeAlgorithmCode = "(function (p){\"use strict\";const d=p.size;if(d===@undefined)return()=>1;if(typeof d!==\"function\")@throwTypeError(\"strategy.size must be a function\");return(w)=>{return d(w)}})\n";
+const char* const s_streamInternalsExtractSizeAlgorithmCode = "(function (strategy) {\"use strict\";\n  const sizeAlgorithm = strategy.size;\n  if (sizeAlgorithm === @undefined)\n    return () => 1;\n  if (typeof sizeAlgorithm !== \"function\")\n    @throwTypeError(\"strategy.size must be a function\");\n  return (chunk) => {\n    return sizeAlgorithm(chunk);\n  };\n})\n";
 
 // extractHighWaterMark
 const JSC::ConstructAbility s_streamInternalsExtractHighWaterMarkCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsExtractHighWaterMarkCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsExtractHighWaterMarkCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsExtractHighWaterMarkCodeLength = 184;
+const int s_streamInternalsExtractHighWaterMarkCodeLength = 326;
 static const JSC::Intrinsic s_streamInternalsExtractHighWaterMarkCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsExtractHighWaterMarkCode = "(function (n,p){\"use strict\";const c=n.highWaterMark;if(c===@undefined)return p;if(c!==c||c<0)@throwRangeError(\"highWaterMark value is negative or not a number\");return @toNumber(c)})\n";
+const char* const s_streamInternalsExtractHighWaterMarkCode = "(function (strategy, defaultHWM) {\"use strict\";\n  const highWaterMark = strategy.highWaterMark;\n  if (highWaterMark === @undefined)\n    return defaultHWM;\n  if (highWaterMark !== highWaterMark || highWaterMark < 0)\n    @throwRangeError(\"highWaterMark value is negative or not a number\");\n  return @toNumber(highWaterMark);\n})\n";
 
 // extractHighWaterMarkFromQueuingStrategyInit
 const JSC::ConstructAbility s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeLength = 249;
+const int s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeLength = 314;
 static const JSC::Intrinsic s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCode = "(function (e){\"use strict\";if(!@isObject(e))@throwTypeError(\"QueuingStrategyInit argument must be an object.\");const{highWaterMark:c}=e;if(c===@undefined)@throwTypeError(\"QueuingStrategyInit.highWaterMark member is required.\");return @toNumber(c)})\n";
+const char* const s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCode = "(function (init) {\"use strict\";\n  if (!@isObject(init))\n    @throwTypeError(\"QueuingStrategyInit argument must be an object.\");\n  const { highWaterMark } = init;\n  if (highWaterMark === @undefined)\n    @throwTypeError(\"QueuingStrategyInit.highWaterMark member is required.\");\n  return @toNumber(highWaterMark);\n})\n";
 
 // createFulfilledPromise
 const JSC::ConstructAbility s_streamInternalsCreateFulfilledPromiseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsCreateFulfilledPromiseCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsCreateFulfilledPromiseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsCreateFulfilledPromiseCodeLength = 81;
+const int s_streamInternalsCreateFulfilledPromiseCodeLength = 122;
 static const JSC::Intrinsic s_streamInternalsCreateFulfilledPromiseCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsCreateFulfilledPromiseCode = "(function (n){\"use strict\";const d=@newPromise();return @fulfillPromise(d,n),d})\n";
+const char* const s_streamInternalsCreateFulfilledPromiseCode = "(function (value) {\"use strict\";\n  const promise = @newPromise();\n  @fulfillPromise(promise, value);\n  return promise;\n})\n";
 
 // toDictionary
 const JSC::ConstructAbility s_streamInternalsToDictionaryCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsToDictionaryCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsToDictionaryCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsToDictionaryCodeLength = 115;
+const int s_streamInternalsToDictionaryCodeLength = 211;
 static const JSC::Intrinsic s_streamInternalsToDictionaryCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_streamInternalsToDictionaryCode = "(function (c,n,p){\"use strict\";if(c===@undefined||c===null)return n;if(!@isObject(c))@throwTypeError(p);return c})\n";
+const char* const s_streamInternalsToDictionaryCode = "(function (value, defaultValue, errorMessage) {\"use strict\";\n  if (value === @undefined || value === null)\n    return defaultValue;\n  if (!@isObject(value))\n    @throwTypeError(errorMessage);\n  return value;\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -2256,41 +2286,47 @@ WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 const JSC::ConstructAbility s_importMetaObjectLoadCJS2ESMCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_importMetaObjectLoadCJS2ESMCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_importMetaObjectLoadCJS2ESMCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_importMetaObjectLoadCJS2ESMCodeLength = 1406;
+const int s_importMetaObjectLoadCJS2ESMCodeLength = 2739;
 static const JSC::Intrinsic s_importMetaObjectLoadCJS2ESMCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_importMetaObjectLoadCJS2ESMCode = "(function (z){\"use strict\";var J=@Loader,G=@createFIFO(),D=z;while(D){var _=J.registry.@get(D);if((_\?.state\?\?0)<=@ModuleFetch)@fulfillModuleSync(D),_=J.registry.@get(D);var V=@getPromiseInternalField(_.fetch,@promiseFieldReactionsOrResult),w=J.parseModule(D,V),x=_.module;if(w&&@isPromise(w)){var h=@getPromiseInternalField(w,@promiseFieldReactionsOrResult),W=@getPromiseInternalField(w,@promiseFieldFlags),L=W&@promiseStateMask;if(L===@promiseStatePending||h&&@isPromise(h))@throwTypeError(`require() async module \"${D}\" is unsupported. use \"await import()\" instead.`);else if(L===@promiseStateRejected){if(!h\?.message)@throwTypeError(`${h+\"\"\?h:\"An error occurred\"} occurred while parsing module \\\"${D}\\\"`);throw h}_.module=x=h}else if(w&&!x)_.module=x=w;@setStateToMax(_,@ModuleLink);var X=x.dependenciesMap,H=J.requestedModules(x),Q=@newArrayWithSize(H.length);for(var B=0,Y=H.length;B<Y;++B){var F=H[B],T=F[0]===\"/\"\?F:J.resolve(F,D),I=J.ensureRegistered(T);if(I.state<@ModuleLink)G.push(T);@putByValDirect(Q,B,I),X.@set(F,I)}_.dependencies=Q,_.instantiate=@Promise.@resolve(_),_.satisfy=@Promise.@resolve(_),_.isSatisfied=!0,D=G.shift();while(D&&(J.registry.@get(D)\?.state\?\?@ModuleFetch)>=@ModuleLink)D=G.shift()}var U=J.linkAndEvaluateModule(z,@undefined);if(U&&@isPromise(U))@throwTypeError(`require() async module \\\"${z}\\\" is unsupported. use \"await import()\" instead.`);return J.registry.@get(z)})\n";
+const char* const s_importMetaObjectLoadCJS2ESMCode = "(function (resolvedSpecifier) {\"use strict\";\n  var loader = @Loader;\n  var queue = @createFIFO();\n  var key = resolvedSpecifier;\n  while (key) {\n    var entry = loader.registry.@get(key);\n    if ((entry\?.state \?\? 0) <= @ModuleFetch) {\n      @fulfillModuleSync(key);\n      entry = loader.registry.@get(key);\n    }\n    var sourceCodeObject = @getPromiseInternalField(entry.fetch, @promiseFieldReactionsOrResult);\n    var moduleRecordPromise = loader.parseModule(key, sourceCodeObject);\n    var mod = entry.module;\n    if (moduleRecordPromise && @isPromise(moduleRecordPromise)) {\n      var reactionsOrResult = @getPromiseInternalField(moduleRecordPromise, @promiseFieldReactionsOrResult);\n      var flags = @getPromiseInternalField(moduleRecordPromise, @promiseFieldFlags);\n      var state = flags & @promiseStateMask;\n      if (state === @promiseStatePending || reactionsOrResult && @isPromise(reactionsOrResult)) {\n        @throwTypeError(`require() async module \"${key}\" is unsupported. use \"await import()\" instead.`);\n      } else if (state === @promiseStateRejected) {\n        if (!reactionsOrResult\?.message) {\n          @throwTypeError(`${reactionsOrResult + \"\" \? reactionsOrResult : \"An error occurred\"} occurred while parsing module \\\"${key}\\\"`);\n        }\n        throw reactionsOrResult;\n      }\n      entry.module = mod = reactionsOrResult;\n    } else if (moduleRecordPromise && !mod) {\n      entry.module = mod = moduleRecordPromise;\n    }\n    @setStateToMax(entry, @ModuleLink);\n    var dependenciesMap = mod.dependenciesMap;\n    var requestedModules = loader.requestedModules(mod);\n    var dependencies = @newArrayWithSize(requestedModules.length);\n    for (var i = 0, length = requestedModules.length;i < length; ++i) {\n      var depName = requestedModules[i];\n      var depKey = depName[0] === \"/\" \? depName : loader.resolve(depName, key);\n      var depEntry = loader.ensureRegistered(depKey);\n      if (depEntry.state < @ModuleLink) {\n        queue.push(depKey);\n      }\n      @putByValDirect(dependencies, i, depEntry);\n      dependenciesMap.@set(depName, depEntry);\n    }\n    entry.dependencies = dependencies;\n    entry.instantiate = @Promise.@resolve(entry);\n    entry.satisfy = @Promise.@resolve(entry);\n    entry.isSatisfied = true;\n    key = queue.shift();\n    while (key && (loader.registry.@get(key)\?.state \?\? @ModuleFetch) >= @ModuleLink) {\n      key = queue.shift();\n    }\n  }\n  var linkAndEvaluateResult = loader.linkAndEvaluateModule(resolvedSpecifier, @undefined);\n  if (linkAndEvaluateResult && @isPromise(linkAndEvaluateResult)) {\n    @throwTypeError(`require() async module \\\"${resolvedSpecifier}\\\" is unsupported. use \"await import()\" instead.`);\n  }\n  return loader.registry.@get(resolvedSpecifier);\n})\n";
 
 // requireESM
 const JSC::ConstructAbility s_importMetaObjectRequireESMCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_importMetaObjectRequireESMCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_importMetaObjectRequireESMCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_importMetaObjectRequireESMCodeLength = 325;
+const int s_importMetaObjectRequireESMCodeLength = 418;
 static const JSC::Intrinsic s_importMetaObjectRequireESMCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_importMetaObjectRequireESMCode = "(function (c){\"use strict\";var a=@Loader.registry.@get(c);if(!a||!a.evaluated)a=@loadCJS2ESM(c);if(!a||!a.evaluated||!a.module)@throwTypeError(`require() failed to evaluate module \"${c}\". This is an internal consistentency error.`);var _=@Loader.getModuleNamespaceObject(a.module);if(_[@commonJSSymbol]===0)return;return _})\n";
+const char* const s_importMetaObjectRequireESMCode = "(function (resolved) {\"use strict\";\n  var entry = @Loader.registry.@get(resolved);\n  if (!entry || !entry.evaluated) {\n    entry = @loadCJS2ESM(resolved);\n  }\n  if (!entry || !entry.evaluated || !entry.module) {\n    @throwTypeError(`require() failed to evaluate module \"${resolved}\". This is an internal consistentency error.`);\n  }\n  var exports = @Loader.getModuleNamespaceObject(entry.module);\n  return exports;\n})\n";
 
 // internalRequire
 const JSC::ConstructAbility s_importMetaObjectInternalRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_importMetaObjectInternalRequireCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_importMetaObjectInternalRequireCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_importMetaObjectInternalRequireCodeLength = 747;
+const int s_importMetaObjectInternalRequireCodeLength = 1071;
 static const JSC::Intrinsic s_importMetaObjectInternalRequireCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_importMetaObjectInternalRequireCode = "(function (_){\"use strict\";var n=@requireMap.@get(_);const g=_.substring(_.length-5);if(n)return n.exports;if(g===\".json\"){var j=globalThis[Symbol.for(\"_fs\")]||=@Bun.fs(),b=JSON.parse(j.readFileSync(_,\"utf8\"));return @requireMap.@set(_,@createCommonJSModule(_,b,!0)),b}else if(g===\".node\"){const k=@createCommonJSModule(_,{},!0);return process.dlopen(k,_),@requireMap.@set(_,k),k.exports}else if(g===\".toml\"){var j=globalThis[Symbol.for(\"_fs\")]||=@Bun.fs(),b=@Bun.TOML.parse(j.readFileSync(_,\"utf8\"));return @requireMap.@set(_,@createCommonJSModule(_,b,!0)),b}else{var b=@requireESM(_);const v=@requireMap.@get(_);if(v)return v.exports;var q=b\?.default;if(q\?.[@commonJSSymbol]===0)b=q;return @requireMap.@set(_,@createCommonJSModule(_,b,!0)),b}})\n";
+const char* const s_importMetaObjectInternalRequireCode = "(function (id) {\"use strict\";\n  var cached = @requireMap.@get(id);\n  const last5 = id.substring(id.length - 5);\n  if (cached) {\n    return cached.exports;\n  }\n  if (last5 === \".json\") {\n    var fs = globalThis[Symbol.for(\"_fs\")] ||= @Bun.fs();\n    var exports = JSON.parse(fs.readFileSync(id, \"utf8\"));\n    @requireMap.@set(id, @createCommonJSModule(id, exports, true));\n    return exports;\n  } else if (last5 === \".node\") {\n    const module = @createCommonJSModule(id, {}, true);\n    process.dlopen(module, id);\n    @requireMap.@set(id, module);\n    return module.exports;\n  } else if (last5 === \".toml\") {\n    var fs = globalThis[Symbol.for(\"_fs\")] ||= @Bun.fs();\n    var exports = @Bun.TOML.parse(fs.readFileSync(id, \"utf8\"));\n    @requireMap.@set(id, @createCommonJSModule(id, exports, true));\n    return exports;\n  } else {\n    var exports = @requireESM(id);\n    const cachedModule = @requireMap.@get(id);\n    if (cachedModule) {\n      return cachedModule.exports;\n    }\n    @requireMap.@set(id, @createCommonJSModule(id, exports, true));\n    return exports;\n  }\n})\n";
 
 // createRequireCache
 const JSC::ConstructAbility s_importMetaObjectCreateRequireCacheCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_importMetaObjectCreateRequireCacheCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_importMetaObjectCreateRequireCacheCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_importMetaObjectCreateRequireCacheCodeLength = 854;
+const int s_importMetaObjectCreateRequireCacheCodeLength = 1411;
 static const JSC::Intrinsic s_importMetaObjectCreateRequireCacheCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_importMetaObjectCreateRequireCacheCode = "(function (){\"use strict\";var c=new Map,L={};return new Proxy(L,{get(f,_){const h=@requireMap.@get(_);if(h)return h;const t=@Loader.registry.@get(_);if(t\?.evaluated){const u=@Loader.getModuleNamespaceObject(t.module),g=u[@commonJSSymbol]===0||u.default\?.[@commonJSSymbol]\?u.default:u,b=@createCommonJSModule(_,g,!0);return @requireMap.@set(_,b),b}return L[_]},set(f,_,h){return @requireMap.@set(_,h),!0},has(f,_){return @requireMap.@has(_)||@Loader.registry.@has(_)},deleteProperty(f,_){return c.@delete(_),@requireMap.@delete(_),@Loader.registry.@delete(_),!0},ownKeys(f){var _=[...@requireMap.@keys()];const h=[...@Loader.registry.@keys()];for(let t of h)if(!_.includes(t))@arrayPush(_,t);return _},getPrototypeOf(f){return null},getOwnPropertyDescriptor(f,_){if(@requireMap.@has(_)||@Loader.registry.@has(_))return{configurable:!0,enumerable:!0}}})})\n";
+const char* const s_importMetaObjectCreateRequireCacheCode = "(function () {\"use strict\";\n  var moduleMap = new Map;\n  var inner = {};\n  return new Proxy(inner, {\n    get(target, key) {\n      const entry = @requireMap.@get(key);\n      if (entry)\n        return entry;\n      const esm = @Loader.registry.@get(key);\n      if (esm\?.evaluated) {\n        const namespace = @Loader.getModuleNamespaceObject(esm.module);\n        const mod = @createCommonJSModule(key, namespace, true);\n        @requireMap.@set(key, mod);\n        return mod;\n      }\n      return inner[key];\n    },\n    set(target, key, value) {\n      @requireMap.@set(key, value);\n      return true;\n    },\n    has(target, key) {\n      return @requireMap.@has(key) || @Loader.registry.@has(key);\n    },\n    deleteProperty(target, key) {\n      moduleMap.@delete(key);\n      @requireMap.@delete(key);\n      @Loader.registry.@delete(key);\n      return true;\n    },\n    ownKeys(target) {\n      var array = [...@requireMap.@keys()];\n      const registryKeys = [...@Loader.registry.@keys()];\n      for (const key of registryKeys) {\n        if (!array.includes(key)) {\n          @arrayPush(array, key);\n        }\n      }\n      return array;\n    },\n    getPrototypeOf(target) {\n      return null;\n    },\n    getOwnPropertyDescriptor(target, key) {\n      if (@requireMap.@has(key) || @Loader.registry.@has(key)) {\n        return {\n          configurable: true,\n          enumerable: true\n        };\n      }\n    }\n  });\n})\n";
 
 // main
 const JSC::ConstructAbility s_importMetaObjectMainCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_importMetaObjectMainCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_importMetaObjectMainCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+<<<<<<< HEAD
 const int s_importMetaObjectMainCodeLength = 76;
 static const JSC::Intrinsic s_importMetaObjectMainCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_importMetaObjectMainCode = "(function (){\"use strict\";return this.path===@Bun.main&&@Bun.isMainThread})\n";
+=======
+const int s_importMetaObjectMainCodeLength = 65;
+static const JSC::Intrinsic s_importMetaObjectMainCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_importMetaObjectMainCode = "(function () {\"use strict\";\n  return this.path === @Bun.main;\n})\n";
+>>>>>>> b7066c30a (finish commonjs stuff)
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -2306,25 +2342,25 @@ WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 const JSC::ConstructAbility s_countQueuingStrategyHighWaterMarkCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_countQueuingStrategyHighWaterMarkCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_countQueuingStrategyHighWaterMarkCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_countQueuingStrategyHighWaterMarkCodeLength = 205;
+const int s_countQueuingStrategyHighWaterMarkCodeLength = 264;
 static const JSC::Intrinsic s_countQueuingStrategyHighWaterMarkCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_countQueuingStrategyHighWaterMarkCode = "(function (){\"use strict\";const n=@getByIdDirectPrivate(this,\"highWaterMark\");if(n===@undefined)@throwTypeError(\"CountQueuingStrategy.highWaterMark getter called on incompatible |this| value.\");return n})\n";
+const char* const s_countQueuingStrategyHighWaterMarkCode = "(function () {\"use strict\";\n  const highWaterMark = @getByIdDirectPrivate(this, \"highWaterMark\");\n  if (highWaterMark === @undefined)\n    @throwTypeError(\"CountQueuingStrategy.highWaterMark getter called on incompatible |this| value.\");\n  return highWaterMark;\n})\n";
 
 // size
 const JSC::ConstructAbility s_countQueuingStrategySizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_countQueuingStrategySizeCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_countQueuingStrategySizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_countQueuingStrategySizeCodeLength = 37;
+const int s_countQueuingStrategySizeCodeLength = 43;
 static const JSC::Intrinsic s_countQueuingStrategySizeCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_countQueuingStrategySizeCode = "(function (){\"use strict\";return 1})\n";
+const char* const s_countQueuingStrategySizeCode = "(function () {\"use strict\";\n  return 1;\n})\n";
 
 // initializeCountQueuingStrategy
 const JSC::ConstructAbility s_countQueuingStrategyInitializeCountQueuingStrategyCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_countQueuingStrategyInitializeCountQueuingStrategyCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_countQueuingStrategyInitializeCountQueuingStrategyCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_countQueuingStrategyInitializeCountQueuingStrategyCodeLength = 121;
+const int s_countQueuingStrategyInitializeCountQueuingStrategyCodeLength = 147;
 static const JSC::Intrinsic s_countQueuingStrategyInitializeCountQueuingStrategyCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_countQueuingStrategyInitializeCountQueuingStrategyCode = "(function (b){\"use strict\";@putByIdDirectPrivate(this,\"highWaterMark\",@extractHighWaterMarkFromQueuingStrategyInit(b))})\n";
+const char* const s_countQueuingStrategyInitializeCountQueuingStrategyCode = "(function (parameters) {\"use strict\";\n  @putByIdDirectPrivate(this, \"highWaterMark\", @extractHighWaterMarkFromQueuingStrategyInit(parameters));\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -2340,33 +2376,33 @@ WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 const JSC::ConstructAbility s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCodeLength = 243;
+const int s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCodeLength = 291;
 static const JSC::Intrinsic s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCode = "(function (a,c){\"use strict\";if(arguments.length!==3&&arguments[2]!==@isReadableStream)@throwTypeError(\"ReadableStreamBYOBRequest constructor should not be called directly\");return @privateInitializeReadableStreamBYOBRequest.@call(this,a,c)})\n";
+const char* const s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCode = "(function (controller, view) {\"use strict\";\n  if (arguments.length !== 3 && arguments[2] !== @isReadableStream)\n    @throwTypeError(\"ReadableStreamBYOBRequest constructor should not be called directly\");\n  return @privateInitializeReadableStreamBYOBRequest.@call(this, controller, view);\n})\n";
 
 // respond
 const JSC::ConstructAbility s_readableStreamBYOBRequestRespondCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamBYOBRequestRespondCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamBYOBRequestRespondCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamBYOBRequestRespondCodeLength = 430;
+const int s_readableStreamBYOBRequestRespondCodeLength = 482;
 static const JSC::Intrinsic s_readableStreamBYOBRequestRespondCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamBYOBRequestRespondCode = "(function (m){\"use strict\";if(!@isReadableStreamBYOBRequest(this))throw @makeThisTypeError(\"ReadableStreamBYOBRequest\",\"respond\");if(@getByIdDirectPrivate(this,\"associatedReadableByteStreamController\")===@undefined)@throwTypeError(\"ReadableStreamBYOBRequest.associatedReadableByteStreamController is undefined\");return @readableByteStreamControllerRespond(@getByIdDirectPrivate(this,\"associatedReadableByteStreamController\"),m)})\n";
+const char* const s_readableStreamBYOBRequestRespondCode = "(function (bytesWritten) {\"use strict\";\n  if (!@isReadableStreamBYOBRequest(this))\n    throw @makeThisTypeError(\"ReadableStreamBYOBRequest\", \"respond\");\n  if (@getByIdDirectPrivate(this, \"associatedReadableByteStreamController\") === @undefined)\n    @throwTypeError(\"ReadableStreamBYOBRequest.associatedReadableByteStreamController is undefined\");\n  return @readableByteStreamControllerRespond(@getByIdDirectPrivate(this, \"associatedReadableByteStreamController\"), bytesWritten);\n})\n";
 
 // respondWithNewView
 const JSC::ConstructAbility s_readableStreamBYOBRequestRespondWithNewViewCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamBYOBRequestRespondWithNewViewCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamBYOBRequestRespondWithNewViewCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamBYOBRequestRespondWithNewViewCodeLength = 595;
+const int s_readableStreamBYOBRequestRespondWithNewViewCodeLength = 655;
 static const JSC::Intrinsic s_readableStreamBYOBRequestRespondWithNewViewCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamBYOBRequestRespondWithNewViewCode = "(function (_){\"use strict\";if(!@isReadableStreamBYOBRequest(this))throw @makeThisTypeError(\"ReadableStreamBYOBRequest\",\"respond\");if(@getByIdDirectPrivate(this,\"associatedReadableByteStreamController\")===@undefined)@throwTypeError(\"ReadableStreamBYOBRequest.associatedReadableByteStreamController is undefined\");if(!@isObject(_))@throwTypeError(\"Provided view is not an object\");if(!@ArrayBuffer.@isView(_))@throwTypeError(\"Provided view is not an ArrayBufferView\");return @readableByteStreamControllerRespondWithNewView(@getByIdDirectPrivate(this,\"associatedReadableByteStreamController\"),_)})\n";
+const char* const s_readableStreamBYOBRequestRespondWithNewViewCode = "(function (view) {\"use strict\";\n  if (!@isReadableStreamBYOBRequest(this))\n    throw @makeThisTypeError(\"ReadableStreamBYOBRequest\", \"respond\");\n  if (@getByIdDirectPrivate(this, \"associatedReadableByteStreamController\") === @undefined)\n    @throwTypeError(\"ReadableStreamBYOBRequest.associatedReadableByteStreamController is undefined\");\n  if (!@isObject(view))\n    @throwTypeError(\"Provided view is not an object\");\n  if (!@ArrayBuffer.@isView(view))\n    @throwTypeError(\"Provided view is not an ArrayBufferView\");\n  return @readableByteStreamControllerRespondWithNewView(@getByIdDirectPrivate(this, \"associatedReadableByteStreamController\"), view);\n})\n";
 
 // view
 const JSC::ConstructAbility s_readableStreamBYOBRequestViewCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamBYOBRequestViewCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamBYOBRequestViewCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamBYOBRequestViewCodeLength = 172;
+const int s_readableStreamBYOBRequestViewCodeLength = 189;
 static const JSC::Intrinsic s_readableStreamBYOBRequestViewCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamBYOBRequestViewCode = "(function (){\"use strict\";if(!@isReadableStreamBYOBRequest(this))throw @makeGetterTypeError(\"ReadableStreamBYOBRequest\",\"view\");return @getByIdDirectPrivate(this,\"view\")})\n";
+const char* const s_readableStreamBYOBRequestViewCode = "(function () {\"use strict\";\n  if (!@isReadableStreamBYOBRequest(this))\n    throw @makeGetterTypeError(\"ReadableStreamBYOBRequest\", \"view\");\n  return @getByIdDirectPrivate(this, \"view\");\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -2382,65 +2418,65 @@ WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 const JSC::ConstructAbility s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeLength = 237;
+const int s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeLength = 336;
 static const JSC::Intrinsic s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCode = "(function (u){\"use strict\";const c=@getInternalWritableStream(u);if(c)u=c;if(!@isWritableStream(u))@throwTypeError(\"WritableStreamDefaultWriter constructor takes a WritableStream\");return @setUpWritableStreamDefaultWriter(this,u),this})\n";
+const char* const s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCode = "(function (stream) {\"use strict\";\n  const internalStream = @getInternalWritableStream(stream);\n  if (internalStream)\n    stream = internalStream;\n  if (!@isWritableStream(stream))\n    @throwTypeError(\"WritableStreamDefaultWriter constructor takes a WritableStream\");\n  @setUpWritableStreamDefaultWriter(this, stream);\n  return this;\n})\n";
 
 // closed
 const JSC::ConstructAbility s_writableStreamDefaultWriterClosedCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamDefaultWriterClosedCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamDefaultWriterClosedCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamDefaultWriterClosedCodeLength = 214;
+const int s_writableStreamDefaultWriterClosedCodeLength = 231;
 static const JSC::Intrinsic s_writableStreamDefaultWriterClosedCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamDefaultWriterClosedCode = "(function (){\"use strict\";if(!@isWritableStreamDefaultWriter(this))return @Promise.@reject(@makeGetterTypeError(\"WritableStreamDefaultWriter\",\"closed\"));return @getByIdDirectPrivate(this,\"closedPromise\").promise})\n";
+const char* const s_writableStreamDefaultWriterClosedCode = "(function () {\"use strict\";\n  if (!@isWritableStreamDefaultWriter(this))\n    return @Promise.@reject(@makeGetterTypeError(\"WritableStreamDefaultWriter\", \"closed\"));\n  return @getByIdDirectPrivate(this, \"closedPromise\").promise;\n})\n";
 
 // desiredSize
 const JSC::ConstructAbility s_writableStreamDefaultWriterDesiredSizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamDefaultWriterDesiredSizeCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamDefaultWriterDesiredSizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamDefaultWriterDesiredSizeCodeLength = 309;
+const int s_writableStreamDefaultWriterDesiredSizeCodeLength = 337;
 static const JSC::Intrinsic s_writableStreamDefaultWriterDesiredSizeCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamDefaultWriterDesiredSizeCode = "(function (){\"use strict\";if(!@isWritableStreamDefaultWriter(this))throw @makeThisTypeError(\"WritableStreamDefaultWriter\",\"desiredSize\");if(@getByIdDirectPrivate(this,\"stream\")===@undefined)@throwTypeError(\"WritableStreamDefaultWriter has no stream\");return @writableStreamDefaultWriterGetDesiredSize(this)})\n";
+const char* const s_writableStreamDefaultWriterDesiredSizeCode = "(function () {\"use strict\";\n  if (!@isWritableStreamDefaultWriter(this))\n    throw @makeThisTypeError(\"WritableStreamDefaultWriter\", \"desiredSize\");\n  if (@getByIdDirectPrivate(this, \"stream\") === @undefined)\n    @throwTypeError(\"WritableStreamDefaultWriter has no stream\");\n  return @writableStreamDefaultWriterGetDesiredSize(this);\n})\n";
 
 // ready
 const JSC::ConstructAbility s_writableStreamDefaultWriterReadyCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamDefaultWriterReadyCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamDefaultWriterReadyCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamDefaultWriterReadyCodeLength = 210;
+const int s_writableStreamDefaultWriterReadyCodeLength = 227;
 static const JSC::Intrinsic s_writableStreamDefaultWriterReadyCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamDefaultWriterReadyCode = "(function (){\"use strict\";if(!@isWritableStreamDefaultWriter(this))return @Promise.@reject(@makeThisTypeError(\"WritableStreamDefaultWriter\",\"ready\"));return @getByIdDirectPrivate(this,\"readyPromise\").promise})\n";
+const char* const s_writableStreamDefaultWriterReadyCode = "(function () {\"use strict\";\n  if (!@isWritableStreamDefaultWriter(this))\n    return @Promise.@reject(@makeThisTypeError(\"WritableStreamDefaultWriter\", \"ready\"));\n  return @getByIdDirectPrivate(this, \"readyPromise\").promise;\n})\n";
 
 // abort
 const JSC::ConstructAbility s_writableStreamDefaultWriterAbortCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamDefaultWriterAbortCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamDefaultWriterAbortCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamDefaultWriterAbortCodeLength = 340;
+const int s_writableStreamDefaultWriterAbortCodeLength = 379;
 static const JSC::Intrinsic s_writableStreamDefaultWriterAbortCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamDefaultWriterAbortCode = "(function (c){\"use strict\";if(!@isWritableStreamDefaultWriter(this))return @Promise.@reject(@makeThisTypeError(\"WritableStreamDefaultWriter\",\"abort\"));if(@getByIdDirectPrivate(this,\"stream\")===@undefined)return @Promise.@reject(@makeTypeError(\"WritableStreamDefaultWriter has no stream\"));return @writableStreamDefaultWriterAbort(this,c)})\n";
+const char* const s_writableStreamDefaultWriterAbortCode = "(function (reason) {\"use strict\";\n  if (!@isWritableStreamDefaultWriter(this))\n    return @Promise.@reject(@makeThisTypeError(\"WritableStreamDefaultWriter\", \"abort\"));\n  if (@getByIdDirectPrivate(this, \"stream\") === @undefined)\n    return @Promise.@reject(@makeTypeError(\"WritableStreamDefaultWriter has no stream\"));\n  return @writableStreamDefaultWriterAbort(this, reason);\n})\n";
 
 // close
 const JSC::ConstructAbility s_writableStreamDefaultWriterCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamDefaultWriterCloseCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamDefaultWriterCloseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamDefaultWriterCloseCodeLength = 477;
+const int s_writableStreamDefaultWriterCloseCodeLength = 534;
 static const JSC::Intrinsic s_writableStreamDefaultWriterCloseCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamDefaultWriterCloseCode = "(function (){\"use strict\";if(!@isWritableStreamDefaultWriter(this))return @Promise.@reject(@makeThisTypeError(\"WritableStreamDefaultWriter\",\"close\"));const i=@getByIdDirectPrivate(this,\"stream\");if(i===@undefined)return @Promise.@reject(@makeTypeError(\"WritableStreamDefaultWriter has no stream\"));if(@writableStreamCloseQueuedOrInFlight(i))return @Promise.@reject(@makeTypeError(\"WritableStreamDefaultWriter is being closed\"));return @writableStreamDefaultWriterClose(this)})\n";
+const char* const s_writableStreamDefaultWriterCloseCode = "(function () {\"use strict\";\n  if (!@isWritableStreamDefaultWriter(this))\n    return @Promise.@reject(@makeThisTypeError(\"WritableStreamDefaultWriter\", \"close\"));\n  const stream = @getByIdDirectPrivate(this, \"stream\");\n  if (stream === @undefined)\n    return @Promise.@reject(@makeTypeError(\"WritableStreamDefaultWriter has no stream\"));\n  if (@writableStreamCloseQueuedOrInFlight(stream))\n    return @Promise.@reject(@makeTypeError(\"WritableStreamDefaultWriter is being closed\"));\n  return @writableStreamDefaultWriterClose(this);\n})\n";
 
 // releaseLock
 const JSC::ConstructAbility s_writableStreamDefaultWriterReleaseLockCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamDefaultWriterReleaseLockCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamDefaultWriterReleaseLockCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamDefaultWriterReleaseLockCodeLength = 307;
+const int s_writableStreamDefaultWriterReleaseLockCodeLength = 361;
 static const JSC::Intrinsic s_writableStreamDefaultWriterReleaseLockCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamDefaultWriterReleaseLockCode = "(function (){\"use strict\";if(!@isWritableStreamDefaultWriter(this))throw @makeThisTypeError(\"WritableStreamDefaultWriter\",\"releaseLock\");const i=@getByIdDirectPrivate(this,\"stream\");if(i===@undefined)return;@assert(@getByIdDirectPrivate(i,\"writer\")!==@undefined),@writableStreamDefaultWriterRelease(this)})\n";
+const char* const s_writableStreamDefaultWriterReleaseLockCode = "(function () {\"use strict\";\n  if (!@isWritableStreamDefaultWriter(this))\n    throw @makeThisTypeError(\"WritableStreamDefaultWriter\", \"releaseLock\");\n  const stream = @getByIdDirectPrivate(this, \"stream\");\n  if (stream === @undefined)\n    return;\n  @assert(@getByIdDirectPrivate(stream, \"writer\") !== @undefined);\n  @writableStreamDefaultWriterRelease(this);\n})\n";
 
 // write
 const JSC::ConstructAbility s_writableStreamDefaultWriterWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamDefaultWriterWriteCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamDefaultWriterWriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamDefaultWriterWriteCodeLength = 340;
+const int s_writableStreamDefaultWriterWriteCodeLength = 377;
 static const JSC::Intrinsic s_writableStreamDefaultWriterWriteCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamDefaultWriterWriteCode = "(function (e){\"use strict\";if(!@isWritableStreamDefaultWriter(this))return @Promise.@reject(@makeThisTypeError(\"WritableStreamDefaultWriter\",\"write\"));if(@getByIdDirectPrivate(this,\"stream\")===@undefined)return @Promise.@reject(@makeTypeError(\"WritableStreamDefaultWriter has no stream\"));return @writableStreamDefaultWriterWrite(this,e)})\n";
+const char* const s_writableStreamDefaultWriterWriteCode = "(function (chunk) {\"use strict\";\n  if (!@isWritableStreamDefaultWriter(this))\n    return @Promise.@reject(@makeThisTypeError(\"WritableStreamDefaultWriter\", \"write\"));\n  if (@getByIdDirectPrivate(this, \"stream\") === @undefined)\n    return @Promise.@reject(@makeTypeError(\"WritableStreamDefaultWriter has no stream\"));\n  return @writableStreamDefaultWriterWrite(this, chunk);\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -2456,145 +2492,145 @@ WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_CODE(DEFINE_BUILTIN_GENERATO
 const JSC::ConstructAbility s_readableStreamInitializeReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInitializeReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInitializeReadableStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInitializeReadableStreamCodeLength = 2143;
+const int s_readableStreamInitializeReadableStreamCodeLength = 3086;
 static const JSC::Intrinsic s_readableStreamInitializeReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInitializeReadableStreamCode = "(function (_,v){\"use strict\";if(_===@undefined)_={@bunNativeType:0,@bunNativePtr:0,@lazy:!1};if(v===@undefined)v={};if(!@isObject(_))@throwTypeError(\"ReadableStream constructor takes an object as first argument\");if(v!==@undefined&&!@isObject(v))@throwTypeError(\"ReadableStream constructor takes an object as second argument, if any\");@putByIdDirectPrivate(this,\"state\",@streamReadable),@putByIdDirectPrivate(this,\"reader\",@undefined),@putByIdDirectPrivate(this,\"storedError\",@undefined),@putByIdDirectPrivate(this,\"disturbed\",!1),@putByIdDirectPrivate(this,\"readableStreamController\",null),@putByIdDirectPrivate(this,\"bunNativeType\",@getByIdDirectPrivate(_,\"bunNativeType\")\?\?0),@putByIdDirectPrivate(this,\"bunNativePtr\",@getByIdDirectPrivate(_,\"bunNativePtr\")\?\?0),@putByIdDirectPrivate(this,\"asyncContext\",@getInternalField(@asyncContext,0));const B=_.type===\"direct\",R=!!_.@lazy,P=B||R;if(@getByIdDirectPrivate(_,\"pull\")!==@undefined&&!P){const m=@getByIdDirectPrivate(v,\"size\"),f=@getByIdDirectPrivate(v,\"highWaterMark\");return @putByIdDirectPrivate(this,\"highWaterMark\",f),@putByIdDirectPrivate(this,\"underlyingSource\",@undefined),@setupReadableStreamDefaultController(this,_,m,f!==@undefined\?f:1,@getByIdDirectPrivate(_,\"start\"),@getByIdDirectPrivate(_,\"pull\"),@getByIdDirectPrivate(_,\"cancel\")),this}if(B)@putByIdDirectPrivate(this,\"underlyingSource\",_),@putByIdDirectPrivate(this,\"highWaterMark\",@getByIdDirectPrivate(v,\"highWaterMark\")),@putByIdDirectPrivate(this,\"start\",()=>@createReadableStreamController(this,_,v));else if(P){const m=_.autoAllocateChunkSize;@putByIdDirectPrivate(this,\"highWaterMark\",@undefined),@putByIdDirectPrivate(this,\"underlyingSource\",@undefined),@putByIdDirectPrivate(this,\"highWaterMark\",m||@getByIdDirectPrivate(v,\"highWaterMark\")),@putByIdDirectPrivate(this,\"start\",()=>{const f=@lazyLoadStream(this,m);if(f)@createReadableStreamController(this,f,v)})}else @putByIdDirectPrivate(this,\"underlyingSource\",@undefined),@putByIdDirectPrivate(this,\"highWaterMark\",@getByIdDirectPrivate(v,\"highWaterMark\")),@putByIdDirectPrivate(this,\"start\",@undefined),@createReadableStreamController(this,_,v);return this})\n";
+const char* const s_readableStreamInitializeReadableStreamCode = "(function (underlyingSource, strategy) {\"use strict\";\n  if (underlyingSource === @undefined)\n    underlyingSource = { @bunNativeType: 0, @bunNativePtr: 0, @lazy: false };\n  if (strategy === @undefined)\n    strategy = {};\n  if (!@isObject(underlyingSource))\n    @throwTypeError(\"ReadableStream constructor takes an object as first argument\");\n  if (strategy !== @undefined && !@isObject(strategy))\n    @throwTypeError(\"ReadableStream constructor takes an object as second argument, if any\");\n  @putByIdDirectPrivate(this, \"state\", @streamReadable);\n  @putByIdDirectPrivate(this, \"reader\", @undefined);\n  @putByIdDirectPrivate(this, \"storedError\", @undefined);\n  @putByIdDirectPrivate(this, \"disturbed\", false);\n  @putByIdDirectPrivate(this, \"readableStreamController\", null);\n  @putByIdDirectPrivate(this, \"bunNativeType\", @getByIdDirectPrivate(underlyingSource, \"bunNativeType\") \?\? 0);\n  @putByIdDirectPrivate(this, \"bunNativePtr\", @getByIdDirectPrivate(underlyingSource, \"bunNativePtr\") \?\? 0);\n  @putByIdDirectPrivate(this, \"asyncContext\", @getInternalField(@asyncContext, 0));\n  const isDirect = underlyingSource.type === \"direct\";\n  const isUnderlyingSourceLazy = !!underlyingSource.@lazy;\n  const isLazy = isDirect || isUnderlyingSourceLazy;\n  if (@getByIdDirectPrivate(underlyingSource, \"pull\") !== @undefined && !isLazy) {\n    const size = @getByIdDirectPrivate(strategy, \"size\");\n    const highWaterMark = @getByIdDirectPrivate(strategy, \"highWaterMark\");\n    @putByIdDirectPrivate(this, \"highWaterMark\", highWaterMark);\n    @putByIdDirectPrivate(this, \"underlyingSource\", @undefined);\n    @setupReadableStreamDefaultController(this, underlyingSource, size, highWaterMark !== @undefined \? highWaterMark : 1, @getByIdDirectPrivate(underlyingSource, \"start\"), @getByIdDirectPrivate(underlyingSource, \"pull\"), @getByIdDirectPrivate(underlyingSource, \"cancel\"));\n    return this;\n  }\n  if (isDirect) {\n    @putByIdDirectPrivate(this, \"underlyingSource\", underlyingSource);\n    @putByIdDirectPrivate(this, \"highWaterMark\", @getByIdDirectPrivate(strategy, \"highWaterMark\"));\n    @putByIdDirectPrivate(this, \"start\", () => @createReadableStreamController(this, underlyingSource, strategy));\n  } else if (isLazy) {\n    const autoAllocateChunkSize = underlyingSource.autoAllocateChunkSize;\n    @putByIdDirectPrivate(this, \"highWaterMark\", @undefined);\n    @putByIdDirectPrivate(this, \"underlyingSource\", @undefined);\n    @putByIdDirectPrivate(this, \"highWaterMark\", autoAllocateChunkSize || @getByIdDirectPrivate(strategy, \"highWaterMark\"));\n    @putByIdDirectPrivate(this, \"start\", () => {\n      const instance = @lazyLoadStream(this, autoAllocateChunkSize);\n      if (instance) {\n        @createReadableStreamController(this, instance, strategy);\n      }\n    });\n  } else {\n    @putByIdDirectPrivate(this, \"underlyingSource\", @undefined);\n    @putByIdDirectPrivate(this, \"highWaterMark\", @getByIdDirectPrivate(strategy, \"highWaterMark\"));\n    @putByIdDirectPrivate(this, \"start\", @undefined);\n    @createReadableStreamController(this, underlyingSource, strategy);\n  }\n  return this;\n})\n";
 
 // readableStreamToArray
 const JSC::ConstructAbility s_readableStreamReadableStreamToArrayCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamReadableStreamToArrayCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamReadableStreamToArrayCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_readableStreamReadableStreamToArrayCodeLength = 173;
+const int s_readableStreamReadableStreamToArrayCodeLength = 268;
 static const JSC::Intrinsic s_readableStreamReadableStreamToArrayCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamReadableStreamToArrayCode = "(function (_){\"use strict\";var b=@getByIdDirectPrivate(_,\"underlyingSource\");if(b!==@undefined)return @readableStreamToArrayDirect(_,b);return @readableStreamIntoArray(_)})\n";
+const char* const s_readableStreamReadableStreamToArrayCode = "(function (stream) {\"use strict\";\n  var underlyingSource = @getByIdDirectPrivate(stream, \"underlyingSource\");\n  if (underlyingSource !== @undefined) {\n    return @readableStreamToArrayDirect(stream, underlyingSource);\n  }\n  return @readableStreamIntoArray(stream);\n})\n";
 
 // readableStreamToText
 const JSC::ConstructAbility s_readableStreamReadableStreamToTextCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamReadableStreamToTextCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamReadableStreamToTextCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_readableStreamReadableStreamToTextCodeLength = 171;
+const int s_readableStreamReadableStreamToTextCodeLength = 266;
 static const JSC::Intrinsic s_readableStreamReadableStreamToTextCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamReadableStreamToTextCode = "(function (p){\"use strict\";var _=@getByIdDirectPrivate(p,\"underlyingSource\");if(_!==@undefined)return @readableStreamToTextDirect(p,_);return @readableStreamIntoText(p)})\n";
+const char* const s_readableStreamReadableStreamToTextCode = "(function (stream) {\"use strict\";\n  var underlyingSource = @getByIdDirectPrivate(stream, \"underlyingSource\");\n  if (underlyingSource !== @undefined) {\n    return @readableStreamToTextDirect(stream, underlyingSource);\n  }\n  return @readableStreamIntoText(stream);\n})\n";
 
 // readableStreamToArrayBuffer
 const JSC::ConstructAbility s_readableStreamReadableStreamToArrayBufferCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamReadableStreamToArrayBufferCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamReadableStreamToArrayBufferCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_readableStreamReadableStreamToArrayBufferCodeLength = 270;
+const int s_readableStreamReadableStreamToArrayBufferCodeLength = 405;
 static const JSC::Intrinsic s_readableStreamReadableStreamToArrayBufferCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamReadableStreamToArrayBufferCode = "(function (_){\"use strict\";var p=@getByIdDirectPrivate(_,\"underlyingSource\");if(p!==@undefined)return @readableStreamToArrayBufferDirect(_,p);var b=@Bun.readableStreamToArray(_);if(@isPromise(b))return b.then(@Bun.concatArrayBuffers);return @Bun.concatArrayBuffers(b)})\n";
+const char* const s_readableStreamReadableStreamToArrayBufferCode = "(function (stream) {\"use strict\";\n  var underlyingSource = @getByIdDirectPrivate(stream, \"underlyingSource\");\n  if (underlyingSource !== @undefined) {\n    return @readableStreamToArrayBufferDirect(stream, underlyingSource);\n  }\n  var result = @Bun.readableStreamToArray(stream);\n  if (@isPromise(result)) {\n    return result.then(@Bun.concatArrayBuffers);\n  }\n  return @Bun.concatArrayBuffers(result);\n})\n";
 
 // readableStreamToFormData
 const JSC::ConstructAbility s_readableStreamReadableStreamToFormDataCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamReadableStreamToFormDataCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamReadableStreamToFormDataCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_readableStreamReadableStreamToFormDataCodeLength = 106;
+const int s_readableStreamReadableStreamToFormDataCodeLength = 161;
 static const JSC::Intrinsic s_readableStreamReadableStreamToFormDataCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamReadableStreamToFormDataCode = "(function (r,d){\"use strict\";return @Bun.readableStreamToBlob(r).then((u)=>{return FormData.from(u,d)})})\n";
+const char* const s_readableStreamReadableStreamToFormDataCode = "(function (stream, contentType) {\"use strict\";\n  return @Bun.readableStreamToBlob(stream).then((blob) => {\n    return FormData.from(blob, contentType);\n  });\n})\n";
 
 // readableStreamToJSON
 const JSC::ConstructAbility s_readableStreamReadableStreamToJSONCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamReadableStreamToJSONCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamReadableStreamToJSONCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_readableStreamReadableStreamToJSONCodeLength = 94;
+const int s_readableStreamReadableStreamToJSONCodeLength = 110;
 static const JSC::Intrinsic s_readableStreamReadableStreamToJSONCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamReadableStreamToJSONCode = "(function (d){\"use strict\";return @Bun.readableStreamToText(d).@then(globalThis.JSON.parse)})\n";
+const char* const s_readableStreamReadableStreamToJSONCode = "(function (stream) {\"use strict\";\n  return @Bun.readableStreamToText(stream).@then(globalThis.JSON.parse);\n})\n";
 
 // readableStreamToBlob
 const JSC::ConstructAbility s_readableStreamReadableStreamToBlobCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamReadableStreamToBlobCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamReadableStreamToBlobCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_readableStreamReadableStreamToBlobCodeLength = 108;
+const int s_readableStreamReadableStreamToBlobCodeLength = 134;
 static const JSC::Intrinsic s_readableStreamReadableStreamToBlobCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamReadableStreamToBlobCode = "(function (n){\"use strict\";return @Promise.resolve(@Bun.readableStreamToArray(n)).@then((B)=>new Blob(B))})\n";
+const char* const s_readableStreamReadableStreamToBlobCode = "(function (stream) {\"use strict\";\n  return @Promise.resolve(@Bun.readableStreamToArray(stream)).@then((array) => new Blob(array));\n})\n";
 
 // consumeReadableStream
 const JSC::ConstructAbility s_readableStreamConsumeReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamConsumeReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamConsumeReadableStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_readableStreamConsumeReadableStreamCodeLength = 1603;
+const int s_readableStreamConsumeReadableStreamCodeLength = 3079;
 static const JSC::Intrinsic s_readableStreamConsumeReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamConsumeReadableStreamCode = "(function (G,q,A){\"use strict\";const B=globalThis.Symbol.for(\"Bun.consumeReadableStreamPrototype\");var k=globalThis[B];if(!k)k=globalThis[B]=[];var w=k[q];if(w===@undefined){var[L,H,I,J,N,D]=globalThis[globalThis.Symbol.for('Bun.lazy')](q);w=class K{handleError;handleClosed;processResult;constructor(_,j){this.#$=j,this.#j=_,this.#_=!1,this.handleError=this._handleError.bind(this),this.handleClosed=this._handleClosed.bind(this),this.processResult=this._processResult.bind(this),_.closed.then(this.handleClosed,this.handleError)}_handleClosed(){if(this.#_)return;this.#_=!0;var _=this.#$;this.#$=0,J(_),D(_)}_handleError(_){if(this.#_)return;this.#_=!0;var j=this.#$;this.#$=0,H(j,_),D(j)}#$;#_=!1;#j;_handleReadMany({value:_,done:j,size:x}){if(j){this.handleClosed();return}if(this.#_)return;I(this.#$,_,j,x)}read(){if(!this.#$)return @throwTypeError(\"ReadableStreamSink is already closed\");return this.processResult(this.#j.read())}_processResult(_){if(_&&@isPromise(_)){if(@getPromiseInternalField(_,@promiseFieldFlags)&@promiseStateFulfilled){const x=@getPromiseInternalField(_,@promiseFieldReactionsOrResult);if(x)_=x}}if(_&&@isPromise(_))return _.then(this.processResult,this.handleError),null;if(_.done)return this.handleClosed(),0;else if(_.value)return _.value;else return-1}readMany(){if(!this.#$)return @throwTypeError(\"ReadableStreamSink is already closed\");return this.processResult(this.#j.readMany())}};const F=q+1;if(k.length<F)k.length=F;@putByValDirect(k,q,w)}if(@isReadableStreamLocked(A))@throwTypeError(\"Cannot start reading from a locked stream\");return new w(A.getReader(),G)})\n";
+const char* const s_readableStreamConsumeReadableStreamCode = "(function (nativePtr, nativeType, inputStream) {\"use strict\";\n  const symbol = globalThis.Symbol.for(\"Bun.consumeReadableStreamPrototype\");\n  var cached = globalThis[symbol];\n  if (!cached) {\n    cached = globalThis[symbol] = [];\n  }\n  var Prototype = cached[nativeType];\n  if (Prototype === @undefined) {\n    var [doRead, doError, doReadMany, doClose, onClose, deinit] = globalThis[globalThis.Symbol.for('Bun.lazy')](nativeType);\n    Prototype = class NativeReadableStreamSink {\n      handleError;\n      handleClosed;\n      processResult;\n      constructor(reader, ptr) {\n        this.#ptr = ptr;\n        this.#reader = reader;\n        this.#didClose = false;\n        this.handleError = this._handleError.bind(this);\n        this.handleClosed = this._handleClosed.bind(this);\n        this.processResult = this._processResult.bind(this);\n        reader.closed.then(this.handleClosed, this.handleError);\n      }\n      _handleClosed() {\n        if (this.#didClose)\n          return;\n        this.#didClose = true;\n        var ptr = this.#ptr;\n        this.#ptr = 0;\n        doClose(ptr);\n        deinit(ptr);\n      }\n      _handleError(error) {\n        if (this.#didClose)\n          return;\n        this.#didClose = true;\n        var ptr = this.#ptr;\n        this.#ptr = 0;\n        doError(ptr, error);\n        deinit(ptr);\n      }\n      #ptr;\n      #didClose = false;\n      #reader;\n      _handleReadMany({ value, done, size }) {\n        if (done) {\n          this.handleClosed();\n          return;\n        }\n        if (this.#didClose)\n          return;\n        doReadMany(this.#ptr, value, done, size);\n      }\n      read() {\n        if (!this.#ptr)\n          return @throwTypeError(\"ReadableStreamSink is already closed\");\n        return this.processResult(this.#reader.read());\n      }\n      _processResult(result) {\n        if (result && @isPromise(result)) {\n          const flags = @getPromiseInternalField(result, @promiseFieldFlags);\n          if (flags & @promiseStateFulfilled) {\n            const fulfilledValue = @getPromiseInternalField(result, @promiseFieldReactionsOrResult);\n            if (fulfilledValue) {\n              result = fulfilledValue;\n            }\n          }\n        }\n        if (result && @isPromise(result)) {\n          result.then(this.processResult, this.handleError);\n          return null;\n        }\n        if (result.done) {\n          this.handleClosed();\n          return 0;\n        } else if (result.value) {\n          return result.value;\n        } else {\n          return -1;\n        }\n      }\n      readMany() {\n        if (!this.#ptr)\n          return @throwTypeError(\"ReadableStreamSink is already closed\");\n        return this.processResult(this.#reader.readMany());\n      }\n    };\n    const minlength = nativeType + 1;\n    if (cached.length < minlength) {\n      cached.length = minlength;\n    }\n    @putByValDirect(cached, nativeType, Prototype);\n  }\n  if (@isReadableStreamLocked(inputStream)) {\n    @throwTypeError(\"Cannot start reading from a locked stream\");\n  }\n  return new Prototype(inputStream.getReader(), nativePtr);\n})\n";
 
 // createEmptyReadableStream
 const JSC::ConstructAbility s_readableStreamCreateEmptyReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamCreateEmptyReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamCreateEmptyReadableStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_readableStreamCreateEmptyReadableStreamCodeLength = 99;
+const int s_readableStreamCreateEmptyReadableStreamCodeLength = 142;
 static const JSC::Intrinsic s_readableStreamCreateEmptyReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamCreateEmptyReadableStreamCode = "(function (){\"use strict\";var c=new @ReadableStream({pull(){}});return @readableStreamClose(c),c})\n";
+const char* const s_readableStreamCreateEmptyReadableStreamCode = "(function () {\"use strict\";\n  var stream = new @ReadableStream({\n    pull() {\n    }\n  });\n  @readableStreamClose(stream);\n  return stream;\n})\n";
 
 // createNativeReadableStream
 const JSC::ConstructAbility s_readableStreamCreateNativeReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamCreateNativeReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamCreateNativeReadableStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_readableStreamCreateNativeReadableStreamCodeLength = 129;
+const int s_readableStreamCreateNativeReadableStreamCodeLength = 217;
 static const JSC::Intrinsic s_readableStreamCreateNativeReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamCreateNativeReadableStreamCode = "(function (d,m,r){\"use strict\";return new @ReadableStream({@lazy:!0,@bunNativeType:m,@bunNativePtr:d,autoAllocateChunkSize:r})})\n";
+const char* const s_readableStreamCreateNativeReadableStreamCode = "(function (nativePtr, nativeType, autoAllocateChunkSize) {\"use strict\";\n  return new @ReadableStream({\n    @lazy: true,\n    @bunNativeType: nativeType,\n    @bunNativePtr: nativePtr,\n    autoAllocateChunkSize\n  });\n})\n";
 
 // cancel
 const JSC::ConstructAbility s_readableStreamCancelCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamCancelCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamCancelCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamCancelCodeLength = 266;
+const int s_readableStreamCancelCodeLength = 302;
 static const JSC::Intrinsic s_readableStreamCancelCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamCancelCode = "(function (_){\"use strict\";if(!@isReadableStream(this))return @Promise.@reject(@makeThisTypeError(\"ReadableStream\",\"cancel\"));if(@isReadableStreamLocked(this))return @Promise.@reject(@makeTypeError(\"ReadableStream is locked\"));return @readableStreamCancel(this,_)})\n";
+const char* const s_readableStreamCancelCode = "(function (reason) {\"use strict\";\n  if (!@isReadableStream(this))\n    return @Promise.@reject(@makeThisTypeError(\"ReadableStream\", \"cancel\"));\n  if (@isReadableStreamLocked(this))\n    return @Promise.@reject(@makeTypeError(\"ReadableStream is locked\"));\n  return @readableStreamCancel(this, reason);\n})\n";
 
 // getReader
 const JSC::ConstructAbility s_readableStreamGetReaderCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamGetReaderCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamGetReaderCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamGetReaderCodeLength = 470;
+const int s_readableStreamGetReaderCodeLength = 600;
 static const JSC::Intrinsic s_readableStreamGetReaderCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamGetReaderCode = "(function (b){\"use strict\";if(!@isReadableStream(this))throw @makeThisTypeError(\"ReadableStream\",\"getReader\");const e=@toDictionary(b,{},\"ReadableStream.getReader takes an object as first argument\").mode;if(e===@undefined){var n=@getByIdDirectPrivate(this,\"start\");if(n)@putByIdDirectPrivate(this,\"start\",@undefined),n();return new @ReadableStreamDefaultReader(this)}if(e==\"byob\")return new @ReadableStreamBYOBReader(this);@throwTypeError(\"Invalid mode is specified\")})\n";
+const char* const s_readableStreamGetReaderCode = "(function (options) {\"use strict\";\n  if (!@isReadableStream(this))\n    throw @makeThisTypeError(\"ReadableStream\", \"getReader\");\n  const mode = @toDictionary(options, {}, \"ReadableStream.getReader takes an object as first argument\").mode;\n  if (mode === @undefined) {\n    var start_ = @getByIdDirectPrivate(this, \"start\");\n    if (start_) {\n      @putByIdDirectPrivate(this, \"start\", @undefined);\n      start_();\n    }\n    return new @ReadableStreamDefaultReader(this);\n  }\n  if (mode == \"byob\") {\n    return new @ReadableStreamBYOBReader(this);\n  }\n  @throwTypeError(\"Invalid mode is specified\");\n})\n";
 
 // pipeThrough
 const JSC::ConstructAbility s_readableStreamPipeThroughCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamPipeThroughCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamPipeThroughCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamPipeThroughCodeLength = 859;
+const int s_readableStreamPipeThroughCodeLength = 1379;
 static const JSC::Intrinsic s_readableStreamPipeThroughCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamPipeThroughCode = "(function (q,_){\"use strict\";const y=q,c=y.readable;if(!@isReadableStream(c))throw @makeTypeError(\"readable should be ReadableStream\");const x=y.writable,u=@getInternalWritableStream(x);if(!@isWritableStream(u))throw @makeTypeError(\"writable should be WritableStream\");let h=!1,j=!1,k=!1,d;if(!@isUndefinedOrNull(_)){if(!@isObject(_))throw @makeTypeError(\"options must be an object\");if(j=!!_.preventAbort,k=!!_.preventCancel,h=!!_.preventClose,d=_.signal,d!==@undefined&&!@isAbortSignal(d))throw @makeTypeError(\"options.signal must be AbortSignal\")}if(!@isReadableStream(this))throw @makeThisTypeError(\"ReadableStream\",\"pipeThrough\");if(@isReadableStreamLocked(this))throw @makeTypeError(\"ReadableStream is locked\");if(@isWritableStreamLocked(u))throw @makeTypeError(\"WritableStream is locked\");return @readableStreamPipeToWritableStream(this,u,h,j,k,d),c})\n";
+const char* const s_readableStreamPipeThroughCode = "(function (streams, options) {\"use strict\";\n  const transforms = streams;\n  const readable = transforms[\"readable\"];\n  if (!@isReadableStream(readable))\n    throw @makeTypeError(\"readable should be ReadableStream\");\n  const writable = transforms[\"writable\"];\n  const internalWritable = @getInternalWritableStream(writable);\n  if (!@isWritableStream(internalWritable))\n    throw @makeTypeError(\"writable should be WritableStream\");\n  let preventClose = false;\n  let preventAbort = false;\n  let preventCancel = false;\n  let signal;\n  if (!@isUndefinedOrNull(options)) {\n    if (!@isObject(options))\n      throw @makeTypeError(\"options must be an object\");\n    preventAbort = !!options[\"preventAbort\"];\n    preventCancel = !!options[\"preventCancel\"];\n    preventClose = !!options[\"preventClose\"];\n    signal = options[\"signal\"];\n    if (signal !== @undefined && !@isAbortSignal(signal))\n      throw @makeTypeError(\"options.signal must be AbortSignal\");\n  }\n  if (!@isReadableStream(this))\n    throw @makeThisTypeError(\"ReadableStream\", \"pipeThrough\");\n  if (@isReadableStreamLocked(this))\n    throw @makeTypeError(\"ReadableStream is locked\");\n  if (@isWritableStreamLocked(internalWritable))\n    throw @makeTypeError(\"WritableStream is locked\");\n  @readableStreamPipeToWritableStream(this, internalWritable, preventClose, preventAbort, preventCancel, signal);\n  return readable;\n})\n";
 
 // pipeTo
 const JSC::ConstructAbility s_readableStreamPipeToCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamPipeToCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamPipeToCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamPipeToCodeLength = 914;
+const int s_readableStreamPipeToCodeLength = 1391;
 static const JSC::Intrinsic s_readableStreamPipeToCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamPipeToCode = "(function (S){\"use strict\";if(!@isReadableStream(this))return @Promise.@reject(@makeThisTypeError(\"ReadableStream\",\"pipeTo\"));if(@isReadableStreamLocked(this))return @Promise.@reject(@makeTypeError(\"ReadableStream is locked\"));let m=@argument(1),j=!1,E=!1,R=!1,u;if(!@isUndefinedOrNull(m)){if(!@isObject(m))return @Promise.@reject(@makeTypeError(\"options must be an object\"));try{E=!!m.preventAbort,R=!!m.preventCancel,j=!!m.preventClose,u=m.signal}catch(b){return @Promise.@reject(b)}if(u!==@undefined&&!@isAbortSignal(u))return @Promise.@reject(@makeTypeError(\"options.signal must be AbortSignal\"))}const _=@getInternalWritableStream(S);if(!@isWritableStream(_))return @Promise.@reject(@makeTypeError(\"ReadableStream pipeTo requires a WritableStream\"));if(@isWritableStreamLocked(_))return @Promise.@reject(@makeTypeError(\"WritableStream is locked\"));return @readableStreamPipeToWritableStream(this,_,j,E,R,u)})\n";
+const char* const s_readableStreamPipeToCode = "(function (destination) {\"use strict\";\n  if (!@isReadableStream(this))\n    return @Promise.@reject(@makeThisTypeError(\"ReadableStream\", \"pipeTo\"));\n  if (@isReadableStreamLocked(this))\n    return @Promise.@reject(@makeTypeError(\"ReadableStream is locked\"));\n  let options = @argument(1);\n  let preventClose = false;\n  let preventAbort = false;\n  let preventCancel = false;\n  let signal;\n  if (!@isUndefinedOrNull(options)) {\n    if (!@isObject(options))\n      return @Promise.@reject(@makeTypeError(\"options must be an object\"));\n    try {\n      preventAbort = !!options[\"preventAbort\"];\n      preventCancel = !!options[\"preventCancel\"];\n      preventClose = !!options[\"preventClose\"];\n      signal = options[\"signal\"];\n    } catch (e) {\n      return @Promise.@reject(e);\n    }\n    if (signal !== @undefined && !@isAbortSignal(signal))\n      return @Promise.@reject(@makeTypeError(\"options.signal must be AbortSignal\"));\n  }\n  const internalDestination = @getInternalWritableStream(destination);\n  if (!@isWritableStream(internalDestination))\n    return @Promise.@reject(@makeTypeError(\"ReadableStream pipeTo requires a WritableStream\"));\n  if (@isWritableStreamLocked(internalDestination))\n    return @Promise.@reject(@makeTypeError(\"WritableStream is locked\"));\n  return @readableStreamPipeToWritableStream(this, internalDestination, preventClose, preventAbort, preventCancel, signal);\n})\n";
 
 // tee
 const JSC::ConstructAbility s_readableStreamTeeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamTeeCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamTeeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamTeeCodeLength = 140;
+const int s_readableStreamTeeCodeLength = 160;
 static const JSC::Intrinsic s_readableStreamTeeCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamTeeCode = "(function (){\"use strict\";if(!@isReadableStream(this))throw @makeThisTypeError(\"ReadableStream\",\"tee\");return @readableStreamTee(this,!1)})\n";
+const char* const s_readableStreamTeeCode = "(function () {\"use strict\";\n  if (!@isReadableStream(this))\n    throw @makeThisTypeError(\"ReadableStream\", \"tee\");\n  return @readableStreamTee(this, false);\n})\n";
 
 // locked
 const JSC::ConstructAbility s_readableStreamLockedCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamLockedCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamLockedCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamLockedCodeLength = 147;
+const int s_readableStreamLockedCodeLength = 163;
 static const JSC::Intrinsic s_readableStreamLockedCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamLockedCode = "(function (){\"use strict\";if(!@isReadableStream(this))throw @makeGetterTypeError(\"ReadableStream\",\"locked\");return @isReadableStreamLocked(this)})\n";
+const char* const s_readableStreamLockedCode = "(function () {\"use strict\";\n  if (!@isReadableStream(this))\n    throw @makeGetterTypeError(\"ReadableStream\", \"locked\");\n  return @isReadableStreamLocked(this);\n})\n";
 
 // values
 const JSC::ConstructAbility s_readableStreamValuesCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamValuesCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamValuesCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamValuesCodeLength = 129;
+const int s_readableStreamValuesCodeLength = 180;
 static const JSC::Intrinsic s_readableStreamValuesCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamValuesCode = "(function (_){\"use strict\";var r=@ReadableStream.prototype;return @readableStreamDefineLazyIterators(r),r.values.@call(this,_)})\n";
+const char* const s_readableStreamValuesCode = "(function (options) {\"use strict\";\n  var prototype = @ReadableStream.prototype;\n  @readableStreamDefineLazyIterators(prototype);\n  return prototype.values.@call(this, options);\n})\n";
 
 // lazyAsyncIterator
 const JSC::ConstructAbility s_readableStreamLazyAsyncIteratorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamLazyAsyncIteratorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamLazyAsyncIteratorCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_readableStreamLazyAsyncIteratorCodeLength = 152;
+const int s_readableStreamLazyAsyncIteratorCodeLength = 190;
 static const JSC::Intrinsic s_readableStreamLazyAsyncIteratorCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamLazyAsyncIteratorCode = "(function (){\"use strict\";var l=@ReadableStream.prototype;return @readableStreamDefineLazyIterators(l),l[globalThis.Symbol.asyncIterator].@call(this)})\n";
+const char* const s_readableStreamLazyAsyncIteratorCode = "(function () {\"use strict\";\n  var prototype = @ReadableStream.prototype;\n  @readableStreamDefineLazyIterators(prototype);\n  return prototype[globalThis.Symbol.asyncIterator].@call(this);\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -2610,41 +2646,41 @@ WEBCORE_FOREACH_READABLESTREAM_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 const JSC::ConstructAbility s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCodeLength = 263;
+const int s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCodeLength = 361;
 static const JSC::Intrinsic s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCode = "(function (_,p,C,R){\"use strict\";if(arguments.length!==5&&arguments[4]!==@isReadableStream)@throwTypeError(\"ReadableStreamDefaultController constructor should not be called directly\");return @privateInitializeReadableStreamDefaultController.@call(this,_,p,C,R)})\n";
+const char* const s_readableStreamDefaultControllerInitializeReadableStreamDefaultControllerCode = "(function (stream, underlyingSource, size, highWaterMark) {\"use strict\";\n  if (arguments.length !== 5 && arguments[4] !== @isReadableStream)\n    @throwTypeError(\"ReadableStreamDefaultController constructor should not be called directly\");\n  return @privateInitializeReadableStreamDefaultController.@call(this, stream, underlyingSource, size, highWaterMark);\n})\n";
 
 // enqueue
 const JSC::ConstructAbility s_readableStreamDefaultControllerEnqueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamDefaultControllerEnqueueCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamDefaultControllerEnqueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamDefaultControllerEnqueueCodeLength = 356;
+const int s_readableStreamDefaultControllerEnqueueCodeLength = 390;
 static const JSC::Intrinsic s_readableStreamDefaultControllerEnqueueCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamDefaultControllerEnqueueCode = "(function (s){\"use strict\";if(!@isReadableStreamDefaultController(this))throw @makeThisTypeError(\"ReadableStreamDefaultController\",\"enqueue\");if(!@readableStreamDefaultControllerCanCloseOrEnqueue(this))@throwTypeError(\"ReadableStreamDefaultController is not in a state where chunk can be enqueued\");return @readableStreamDefaultControllerEnqueue(this,s)})\n";
+const char* const s_readableStreamDefaultControllerEnqueueCode = "(function (chunk) {\"use strict\";\n  if (!@isReadableStreamDefaultController(this))\n    throw @makeThisTypeError(\"ReadableStreamDefaultController\", \"enqueue\");\n  if (!@readableStreamDefaultControllerCanCloseOrEnqueue(this))\n    @throwTypeError(\"ReadableStreamDefaultController is not in a state where chunk can be enqueued\");\n  return @readableStreamDefaultControllerEnqueue(this, chunk);\n})\n";
 
 // error
 const JSC::ConstructAbility s_readableStreamDefaultControllerErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamDefaultControllerErrorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamDefaultControllerErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamDefaultControllerErrorCodeLength = 188;
+const int s_readableStreamDefaultControllerErrorCodeLength = 209;
 static const JSC::Intrinsic s_readableStreamDefaultControllerErrorCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamDefaultControllerErrorCode = "(function (c){\"use strict\";if(!@isReadableStreamDefaultController(this))throw @makeThisTypeError(\"ReadableStreamDefaultController\",\"error\");@readableStreamDefaultControllerError(this,c)})\n";
+const char* const s_readableStreamDefaultControllerErrorCode = "(function (err) {\"use strict\";\n  if (!@isReadableStreamDefaultController(this))\n    throw @makeThisTypeError(\"ReadableStreamDefaultController\", \"error\");\n  @readableStreamDefaultControllerError(this, err);\n})\n";
 
 // close
 const JSC::ConstructAbility s_readableStreamDefaultControllerCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamDefaultControllerCloseCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamDefaultControllerCloseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamDefaultControllerCloseCodeLength = 337;
+const int s_readableStreamDefaultControllerCloseCodeLength = 362;
 static const JSC::Intrinsic s_readableStreamDefaultControllerCloseCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamDefaultControllerCloseCode = "(function (){\"use strict\";if(!@isReadableStreamDefaultController(this))throw @makeThisTypeError(\"ReadableStreamDefaultController\",\"close\");if(!@readableStreamDefaultControllerCanCloseOrEnqueue(this))@throwTypeError(\"ReadableStreamDefaultController is not in a state where it can be closed\");@readableStreamDefaultControllerClose(this)})\n";
+const char* const s_readableStreamDefaultControllerCloseCode = "(function () {\"use strict\";\n  if (!@isReadableStreamDefaultController(this))\n    throw @makeThisTypeError(\"ReadableStreamDefaultController\", \"close\");\n  if (!@readableStreamDefaultControllerCanCloseOrEnqueue(this))\n    @throwTypeError(\"ReadableStreamDefaultController is not in a state where it can be closed\");\n  @readableStreamDefaultControllerClose(this);\n})\n";
 
 // desiredSize
 const JSC::ConstructAbility s_readableStreamDefaultControllerDesiredSizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamDefaultControllerDesiredSizeCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamDefaultControllerDesiredSizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamDefaultControllerDesiredSizeCodeLength = 209;
+const int s_readableStreamDefaultControllerDesiredSizeCodeLength = 225;
 static const JSC::Intrinsic s_readableStreamDefaultControllerDesiredSizeCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamDefaultControllerDesiredSizeCode = "(function (){\"use strict\";if(!@isReadableStreamDefaultController(this))throw @makeGetterTypeError(\"ReadableStreamDefaultController\",\"desiredSize\");return @readableStreamDefaultControllerGetDesiredSize(this)})\n";
+const char* const s_readableStreamDefaultControllerDesiredSizeCode = "(function () {\"use strict\";\n  if (!@isReadableStreamDefaultController(this))\n    throw @makeGetterTypeError(\"ReadableStreamDefaultController\", \"desiredSize\");\n  return @readableStreamDefaultControllerGetDesiredSize(this);\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -2660,289 +2696,289 @@ WEBCORE_FOREACH_READABLESTREAMDEFAULTCONTROLLER_BUILTIN_CODE(DEFINE_BUILTIN_GENE
 const JSC::ConstructAbility s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeLength = 1650;
+const int s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeLength = 2238;
 static const JSC::Intrinsic s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCode = "(function (R,D,E){\"use strict\";if(!@isReadableStream(R))@throwTypeError(\"ReadableByteStreamController needs a ReadableStream\");if(@getByIdDirectPrivate(R,\"readableStreamController\")!==null)@throwTypeError(\"ReadableStream already has a controller\");@putByIdDirectPrivate(this,\"controlledReadableStream\",R),@putByIdDirectPrivate(this,\"underlyingByteSource\",D),@putByIdDirectPrivate(this,\"pullAgain\",!1),@putByIdDirectPrivate(this,\"pulling\",!1),@readableByteStreamControllerClearPendingPullIntos(this),@putByIdDirectPrivate(this,\"queue\",@newQueue()),@putByIdDirectPrivate(this,\"started\",0),@putByIdDirectPrivate(this,\"closeRequested\",!1);let v=@toNumber(E);if(v!==v||v<0)@throwRangeError(\"highWaterMark value is negative or not a number\");@putByIdDirectPrivate(this,\"strategyHWM\",v);let _=D.autoAllocateChunkSize;if(_!==@undefined){if(_=@toNumber(_),_<=0||_===@Infinity||_===-@Infinity)@throwRangeError(\"autoAllocateChunkSize value is negative or equal to positive or negative infinity\")}@putByIdDirectPrivate(this,\"autoAllocateChunkSize\",_),@putByIdDirectPrivate(this,\"pendingPullIntos\",@createFIFO());const p=this;return @promiseInvokeOrNoopNoCatch(@getByIdDirectPrivate(p,\"underlyingByteSource\"),\"start\",[p]).@then(()=>{@putByIdDirectPrivate(p,\"started\",1),@assert(!@getByIdDirectPrivate(p,\"pulling\")),@assert(!@getByIdDirectPrivate(p,\"pullAgain\")),@readableByteStreamControllerCallPullIfNeeded(p)},(I)=>{if(@getByIdDirectPrivate(R,\"state\")===@streamReadable)@readableByteStreamControllerError(p,I)}),@putByIdDirectPrivate(this,\"cancel\",@readableByteStreamControllerCancel),@putByIdDirectPrivate(this,\"pull\",@readableByteStreamControllerPull),this})\n";
+const char* const s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCode = "(function (stream, underlyingByteSource, highWaterMark) {\"use strict\";\n  if (!@isReadableStream(stream))\n    @throwTypeError(\"ReadableByteStreamController needs a ReadableStream\");\n  if (@getByIdDirectPrivate(stream, \"readableStreamController\") !== null)\n    @throwTypeError(\"ReadableStream already has a controller\");\n  @putByIdDirectPrivate(this, \"controlledReadableStream\", stream);\n  @putByIdDirectPrivate(this, \"underlyingByteSource\", underlyingByteSource);\n  @putByIdDirectPrivate(this, \"pullAgain\", false);\n  @putByIdDirectPrivate(this, \"pulling\", false);\n  @readableByteStreamControllerClearPendingPullIntos(this);\n  @putByIdDirectPrivate(this, \"queue\", @newQueue());\n  @putByIdDirectPrivate(this, \"started\", 0);\n  @putByIdDirectPrivate(this, \"closeRequested\", false);\n  let hwm = @toNumber(highWaterMark);\n  if (hwm !== hwm || hwm < 0)\n    @throwRangeError(\"highWaterMark value is negative or not a number\");\n  @putByIdDirectPrivate(this, \"strategyHWM\", hwm);\n  let autoAllocateChunkSize = underlyingByteSource.autoAllocateChunkSize;\n  if (autoAllocateChunkSize !== @undefined) {\n    autoAllocateChunkSize = @toNumber(autoAllocateChunkSize);\n    if (autoAllocateChunkSize <= 0 || autoAllocateChunkSize === @Infinity || autoAllocateChunkSize === -@Infinity)\n      @throwRangeError(\"autoAllocateChunkSize value is negative or equal to positive or negative infinity\");\n  }\n  @putByIdDirectPrivate(this, \"autoAllocateChunkSize\", autoAllocateChunkSize);\n  @putByIdDirectPrivate(this, \"pendingPullIntos\", @createFIFO());\n  const controller = this;\n  @promiseInvokeOrNoopNoCatch(@getByIdDirectPrivate(controller, \"underlyingByteSource\"), \"start\", [controller]).@then(() => {\n    @putByIdDirectPrivate(controller, \"started\", 1);\n    @assert(!@getByIdDirectPrivate(controller, \"pulling\"));\n    @assert(!@getByIdDirectPrivate(controller, \"pullAgain\"));\n    @readableByteStreamControllerCallPullIfNeeded(controller);\n  }, (error) => {\n    if (@getByIdDirectPrivate(stream, \"state\") === @streamReadable)\n      @readableByteStreamControllerError(controller, error);\n  });\n  @putByIdDirectPrivate(this, \"cancel\", @readableByteStreamControllerCancel);\n  @putByIdDirectPrivate(this, \"pull\", @readableByteStreamControllerPull);\n  return this;\n})\n";
 
 // readableStreamByteStreamControllerStart
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeLength = 73;
+const int s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeLength = 99;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCode = "(function (u){\"use strict\";@putByIdDirectPrivate(u,\"start\",@undefined)})\n";
+const char* const s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCode = "(function (controller) {\"use strict\";\n  @putByIdDirectPrivate(controller, \"start\", @undefined);\n})\n";
 
 // privateInitializeReadableStreamBYOBRequest
 const JSC::ConstructAbility s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCodeLength = 139;
+const int s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCodeLength = 177;
 static const JSC::Intrinsic s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCode = "(function (a,d){\"use strict\";@putByIdDirectPrivate(this,\"associatedReadableByteStreamController\",a),@putByIdDirectPrivate(this,\"view\",d)})\n";
+const char* const s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCode = "(function (controller, view) {\"use strict\";\n  @putByIdDirectPrivate(this, \"associatedReadableByteStreamController\", controller);\n  @putByIdDirectPrivate(this, \"view\", view);\n})\n";
 
 // isReadableByteStreamController
 const JSC::ConstructAbility s_readableByteStreamInternalsIsReadableByteStreamControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsIsReadableByteStreamControllerCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsIsReadableByteStreamControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsIsReadableByteStreamControllerCodeLength = 100;
+const int s_readableByteStreamInternalsIsReadableByteStreamControllerCodeLength = 136;
 static const JSC::Intrinsic s_readableByteStreamInternalsIsReadableByteStreamControllerCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsIsReadableByteStreamControllerCode = "(function (u){\"use strict\";return @isObject(u)&&!!@getByIdDirectPrivate(u,\"underlyingByteSource\")})\n";
+const char* const s_readableByteStreamInternalsIsReadableByteStreamControllerCode = "(function (controller) {\"use strict\";\n  return @isObject(controller) && !!@getByIdDirectPrivate(controller, \"underlyingByteSource\");\n})\n";
 
 // isReadableStreamBYOBRequest
 const JSC::ConstructAbility s_readableByteStreamInternalsIsReadableStreamBYOBRequestCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsIsReadableStreamBYOBRequestCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsIsReadableStreamBYOBRequestCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsIsReadableStreamBYOBRequestCodeLength = 118;
+const int s_readableByteStreamInternalsIsReadableStreamBYOBRequestCodeLength = 157;
 static const JSC::Intrinsic s_readableByteStreamInternalsIsReadableStreamBYOBRequestCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsIsReadableStreamBYOBRequestCode = "(function (n){\"use strict\";return @isObject(n)&&!!@getByIdDirectPrivate(n,\"associatedReadableByteStreamController\")})\n";
+const char* const s_readableByteStreamInternalsIsReadableStreamBYOBRequestCode = "(function (byobRequest) {\"use strict\";\n  return @isObject(byobRequest) && !!@getByIdDirectPrivate(byobRequest, \"associatedReadableByteStreamController\");\n})\n";
 
 // isReadableStreamBYOBReader
 const JSC::ConstructAbility s_readableByteStreamInternalsIsReadableStreamBYOBReaderCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsIsReadableStreamBYOBReaderCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsIsReadableStreamBYOBReaderCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsIsReadableStreamBYOBReaderCodeLength = 96;
+const int s_readableByteStreamInternalsIsReadableStreamBYOBReaderCodeLength = 120;
 static const JSC::Intrinsic s_readableByteStreamInternalsIsReadableStreamBYOBReaderCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsIsReadableStreamBYOBReaderCode = "(function (c){\"use strict\";return @isObject(c)&&!!@getByIdDirectPrivate(c,\"readIntoRequests\")})\n";
+const char* const s_readableByteStreamInternalsIsReadableStreamBYOBReaderCode = "(function (reader) {\"use strict\";\n  return @isObject(reader) && !!@getByIdDirectPrivate(reader, \"readIntoRequests\");\n})\n";
 
 // readableByteStreamControllerCancel
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerCancelCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerCancelCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerCancelCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerCancelCodeLength = 248;
+const int s_readableByteStreamInternalsReadableByteStreamControllerCancelCodeLength = 377;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerCancelCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerCancelCode = "(function (a,u){\"use strict\";var _=@getByIdDirectPrivate(a,\"pendingPullIntos\"),p=_.peek();if(p)p.bytesFilled=0;return @putByIdDirectPrivate(a,\"queue\",@newQueue()),@promiseInvokeOrNoop(@getByIdDirectPrivate(a,\"underlyingByteSource\"),\"cancel\",[u])})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerCancelCode = "(function (controller, reason) {\"use strict\";\n  var pendingPullIntos = @getByIdDirectPrivate(controller, \"pendingPullIntos\");\n  var first = pendingPullIntos.peek();\n  if (first)\n    first.bytesFilled = 0;\n  @putByIdDirectPrivate(controller, \"queue\", @newQueue());\n  return @promiseInvokeOrNoop(@getByIdDirectPrivate(controller, \"underlyingByteSource\"), \"cancel\", [reason]);\n})\n";
 
 // readableByteStreamControllerError
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerErrorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerErrorCodeLength = 316;
+const int s_readableByteStreamInternalsReadableByteStreamControllerErrorCodeLength = 385;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerErrorCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerErrorCode = "(function (_,a){\"use strict\";@assert(@getByIdDirectPrivate(@getByIdDirectPrivate(_,\"controlledReadableStream\"),\"state\")===@streamReadable),@readableByteStreamControllerClearPendingPullIntos(_),@putByIdDirectPrivate(_,\"queue\",@newQueue()),@readableStreamError(@getByIdDirectPrivate(_,\"controlledReadableStream\"),a)})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerErrorCode = "(function (controller, e) {\"use strict\";\n  @assert(@getByIdDirectPrivate(@getByIdDirectPrivate(controller, \"controlledReadableStream\"), \"state\") === @streamReadable);\n  @readableByteStreamControllerClearPendingPullIntos(controller);\n  @putByIdDirectPrivate(controller, \"queue\", @newQueue());\n  @readableStreamError(@getByIdDirectPrivate(controller, \"controlledReadableStream\"), e);\n})\n";
 
 // readableByteStreamControllerClose
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerCloseCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerCloseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerCloseCodeLength = 569;
+const int s_readableByteStreamInternalsReadableByteStreamControllerCloseCodeLength = 750;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerCloseCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerCloseCode = "(function (d){\"use strict\";if(@assert(!@getByIdDirectPrivate(d,\"closeRequested\")),@assert(@getByIdDirectPrivate(@getByIdDirectPrivate(d,\"controlledReadableStream\"),\"state\")===@streamReadable),@getByIdDirectPrivate(d,\"queue\").size>0){@putByIdDirectPrivate(d,\"closeRequested\",!0);return}var a=@getByIdDirectPrivate(d,\"pendingPullIntos\")\?.peek();if(a){if(a.bytesFilled>0){const u=@makeTypeError(\"Close requested while there remain pending bytes\");throw @readableByteStreamControllerError(d,u),u}}@readableStreamClose(@getByIdDirectPrivate(d,\"controlledReadableStream\"))})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerCloseCode = "(function (controller) {\"use strict\";\n  @assert(!@getByIdDirectPrivate(controller, \"closeRequested\"));\n  @assert(@getByIdDirectPrivate(@getByIdDirectPrivate(controller, \"controlledReadableStream\"), \"state\") === @streamReadable);\n  if (@getByIdDirectPrivate(controller, \"queue\").size > 0) {\n    @putByIdDirectPrivate(controller, \"closeRequested\", true);\n    return;\n  }\n  var first = @getByIdDirectPrivate(controller, \"pendingPullIntos\")\?.peek();\n  if (first) {\n    if (first.bytesFilled > 0) {\n      const e = @makeTypeError(\"Close requested while there remain pending bytes\");\n      @readableByteStreamControllerError(controller, e);\n      throw e;\n    }\n  }\n  @readableStreamClose(@getByIdDirectPrivate(controller, \"controlledReadableStream\"));\n})\n";
 
 // readableByteStreamControllerClearPendingPullIntos
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntosCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntosCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntosCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntosCodeLength = 224;
+const int s_readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntosCodeLength = 323;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntosCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntosCode = "(function (_){\"use strict\";@readableByteStreamControllerInvalidateBYOBRequest(_);var u=@getByIdDirectPrivate(_,\"pendingPullIntos\");if(u!==@undefined)u.clear();else @putByIdDirectPrivate(_,\"pendingPullIntos\",@createFIFO())})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerClearPendingPullIntosCode = "(function (controller) {\"use strict\";\n  @readableByteStreamControllerInvalidateBYOBRequest(controller);\n  var existing = @getByIdDirectPrivate(controller, \"pendingPullIntos\");\n  if (existing !== @undefined) {\n    existing.clear();\n  } else {\n    @putByIdDirectPrivate(controller, \"pendingPullIntos\", @createFIFO());\n  }\n})\n";
 
 // readableByteStreamControllerGetDesiredSize
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerGetDesiredSizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerGetDesiredSizeCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerGetDesiredSizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerGetDesiredSizeCodeLength = 272;
+const int s_readableByteStreamInternalsReadableByteStreamControllerGetDesiredSizeCodeLength = 380;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerGetDesiredSizeCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerGetDesiredSizeCode = "(function (u){\"use strict\";const _=@getByIdDirectPrivate(u,\"controlledReadableStream\"),d=@getByIdDirectPrivate(_,\"state\");if(d===@streamErrored)return null;if(d===@streamClosed)return 0;return @getByIdDirectPrivate(u,\"strategyHWM\")-@getByIdDirectPrivate(u,\"queue\").size})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerGetDesiredSizeCode = "(function (controller) {\"use strict\";\n  const stream = @getByIdDirectPrivate(controller, \"controlledReadableStream\");\n  const state = @getByIdDirectPrivate(stream, \"state\");\n  if (state === @streamErrored)\n    return null;\n  if (state === @streamClosed)\n    return 0;\n  return @getByIdDirectPrivate(controller, \"strategyHWM\") - @getByIdDirectPrivate(controller, \"queue\").size;\n})\n";
 
 // readableStreamHasBYOBReader
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamHasBYOBReaderCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamHasBYOBReaderCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableStreamHasBYOBReaderCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableStreamHasBYOBReaderCodeLength = 125;
+const int s_readableByteStreamInternalsReadableStreamHasBYOBReaderCodeLength = 166;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableStreamHasBYOBReaderCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableStreamHasBYOBReaderCode = "(function (u){\"use strict\";const n=@getByIdDirectPrivate(u,\"reader\");return n!==@undefined&&@isReadableStreamBYOBReader(n)})\n";
+const char* const s_readableByteStreamInternalsReadableStreamHasBYOBReaderCode = "(function (stream) {\"use strict\";\n  const reader = @getByIdDirectPrivate(stream, \"reader\");\n  return reader !== @undefined && @isReadableStreamBYOBReader(reader);\n})\n";
 
 // readableStreamHasDefaultReader
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamHasDefaultReaderCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamHasDefaultReaderCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableStreamHasDefaultReaderCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableStreamHasDefaultReaderCodeLength = 128;
+const int s_readableByteStreamInternalsReadableStreamHasDefaultReaderCodeLength = 169;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableStreamHasDefaultReaderCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableStreamHasDefaultReaderCode = "(function (n){\"use strict\";const l=@getByIdDirectPrivate(n,\"reader\");return l!==@undefined&&@isReadableStreamDefaultReader(l)})\n";
+const char* const s_readableByteStreamInternalsReadableStreamHasDefaultReaderCode = "(function (stream) {\"use strict\";\n  const reader = @getByIdDirectPrivate(stream, \"reader\");\n  return reader !== @undefined && @isReadableStreamDefaultReader(reader);\n})\n";
 
 // readableByteStreamControllerHandleQueueDrain
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrainCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrainCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrainCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrainCodeLength = 352;
+const int s_readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrainCodeLength = 437;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrainCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrainCode = "(function (g){\"use strict\";if(@assert(@getByIdDirectPrivate(@getByIdDirectPrivate(g,\"controlledReadableStream\"),\"state\")===@streamReadable),!@getByIdDirectPrivate(g,\"queue\").size&&@getByIdDirectPrivate(g,\"closeRequested\"))@readableStreamClose(@getByIdDirectPrivate(g,\"controlledReadableStream\"));else @readableByteStreamControllerCallPullIfNeeded(g)})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerHandleQueueDrainCode = "(function (controller) {\"use strict\";\n  @assert(@getByIdDirectPrivate(@getByIdDirectPrivate(controller, \"controlledReadableStream\"), \"state\") === @streamReadable);\n  if (!@getByIdDirectPrivate(controller, \"queue\").size && @getByIdDirectPrivate(controller, \"closeRequested\"))\n    @readableStreamClose(@getByIdDirectPrivate(controller, \"controlledReadableStream\"));\n  else\n    @readableByteStreamControllerCallPullIfNeeded(controller);\n})\n";
 
 // readableByteStreamControllerPull
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerPullCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerPullCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerPullCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerPullCodeLength = 1005;
+const int s_readableByteStreamInternalsReadableByteStreamControllerPullCodeLength = 1458;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerPullCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerPullCode = "(function (_){\"use strict\";const P=@getByIdDirectPrivate(_,\"controlledReadableStream\");if(@assert(@readableStreamHasDefaultReader(P)),@getByIdDirectPrivate(_,\"queue\").content\?.isNotEmpty()){const d=@getByIdDirectPrivate(_,\"queue\").content.shift();@getByIdDirectPrivate(_,\"queue\").size-=d.byteLength,@readableByteStreamControllerHandleQueueDrain(_);let h;try{h=new @Uint8Array(d.buffer,d.byteOffset,d.byteLength)}catch(F){return @Promise.@reject(F)}return @createFulfilledPromise({value:h,done:!1})}if(@getByIdDirectPrivate(_,\"autoAllocateChunkSize\")!==@undefined){let d;try{d=@createUninitializedArrayBuffer(@getByIdDirectPrivate(_,\"autoAllocateChunkSize\"))}catch(F){return @Promise.@reject(F)}const h={buffer:d,byteOffset:0,byteLength:@getByIdDirectPrivate(_,\"autoAllocateChunkSize\"),bytesFilled:0,elementSize:1,ctor:@Uint8Array,readerType:\"default\"};@getByIdDirectPrivate(_,\"pendingPullIntos\").push(h)}const R=@readableStreamAddReadRequest(P);return @readableByteStreamControllerCallPullIfNeeded(_),R})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerPullCode = "(function (controller) {\"use strict\";\n  const stream = @getByIdDirectPrivate(controller, \"controlledReadableStream\");\n  @assert(@readableStreamHasDefaultReader(stream));\n  if (@getByIdDirectPrivate(controller, \"queue\").content\?.isNotEmpty()) {\n    const entry = @getByIdDirectPrivate(controller, \"queue\").content.shift();\n    @getByIdDirectPrivate(controller, \"queue\").size -= entry.byteLength;\n    @readableByteStreamControllerHandleQueueDrain(controller);\n    let view;\n    try {\n      view = new @Uint8Array(entry.buffer, entry.byteOffset, entry.byteLength);\n    } catch (error) {\n      return @Promise.@reject(error);\n    }\n    return @createFulfilledPromise({ value: view, done: false });\n  }\n  if (@getByIdDirectPrivate(controller, \"autoAllocateChunkSize\") !== @undefined) {\n    let buffer;\n    try {\n      buffer = @createUninitializedArrayBuffer(@getByIdDirectPrivate(controller, \"autoAllocateChunkSize\"));\n    } catch (error) {\n      return @Promise.@reject(error);\n    }\n    const pullIntoDescriptor = {\n      buffer,\n      byteOffset: 0,\n      byteLength: @getByIdDirectPrivate(controller, \"autoAllocateChunkSize\"),\n      bytesFilled: 0,\n      elementSize: 1,\n      ctor: @Uint8Array,\n      readerType: \"default\"\n    };\n    @getByIdDirectPrivate(controller, \"pendingPullIntos\").push(pullIntoDescriptor);\n  }\n  const promise = @readableStreamAddReadRequest(stream);\n  @readableByteStreamControllerCallPullIfNeeded(controller);\n  return promise;\n})\n";
 
 // readableByteStreamControllerShouldCallPull
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeLength = 619;
+const int s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeLength = 825;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCode = "(function (u){\"use strict\";const P=@getByIdDirectPrivate(u,\"controlledReadableStream\");if(@getByIdDirectPrivate(P,\"state\")!==@streamReadable)return!1;if(@getByIdDirectPrivate(u,\"closeRequested\"))return!1;if(!(@getByIdDirectPrivate(u,\"started\")>0))return!1;const b=@getByIdDirectPrivate(P,\"reader\");if(b&&(@getByIdDirectPrivate(b,\"readRequests\")\?.isNotEmpty()||!!@getByIdDirectPrivate(b,\"bunNativePtr\")))return!0;if(@readableStreamHasBYOBReader(P)&&@getByIdDirectPrivate(@getByIdDirectPrivate(P,\"reader\"),\"readIntoRequests\")\?.isNotEmpty())return!0;if(@readableByteStreamControllerGetDesiredSize(u)>0)return!0;return!1})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCode = "(function (controller) {\"use strict\";\n  const stream = @getByIdDirectPrivate(controller, \"controlledReadableStream\");\n  if (@getByIdDirectPrivate(stream, \"state\") !== @streamReadable)\n    return false;\n  if (@getByIdDirectPrivate(controller, \"closeRequested\"))\n    return false;\n  if (!(@getByIdDirectPrivate(controller, \"started\") > 0))\n    return false;\n  const reader = @getByIdDirectPrivate(stream, \"reader\");\n  if (reader && (@getByIdDirectPrivate(reader, \"readRequests\")\?.isNotEmpty() || !!@getByIdDirectPrivate(reader, \"bunNativePtr\")))\n    return true;\n  if (@readableStreamHasBYOBReader(stream) && @getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readIntoRequests\")\?.isNotEmpty())\n    return true;\n  if (@readableByteStreamControllerGetDesiredSize(controller) > 0)\n    return true;\n  return false;\n})\n";
 
 // readableByteStreamControllerCallPullIfNeeded
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCodeLength = 670;
+const int s_readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCodeLength = 932;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCode = "(function (i){\"use strict\";if(!@readableByteStreamControllerShouldCallPull(i))return;if(@getByIdDirectPrivate(i,\"pulling\")){@putByIdDirectPrivate(i,\"pullAgain\",!0);return}@assert(!@getByIdDirectPrivate(i,\"pullAgain\")),@putByIdDirectPrivate(i,\"pulling\",!0),@promiseInvokeOrNoop(@getByIdDirectPrivate(i,\"underlyingByteSource\"),\"pull\",[i]).@then(()=>{if(@putByIdDirectPrivate(i,\"pulling\",!1),@getByIdDirectPrivate(i,\"pullAgain\"))@putByIdDirectPrivate(i,\"pullAgain\",!1),@readableByteStreamControllerCallPullIfNeeded(i)},(_)=>{if(@getByIdDirectPrivate(@getByIdDirectPrivate(i,\"controlledReadableStream\"),\"state\")===@streamReadable)@readableByteStreamControllerError(i,_)})})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCode = "(function (controller) {\"use strict\";\n  if (!@readableByteStreamControllerShouldCallPull(controller))\n    return;\n  if (@getByIdDirectPrivate(controller, \"pulling\")) {\n    @putByIdDirectPrivate(controller, \"pullAgain\", true);\n    return;\n  }\n  @assert(!@getByIdDirectPrivate(controller, \"pullAgain\"));\n  @putByIdDirectPrivate(controller, \"pulling\", true);\n  @promiseInvokeOrNoop(@getByIdDirectPrivate(controller, \"underlyingByteSource\"), \"pull\", [controller]).@then(() => {\n    @putByIdDirectPrivate(controller, \"pulling\", false);\n    if (@getByIdDirectPrivate(controller, \"pullAgain\")) {\n      @putByIdDirectPrivate(controller, \"pullAgain\", false);\n      @readableByteStreamControllerCallPullIfNeeded(controller);\n    }\n  }, (error) => {\n    if (@getByIdDirectPrivate(@getByIdDirectPrivate(controller, \"controlledReadableStream\"), \"state\") === @streamReadable)\n      @readableByteStreamControllerError(controller, error);\n  });\n})\n";
 
 // transferBufferToCurrentRealm
 const JSC::ConstructAbility s_readableByteStreamInternalsTransferBufferToCurrentRealmCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsTransferBufferToCurrentRealmCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsTransferBufferToCurrentRealmCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsTransferBufferToCurrentRealmCodeLength = 38;
+const int s_readableByteStreamInternalsTransferBufferToCurrentRealmCodeLength = 54;
 static const JSC::Intrinsic s_readableByteStreamInternalsTransferBufferToCurrentRealmCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsTransferBufferToCurrentRealmCode = "(function (n){\"use strict\";return n})\n";
+const char* const s_readableByteStreamInternalsTransferBufferToCurrentRealmCode = "(function (buffer) {\"use strict\";\n  return buffer;\n})\n";
 
 // readableStreamReaderKind
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamReaderKindCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamReaderKindCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableStreamReaderKindCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableStreamReaderKindCodeLength = 188;
+const int s_readableByteStreamInternalsReadableStreamReaderKindCodeLength = 243;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableStreamReaderKindCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableStreamReaderKindCode = "(function (t){\"use strict\";if(@getByIdDirectPrivate(t,\"readRequests\"))return @getByIdDirectPrivate(t,\"bunNativePtr\")\?3:1;if(@getByIdDirectPrivate(t,\"readIntoRequests\"))return 2;return 0})\n";
+const char* const s_readableByteStreamInternalsReadableStreamReaderKindCode = "(function (reader) {\"use strict\";\n  if (!!@getByIdDirectPrivate(reader, \"readRequests\"))\n    return @getByIdDirectPrivate(reader, \"bunNativePtr\") \? 3 : 1;\n  if (!!@getByIdDirectPrivate(reader, \"readIntoRequests\"))\n    return 2;\n  return 0;\n})\n";
 
 // readableByteStreamControllerEnqueue
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeLength = 1076;
+const int s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeLength = 1496;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCode = "(function (d,i){\"use strict\";const _=@getByIdDirectPrivate(d,\"controlledReadableStream\");switch(@assert(!@getByIdDirectPrivate(d,\"closeRequested\")),@assert(@getByIdDirectPrivate(_,\"state\")===@streamReadable),@getByIdDirectPrivate(_,\"reader\")\?@readableStreamReaderKind(@getByIdDirectPrivate(_,\"reader\")):0){case 1:{if(!@getByIdDirectPrivate(@getByIdDirectPrivate(_,\"reader\"),\"readRequests\")\?.isNotEmpty())@readableByteStreamControllerEnqueueChunk(d,@transferBufferToCurrentRealm(i.buffer),i.byteOffset,i.byteLength);else{@assert(!@getByIdDirectPrivate(d,\"queue\").content.size());const f=i.constructor===@Uint8Array\?i:new @Uint8Array(i.buffer,i.byteOffset,i.byteLength);@readableStreamFulfillReadRequest(_,f,!1)}break}case 2:{@readableByteStreamControllerEnqueueChunk(d,@transferBufferToCurrentRealm(i.buffer),i.byteOffset,i.byteLength),@readableByteStreamControllerProcessPullDescriptors(d);break}case 3:break;default:{@assert(!@isReadableStreamLocked(_)),@readableByteStreamControllerEnqueueChunk(d,@transferBufferToCurrentRealm(i.buffer),i.byteOffset,i.byteLength);break}}})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCode = "(function (controller, chunk) {\"use strict\";\n  const stream = @getByIdDirectPrivate(controller, \"controlledReadableStream\");\n  @assert(!@getByIdDirectPrivate(controller, \"closeRequested\"));\n  @assert(@getByIdDirectPrivate(stream, \"state\") === @streamReadable);\n  switch (@getByIdDirectPrivate(stream, \"reader\") \? @readableStreamReaderKind(@getByIdDirectPrivate(stream, \"reader\")) : 0) {\n    case 1: {\n      if (!@getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readRequests\")\?.isNotEmpty())\n        @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), chunk.byteOffset, chunk.byteLength);\n      else {\n        @assert(!@getByIdDirectPrivate(controller, \"queue\").content.size());\n        const transferredView = chunk.constructor === @Uint8Array \? chunk : new @Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);\n        @readableStreamFulfillReadRequest(stream, transferredView, false);\n      }\n      break;\n    }\n    case 2: {\n      @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), chunk.byteOffset, chunk.byteLength);\n      @readableByteStreamControllerProcessPullDescriptors(controller);\n      break;\n    }\n    case 3: {\n      break;\n    }\n    default: {\n      @assert(!@isReadableStreamLocked(stream));\n      @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), chunk.byteOffset, chunk.byteLength);\n      break;\n    }\n  }\n})\n";
 
 // readableByteStreamControllerEnqueueChunk
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCodeLength = 160;
+const int s_readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCodeLength = 247;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCode = "(function (_,d,p,a){\"use strict\";@getByIdDirectPrivate(_,\"queue\").content.push({buffer:d,byteOffset:p,byteLength:a}),@getByIdDirectPrivate(_,\"queue\").size+=a})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCode = "(function (controller, buffer, byteOffset, byteLength) {\"use strict\";\n  @getByIdDirectPrivate(controller, \"queue\").content.push({\n    buffer,\n    byteOffset,\n    byteLength\n  });\n  @getByIdDirectPrivate(controller, \"queue\").size += byteLength;\n})\n";
 
 // readableByteStreamControllerRespondWithNewView
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCodeLength = 417;
+const int s_readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCodeLength = 585;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCode = "(function (d,u){\"use strict\";@assert(@getByIdDirectPrivate(d,\"pendingPullIntos\").isNotEmpty());let a=@getByIdDirectPrivate(d,\"pendingPullIntos\").peek();if(a.byteOffset+a.bytesFilled!==u.byteOffset)@throwRangeError(\"Invalid value for view.byteOffset\");if(a.byteLength!==u.byteLength)@throwRangeError(\"Invalid value for view.byteLength\");a.buffer=u.buffer,@readableByteStreamControllerRespondInternal(d,u.byteLength)})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCode = "(function (controller, view) {\"use strict\";\n  @assert(@getByIdDirectPrivate(controller, \"pendingPullIntos\").isNotEmpty());\n  let firstDescriptor = @getByIdDirectPrivate(controller, \"pendingPullIntos\").peek();\n  if (firstDescriptor.byteOffset + firstDescriptor.bytesFilled !== view.byteOffset)\n    @throwRangeError(\"Invalid value for view.byteOffset\");\n  if (firstDescriptor.byteLength !== view.byteLength)\n    @throwRangeError(\"Invalid value for view.byteLength\");\n  firstDescriptor.buffer = view.buffer;\n  @readableByteStreamControllerRespondInternal(controller, view.byteLength);\n})\n";
 
 // readableByteStreamControllerRespond
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerRespondCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerRespondCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerRespondCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerRespondCodeLength = 247;
+const int s_readableByteStreamInternalsReadableByteStreamControllerRespondCodeLength = 398;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerRespondCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespondCode = "(function (u,_){\"use strict\";if(_=@toNumber(_),_!==_||_===@Infinity||_<0)@throwRangeError(\"bytesWritten has an incorrect value\");@assert(@getByIdDirectPrivate(u,\"pendingPullIntos\").isNotEmpty()),@readableByteStreamControllerRespondInternal(u,_)})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespondCode = "(function (controller, bytesWritten) {\"use strict\";\n  bytesWritten = @toNumber(bytesWritten);\n  if (bytesWritten !== bytesWritten || bytesWritten === @Infinity || bytesWritten < 0)\n    @throwRangeError(\"bytesWritten has an incorrect value\");\n  @assert(@getByIdDirectPrivate(controller, \"pendingPullIntos\").isNotEmpty());\n  @readableByteStreamControllerRespondInternal(controller, bytesWritten);\n})\n";
 
 // readableByteStreamControllerRespondInternal
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerRespondInternalCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerRespondInternalCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerRespondInternalCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerRespondInternalCodeLength = 464;
+const int s_readableByteStreamInternalsReadableByteStreamControllerRespondInternalCodeLength = 673;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerRespondInternalCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespondInternalCode = "(function (d,u){\"use strict\";let _=@getByIdDirectPrivate(d,\"pendingPullIntos\").peek(),k=@getByIdDirectPrivate(d,\"controlledReadableStream\");if(@getByIdDirectPrivate(k,\"state\")===@streamClosed){if(u!==0)@throwTypeError(\"bytesWritten is different from 0 even though stream is closed\");@readableByteStreamControllerRespondInClosedState(d,_)}else @assert(@getByIdDirectPrivate(k,\"state\")===@streamReadable),@readableByteStreamControllerRespondInReadableState(d,u,_)})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespondInternalCode = "(function (controller, bytesWritten) {\"use strict\";\n  let firstDescriptor = @getByIdDirectPrivate(controller, \"pendingPullIntos\").peek();\n  let stream = @getByIdDirectPrivate(controller, \"controlledReadableStream\");\n  if (@getByIdDirectPrivate(stream, \"state\") === @streamClosed) {\n    if (bytesWritten !== 0)\n      @throwTypeError(\"bytesWritten is different from 0 even though stream is closed\");\n    @readableByteStreamControllerRespondInClosedState(controller, firstDescriptor);\n  } else {\n    @assert(@getByIdDirectPrivate(stream, \"state\") === @streamReadable);\n    @readableByteStreamControllerRespondInReadableState(controller, bytesWritten, firstDescriptor);\n  }\n})\n";
 
 // readableByteStreamControllerRespondInReadableState
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerRespondInReadableStateCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerRespondInReadableStateCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerRespondInReadableStateCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerRespondInReadableStateCodeLength = 799;
+const int s_readableByteStreamInternalsReadableByteStreamControllerRespondInReadableStateCodeLength = 1383;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerRespondInReadableStateCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespondInReadableStateCode = "(function (w,_,f){\"use strict\";if(f.bytesFilled+_>f.byteLength)@throwRangeError(\"bytesWritten value is too great\");if(@assert(@getByIdDirectPrivate(w,\"pendingPullIntos\").isEmpty()||@getByIdDirectPrivate(w,\"pendingPullIntos\").peek()===f),@readableByteStreamControllerInvalidateBYOBRequest(w),f.bytesFilled+=_,f.bytesFilled<f.elementSize)return;@readableByteStreamControllerShiftPendingDescriptor(w);const R=f.bytesFilled%f.elementSize;if(R>0){const h=f.byteOffset+f.bytesFilled,g=@cloneArrayBuffer(f.buffer,h-R,R);@readableByteStreamControllerEnqueueChunk(w,g,0,g.byteLength)}f.buffer=@transferBufferToCurrentRealm(f.buffer),f.bytesFilled-=R,@readableByteStreamControllerCommitDescriptor(@getByIdDirectPrivate(w,\"controlledReadableStream\"),f),@readableByteStreamControllerProcessPullDescriptors(w)})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespondInReadableStateCode = "(function (controller, bytesWritten, pullIntoDescriptor) {\"use strict\";\n  if (pullIntoDescriptor.bytesFilled + bytesWritten > pullIntoDescriptor.byteLength)\n    @throwRangeError(\"bytesWritten value is too great\");\n  @assert(@getByIdDirectPrivate(controller, \"pendingPullIntos\").isEmpty() || @getByIdDirectPrivate(controller, \"pendingPullIntos\").peek() === pullIntoDescriptor);\n  @readableByteStreamControllerInvalidateBYOBRequest(controller);\n  pullIntoDescriptor.bytesFilled += bytesWritten;\n  if (pullIntoDescriptor.bytesFilled < pullIntoDescriptor.elementSize)\n    return;\n  @readableByteStreamControllerShiftPendingDescriptor(controller);\n  const remainderSize = pullIntoDescriptor.bytesFilled % pullIntoDescriptor.elementSize;\n  if (remainderSize > 0) {\n    const end = pullIntoDescriptor.byteOffset + pullIntoDescriptor.bytesFilled;\n    const remainder = @cloneArrayBuffer(pullIntoDescriptor.buffer, end - remainderSize, remainderSize);\n    @readableByteStreamControllerEnqueueChunk(controller, remainder, 0, remainder.byteLength);\n  }\n  pullIntoDescriptor.buffer = @transferBufferToCurrentRealm(pullIntoDescriptor.buffer);\n  pullIntoDescriptor.bytesFilled -= remainderSize;\n  @readableByteStreamControllerCommitDescriptor(@getByIdDirectPrivate(controller, \"controlledReadableStream\"), pullIntoDescriptor);\n  @readableByteStreamControllerProcessPullDescriptors(controller);\n})\n";
 
 // readableByteStreamControllerRespondInClosedState
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerRespondInClosedStateCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerRespondInClosedStateCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerRespondInClosedStateCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerRespondInClosedStateCodeLength = 502;
+const int s_readableByteStreamInternalsReadableByteStreamControllerRespondInClosedStateCodeLength = 695;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerRespondInClosedStateCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespondInClosedStateCode = "(function (a,_){\"use strict\";if(_.buffer=@transferBufferToCurrentRealm(_.buffer),@assert(_.bytesFilled===0),@readableStreamHasBYOBReader(@getByIdDirectPrivate(a,\"controlledReadableStream\")))while(@getByIdDirectPrivate(@getByIdDirectPrivate(@getByIdDirectPrivate(a,\"controlledReadableStream\"),\"reader\"),\"readIntoRequests\")\?.isNotEmpty()){let d=@readableByteStreamControllerShiftPendingDescriptor(a);@readableByteStreamControllerCommitDescriptor(@getByIdDirectPrivate(a,\"controlledReadableStream\"),d)}})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerRespondInClosedStateCode = "(function (controller, firstDescriptor) {\"use strict\";\n  firstDescriptor.buffer = @transferBufferToCurrentRealm(firstDescriptor.buffer);\n  @assert(firstDescriptor.bytesFilled === 0);\n  if (@readableStreamHasBYOBReader(@getByIdDirectPrivate(controller, \"controlledReadableStream\"))) {\n    while (@getByIdDirectPrivate(@getByIdDirectPrivate(@getByIdDirectPrivate(controller, \"controlledReadableStream\"), \"reader\"), \"readIntoRequests\")\?.isNotEmpty()) {\n      let pullIntoDescriptor = @readableByteStreamControllerShiftPendingDescriptor(controller);\n      @readableByteStreamControllerCommitDescriptor(@getByIdDirectPrivate(controller, \"controlledReadableStream\"), pullIntoDescriptor);\n    }\n  }\n})\n";
 
 // readableByteStreamControllerProcessPullDescriptors
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptorsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptorsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptorsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptorsCodeLength = 472;
+const int s_readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptorsCodeLength = 666;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptorsCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptorsCode = "(function (d){\"use strict\";@assert(!@getByIdDirectPrivate(d,\"closeRequested\"));while(@getByIdDirectPrivate(d,\"pendingPullIntos\").isNotEmpty()){if(@getByIdDirectPrivate(d,\"queue\").size===0)return;let a=@getByIdDirectPrivate(d,\"pendingPullIntos\").peek();if(@readableByteStreamControllerFillDescriptorFromQueue(d,a))@readableByteStreamControllerShiftPendingDescriptor(d),@readableByteStreamControllerCommitDescriptor(@getByIdDirectPrivate(d,\"controlledReadableStream\"),a)}})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerProcessPullDescriptorsCode = "(function (controller) {\"use strict\";\n  @assert(!@getByIdDirectPrivate(controller, \"closeRequested\"));\n  while (@getByIdDirectPrivate(controller, \"pendingPullIntos\").isNotEmpty()) {\n    if (@getByIdDirectPrivate(controller, \"queue\").size === 0)\n      return;\n    let pullIntoDescriptor = @getByIdDirectPrivate(controller, \"pendingPullIntos\").peek();\n    if (@readableByteStreamControllerFillDescriptorFromQueue(controller, pullIntoDescriptor)) {\n      @readableByteStreamControllerShiftPendingDescriptor(controller);\n      @readableByteStreamControllerCommitDescriptor(@getByIdDirectPrivate(controller, \"controlledReadableStream\"), pullIntoDescriptor);\n    }\n  }\n})\n";
 
 // readableByteStreamControllerFillDescriptorFromQueue
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueueCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueueCodeLength = 970;
+const int s_readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueueCodeLength = 2160;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueueCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueueCode = "(function (q,_){\"use strict\";const H=_.bytesFilled-_.bytesFilled%_.elementSize,z=@getByIdDirectPrivate(q,\"queue\").size<_.byteLength-_.bytesFilled\?@getByIdDirectPrivate(q,\"queue\").size:_.byteLength-_.bytesFilled,E=_.bytesFilled+z,G=E-E%_.elementSize;let v=z,w=!1;if(G>H)v=G-_.bytesFilled,w=!0;while(v>0){let j=@getByIdDirectPrivate(q,\"queue\").content.peek();const k=v<j.byteLength\?v:j.byteLength,J=_.byteOffset+_.bytesFilled;if(new @Uint8Array(_.buffer).set(new @Uint8Array(j.buffer,j.byteOffset,k),J),j.byteLength===k)@getByIdDirectPrivate(q,\"queue\").content.shift();else j.byteOffset+=k,j.byteLength-=k;@getByIdDirectPrivate(q,\"queue\").size-=k,@assert(@getByIdDirectPrivate(q,\"pendingPullIntos\").isEmpty()||@getByIdDirectPrivate(q,\"pendingPullIntos\").peek()===_),@readableByteStreamControllerInvalidateBYOBRequest(q),_.bytesFilled+=k,v-=k}if(!w)@assert(@getByIdDirectPrivate(q,\"queue\").size===0),@assert(_.bytesFilled>0),@assert(_.bytesFilled<_.elementSize);return w})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerFillDescriptorFromQueueCode = "(function (controller, pullIntoDescriptor) {\"use strict\";\n  const currentAlignedBytes = pullIntoDescriptor.bytesFilled - pullIntoDescriptor.bytesFilled % pullIntoDescriptor.elementSize;\n  const maxBytesToCopy = @getByIdDirectPrivate(controller, \"queue\").size < pullIntoDescriptor.byteLength - pullIntoDescriptor.bytesFilled \? @getByIdDirectPrivate(controller, \"queue\").size : pullIntoDescriptor.byteLength - pullIntoDescriptor.bytesFilled;\n  const maxBytesFilled = pullIntoDescriptor.bytesFilled + maxBytesToCopy;\n  const maxAlignedBytes = maxBytesFilled - maxBytesFilled % pullIntoDescriptor.elementSize;\n  let totalBytesToCopyRemaining = maxBytesToCopy;\n  let ready = false;\n  if (maxAlignedBytes > currentAlignedBytes) {\n    totalBytesToCopyRemaining = maxAlignedBytes - pullIntoDescriptor.bytesFilled;\n    ready = true;\n  }\n  while (totalBytesToCopyRemaining > 0) {\n    let headOfQueue = @getByIdDirectPrivate(controller, \"queue\").content.peek();\n    const bytesToCopy = totalBytesToCopyRemaining < headOfQueue.byteLength \? totalBytesToCopyRemaining : headOfQueue.byteLength;\n    const destStart = pullIntoDescriptor.byteOffset + pullIntoDescriptor.bytesFilled;\n    new @Uint8Array(pullIntoDescriptor.buffer).set(new @Uint8Array(headOfQueue.buffer, headOfQueue.byteOffset, bytesToCopy), destStart);\n    if (headOfQueue.byteLength === bytesToCopy)\n      @getByIdDirectPrivate(controller, \"queue\").content.shift();\n    else {\n      headOfQueue.byteOffset += bytesToCopy;\n      headOfQueue.byteLength -= bytesToCopy;\n    }\n    @getByIdDirectPrivate(controller, \"queue\").size -= bytesToCopy;\n    @assert(@getByIdDirectPrivate(controller, \"pendingPullIntos\").isEmpty() || @getByIdDirectPrivate(controller, \"pendingPullIntos\").peek() === pullIntoDescriptor);\n    @readableByteStreamControllerInvalidateBYOBRequest(controller);\n    pullIntoDescriptor.bytesFilled += bytesToCopy;\n    totalBytesToCopyRemaining -= bytesToCopy;\n  }\n  if (!ready) {\n    @assert(@getByIdDirectPrivate(controller, \"queue\").size === 0);\n    @assert(pullIntoDescriptor.bytesFilled > 0);\n    @assert(pullIntoDescriptor.bytesFilled < pullIntoDescriptor.elementSize);\n  }\n  return ready;\n})\n";
 
 // readableByteStreamControllerShiftPendingDescriptor
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptorCodeLength = 150;
+const int s_readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptorCodeLength = 210;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptorCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptorCode = "(function (u){\"use strict\";let _=@getByIdDirectPrivate(u,\"pendingPullIntos\").shift();return @readableByteStreamControllerInvalidateBYOBRequest(u),_})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerShiftPendingDescriptorCode = "(function (controller) {\"use strict\";\n  let descriptor = @getByIdDirectPrivate(controller, \"pendingPullIntos\").shift();\n  @readableByteStreamControllerInvalidateBYOBRequest(controller);\n  return descriptor;\n})\n";
 
 // readableByteStreamControllerInvalidateBYOBRequest
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequestCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequestCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequestCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequestCodeLength = 308;
+const int s_readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequestCodeLength = 410;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequestCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequestCode = "(function (d){\"use strict\";if(@getByIdDirectPrivate(d,\"byobRequest\")===@undefined)return;const P=@getByIdDirectPrivate(d,\"byobRequest\");@putByIdDirectPrivate(P,\"associatedReadableByteStreamController\",@undefined),@putByIdDirectPrivate(P,\"view\",@undefined),@putByIdDirectPrivate(d,\"byobRequest\",@undefined)})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerInvalidateBYOBRequestCode = "(function (controller) {\"use strict\";\n  if (@getByIdDirectPrivate(controller, \"byobRequest\") === @undefined)\n    return;\n  const byobRequest = @getByIdDirectPrivate(controller, \"byobRequest\");\n  @putByIdDirectPrivate(byobRequest, \"associatedReadableByteStreamController\", @undefined);\n  @putByIdDirectPrivate(byobRequest, \"view\", @undefined);\n  @putByIdDirectPrivate(controller, \"byobRequest\", @undefined);\n})\n";
 
 // readableByteStreamControllerCommitDescriptor
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerCommitDescriptorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerCommitDescriptorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerCommitDescriptorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerCommitDescriptorCodeLength = 386;
+const int s_readableByteStreamInternalsReadableByteStreamControllerCommitDescriptorCodeLength = 620;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerCommitDescriptorCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerCommitDescriptorCode = "(function (_,b){\"use strict\";@assert(@getByIdDirectPrivate(_,\"state\")!==@streamErrored);let g=!1;if(@getByIdDirectPrivate(_,\"state\")===@streamClosed)@assert(!b.bytesFilled),g=!0;let h=@readableByteStreamControllerConvertDescriptor(b);if(b.readerType===\"default\")@readableStreamFulfillReadRequest(_,h,g);else @assert(b.readerType===\"byob\"),@readableStreamFulfillReadIntoRequest(_,h,g)})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerCommitDescriptorCode = "(function (stream, pullIntoDescriptor) {\"use strict\";\n  @assert(@getByIdDirectPrivate(stream, \"state\") !== @streamErrored);\n  let done = false;\n  if (@getByIdDirectPrivate(stream, \"state\") === @streamClosed) {\n    @assert(!pullIntoDescriptor.bytesFilled);\n    done = true;\n  }\n  let filledView = @readableByteStreamControllerConvertDescriptor(pullIntoDescriptor);\n  if (pullIntoDescriptor.readerType === \"default\")\n    @readableStreamFulfillReadRequest(stream, filledView, done);\n  else {\n    @assert(pullIntoDescriptor.readerType === \"byob\");\n    @readableStreamFulfillReadIntoRequest(stream, filledView, done);\n  }\n})\n";
 
 // readableByteStreamControllerConvertDescriptor
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerConvertDescriptorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerConvertDescriptorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerConvertDescriptorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerConvertDescriptorCodeLength = 176;
+const int s_readableByteStreamInternalsReadableByteStreamControllerConvertDescriptorCodeLength = 368;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerConvertDescriptorCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerConvertDescriptorCode = "(function (_){\"use strict\";return @assert(_.bytesFilled<=_.byteLength),@assert(_.bytesFilled%_.elementSize===0),new _.ctor(_.buffer,_.byteOffset,_.bytesFilled/_.elementSize)})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerConvertDescriptorCode = "(function (pullIntoDescriptor) {\"use strict\";\n  @assert(pullIntoDescriptor.bytesFilled <= pullIntoDescriptor.byteLength);\n  @assert(pullIntoDescriptor.bytesFilled % pullIntoDescriptor.elementSize === 0);\n  return new pullIntoDescriptor.ctor(pullIntoDescriptor.buffer, pullIntoDescriptor.byteOffset, pullIntoDescriptor.bytesFilled / pullIntoDescriptor.elementSize);\n})\n";
 
 // readableStreamFulfillReadIntoRequest
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamFulfillReadIntoRequestCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamFulfillReadIntoRequestCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableStreamFulfillReadIntoRequestCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableStreamFulfillReadIntoRequestCodeLength = 161;
+const int s_readableByteStreamInternalsReadableStreamFulfillReadIntoRequestCodeLength = 228;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableStreamFulfillReadIntoRequestCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableStreamFulfillReadIntoRequestCode = "(function (l,i,p){\"use strict\";const _=@getByIdDirectPrivate(@getByIdDirectPrivate(l,\"reader\"),\"readIntoRequests\").shift();@fulfillPromise(_,{value:i,done:p})})\n";
+const char* const s_readableByteStreamInternalsReadableStreamFulfillReadIntoRequestCode = "(function (stream, chunk, done) {\"use strict\";\n  const readIntoRequest = @getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readIntoRequests\").shift();\n  @fulfillPromise(readIntoRequest, { value: chunk, done });\n})\n";
 
 // readableStreamBYOBReaderRead
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamBYOBReaderReadCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamBYOBReaderReadCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableStreamBYOBReaderReadCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableStreamBYOBReaderReadCodeLength = 356;
+const int s_readableByteStreamInternalsReadableStreamBYOBReaderReadCodeLength = 440;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableStreamBYOBReaderReadCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableStreamBYOBReaderReadCode = "(function (c,l){\"use strict\";const o=@getByIdDirectPrivate(c,\"ownerReadableStream\");if(@assert(!!o),@putByIdDirectPrivate(o,\"disturbed\",!0),@getByIdDirectPrivate(o,\"state\")===@streamErrored)return @Promise.@reject(@getByIdDirectPrivate(o,\"storedError\"));return @readableByteStreamControllerPullInto(@getByIdDirectPrivate(o,\"readableStreamController\"),l)})\n";
+const char* const s_readableByteStreamInternalsReadableStreamBYOBReaderReadCode = "(function (reader, view) {\"use strict\";\n  const stream = @getByIdDirectPrivate(reader, \"ownerReadableStream\");\n  @assert(!!stream);\n  @putByIdDirectPrivate(stream, \"disturbed\", true);\n  if (@getByIdDirectPrivate(stream, \"state\") === @streamErrored)\n    return @Promise.@reject(@getByIdDirectPrivate(stream, \"storedError\"));\n  return @readableByteStreamControllerPullInto(@getByIdDirectPrivate(stream, \"readableStreamController\"), view);\n})\n";
 
 // readableByteStreamControllerPullInto
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerPullIntoCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerPullIntoCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableByteStreamControllerPullIntoCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableByteStreamControllerPullIntoCodeLength = 1255;
+const int s_readableByteStreamInternalsReadableByteStreamControllerPullIntoCodeLength = 1926;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerPullIntoCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableByteStreamControllerPullIntoCode = "(function (b,d){\"use strict\";const A=@getByIdDirectPrivate(b,\"controlledReadableStream\");let E=1;if(d.BYTES_PER_ELEMENT!==@undefined)E=d.BYTES_PER_ELEMENT;const L=d.constructor,_={buffer:d.buffer,byteOffset:d.byteOffset,byteLength:d.byteLength,bytesFilled:0,elementSize:E,ctor:L,readerType:\"byob\"};var N=@getByIdDirectPrivate(b,\"pendingPullIntos\");if(N\?.isNotEmpty())return _.buffer=@transferBufferToCurrentRealm(_.buffer),N.push(_),@readableStreamAddReadIntoRequest(A);if(@getByIdDirectPrivate(A,\"state\")===@streamClosed){const k=new L(_.buffer,_.byteOffset,0);return @createFulfilledPromise({value:k,done:!0})}if(@getByIdDirectPrivate(b,\"queue\").size>0){if(@readableByteStreamControllerFillDescriptorFromQueue(b,_)){const k=@readableByteStreamControllerConvertDescriptor(_);return @readableByteStreamControllerHandleQueueDrain(b),@createFulfilledPromise({value:k,done:!1})}if(@getByIdDirectPrivate(b,\"closeRequested\")){const k=@makeTypeError(\"Closing stream has been requested\");return @readableByteStreamControllerError(b,k),@Promise.@reject(k)}}_.buffer=@transferBufferToCurrentRealm(_.buffer),@getByIdDirectPrivate(b,\"pendingPullIntos\").push(_);const R=@readableStreamAddReadIntoRequest(A);return @readableByteStreamControllerCallPullIfNeeded(b),R})\n";
+const char* const s_readableByteStreamInternalsReadableByteStreamControllerPullIntoCode = "(function (controller, view) {\"use strict\";\n  const stream = @getByIdDirectPrivate(controller, \"controlledReadableStream\");\n  let elementSize = 1;\n  if (view.BYTES_PER_ELEMENT !== @undefined)\n    elementSize = view.BYTES_PER_ELEMENT;\n  const ctor = view.constructor;\n  const pullIntoDescriptor = {\n    buffer: view.buffer,\n    byteOffset: view.byteOffset,\n    byteLength: view.byteLength,\n    bytesFilled: 0,\n    elementSize,\n    ctor,\n    readerType: \"byob\"\n  };\n  var pending = @getByIdDirectPrivate(controller, \"pendingPullIntos\");\n  if (pending\?.isNotEmpty()) {\n    pullIntoDescriptor.buffer = @transferBufferToCurrentRealm(pullIntoDescriptor.buffer);\n    pending.push(pullIntoDescriptor);\n    return @readableStreamAddReadIntoRequest(stream);\n  }\n  if (@getByIdDirectPrivate(stream, \"state\") === @streamClosed) {\n    const emptyView = new ctor(pullIntoDescriptor.buffer, pullIntoDescriptor.byteOffset, 0);\n    return @createFulfilledPromise({ value: emptyView, done: true });\n  }\n  if (@getByIdDirectPrivate(controller, \"queue\").size > 0) {\n    if (@readableByteStreamControllerFillDescriptorFromQueue(controller, pullIntoDescriptor)) {\n      const filledView = @readableByteStreamControllerConvertDescriptor(pullIntoDescriptor);\n      @readableByteStreamControllerHandleQueueDrain(controller);\n      return @createFulfilledPromise({ value: filledView, done: false });\n    }\n    if (@getByIdDirectPrivate(controller, \"closeRequested\")) {\n      const e = @makeTypeError(\"Closing stream has been requested\");\n      @readableByteStreamControllerError(controller, e);\n      return @Promise.@reject(e);\n    }\n  }\n  pullIntoDescriptor.buffer = @transferBufferToCurrentRealm(pullIntoDescriptor.buffer);\n  @getByIdDirectPrivate(controller, \"pendingPullIntos\").push(pullIntoDescriptor);\n  const promise = @readableStreamAddReadIntoRequest(stream);\n  @readableByteStreamControllerCallPullIfNeeded(controller);\n  return promise;\n})\n";
 
 // readableStreamAddReadIntoRequest
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamAddReadIntoRequestCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamAddReadIntoRequestCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableByteStreamInternalsReadableStreamAddReadIntoRequestCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableByteStreamInternalsReadableStreamAddReadIntoRequestCodeLength = 326;
+const int s_readableByteStreamInternalsReadableStreamAddReadIntoRequestCodeLength = 412;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableStreamAddReadIntoRequestCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableByteStreamInternalsReadableStreamAddReadIntoRequestCode = "(function (i){\"use strict\";@assert(@isReadableStreamBYOBReader(@getByIdDirectPrivate(i,\"reader\"))),@assert(@getByIdDirectPrivate(i,\"state\")===@streamReadable||@getByIdDirectPrivate(i,\"state\")===@streamClosed);const _=@newPromise();return @getByIdDirectPrivate(@getByIdDirectPrivate(i,\"reader\"),\"readIntoRequests\").push(_),_})\n";
+const char* const s_readableByteStreamInternalsReadableStreamAddReadIntoRequestCode = "(function (stream) {\"use strict\";\n  @assert(@isReadableStreamBYOBReader(@getByIdDirectPrivate(stream, \"reader\")));\n  @assert(@getByIdDirectPrivate(stream, \"state\") === @streamReadable || @getByIdDirectPrivate(stream, \"state\") === @streamClosed);\n  const readRequest = @newPromise();\n  @getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readIntoRequests\").push(readRequest);\n  return readRequest;\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -2958,17 +2994,17 @@ WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_CODE(DEFINE_BUILTIN_GENERATO
 const JSC::ConstructAbility s_writableStreamDefaultControllerInitializeWritableStreamDefaultControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamDefaultControllerInitializeWritableStreamDefaultControllerCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamDefaultControllerInitializeWritableStreamDefaultControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamDefaultControllerInitializeWritableStreamDefaultControllerCodeLength = 368;
+const int s_writableStreamDefaultControllerInitializeWritableStreamDefaultControllerCodeLength = 446;
 static const JSC::Intrinsic s_writableStreamDefaultControllerInitializeWritableStreamDefaultControllerCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamDefaultControllerInitializeWritableStreamDefaultControllerCode = "(function (){\"use strict\";return @putByIdDirectPrivate(this,\"queue\",@newQueue()),@putByIdDirectPrivate(this,\"abortSteps\",(_)=>{const u=@getByIdDirectPrivate(this,\"abortAlgorithm\").@call(@undefined,_);return @writableStreamDefaultControllerClearAlgorithms(this),u}),@putByIdDirectPrivate(this,\"errorSteps\",()=>{@resetQueue(@getByIdDirectPrivate(this,\"queue\"))}),this})\n";
+const char* const s_writableStreamDefaultControllerInitializeWritableStreamDefaultControllerCode = "(function () {\"use strict\";\n  @putByIdDirectPrivate(this, \"queue\", @newQueue());\n  @putByIdDirectPrivate(this, \"abortSteps\", (reason) => {\n    const result = @getByIdDirectPrivate(this, \"abortAlgorithm\").@call(@undefined, reason);\n    @writableStreamDefaultControllerClearAlgorithms(this);\n    return result;\n  });\n  @putByIdDirectPrivate(this, \"errorSteps\", () => {\n    @resetQueue(@getByIdDirectPrivate(this, \"queue\"));\n  });\n  return this;\n})\n";
 
 // error
 const JSC::ConstructAbility s_writableStreamDefaultControllerErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamDefaultControllerErrorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamDefaultControllerErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamDefaultControllerErrorCodeLength = 301;
+const int s_writableStreamDefaultControllerErrorCodeLength = 349;
 static const JSC::Intrinsic s_writableStreamDefaultControllerErrorCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_writableStreamDefaultControllerErrorCode = "(function (r){\"use strict\";if(@getByIdDirectPrivate(this,\"abortSteps\")===@undefined)throw @makeThisTypeError(\"WritableStreamDefaultController\",\"error\");const t=@getByIdDirectPrivate(this,\"stream\");if(@getByIdDirectPrivate(t,\"state\")!==\"writable\")return;@writableStreamDefaultControllerError(this,r)})\n";
+const char* const s_writableStreamDefaultControllerErrorCode = "(function (e) {\"use strict\";\n  if (@getByIdDirectPrivate(this, \"abortSteps\") === @undefined)\n    throw @makeThisTypeError(\"WritableStreamDefaultController\", \"error\");\n  const stream = @getByIdDirectPrivate(this, \"stream\");\n  if (@getByIdDirectPrivate(stream, \"state\") !== \"writable\")\n    return;\n  @writableStreamDefaultControllerError(this, e);\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -2984,9 +3020,9 @@ WEBCORE_FOREACH_WRITABLESTREAMDEFAULTCONTROLLER_BUILTIN_CODE(DEFINE_BUILTIN_GENE
 const JSC::ConstructAbility s_eventSourceGetEventSourceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_eventSourceGetEventSourceCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_eventSourceGetEventSourceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_eventSourceGetEventSourceCodeLength = 5469;
+const int s_eventSourceGetEventSourceCodeLength = 13858;
 static const JSC::Intrinsic s_eventSourceGetEventSourceCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_eventSourceGetEventSourceCode = "(function (){\"use strict\";class A extends EventTarget{#j;#$;#F;#G;#J;#K=!1;#U=null;#w=\"\";#M=\"\";#O=\"\";#Q=!0;#A=0;#B=0;#X=0;#L=null;static#V(w){w.#H()}static#Y(w,U){const L=w.data,j=L.#O\?`Last-Event-ID: ${L.#O}\\r\\n`:\"\",G=`GET ${U.pathname}${U.search} HTTP/1.1\\r\\nHost: bun\\r\\nContent-type: text/event-stream\\r\\nContent-length: 0\\r\\n${j}\\r\\n`,F=w.write(G);if(F!==G.length)L.#M=G.substring(F)}static#Z(w,U,L){for(;;){if(L>=U.length)return;let j=-1,G=U.indexOf(\"\\r\\n\",L);const F=G+2;if(G>0)if(w.#A===0){const B=parseInt(U.substring(L,G),16);if(B===0){w.#$=2,w.#U\?.end();return}j=F+B}else j=U.length;else{if(w.#w.length===0){w.#w+=U.substring(L);return}j=U.length}let K=U.substring(F,j);L=j+2;let Z=0,J=K.indexOf(\"\\n\\n\");if(J==-1){w.#w+=U.substring(F);return}if(w.#w.length)w.#w+=K,K=w.#w,w.#w=\"\";let X=!0;while(X){const B=K.substring(Z,J);let Y,M=\"\",O,W=0,Q=-1;for(;;){let z=B.indexOf(\"\\n\",W);if(z===-1){if(W>=B.length)break;z=B.length}const V=B.substring(W,z);if(V.startsWith(\"data:\"))if(M.length)M+=`\\n${V.substring(5).trim()}`;else M=V.substring(5).trim();else if(V.startsWith(\"event:\"))Y=V.substring(6).trim();else if(V.startsWith(\"id:\"))O=V.substring(3).trim();else if(V.startsWith(\"retry:\")){if(Q=parseInt(V.substring(6).trim(),10),Q!==Q)Q=-1}W=z+1}if(w.#O=O||\"\",Q>=0)w.#X=Q;if(M||O||Y)w.dispatchEvent(new MessageEvent(Y||\"message\",{data:M||\"\",origin:w.#j.origin,source:w,lastEventId:O}));if(K.length===J+2){X=!1;break}const H=K.indexOf(\"\\n\\n\",J+1);if(H===-1)break;Z=J,J=H}}}static#z={open(w){const U=w.data;if(U.#U=w,!U.#K)A.#Y(w,U.#j)},handshake(w,U,L){const j=w.data;if(U)A.#Y(w,j.#j);else j.#$=2,j.dispatchEvent(new ErrorEvent(\"error\",{error:L})),w.end()},data(w,U){const L=w.data;switch(L.#$){case 0:{let j=U.toString();const G=j.indexOf(\"\\r\\n\\r\\n\");if(G===-1){L.#w+=j;return}if(L.#w.length)L.#w+=j,j=L.#w,L.#w=\"\";const F=j.substring(0,G),K=F.indexOf(\"\\r\\n\");if(K===-1){L.#$=2,L.dispatchEvent(new ErrorEvent(\"error\",{error:new Error(\"Invalid HTTP request\")})),w.end();return}const Z=F.substring(0,K);if(Z!==\"HTTP/1.1 200 OK\"){L.#$=2,L.dispatchEvent(new ErrorEvent(\"error\",{error:new Error(Z)})),w.end();return}let J=K+1,X=!1,B=-1;for(;;){let M=F.indexOf(\"\\r\\n\",J);if(M===-1){if(J>=F.length){if(!X)L.#$=2,L.dispatchEvent(new ErrorEvent(\"error\",{error:new Error(`EventSource's response has no MIME type and \"text/event-stream\" is required. Aborting the connection.`)})),w.end();return}M=F.length}const O=F.substring(J+1,M),W=O.indexOf(\":\"),Q=O.substring(0,W),H=Q.localeCompare(\"content-type\",@undefined,{sensitivity:\"accent\"})===0;if(J=M+1,H)if(O.endsWith(\" text/event-stream\"))X=!0;else{L.#$=2,L.dispatchEvent(new ErrorEvent(\"error\",{error:new Error(`EventSource's response has a MIME type that is not \"text/event-stream\". Aborting the connection.`)})),w.end();return}else if(Q.localeCompare(\"content-length\",@undefined,{sensitivity:\"accent\"})===0){if(B=parseInt(O.substring(W+1).trim(),10),B!==B||B<=0){L.dispatchEvent(new ErrorEvent(\"error\",{error:new Error(\"EventSource's Content-Length is invalid. Aborting the connection.\")})),w.end();return}if(X)break}else if(Q.localeCompare(\"transfer-encoding\",@undefined,{sensitivity:\"accent\"})===0){if(O.substring(W+1).trim()!==\"chunked\"){L.dispatchEvent(new ErrorEvent(\"error\",{error:new Error(\"EventSource's Transfer-Encoding is invalid. Aborting the connection.\")})),w.end();return}if(B=0,X)break}}L.#A=B,L.#$=1,L.dispatchEvent(new Event(\"open\"));const Y=j.substring(G+4);if(A.#Z(L,Y,0),L.#A>0){if(L.#B+=Y.length,L.#B>=L.#A)L.#$=2,w.end()}return}case 1:if(A.#Z(L,U.toString(),2),L.#A>0){if(L.#B+=U.byteLength,L.#B>=L.#A)L.#$=2,w.end()}return;default:break}},drain(w){const U=w.data;if(U.#$===0){const L=U.#w;if(L.length){const j=w.write(L);if(j!==L.length)w.data.#M=L.substring(j);else w.data.#M=\"\"}}},close:A.#W,end(w){A.#W(w).dispatchEvent(new ErrorEvent(\"error\",{error:new Error(\"Connection closed by server\")}))},timeout(w){A.#W(w).dispatchEvent(new ErrorEvent(\"error\",{error:new Error(\"Timeout\")}))},binaryType:\"buffer\"};static#W(w){const U=w.data;if(U.#U=null,U.#B=0,U.#$=2,U.#Q){if(U.#L)clearTimeout(U.#L);U.#L=setTimeout(A.#V,U.#X,U)}return U}constructor(w,U=@undefined){super();const L=new URL(w);this.#K=L.protocol===\"https:\",this.#j=L,this.#$=2,process.nextTick(A.#V,this)}ref(){this.#L\?.ref(),this.#U\?.ref()}unref(){this.#L\?.unref(),this.#U\?.unref()}#H(){if(this.#$!==2)return;const w=this.#j,U=this.#K;this.#$=0,@Bun.connect({data:this,socket:A.#z,hostname:w.hostname,port:parseInt(w.port||(U\?\"443\":\"80\"),10),tls:U\?{requestCert:!0,rejectUnauthorized:!1}:!1}).catch((L)=>{if(super.dispatchEvent(new ErrorEvent(\"error\",{error:L})),this.#Q){if(this.#L)this.#L.unref\?.();this.#L=setTimeout(A.#V,1000,this)}})}get url(){return this.#j.href}get readyState(){return this.#$}close(){this.#Q=!1,this.#$=2,this.#U\?.unref(),this.#U\?.end()}get onopen(){return this.#J}get onerror(){return this.#F}get onmessage(){return this.#G}set onopen(w){if(this.#J)super.removeEventListener(\"close\",this.#J);super.addEventListener(\"open\",w),this.#J=w}set onerror(w){if(this.#F)super.removeEventListener(\"error\",this.#F);super.addEventListener(\"error\",w),this.#F=w}set onmessage(w){if(this.#G)super.removeEventListener(\"message\",this.#G);super.addEventListener(\"message\",w),this.#G=w}}return Object.defineProperty(A.prototype,\"CONNECTING\",{enumerable:!0,value:0}),Object.defineProperty(A.prototype,\"OPEN\",{enumerable:!0,value:1}),Object.defineProperty(A.prototype,\"CLOSED\",{enumerable:!0,value:2}),A[Symbol.for(\"CommonJS\")]=0,A})\n";
+const char* const s_eventSourceGetEventSourceCode = "(function () {\"use strict\";\n\n  class EventSource extends EventTarget {\n    #url;\n    #state;\n    #onerror;\n    #onmessage;\n    #onopen;\n    #is_tls = false;\n    #socket = null;\n    #data_buffer = \"\";\n    #send_buffer = \"\";\n    #lastEventID = \"\";\n    #reconnect = true;\n    #content_length = 0;\n    #received_length = 0;\n    #reconnection_time = 0;\n    #reconnection_timer = null;\n    static #ConnectNextTick(self) {\n      self.#connect();\n    }\n    static #SendRequest(socket, url) {\n      const self = socket.data;\n      const last_event_header = self.#lastEventID \? `Last-Event-ID: ${self.#lastEventID}\\r\\n` : \"\";\n      const request = `GET ${url.pathname}${url.search} HTTP/1.1\\r\\nHost: bun\\r\\nContent-type: text/event-stream\\r\\nContent-length: 0\\r\\n${last_event_header}\\r\\n`;\n      const sended = socket.write(request);\n      if (sended !== request.length) {\n        self.#send_buffer = request.substring(sended);\n      }\n    }\n    static #ProcessChunk(self, chunks, offset) {\n      for (;; ) {\n        if (offset >= chunks.length) {\n          return;\n        }\n        let chunk_end_idx = -1;\n        let start_idx = chunks.indexOf(\"\\r\\n\", offset);\n        const chunk_start_idx = start_idx + 2;\n        if (start_idx > 0) {\n          if (self.#content_length === 0) {\n            const chunk_size = parseInt(chunks.substring(offset, start_idx), 16);\n            if (chunk_size === 0) {\n              self.#state = 2;\n              self.#socket\?.end();\n              return;\n            }\n            chunk_end_idx = chunk_start_idx + chunk_size;\n          } else {\n            chunk_end_idx = chunks.length;\n          }\n        } else {\n          if (self.#data_buffer.length === 0) {\n            self.#data_buffer += chunks.substring(offset);\n            return;\n          }\n          chunk_end_idx = chunks.length;\n        }\n        let chunk = chunks.substring(chunk_start_idx, chunk_end_idx);\n        offset = chunk_end_idx + 2;\n        let chunk_offset = 0;\n        let event_idx = chunk.indexOf(\"\\n\\n\");\n        if (event_idx == -1) {\n          self.#data_buffer += chunks.substring(chunk_start_idx);\n          return;\n        }\n        if (self.#data_buffer.length) {\n          self.#data_buffer += chunk;\n          chunk = self.#data_buffer;\n          self.#data_buffer = \"\";\n        }\n        let more_events = true;\n        while (more_events) {\n          const event_data = chunk.substring(chunk_offset, event_idx);\n          let type;\n          let data = \"\";\n          let id;\n          let event_line_idx = 0;\n          let retry = -1;\n          for (;; ) {\n            let idx = event_data.indexOf(\"\\n\", event_line_idx);\n            if (idx === -1) {\n              if (event_line_idx >= event_data.length) {\n                break;\n              }\n              idx = event_data.length;\n            }\n            const line = event_data.substring(event_line_idx, idx);\n            if (line.startsWith(\"data:\")) {\n              if (data.length) {\n                data += `\\n${line.substring(5).trim()}`;\n              } else {\n                data = line.substring(5).trim();\n              }\n            } else if (line.startsWith(\"event:\")) {\n              type = line.substring(6).trim();\n            } else if (line.startsWith(\"id:\")) {\n              id = line.substring(3).trim();\n            } else if (line.startsWith(\"retry:\")) {\n              retry = parseInt(line.substring(6).trim(), 10);\n              if (retry !== retry) {\n                retry = -1;\n              }\n            }\n            event_line_idx = idx + 1;\n          }\n          self.#lastEventID = id || \"\";\n          if (retry >= 0) {\n            self.#reconnection_time = retry;\n          }\n          if (data || id || type) {\n            self.dispatchEvent(new MessageEvent(type || \"message\", {\n              data: data || \"\",\n              origin: self.#url.origin,\n              source: self,\n              lastEventId: id\n            }));\n          }\n          if (chunk.length === event_idx + 2) {\n            more_events = false;\n            break;\n          }\n          const next_event_idx = chunk.indexOf(\"\\n\\n\", event_idx + 1);\n          if (next_event_idx === -1) {\n            break;\n          }\n          chunk_offset = event_idx;\n          event_idx = next_event_idx;\n        }\n      }\n    }\n    static #Handlers = {\n      open(socket) {\n        const self = socket.data;\n        self.#socket = socket;\n        if (!self.#is_tls) {\n          EventSource.#SendRequest(socket, self.#url);\n        }\n      },\n      handshake(socket, success, verifyError) {\n        const self = socket.data;\n        if (success) {\n          EventSource.#SendRequest(socket, self.#url);\n        } else {\n          self.#state = 2;\n          self.dispatchEvent(new ErrorEvent(\"error\", { error: verifyError }));\n          socket.end();\n        }\n      },\n      data(socket, buffer) {\n        const self = socket.data;\n        switch (self.#state) {\n          case 0: {\n            let text = buffer.toString();\n            const headers_idx = text.indexOf(\"\\r\\n\\r\\n\");\n            if (headers_idx === -1) {\n              self.#data_buffer += text;\n              return;\n            }\n            if (self.#data_buffer.length) {\n              self.#data_buffer += text;\n              text = self.#data_buffer;\n              self.#data_buffer = \"\";\n            }\n            const headers = text.substring(0, headers_idx);\n            const status_idx = headers.indexOf(\"\\r\\n\");\n            if (status_idx === -1) {\n              self.#state = 2;\n              self.dispatchEvent(new ErrorEvent(\"error\", { error: new Error(\"Invalid HTTP request\") }));\n              socket.end();\n              return;\n            }\n            const status = headers.substring(0, status_idx);\n            if (status !== \"HTTP/1.1 200 OK\") {\n              self.#state = 2;\n              self.dispatchEvent(new ErrorEvent(\"error\", { error: new Error(status) }));\n              socket.end();\n              return;\n            }\n            let start_idx = status_idx + 1;\n            let mime_type_ok = false;\n            let content_length = -1;\n            for (;; ) {\n              let header_idx = headers.indexOf(\"\\r\\n\", start_idx);\n              if (header_idx === -1) {\n                if (start_idx >= headers.length) {\n                  if (!mime_type_ok) {\n                    self.#state = 2;\n                    self.dispatchEvent(new ErrorEvent(\"error\", {\n                      error: new Error(`EventSource's response has no MIME type and \"text/event-stream\" is required. Aborting the connection.`)\n                    }));\n                    socket.end();\n                  }\n                  return;\n                }\n                header_idx = headers.length;\n              }\n              const header = headers.substring(start_idx + 1, header_idx);\n              const header_name_idx = header.indexOf(\":\");\n              const header_name = header.substring(0, header_name_idx);\n              const is_content_type = header_name.localeCompare(\"content-type\", @undefined, { sensitivity: \"accent\" }) === 0;\n              start_idx = header_idx + 1;\n              if (is_content_type) {\n                if (header.endsWith(\" text/event-stream\")) {\n                  mime_type_ok = true;\n                } else {\n                  self.#state = 2;\n                  self.dispatchEvent(new ErrorEvent(\"error\", {\n                    error: new Error(`EventSource's response has a MIME type that is not \"text/event-stream\". Aborting the connection.`)\n                  }));\n                  socket.end();\n                  return;\n                }\n              } else {\n                const is_content_length = header_name.localeCompare(\"content-length\", @undefined, { sensitivity: \"accent\" }) === 0;\n                if (is_content_length) {\n                  content_length = parseInt(header.substring(header_name_idx + 1).trim(), 10);\n                  if (content_length !== content_length || content_length <= 0) {\n                    self.dispatchEvent(new ErrorEvent(\"error\", {\n                      error: new Error(`EventSource's Content-Length is invalid. Aborting the connection.`)\n                    }));\n                    socket.end();\n                    return;\n                  }\n                  if (mime_type_ok) {\n                    break;\n                  }\n                } else {\n                  const is_transfer_encoding = header_name.localeCompare(\"transfer-encoding\", @undefined, { sensitivity: \"accent\" }) === 0;\n                  if (is_transfer_encoding) {\n                    if (header.substring(header_name_idx + 1).trim() !== \"chunked\") {\n                      self.dispatchEvent(new ErrorEvent(\"error\", {\n                        error: new Error(`EventSource's Transfer-Encoding is invalid. Aborting the connection.`)\n                      }));\n                      socket.end();\n                      return;\n                    }\n                    content_length = 0;\n                    if (mime_type_ok) {\n                      break;\n                    }\n                  }\n                }\n              }\n            }\n            self.#content_length = content_length;\n            self.#state = 1;\n            self.dispatchEvent(new Event(\"open\"));\n            const chunks = text.substring(headers_idx + 4);\n            EventSource.#ProcessChunk(self, chunks, 0);\n            if (self.#content_length > 0) {\n              self.#received_length += chunks.length;\n              if (self.#received_length >= self.#content_length) {\n                self.#state = 2;\n                socket.end();\n              }\n            }\n            return;\n          }\n          case 1:\n            EventSource.#ProcessChunk(self, buffer.toString(), 2);\n            if (self.#content_length > 0) {\n              self.#received_length += buffer.byteLength;\n              if (self.#received_length >= self.#content_length) {\n                self.#state = 2;\n                socket.end();\n              }\n            }\n            return;\n          default:\n            break;\n        }\n      },\n      drain(socket) {\n        const self = socket.data;\n        if (self.#state === 0) {\n          const request = self.#data_buffer;\n          if (request.length) {\n            const sended = socket.write(request);\n            if (sended !== request.length) {\n              socket.data.#send_buffer = request.substring(sended);\n            } else {\n              socket.data.#send_buffer = \"\";\n            }\n          }\n        }\n      },\n      close: EventSource.#Close,\n      end(socket) {\n        EventSource.#Close(socket).dispatchEvent(new ErrorEvent(\"error\", { error: new Error(\"Connection closed by server\") }));\n      },\n      timeout(socket) {\n        EventSource.#Close(socket).dispatchEvent(new ErrorEvent(\"error\", { error: new Error(\"Timeout\") }));\n      },\n      binaryType: \"buffer\"\n    };\n    static #Close(socket) {\n      const self = socket.data;\n      self.#socket = null;\n      self.#received_length = 0;\n      self.#state = 2;\n      if (self.#reconnect) {\n        if (self.#reconnection_timer) {\n          clearTimeout(self.#reconnection_timer);\n        }\n        self.#reconnection_timer = setTimeout(EventSource.#ConnectNextTick, self.#reconnection_time, self);\n      }\n      return self;\n    }\n    constructor(url, options = @undefined) {\n      super();\n      const uri = new URL(url);\n      this.#is_tls = uri.protocol === \"https:\";\n      this.#url = uri;\n      this.#state = 2;\n      process.nextTick(EventSource.#ConnectNextTick, this);\n    }\n    ref() {\n      this.#reconnection_timer\?.ref();\n      this.#socket\?.ref();\n    }\n    unref() {\n      this.#reconnection_timer\?.unref();\n      this.#socket\?.unref();\n    }\n    #connect() {\n      if (this.#state !== 2)\n        return;\n      const uri = this.#url;\n      const is_tls = this.#is_tls;\n      this.#state = 0;\n      @Bun.connect({\n        data: this,\n        socket: EventSource.#Handlers,\n        hostname: uri.hostname,\n        port: parseInt(uri.port || (is_tls \? \"443\" : \"80\"), 10),\n        tls: is_tls \? {\n          requestCert: true,\n          rejectUnauthorized: false\n        } : false\n      }).catch((err) => {\n        super.dispatchEvent(new ErrorEvent(\"error\", { error: err }));\n        if (this.#reconnect) {\n          if (this.#reconnection_timer) {\n            this.#reconnection_timer.unref\?.();\n          }\n          this.#reconnection_timer = setTimeout(EventSource.#ConnectNextTick, 1000, this);\n        }\n      });\n    }\n    get url() {\n      return this.#url.href;\n    }\n    get readyState() {\n      return this.#state;\n    }\n    close() {\n      this.#reconnect = false;\n      this.#state = 2;\n      this.#socket\?.unref();\n      this.#socket\?.end();\n    }\n    get onopen() {\n      return this.#onopen;\n    }\n    get onerror() {\n      return this.#onerror;\n    }\n    get onmessage() {\n      return this.#onmessage;\n    }\n    set onopen(cb) {\n      if (this.#onopen) {\n        super.removeEventListener(\"close\", this.#onopen);\n      }\n      super.addEventListener(\"open\", cb);\n      this.#onopen = cb;\n    }\n    set onerror(cb) {\n      if (this.#onerror) {\n        super.removeEventListener(\"error\", this.#onerror);\n      }\n      super.addEventListener(\"error\", cb);\n      this.#onerror = cb;\n    }\n    set onmessage(cb) {\n      if (this.#onmessage) {\n        super.removeEventListener(\"message\", this.#onmessage);\n      }\n      super.addEventListener(\"message\", cb);\n      this.#onmessage = cb;\n    }\n  }\n  Object.defineProperty(EventSource.prototype, \"CONNECTING\", {\n    enumerable: true,\n    value: 0\n  });\n  Object.defineProperty(EventSource.prototype, \"OPEN\", {\n    enumerable: true,\n    value: 1\n  });\n  Object.defineProperty(EventSource.prototype, \"CLOSED\", {\n    enumerable: true,\n    value: 2\n  });\n  return EventSource;\n})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \

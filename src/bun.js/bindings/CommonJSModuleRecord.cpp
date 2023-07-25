@@ -487,62 +487,12 @@ bool JSCommonJSModule::evaluate(
     JSC::MarkedArgumentBuffer arguments;
     auto& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+    // TODO: remove second arg, we do not use it ???
+    // was it object loader?
     generator(globalObject, JSC::Identifier::fromString(vm, key), propertyNames, arguments);
     RETURN_IF_EXCEPTION(throwScope, false);
-
-    bool needsPut = false;
-    auto getDefaultValue = [&]() -> JSValue {
-        size_t defaultValueIndex = propertyNames.find(vm.propertyNames->defaultKeyword);
-        auto cjsSymbol = Identifier::fromUid(vm.symbolRegistry().symbolForKey("CommonJS"_s));
-
-        if (defaultValueIndex != notFound && propertyNames.contains(cjsSymbol)) {
-            JSValue current = arguments.at(defaultValueIndex);
-            needsPut = true;
-            return current;
-        }
-
-        size_t count = propertyNames.size();
-        JSValue existingDefaultObject = this->getIfPropertyExists(globalObject, WebCore::clientData(vm)->builtinNames().exportsPublicName());
-        JSObject* defaultObject;
-
-        if (existingDefaultObject && existingDefaultObject.isObject()) {
-            defaultObject = jsCast<JSObject*>(existingDefaultObject);
-        } else {
-            defaultObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
-            needsPut = true;
-        }
-
-        for (size_t i = 0; i < count; ++i) {
-            auto prop = propertyNames[i];
-            unsigned attributes = 0;
-
-            JSValue value = arguments.at(i);
-
-            if (prop.isSymbol()) {
-                attributes |= JSC::PropertyAttribute::DontEnum;
-            }
-
-            if (value.isCell() && value.isCallable()) {
-                attributes |= JSC::PropertyAttribute::Function;
-            }
-
-            defaultObject->putDirect(vm, prop, value, attributes);
-        }
-
-        return defaultObject;
-    };
-
-    JSValue defaultValue = getDefaultValue();
-    if (needsPut) {
-        unsigned attributes = 0;
-
-        if (defaultValue.isCell() && defaultValue.isCallable()) {
-            attributes |= JSC::PropertyAttribute::Function;
-        }
-
-        this->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), defaultValue, attributes);
-    }
-
+    JSValue defaultValue = arguments.at(0);
+    this->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), defaultValue, 0);
     this->hasEvaluated = true;
     RELEASE_AND_RETURN(throwScope, true);
 }
@@ -555,10 +505,6 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
     auto result = this->exportsObject();
 
     auto& vm = globalObject->vm();
-
-    // This exists to tell ImportMetaObject.ts that this is a CommonJS module.
-    exportNames.append(Identifier::fromUid(vm.symbolRegistry().symbolForKey("CommonJS"_s)));
-    exportValues.append(jsNumber(0));
 
     // Bun's intepretation of the "__esModule" annotation:
     //
@@ -808,6 +754,33 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
     RELEASE_AND_RETURN(throwScope, JSValue::encode(fetchResult));
 }
 
+// Used by $requireBuiltin(...) (Module.ts)
+JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateAndLoadBuiltinModule, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
+{
+    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue specifierValue = callframe->argument(0);
+    WTF::String specifier = specifierValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    BunString specifierStr = Bun::toString(specifier);
+    BunString referrerStr = Bun::toString(""_s);
+
+    JSValue fetchResult = Bun::fetchCommonJSModule(
+        globalObject,
+        JSCommonJSModule::create(
+            jsCast<Zig::GlobalObject*>(globalObject),
+            specifier,
+            constructEmptyObject(globalObject), false),
+        specifierValue,
+        &specifierStr,
+        &referrerStr);
+
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(fetchResult));
+}
+
 void RequireResolveFunctionPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
@@ -820,10 +793,11 @@ void RequireResolveFunctionPrototype::finishCreation(JSC::VM& vm)
 bool JSCommonJSModule::evaluate(
     Zig::GlobalObject* globalObject,
     const WTF::String& key,
-    ResolvedSource source)
+    ResolvedSource source,
+    bool isBuiltIn)
 {
     auto& vm = globalObject->vm();
-    auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program);
+    auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program, isBuiltIn);
     this->ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
     JSC::SourceCode rawInputSource(
         WTFMove(sourceProvider));
@@ -854,7 +828,8 @@ bool JSCommonJSModule::evaluate(
 
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
-    ResolvedSource source)
+    ResolvedSource source,
+    bool isBuiltIn)
 {
     JSCommonJSModule* moduleObject;
     WTF::String sourceURL = toStringCopy(source.source_url);
@@ -862,7 +837,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     JSValue specifierValue = Bun::toJS(globalObject, source.specifier);
     JSValue entry = globalObject->requireMap()->get(globalObject, specifierValue);
 
-    auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program);
+    auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program, isBuiltIn);
     bool ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
     SourceOrigin sourceOrigin = sourceProvider->sourceOrigin();
 

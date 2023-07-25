@@ -95,7 +95,7 @@ declare module "bun" {
   };
   function fs(): BunFS;
   function _Os(): typeof import("node:os");
-  function _Path(isWindows?: boolean): typeof import("node:path");
+  function _Path(isWin32?: boolean): typeof import("node:path");
   function jest(): typeof import("bun:test");
   var main: string;
   var tty: Array<{ hasColors: boolean }>;
@@ -145,7 +145,6 @@ declare interface Error {
  * This is only valid in src/js/ as it is replaced with `globalThis[Symbol.for("Bun.lazy")]` at bundle time.
  */
 function $lazy<T extends keyof BunLazyModules>(id: T): BunLazyModules[T];
-function $lazy(id: "createImportMeta", from: string): BunLazyModules[T];
 
 interface BunLazyModules {
   /**
@@ -199,3 +198,6 @@ interface BunLazyModules {
   [2]: any;
   [4]: any;
 }
+
+/** Assign to this variable in src/js/{bun,node,thirdparty} to act as module.exports */
+declare var $exports: any;

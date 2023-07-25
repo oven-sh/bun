@@ -3,75 +3,16 @@
 // This is a very slow module!
 // It should really be fixed. It will show up in benchmarking. It also loads
 // slowly. We need to fix it!
-import { default as assert } from "node:assert";
-import * as AssertModule from "node:assert";
-import * as BufferModule from "node:buffer";
-import * as StreamModule from "node:stream";
-import * as Util from "node:util";
+const assert = require("node:assert");
+const BufferModule = require("node:buffer");
+const StreamModule = require("node:stream");
+const Util = require("node:util");
 
-export var Deflate,
-  Inflate,
-  Gzip,
-  Gunzip,
-  DeflateRaw,
-  InflateRaw,
-  Unzip,
-  createDeflate,
-  createInflate,
-  createDeflateRaw,
-  createInflateRaw,
-  createGzip,
-  createGunzip,
-  createUnzip,
-  deflate,
-  deflateSync,
-  gzip,
-  gzipSync,
-  deflateRaw,
-  deflateRawSync,
-  unzip,
-  unzipSync,
-  inflate,
-  inflateSync,
-  gunzip,
-  gunzipSync,
-  inflateRaw,
-  inflateRawSync,
-  constants;
-
-var __create = Object.create;
-var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
-var __getProtoOf = Object.getPrototypeOf;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __commonJS = (cb, mod) =>
   function __require() {
     return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
   };
-
-var __copyProps = (to, from, except, desc) => {
-  if ((from && typeof from === "object") || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, {
-          get: () => from[key],
-          enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,
-        });
-  }
-  return to;
-};
-var __reExport = (target, mod, secondTarget) => (
-  __copyProps(target, mod, "default"), secondTarget && __copyProps(secondTarget, mod, "default")
-);
-var __toESM = (mod, isNodeMode, target) => (
-  (target = mod != null ? __create(__getProtoOf(mod)) : {}),
-  __copyProps(
-    isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
-    mod,
-  )
-);
-var __toCommonJS = mod => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // node_modules/pako/lib/zlib/zstream.js
 var require_zstream = __commonJS({
@@ -3974,7 +3915,6 @@ var require_lib = __commonJS({
     var Transform = StreamModule.Transform;
     var binding = require_binding();
     var util = Util;
-    var assert = AssertModule.ok;
     var kMaxLength = BufferModule.kMaxLength;
     var kRangeErrorMessage =
       "Cannot create final Buffer. It would be larger than 0x" + kMaxLength.toString(16) + " bytes";
@@ -4468,37 +4408,4 @@ var require_lib = __commonJS({
 });
 
 // zlib.js
-var zlib_exports = require_lib();
-zlib_exports[Symbol.for("CommonJS")] = 0;
-
-export default zlib_exports;
-
-Deflate = zlib_exports.Deflate;
-Inflate = zlib_exports.Inflate;
-Gzip = zlib_exports.Gzip;
-Gunzip = zlib_exports.Gunzip;
-DeflateRaw = zlib_exports.DeflateRaw;
-InflateRaw = zlib_exports.InflateRaw;
-Unzip = zlib_exports.Unzip;
-createDeflate = zlib_exports.createDeflate;
-createInflate = zlib_exports.createInflate;
-createDeflateRaw = zlib_exports.createDeflateRaw;
-createInflateRaw = zlib_exports.createInflateRaw;
-createGzip = zlib_exports.createGzip;
-createGunzip = zlib_exports.createGunzip;
-createUnzip = zlib_exports.createUnzip;
-deflate = zlib_exports.deflate;
-deflateSync = zlib_exports.deflateSync;
-gzip = zlib_exports.gzip;
-gzipSync = zlib_exports.gzipSync;
-deflateRaw = zlib_exports.deflateRaw;
-deflateRawSync = zlib_exports.deflateRawSync;
-unzip = zlib_exports.unzip;
-unzipSync = zlib_exports.unzipSync;
-inflate = zlib_exports.inflate;
-inflateSync = zlib_exports.inflateSync;
-gunzip = zlib_exports.gunzip;
-gunzipSync = zlib_exports.gunzipSync;
-inflateRaw = zlib_exports.inflateRaw;
-inflateRawSync = zlib_exports.inflateRawSync;
-constants = zlib_exports.constants;
+export default require_lib();

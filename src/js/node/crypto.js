@@ -5,14 +5,14 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf,
   __hasOwnProp = Object.prototype.hasOwnProperty;
-import { StringDecoder } from "node:string_decoder";
-import * as BufferModule from "node:buffer";
-import * as StreamModule from "node:stream";
+const BufferModule = require("node:buffer");
+const StreamModule = require("node:stream");
+const StringDecoder = require("node:string_decoder").StringDecoder;
 
 const MAX_STRING_LENGTH = 536870888;
 var Buffer = globalThis.Buffer;
 const EMPTY_BUFFER = Buffer.alloc(0);
-const { isAnyArrayBuffer, isArrayBufferView } = require("util/types");
+const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 
 function getArrayBufferOrView(buffer, name, encoding) {
   if (isAnyArrayBuffer(buffer)) return buffer;
@@ -34,10 +34,6 @@ function getArrayBufferOrView(buffer, name, encoding) {
 const crypto = globalThis.crypto;
 const globalCrypto = crypto;
 
-var __esm = (fn, res) =>
-  function () {
-    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])((fn = 0))), res;
-  };
 var __commonJS = (cb, mod) =>
   function () {
     return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
@@ -55,17 +51,7 @@ var __export = (target, all) => {
             enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,
           });
     return to;
-  },
-  __reExport = (target, mod, secondTarget) => (
-    __copyProps(target, mod, "default"), secondTarget && __copyProps(secondTarget, mod, "default")
-  ),
-  __toESM = (mod, isNodeMode, target) => (
-    (target = mod != null ? __create(__getProtoOf(mod)) : {}),
-    __copyProps(
-      isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: !0 }) : target,
-      mod,
-    )
-  );
+  };
 
 // node_modules/safe-buffer/index.js
 var require_safe_buffer = __commonJS({
@@ -23789,10 +23775,8 @@ var require_crypto_browserify2 = __commonJS({
 });
 
 // crypto.js
-var crypto_exports = {
-  ...require_crypto_browserify2(),
-  [Symbol.for("CommonJS")]: 0,
-};
+var crypto_exports = require_crypto_browserify2();
+
 var DEFAULT_ENCODING = "buffer",
   getRandomValues = array => crypto.getRandomValues(array),
   randomUUID = () => crypto.randomUUID(),
@@ -23882,58 +23866,5 @@ __export(crypto_exports, {
   subtle: () => webcrypto.subtle,
 });
 
-export const {
-  randomBytes,
-  rng,
-  pseudoRandomBytes,
-  prng,
-  Hash,
-  createHash,
-  createHmac,
-  Hmac,
-  getHashes,
-  pbkdf2,
-  pbkdf2Sync,
-  Cipher,
-  createCipher,
-  Cipheriv,
-  createCipheriv,
-  Decipher,
-  createDecipher,
-  Decipheriv,
-  createDecipheriv,
-  getCiphers,
-  listCiphers,
-  DiffieHellmanGroup,
-  createDiffieHellmanGroup,
-  getDiffieHellman,
-  createDiffieHellman,
-  DiffieHellman,
-  createSign,
-  Sign,
-  createVerify,
-  Verify,
-  createECDH,
-  publicEncrypt,
-  privateEncrypt,
-  publicDecrypt,
-  privateDecrypt,
-  randomFill,
-  randomFillSync,
-  createCredentials,
-  constants,
-} = crypto_exports;
-
-export {
-  DEFAULT_ENCODING,
-  getRandomValues,
-  getCurves,
-  randomUUID,
-  randomInt,
-  scrypt,
-  scryptSync,
-  timingSafeEqual,
-  webcrypto,
-};
 export default crypto_exports;
 /*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */

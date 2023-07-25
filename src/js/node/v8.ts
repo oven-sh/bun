@@ -1,7 +1,7 @@
 // Hardcoded module "node:v8"
 // This is a stub! None of this is actually implemented yet.
-import { hideFromStack, throwNotImplemented } from "../shared";
-import { serialize as jscSerialize, deserialize as jscDeserialize } from "bun:jsc";
+const { hideFromStack, throwNotImplemented } = require("$shared");
+const jsc = require("bun:jsc");
 
 function notimpl(message) {
   throwNotImplemented("node:v8 " + message);
@@ -44,7 +44,7 @@ function setFlagsFromString() {
   notimpl("setFlagsFromString");
 }
 function deserialize(value) {
-  return jscDeserialize(value);
+  return jsc.deserialize(value);
 }
 function takeCoverage() {
   notimpl("takeCoverage");
@@ -53,7 +53,7 @@ function stopCoverage() {
   notimpl("stopCoverage");
 }
 function serialize(arg1) {
-  return jscSerialize(arg1, { binaryType: "nodebuffer" });
+  return jsc.serialize(arg1, { binaryType: "nodebuffer" });
 }
 function writeHeapSnapshot() {
   notimpl("writeHeapSnapshot");
@@ -85,7 +85,7 @@ const promiseHooks = {
     isBuildingSnapshot: () => notimpl("isBuildingSnapshot"),
   };
 
-const defaultObject = {
+export default {
   cachedDataVersionTag,
   getHeapSnapshot,
   getHeapStatistics,
@@ -102,30 +102,6 @@ const defaultObject = {
   startupSnapshot,
   Deserializer,
   Serializer,
-  [Symbol.for("CommonJS")]: 0,
-};
-
-export {
-  cachedDataVersionTag,
-  getHeapSnapshot,
-  getHeapStatistics,
-  getHeapSpaceStatistics,
-  getHeapCodeStatistics,
-  setFlagsFromString,
-  deserialize,
-  takeCoverage,
-  stopCoverage,
-  serialize,
-  writeHeapSnapshot,
-  setHeapSnapshotNearHeapLimit,
-  promiseHooks,
-  startupSnapshot,
-  Deserializer,
-  Serializer,
-  DefaultDeserializer,
-  DefaultSerializer,
-  GCProfiler,
-  defaultObject as default,
 };
 
 hideFromStack(

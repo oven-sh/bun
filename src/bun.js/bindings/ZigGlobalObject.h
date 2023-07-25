@@ -42,6 +42,7 @@ class DOMWrapperWorld;
 #include "DOMConstructors.h"
 #include "BunPlugin.h"
 #include "JSMockFunction.h"
+#include "InternalModuleRegistry.h"
 
 namespace WebCore {
 class GlobalScope;
@@ -252,7 +253,6 @@ public:
     JSC::Structure* callSiteStructure() const { return m_callSiteStructure.getInitializedOnMainThread(this); }
 
     JSC::JSObject* performanceObject() { return m_performanceObject.getInitializedOnMainThread(this); }
-    JSC::JSObject* primordialsObject() { return m_primordialsObject.getInitializedOnMainThread(this); }
 
     JSC::JSFunction* performMicrotaskFunction() { return m_performMicrotaskFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* performMicrotaskVariadicFunction() { return m_performMicrotaskVariadicFunction.getInitializedOnMainThread(this); }
@@ -446,6 +446,7 @@ public:
     void* napiInstanceDataFinalizerHint = nullptr;
 
     Bun::JSMockModule mockModule;
+    Bun::InternalModuleRegistry internalModuleRegistry;
 
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
@@ -509,7 +510,6 @@ private:
     LazyProperty<JSGlobalObject, JSObject> m_JSHTTPSResponseControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
-    LazyProperty<JSGlobalObject, JSObject> m_primordialsObject;
     LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
     LazyProperty<JSGlobalObject, JSObject> m_subtleCryptoObject;

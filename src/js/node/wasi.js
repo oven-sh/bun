@@ -769,9 +769,9 @@ var require_wasi = __commonJS({
           process.kill(process.pid, signal);
         },
         randomFillSync: array => crypto.getRandomValues(array),
-        isTTY: fd => import.meta.require("node:tty").isatty(fd),
+        isTTY: fd => require("node:tty").isatty(fd),
         fs: Bun.fs(),
-        path: import.meta.require("node:path"),
+        path: require("node:path"),
       };
 
       return (defaultConfig = {
@@ -1936,8 +1936,4 @@ var require_wasi = __commonJS({
     exports.default = WASI;
   },
 });
-const WASIExport = require_wasi();
-const WASI = WASIExport.default;
-WASIExport[Symbol.for("CommonJS")] = 0;
-export { WASIExport as WASI };
-export default WASIExport;
+export default require_wasi();

@@ -6,8 +6,6 @@ BUN_AUTO_UPDATER_REPO = Jarred-Sumner/bun-releases-for-updater
 
 CMAKE_CXX_COMPILER_LAUNCHER_FLAG :=
 
-
-
 # 'make' command will trigger the help target
 .DEFAULT_GOAL := help
 
@@ -561,8 +559,8 @@ builtins:
 	NODE_ENV=production bun src/js/builtins/codegen/index.ts --minify
 
 .PHONY: esm
-esm:
-	NODE_ENV=production bun src/js/build-esm.ts
+js:
+	NODE_ENV=production bun src/js/_codegen/index.ts
 
 esm-debug:
 	BUN_DEBUG_QUIET_LOGS=1 NODE_ENV=production bun-debug src/js/build-esm.ts
@@ -1118,7 +1116,7 @@ dev-obj-linux:
 	$(ZIG) build obj -Dtarget=x86_64-linux-gnu -Dcpu="$(CPU_TARGET)"
 
 .PHONY: dev
-dev: mkdir-dev esm dev-obj link ## compile zig changes + link bun
+dev: mkdir-dev dev-obj link ## compile zig changes + link bun
 
 mkdir-dev:
 	mkdir -p $(DEBUG_PACKAGE_DIR)

@@ -1,6 +1,5 @@
 // Hardcoded module "node:assert"
-var { Bun } = $lazy("primordials");
-import util from "node:util";
+const util = require("node:util");
 
 var isDeepEqual = Bun.deepEquals;
 var __commonJS = (cb, mod) =>
@@ -781,6 +780,7 @@ should equal
           _possibleConstructorReturn(_this)
         );
       }
+      AssertionError2.prototype = {};
       return (
         _createClass(AssertionError2, [
           {
@@ -1256,26 +1256,6 @@ function CallTracker() {
   throw new Error("CallTracker is not supported yet");
 }
 
-assert_module[Symbol.for("CommonJS")] = 0;
 assert_module["CallTracker"] = CallTracker;
-export var {
-  AssertionError,
-  assert,
-  deepEqual,
-  deepStrictEqual,
-  doesNotReject,
-  doesNotThrow,
-  equal,
-  fail,
-  ifError,
-  notDeepEqual,
-  notDeepStrictEqual,
-  notEqual,
-  notStrictEqual,
-  ok,
-  rejects,
-  strict,
-  strictEqual,
-  throws,
-} = assert_module;
+
 export default assert_module;

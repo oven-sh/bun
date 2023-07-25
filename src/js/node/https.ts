@@ -1,19 +1,5 @@
 // Hardcoded module "node:https"
-import * as http from "node:http";
-
-var {
-  Agent,
-  Server,
-  METHODS,
-  STATUS_CODES,
-  createServer,
-  ServerResponse,
-  IncomingMessage,
-  maxHeaderSize,
-  validateHeaderName,
-  validateHeaderValue,
-  globalAgent,
-} = http;
+const http = require("node:http");
 
 function request(input, options, cb) {
   if (input && typeof input === "object" && !(input instanceof URL)) {
@@ -31,35 +17,8 @@ function get(input, options, cb) {
   return req;
 }
 
-var defaultExport = {
-  Agent,
-  Server,
-  METHODS,
-  STATUS_CODES,
-  createServer,
-  ServerResponse,
-  IncomingMessage,
-  request,
+export default {
+  ...http,
   get,
-  maxHeaderSize,
-  validateHeaderName,
-  validateHeaderValue,
-  globalAgent,
-};
-
-export {
-  Agent,
-  Server,
-  METHODS,
-  STATUS_CODES,
-  createServer,
-  ServerResponse,
-  IncomingMessage,
   request,
-  get,
-  maxHeaderSize,
-  validateHeaderName,
-  validateHeaderValue,
-  globalAgent,
 };
-export default defaultExport;

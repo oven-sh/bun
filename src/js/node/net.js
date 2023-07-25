@@ -19,8 +19,8 @@
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
-import { Duplex } from "node:stream";
-import { EventEmitter } from "node:events";
+const { Duplex } = require("node:stream");
+const EventEmitter = require("node:events");
 
 // IPv4 Segment
 const v4Seg = "(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])";
@@ -56,7 +56,6 @@ function isIP(s) {
   return 0;
 }
 
-const { Bun, createFIFO, Object } = $lazy("primordials");
 const { connect: bunConnect } = Bun;
 var { setTimeout } = globalThis;
 
@@ -294,7 +293,7 @@ const Socket = (function (InternalSocket) {
     #closed = false;
     connecting = false;
     localAddress = "127.0.0.1";
-    #readQueue = createFIFO();
+    #readQueue = $createFIFO();
     remotePort;
     [bunSocketInternal] = null;
     [bunTLSConnectOptions] = null;
@@ -891,8 +890,5 @@ export default {
   isIPv4,
   isIPv6,
   Socket,
-  [Symbol.for("CommonJS")]: 0,
   [Symbol.for("::bunternal::")]: SocketClass,
 };
-
-export { createServer, Server, createConnection, connect, isIP, isIPv4, isIPv6, Socket };

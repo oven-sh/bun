@@ -1,18 +1,15 @@
 // Hardcoded module "node:stream/consumers" / "readable-stream/consumer"
-const { Bun } = $lazy("primordials");
+const arrayBuffer = Bun.readableStreamToArrayBuffer;
+const text = Bun.readableStreamToText;
+const json = stream => Bun.readableStreamToText(stream).then(JSON.parse);
 
-export const arrayBuffer = Bun.readableStreamToArrayBuffer;
-export const text = Bun.readableStreamToText;
-export const json = stream => Bun.readableStreamToText(stream).then(JSON.parse);
-
-export const buffer = async readableStream => {
+const buffer = async readableStream => {
   return new Buffer(await arrayBuffer(readableStream));
 };
 
-export const blob = Bun.readableStreamToBlob;
+const blob = Bun.readableStreamToBlob;
 
 export default {
-  [Symbol.for("CommonJS")]: 0,
   arrayBuffer,
   text,
   json,

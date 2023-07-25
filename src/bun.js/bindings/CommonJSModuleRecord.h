@@ -1,3 +1,4 @@
+#pragma once
 #include "root.h"
 #include "headers-handwritten.h"
 
@@ -15,6 +16,7 @@ namespace Bun {
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionLoadModule);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateAndLoadBuiltinModule);
 
 class JSCommonJSModule final : public JSC::JSDestructibleObject {
 public:
@@ -37,7 +39,11 @@ public:
 
     static JSC::Structure* createStructure(JSC::JSGlobalObject* globalObject);
 
-    bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource resolvedSource);
+    bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource resolvedSource, bool isBuiltIn);
+    inline bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource resolvedSource)
+    {
+        return evaluate(globalObject, sourceURL, resolvedSource, false);
+    }
     bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& key, const SyntheticSourceProvider::SyntheticSourceGenerator& generator);
     bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& key, JSSourceCode* sourceCode);
 
@@ -96,7 +102,15 @@ JSC::Structure* createCommonJSModuleStructure(
 
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
-    ResolvedSource source);
+    ResolvedSource source,
+    bool isBuiltIn);
+
+inline std::optional<JSC::SourceCode> createCommonJSModule(
+    Zig::GlobalObject* globalObject,
+    ResolvedSource source)
+{
+    return createCommonJSModule(globalObject, source, false);
+}
 
 class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {
 public:

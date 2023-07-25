@@ -1,7 +1,6 @@
 // Hardcoded module "node:http"
-import { EventEmitter } from "node:events";
-import { Readable, Writable, Duplex } from "node:stream";
-import { isTypedArray } from "util/types";
+const EventEmitter = require("node:events");
+const { isTypedArray } = require("node:util/types");
 
 const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
 /**
@@ -14,14 +13,14 @@ function checkInvalidHeaderChar(val: string) {
   return RegExpPrototypeExec.call(headerCharRegex, val) !== null;
 }
 
-export const validateHeaderName = (name, label) => {
+const validateHeaderName = (name, label) => {
   if (typeof name !== "string" || !name || !checkIsHttpToken(name)) {
     // throw new ERR_INVALID_HTTP_TOKEN(label || "Header name", name);
     throw new Error("ERR_INVALID_HTTP_TOKEN");
   }
 };
 
-export const validateHeaderValue = (name, value) => {
+const validateHeaderValue = (name, value) => {
   if (value === undefined) {
     // throw new ERR_HTTP_INVALID_HEADER_VALUE(value, name);
     throw new Error("ERR_HTTP_INVALID_HEADER_VALUE");
@@ -56,8 +55,6 @@ function isIPv6(input) {
 // TODO: add primordial for URL
 // Importing from node:url is unnecessary
 const { URL } = globalThis;
-
-const { newArrayWithSize, String, Object, Array } = $lazy("primordials");
 
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
@@ -218,11 +215,11 @@ var FakeSocket = class Socket extends Duplex {
   _write(chunk, encoding, callback) {}
 };
 
-export function createServer(options, callback) {
+function createServer(options, callback) {
   return new Server(options, callback);
 }
 
-export class Agent extends EventEmitter {
+class Agent extends EventEmitter {
   defaultPort = 80;
   protocol = "http:";
   options;
@@ -331,7 +328,7 @@ function emitListeningNextTick(self, onListen, err, hostname, port) {
   }
 }
 
-export class Server extends EventEmitter {
+class Server extends EventEmitter {
   #server;
   #options;
   #tls;
@@ -558,7 +555,7 @@ export class Server extends EventEmitter {
 
 function assignHeaders(object, req) {
   var headers = req.headers.toJSON();
-  const rawHeaders = newArrayWithSize(req.headers.count * 2);
+  const rawHeaders = $newArrayWithSize(req.headers.count * 2);
   var i = 0;
   for (const key in headers) {
     rawHeaders[i++] = key;
@@ -577,7 +574,7 @@ function getDefaultHTTPSAgent() {
   return (_defaultHTTPSAgent ??= new Agent({ defaultPort: 443, protocol: "https:" }));
 }
 
-export class IncomingMessage extends Readable {
+class IncomingMessage extends Readable {
   method: string;
   complete: boolean;
 
@@ -809,7 +806,7 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
   return true;
 }
 
-export class OutgoingMessage extends Writable {
+class OutgoingMessage extends Writable {
   #headers;
   headersSent = false;
   sendDate = true;
@@ -958,7 +955,7 @@ export class OutgoingMessage extends Writable {
 }
 
 let OriginalWriteHeadFn, OriginalImplicitHeadFn;
-export class ServerResponse extends Writable {
+class ServerResponse extends Writable {
   declare _writableState: any;
 
   constructor({ req, reply }) {
@@ -1196,7 +1193,7 @@ export class ServerResponse extends Writable {
 OriginalWriteHeadFn = ServerResponse.prototype.writeHead;
 OriginalImplicitHeadFn = ServerResponse.prototype._implicitHeader;
 
-export class ClientRequest extends OutgoingMessage {
+class ClientRequest extends OutgoingMessage {
   #timeout;
   #res: IncomingMessage | null = null;
   #upgradeOrConnect = false;
@@ -1666,7 +1663,7 @@ function checkIsHttpToken(val) {
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-export const METHODS = [
+const METHODS = [
   "ACL",
   "BIND",
   "CHECKOUT",
@@ -1703,7 +1700,7 @@ export const METHODS = [
   "UNSUBSCRIBE",
 ];
 
-export const STATUS_CODES = {
+const STATUS_CODES = {
   100: "Continue",
   101: "Switching Protocols",
   102: "Processing",
@@ -1863,7 +1860,7 @@ function _writeHead(statusCode, reason, obj, response) {
  * @param {Function} [cb]
  * @returns {ClientRequest}
  */
-export function request(url, options, cb) {
+function request(url, options, cb) {
   return new ClientRequest(url, options, cb);
 }
 
@@ -1874,14 +1871,14 @@ export function request(url, options, cb) {
  * @param {Function} [cb]
  * @returns {ClientRequest}
  */
-export function get(url, options, cb) {
+function get(url, options, cb) {
   const req = request(url, options, cb);
   req.end();
   return req;
 }
 
-export var globalAgent = new Agent();
-var defaultObject = {
+var globalAgent = new Agent();
+export default {
   Agent,
   Server,
   METHODS,
@@ -1900,7 +1897,4 @@ var defaultObject = {
   globalAgent,
   ClientRequest,
   OutgoingMessage,
-  [Symbol.for("CommonJS")]: 0,
 };
-
-export default defaultObject;

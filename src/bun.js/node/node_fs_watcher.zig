@@ -67,12 +67,12 @@ pub const FSWatcher = struct {
         this.detach();
 
         while (this.file_paths.popOrNull()) |file_path| {
-            bun.default_allocator.destroy(file_path);
+            bun.default_allocator.free(file_path);
         }
         this.file_paths.deinitWithAllocator(bun.default_allocator);
         if (this.entry_path) |path| {
             this.entry_path = null;
-            bun.default_allocator.destroy(path);
+            bun.default_allocator.free(path);
         }
         bun.default_allocator.destroy(this);
     }
@@ -203,21 +203,13 @@ pub const FSWatcher = struct {
         } else {
             ctx.file_paths.push(bun.default_allocator, dir_path_clone) catch unreachable;
         }
-        fs_watcher.addDirectory(fd, dir_path_clone, FSWatcher.Watcher.getHash(file_path), false) catch |err| {
-            ctx.deinit();
-            fs_watcher.deinit(true);
-            return err;
-        };
+        try fs_watcher.addDirectory(fd, dir_path_clone, FSWatcher.Watcher.getHash(file_path), false);
 
         var iter = (std.fs.IterableDir{ .dir = std.fs.Dir{
             .fd = fd,
         } }).iterate();
 
-        while (iter.next() catch |err| {
-            ctx.deinit();
-            fs_watcher.deinit(true);
-            return err;
-        }) |entry| {
+        while (try iter.next()) |entry| {
             var parts = [2]string{ dir_path_clone, entry.name };
             var entry_path = Path.joinAbsStringBuf(
                 Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(),
@@ -229,29 +221,17 @@ pub const FSWatcher = struct {
             buf[entry_path.len] = 0;
             var entry_path_z = buf[0..entry_path.len :0];
 
-            var fs_info = fdFromAbsolutePathZ(entry_path_z) catch |err| {
-                ctx.deinit();
-                fs_watcher.deinit(true);
-                return err;
-            };
+            var fs_info = try fdFromAbsolutePathZ(entry_path_z);
 
             if (fs_info.is_file) {
                 const file_path_clone = bun.default_allocator.dupeZ(u8, entry_path) catch unreachable;
 
                 ctx.file_paths.push(bun.default_allocator, file_path_clone) catch unreachable;
 
-                fs_watcher.addFile(fs_info.fd, file_path_clone, FSWatcher.Watcher.getHash(entry_path), options.Loader.file, 0, null, false) catch |err| {
-                    ctx.deinit();
-                    fs_watcher.deinit(true);
-                    return err;
-                };
+                try fs_watcher.addFile(fs_info.fd, file_path_clone, FSWatcher.Watcher.getHash(entry_path), options.Loader.file, 0, null, false);
             } else {
                 if (recursive) {
-                    addDirectory(ctx, fs_watcher, fs_info.fd, entry_path, recursive, buf, false) catch |err| {
-                        ctx.deinit();
-                        fs_watcher.deinit(true);
-                        return err;
-                    };
+                    try addDirectory(ctx, fs_watcher, fs_info.fd, entry_path, recursive, buf, false);
                 }
             }
         }
@@ -899,11 +879,13 @@ pub const FSWatcher = struct {
 
             default_watcher.addFile(fs_type.fd, file_path_clone, FSWatcher.Watcher.getHash(file_path), options.Loader.file, 0, null, false) catch |err| {
                 ctx.deinit();
+                default_watcher.deinit(true);
                 return err;
             };
         } else {
             addDirectory(ctx, default_watcher, fs_type.fd, file_path, args.recursive, &buf, true) catch |err| {
                 ctx.deinit();
+                default_watcher.deinit(true);
                 return err;
             };
         }

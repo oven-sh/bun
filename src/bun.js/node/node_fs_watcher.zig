@@ -839,10 +839,13 @@ pub const FSWatcher = struct {
             .has_pending_activity = std.atomic.Atomic(bool).init(true),
             .verbose = args.verbose,
             .file_paths = bun.BabyList(string).initCapacity(bun.default_allocator, 1) catch |err| {
-                ctx.deinit();
+                // ctx.deinit() cannot be called on uninitialized memory.
+                bun.default_allocator.destroy(ctx);
                 return err;
             },
         };
+
+        errdefer ctx.deinit();
 
         if (comptime Environment.isMac) {
             if (!fs_type.is_file) {
@@ -850,25 +853,18 @@ pub const FSWatcher = struct {
                 ctx.entry_path = dir_path_clone;
                 ctx.entry_dir = dir_path_clone;
 
-                ctx.fsevents_watcher = FSEvents.watch(dir_path_clone, args.recursive, onFSEventUpdate, bun.cast(*anyopaque, ctx)) catch |err| {
-                    ctx.deinit();
-                    return err;
-                };
+                ctx.fsevents_watcher = try FSEvents.watch(dir_path_clone, args.recursive, onFSEventUpdate, bun.cast(*anyopaque, ctx));
 
                 ctx.initJS(args.listener);
                 return ctx;
             }
         }
 
-        var default_watcher = FSWatcher.Watcher.init(
+        var default_watcher = try FSWatcher.Watcher.init(
             ctx,
             vm.bundler.fs,
             bun.default_allocator,
-        ) catch |err| {
-            ctx.deinit();
-            return err;
-        };
-
+        );
         ctx.default_watcher = default_watcher;
 
         if (fs_type.is_file) {
@@ -877,21 +873,12 @@ pub const FSWatcher = struct {
             ctx.entry_path = file_path_clone;
             ctx.entry_dir = std.fs.path.dirname(file_path_clone) orelse file_path_clone;
 
-            default_watcher.addFile(fs_type.fd, file_path_clone, FSWatcher.Watcher.getHash(file_path), options.Loader.file, 0, null, false) catch |err| {
-                ctx.deinit();
-                return err;
-            };
+            try default_watcher.addFile(fs_type.fd, file_path_clone, FSWatcher.Watcher.getHash(file_path), options.Loader.file, 0, null, false);
         } else {
-            addDirectory(ctx, default_watcher, fs_type.fd, file_path, args.recursive, &buf, true) catch |err| {
-                ctx.deinit();
-                return err;
-            };
+            try addDirectory(ctx, default_watcher, fs_type.fd, file_path, args.recursive, &buf, true);
         }
 
-        default_watcher.start() catch |err| {
-            ctx.deinit();
-            return err;
-        };
+        try default_watcher.start();
 
         ctx.initJS(args.listener);
         return ctx;

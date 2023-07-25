@@ -852,37 +852,6 @@ bool JSCommonJSModule::evaluate(
     return true;
 }
 
-bool JSCommonJSModule::evaluate(
-    Zig::GlobalObject* globalObject,
-    const WTF::String& key,
-    JSC::JSSourceCode* sourceCode)
-{
-    auto& vm = globalObject->vm();
-
-    if (this->hasEvaluated)
-        return true;
-
-    this->sourceCode.set(vm, this, sourceCode);
-
-    WTF::NakedPtr<JSC::Exception> exception;
-
-    evaluateCommonJSModuleOnce(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get(), exception);
-
-    if (exception.get()) {
-        // On error, remove the module from the require map/
-        // so that it can be re-evaluated on the next require.
-        globalObject->requireMap()->remove(globalObject, this->id());
-
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        throwException(globalObject, throwScope, exception.get());
-        exception.clear();
-
-        return false;
-    }
-
-    return true;
-}
-
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     ResolvedSource source)

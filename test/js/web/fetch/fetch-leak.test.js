@@ -49,7 +49,7 @@ describe("fetch doesn't leak", () => {
       },
       stderr: "inherit",
       stdout: "inherit",
-      cmd: [bunExe(), join(import.meta.dir, "fetch-leak-test-fixture-2.js")],
+      cmd: [bunExe(), "--smol", join(import.meta.dir, "fetch-leak-test-fixture-2.js")],
     });
 
     const exitCode = await proc.exited;

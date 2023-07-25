@@ -1,7 +1,7 @@
 var bound = function(obj) {
   return {
     arch: obj.arch.bind(obj),
-    cpus: obj.cpus.bind(obj),
+    cpus: () => cachedCpus ??= obj.cpus(),
     endianness: obj.endianness.bind(obj),
     freemem: obj.freemem.bind(obj),
     getPriority: obj.getPriority.bind(obj),
@@ -35,7 +35,7 @@ var bound = function(obj) {
       path = path.slice(0, -1);
     return path;
   }, tmpdir();
-}, os = bound(Bun._Os()), {
+}, cachedCpus, os = bound(Bun._Os()), {
   arch,
   cpus,
   endianness,

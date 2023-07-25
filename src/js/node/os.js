@@ -14,10 +14,11 @@ export var tmpdir = function () {
   return tmpdir();
 };
 
+var cachedCpus;
 function bound(obj) {
   return {
     arch: obj.arch.bind(obj),
-    cpus: obj.cpus.bind(obj),
+    cpus: () => (cachedCpus ??= obj.cpus()),
     endianness: obj.endianness.bind(obj),
     freemem: obj.freemem.bind(obj),
     getPriority: obj.getPriority.bind(obj),

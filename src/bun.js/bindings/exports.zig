@@ -209,15 +209,15 @@ pub const ResolvedSource = extern struct {
     pub const name = "ResolvedSource";
     pub const namespace = shim.namespace;
 
-    specifier: bun.String,
-    source_code: bun.String,
-    source_url: ZigString,
+    specifier: bun.String = bun.String.empty,
+    source_code: bun.String = bun.String.empty,
+    source_url: ZigString = ZigString.Empty,
     commonjs_exports: ?[*]ZigString = null,
     commonjs_exports_len: u32 = 0,
 
-    hash: u32,
+    hash: u32 = 0,
 
-    allocator: ?*anyopaque,
+    allocator: ?*anyopaque = null,
 
     tag: Tag = Tag.javascript,
 

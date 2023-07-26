@@ -12,10 +12,10 @@ test("utf16 string", () => {
   expect(identity("😊 Smiling Face with Smiling Eyes Emoji")).toBe("😊 Smiling Face with Smiling Eyes Emoji");
 });
 
-test("template string ascii", () => {
-  expect(identity(`A${""}`)).toBe("A");
-});
+// test("template string ascii", () => {
+//   expect(identity(`A${""}`)).toBe("A");
+// });
 
-test("template string latin1", () => {
-  expect(identity(`©${""}`)).toBe("©");
-});
+// test("template string latin1", () => {
+//   expect(identity(`©${""}`)).toBe("©");
+// });

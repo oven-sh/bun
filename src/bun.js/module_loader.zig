@@ -442,6 +442,7 @@ pub const RuntimeTranspilerStore = struct {
                 if (JSC.HardcodedModule.Aliases.get(import_record.path.text)) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
+                    continue;
                 }
 
                 if (JSC.DisabledModule.has(import_record.path.text)) {
@@ -2560,14 +2561,14 @@ pub const HardcodedModule = enum {
             .{ "async_hooks", .{ .path = "node:async_hooks" } },
             .{ "buffer", .{ .path = "node:buffer" } },
             .{ "bun", .{ .path = "bun", .tag = .bun } },
+            .{ "bun:events_native", .{ .path = "bun:events_native" } },
             .{ "bun:ffi", .{ .path = "bun:ffi" } },
             .{ "bun:jsc", .{ .path = "bun:jsc" } },
             .{ "bun:sqlite", .{ .path = "bun:sqlite" } },
             .{ "bun:wrap", .{ .path = "bun:wrap" } },
-            .{ "bun:events_native", .{ .path = "bun:events_native" } },
             .{ "child_process", .{ .path = "node:child_process" } },
-            .{ "crypto", .{ .path = "node:crypto" } },
             .{ "constants", .{ .path = "node:constants" } },
+            .{ "crypto", .{ .path = "node:crypto" } },
             .{ "detect-libc", .{ .path = "detect-libc" } },
             .{ "detect-libc/lib/detect-libc.js", .{ .path = "detect-libc" } },
             .{ "dns", .{ .path = "node:dns" } },
@@ -2585,8 +2586,8 @@ pub const HardcodedModule = enum {
             .{ "node:async_hooks", .{ .path = "node:async_hooks" } },
             .{ "node:buffer", .{ .path = "node:buffer" } },
             .{ "node:child_process", .{ .path = "node:child_process" } },
-            .{ "node:crypto", .{ .path = "node:crypto" } },
             .{ "node:constants", .{ .path = "node:constants" } },
+            .{ "node:crypto", .{ .path = "node:crypto" } },
             .{ "node:dns", .{ .path = "node:dns" } },
             .{ "node:dns/promises", .{ .path = "node:dns/promises" } },
             .{ "node:events", .{ .path = "node:events" } },
@@ -2625,11 +2626,6 @@ pub const HardcodedModule = enum {
             .{ "path/win32", .{ .path = "node:path/win32" } },
             .{ "perf_hooks", .{ .path = "node:perf_hooks" } },
             .{ "process", .{ .path = "node:process" } },
-            // Older versions of `readable-stream` is incompatible with latest
-            // version of Node.js Stream API, which `bun` implements
-            // .{ "readable-stream", .{ .path = "node:stream" } },
-            // .{ "readable-stream/consumer", .{ .path = "node:stream/consumers" } },
-            // .{ "readable-stream/web", .{ .path = "node:stream/web" } },
             .{ "readline", .{ .path = "node:readline" } },
             .{ "readline/promises", .{ .path = "node:readline/promises" } },
             .{ "stream", .{ .path = "node:stream" } },
@@ -2650,6 +2646,11 @@ pub const HardcodedModule = enum {
             .{ "ws", .{ .path = "ws" } },
             .{ "ws/lib/websocket", .{ .path = "ws" } },
             .{ "zlib", .{ .path = "node:zlib" } },
+            // .{ "readable-stream", .{ .path = "node:stream" } },
+            // .{ "readable-stream/consumer", .{ .path = "node:stream/consumers" } },
+            // .{ "readable-stream/web", .{ .path = "node:stream/web" } },
+            // Older versions of `readable-stream` is incompatible with latest
+            // version of Node.js Stream API, which `bun` implements
 
             // These are returned in builtinModules, but probably not many packages use them
             // so we will just alias them.

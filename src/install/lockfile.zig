@@ -2515,8 +2515,20 @@ pub const Package = extern struct {
             &sliced,
             log,
         ) orelse Dependency.Version{};
+        var workspace_range: ?Semver.Query.Group = null;
         const name_hash = switch (dependency_version.tag) {
             .npm => String.Builder.stringHash(dependency_version.value.npm.name.slice(buf)),
+            .workspace => if (strings.hasPrefixComptime(sliced.slice, "workspace:")) brk: {
+                const input = sliced.slice["workspace:".len..];
+                const at = strings.lastIndexOfChar(input, '@') orelse 0;
+                if (at > 0) {
+                    workspace_range = Semver.Query.parse(allocator, input[at + 1 ..], sliced) catch return error.InstallFailed;
+                    break :brk String.Builder.stringHash(input[0..at]);
+                } else {
+                    workspace_range = Semver.Query.parse(allocator, input, sliced) catch null;
+                    break :brk external_alias.hash;
+                }
+            } else external_alias.hash,
             else => external_alias.hash,
         };
         const workspace_path = if (comptime tag == null) lockfile.workspace_paths.get(@truncate(name_hash)) else null;
@@ -2564,7 +2576,15 @@ pub const Package = extern struct {
                 }
             },
             .workspace => if (workspace_path) |path| {
-                dependency_version.value.workspace = path;
+                if (workspace_range) |range| {
+                    if (workspace_version) |ver| {
+                        if (range.satisfies(ver)) {
+                            dependency_version.value.workspace = path;
+                        }
+                    }
+                } else {
+                    dependency_version.value.workspace = path;
+                }
             } else {
                 {
                     const workspace = dependency_version.value.workspace.slice(buf);

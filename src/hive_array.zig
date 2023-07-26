@@ -88,7 +88,7 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
 
             pub fn getAndSeeIfNew(self: *This, new: *bool) *T {
                 if (self.hive.get()) |value| {
-                    new.* = true;
+                    new.* = false;
                     return value;
                 }
 

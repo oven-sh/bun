@@ -193,16 +193,10 @@ pub const RuntimeTranspilerStore = struct {
         referrer: []const u8,
     ) *anyopaque {
         debug("transpile({s})", .{path.text});
-        var was_new = false;
+        var was_new = true;
         var job: *TranspilerJob = this.store.getAndSeeIfNew(&was_new);
         var owned_path = Fs.Path.init(bun.default_allocator.dupe(u8, path.text) catch unreachable);
         var promise = JSC.JSInternalPromise.create(globalObject);
-        var strong: JSC.Strong = .{};
-        if (!was_new) {
-            strong = job.promise;
-        } else {
-            strong = JSC.Strong.create(JSC.JSValue.fromCell(promise), globalObject);
-        }
         job.* = TranspilerJob{
             .path = owned_path,
             .globalThis = globalObject,
@@ -210,7 +204,7 @@ pub const RuntimeTranspilerStore = struct {
             .vm = vm,
             .log = logger.Log.init(bun.default_allocator),
             .loader = vm.bundler.options.loader(owned_path.name.ext),
-            .promise = strong,
+            .promise = JSC.Strong.create(JSC.JSValue.fromCell(promise), globalObject),
             .poll_ref = .{},
             .fetcher = TranspilerJob.Fetcher{
                 .file = {},
@@ -252,12 +246,12 @@ pub const RuntimeTranspilerStore = struct {
             bun.default_allocator.free(this.path.text);
             bun.default_allocator.free(this.referrer);
 
-            this.promise.clear();
             this.poll_ref.disable();
             this.fetcher.deinit();
             this.loader = options.Loader.file;
             this.path = Fs.Path.empty;
             this.log.deinit();
+            this.promise.deinit();
             this.globalThis = undefined;
         }
 
@@ -272,10 +266,9 @@ pub const RuntimeTranspilerStore = struct {
 
         pub fn runFromJSThread(this: *TranspilerJob) void {
             var vm = this.vm;
-            var promise = this.promise.get().?;
+            var promise = this.promise.swap();
             var globalThis = this.globalThis;
             this.poll_ref.unref(vm);
-            this.promise.clear();
             var specifier = if (this.parse_error == null) this.resolved_source.specifier else bun.String.create(this.path.text);
             var referrer = bun.String.create(this.referrer);
             var log = this.log;

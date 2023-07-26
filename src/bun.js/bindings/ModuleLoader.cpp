@@ -352,6 +352,18 @@ extern "C" void Bun__onFulfillAsyncModule(
         return promise->reject(promise->globalObject(), exception);
     }
 
+    if (res->result.value.commonJSExportsLen) {
+        auto created = Bun::createCommonJSModule(jsCast<Zig::GlobalObject*>(globalObject), res->result.value);
+
+        if (created.has_value()) {
+            return promise->resolve(promise->globalObject(), JSSourceCode::create(vm, WTFMove(created.value())));
+        } else {
+            auto* exception = scope.exception();
+            scope.clearException();
+            return promise->reject(promise->globalObject(), exception);
+        }
+    }
+
     auto provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
     promise->resolve(promise->globalObject(), JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
 }

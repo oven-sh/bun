@@ -275,6 +275,25 @@ pub const RuntimeTranspilerStore = struct {
             this.log = logger.Log.init(bun.default_allocator);
             var resolved_source = this.resolved_source;
             resolved_source.source_url = specifier.toZigString();
+
+            resolved_source.tag = brk: {
+                if (resolved_source.commonjs_exports_len > 0) {
+                    var actual_package_json: *PackageJSON = brk2: {
+                        // this should already be cached virtually always so it's fine to do this
+                        var dir_info = (vm.bundler.resolver.readDirInfo(this.path.name.dir) catch null) orelse
+                            break :brk .javascript;
+
+                        break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;
+                    } orelse break :brk .javascript;
+
+                    if (actual_package_json.module_type == .esm) {
+                        break :brk ResolvedSource.Tag.package_json_type_module;
+                    }
+                }
+
+                break :brk ResolvedSource.Tag.javascript;
+            };
+
             const parse_error = this.parse_error;
             if (!vm.transpiler_store.store.hive.in(this)) {
                 this.promise.deinit();

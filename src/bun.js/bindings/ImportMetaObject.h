@@ -19,17 +19,12 @@ namespace Zig {
 using namespace JSC;
 using namespace WebCore;
 
-JSC_DECLARE_CUSTOM_GETTER(jsRequireCacheGetter);
-JSC_DECLARE_CUSTOM_SETTER(jsRequireCacheSetter);
-
 class ImportMetaObject final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
 
     static ImportMetaObject* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url);
 
-    static JSC::JSObject* createRequireFunctionUnbound(JSC::VM& vm, JSGlobalObject* globalObject);
-    static JSC::JSObject* createRequireResolveFunctionUnbound(JSC::VM& vm, JSGlobalObject* globalObject);
     static JSObject* createRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString);
 
     static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSC::JSString* keyString);

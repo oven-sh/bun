@@ -41,6 +41,7 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include "CommonJSModuleRecord.h"
 
 namespace Zig {
 using namespace JSC;
@@ -140,147 +141,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireResolve, (JSC::JSGlobalObject * global
 
     return functionRequireResolve(globalObject, callFrame, fromStr);
 }
-
-JSC_DEFINE_CUSTOM_GETTER(jsRequireCacheGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    Zig::GlobalObject* thisObject = jsCast<Zig::GlobalObject*>(globalObject);
-    return JSValue::encode(thisObject->lazyRequireCacheObject());
-}
-
-JSC_DEFINE_CUSTOM_SETTER(jsRequireCacheSetter,
-    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
-{
-    JSObject* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
-    if (!thisObject)
-        return false;
-
-    thisObject->putDirect(globalObject->vm(), propertyName, JSValue::decode(value), 0);
-    return true;
-}
-
-JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalObject, CallFrame* callframe))
-{
-    return JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr, 0));
-}
-
-static const HashTableValue RequireResolveFunctionPrototypeValues[] = {
-    { "paths"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, requireResolvePathsFunction, 1 } },
-};
-
-class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static RequireResolveFunctionPrototype* create(
-        JSC::JSGlobalObject* globalObject)
-    {
-        auto& vm = globalObject->vm();
-
-        auto* structure = RequireResolveFunctionPrototype::createStructure(vm, globalObject, globalObject->functionPrototype());
-        RequireResolveFunctionPrototype* prototype = new (NotNull, JSC::allocateCell<RequireResolveFunctionPrototype>(vm)) RequireResolveFunctionPrototype(vm, structure);
-        prototype->finishCreation(vm);
-        return prototype;
-    }
-
-    DECLARE_INFO;
-
-    RequireResolveFunctionPrototype(
-        JSC::VM& vm,
-        JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
-    }
-};
-
-class ResolveFunction final : public JSC::InternalFunction {
-
-public:
-    using Base = JSC::InternalFunction;
-    static ResolveFunction* create(JSGlobalObject* globalObject)
-    {
-        JSObject* resolvePrototype = RequireResolveFunctionPrototype::create(globalObject);
-        Structure* structure = Structure::create(
-            globalObject->vm(),
-            globalObject,
-            resolvePrototype,
-            JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags),
-            ResolveFunction::info());
-        auto* resolveFunction = new (NotNull, JSC::allocateCell<ResolveFunction>(globalObject->vm())) ResolveFunction(globalObject->vm(), structure);
-        resolveFunction->finishCreation(globalObject->vm());
-        return resolveFunction;
-    }
-
-    DECLARE_INFO;
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.internalFunctionSpace();
-    }
-
-    ResolveFunction(
-        JSC::VM& vm,
-        JSC::Structure* structure)
-        : InternalFunction(vm, structure, jsFunctionRequireResolve, nullptr)
-    {
-    }
-};
-
-JSObject* Zig::ImportMetaObject::createRequireResolveFunctionUnbound(VM& vm, JSGlobalObject* globalObject)
-{
-    return ResolveFunction::create(globalObject);
-}
-
-JSObject* Zig::ImportMetaObject::createRequireFunctionUnbound(VM& vm, JSGlobalObject* globalObject)
-{
-    auto& builtinNames = WebCore::builtinNames(vm);
-
-    JSC::JSFunction* requireDotMainFunction = JSFunction::create(
-        vm,
-        moduleMainCodeGenerator(vm),
-        globalObject->globalScope());
-
-    auto* prototype = JSC::constructEmptyObject(globalObject, globalObject->functionPrototype());
-    prototype->putDirect(
-        vm,
-        JSC::Identifier::fromString(vm, "main"_s),
-        JSC::GetterSetter::create(vm, globalObject, requireDotMainFunction, JSValue()),
-        PropertyAttribute::Builtin | PropertyAttribute::Accessor | PropertyAttribute::ReadOnly | 0);
-    prototype->putDirect(vm, JSC::Identifier::fromString(vm, "extensions"_s), constructEmptyObject(globalObject), 0);
-    prototype->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "cache"_s), JSC::CustomGetterSetter::create(vm, Zig::jsRequireCacheGetter, Zig::jsRequireCacheSetter), 0);
-    return JSFunction::create(vm, importMetaObjectRequireCodeGenerator(vm), globalObject, JSFunction::createStructure(vm, globalObject, prototype));
-}
-
-JSObject* Zig::ImportMetaObject::createRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString)
-{
-    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto& builtinNames = WebCore::builtinNames(vm);
-
-    JSFunction* resolveFunctionUnbound = jsCast<JSFunction*>(globalObject->importMetaRequireResolveFunctionUnbound());
-    JSFunction* requireFunctionUnbound = jsCast<JSFunction*>(globalObject->importMetaRequireFunctionUnbound());
-    auto str = jsString(vm, pathString);
-
-    JSFunction* requireFunction = JSC::JSBoundFunction::create(vm,
-        globalObject, requireFunctionUnbound,
-        str, ArgList(), 1, jsString(vm, String("require"_s)));
-
-    JSFunction* resolveFunction = JSC::JSBoundFunction::create(vm,
-        globalObject, resolveFunctionUnbound,
-        str, ArgList(), 2, jsString(vm, String("resolve"_s)));
-
-    requireFunction->putDirect(vm, builtinNames.resolvePublicName(), resolveFunction, PropertyAttribute::Function | 0);
-
-    return requireFunction;
-}
-
-const JSC::ClassInfo RequireResolveFunctionPrototype::s_info = { "resolve"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RequireResolveFunctionPrototype) };
-const JSC::ClassInfo ResolveFunction::s_info = { "resolve"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ResolveFunction) };
 
 extern "C" EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
@@ -390,8 +250,6 @@ extern "C" EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalOb
     return result;
 }
 
-JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolve);
-
 JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -443,7 +301,6 @@ enum class ImportMetaPropertyOffset : uint32_t {
     file,
     path,
     require,
-
 };
 static constexpr uint32_t numberOfImportMetaProperties = 5;
 
@@ -593,7 +450,7 @@ void ImportMetaObject::finishCreation(VM& vm)
             path = url.path();
         }
 
-        JSFunction* value = jsCast<JSFunction*>(ImportMetaObject::createRequireFunction(init.vm, meta->globalObject(), path.toString()));
+        JSFunction* value = jsCast<JSFunction*>(Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path.toString()));
         init.set(value);
     });
     this->urlProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSString>::Initializer& init) {

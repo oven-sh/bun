@@ -176,7 +176,7 @@ async function runInServer(opts: ServeOptions, cb: (url: string) => void | Promi
 }
 
 afterAll(() => {
-  existingServer && existingServer.close();
+  existingServer && existingServer.stop();
   existingServer = null;
 });
 

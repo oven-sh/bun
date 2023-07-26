@@ -2171,7 +2171,9 @@ pub const E = struct {
                 this.next = other;
                 this.end = other;
             } else {
-                this.end.?.next = other;
+                var end = this.end.?;
+                while (end.next != null) end = end.end.?;
+                end.next = other;
                 this.end = other;
             }
         }

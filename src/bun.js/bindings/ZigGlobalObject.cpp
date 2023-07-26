@@ -1312,7 +1312,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
         return JSC::JSValue::encode(JSC::jsEmptyString(vm));
     }
 
-    if (!encodedString.isAllLatin1()) {
+    if (!encodedString.containsOnlyLatin1()) {
         throwException(globalObject, throwScope, createDOMException(globalObject, InvalidCharacterError));
         return JSC::JSValue::encode(JSC::JSValue {});
     }
@@ -3448,15 +3448,23 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(structure);
         });
 
-    m_importMetaRequireFunctionUnbound.initLater(
+    m_requireFunctionUnbound.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
             init.set(
-                Zig::ImportMetaObject::createRequireFunctionUnbound(init.vm, init.owner));
+                JSFunction::create(
+                    init.vm,
+                    moduleRequireCodeGenerator(init.vm),
+                    init.owner->globalScope(),
+                    JSFunction::createStructure(init.vm, init.owner, RequireFunctionPrototype::create(init.owner))));
         });
-    m_importMetaRequireResolveFunctionUnbound.initLater(
+    m_requireResolveFunctionUnbound.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
             init.set(
-                Zig::ImportMetaObject::createRequireResolveFunctionUnbound(init.vm, init.owner));
+                JSFunction::create(
+                    init.vm,
+                    moduleRequireResolveCodeGenerator(init.vm),
+                    init.owner->globalScope(),
+                    JSFunction::createStructure(init.vm, init.owner, RequireResolveFunctionPrototype::create(init.owner))));
         });
 
     m_importMetaObjectStructure.initLater(
@@ -4107,7 +4115,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectBuiltinFunction(vm, this, builtinNames.createNativeReadableStreamPrivateName(), readableStreamCreateNativeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
     putDirectBuiltinFunction(vm, this, builtinNames.requireESMPrivateName(), importMetaObjectRequireESMCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    putDirectBuiltinFunction(vm, this, builtinNames.requirePrivateName(), importMetaObjectRequireCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.loadCJS2ESMPrivateName(), importMetaObjectLoadCJS2ESMCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.internalRequirePrivateName(), importMetaObjectInternalRequireCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
@@ -4622,8 +4629,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_emitReadableNextTickFunction.visit(visitor);
     thisObject->m_JSBufferSubclassStructure.visit(visitor);
 
-    thisObject->m_importMetaRequireFunctionUnbound.visit(visitor);
-    thisObject->m_importMetaRequireResolveFunctionUnbound.visit(visitor);
+    thisObject->m_requireFunctionUnbound.visit(visitor);
+    thisObject->m_requireResolveFunctionUnbound.visit(visitor);
     thisObject->m_importMetaObjectStructure.visit(visitor);
     thisObject->m_asyncBoundFunctionStructure.visit(visitor);
 

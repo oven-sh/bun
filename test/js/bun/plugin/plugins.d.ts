@@ -9,3 +9,5 @@ declare module "async-obj:*";
 declare module "obj:*";
 declare module "delay:*";
 declare module "./*.svelte";
+declare module "rejected-promise:*";
+declare module "rejected-promise2:*";

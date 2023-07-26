@@ -172,3 +172,5 @@ pub const alignment_tweak = false;
 pub const export_star_redirect = false;
 
 pub const streaming_file_uploads_for_http_client = true;
+
+pub const concurrent_transpiler = true;

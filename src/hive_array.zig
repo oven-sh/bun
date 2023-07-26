@@ -86,6 +86,15 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
                 return self.allocator.create(T) catch unreachable;
             }
 
+            pub fn getAndSeeIfNew(self: *This, new: *bool) *T {
+                if (self.hive.get()) |value| {
+                    new.* = false;
+                    return value;
+                }
+
+                return self.allocator.create(T) catch unreachable;
+            }
+
             pub fn tryGet(self: *This) !*T {
                 if (self.hive.get()) |value| {
                     return value;

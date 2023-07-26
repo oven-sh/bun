@@ -1056,16 +1056,16 @@ pub const PackageJSON = struct {
                             if (value) {
                                 package_json.npm_cfg_map.put(lkey, "true") catch unreachable;
                             } else {
-                                // Node.js interprets false as a empty string
+                                // Node.js interprets false as an empty string
                                 package_json.npm_cfg_map.put(lkey, "") catch unreachable;
                             }
                         },
                         .e_null => {
-                            // Node.js interprets null as a empty string
+                            // Node.js interprets null as an empty string
                             package_json.npm_cfg_map.put(lkey, "") catch unreachable;
                         },
                         else => {
-                            r.log.addWarning(json_source, prop.value.?.loc, "Values of \"config\" must be either a boolean, number or string") catch unreachable;
+                            r.log.addWarning(json_source, prop.value.?.loc, "Values of 'config' must be either a boolean, number, string, or object.") catch unreachable;
                             continue;
                         },
                     }

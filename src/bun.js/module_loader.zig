@@ -347,6 +347,7 @@ pub const RuntimeTranspilerStore = struct {
             var allocator = arena.allocator();
             bundler.setAllocator(allocator);
             bundler.setLog(&this.log);
+            bundler.resolver.opts = bundler.options;
             bundler.macro_context = null;
             bundler.linker.resolver = &bundler.resolver;
 
@@ -397,7 +398,7 @@ pub const RuntimeTranspilerStore = struct {
                 .macro_remappings = macro_remappings,
                 .jsx = bundler.options.jsx,
                 .virtual_source = null,
-                .hoist_bun_plugin = true,
+                .hoist_bun_plugin = false,
                 .dont_bundle_twice = true,
                 .allow_commonjs = true,
                 .inject_jest_globals = bundler.options.rewrite_jest_for_tests and

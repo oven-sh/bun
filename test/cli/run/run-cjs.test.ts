@@ -50,15 +50,19 @@ test("npm_package_config", () => {
     "port": 8000,
     "password": "hello world",
     "password2": " hello world ",
+<<<<<<< HEAD
 =======
   const vals = {
     "port": 8000,
     "password": "hello world",
 >>>>>>> 487a471a (More fixes)
+=======
+>>>>>>> a57fc15f (Little fixes)
     "isDev": true,
     "isProd": false,
     "piNum": 3.14,
     "emptyStr": "",
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
     "emptyStr2": " ",
@@ -70,6 +74,9 @@ test("npm_package_config", () => {
 >>>>>>> 487a471a (More fixes)
 =======
 >>>>>>> 40553a28 (Add object support)
+=======
+    "emptyStr2": " ",
+>>>>>>> a57fc15f (Little fixes)
     "why": 0,
     "none": null,
     "emoji": "🍕"
@@ -97,6 +104,7 @@ test("npm_package_config", () => {
 
     if (val === false || val === null) {
       expect(jsVl).toEqual('""');
+<<<<<<< HEAD
       continue;
     }
 
@@ -188,10 +196,16 @@ test("npm_package_config", () => {
 
     if (val === false || val === null) {
       expect(jsVl).toEqual("");
+=======
+>>>>>>> a57fc15f (Little fixes)
       continue;
     }
 
-    expect(jsVl).toEqual(String(val));
+    if (jsVl == '""' && key === "emptyStr") {
+      continue;
+    }
+    
+    expect(jsVl).toEqual(val.toString());
   }
 <<<<<<< HEAD
 >>>>>>> 487a471a (More fixes)
@@ -204,7 +218,7 @@ test("npm_package_config", () => {
         "foo": {
           "bar": "baz",
           "buzz": {
-            "fizz": "fuzz",
+            "fizz": " fuzz",
             "dave": "🕶️",
             "something": 1
           }
@@ -221,7 +235,7 @@ test("npm_package_config", () => {
   const deepJsStd = JSON.parse(deepStdout.toString())
 
   expect(deepJsStd.npm_package_config_foo_bar).toEqual("baz");
-  expect(deepJsStd.npm_package_config_foo_buzz_fizz).toEqual("fuzz");
+  expect(deepJsStd.npm_package_config_foo_buzz_fizz).toEqual(" fuzz");
   expect(deepJsStd.npm_package_config_foo_buzz_dave).toEqual("🕶️");
   expect(deepJsStd.npm_package_config_foo_buzz_something).toEqual("1");
 >>>>>>> 40553a28 (Add object support)

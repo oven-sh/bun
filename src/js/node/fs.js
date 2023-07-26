@@ -8,6 +8,7 @@ var { direct, isPromise, isCallable } = $lazy("primordials");
 import promises from "node:fs/promises";
 export { default as promises } from "node:fs/promises";
 import * as Stream from "node:stream";
+import { resolve } from "node:path";
 
 var fs = Bun.fs();
 var debug = process.env.DEBUG ? console.log : () => {};
@@ -68,6 +69,124 @@ class FSWatcher extends EventEmitter {
     this.#watcher?.unref();
   }
 }
+
+/** @type {Map<string, Array<[Function, StatWatcher]>>} */
+const statWatchers = new Map();
+
+/** @link https://nodejs.org/api/fs.html#class-fsstatwatcher */
+class StatWatcher extends EventEmitter {
+  #filename;
+  #options;
+  #listener;
+  #watcher;
+  #timer;
+  #stat;
+
+  constructor(filename, options, listener) {
+    super();
+    this.#filename = filename;
+    if (typeof options === "function") {
+      listener = options;
+      options = undefined;
+    } else if (typeof listener !== "function") {
+      listener = () => {};
+    }
+    this.#listener = listener;
+    this.#options = options;
+    const watchKey = resolve(filename);
+    const watchers = statWatchers.get(watchKey);
+    if (watchers === undefined) {
+      statWatchers.set(watchKey, [[this.#listener, this]]);
+    } else {
+      watchers.push([this.#listener, this]);
+    }
+    this.#watch();
+  }
+
+  #watch() {
+    let previous = this.#stat;
+    let current;
+    try {
+      current = this.#stat = fs.statSync(this.#filename);
+      debug("fs.watchFile mtime", current.mtime);
+
+      if (this.#watcher === undefined) {
+        this.#watcher = fs.watch(this.#filename, this.#options, this.#onEvent.bind(this));
+      }
+    } catch (error) {
+      debug("fs.watchFile error", error);
+      if (error.code !== "ENOENT") {
+        throw error;
+      }
+
+      // When an `fs.watchFile` operation results in an ENOENT error,
+      // it will invoke the listener once, with all the fields zeroed (or, for dates, the Unix Epoch).
+      // If the file is created later on, the listener will be called again, with the latest stat objects.
+      if (previous === undefined) {
+        current = this.#stat = new fs.Stats(this.#options?.bigint === true);
+        this.#listener?.(current, current);
+      }
+
+      if (this.#timer === undefined) {
+        this.#timer = setInterval(
+          this.#watch.bind(this),
+          this.#options?.interval ?? 5007, // libuv default
+        );
+      }
+      return;
+    }
+    if (previous !== undefined && previous.mtimeMs !== current.mtimeMs) {
+      this.#listener?.(current, previous);
+    }
+    this.#clear();
+  }
+
+  #onEvent(eventType, filename) {
+    debug("fs.watchFile event", eventType, filename);
+    switch (eventType) {
+      case "close":
+        this.close();
+        break;
+      case "error":
+        this.close();
+      // fallthrough
+      case "rename":
+      case "change":
+        this.#watch();
+        break;
+    }
+  }
+
+  #clear() {
+    if (this.#timer !== undefined) {
+      debug("fs.watchFile clear timer");
+      clearInterval(this.#timer);
+      this.#timer = undefined;
+    }
+  }
+
+  close() {
+    debug("fs.watchFile close");
+    this.#watcher?.close();
+    this.#watcher = undefined;
+    this.#clear();
+  }
+
+  ref() {
+    debug("fs.watchFile ref");
+    this.#watcher?.ref();
+    this.#timer?.ref();
+    return this;
+  }
+
+  unref() {
+    debug("fs.watchFile unref");
+    this.#watcher?.unref();
+    this.#timer?.unref();
+    return this;
+  }
+}
+
 export var access = function access(...args) {
     callbackify(fs.accessSync, args);
   },
@@ -250,6 +369,43 @@ export var access = function access(...args) {
   Stats = fs.Stats,
   watch = function watch(path, options, listener) {
     return new FSWatcher(path, options, listener);
+  },
+  watchFile = function watchFile(path, options, listener) {
+    return new StatWatcher(path, options, listener);
+  },
+  unwatchFile = function unwatchFile(path, listener) {
+    const watchKey = resolve(path);
+    const watchers = statWatchers.get(watchKey);
+    if (watchers === undefined) {
+      return;
+    }
+    if (typeof listener === "function") {
+      const deleted = new Set();
+      for (const [func, watcher] of watchers) {
+        if (listener !== func) {
+          continue;
+        }
+        try {
+          watcher.close();
+        } finally {
+          deleted.add(watcher);
+        }
+      }
+      const remaining = watchers.filter(([_, watcher]) => !deleted.has(watcher));
+      if (remaining.length) {
+        statWatchers.set(watchKey, remaining);
+      } else {
+        statWatchers.delete(watchKey);
+      }
+      return;
+    }
+    try {
+      for (const [_, watcher] of watchers) {
+        watcher.close();
+      }
+    } finally {
+      statWatchers.delete(watchKey);
+    }
   };
 
 function callbackify(fsFunction, args) {
@@ -1102,6 +1258,9 @@ export default {
   ReadStream,
   watch,
   FSWatcher,
+  watchFile,
+  unwatchFile,
+  StatWatcher,
   writev,
   writevSync,
   readv,

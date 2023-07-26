@@ -2,6 +2,7 @@ import {EventEmitter} from "node:events";
 import promises2 from "node:fs/promises";
 import {default as default2} from "node:fs/promises";
 import * as Stream from "node:stream";
+import {resolve} from "node:path";
 var callbackify = function(fsFunction, args) {
   try {
     const result = fsFunction.apply(fs, args.slice(0, args.length - 1)), callback = args[args.length - 1];
@@ -59,6 +60,75 @@ class FSWatcher extends EventEmitter {
   }
   unref() {
     this.#watcher?.unref();
+  }
+}
+var statWatchers = new Map;
+
+class StatWatcher extends EventEmitter {
+  #filename;
+  #options;
+  #listener;
+  #watcher;
+  #timer;
+  #stat;
+  constructor(filename, options, listener) {
+    super();
+    if (this.#filename = filename, typeof options === "function")
+      listener = options, options = void 0;
+    else if (typeof listener !== "function")
+      listener = () => {
+      };
+    this.#listener = listener, this.#options = options;
+    const watchKey = resolve(filename), watchers = statWatchers.get(watchKey);
+    if (watchers === void 0)
+      statWatchers.set(watchKey, [[this.#listener, this]]);
+    else
+      watchers.push([this.#listener, this]);
+    this.#watch();
+  }
+  #watch() {
+    let previous = this.#stat, current;
+    try {
+      if (current = this.#stat = fs.statSync(this.#filename), debug("fs.watchFile mtime", current.mtime), this.#watcher === void 0)
+        this.#watcher = fs.watch(this.#filename, this.#options, this.#onEvent.bind(this));
+    } catch (error) {
+      if (debug("fs.watchFile error", error), error.code !== "ENOENT")
+        throw error;
+      if (previous === void 0)
+        current = this.#stat = new fs.Stats(this.#options?.bigint === !0), this.#listener?.(current, current);
+      if (this.#timer === void 0)
+        this.#timer = setInterval(this.#watch.bind(this), this.#options?.interval ?? 5007);
+      return;
+    }
+    if (previous !== void 0 && previous.mtimeMs !== current.mtimeMs)
+      this.#listener?.(current, previous);
+    this.#clear();
+  }
+  #onEvent(eventType, filename) {
+    switch (debug("fs.watchFile event", eventType, filename), eventType) {
+      case "close":
+        this.close();
+        break;
+      case "error":
+        this.close();
+      case "rename":
+      case "change":
+        this.#watch();
+        break;
+    }
+  }
+  #clear() {
+    if (this.#timer !== void 0)
+      debug("fs.watchFile clear timer"), clearInterval(this.#timer), this.#timer = void 0;
+  }
+  close() {
+    debug("fs.watchFile close"), this.#watcher?.close(), this.#watcher = void 0, this.#clear();
+  }
+  ref() {
+    return debug("fs.watchFile ref"), this.#watcher?.ref(), this.#timer?.ref(), this;
+  }
+  unref() {
+    return debug("fs.watchFile unref"), this.#watcher?.unref(), this.#timer?.unref(), this;
   }
 }
 var access = function access2(...args) {
@@ -157,6 +227,36 @@ var access = function access2(...args) {
   });
 }, readvSync = fs.readvSync.bind(fs), Dirent = fs.Dirent, Stats = fs.Stats, watch = function watch2(path, options, listener) {
   return new FSWatcher(path, options, listener);
+}, watchFile = function watchFile2(path, options, listener) {
+  return new StatWatcher(path, options, listener);
+}, unwatchFile = function unwatchFile2(path, listener) {
+  const watchKey = resolve(path), watchers = statWatchers.get(watchKey);
+  if (watchers === void 0)
+    return;
+  if (typeof listener === "function") {
+    const deleted = new Set;
+    for (let [func, watcher] of watchers) {
+      if (listener !== func)
+        continue;
+      try {
+        watcher.close();
+      } finally {
+        deleted.add(watcher);
+      }
+    }
+    const remaining = watchers.filter(([_, watcher]) => !deleted.has(watcher));
+    if (remaining.length)
+      statWatchers.set(watchKey, remaining);
+    else
+      statWatchers.delete(watchKey);
+    return;
+  }
+  try {
+    for (let [_, watcher] of watchers)
+      watcher.close();
+  } finally {
+    statWatchers.delete(watchKey);
+  }
 }, readStreamPathFastPathSymbol = Symbol.for("Bun.Node.readStreamPathFastPath"), readStreamSymbol = Symbol.for("Bun.NodeReadStream"), readStreamPathOrFdSymbol = Symbol.for("Bun.NodeReadStreamPathOrFd"), writeStreamSymbol = Symbol.for("Bun.NodeWriteStream"), writeStreamPathFastPathSymbol = Symbol.for("Bun.NodeWriteStreamFastPath"), writeStreamPathFastPathCallSymbol = Symbol.for("Bun.NodeWriteStreamFastPathCall"), kIoDone = Symbol.for("kIoDone"), defaultReadStreamOptions = {
   file: void 0,
   fd: void 0,
@@ -664,6 +764,9 @@ var fs_default = {
   ReadStream,
   watch,
   FSWatcher,
+  watchFile,
+  unwatchFile,
+  StatWatcher,
   writev,
   writevSync,
   readv,
@@ -680,9 +783,11 @@ export {
   writeFileSync,
   writeFile,
   write,
+  watchFile,
   watch,
   utimesSync,
   utimes,
+  unwatchFile,
   unlinkSync,
   unlink,
   truncateSync,

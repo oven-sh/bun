@@ -3461,6 +3461,7 @@ pub const JSValue = enum(JSValueReprInt) {
             i8 => @as(i8, @truncate(toInt32(this))),
             i32 => @as(i32, @truncate(toInt32(this))),
             i64 => this.toInt64(),
+            f64 => this.asNumber(),
             bool => this.toBoolean(),
             else => @compileError("Not implemented yet"),
         };
@@ -3987,6 +3988,10 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn isNumber(this: JSValue) bool {
         return FFI.JSVALUE_IS_NUMBER(.{ .asJSValue = this });
+    }
+
+    pub fn isNumeric(this: JSValue) bool {
+        return this.isNumber() or this.isBigInt();
     }
 
     pub fn isError(this: JSValue) bool {
@@ -5211,15 +5216,21 @@ pub const CallFrame = opaque {
         var ptr = self.argumentsPtr();
         return switch (@as(u4, @min(len, max))) {
             0 => .{ .ptr = undefined, .len = 0 },
-            4 => Arguments(max).init(comptime @min(4, max), ptr),
-            2 => Arguments(max).init(comptime @min(2, max), ptr),
-            6 => Arguments(max).init(comptime @min(6, max), ptr),
-            3 => Arguments(max).init(comptime @min(3, max), ptr),
-            8 => Arguments(max).init(comptime @min(8, max), ptr),
-            5 => Arguments(max).init(comptime @min(5, max), ptr),
             1 => Arguments(max).init(comptime @min(1, max), ptr),
+            2 => Arguments(max).init(comptime @min(2, max), ptr),
+            3 => Arguments(max).init(comptime @min(3, max), ptr),
+            4 => Arguments(max).init(comptime @min(4, max), ptr),
+            5 => Arguments(max).init(comptime @min(5, max), ptr),
+            6 => Arguments(max).init(comptime @min(6, max), ptr),
             7 => Arguments(max).init(comptime @min(7, max), ptr),
-            else => unreachable,
+            8 => Arguments(max).init(comptime @min(8, max), ptr),
+            9 => Arguments(max).init(comptime @min(9, max), ptr),
+            10 => Arguments(max).init(comptime @min(10, max), ptr),
+            11 => Arguments(max).init(comptime @min(11, max), ptr),
+            12 => Arguments(max).init(comptime @min(12, max), ptr),
+            13 => Arguments(max).init(comptime @min(13, max), ptr),
+            14 => Arguments(max).init(comptime @min(14, max), ptr),
+            15 => Arguments(max).init(comptime @min(15, max), ptr),
         };
     }
 

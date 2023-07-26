@@ -1302,6 +1302,29 @@ fn StatsDataType(comptime T: type) type {
                     @as(Date, @enumFromInt(@as(u64, @intCast(@max(stat_.birthtime().tv_sec, 0))))),
             };
         }
+
+        pub fn fromJS(args: []JSC.JSValue) @This() {
+            return @This(){
+                .dev = if (args.len > 0 and args[0].isNumeric()) args[0].to(T) else 0,
+                .ino = if (args.len > 1 and args[1].isNumeric()) args[1].to(T) else 0,
+                .mode = if (args.len > 2 and args[2].isNumeric()) args[2].to(T) else 0,
+                .nlink = if (args.len > 3 and args[3].isNumeric()) args[3].to(T) else 0,
+                .uid = if (args.len > 4 and args[4].isNumeric()) args[4].to(T) else 0,
+                .gid = if (args.len > 5 and args[5].isNumeric()) args[5].to(T) else 0,
+                .rdev = if (args.len > 6 and args[6].isNumeric()) args[6].to(T) else 0,
+                .size = if (args.len > 7 and args[7].isNumeric()) args[7].to(T) else 0,
+                .blksize = if (args.len > 8 and args[8].isNumeric()) args[8].to(T) else 0,
+                .blocks = if (args.len > 9 and args[9].isNumeric()) args[9].to(T) else 0,
+                .atime_ms = if (args.len > 10 and args[10].isNumeric()) args[10].to(f64) else 0,
+                .mtime_ms = if (args.len > 11 and args[11].isNumeric()) args[11].to(f64) else 0,
+                .ctime_ms = if (args.len > 12 and args[12].isNumeric()) args[12].to(f64) else 0,
+                .birthtime_ms = if (args.len > 13 and args[13].isNumeric()) args[13].to(T) else 0,
+                .atime = @as(Date, @enumFromInt(if (args.len > 10 and args[10].isNumeric()) args[10].to(u64) else 0)),
+                .mtime = @as(Date, @enumFromInt(if (args.len > 11 and args[11].isNumeric()) args[11].to(u64) else 0)),
+                .ctime = @as(Date, @enumFromInt(if (args.len > 12 and args[12].isNumeric()) args[12].to(u64) else 0)),
+                .birthtime = @as(Date, @enumFromInt(if (args.len > 13 and args[13].isNumeric()) args[13].to(u64) else 0)),
+            };
+        }
     };
 }
 
@@ -1431,10 +1454,26 @@ pub const Stats = union(enum) {
         return this;
     }
 
-    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*Stats {
-        globalThis.throw("Stats is not constructable. use fs.stat()", .{});
-
-        return null;
+    pub fn constructor(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) ?*This {
+        var this = bun.default_allocator.create(Stats) catch unreachable;
+        var arguments = callframe.arguments(15);
+        var args = arguments.ptr[0..arguments.len];
+        if (args.len > 0 and args[0].isBoolean()) {
+            if (args[0].toBoolean()) {
+                this.* = .{
+                    .big = StatsDataType(i64).fromJS(args[1..]),
+                };
+            } else {
+                this.* = .{
+                    .small = StatsDataType(i32).fromJS(args[1..]),
+                };
+            }
+        } else {
+            this.* = .{
+                .small = StatsDataType(i32).fromJS(args),
+            };
+        }
+        return this;
     }
 
     comptime {

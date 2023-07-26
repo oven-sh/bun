@@ -364,11 +364,6 @@ pub const FSWatcher = struct {
                     }
                 },
                 .directory => {
-                    // macOS should use FSEvents for directories
-                    if (comptime Environment.isMac) {
-                        @panic("Unexpected directory watch");
-                    }
-
                     const affected = event.names(changed_files);
 
                     for (affected) |changed_name_| {

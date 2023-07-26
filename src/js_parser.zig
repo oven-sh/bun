@@ -19519,6 +19519,8 @@ fn NewParser_(
                             }
                         }
 
+                        // TODO: prop.kind == .declare and prop.value == null
+
                         if (prop.ts_decorators.len > 0) {
                             const loc = prop.key.?.loc;
                             const descriptor_key = switch (prop.key.?.data) {

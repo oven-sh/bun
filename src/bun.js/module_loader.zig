@@ -178,6 +178,7 @@ pub const RuntimeTranspilerStore = struct {
 
     generation_number: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
     store: TranspilerJob.Store,
+    enabled: bool = true,
 
     pub fn init(allocator: std.mem.Allocator) RuntimeTranspilerStore {
         return RuntimeTranspilerStore{
@@ -2035,7 +2036,7 @@ pub const ModuleLoader = struct {
             if (allow_promise and loader.isJavaScriptLike() and
                 // Plugins make this complicated,
                 // TODO: allow running concurrently when no onLoad handlers match a plugin.
-                jsc_vm.plugin_runner == null)
+                jsc_vm.plugin_runner == null and jsc_vm.transpiler_store.enabled)
             {
                 if (!strings.eqlLong(specifier, jsc_vm.main, true)) {
                     return jsc_vm.transpiler_store.transpile(

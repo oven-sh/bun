@@ -751,6 +751,7 @@ pub const VirtualMachine = struct {
         this.macro_mode = true;
         this.event_loop = &this.macro_event_loop;
         Analytics.Features.macros = true;
+        this.transpiler_store.enabled = false;
     }
 
     pub fn disableMacroMode(this: *VirtualMachine) void {
@@ -758,6 +759,7 @@ pub const VirtualMachine = struct {
         this.bundler.resolver.caches.fs.use_alternate_source_cache = false;
         this.macro_mode = false;
         this.event_loop = &this.regular_event_loop;
+        this.transpiler_store.enabled = true;
     }
 
     pub fn getAPIGlobals() []js.JSClassRef {

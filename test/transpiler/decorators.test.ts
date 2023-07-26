@@ -998,3 +998,23 @@ test("export default class Named works", () => {
 test("export default class works (anonymous name)", () => {
   expect(new DecoratedAnonClass()["methoddecorated"]).toBe(true);
 });
+
+test("decorator and declare", () => {
+  let counter = 0;
+  function d1(t) {
+    t();
+  }
+  class A {
+    @d1(() => {
+      counter++;
+    })
+    declare a: number;
+
+    m() {
+      counter++;
+    }
+  }
+
+  new A();
+  expect(counter).toBe(1);
+});

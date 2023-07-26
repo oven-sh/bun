@@ -2011,8 +2011,19 @@ pub const ModuleLoader = struct {
         );
         const path = Fs.Path.init(specifier);
         const loader: options.Loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse options.Loader.js;
+
+        // We only run the transpiler concurrently when we can.
+        // Today, that's:
+        //
+        //   Import Statements (import 'foo')
+        //   Import Expressions (import('foo'))
+        //
         if (comptime bun.FeatureFlags.concurrent_transpiler) {
-            if (allow_promise and loader.isJavaScriptLike() and jsc_vm.plugin_runner == null) {
+            if (allow_promise and loader.isJavaScriptLike() and
+                // Plugins make this complicated,
+                // TODO: allow running concurrently when no onLoad handlers match a plugin.
+                jsc_vm.plugin_runner == null)
+            {
                 if (!strings.eqlLong(specifier, jsc_vm.main, true)) {
                     return jsc_vm.transpiler_store.transpile(
                         jsc_vm,

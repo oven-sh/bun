@@ -2802,8 +2802,6 @@ pub fn handleResponseMetadata(
                 } else if (strings.eqlComptime(header.value, "deflate")) {
                     this.state.encoding = Encoding.deflate;
                     this.state.content_encoding_i = @as(u8, @truncate(header_i));
-                } else if (!strings.eqlComptime(header.value, "identity")) {
-                    return error.UnsupportedContentEncoding;
                 }
             },
             hashHeaderConst("Transfer-Encoding") => {

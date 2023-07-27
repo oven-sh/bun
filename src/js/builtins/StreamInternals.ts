@@ -81,7 +81,7 @@ export function validateAndNormalizeQueuingStrategy(size, highWaterMark) {
 
   const newHighWaterMark = $toNumber(highWaterMark);
 
-  if (isNaN(newHighWaterMark) || newHighWaterMark < 0)
+  if (newHighWaterMark !== newHighWaterMark || newHighWaterMark < 0)
     throw new RangeError("highWaterMark value is negative or not a number");
 
   return { size: size, highWaterMark: newHighWaterMark };
@@ -241,7 +241,7 @@ export function extractHighWaterMark(strategy, defaultHWM) {
 
   if (highWaterMark === undefined) return defaultHWM;
 
-  if (isNaN(highWaterMark) || highWaterMark < 0)
+  if (highWaterMark !== highWaterMark || highWaterMark < 0)
     throw new RangeError("highWaterMark value is negative or not a number");
 
   return $toNumber(highWaterMark);

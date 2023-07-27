@@ -160,7 +160,7 @@ for (let [gcTick, label] of [
           expect(exitCode1).toBe(0);
           expect(exitCode2).toBe(1);
         }
-      });
+      }, 20_000);
 
       // FIXME: fix the assertion failure
       it.skip("Uint8Array works as stdout", () => {

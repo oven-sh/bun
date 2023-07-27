@@ -216,9 +216,9 @@ template<> void JSTextEncoderDOMConstructor::initializeProperties(VM& vm, JSDOMG
 
 constexpr JSC::DFG::AbstractHeapKind heapKinds[4] = { JSC::DFG::HeapObjectCount };
 
-// This is the equivalent of DataView.set
-constexpr JSC::DFG::AbstractHeapKind encodeIntoRead[4] = { JSC::DFG::MiscFields, JSC::DFG::TypedArrayProperties, JSC::DFG::Absolute };
-constexpr JSC::DFG::AbstractHeapKind encodeIntoWrite[4] = { JSC::DFG::TypedArrayProperties, JSC::DFG::Absolute };
+// TODO: figure out why the test fails after JSC upgrade and re-enable this!
+// constexpr JSC::DFG::AbstractHeapKind encodeIntoRead[4] = { JSC::DFG::Heap, JSC::DFG::MiscFields, JSC::DFG::TypedArrayProperties, JSC::DFG::Absolute };
+// constexpr JSC::DFG::AbstractHeapKind encodeIntoWrite[4] = { JSC::DFG::SideState, JSC::DFG::Absolute, JSC::DFG::JSCell_structureID, JSC::DFG::HeapObjectCount };
 
 static const JSC::DOMJIT::Signature DOMJITSignatureForJSTextEncoderEncodeWithoutTypeCheck(
     jsTextEncoderEncodeWithoutTypeCheck,
@@ -230,10 +230,9 @@ static const JSC::DOMJIT::Signature DOMJITSignatureForJSTextEncoderEncodeWithout
 static const JSC::DOMJIT::Signature DOMJITSignatureForJSTextEncoderEncodeIntoWithoutTypeCheck(
     jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeCheck,
     JSTextEncoder::info(),
-    // this is slightly incorrect
-    // there could be cases where the object returned by encodeInto will appear to be reused
-    // it impacts HeapObjectCount
-    JSC::DOMJIT::Effect::forReadWriteKinds(encodeIntoRead, encodeIntoWrite),
+
+    JSC::DOMJIT::Effect {},
+    // JSC::DOMJIT::Effect::forReadWriteKinds(encodeIntoRead, encodeIntoWrite),
     DOMJIT::IDLResultTypeFilter<IDLObject>::value,
     DOMJIT::IDLArgumentTypeFilter<IDLDOMString>::value,
     DOMJIT::IDLArgumentTypeFilter<IDLUint8Array>::value);

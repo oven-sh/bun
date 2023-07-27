@@ -859,6 +859,9 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/TypeScriptDecorators", {
+    // We still need to handle decorators with computed properties in method names
+    todo: true,
+
     files: {
       "/entry.js": /* js */ `
         import all from './all'

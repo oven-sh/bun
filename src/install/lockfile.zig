@@ -2496,10 +2496,9 @@ pub const Package = extern struct {
         package_dependencies: []Dependency,
         dependencies_count: u32,
         in_workspace: bool,
-        tag: ?Dependency.Version.Tag,
-        workspace_path: ?String,
-        workspace_version: ?Semver.Version,
-        external_name: ExternalString,
+        comptime tag: ?Dependency.Version.Tag,
+        workspace_ver: ?Semver.Version,
+        external_alias: ExternalString,
         version: string,
         key_loc: logger.Loc,
         value_loc: logger.Loc,
@@ -2510,12 +2509,30 @@ pub const Package = extern struct {
 
         var dependency_version = Dependency.parseWithOptionalTag(
             allocator,
-            external_name.value,
+            external_alias.value,
             sliced.slice,
             tag,
             &sliced,
             log,
         ) orelse Dependency.Version{};
+        var workspace_range: ?Semver.Query.Group = null;
+        const name_hash = switch (dependency_version.tag) {
+            .npm => String.Builder.stringHash(dependency_version.value.npm.name.slice(buf)),
+            .workspace => if (strings.hasPrefixComptime(sliced.slice, "workspace:")) brk: {
+                const input = sliced.slice["workspace:".len..];
+                const at = strings.lastIndexOfChar(input, '@') orelse 0;
+                if (at > 0) {
+                    workspace_range = Semver.Query.parse(allocator, input[at + 1 ..], sliced) catch return error.InstallFailed;
+                    break :brk String.Builder.stringHash(input[0..at]);
+                } else {
+                    workspace_range = Semver.Query.parse(allocator, input, sliced) catch null;
+                    break :brk external_alias.hash;
+                }
+            } else external_alias.hash,
+            else => external_alias.hash,
+        };
+        const workspace_path = if (comptime tag == null) lockfile.workspace_paths.get(@truncate(name_hash)) else null;
+        const workspace_version = if (comptime tag == null) lockfile.workspace_versions.get(@truncate(name_hash)) else workspace_ver;
 
         switch (dependency_version.tag) {
             .folder => {
@@ -2534,11 +2551,13 @@ pub const Package = extern struct {
                     ),
                 );
             },
-            .npm => if (workspace_version) |ver| {
+            .npm => if (comptime tag != null)
+                unreachable
+            else if (workspace_version) |ver| {
                 if (dependency_version.value.npm.version.satisfies(ver)) {
                     for (package_dependencies[0..dependencies_count]) |dep| {
                         // `dependencies` & `workspaces` defined within the same `package.json`
-                        if (dep.version.tag == .workspace and dep.name_hash == external_name.hash) {
+                        if (dep.version.tag == .workspace and dep.name_hash == name_hash) {
                             return null;
                         }
                     }
@@ -2546,7 +2565,7 @@ pub const Package = extern struct {
                     const path = workspace_path.?.sliced(buf);
                     if (Dependency.parseWithTag(
                         allocator,
-                        external_name.value,
+                        external_alias.value,
                         path.slice,
                         .workspace,
                         &path,
@@ -2557,7 +2576,15 @@ pub const Package = extern struct {
                 }
             },
             .workspace => if (workspace_path) |path| {
-                dependency_version.value.workspace = path;
+                if (workspace_range) |range| {
+                    if (workspace_version) |ver| {
+                        if (range.satisfies(ver)) {
+                            dependency_version.value.workspace = path;
+                        }
+                    }
+                } else {
+                    dependency_version.value.workspace = path;
+                }
             } else {
                 {
                     const workspace = dependency_version.value.workspace.slice(buf);
@@ -2576,7 +2603,7 @@ pub const Package = extern struct {
                         ),
                     );
                     defer dependency_version.value.workspace = path;
-                    var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, @truncate(external_name.hash));
+                    var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, @truncate(name_hash));
                     if (workspace_entry.found_existing) {
                         const old_path = workspace_entry.value_ptr.*;
 
@@ -2586,7 +2613,7 @@ pub const Package = extern struct {
                         } else if (strings.eqlComptime(old_path.slice(buf), "*")) brk: {
                             workspace_entry.value_ptr.* = path;
                             for (package_dependencies[0..dependencies_count]) |*package_dep| {
-                                if (package_dep.name_hash == external_name.hash) {
+                                if (String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash) {
                                     if (package_dep.version.tag != .workspace) break :brk;
                                     package_dep.version.value.workspace = path;
                                     return null;
@@ -2597,7 +2624,7 @@ pub const Package = extern struct {
                             return null;
                         } else {
                             log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Workspace name \"{s}\" already exists", .{
-                                external_name.slice(buf),
+                                external_alias.slice(buf),
                             }) catch {};
                             return error.InstallFailed;
                         }
@@ -2606,12 +2633,12 @@ pub const Package = extern struct {
                 }
 
                 if (workspace_version) |ver| {
-                    try lockfile.workspace_versions.put(allocator, @truncate(external_name.hash), ver);
+                    try lockfile.workspace_versions.put(allocator, @truncate(name_hash), ver);
 
                     for (package_dependencies[0..dependencies_count]) |*package_dep| {
                         // `dependencies` & `workspaces` defined within the same `package.json`
                         if (package_dep.version.tag == .npm and
-                            package_dep.name_hash == external_name.hash and
+                            String.Builder.stringHash(package_dep.version.value.npm.name.slice(buf)) == name_hash and
                             package_dep.version.value.npm.version.satisfies(ver))
                         {
                             package_dep.version = dependency_version;
@@ -2625,14 +2652,14 @@ pub const Package = extern struct {
 
         const this_dep = Dependency{
             .behavior = group.behavior.setWorkspace(in_workspace),
-            .name = external_name.value,
-            .name_hash = external_name.hash,
+            .name = external_alias.value,
+            .name_hash = external_alias.hash,
             .version = dependency_version,
         };
 
         // `peerDependencies` may be specified on existing dependencies
         if (comptime features.check_for_duplicate_dependencies and !group.behavior.isPeer()) {
-            var entry = lockfile.scratch.duplicate_checker_map.getOrPutAssumeCapacity(external_name.hash);
+            var entry = lockfile.scratch.duplicate_checker_map.getOrPutAssumeCapacity(external_alias.hash);
             if (entry.found_existing) {
                 // duplicate dependencies are allowed in optionalDependencies
                 if (comptime group.behavior.isOptional()) {
@@ -2647,7 +2674,7 @@ pub const Package = extern struct {
                     var notes = try allocator.alloc(logger.Data, 1);
 
                     notes[0] = .{
-                        .text = try std.fmt.allocPrint(lockfile.allocator, "\"{s}\" originally specified here", .{external_name.slice(buf)}),
+                        .text = try std.fmt.allocPrint(lockfile.allocator, "\"{s}\" originally specified here", .{external_alias.slice(buf)}),
                         .location = logger.Location.init_or_nil(&source, source.rangeOfString(entry.value_ptr.*)),
                     };
 
@@ -2657,7 +2684,7 @@ pub const Package = extern struct {
                         lockfile.allocator,
                         notes,
                         "Duplicate dependency: \"{s}\" specified in package.json",
-                        .{external_name.slice(buf)},
+                        .{external_alias.slice(buf)},
                     );
                 }
             }
@@ -3447,7 +3474,6 @@ pub const Package = extern struct {
                         total_dependencies_count,
                         in_workspace,
                         .workspace,
-                        null,
                         entry.version,
                         external_name,
                         path,
@@ -3480,8 +3506,7 @@ pub const Package = extern struct {
                                     total_dependencies_count,
                                     in_workspace,
                                     null,
-                                    lockfile.workspace_paths.get(@truncate(external_name.hash)),
-                                    lockfile.workspace_versions.get(@truncate(external_name.hash)),
+                                    null,
                                     external_name,
                                     version,
                                     key.loc,

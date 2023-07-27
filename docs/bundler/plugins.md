@@ -276,7 +276,7 @@ import MySvelteComponent from "./component.svelte";
 console.log(mySvelteComponent.render());
 ```
 
-## Reading `Bun.build`'s config
+## Reading the config
 
 Plugins can read and write to the [build config](/docs/bundler#api) with `build.config`.
 
@@ -305,7 +305,10 @@ Bun.build({
 
 ```ts
 namespace Bun {
-  function plugin(plugin: { name: string; setup: (build: PluginBuilder) => void }): void;
+  function plugin(plugin: {
+    name: string;
+    setup: (build: PluginBuilder) => void;
+  }): void;
 }
 
 type PluginBuilder = {

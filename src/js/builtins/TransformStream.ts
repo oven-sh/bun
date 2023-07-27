@@ -68,7 +68,7 @@ export function initializeTransformStream(this) {
   const startPromiseCapability = $newPromiseCapability(Promise);
   $initializeTransformStream(
     this,
-    startPromiseCapability.$promise,
+    startPromiseCapability.promise,
     writableHighWaterMark,
     writableSizeAlgorithm,
     readableHighWaterMark,
@@ -82,13 +82,13 @@ export function initializeTransformStream(this) {
     startAlgorithm().$then(
       () => {
         // FIXME: We probably need to resolve start promise with the result of the start algorithm.
-        startPromiseCapability.$resolve.$call();
+        startPromiseCapability.resolve.$call();
       },
       error => {
-        startPromiseCapability.$reject.$call(undefined, error);
+        startPromiseCapability.reject.$call(undefined, error);
       },
     );
-  } else startPromiseCapability.$resolve.$call();
+  } else startPromiseCapability.resolve.$call();
 
   return this;
 }

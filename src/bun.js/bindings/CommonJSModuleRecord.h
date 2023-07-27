@@ -39,6 +39,7 @@ public:
 
     bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource resolvedSource);
     bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& key, const SyntheticSourceProvider::SyntheticSourceGenerator& generator);
+    bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& key, JSSourceCode* sourceCode);
 
     static JSCommonJSModule* create(JSC::VM& vm, JSC::Structure* structure,
         JSC::JSString* id,
@@ -55,6 +56,8 @@ public:
         Zig::GlobalObject* globalObject,
         const WTF::String& key,
         ResolvedSource resolvedSource);
+
+    static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString);
 
     void toSyntheticSource(JSC::JSGlobalObject* globalObject,
         JSC::Identifier moduleKey,
@@ -94,5 +97,51 @@ JSC::Structure* createCommonJSModuleStructure(
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     ResolvedSource source);
+
+class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+    static RequireResolveFunctionPrototype* create(JSC::JSGlobalObject* globalObject);
+
+    DECLARE_INFO;
+
+    RequireResolveFunctionPrototype(
+        JSC::VM& vm,
+        JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+
+    void finishCreation(JSC::VM& vm);
+};
+
+class RequireFunctionPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+    static RequireFunctionPrototype* create(JSC::JSGlobalObject* globalObject);
+
+    RequireFunctionPrototype(
+        JSC::VM& vm,
+        JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+
+    DECLARE_INFO;
+
+    void finishCreation(JSC::VM& vm);
+};
 
 } // namespace Bun

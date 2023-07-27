@@ -259,8 +259,6 @@ extern "C" EncodedJSValue BunString__createArray(
     if (length < 64) {
         // We must do this or Bun.gc(true) in a loop creating large arrays of strings will crash due to GC'ing.
         MarkedArgumentBuffer arguments;
-        JSC::ObjectInitializationScope scope(vm);
-        GCDeferralContext context(vm);
 
         arguments.fill(length, [&](JSC::JSValue* value) {
             const BunString* end = ptr + length;
@@ -268,6 +266,9 @@ extern "C" EncodedJSValue BunString__createArray(
                 *value++ = Bun::toJS(globalObject, *ptr++);
             }
         });
+
+        JSC::ObjectInitializationScope scope(vm);
+        GCDeferralContext context(vm);
 
         JSC::JSArray* array = JSC::JSArray::tryCreateUninitializedRestricted(
             scope,

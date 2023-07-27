@@ -135,7 +135,7 @@ export function getEventSource() {
               id = line.substring(3).trim();
             } else if (line.startsWith("retry:")) {
               retry = parseInt(line.substring(6).trim(), 10);
-              if (isNaN(retry)) {
+              if (retry !== retry) {
                 retry = -1;
               }
             }
@@ -278,7 +278,7 @@ export function getEventSource() {
                   header_name.localeCompare("content-length", undefined, { sensitivity: "accent" }) === 0;
                 if (is_content_length) {
                   content_length = parseInt(header.substring(header_name_idx + 1).trim(), 10);
-                  if (isNaN(content_length) || content_length <= 0) {
+                  if (content_length !== content_length || content_length <= 0) {
                     self.dispatchEvent(
                       new ErrorEvent("error", {
                         error: new Error(`EventSource's Content-Length is invalid. Aborting the connection.`),

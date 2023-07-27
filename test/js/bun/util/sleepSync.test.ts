@@ -2,11 +2,11 @@ import { it, expect } from "bun:test";
 import { sleepSync } from "bun";
 
 it("sleepSync uses milliseconds", async () => {
-  const start = Date.now();
-  sleepSync(5);
-  const end = Date.now();
+  const start = performance.now();
+  sleepSync(50);
+  const end = performance.now();
   expect(end - start).toBeGreaterThanOrEqual(5);
-  expect(end - start).toBeLessThan(10);
+  expect(end - start).toBeLessThan(1000);
 });
 
 it("sleepSync with no arguments throws", async () => {

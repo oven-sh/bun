@@ -8,12 +8,12 @@ Bun ships as a single executable that can be installed a few different ways.
 
 {% codetabs %}
 
-```bash#NPM
-$ npm install -g bun # the last `npm` command you'll ever need
-```
-
 ```bash#Native
 $ curl -fsSL https://bun.sh/install | bash # for macOS, Linux, and WSL
+```
+
+```bash#NPM
+$ npm install -g bun # the last `npm` command you'll ever need
 ```
 
 ```bash#Homebrew
@@ -98,14 +98,6 @@ $ docker run --rm --init --ulimit memlock=-1:-1 oven/bun:edge
 $ docker run --rm --init --ulimit memlock=-1:-1 oven/bun:edge
 this is some output
 ``` -->
-
-## Uninstalling
-
-Bun's binary and install cache is located in `~/.bun` by default. To uninstall bun, delete this directory and edit your shell config (`.bashrc`, `.zshrc`, or similar) to remove `~/.bun/bin` from the `$PATH` variable.
-
-```sh
-$ rm -rf ~/.bun # make sure to remove ~/.bun/bin from $PATH
-```
 
 ## TypeScript
 

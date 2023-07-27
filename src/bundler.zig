@@ -1147,6 +1147,9 @@ pub const Bundler = struct {
         comptime enable_source_map: bool,
         source_map_context: ?js_printer.SourceMapHandler,
     ) !usize {
+        const tracer = bun.tracy.traceNamed(@src(), if (enable_source_map) "JSPrinter.printWithSourceMap" else "JSPrinter.print");
+        defer tracer.end();
+
         var symbols = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{ast.symbols});
 
         return switch (format) {
@@ -1314,6 +1317,22 @@ pub const Bundler = struct {
         client_entry_point_: anytype,
         comptime return_file_only: bool,
     ) ?ParseResult {
+        return parseMaybeReturnFileOnlyAllowSharedBuffer(
+            bundler,
+            this_parse,
+            client_entry_point_,
+            return_file_only,
+            false,
+        );
+    }
+
+    pub fn parseMaybeReturnFileOnlyAllowSharedBuffer(
+        bundler: *Bundler,
+        this_parse: ParseOptions,
+        client_entry_point_: anytype,
+        comptime return_file_only: bool,
+        comptime use_shared_buffer: bool,
+    ) ?ParseResult {
         var allocator = this_parse.allocator;
         const dirname_fd = this_parse.dirname_fd;
         const file_descriptor = this_parse.file_descriptor;
@@ -1342,11 +1361,12 @@ pub const Bundler = struct {
                 break :brk logger.Source.initPathString(path.text, "");
             }
 
-            const entry = bundler.resolver.caches.fs.readFile(
+            const entry = bundler.resolver.caches.fs.readFileWithAllocator(
+                if (use_shared_buffer) bun.fs_allocator else this_parse.allocator,
                 bundler.fs,
                 path.text,
                 dirname_fd,
-                true,
+                use_shared_buffer,
                 file_descriptor,
             ) catch |err| {
                 bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), path.text }) catch {};

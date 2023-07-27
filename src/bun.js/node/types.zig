@@ -1682,6 +1682,87 @@ pub const Path = struct {
 
         return JSC.ZigString.init(out).withEncoding().toValueGC(globalThis);
     }
+
+    fn dirnameWindows(path: []const u8) []const u8 {
+        if (path.len == 0)
+            return ".";
+
+        const root_slice = std.fs.path.diskDesignatorWindows(path);
+        if (path.len == root_slice.len)
+            return root_slice;
+
+        const have_root_slash = path.len > root_slice.len and (path[root_slice.len] == '/' or path[root_slice.len] == '\\');
+
+        var end_index: usize = path.len - 1;
+
+        while (path[end_index] == '/' or path[end_index] == '\\') {
+            // e.g. '\\' => "\\"
+            if (end_index == 0) {
+                return path[0..1];
+            }
+            end_index -= 1;
+        }
+
+        while (path[end_index] != '/' and path[end_index] != '\\') {
+            if (end_index == 0) {
+                if (root_slice.len == 0) {
+                    return ".";
+                }
+                if (have_root_slash) {
+                    // e.g. "c:\\" => "c:\\"
+                    return path[0 .. root_slice.len + 1];
+                } else {
+                    // e.g. "c:foo" => "c:"
+                    return root_slice;
+                }
+            }
+            end_index -= 1;
+        }
+
+        if (have_root_slash and end_index == root_slice.len) {
+            end_index += 1;
+        }
+
+        return path[0..end_index];
+    }
+
+    fn dirnamePosix(path: []const u8) []const u8 {
+        if (path.len == 0)
+            return ".";
+
+        var end_index: usize = path.len - 1;
+
+        while (path[end_index] == '/') {
+            // e.g. "////" => "/"
+            if (end_index == 0) {
+                return "/";
+            }
+            end_index -= 1;
+        }
+
+        while (path[end_index] != '/') {
+            if (end_index == 0) {
+                // e.g. "a/", "a"
+                return ".";
+            }
+            end_index -= 1;
+        }
+
+        // e.g. "/a/" => "/"
+        if (end_index == 0 and path[0] == '/') {
+            return "/";
+        }
+
+        // "a/b" => "a" or "//b" => "//"
+        if (end_index <= 1) {
+            if (path[0] == '/' and path[1] == '/') {
+                end_index += 1;
+            }
+        }
+
+        return path[0..end_index];
+    }
+
     pub fn dirname(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
         if (args_len == 0) {
@@ -1697,11 +1778,11 @@ pub const Path = struct {
         const base_slice = path.slice();
 
         const out = if (isWindows)
-            std.fs.path.dirnameWindows(base_slice) orelse "."
+            @This().dirnameWindows(base_slice)
         else
-            std.fs.path.dirnamePosix(base_slice) orelse ".";
+            @This().dirnamePosix(base_slice);
 
-        return JSC.ZigString.init(out).toValueGC(globalThis);
+        return JSC.ZigString.init(out).withEncoding().toValueGC(globalThis);
     }
     pub fn extname(globalThis: *JSC.JSGlobalObject, _: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
@@ -1856,27 +1937,20 @@ pub const Path = struct {
     ) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
         if (args_len == 0) return JSC.ZigString.init("").toValue(globalThis);
-
-        var stack_fallback_allocator = std.heap.stackFallback(
-            (32 * @sizeOf(string)),
-            heap_allocator,
-        );
-        var allocator = stack_fallback_allocator.get();
         var arena = @import("root").bun.ArenaAllocator.init(heap_allocator);
         var arena_allocator = arena.allocator();
+        var stack_fallback_allocator = std.heap.stackFallback(
+            ((32 * @sizeOf(string)) + 1024),
+            arena_allocator,
+        );
+        var allocator = stack_fallback_allocator.get();
+
         defer arena.deinit();
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var to_join = allocator.alloc(string, args_len) catch unreachable;
-        var possibly_utf16 = false;
         for (args_ptr[0..args_len], 0..) |arg, i| {
             const zig_str: JSC.ZigString = arg.getZigString(globalThis);
-            if (zig_str.is16Bit()) {
-                // TODO: remove this string conversion
-                to_join[i] = zig_str.toSlice(arena_allocator).slice();
-                possibly_utf16 = true;
-            } else {
-                to_join[i] = zig_str.slice();
-            }
+            to_join[i] = zig_str.toSlice(allocator).slice();
         }
 
         const out = if (!isWindows)
@@ -1884,12 +1958,9 @@ pub const Path = struct {
         else
             PathHandler.joinStringBuf(&buf, to_join, .windows);
 
-        var out_str = JSC.ZigString.init(out);
-        if (possibly_utf16) {
-            out_str.setOutputEncoding();
-        }
-
-        return out_str.toValueGC(globalThis);
+        var str = bun.String.create(out);
+        defer str.deref();
+        return str.toJS(globalThis);
     }
     pub fn normalize(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();

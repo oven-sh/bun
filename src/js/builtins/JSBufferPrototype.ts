@@ -465,7 +465,7 @@ export function slice(this: BufferExt, start, end) {
     // Use Math.trunc() to convert offset to an integer value that can be larger
     // than an Int32. Hence, don't use offset | 0 or similar techniques.
     offset = $trunc(offset);
-    if (offset === 0 || isNaN(offset)) {
+    if (offset === 0 || offset !== offset) {
       return 0;
     } else if (offset < 0) {
       offset += length;

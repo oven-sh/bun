@@ -41,7 +41,7 @@ export function privateInitializeReadableByteStreamController(this, stream, unde
   $putByIdDirectPrivate(this, "closeRequested", false);
 
   let hwm = $toNumber(highWaterMark);
-  if (isNaN(hwm) || hwm < 0) throw new RangeError("highWaterMark value is negative or not a number");
+  if (hwm !== hwm || hwm < 0) throw new RangeError("highWaterMark value is negative or not a number");
   $putByIdDirectPrivate(this, "strategyHWM", hwm);
 
   let autoAllocateChunkSize = underlyingByteSource.autoAllocateChunkSize;
@@ -372,7 +372,7 @@ export function readableByteStreamControllerRespondWithNewView(controller, view)
 export function readableByteStreamControllerRespond(controller, bytesWritten) {
   bytesWritten = $toNumber(bytesWritten);
 
-  if (isNaN(bytesWritten) || bytesWritten === Infinity || bytesWritten < 0)
+  if (bytesWritten !== bytesWritten || bytesWritten === Infinity || bytesWritten < 0)
     throw new RangeError("bytesWritten has an incorrect value");
 
   $assert($getByIdDirectPrivate(controller, "pendingPullIntos").isNotEmpty());

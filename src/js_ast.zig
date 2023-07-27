@@ -840,6 +840,7 @@ pub const G = struct {
             get,
             set,
             spread,
+            declare,
             class_static_block,
 
             pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
@@ -2163,7 +2164,9 @@ pub const E = struct {
                 this.next = other;
                 this.end = other;
             } else {
-                this.end.?.next = other;
+                var end = this.end.?;
+                while (end.next != null) end = end.end.?;
+                end.next = other;
                 this.end = other;
             }
         }

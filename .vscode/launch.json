@@ -242,7 +242,6 @@
       "console": "internalConsole",
       "env": {}
     },
-
     {
       "type": "lldb",
       "request": "launch",

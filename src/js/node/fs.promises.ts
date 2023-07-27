@@ -38,7 +38,7 @@ export function watch(
   if (typeof options === "string") {
     options = { encoding: options };
   }
-  fs.watch(filename, options || {}, (eventType: string, filename: string | Buffer | undefined) => {
+  const watcher = fs.watch(filename, options || {}, (eventType: string, filename: string | Buffer | undefined) => {
     events.push({ eventType, filename });
     if (nextEventResolve) {
       const resolve = nextEventResolve;
@@ -46,24 +46,43 @@ export function watch(
       resolve();
     }
   });
+
   return {
-    async *[Symbol.asyncIterator]() {
+    [Symbol.asyncIterator]() {
       let closed = false;
-      while (!closed) {
-        while (events.length) {
-          let event = events.shift() as Event;
-          if (event.eventType === "close") {
-            closed = true;
-            break;
+      return {
+        async next() {
+          while (!closed) {
+            while (events.length) {
+              let event = events.shift() as Event;
+              if (event.eventType === "close") {
+                closed = true;
+                break;
+              }
+              if (event.eventType === "error") {
+                closed = true;
+                throw event.filename;
+              }
+              return { value: event, done: false };
+            }
+            await new Promise((resolve: Function) => (nextEventResolve = resolve));
           }
-          if (event.eventType === "error") {
+          return { value: undefined, done: true };
+        },
+
+        return() {
+          if (!closed) {
+            watcher.close();
             closed = true;
-            throw event.filename;
+            if (nextEventResolve) {
+              const resolve = nextEventResolve;
+              nextEventResolve = null;
+              resolve();
+            }
           }
-          yield event;
-        }
-        await new Promise((resolve: Function) => (nextEventResolve = resolve));
-      }
+          return { value: undefined, done: true };
+        },
+      };
     },
   };
 }

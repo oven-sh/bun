@@ -373,11 +373,6 @@ describe("fs.watch", () => {
     });
     expect(promise).resolves.toBe("change");
   });
-
-  test("immediately closing works correctly", async () => {
-    for (let i = 0; i < 100; i++) fs.watch(testDir, { persistent: true }).close();
-    for (let i = 0; i < 100; i++) fs.watch(testDir, { persistent: false }).close();
-  });
 });
 
 describe("fs.promises.watch", () => {
@@ -502,6 +497,32 @@ describe("fs.promises.watch", () => {
     })();
   });
 
+  test("should work with symlink dir", async () => {
+    const filepath = path.join(testDir, "sym-symlink-dir");
+    const dest = path.join(testDir, "sym-symlink-dest");
+    fs.rmSync(filepath, { recursive: true, force: true });
+    fs.rmSync(dest, { recursive: true, force: true });
+    fs.mkdirSync(dest, { recursive: true });
+    await fs.promises.symlink(dest, filepath);
+
+    const watcher = fs.promises.watch(filepath);
+    const interval = setInterval(() => {
+      fs.writeFileSync(path.join(filepath, "hello.txt"), "hello");
+    }, 10);
+
+    const promise = (async () => {
+      try {
+        for await (const event of watcher) {
+          return event.eventType;
+        }
+      } catch {
+        expect("unreacheable").toBe(false);
+      } finally {
+        clearInterval(interval);
+      }
+    })();
+    expect(promise).resolves.toBe("rename");
+  });
   test("should work with symlink", async () => {
     const filepath = path.join(testDir, "sym-symlink.txt");
     await fs.promises.symlink(path.join(testDir, "sym.txt"), filepath);
@@ -523,5 +544,21 @@ describe("fs.promises.watch", () => {
       }
     })();
     expect(promise).resolves.toBe("change");
+  });
+});
+
+describe("immediately closing", () => {
+  test("works correctly with files", async () => {
+    const filepath = path.join(testDir, "close.txt");
+    for (let i = 0; i < 100; i++) fs.watch(filepath, { persistent: true }).close();
+    for (let i = 0; i < 100; i++) fs.watch(filepath, { persistent: false }).close();
+  });
+  test("works correctly with directories", async () => {
+    for (let i = 0; i < 100; i++) fs.watch(testDir, { persistent: true }).close();
+    for (let i = 0; i < 100; i++) fs.watch(testDir, { persistent: false }).close();
+  });
+  test("works correctly with recursive directories", async () => {
+    for (let i = 0; i < 100; i++) fs.watch(testDir, { persistent: true, recursive: true }).close();
+    for (let i = 0; i < 100; i++) fs.watch(testDir, { persistent: false, recursive: false }).close();
   });
 });

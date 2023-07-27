@@ -1218,11 +1218,11 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
         switch (sqlite3_column_type(stmt, i)) {
         case SQLITE_INTEGER: {
             // https://github.com/oven-sh/bun/issues/1536
-            result->initializeIndex(scope, i, jsNumber(sqlite3_column_int64(stmt, i)));
+            result->putDirectIndex(lexicalGlobalObject, i, jsNumber(sqlite3_column_int64(stmt, i)));
             break;
         }
         case SQLITE_FLOAT: {
-            result->initializeIndex(scope, i, jsNumber(sqlite3_column_double(stmt, i)));
+            result->putDirectIndex(lexicalGlobalObject, i, jsNumber(sqlite3_column_double(stmt, i)));
             break;
         }
         // > Note that the SQLITE_TEXT constant was also used in SQLite version
@@ -1233,10 +1233,10 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
             size_t len = sqlite3_column_bytes(stmt, i);
             const unsigned char* text = len > 0 ? sqlite3_column_text(stmt, i) : nullptr;
             if (UNLIKELY(text == nullptr || len == 0)) {
-                result->initializeIndex(scope, i, jsEmptyString(vm));
+                result->putDirectIndex(lexicalGlobalObject, i, jsEmptyString(vm));
                 continue;
             }
-            result->initializeIndex(scope, i, len < 64 ? jsString(vm, WTF::String::fromUTF8(text, len)) : JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject)));
+            result->putDirectIndex(lexicalGlobalObject, i, len < 64 ? jsString(vm, WTF::String::fromUTF8(text, len)) : JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject)));
             break;
         }
         case SQLITE_BLOB: {
@@ -1244,11 +1244,11 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
             const void* blob = len > 0 ? sqlite3_column_blob(stmt, i) : nullptr;
             JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), len);
             memcpy(array->vector(), blob, len);
-            result->initializeIndex(scope, i, array);
+            result->putDirectIndex(lexicalGlobalObject, i, array);
             break;
         }
         default: {
-            result->initializeIndex(scope, i, jsNull());
+            result->putDirectIndex(lexicalGlobalObject, i, jsNull());
             break;
         }
         }

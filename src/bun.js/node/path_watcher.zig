@@ -154,6 +154,7 @@ pub const PathWatcherManager = struct {
         const watchers = this.watchers.slice();
 
         for (events) |event| {
+            if (event.index >= file_paths.len) continue;
             const file_path = file_paths[event.index];
             const update_count = counts[event.index] + 1;
             counts[event.index] = update_count;
@@ -505,7 +506,7 @@ pub const PathWatcherManager = struct {
         const path = watcher.path;
         if (path.is_file) {
             try this.main_watcher.addFile(path.fd, path.path, path.hash, options.Loader.file, 0, null, false);
-        } else {
+        } else if (watcher.fsevents_watcher == null) {
             try this._addDirectory(watcher, path);
         }
     }
@@ -744,11 +745,12 @@ pub const PathWatcher = struct {
         this.mutex.unlock();
 
         if (this.manager) |manager| {
-            manager.unregisterWatcher(this);
-
             if (this.fsevents_watcher) |watcher| {
+                // first unregister on FSEvents
                 watcher.deinit();
+                manager.unregisterWatcher(this);
             } else {
+                manager.unregisterWatcher(this);
                 this.file_paths.deinitWithAllocator(bun.default_allocator);
             }
         }

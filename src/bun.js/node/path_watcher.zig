@@ -77,16 +77,12 @@ pub const PathWatcherManager = struct {
         } else |err| {
             if (err == error.NotDir) {
                 var file = try std.fs.openFileAbsoluteZ(cloned_path, .{ .mode = .read_only });
-                // we check stat because if is not dir can be a symlink and openFileAbsoluteZ will follow it
-                const _stat = try file.stat();
-                // now we know if is really a file or directory
-                const is_file = _stat.kind != .directory;
                 const result = PathInfo{
                     .fd = file.handle,
-                    .is_file = is_file,
+                    .is_file = true,
                     .path = cloned_path,
                     // if is really a file we need to get the dirname
-                    .dirname = if (is_file) std.fs.path.dirname(cloned_path) orelse cloned_path else cloned_path,
+                    .dirname = std.fs.path.dirname(cloned_path) orelse cloned_path,
                     .hash = Watcher.getHash(cloned_path),
                     .refs = 1,
                 };

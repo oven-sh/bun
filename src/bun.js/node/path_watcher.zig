@@ -148,7 +148,7 @@ pub const PathWatcherManager = struct {
             const kind = kinds[event.index];
 
             if (comptime Environment.isDebug) {
-                Output.prettyErrorln("[watch] {s} ({s}, {})", .{ file_path, @tagName(kind), event.op });
+                log("[watch] {s} ({s}, {})", .{ file_path, @tagName(kind), event.op });
             }
 
             switch (kind) {

@@ -113,7 +113,10 @@ var access = function access2(...args) {
     throw new TypeError("Callback must be a function");
   fs.readdir(...args).then((result) => callback(null, result), callback);
 }, readFile = function readFile2(...args) {
-  callbackify(fs.readFileSync, args);
+  const callback = args[args.length - 1];
+  if (typeof callback !== "function")
+    throw new TypeError("Callback must be a function");
+  fs.readFile(...args).then((result) => callback(null, result), callback);
 }, writeFile = function writeFile2(...args) {
   callbackify(fs.writeFileSync, args);
 }, readlink = function readlink2(...args) {

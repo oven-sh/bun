@@ -88,7 +88,7 @@ pub const PathWatcherManager = struct {
             },
         }
 
-        _ = try this.file_paths.getOrPutValue(cloned_path, result);
+        _ = try this.file_paths.put(cloned_path, result);
         return result;
     }
 
@@ -160,7 +160,7 @@ pub const PathWatcherManager = struct {
 
                     if (event.op.write or event.op.delete or event.op.rename) {
                         const event_type: PathWatcher.EventType = if (event.op.delete or event.op.rename or event.op.move_to) .rename else .change;
-                        const is_file = true;
+
                         const hash = Watcher.getHash(file_path);
 
                         for (watchers) |w| {
@@ -176,7 +176,7 @@ pub const PathWatcherManager = struct {
                                     path = path[entry_point.len..];
 
                                     // Ignore events with path equal to directory itself
-                                    if (path.len <= 1 and is_file) {
+                                    if (path.len <= 1) {
                                         continue;
                                     }
                                     if (path.len == 0) {
@@ -199,7 +199,7 @@ pub const PathWatcherManager = struct {
                                     continue;
                                 }
 
-                                watcher.emit(path, hash, timestamp, event_type);
+                                watcher.emit(path, hash, timestamp, true, event_type);
                             }
                         }
                     }
@@ -229,7 +229,6 @@ pub const PathWatcherManager = struct {
                             if (w) |watcher| {
                                 const entry_point = watcher.path.dirname;
                                 var path = path_slice;
-                                const is_file = false;
 
                                 if (path.len < entry_point.len or !bun.strings.startsWith(path, entry_point)) {
                                     continue;
@@ -238,10 +237,6 @@ pub const PathWatcherManager = struct {
                                 if (!(path.len == 1 and entry_point[0] == '/')) {
                                     path = path[entry_point.len..];
 
-                                    // Ignore events with path equal to directory itself
-                                    if (path.len <= 1 and is_file) {
-                                        continue;
-                                    }
                                     if (path.len == 0) {
                                         while (path.len > 0) {
                                             if (bun.strings.startsWithChar(path, '/')) {
@@ -262,7 +257,7 @@ pub const PathWatcherManager = struct {
                                     continue;
                                 }
 
-                                watcher.emit(path, hash, timestamp, event_type);
+                                watcher.emit(path, hash, timestamp, false, event_type);
                             }
                         }
                     }
@@ -288,7 +283,7 @@ pub const PathWatcherManager = struct {
         // stop all watchers
         for (watchers) |w| {
             if (w) |watcher| {
-                watcher.emit(@errorName(err), 0, timestamp, .@"error");
+                watcher.emit(@errorName(err), 0, timestamp, false, .@"error");
                 watcher.flush();
             }
         }
@@ -474,7 +469,7 @@ pub const PathWatcher = struct {
         change,
         @"error",
     };
-    const Callback = *const fn (ctx: ?*anyopaque, path: string, event_type: EventType) void;
+    const Callback = *const fn (ctx: ?*anyopaque, path: string, is_file: bool, event_type: EventType) void;
     const UpdateEndCallback = *const fn (ctx: ?*anyopaque) void;
 
     pub fn init(manager: *PathWatcherManager, path: PathWatcherManager.PathInfo, recursive: bool, callback: Callback, updateEndCallback: UpdateEndCallback, ctx: ?*anyopaque) !*PathWatcher {
@@ -498,7 +493,7 @@ pub const PathWatcher = struct {
         return this;
     }
 
-    pub fn emit(this: *PathWatcher, path: string, hash: PathWatcherManager.Watcher.HashType, time_stamp: i64, event_type: EventType) void {
+    pub fn emit(this: *PathWatcher, path: string, hash: PathWatcherManager.Watcher.HashType, time_stamp: i64, is_file: bool, event_type: EventType) void {
         const time_diff = time_stamp - this.last_change_event.time_stamp;
         // skip consecutive duplicates
         if ((this.last_change_event.time_stamp == 0 or time_diff > 1) or this.last_change_event.event_type != event_type and this.last_change_event.hash != hash) {
@@ -506,7 +501,7 @@ pub const PathWatcher = struct {
             this.last_change_event.event_type = event_type;
             this.last_change_event.hash = hash;
             this.needs_flush = true;
-            this.callback(this.ctx, path, event_type);
+            this.callback(this.ctx, path, is_file, event_type);
         }
     }
 

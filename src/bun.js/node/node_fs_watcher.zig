@@ -165,7 +165,7 @@ pub const FSWatcher = struct {
     pub fn onFSEventUpdate(
         ctx: ?*anyopaque,
         path: string,
-        _: bool,
+        is_file: bool,
         is_rename: bool,
     ) void {
         // only called by FSEventUpdate
@@ -175,15 +175,32 @@ pub const FSWatcher = struct {
         const relative_path = bun.default_allocator.dupe(u8, path) catch unreachable;
         const event_type: FSWatchTask.EventType = if (is_rename) .rename else .change;
 
+        if (this.verbose) {
+            if (is_file) {
+                Output.prettyErrorln("<r> <d>File changed: {s}<r>", .{relative_path});
+            } else {
+                Output.prettyErrorln("<r> <d>Dir changed: {s}<r>", .{relative_path});
+            }
+        }
+
         this.current_task.append(relative_path, event_type, .destroy);
     }
 
-    pub fn onPathUpdate(ctx: ?*anyopaque, path: string, event_type: PathWatcher.PathWatcher.EventType) void {
+    pub fn onPathUpdate(ctx: ?*anyopaque, path: string, is_file: bool, event_type: PathWatcher.PathWatcher.EventType) void {
         // only called by PathWatcher
 
         const this = bun.cast(*FSWatcher, ctx.?);
 
         const relative_path = bun.default_allocator.dupe(u8, path) catch unreachable;
+
+        if (this.verbose and event_type != .@"error") {
+            if (is_file) {
+                Output.prettyErrorln("<r> <d>File changed: {s}<r>", .{relative_path});
+            } else {
+                Output.prettyErrorln("<r> <d>Dir changed: {s}<r>", .{relative_path});
+            }
+        }
+
         switch (event_type) {
             .rename => {
                 this.current_task.append(relative_path, .rename, .destroy);

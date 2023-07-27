@@ -374,7 +374,6 @@ describe("fs.watch", () => {
     expect(promise).resolves.toBe("change");
   });
 
-
   test("immediately closing works correctly", async () => {
     for (let i = 0; i < 100; i++) fs.watch(testDir, { persistent: true }).close();
     for (let i = 0; i < 100; i++) fs.watch(testDir, { persistent: false }).close();

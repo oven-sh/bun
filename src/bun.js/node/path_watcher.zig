@@ -88,7 +88,7 @@ pub const PathWatcherManager = struct {
             },
         }
 
-        _ = try this.file_paths.put(cloned_path, result);
+        _ = try this.file_paths.getOrPutValue(cloned_path, result);
         return result;
     }
 
@@ -298,8 +298,6 @@ pub const PathWatcherManager = struct {
         defer default_manager_mutex.unlock();
         default_manager = null;
 
-        default_manager_mutex.unlock();
-
         // deinit manager when all watchers are closed
         this.mutex.unlock();
         this.deinit();
@@ -371,9 +369,10 @@ pub const PathWatcherManager = struct {
             if (path.refs > 0) {
                 path.refs -= 1;
                 if (path.refs == 0) {
+                    const path_ = path.path;
                     this.main_watcher.remove(path.hash);
-                    bun.default_allocator.destroy(path.path);
-                    _ = this.file_paths.remove(path.path);
+                    _ = this.file_paths.remove(path_);
+                    bun.default_allocator.destroy(path_);
                 }
             }
         }
@@ -416,7 +415,6 @@ pub const PathWatcherManager = struct {
         if (default_manager == this) {
             default_manager = null;
         }
-        default_manager_mutex.unlock();
 
         // only deinit if no watchers are registered
         if (this.watcher_count > 0) {

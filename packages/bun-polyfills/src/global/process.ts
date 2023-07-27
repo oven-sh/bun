@@ -13,4 +13,7 @@ if (typeof process === 'object' && process !== null) {
     process.versions.boringssl = NULL_VERSION satisfies Process['versions'][string];
     process.versions.zig = '0.10.0' satisfies Process['versions'][string];
     Reflect.set(process, 'revision', NULL_VERSION satisfies Process['revision']);
+
+    // Doesn't work on Windows sadly
+    //Object.defineProperty(process, 'execPath', { value: path.resolve(root, 'cli.js') });
 }

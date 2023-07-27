@@ -4,7 +4,7 @@ import type {
 } from 'bun';
 import type { TextDecoderStream } from 'node:stream/web';
 import { NotImplementedError, type SystemError } from '../utils/errors.js';
-import { streamToBuffer, isArrayBufferView } from '../utils/misc.js';
+import { streamToBuffer, isArrayBufferView, isFileBlob, isOptions } from '../utils/misc.js';
 import dnsPolyfill from './bun/dns.js';
 import { FileSink } from './bun/filesink.js';
 import {
@@ -17,7 +17,6 @@ import {
 import { ArrayBufferSink as ArrayBufferSinkPolyfill } from './bun/arraybuffersink.js';
 import { FileBlob, NodeJSStreamFileBlob } from './bun/fileblob.js';
 import fs from 'node:fs';
-import os from 'node:os';
 import v8 from 'node:v8';
 import path from 'node:path';
 import util from 'node:util';
@@ -446,34 +445,3 @@ export const plugin = bunPlugin;
         });
     }
 });*/
-
-//! SharedArrayBuffer types being a nuisance, I question if they're even correct
-// @ts-expect-error read above
-if (!globalThis.crypto) globalThis.crypto = cryptoPolyfill; // Don't polyfill if --experimental-global-webcrypto is enabled (or Node 19+)
-
-// Doesn't work on Windows sadly
-//Object.defineProperty(process, 'execPath', { value: path.resolve(root, 'cli.js') });
-
-//? NodeJS Blob doesn't implement Blob.json(), so we need to polyfill it.
-Blob.prototype.json = async function json(this: Blob) {
-    try {
-        return JSON.parse(await this.text()) as unknown;
-    } catch (err) {
-        Error.captureStackTrace(err as Error, json);
-        throw err;
-    }
-};
-
-Reflect.set(globalThis, 'navigator', {
-    userAgent: `Bun/${version}`,
-    hardwareConcurrency: os.cpus().length,
-});
-
-// internal utils
-function isOptions(options: any): options is SpawnOptions.OptionsObject {
-    return options !== null && typeof options === 'object';
-}
-
-function isFileBlob(blob: any): blob is BunFileBlob {
-    return blob instanceof Blob && Reflect.get(blob, 'readable') instanceof ReadableStream && typeof Reflect.get(blob, 'writer') === 'function';
-}

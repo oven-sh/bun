@@ -143,7 +143,8 @@ export var access = function access(...args) {
   readdir = function readdir(...args) {
     const callback = args[args.length - 1];
     if (typeof callback !== "function") {
-      return callbackify(fs.readdirSync, args);
+      // TODO: set code
+      throw new TypeError("Callback must be a function");
     }
 
     fs.readdir(...args).then(result => callback(null, result), callback);

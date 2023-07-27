@@ -110,7 +110,10 @@ var access = function access2(...args) {
 }, write = function write2(...args) {
   callbackify(fs.writeSync, args);
 }, readdir = function readdir2(...args) {
-  callbackify(fs.readdirSync, args);
+  const callback = args[args.length - 1];
+  if (typeof callback !== "function")
+    return callbackify(fs.readdirSync, args);
+  fs.readdir(...args).then((result) => callback(null, result), callback);
 }, readFile = function readFile2(...args) {
   callbackify(fs.readFileSync, args);
 }, writeFile = function writeFile2(...args) {

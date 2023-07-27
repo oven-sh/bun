@@ -19,7 +19,7 @@ node ./chat-server.node.mjs
 Run in Deno (`Deno.serve`):
 
 ```bash
-deno run -A --unstable ./chat-server.deno.mjs
+deno run -A ./chat-server.deno.mjs
 ```
 
 Then, run the client script. By default, it will connect 16 clients. This client script can run in Bun, Node, or Deno

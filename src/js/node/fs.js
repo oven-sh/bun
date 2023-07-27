@@ -141,7 +141,12 @@ export var access = function access(...args) {
     callbackify(fs.writeSync, args);
   },
   readdir = function readdir(...args) {
-    callbackify(fs.readdirSync, args);
+    const callback = args[args.length - 1];
+    if (typeof callback !== "function") {
+      return callbackify(fs.readdirSync, args);
+    }
+
+    fs.readdir(...args).then(result => callback(null, result), callback);
   },
   readFile = function readFile(...args) {
     callbackify(fs.readFileSync, args);

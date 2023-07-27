@@ -11,30 +11,9 @@ var fs = Bun.fs();
 const notrace = "::bunternal::";
 var promisify = {
   [notrace]: fsFunction => {
-    // TODO: remove variadic arguments
-    // we can use new Function() here instead
-    // based on fsFucntion.length
-    var func = {
-      [notrace]: function (resolve, reject, args) {
-        var result;
-        try {
-          result = fsFunction.apply(fs, args);
-          args = undefined;
-        } catch (err) {
-          args = undefined;
-          reject(err);
-          return;
-        }
-
-        resolve(result);
-      },
-    }[notrace];
-
     return async function (...args) {
-      // we await it so that the stack is captured
-      return await new Promise((resolve, reject) => {
-        process.nextTick(func, resolve, reject, args);
-      });
+      await 1;
+      return fsFunction.apply(fs, args);
     };
   },
 }[notrace];
@@ -110,7 +89,7 @@ export var access = promisify(fs.accessSync),
   open = promisify(fs.openSync),
   read = promisify(fs.readSync),
   write = promisify(fs.writeSync),
-  readdir = promisify(fs.readdirSync),
+  readdir = fs.readdir.bind(fs),
   readFile = promisify(fs.readFileSync),
   writeFile = promisify(fs.writeFileSync),
   readlink = promisify(fs.readlinkSync),

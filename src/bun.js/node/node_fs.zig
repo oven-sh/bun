@@ -55,6 +55,78 @@ const ArrayBuffer = JSC.MarkedArrayBuffer;
 const Buffer = JSC.Buffer;
 const FileSystemFlags = JSC.Node.FileSystemFlags;
 
+pub const AsyncReaddirTask = struct {
+    promise: JSC.JSPromise.Strong,
+    args: Arguments.Readdir,
+    globalObject: *JSC.JSGlobalObject,
+    task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
+    result: JSC.Maybe(Return.Readdir),
+    ref: JSC.PollRef = .{},
+
+    pub fn create(globalObject: *JSC.JSGlobalObject, readdir_args: Arguments.Readdir, vm: *JSC.VirtualMachine) JSC.JSValue {
+        var task = bun.default_allocator.create(AsyncReaddirTask) catch @panic("out of memory");
+        task.* = AsyncReaddirTask{
+            .promise = JSC.JSPromise.Strong.init(globalObject),
+            .args = readdir_args,
+            .result = undefined,
+            .globalObject = globalObject,
+        };
+        task.ref.ref(vm);
+
+        JSC.WorkPool.schedule(&task.task);
+
+        return task.promise.value();
+    }
+
+    fn workPoolCallback(task: *JSC.WorkPoolTask) void {
+        var this: *AsyncReaddirTask = @fieldParentPtr(AsyncReaddirTask, "task", task);
+
+        var node_fs = NodeFS{};
+        this.result = node_fs.readdir(this.args, .promise);
+
+        this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
+    }
+
+    fn runFromJSThread(this: *AsyncReaddirTask) void {
+        var globalObject = this.globalObject;
+        var success = @as(JSC.Maybe(Return.Readdir).Tag, this.result) == .result;
+        const result = switch (this.result) {
+            .err => |err| err.toJSC(globalObject),
+            .result => |res| brk: {
+                var exceptionref: JSC.C.JSValueRef = null;
+                const out = JSC.JSValue.c(JSC.To.JS.withType(Return.Readdir, res, globalObject, &exceptionref));
+                const exception = JSC.JSValue.c(exceptionref);
+                if (exception != .zero) {
+                    success = false;
+                    break :brk exception;
+                }
+
+                break :brk out;
+            },
+        };
+        var promise_value = this.promise.value();
+        var promise = this.promise.get();
+        promise_value.ensureStillAlive();
+
+        this.deinit();
+        switch (success) {
+            false => {
+                promise.reject(globalObject, result);
+            },
+            true => {
+                promise.resolve(globalObject, result);
+            },
+        }
+    }
+
+    pub fn deinit(this: *AsyncReaddirTask) void {
+        this.ref.unref(this.globalObject.bunVM());
+        this.args.deinit();
+        this.promise.strong.deinit();
+        bun.default_allocator.destroy(this);
+    }
+};
+
 // TODO: to improve performance for all of these
 // The tagged unions for each type should become regular unions
 // and the tags should be passed in as comptime arguments to the functions performing the syscalls
@@ -2624,11 +2696,20 @@ const Return = struct {
         };
 
         pub fn toJS(this: Readdir, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-            return switch (this) {
-                .with_file_types => JSC.To.JS.withType([]const Dirent, this.with_file_types, ctx, exception),
-                .buffers => JSC.To.JS.withType([]const Buffer, this.buffers, ctx, exception),
-                .files => JSC.To.JS.withType([]const bun.String, this.files, ctx, exception),
-            };
+            switch (this) {
+                .with_file_types => {
+                    defer bun.default_allocator.free(this.with_file_types);
+                    return JSC.To.JS.withType([]const Dirent, this.with_file_types, ctx, exception);
+                },
+                .buffers => {
+                    defer bun.default_allocator.free(this.buffers);
+                    return JSC.To.JS.withType([]const Buffer, this.buffers, ctx, exception);
+                },
+                .files => {
+                    // automatically freed
+                    return JSC.To.JS.withType([]const bun.String, this.files, ctx, exception);
+                },
+            }
         }
     };
     pub const ReadFile = JSC.Node.StringOrNodeBuffer;
@@ -3575,7 +3656,7 @@ pub const NodeFS = struct {
     pub fn readdir(this: *NodeFS, args: Arguments.Readdir, comptime flavor: Flavor) Maybe(Return.Readdir) {
         return switch (args.encoding) {
             .buffer => _readdir(
-                this,
+                &this.sync_error_buf,
                 args,
                 Buffer,
                 flavor,
@@ -3583,7 +3664,7 @@ pub const NodeFS = struct {
             else => {
                 if (!args.with_file_types) {
                     return _readdir(
-                        this,
+                        &this.sync_error_buf,
                         args,
                         bun.String,
                         flavor,
@@ -3591,7 +3672,7 @@ pub const NodeFS = struct {
                 }
 
                 return _readdir(
-                    this,
+                    &this.sync_error_buf,
                     args,
                     Dirent,
                     flavor,
@@ -3601,10 +3682,10 @@ pub const NodeFS = struct {
     }
 
     pub fn _readdir(
-        this: *NodeFS,
+        buf: *[bun.MAX_PATH_BYTES]u8,
         args: Arguments.Readdir,
         comptime ExpectedType: type,
-        comptime flavor: Flavor,
+        comptime _: Flavor,
     ) Maybe(Return.Readdir) {
         const file_type = comptime switch (ExpectedType) {
             Dirent => "with_file_types",
@@ -3613,73 +3694,66 @@ pub const NodeFS = struct {
             else => unreachable,
         };
 
-        switch (comptime flavor) {
-            .sync => {
-                var path = args.path.sliceZ(&this.sync_error_buf);
-                const flags = os.O.DIRECTORY | os.O.RDONLY;
-                const fd = switch (Syscall.open(path, flags, 0)) {
-                    .err => |err| return .{
-                        .err = err.withPath(args.path.slice()),
-                    },
-                    .result => |fd_| fd_,
-                };
-                defer {
-                    _ = Syscall.close(fd);
-                }
+        var path = args.path.sliceZ(buf);
+        const flags = os.O.DIRECTORY | os.O.RDONLY;
+        const fd = switch (Syscall.open(path, flags, 0)) {
+            .err => |err| return .{
+                .err = err.withPath(args.path.slice()),
+            },
+            .result => |fd_| fd_,
+        };
+        defer {
+            _ = Syscall.close(fd);
+        }
 
-                var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
-                var dir = std.fs.Dir{ .fd = fd };
-                var iterator = DirIterator.iterate(dir);
-                var entry = iterator.next();
-                while (switch (entry) {
-                    .err => |err| {
-                        for (entries.items) |*item| {
-                            switch (comptime ExpectedType) {
-                                Dirent => {
-                                    item.name.deref();
-                                },
-                                Buffer => {
-                                    item.destroy();
-                                },
-                                bun.String => {
-                                    item.deref();
-                                },
-                                else => unreachable,
-                            }
-                        }
-
-                        entries.deinit();
-
-                        return .{
-                            .err = err.withPath(args.path.slice()),
-                        };
-                    },
-                    .result => |ent| ent,
-                }) |current| : (entry = iterator.next()) {
-                    const utf8_name = current.name.slice();
+        var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
+        var dir = std.fs.Dir{ .fd = fd };
+        var iterator = DirIterator.iterate(dir);
+        var entry = iterator.next();
+        while (switch (entry) {
+            .err => |err| {
+                for (entries.items) |*item| {
                     switch (comptime ExpectedType) {
                         Dirent => {
-                            entries.append(.{
-                                .name = bun.String.create(utf8_name),
-                                .kind = current.kind,
-                            }) catch unreachable;
+                            item.name.deref();
                         },
                         Buffer => {
-                            entries.append(Buffer.fromString(utf8_name, bun.default_allocator) catch unreachable) catch unreachable;
+                            item.destroy();
                         },
                         bun.String => {
-                            entries.append(bun.String.create(utf8_name)) catch unreachable;
+                            item.deref();
                         },
                         else => unreachable,
                     }
                 }
 
-                return .{ .result = @unionInit(Return.Readdir, file_type, entries.items) };
+                entries.deinit();
+
+                return .{
+                    .err = err.withPath(args.path.slice()),
+                };
             },
-            else => {},
+            .result => |ent| ent,
+        }) |current| : (entry = iterator.next()) {
+            const utf8_name = current.name.slice();
+            switch (comptime ExpectedType) {
+                Dirent => {
+                    entries.append(.{
+                        .name = bun.String.create(utf8_name),
+                        .kind = current.kind,
+                    }) catch unreachable;
+                },
+                Buffer => {
+                    entries.append(Buffer.fromString(utf8_name, bun.default_allocator) catch unreachable) catch unreachable;
+                },
+                bun.String => {
+                    entries.append(bun.String.create(utf8_name)) catch unreachable;
+                },
+                else => unreachable,
+            }
         }
 
-        return Maybe(Return.Readdir).todo;
+        return .{ .result = @unionInit(Return.Readdir, file_type, entries.items) };
     }
 
     pub const StringType = enum {

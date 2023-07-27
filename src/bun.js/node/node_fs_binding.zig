@@ -95,26 +95,50 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     return NodeBindingClosure.bind;
 }
 
-fn call(comptime Function: NodeFSFunctionEnum) NodeFSFunction {
-    // const FunctionType = @TypeOf(Function);
-    _ = Function;
+fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
+    const Function = @field(JSC.Node.NodeFS, @tagName(FunctionEnum));
+    const FunctionType = @TypeOf(Function);
 
-    // const function: std.builtin.Type.Fn = comptime @typeInfo(FunctionType).Fn;
-    // comptime if (function.args.len != 3) @compileError("Expected 3 arguments");
-    // const Arguments = comptime function.args[2].type orelse @compileError(std.fmt.comptimePrint("Function {s} expected to have an arg type at [2]", .{@typeName(FunctionType)}));
-    // const Result = comptime function.return_type.?;
-    // comptime if (Arguments != void and !fromJSTrait(Arguments)) @compileError(std.fmt.comptimePrint("{s} is missing fromJS()", .{@typeName(Arguments)}));
-    // comptime if (Result != void and !toJSTrait(Result)) @compileError(std.fmt.comptimePrint("{s} is missing toJS()", .{@typeName(Result)}));
+    const function: std.builtin.Type.Fn = comptime @typeInfo(FunctionType).Fn;
+    comptime if (function.params.len != 3) @compileError("Expected 3 arguments");
+    const Arguments = comptime function.params[1].type.?;
     const NodeBindingClosure = struct {
         pub fn bind(
             _: *JSC.Node.NodeJSFS,
             globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
+            callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
-            globalObject.throw("Not implemented yet", .{});
-            return .zero;
-            // var slice = ArgumentsSlice.init(arguments);
+            if (comptime FunctionEnum != .readdir) {
+                globalObject.throw("Not implemented yet", .{});
+                return .zero;
+            }
 
+            var arguments = callframe.arguments(8);
+
+            var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.ptr[0..arguments.len]);
+            var exceptionref: JSC.C.JSValueRef = null;
+            const args = if (comptime Arguments != void)
+                (Arguments.fromJS(globalObject, &slice, &exceptionref) orelse {
+                    // we might've already thrown
+                    if (exceptionref != null)
+                        globalObject.throwValue(JSC.JSValue.c(exceptionref));
+                    return .zero;
+                })
+            else
+                Arguments{};
+
+            const exception1 = JSC.JSValue.c(exceptionref);
+
+            if (exception1 != .zero) {
+                globalObject.throwValue(exception1);
+                return .zero;
+            }
+
+            // TODO: handle globalObject.throwValue
+
+            if (comptime FunctionEnum == .readdir) {
+                return JSC.Node.AsyncReaddirTask.create(globalObject, args, slice.vm);
+            }
             // defer {
             //     for (arguments.len) |arg| {
             //         JSC.C.JSValueUnprotect(ctx, arg);

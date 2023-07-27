@@ -47,8 +47,8 @@ Object.setPrototypeOf(env, {
 });
 // @ts-expect-error supports-color types are unbelievably bad
 export const enableANSIColors = (await import('supports-color')).createSupportsColor().hasBasic satisfies typeof Bun.enableANSIColors;
-export const hash = bunHash;
-Object.setPrototypeOf(hash, bunHashProto);
+export const hash = bunHash satisfies typeof Bun.hash;
+Object.setPrototypeOf(hash, bunHashProto satisfies typeof Bun.hash);
 export const unsafe = {
     gcAggressionLevel: () => 0, //! no-op
     arrayBufferToString: (buf) => new TextDecoder().decode(buf),
@@ -60,24 +60,25 @@ export const unsafe = {
         process.exit(1);
     }
 } satisfies typeof Bun['unsafe'];
-export const SHA1 = SHA1Polyfill;
-export const MD5 = MD5Polyfill;
-export const MD4 = MD4Polyfill;
-export const SHA224 = SHA224Polyfill;
-export const SHA512 = SHA512Polyfill;
-export const SHA384 = SHA384Polyfill;
-export const SHA256 = SHA256Polyfill;
-export const SHA512_256 = SHA512_256Polyfill;
 
-export const sleepSync = (s: number) => {
+export const SHA1 = SHA1Polyfill satisfies typeof Bun.SHA1;
+export const MD5 = MD5Polyfill satisfies typeof Bun.MD5;
+export const MD4 = MD4Polyfill satisfies typeof Bun.MD4;
+export const SHA224 = SHA224Polyfill satisfies typeof Bun.SHA224;
+export const SHA512 = SHA512Polyfill satisfies typeof Bun.SHA512;
+export const SHA384 = SHA384Polyfill satisfies typeof Bun.SHA384;
+export const SHA256 = SHA256Polyfill satisfies typeof Bun.SHA256;
+export const SHA512_256 = SHA512_256Polyfill satisfies typeof Bun.SHA512_256;
+
+export const sleepSync = ((s: number) => {
     if (!s || s < 0) throw new RangeError('sleepSync() argument must be a positive number');
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, s * 1000);
-};
+}) satisfies typeof Bun.sleepSync;
 
 //? This is not 1:1 matching, but no one should be relying on the exact output of this function anyway.
 //? To quote Node's inspect itself: "The output of util.inspect() may change at any time and should not be depended upon programmatically."
 //? Of course in Node's case some didn't listen and relied on the output of util.inspect() anyway, but hopefully this won't happen with this one.
-export const inspect = (arg: any): string => util.inspect(arg, {
+export const inspect = ((arg: any): string => util.inspect(arg, {
     breakLength: Infinity,
     colors: false,
     compact: true,
@@ -89,11 +90,14 @@ export const inspect = (arg: any): string => util.inspect(arg, {
     showHidden: false,
     showProxy: false,
     sorted: false
-});
-export const resolveSync = (id: string, parent: string) => import.meta.resolveSync(id, parent);
-export const resolve = async (id: string, parent: string) => import.meta.resolve!(id, parent);
+})) satisfies typeof Bun.inspect;
 
-export const allocUnsafe = (size: number) => new Uint8Array(size); //? Yes, this is faster than new Uint8Array(Buffer.allocUnsafe(size).buffer) by about 2.5x in Node.js
+export const resolveSync = ((id: string, parent: string) => import.meta.resolveSync(id, parent)) satisfies typeof Bun.resolveSync;
+export const resolve = (async (id: string, parent: string) => import.meta.resolve!(id, parent)) satisfies typeof Bun.resolve;
+
+//? Yes, this is faster than new Uint8Array(Buffer.allocUnsafe(size).buffer) by about 2.5x in Node.js
+export const allocUnsafe = ((size: number) => new Uint8Array(size)) satisfies typeof Bun.allocUnsafe;
+
 export const generateHeapSnapshot = (async (): Promise<HeapSnapshot> => {
     process.emitWarning('The polyfill for Bun.generateHeapShot is asynchronous, unlike the original which is synchronous.', {
         type: 'BunPolyfillWarning',
@@ -113,17 +117,23 @@ export const generateHeapSnapshot = (async (): Promise<HeapSnapshot> => {
     };
     // @ts-expect-error Refer to the above emitWarning call
 }) satisfies typeof Bun.generateHeapSnapshot;
-export const shrink = () => void 0; //! This is a no-op in Node.js, as there is no way to shrink the V8 heap from JS as far as I know.
-export const openInEditor = (file: string, opts?: EditorOptions) => {
+
+//! This is a no-op in Node.js, as there is no way to shrink the V8 heap from JS as far as I know.
+export const shrink = (() => void 0) satisfies typeof Bun.shrink;
+
+export const openInEditor = ((file: string, opts?: EditorOptions) => {
     const target = [{ file: path.resolve(process.cwd(), file), line: opts?.line, column: opts?.column }] as const;
     if (opts?.editor) openEditor(target, opts);
     else openEditor(target, { editor: process.env.TERM_PROGRAM ?? process.env.VISUAL ?? process.env.EDITOR ?? 'vscode' });
-};
-export const serve = () => { throw new NotImplementedError('Bun.serve', serve); };
-export const file = (path: string | URL | Uint8Array | ArrayBufferLike | number, options?: BlobPropertyBag): BunFileBlob => {
+}) satisfies typeof Bun.openInEditor;
+
+export const serve = (() => { throw new NotImplementedError('Bun.serve', serve); }) satisfies typeof Bun.serve;
+
+export const file = ((path: string | URL | Uint8Array | ArrayBufferLike | number, options?: BlobPropertyBag): BunFileBlob => {
     if (typeof path === 'object') throw new NotImplementedError('Bun.file with typed array', file);
     return new FileBlob(path, options);
-};
+}) satisfies typeof Bun.file;
+
 export const write = (async (dest: BunFileBlob | PathLike, input: string | Blob | TypedArray | ArrayBufferLike | BlobPart[] | Response | BunFileBlob): ReturnType<typeof Bun.write> => {
     if (!isFileBlob(dest)) {
         let fd: number;
@@ -160,18 +170,23 @@ export const write = (async (dest: BunFileBlob | PathLike, input: string | Blob 
         else return write(dest, String(input)); // if all else fails, it seems Bun tries to convert to string and write that.
     }
 }) satisfies typeof Bun.write;
+
 // @ts-expect-error bun-types mistake (TypedArray should be Uint8Array on SHA512_256.hash)
-export const sha = (...args) => SHA512_256.hash(...args);
+export const sha = ((...args) => SHA512_256.hash(...args)) satisfies typeof Bun.sha;
+
 export const nanoseconds = () => Math.trunc(performance.now() * 1000000);
+
 //? This just prints out some debug stuff in console, and as the name implies no one should be using it.
 //? But, just in case someone does, we'll make it a no-op function so at least the program doesn't crash trying to run the function.
 export const DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump = (() => {
     console.warn('DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump called.');
-});
-export const gzipSync = zlib.gzipSync;
-export const deflateSync = zlib.deflateSync;
-export const gunzipSync = zlib.gunzipSync;
-export const inflateSync = zlib.inflateSync;
+}) satisfies unknown; /* undocumented */
+
+export const gzipSync = zlib.gzipSync satisfies typeof Bun.gzipSync;
+export const deflateSync = zlib.deflateSync satisfies typeof Bun.deflateSync;
+export const gunzipSync = zlib.gunzipSync satisfies typeof Bun.gunzipSync;
+export const inflateSync = zlib.inflateSync satisfies typeof Bun.inflateSync;
+
 export const which = ((cmd: string, options) => {
     const opts: npm_which.Options = { all: false, nothrow: true };
     if (options?.PATH) opts.path = options.PATH;
@@ -181,6 +196,7 @@ export const which = ((cmd: string, options) => {
     else return null;
     // @ts-expect-error bun-types is missing the null on the return type
 }) satisfies typeof Bun.which;
+
 export const spawn = ((...args) => {
     let cmd: string;
     let argv: string[];
@@ -225,7 +241,7 @@ export const spawn = ((...args) => {
     const subpAsNode = subp as unknown as ChildProcess;
     const stdstreams = [subpAsNode.stdin, subpAsNode.stdout, subpAsNode.stderr] as const;
     if (subpAsNode.stdout) {
-        const rstream = streams.Readable.toWeb(subpAsNode.stdout);
+        const rstream = streams.Readable.toWeb(subpAsNode.stdout) as ReadableStream;
         Reflect.set(rstream, 'destroy', function (this: ReadableStream, err?: Error) {
             void (err ? this.cancel(String(err)) : this.cancel()).catch(() => { /* if it fails its already closed */ });
             return this;
@@ -233,7 +249,7 @@ export const spawn = ((...args) => {
         (<Mutable<Subprocess>>subp).stdout = rstream;
     }
     if (subpAsNode.stderr) {
-        const rstream = streams.Readable.toWeb(subpAsNode.stderr);
+        const rstream = streams.Readable.toWeb(subpAsNode.stderr) as ReadableStream;
         Reflect.set(rstream, 'destroy', function (this: ReadableStream, err?: Error) {
             void (err ? this.cancel(String(err)) : this.cancel()).catch(() => { /* if it fails its already closed */ });
             return this;
@@ -334,6 +350,7 @@ export const spawnSync = ((...args): SyncSubprocess => {
     subp.success = subp.exitCode === 0;
     return subp;
 }) satisfies typeof Bun.spawnSync;
+
 export const escapeHTML = ((input) => {
     const str = String(input);
     let out = '';
@@ -350,7 +367,8 @@ export const escapeHTML = ((input) => {
     }
     return out;
 }) satisfies typeof Bun.escapeHTML;
-export const readableStreamToArrayBuffer = (stream: ReadableStream<ArrayBufferView | ArrayBufferLike>): ArrayBuffer | Promise<ArrayBuffer> => {
+
+export const readableStreamToArrayBuffer = ((stream: ReadableStream<ArrayBufferView | ArrayBufferLike>): ArrayBuffer | Promise<ArrayBuffer> => {
     return (async () => {
         const sink = new ArrayBufferSink();
         const reader = stream.getReader();
@@ -361,8 +379,8 @@ export const readableStreamToArrayBuffer = (stream: ReadableStream<ArrayBufferVi
         }
         return sink.end() as ArrayBuffer;
     })();
-};
-export const readableStreamToText = async (stream: ReadableStream<ArrayBufferView | ArrayBufferLike>) => {
+}) satisfies typeof Bun.readableStreamToArrayBuffer;
+export const readableStreamToText = (async (stream: ReadableStream<ArrayBufferView | ArrayBufferLike>) => {
     let result = '';
     // @ts-expect-error Typings conflict
     const reader = stream.pipeThrough(new TextDecoderStream()).getReader();
@@ -373,22 +391,22 @@ export const readableStreamToText = async (stream: ReadableStream<ArrayBufferVie
         result += value;
     }
     return result;
-};
-export const readableStreamToBlob = async (stream: ReadableStream<any>) => {
+}) satisfies typeof Bun.readableStreamToText;
+export const readableStreamToBlob = (async (stream: ReadableStream<any>) => {
     const parts = await readableStreamToArray(stream);
     return new Blob(parts as BlobPart[]);
-};
-export const readableStreamToArray = async <T = unknown>(stream: ReadableStream<Uint8Array>) => {
+}) satisfies typeof Bun.readableStreamToBlob;
+export const readableStreamToArray = (async <T = unknown>(stream: ReadableStream<T>) => {
     const array = new Array<T>();
     const reader = stream.getReader();
     while (true) {
         const { done, value } = await reader.read();
-        if (done || !value || !value?.length) break;
+        if (done || !value || !(<any>value)?.length) break;
         array.push(value as unknown as T);
     }
     return array;
-};
-export const readableStreamToJSON = async <T = unknown>(stream: ReadableStream<Uint8Array>) => {
+}) satisfies typeof Bun.readableStreamToArray;
+export const readableStreamToJSON = (async <T = unknown>(stream: ReadableStream<Uint8Array>) => {
     const text = await readableStreamToText(stream);
     try {
         return JSON.parse(text) as T;
@@ -396,7 +414,8 @@ export const readableStreamToJSON = async <T = unknown>(stream: ReadableStream<U
         Error.captureStackTrace(err as Error, readableStreamToJSON);
         throw err;
     }
-};
+}) satisfies typeof Bun.readableStreamToJSON;
+
 export const concatArrayBuffers = ((buffers) => {
     let size = 0;
     for (const chunk of buffers) size += chunk.byteLength;
@@ -409,15 +428,18 @@ export const concatArrayBuffers = ((buffers) => {
     }
     return buffer;
 }) satisfies typeof Bun.concatArrayBuffers;
-export const ArrayBufferSink = ArrayBufferSinkPolyfill;
-export const pathToFileURL = pathToFileURLNode;
-// @tsr-expect-error this is just awful, conflicting URL types again...
-export const fileURLToPath = fileURLToPathNode;
-export const dns = dnsPolyfill;
+
+export const ArrayBufferSink = ArrayBufferSinkPolyfill satisfies typeof Bun.ArrayBufferSink;
+
+export const pathToFileURL = pathToFileURLNode satisfies typeof Bun.pathToFileURL;
+export const fileURLToPath = fileURLToPathNode satisfies typeof Bun.fileURLToPath;
+
+export const dns = dnsPolyfill satisfies typeof Bun.dns;
+
 //! It may be possible to implement plugins with Node ESM loaders, but it would take some effort and have some caveats.
 //! For now, we'll simply make all calls to Bun.plugin no-op, such that manual implementation of an external ESM loader is possible,
 //! but without needing to strip out all Bun.plugin calls from the source code for running on Node.
-const dummyPluginBuilder: PluginBuilder = {
+const dummyPluginBuilder: PluginBuilder = ({
     onLoad(constraints: PluginConstraints, callback: OnLoadCallback): void {
         return; // stubbed
     },
@@ -425,10 +447,10 @@ const dummyPluginBuilder: PluginBuilder = {
         return; // stubbed
     },
     config: { plugins: [], entrypoints: [] },
-};
+}) satisfies PluginBuilder;
 const bunPlugin = <T extends BunPlugin>(options: T) => options?.setup?.(dummyPluginBuilder) as ReturnType<T['setup']>;
 bunPlugin.clearAll = () => void 0;
-export const plugin = bunPlugin;
+export const plugin = bunPlugin satisfies typeof Bun.plugin;
 /*void plugin({
     name: 'test',
     target: 'bun',

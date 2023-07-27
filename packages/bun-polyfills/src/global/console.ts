@@ -10,14 +10,14 @@
 //}
 
 //? Implements: for await (const line of console) { ... }
-console[Symbol.asyncIterator] = (async function* () {
+console[Symbol.asyncIterator] = async function* () {
     while (true) yield await new Promise(resolve => {
         process.stdin.on('data', (data: Buffer | string) => {
             const str = data.toString('utf-8').replaceAll(/[\r\n]+/g, '');
             resolve(str);
         });
     });
-} satisfies Console[typeof Symbol.asyncIterator]);
+} satisfies Console[typeof Symbol.asyncIterator];
 
 //? Implements: Bun-exclusive console function
 console.write = ((...data) => {

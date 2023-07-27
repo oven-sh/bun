@@ -629,6 +629,18 @@ pub const PathLike = union(Tag) {
         }
     }
 
+    pub fn deinitAndUnprotect(this: *const PathLike) void {
+        switch (this.*) {
+            .slice_with_underlying_string => |val| {
+                val.deinit();
+            },
+            .buffer => |val| {
+                val.buffer.value.unprotect();
+            },
+            else => {},
+        }
+    }
+
     pub inline fn slice(this: PathLike) string {
         return switch (this) {
             .string => this.string.slice(),
@@ -917,6 +929,15 @@ pub const ArgumentsSlice = struct {
         };
     }
 
+    pub fn initAsync(vm: *JSC.VirtualMachine, arguments: []const JSC.JSValue) ArgumentsSlice {
+        return ArgumentsSlice{
+            .remaining = bun.default_allocator.dupe(JSC.JSValue, arguments),
+            .vm = vm,
+            .all = arguments,
+            .arena = bun.ArenaAllocator.init(bun.default_allocator),
+        };
+    }
+
     pub inline fn len(this: *const ArgumentsSlice) u16 {
         return @as(u16, @truncate(this.remaining.len));
     }
@@ -1026,6 +1047,12 @@ pub const PathOrFileDescriptor = union(Tag) {
     pub fn deinit(this: PathOrFileDescriptor) void {
         if (this == .path) {
             this.path.deinit();
+        }
+    }
+
+    pub fn deinitAndUnprotect(this: PathOrFileDescriptor) void {
+        if (this == .path) {
+            this.path.deinitAndUnprotect();
         }
     }
 
@@ -1962,6 +1989,7 @@ pub const Path = struct {
         defer str.deref();
         return str.toJS(globalThis);
     }
+
     pub fn normalize(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
         if (args_len == 0) return JSC.ZigString.init("").toValue(globalThis);

@@ -246,6 +246,12 @@ it("statSync throwIfNoEntry: true", () => {
   expect(() => lstatSync("/tmp/404/not-found/ok")).toThrow("No such file or directory");
 });
 
+it("stat == statSync", async () => {
+  const sync = statSync(import.meta.path);
+  const async = await promises.stat(import.meta.path);
+  expect(Object.entries(sync)).toEqual(Object.entries(async));
+});
+
 // https://github.com/oven-sh/bun/issues/1887
 it("mkdtempSync, readdirSync, rmdirSync and unlinkSync with non-ascii", () => {
   const tempdir = mkdtempSync(`${tmpdir()}/emoji-fruit-🍇 🍈 🍉 🍊 🍋`);

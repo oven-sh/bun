@@ -267,10 +267,11 @@ pub const FSEventsLoop = struct {
 
         pub const Queue = UnboundedQueue(ConcurrentTask, .next);
 
-        pub fn from(this: *ConcurrentTask, task: Task) *ConcurrentTask {
+        pub fn from(this: *ConcurrentTask, task: Task, auto_delete: bool) *ConcurrentTask {
             this.* = .{
                 .task = task,
                 .next = null,
+                .auto_delete = auto_delete,
             };
             return this;
         }
@@ -339,8 +340,7 @@ pub const FSEventsLoop = struct {
     fn enqueueTaskConcurrent(this: *FSEventsLoop, task: Task) void {
         const CF = CoreFoundation.get();
         var concurrent = bun.default_allocator.create(ConcurrentTask) catch unreachable;
-        concurrent.auto_delete = true;
-        this.tasks.push(concurrent.from(task));
+        this.tasks.push(concurrent.from(task, true));
         CF.RunLoopSourceSignal(this.signal_source);
         CF.RunLoopWakeUp(this.loop);
     }
@@ -403,8 +403,9 @@ pub const FSEventsLoop = struct {
                         }
                     }
 
-                    handle.callback(handle.ctx, path, is_file, is_rename);
+                    handle.emit(path, is_file, is_rename);
                 }
+                handle.flush();
             }
         }
     }
@@ -414,6 +415,7 @@ pub const FSEventsLoop = struct {
         this.mutex.lock();
         defer this.mutex.unlock();
         this.has_scheduled_watchers = false;
+        const watcher_count = this.watcher_count;
 
         var watchers = this.watchers.slice();
 
@@ -432,14 +434,18 @@ pub const FSEventsLoop = struct {
         // clean old paths
         if (this.paths) |p| {
             this.paths = null;
-            bun.default_allocator.destroy(p);
+            bun.default_allocator.free(p);
         }
         if (this.cf_paths) |cf| {
             this.cf_paths = null;
             CF.Release(cf);
         }
 
-        const paths = bun.default_allocator.alloc(?*anyopaque, this.watcher_count) catch unreachable;
+        if (watcher_count == 0) {
+            return;
+        }
+
+        const paths = bun.default_allocator.alloc(?*anyopaque, watcher_count) catch unreachable;
         var count: u32 = 0;
         for (watchers) |w| {
             if (w) |watcher| {
@@ -567,17 +573,20 @@ pub const FSEventsLoop = struct {
 pub const FSEventsWatcher = struct {
     path: string,
     callback: Callback,
+    flushCallback: UpdateEndCallback,
     loop: ?*FSEventsLoop,
     recursive: bool,
     ctx: ?*anyopaque,
 
     const Callback = *const fn (ctx: ?*anyopaque, path: string, is_file: bool, is_rename: bool) void;
+    const UpdateEndCallback = *const fn (ctx: ?*anyopaque) void;
 
-    pub fn init(loop: *FSEventsLoop, path: string, recursive: bool, callback: Callback, ctx: ?*anyopaque) *FSEventsWatcher {
+    pub fn init(loop: *FSEventsLoop, path: string, recursive: bool, callback: Callback, updateEnd: UpdateEndCallback, ctx: ?*anyopaque) *FSEventsWatcher {
         var this = bun.default_allocator.create(FSEventsWatcher) catch unreachable;
         this.* = FSEventsWatcher{
             .path = path,
             .callback = callback,
+            .flushCallback = updateEnd,
             .loop = loop,
             .recursive = recursive,
             .ctx = ctx,
@@ -585,6 +594,14 @@ pub const FSEventsWatcher = struct {
 
         loop.registerWatcher(this);
         return this;
+    }
+
+    pub fn emit(this: *FSEventsWatcher, path: string, is_file: bool, is_rename: bool) void {
+        this.callback(this.ctx, path, is_file, is_rename);
+    }
+
+    pub fn flush(this: *FSEventsWatcher) void {
+        this.flushCallback(this.ctx);
     }
 
     pub fn deinit(this: *FSEventsWatcher) void {
@@ -595,15 +612,15 @@ pub const FSEventsWatcher = struct {
     }
 };
 
-pub fn watch(path: string, recursive: bool, callback: FSEventsWatcher.Callback, ctx: ?*anyopaque) !*FSEventsWatcher {
+pub fn watch(path: string, recursive: bool, callback: FSEventsWatcher.Callback, updateEnd: FSEventsWatcher.UpdateEndCallback, ctx: ?*anyopaque) !*FSEventsWatcher {
     if (fsevents_default_loop) |loop| {
-        return FSEventsWatcher.init(loop, path, recursive, callback, ctx);
+        return FSEventsWatcher.init(loop, path, recursive, callback, updateEnd, ctx);
     } else {
         fsevents_default_loop_mutex.lock();
         defer fsevents_default_loop_mutex.unlock();
         if (fsevents_default_loop == null) {
             fsevents_default_loop = try FSEventsLoop.init();
         }
-        return FSEventsWatcher.init(fsevents_default_loop.?, path, recursive, callback, ctx);
+        return FSEventsWatcher.init(fsevents_default_loop.?, path, recursive, callback, updateEnd, ctx);
     }
 }

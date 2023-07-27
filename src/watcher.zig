@@ -382,6 +382,8 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         pub fn init(ctx: ContextType, fs: *Fs.FileSystem, allocator: std.mem.Allocator) !*Watcher {
             var watcher = try allocator.create(Watcher);
+            errdefer allocator.destroy(watcher);
+
             if (!PlatformWatcher.isRunning()) {
                 try PlatformWatcher.init();
             }
@@ -406,14 +408,16 @@ pub fn NewWatcher(comptime ContextType: type) type {
         }
 
         pub fn deinit(this: *Watcher, close_descriptors: bool) void {
-            this.mutex.lock();
-            defer this.mutex.unlock();
-
-            this.close_descriptors = close_descriptors;
             if (this.watchloop_handle != null) {
+                this.mutex.lock();
+                defer this.mutex.unlock();
+                this.close_descriptors = close_descriptors;
                 this.running = false;
             } else {
-                if (this.close_descriptors and this.running) {
+                // if the mutex is locked, then that's now a UAF.
+                this.mutex.assertUnlocked("Internal consistency error: watcher mutex is locked when it should not be.");
+
+                if (close_descriptors and this.running) {
                     const fds = this.watchlist.items(.fd);
                     for (fds) |fd| {
                         std.os.close(fd);
@@ -454,7 +458,19 @@ pub fn NewWatcher(comptime ContextType: type) type {
             allocator.destroy(this);
         }
 
+        pub fn remove(this: *Watcher, hash: HashType) void {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+            if (this.indexOf(hash)) |index| {
+                const fds = this.watchlist.items(.fd);
+                const fd = fds[index];
+                std.os.close(fd);
+                this.watchlist.swapRemove(index);
+            }
+        }
+
         var evict_list_i: WatchItemIndex = 0;
+
         pub fn removeAtIndex(_: *Watcher, index: WatchItemIndex, hash: HashType, parents: []HashType, comptime kind: WatchItem.Kind) void {
             std.debug.assert(index != NoWatchItem);
 

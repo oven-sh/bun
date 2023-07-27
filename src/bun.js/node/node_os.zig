@@ -110,9 +110,14 @@ pub const Os = struct {
         // Read /proc/stat to get number of CPUs and times
         if (std.fs.openFileAbsolute("/proc/stat", .{})) |file| {
             defer file.close();
-            var reader = file.reader();
+            // TODO: remove all usages of file.reader(). zig's std.io.Reader()
+            // is extremely slow and should rarely ever be used in Bun until
+            // that is fixed.
+            var buffered_reader = std.io.BufferedReader(8096, @TypeOf(file.reader())){ .unbuffered_reader = file.reader() };
+            var reader = buffered_reader.reader();
 
             // Skip the first line (aggregate of all CPUs)
+            // TODO: use indexOfNewline
             try reader.skipUntilDelimiterOrEof('\n');
 
             // Read each CPU line
@@ -148,18 +153,23 @@ pub const Os = struct {
         // Read /proc/cpuinfo to get model information (optional)
         if (std.fs.openFileAbsolute("/proc/cpuinfo", .{})) |file| {
             defer file.close();
-            var reader = file.reader();
+            // TODO: remove all usages of file.reader(). zig's std.io.Reader()
+            // is extremely slow and should rarely ever be used in Bun until
+            // that is fixed.
+            var buffered_reader = std.io.BufferedReader(8096, @TypeOf(file.reader())){ .unbuffered_reader = file.reader() };
+            var reader = buffered_reader.reader();
+
             const key_processor = "processor\t: ";
             const key_model_name = "model name\t: ";
 
             var cpu_index: u32 = 0;
             while (try reader.readUntilDelimiterOrEof(&line_buffer, '\n')) |line| {
-                if (std.mem.startsWith(u8, line, key_processor)) {
+                if (strings.hasPrefixComptime(line, key_processor)) {
                     // If this line starts a new processor, parse the index from the line
                     const digits = std.mem.trim(u8, line[key_processor.len..], " \t\n");
                     cpu_index = try std.fmt.parseInt(u32, digits, 10);
                     if (cpu_index >= num_cpus) return error.too_may_cpus;
-                } else if (std.mem.startsWith(u8, line, key_model_name)) {
+                } else if (strings.hasPrefixComptime(line, key_model_name)) {
                     // If this is the model name, extract it and store on the current cpu
                     const model_name = line[key_model_name.len..];
                     const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
@@ -176,9 +186,8 @@ pub const Os = struct {
         }
 
         // Read /sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq to get current frequency (optional)
-        var cpu_index: u32 = 0;
-        while (cpu_index < num_cpus) : (cpu_index += 1) {
-            const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+        for (0..num_cpus) |cpu_index| {
+            const cpu = JSC.JSObject.getIndex(values, globalThis, @truncate(cpu_index));
 
             var path_buf: [128]u8 = undefined;
             const path = try std.fmt.bufPrint(&path_buf, "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", .{cpu_index});
@@ -199,6 +208,7 @@ pub const Os = struct {
         return values;
     }
 
+    extern fn bun_sysconf__SC_CLK_TCK() isize;
     fn cpusImplDarwin(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
         const local_bindings = @import("../../darwin_c.zig");
         const c = std.c;
@@ -243,10 +253,7 @@ pub const Os = struct {
         }
 
         // Get the multiplier; this is the number of ms/tick
-        const unistd = @cImport({
-            @cInclude("unistd.h");
-        });
-        const ticks: i64 = unistd.sysconf(unistd._SC_CLK_TCK);
+        const ticks: i64 = bun_sysconf__SC_CLK_TCK();
         const multiplier = 1000 / @as(u64, @intCast(ticks));
 
         // Set up each CPU value in the return

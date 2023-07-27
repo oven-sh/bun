@@ -147,7 +147,13 @@ export var access = function access(...args) {
     fs.readdir(...args).then(result => callback(null, result), callback);
   },
   readFile = function readFile(...args) {
-    callbackify(fs.readFileSync, args);
+    const callback = args[args.length - 1];
+    if (typeof callback !== "function") {
+      // TODO: set code
+      throw new TypeError("Callback must be a function");
+    }
+
+    fs.readFile(...args).then(result => callback(null, result), callback);
   },
   writeFile = function writeFile(...args) {
     callbackify(fs.writeFileSync, args);

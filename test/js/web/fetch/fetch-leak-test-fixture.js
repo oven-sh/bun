@@ -14,7 +14,8 @@ await (async function runAll() {
     for (let j = 0; j < 32; j++) {
       fetches.push(fetch(SERVER));
     }
-    await Promise.all(fetches.slice(i, i + 32));
+    await Promise.all(fetches);
+    fetches.length = 0;
     i += 32;
   }
 

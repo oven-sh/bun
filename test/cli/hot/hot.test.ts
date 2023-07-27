@@ -2,9 +2,12 @@ import { spawn } from "bun";
 import { expect, it } from "bun:test";
 import { bunExe, bunEnv } from "harness";
 import { readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
+import { join } from "path";
+
+const hotRunnerRoot = join(import.meta.dir, "/hot-runner-root.js");
 
 it("should hot reload when file is overwritten", async () => {
-  const root = import.meta.dir + "/hot-runner.js";
+  const root = hotRunnerRoot;
   const runner = spawn({
     cmd: [bunExe(), "--hot", "run", root],
     env: bunEnv,
@@ -43,7 +46,7 @@ it("should hot reload when file is overwritten", async () => {
 });
 
 it("should recover from errors", async () => {
-  const root = import.meta.dir + "/hot-runner.js";
+  const root = hotRunnerRoot;
   const runner = spawn({
     cmd: [bunExe(), "--hot", "run", root],
     env: bunEnv,
@@ -111,7 +114,7 @@ it("should recover from errors", async () => {
 });
 
 it("should not hot reload when a random file is written", async () => {
-  const root = import.meta.dir + "/hot-runner.js";
+  const root = hotRunnerRoot;
   const runner = spawn({
     cmd: [bunExe(), "--hot", "run", root],
     env: bunEnv,
@@ -165,7 +168,7 @@ it("should not hot reload when a random file is written", async () => {
 });
 
 it("should hot reload when a file is deleted and rewritten", async () => {
-  const root = import.meta.dir + "/hot-runner.js";
+  const root = hotRunnerRoot;
   const runner = spawn({
     cmd: [bunExe(), "--hot", "run", root],
     env: bunEnv,
@@ -206,7 +209,7 @@ it("should hot reload when a file is deleted and rewritten", async () => {
 });
 
 it("should hot reload when a file is renamed() into place", async () => {
-  const root = import.meta.dir + "/hot-runner.js";
+  const root = hotRunnerRoot;
   const runner = spawn({
     cmd: [bunExe(), "--hot", "run", root],
     env: bunEnv,

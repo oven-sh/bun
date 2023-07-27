@@ -312,9 +312,7 @@ pub const Expect = struct {
                 return .zero;
             }
 
-            var _msg = value.toSliceOrNull(globalObject) orelse return .zero;
-            defer _msg.deinit();
-            msg = _msg.slice();
+            msg = value.toString(globalObject).toSlice(globalObject, default_allocator).slice();
         }
             
         active_test_expectation_counter.actual += 1;

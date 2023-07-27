@@ -289,6 +289,102 @@ pub const Expect = struct {
         return null;
     }
 
+    // pass here has a leading underscore to avoid name collision with the pass variable in other functions
+    pub fn _pass(
+        this: *Expect,
+        globalObject: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        var msg: []const u8 = "passes by .pass() assertion";
+
+        if (arguments.len > 0) {
+            const value = arguments[0];
+            value.ensureStillAlive();
+
+            if (!value.isString()) {
+                globalObject.throwInvalidArgumentType("pass", "message", "string");
+                return .zero;
+            }
+
+            var _msg = value.toSliceOrNull(globalObject) orelse return .zero;
+            defer _msg.deinit();
+            msg = _msg.slice();
+        }
+            
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.flags.not;
+        var pass = true;
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        if (not) {
+            const signature = comptime getSignature("pass", "", true);
+            const fmt = signature ++ "\n\n{s}\n";
+            if (Output.enable_ansi_colors) {
+                globalObject.throw(Output.prettyFmt(fmt, true), .{msg});
+                return .zero;
+            }
+            globalObject.throw(Output.prettyFmt(fmt, false), .{msg});
+            return .zero;
+        }
+
+        // should never reach here
+        return .zero;
+    }
+
+    pub fn fail(
+        this: *Expect,
+        globalObject: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        var msg: []const u8 = "fails by .fail() assertion";
+
+        if (arguments.len > 0) {
+            const value = arguments[0];
+            value.ensureStillAlive();
+
+            if (!value.isString()) {
+                globalObject.throwInvalidArgumentType("fail", "message", "string");
+                return .zero;
+            }
+
+            var _msg = value.toSliceOrNull(globalObject) orelse return .zero;
+            defer _msg.deinit();
+            msg = _msg.slice();
+        }
+            
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.flags.not;
+        var pass = false;
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        const signature = comptime getSignature("fail", "", true);
+        const fmt = signature ++ "\n\n{s}\n";
+        if (Output.enable_ansi_colors) {
+            globalObject.throw(Output.prettyFmt(fmt, true), .{msg});
+            return .zero;
+        }
+        globalObject.throw(Output.prettyFmt(fmt, false), .{msg});
+        return .zero;
+    }
+
     /// Object.is()
     pub fn toBe(
         this: *Expect,

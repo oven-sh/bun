@@ -171,8 +171,17 @@ pub const PathWatcherManager = struct {
                                 const entry_point = watcher.path.dirname;
                                 var path = file_path;
 
-                                if (path.len < entry_point.len or !bun.strings.startsWith(path, entry_point)) {
+                                if (path.len < entry_point.len) {
                                     continue;
+                                }
+                                if (watcher.path.is_file) {
+                                    if (watcher.path.hash != hash) {
+                                        continue;
+                                    }
+                                } else {
+                                    if (!bun.strings.startsWith(path, entry_point)) {
+                                        continue;
+                                    }
                                 }
                                 // Remove common prefix, unless the watched folder is "/"
                                 if (!(path.len == 1 and entry_point[0] == '/')) {
@@ -201,7 +210,6 @@ pub const PathWatcherManager = struct {
                                 if (path.len == 0 or (bun.strings.containsChar(path, '/') and !watcher.recursive)) {
                                     continue;
                                 }
-
                                 watcher.emit(path, hash, timestamp, true, event_type);
                             }
                         }
@@ -233,7 +241,7 @@ pub const PathWatcherManager = struct {
                                 const entry_point = watcher.path.dirname;
                                 var path = path_slice;
 
-                                if (path.len < entry_point.len or !bun.strings.startsWith(path, entry_point)) {
+                                if (watcher.path.is_file or path.len < entry_point.len or !bun.strings.startsWith(path, entry_point)) {
                                     continue;
                                 }
                                 // Remove common prefix, unless the watched folder is "/"

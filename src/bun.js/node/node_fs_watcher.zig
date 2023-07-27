@@ -203,13 +203,13 @@ pub const FSWatcher = struct {
 
         switch (event_type) {
             .rename => {
-                this.current_task.append(relative_path, .rename, .destroy);
+                this.current_task.append(relative_path, .rename, .free);
             },
             .change => {
-                this.current_task.append(relative_path, .change, .destroy);
+                this.current_task.append(relative_path, .change, .free);
             },
             else => {
-                this.current_task.append(relative_path, .@"error", .destroy);
+                this.current_task.append(relative_path, .@"error", .free);
             },
         }
     }

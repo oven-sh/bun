@@ -367,7 +367,7 @@ pub const PathWatcherManager = struct {
                     const path_ = path.path;
                     this.main_watcher.remove(path.hash);
                     _ = this.file_paths.remove(path_);
-                    bun.default_allocator.destroy(path_);
+                    bun.default_allocator.free(path_);
                 }
             }
         }

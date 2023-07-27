@@ -1,5 +1,5 @@
 ---
-name: Use Hono
+name: Build an HTTP server using Hono
 ---
 
 [Hono](https://github.com/honojs/hono) is a lightweight ultrafast web framework designed for the edge.

@@ -1,5 +1,5 @@
 ---
-name: Use Elysia
+name: Build an HTTP server using Elysia
 ---
 
 [Elysia](https://elysiajs.com) is a Bun-first performance focused web framework that takes full advantage of Bun's HTTP, file system, and hot reloading APIs. Get started with `bun create`.

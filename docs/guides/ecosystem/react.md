@@ -1,5 +1,5 @@
 ---
-name: Use React
+name: Use React and JSX
 ---
 
 React just works with Bun. Bun supports `.jsx` and `.tsx` files out of the box. Bun's internal transpiler converts JSX syntax into vanilla JavaScript before execution.

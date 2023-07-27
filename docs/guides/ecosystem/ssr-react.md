@@ -20,6 +20,8 @@ const stream = await renderToReadableStream(
 );
 ```
 
+---
+
 Combining this with `Bun.serve()`, we get a simple SSR HTTP server:
 
 ```tsx

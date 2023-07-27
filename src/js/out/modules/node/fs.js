@@ -97,8 +97,6 @@ var access = function access2(...args) {
   callbackify(fs.lchownSync, args);
 }, link = function link2(...args) {
   callbackify(fs.linkSync, args);
-}, lstat = function lstat2(...args) {
-  callbackify(fs.lstatSync, args);
 }, mkdir = function mkdir2(...args) {
   callbackify(fs.mkdirSync, args);
 }, mkdtemp = function mkdtemp2(...args) {
@@ -112,7 +110,7 @@ var access = function access2(...args) {
 }, readdir = function readdir2(...args) {
   const callback = args[args.length - 1];
   if (typeof callback !== "function")
-    return callbackify(fs.readdirSync, args);
+    throw new TypeError("Callback must be a function");
   fs.readdir(...args).then((result) => callback(null, result), callback);
 }, readFile = function readFile2(...args) {
   callbackify(fs.readFileSync, args);
@@ -124,8 +122,16 @@ var access = function access2(...args) {
   callbackify(fs.realpathSync, args);
 }, rename = function rename2(...args) {
   callbackify(fs.renameSync, args);
+}, lstat = function lstat2(...args) {
+  const callback = args[args.length - 1];
+  if (typeof callback !== "function")
+    throw new TypeError("Callback must be a function");
+  fs.lstat(...args).then((result) => callback(null, result), callback);
 }, stat = function stat2(...args) {
-  callbackify(fs.statSync, args);
+  const callback = args[args.length - 1];
+  if (typeof callback !== "function")
+    throw new TypeError("Callback must be a function");
+  fs.stat(...args).then((result) => callback(null, result), callback);
 }, symlink = function symlink2(...args) {
   callbackify(fs.symlinkSync, args);
 }, truncate = function truncate2(...args) {

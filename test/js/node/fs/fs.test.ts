@@ -218,7 +218,7 @@ it("promises.readdir on a large folder withFileTypes", async () => {
 
       let count = 0;
       for (let i = 0; i < 128; i++) {
-        const current = chunk[i].path;
+        const current = chunk[i].name;
         if (!current.startsWith("file-")) {
           throw new Error("invalid file name");
         }

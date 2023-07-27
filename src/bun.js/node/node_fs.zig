@@ -127,6 +127,88 @@ pub const AsyncReaddirTask = struct {
     }
 };
 
+pub const AsyncStatTask = struct {
+    promise: JSC.JSPromise.Strong,
+    args: Arguments.Stat,
+    globalObject: *JSC.JSGlobalObject,
+    task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
+    result: JSC.Maybe(Return.Stat),
+    ref: JSC.PollRef = .{},
+    is_lstat: bool = false,
+
+    pub fn create(
+        globalObject: *JSC.JSGlobalObject,
+        readdir_args: Arguments.Stat,
+        vm: *JSC.VirtualMachine,
+        is_lstat: bool,
+    ) JSC.JSValue {
+        var task = bun.default_allocator.create(AsyncStatTask) catch @panic("out of memory");
+        task.* = AsyncStatTask{
+            .promise = JSC.JSPromise.Strong.init(globalObject),
+            .args = readdir_args,
+            .result = undefined,
+            .globalObject = globalObject,
+            .is_lstat = is_lstat,
+        };
+        task.ref.ref(vm);
+
+        JSC.WorkPool.schedule(&task.task);
+
+        return task.promise.value();
+    }
+
+    fn workPoolCallback(task: *JSC.WorkPoolTask) void {
+        var this: *AsyncStatTask = @fieldParentPtr(AsyncStatTask, "task", task);
+
+        var node_fs = NodeFS{};
+        this.result = if (this.is_lstat)
+            node_fs.lstat(this.args, .promise)
+        else
+            node_fs.stat(this.args, .promise);
+
+        this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
+    }
+
+    fn runFromJSThread(this: *AsyncStatTask) void {
+        var globalObject = this.globalObject;
+        var success = @as(JSC.Maybe(Return.Lstat).Tag, this.result) == .result;
+        const result = switch (this.result) {
+            .err => |err| err.toJSC(globalObject),
+            .result => |res| brk: {
+                var exceptionref: JSC.C.JSValueRef = null;
+                const out = JSC.JSValue.c(JSC.To.JS.withType(Return.Lstat, res, globalObject, &exceptionref));
+                const exception = JSC.JSValue.c(exceptionref);
+                if (exception != .zero) {
+                    success = false;
+                    break :brk exception;
+                }
+
+                break :brk out;
+            },
+        };
+        var promise_value = this.promise.value();
+        var promise = this.promise.get();
+        promise_value.ensureStillAlive();
+
+        this.deinit();
+        switch (success) {
+            false => {
+                promise.reject(globalObject, result);
+            },
+            true => {
+                promise.resolve(globalObject, result);
+            },
+        }
+    }
+
+    pub fn deinit(this: *AsyncStatTask) void {
+        this.ref.unref(this.globalObject.bunVM());
+        this.args.deinit();
+        this.promise.strong.deinit();
+        bun.default_allocator.destroy(this);
+    }
+};
+
 // TODO: to improve performance for all of these
 // The tagged unions for each type should become regular unions
 // and the tags should be passed in as comptime arguments to the functions performing the syscalls
@@ -3226,28 +3308,22 @@ pub const NodeFS = struct {
         return Maybe(Return.Link).todo;
     }
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, comptime flavor: Flavor) Maybe(Return.Lstat) {
+        _ = flavor;
         if (args.big_int) return Maybe(Return.Lstat).todo;
 
-        switch (comptime flavor) {
-            .sync => {
-                return switch (Syscall.lstat(
-                    args.path.sliceZ(
-                        &this.sync_error_buf,
-                    ),
-                )) {
-                    .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = Stats.init(result, args.big_int) } },
-                    .err => |err| brk: {
-                        if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
-                            return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
-                        }
-                        break :brk Maybe(Return.Lstat){ .err = err };
-                    },
-                };
+        return switch (Syscall.lstat(
+            args.path.sliceZ(
+                &this.sync_error_buf,
+            ),
+        )) {
+            .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = Stats.init(result, args.big_int) } },
+            .err => |err| brk: {
+                if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
+                    return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
+                }
+                break :brk Maybe(Return.Lstat){ .err = err };
             },
-            else => {},
-        }
-
-        return Maybe(Return.Lstat).todo;
+        };
     }
 
     pub fn mkdir(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
@@ -4428,28 +4504,22 @@ pub const NodeFS = struct {
         return Maybe(Return.Rm).todo;
     }
     pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime flavor: Flavor) Maybe(Return.Stat) {
+        _ = flavor;
         if (args.big_int) return Maybe(Return.Stat).todo;
 
-        switch (comptime flavor) {
-            .sync => {
-                return @as(Maybe(Return.Stat), switch (Syscall.stat(
-                    args.path.sliceZ(
-                        &this.sync_error_buf,
-                    ),
-                )) {
-                    .result => |result| Maybe(Return.Stat){ .result = .{ .stats = Stats.init(result, args.big_int) } },
-                    .err => |err| brk: {
-                        if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
-                            return Maybe(Return.Stat){ .result = .{ .not_found = {} } };
-                        }
-                        break :brk Maybe(Return.Stat){ .err = err };
-                    },
-                });
+        return @as(Maybe(Return.Stat), switch (Syscall.stat(
+            args.path.sliceZ(
+                &this.sync_error_buf,
+            ),
+        )) {
+            .result => |result| Maybe(Return.Stat){ .result = .{ .stats = Stats.init(result, args.big_int) } },
+            .err => |err| brk: {
+                if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
+                    return Maybe(Return.Stat){ .result = .{ .not_found = {} } };
+                }
+                break :brk Maybe(Return.Stat){ .err = err };
             },
-            else => {},
-        }
-
-        return Maybe(Return.Stat).todo;
+        });
     }
 
     pub fn symlink(this: *NodeFS, args: Arguments.Symlink, comptime flavor: Flavor) Maybe(Return.Symlink) {

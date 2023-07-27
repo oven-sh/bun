@@ -122,9 +122,6 @@ export var access = function access(...args) {
   link = function link(...args) {
     callbackify(fs.linkSync, args);
   },
-  lstat = function lstat(...args) {
-    callbackify(fs.lstatSync, args);
-  },
   mkdir = function mkdir(...args) {
     callbackify(fs.mkdirSync, args);
   },
@@ -164,8 +161,23 @@ export var access = function access(...args) {
   rename = function rename(...args) {
     callbackify(fs.renameSync, args);
   },
+  lstat = function lstat(...args) {
+    const callback = args[args.length - 1];
+    if (typeof callback !== "function") {
+      // TODO: set code
+      throw new TypeError("Callback must be a function");
+    }
+
+    fs.lstat(...args).then(result => callback(null, result), callback);
+  },
   stat = function stat(...args) {
-    callbackify(fs.statSync, args);
+    const callback = args[args.length - 1];
+    if (typeof callback !== "function") {
+      // TODO: set code
+      throw new TypeError("Callback must be a function");
+    }
+
+    fs.stat(...args).then(result => callback(null, result), callback);
   },
   symlink = function symlink(...args) {
     callbackify(fs.symlinkSync, args);

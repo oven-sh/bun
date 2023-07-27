@@ -589,34 +589,30 @@ pub const FSWatcher = struct {
         is_file: bool = true,
     };
 
+    // TODO: switch to using JSC.Maybe to avoid using "unreachable" and improve error messages
     fn fdFromAbsolutePathZ(
         absolute_path_z: [:0]const u8,
     ) !PathResult {
-        var stat = try bun.C.lstat_absolute(absolute_path_z);
-        var result = PathResult{};
-
-        switch (stat.kind) {
-            .sym_link => {
+        if (std.fs.openIterableDirAbsoluteZ(absolute_path_z, .{
+            .access_sub_paths = true,
+        })) |iterable_dir| {
+            return PathResult{
+                .fd = iterable_dir.dir.fd,
+                .is_file = false,
+            };
+        } else |err| {
+            if (err == error.NotDir) {
                 var file = try std.fs.openFileAbsoluteZ(absolute_path_z, .{ .mode = .read_only });
-                result.fd = file.handle;
-                const _stat = try file.stat();
-
-                result.is_file = _stat.kind != .directory;
-            },
-            .directory => {
-                const dir = (try std.fs.openIterableDirAbsoluteZ(absolute_path_z, .{
-                    .access_sub_paths = true,
-                })).dir;
-                result.fd = dir.fd;
-                result.is_file = false;
-            },
-            else => {
-                const file = try std.fs.openFileAbsoluteZ(absolute_path_z, .{ .mode = .read_only });
-                result.fd = file.handle;
-                result.is_file = true;
-            },
+                return PathResult{
+                    .fd = file.handle,
+                    .is_file = true,
+                };
+            } else {
+                return err;
+            }
         }
-        return result;
+
+        unreachable;
     }
 
     pub fn init(args: Arguments) !*FSWatcher {

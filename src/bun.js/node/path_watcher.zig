@@ -669,7 +669,13 @@ pub const PathWatcher = struct {
                 this.* = PathWatcher{
                     .path = path,
                     .callback = callback,
-                    .fsevents_watcher = FSEvents.watch(path.path, recursive, _onFSEventUpdate, _onFSEventUpdateEnd, bun.cast(*anyopaque, this)) catch |err| {
+                    .fsevents_watcher = FSEvents.watch(
+                        path.path,
+                        recursive,
+                        bun.cast(FSEvents.FSEventsWatcher.Callback, callback),
+                        bun.cast(FSEvents.FSEventsWatcher.UpdateEndCallback, updateEndCallback),
+                        bun.cast(*anyopaque, ctx),
+                    ) catch |err| {
                         bun.default_allocator.destroy(this);
                         return err;
                     },
@@ -710,25 +716,6 @@ pub const PathWatcher = struct {
 
         try manager.registerWatcher(this);
         return this;
-    }
-
-    // TODO: remove this layer of indirection
-    pub fn _onFSEventUpdate(
-        ctx: ?*anyopaque,
-        path: string,
-        is_file: bool,
-        is_rename: bool,
-    ) void {
-        const this = bun.cast(*PathWatcher, ctx.?);
-        const event_type: EventType = if (is_rename) .rename else .change;
-        // we dont need to check for duplicates here because FSEvents already does that
-        this.callback(this.ctx, path, is_file, event_type);
-    }
-
-    // TODO: remove this layer of indirection
-    pub fn _onFSEventUpdateEnd(ctx: ?*anyopaque) void {
-        const this = bun.cast(*PathWatcher, ctx.?);
-        this.flushCallback(this.ctx);
     }
 
     pub fn emit(this: *PathWatcher, path: string, hash: PathWatcherManager.Watcher.HashType, time_stamp: i64, is_file: bool, event_type: EventType) void {

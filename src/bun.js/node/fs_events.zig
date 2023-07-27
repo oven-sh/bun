@@ -366,7 +366,11 @@ pub const FSEventsLoop = struct {
                 if (handle.symlink_path == null) {
                     handle.symlink_path = symlinkPath(handle.path, &buffer);
                     if (handle.symlink_path) |path| {
-                        handle.symlink_path = bun.default_allocator.dupe(u8, path) catch "";
+                        handle.symlink_path = bun.default_allocator.dupe(u8, path) catch |err| {
+                            handle.emit(@errorName(err), false, .@"error");
+                            handle.flush();
+                            continue;
+                        };
                     } else {
                         handle.symlink_path = "";
                     }
@@ -424,7 +428,7 @@ pub const FSEventsLoop = struct {
                         }
                     }
 
-                    handle.emit(path, is_file, is_rename);
+                    handle.emit(path, is_file, if (is_rename) .rename else .change);
                 }
                 handle.flush();
             }
@@ -600,8 +604,14 @@ pub const FSEventsWatcher = struct {
     recursive: bool,
     ctx: ?*anyopaque,
 
-    const Callback = *const fn (ctx: ?*anyopaque, path: string, is_file: bool, is_rename: bool) void;
-    const UpdateEndCallback = *const fn (ctx: ?*anyopaque) void;
+    pub const EventType = enum {
+        rename,
+        change,
+        @"error",
+    };
+
+    pub const Callback = *const fn (ctx: ?*anyopaque, path: string, is_file: bool, event_type: EventType) void;
+    pub const UpdateEndCallback = *const fn (ctx: ?*anyopaque) void;
 
     pub fn init(loop: *FSEventsLoop, path: string, recursive: bool, callback: Callback, updateEnd: UpdateEndCallback, ctx: ?*anyopaque) *FSEventsWatcher {
         var this = bun.default_allocator.create(FSEventsWatcher) catch unreachable;
@@ -619,8 +629,8 @@ pub const FSEventsWatcher = struct {
         return this;
     }
 
-    pub fn emit(this: *FSEventsWatcher, path: string, is_file: bool, is_rename: bool) void {
-        this.callback(this.ctx, path, is_file, is_rename);
+    pub fn emit(this: *FSEventsWatcher, path: string, is_file: bool, event_type: EventType) void {
+        this.callback(this.ctx, path, is_file, event_type);
     }
 
     pub fn flush(this: *FSEventsWatcher) void {

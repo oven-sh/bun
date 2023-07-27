@@ -450,6 +450,25 @@ pub const RuntimeTranspilerStore = struct {
                 return;
             };
 
+            if (vm.isWatcherEnabled()) {
+                if (input_file_fd != 0) {
+                    if (vm.bun_watcher != null and !is_node_override and
+                        std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules"))
+                    {
+                        should_close_input_file_fd = false;
+                        vm.bun_watcher.?.addFile(
+                            input_file_fd,
+                            path.text,
+                            hash,
+                            loader,
+                            0,
+                            package_json,
+                            true,
+                        ) catch {};
+                    }
+                }
+            }
+
             for (parse_result.ast.import_records.slice()) |*import_record_| {
                 var import_record: *bun.ImportRecord = import_record_;
 

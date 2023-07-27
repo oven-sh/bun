@@ -693,6 +693,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             package_json: ?*PackageJSON,
             comptime copy_file_path: bool,
         ) !void {
+            // This must lock due to concurrent transpiler
             this.mutex.lock();
             defer this.mutex.unlock();
 

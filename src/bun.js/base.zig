@@ -266,58 +266,21 @@ pub const To = struct {
 
                     // Recursion can stack overflow here
                     if (comptime std.meta.trait.isSlice(Type)) {
-                        const Child = std.meta.Child(Type);
+                        const Child = comptime std.meta.Child(Type);
 
-                        const prefill = 32;
-                        if (value.len <= prefill) {
-                            var array: [prefill]JSC.C.JSValueRef = undefined;
-                            var i: u8 = 0;
-                            const len = @min(@as(u8, @intCast(value.len)), prefill);
-                            while (i < len and exception.* == null) : (i += 1) {
-                                array[i] = if (comptime Child == JSC.C.JSValueRef)
-                                    value[i]
-                                else
-                                    To.JS.withType(Child, value[i], context, exception);
-                            }
+                        var array = JSC.JSValue.createEmptyArray(context, value.len);
+                        for (value, 0..) |item, i| {
+                            array.putIndex(
+                                context,
+                                @truncate(i),
+                                JSC.JSValue.c(To.JS.withType(Child, item, context, exception)),
+                            );
 
                             if (exception.* != null) {
                                 return null;
                             }
-
-                            // TODO: this function copies to a MarkedArgumentsBuffer
-                            // That copy is unnecessary.
-                            const obj = JSC.C.JSObjectMakeArray(context, len, &array, exception);
-
-                            if (exception.* != null) {
-                                return null;
-                            }
-                            return obj;
                         }
-
-                        {
-                            var array = bun.default_allocator.alloc(JSC.C.JSValueRef, value.len) catch unreachable;
-                            defer bun.default_allocator.free(array);
-                            var i: usize = 0;
-                            while (i < value.len and exception.* == null) : (i += 1) {
-                                array[i] = if (comptime Child == JSC.C.JSValueRef)
-                                    value[i]
-                                else
-                                    To.JS.withType(Child, value[i], context, exception);
-                            }
-
-                            if (exception.* != null) {
-                                return null;
-                            }
-
-                            // TODO: this function copies to a MarkedArgumentsBuffer
-                            // That copy is unnecessary.
-                            const obj = JSC.C.JSObjectMakeArray(context, value.len, array.ptr, exception);
-                            if (exception.* != null) {
-                                return null;
-                            }
-
-                            return obj;
-                        }
+                        return array.asObjectRef();
                     }
 
                     if (comptime std.meta.trait.isZigString(Type)) {

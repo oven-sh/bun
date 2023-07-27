@@ -74,19 +74,13 @@ pub const FSWatcher = struct {
             abort,
         };
 
-        pub const EventFreeType = enum {
-            destroy,
-            free,
-            none,
-        };
-
         pub const Entry = struct {
             file_path: string,
             event_type: EventType,
-            free_type: EventFreeType,
+            needs_free: bool,
         };
 
-        pub fn append(this: *FSWatchTask, file_path: string, event_type: EventType, free_type: EventFreeType) void {
+        pub fn append(this: *FSWatchTask, file_path: string, event_type: EventType, needs_free: bool) void {
             if (this.count == 8) {
                 this.enqueue();
                 var ctx = this.ctx;
@@ -99,7 +93,7 @@ pub const FSWatcher = struct {
             this.entries[this.count] = .{
                 .file_path = file_path,
                 .event_type = event_type,
-                .free_type = free_type,
+                .needs_free = needs_free,
             };
             this.count += 1;
         }
@@ -147,10 +141,8 @@ pub const FSWatcher = struct {
         }
         pub fn cleanEntries(this: *FSWatchTask) void {
             for (this.entries[0..this.count]) |entry| {
-                switch (entry.free_type) {
-                    .destroy => bun.default_allocator.destroy(entry.file_path),
-                    .free => bun.default_allocator.free(entry.file_path),
-                    else => {},
+                if (entry.needs_free) {
+                    bun.default_allocator.free(entry.file_path);
                 }
             }
             this.count = 0;
@@ -183,7 +175,7 @@ pub const FSWatcher = struct {
             }
         }
 
-        this.current_task.append(relative_path, event_type, .destroy);
+        this.current_task.append(relative_path, event_type, true);
     }
 
     pub fn onPathUpdate(ctx: ?*anyopaque, path: string, is_file: bool, event_type: PathWatcher.PathWatcher.EventType) void {
@@ -203,13 +195,13 @@ pub const FSWatcher = struct {
 
         switch (event_type) {
             .rename => {
-                this.current_task.append(relative_path, .rename, .free);
+                this.current_task.append(relative_path, .rename, true);
             },
             .change => {
-                this.current_task.append(relative_path, .change, .free);
+                this.current_task.append(relative_path, .change, true);
             },
             else => {
-                this.current_task.append(relative_path, .@"error", .free);
+                this.current_task.append(relative_path, .@"error", true);
             },
         }
     }
@@ -394,7 +386,7 @@ pub const FSWatcher = struct {
                 var current_task: FSWatchTask = .{
                     .ctx = this,
                 };
-                current_task.append("", .abort, .none);
+                current_task.append("", .abort, false);
                 current_task.enqueue();
             } else {
                 // watch for abortion

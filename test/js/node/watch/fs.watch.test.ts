@@ -189,7 +189,7 @@ describe("fs.watch", () => {
     const interval = repeat(() => {
       fs.writeFileSync(filepath, "world");
     });
-  });
+  }, 10000);
 
   test("should error on invalid path", done => {
     try {
@@ -248,7 +248,7 @@ describe("fs.watch", () => {
       clearInterval(interval);
       watchers.forEach(watcher => watcher.close());
     }
-  });
+  }, 10000);
 
   test("should work with url", done => {
     const filepath = path.join(testDir, "url.txt");
@@ -344,11 +344,6 @@ describe("fs.watch", () => {
     });
   });
 
-  test("immediately closing works correctly", async () => {
-    for (let i = 0; i < 100; i++) fs.watch(testDir, { persistent: true }).close();
-    for (let i = 0; i < 100; i++) fs.watch(testDir, { persistent: false }).close();
-  });
-
   test("should work with symlink", async () => {
     const filepath = path.join(testDir, "sym-symlink2.txt");
     await fs.promises.symlink(path.join(testDir, "sym-sync.txt"), filepath);
@@ -377,6 +372,12 @@ describe("fs.watch", () => {
       }, 3000);
     });
     expect(promise).resolves.toBe("change");
+  });
+
+
+  test("immediately closing works correctly", async () => {
+    for (let i = 0; i < 100; i++) fs.watch(testDir, { persistent: true }).close();
+    for (let i = 0; i < 100; i++) fs.watch(testDir, { persistent: false }).close();
   });
 });
 

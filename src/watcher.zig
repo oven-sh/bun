@@ -458,7 +458,19 @@ pub fn NewWatcher(comptime ContextType: type) type {
             allocator.destroy(this);
         }
 
+        pub fn remove(this: *Watcher, hash: HashType) void {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+            if (this.indexOf(hash)) |index| {
+                const fds = this.watchlist.items(.fd);
+                const fd = fds[index];
+                std.os.close(fd);
+                this.watchlist.swapRemove(index);
+            }
+        }
+
         var evict_list_i: WatchItemIndex = 0;
+
         pub fn removeAtIndex(_: *Watcher, index: WatchItemIndex, hash: HashType, parents: []HashType, comptime kind: WatchItem.Kind) void {
             std.debug.assert(index != NoWatchItem);
 

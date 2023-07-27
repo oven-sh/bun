@@ -30,7 +30,7 @@ new Response(Bun.file("./img.png")).headers.get("Content-Type");
 
 ---
 
-Putting it all together with [`Bun.serve()`](/docs/api/http#serving-files-bun-serve).
+Putting it all together with [`Bun.serve()`](/docs/api/http#bun-serve).
 
 ```ts
 // static file server

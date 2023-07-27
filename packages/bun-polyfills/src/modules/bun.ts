@@ -4,7 +4,7 @@ import type {
 } from 'bun';
 import type { TextDecoderStream } from 'node:stream/web';
 import { NotImplementedError, type SystemError } from '../utils/errors.js';
-import { streamToBuffer, fromWebReadableStream, isArrayBufferView, toWebReadableStream } from '../utils/misc.js';
+import { streamToBuffer, isArrayBufferView } from '../utils/misc.js';
 import dnsPolyfill from './bun/dns.js';
 import { FileSink } from './bun/filesink.js';
 import {
@@ -22,6 +22,7 @@ import v8 from 'node:v8';
 import path from 'node:path';
 import util from 'node:util';
 import zlib from 'node:zlib';
+import streams from 'node:stream';
 import chp, { type ChildProcess, type StdioOptions, type SpawnSyncReturns } from 'node:child_process';
 import { fileURLToPath as fileURLToPathNode, pathToFileURL as pathToFileURLNode } from 'node:url';
 import npm_which from 'which';
@@ -204,10 +205,10 @@ export const spawn = ((...args) => {
     if (opts.stderr) opts.stdio[2] = opts.stderr;
     for (let i = 1; i < 3; i++) { // this intentionally skips stdin
         let std = opts.stdio[i];
-        if (isArrayBufferView(std)) stdio[i] = fromWebReadableStream(new Blob([std]).stream());
-        else if (std instanceof Blob || isFileBlob(std)) stdio[i] = fromWebReadableStream(std.stream());
-        else if (std instanceof ReadableStream) stdio[i] = fromWebReadableStream(std);
-        else if (std instanceof Response || std instanceof Request) stdio[i] = fromWebReadableStream(std.body!);
+        if (isArrayBufferView(std)) stdio[i] = streams.Readable.fromWeb(new Blob([std]).stream());
+        else if (std instanceof Blob || isFileBlob(std)) stdio[i] = streams.Readable.fromWeb(std.stream());
+        else if (std instanceof ReadableStream) stdio[i] = streams.Readable.fromWeb(std);
+        else if (std instanceof Response || std instanceof Request) stdio[i] = streams.Readable.fromWeb(std.body!);
         else stdio[i] = std;
     }
     let stdinSrc: typeof opts.stdio[0] = null;
@@ -223,9 +224,9 @@ export const spawn = ((...args) => {
         stdio
     }) as unknown as Subprocess;
     const subpAsNode = subp as unknown as ChildProcess;
-    const streams = [subpAsNode.stdin, subpAsNode.stdout, subpAsNode.stderr] as const;
+    const stdstreams = [subpAsNode.stdin, subpAsNode.stdout, subpAsNode.stderr] as const;
     if (subpAsNode.stdout) {
-        const rstream = toWebReadableStream(subpAsNode.stdout);
+        const rstream = streams.Readable.toWeb(subpAsNode.stdout);
         Reflect.set(rstream, 'destroy', function (this: ReadableStream, err?: Error) {
             void (err ? this.cancel(String(err)) : this.cancel()).catch(() => { /* if it fails its already closed */ });
             return this;
@@ -233,7 +234,7 @@ export const spawn = ((...args) => {
         (<Mutable<Subprocess>>subp).stdout = rstream;
     }
     if (subpAsNode.stderr) {
-        const rstream = toWebReadableStream(subpAsNode.stderr);
+        const rstream = streams.Readable.toWeb(subpAsNode.stderr);
         Reflect.set(rstream, 'destroy', function (this: ReadableStream, err?: Error) {
             void (err ? this.cancel(String(err)) : this.cancel()).catch(() => { /* if it fails its already closed */ });
             return this;
@@ -253,9 +254,9 @@ export const spawn = ((...args) => {
     Object.defineProperty(subp, 'exited', {
         value: new Promise((resolve, reject) => {
             subpAsNode.once('exit', (code) => {
-                streams[0]?.destroy();
-                streams[1]?.destroy();
-                streams[2]?.destroy();
+                stdstreams[0]?.destroy();
+                stdstreams[1]?.destroy();
+                stdstreams[2]?.destroy();
                 subp.kill();
                 subp.unref();
                 subpAsNode.disconnect?.();
@@ -305,10 +306,10 @@ export const spawnSync = ((...args): SyncSubprocess => {
     if (opts.stderr) opts.stdio[2] = opts.stderr;
     for (let i = 1; i < 3; i++) { // this intentionally skips stdin
         let std = opts.stdio[i];
-        if (isArrayBufferView(std)) stdio[i] = fromWebReadableStream(new Blob([std]).stream());
-        else if (std instanceof Blob || isFileBlob(std)) stdio[i] = fromWebReadableStream(std.stream());
-        else if (std instanceof ReadableStream) stdio[i] = fromWebReadableStream(std);
-        else if (std instanceof Response || std instanceof Request) stdio[i] = fromWebReadableStream(std.body!);
+        if (isArrayBufferView(std)) stdio[i] = streams.Readable.fromWeb(new Blob([std]).stream());
+        else if (std instanceof Blob || isFileBlob(std)) stdio[i] = streams.Readable.fromWeb(std.stream());
+        else if (std instanceof ReadableStream) stdio[i] = streams.Readable.fromWeb(std);
+        else if (std instanceof Response || std instanceof Request) stdio[i] = streams.Readable.fromWeb(std.body!);
         else stdio[i] = std;
     }
     let input: ArrayBufferView | string | undefined;

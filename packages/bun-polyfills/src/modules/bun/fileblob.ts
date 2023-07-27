@@ -1,9 +1,8 @@
 import fs from 'node:fs';
 import tty from 'node:tty';
 import streams from 'node:stream';
-import { SystemError } from '../../utils/errors.js';
 import { FileSink } from './filesink.js';
-import { ReadableStream as NodeWebReadableStream } from 'node:stream/web';
+import { SystemError } from '../../utils/errors.js';
 import type { FileBlob as BunFileBlob, FileSink as BunFileSink } from 'bun';
 
 type NodeJSReadStream = NodeJS.ReadableStream | NodeJS.ReadWriteStream;
@@ -29,6 +28,7 @@ export const NodeJSStreamFileBlob = class FileBlob extends Blob {
     constructor(source: NodeJSStream, slice: [number?, number?] = [undefined, undefined]) {
         super(undefined, { type: 'application/octet-stream' });
         Reflect.deleteProperty(this, 'size');
+        // @ts-expect-error Caused by the conflicting stream types
         if (source === process.stdout || source === process.stdin || source === process.stderr) {
             this.#iostream = true;
         }
@@ -48,10 +48,11 @@ export const NodeJSStreamFileBlob = class FileBlob extends Blob {
         return new NodeJSStreamFileBlob(this.#source, [begin, end]);
     }
 
-    override stream(): ReadableStream<Uint8Array> {
+    override stream(): ReadableStream<Uint8Array> | ReadableStream {
         // This makes no sense but Bun does it so we will too
         if (!this.#readable) return new ReadableStream();
-        return streams.Readable.toWeb(this.#source);
+        // @ts-expect-error Caused by the stream's types conflicts
+        return streams.Readable.toWeb(this.#source) as ReadableStream;
     }
 
     #blobStackFn: AnyFunction = this.#getBlob;

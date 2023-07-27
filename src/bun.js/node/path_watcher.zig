@@ -547,8 +547,7 @@ pub const PathWatcherManager = struct {
         var watchers = this.watchers.slice();
         defer {
             if (this.watcher_count == 0) {
-                // if we are the last watcher we dont need to keep the thread pool alive
-                // this.thread_pool.shutdown();
+                // TODO: if we are the last watcher we dont need to keep the thread pool alive, should we deinit/reset it?
                 // this.thread_pool.deinit();
 
                 if (this.deinit_on_last_watcher) {
@@ -598,7 +597,6 @@ pub const PathWatcherManager = struct {
             return;
         }
 
-        // this.thread_pool.shutdown();
         this.thread_pool.deinit();
 
         this.main_watcher.deinit(false);

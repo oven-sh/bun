@@ -554,7 +554,7 @@ pub const FSEventsLoop = struct {
         this.signal_source = null;
 
         this.sem.deinit();
-        this.mutex.deinit();
+
         if (this.watcher_count > 0) {
             while (this.watchers.popOrNull()) |watcher| {
                 if (watcher) |w| {

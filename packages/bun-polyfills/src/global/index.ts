@@ -1,6 +1,6 @@
 import { version } from '../modules/bun.js';
-import './global/console.js';
-import './global/process.js';
+import './console.js';
+import './process.js';
 import os from 'node:os';
 
 //? NodeJS Blob doesn't implement Blob.json(), so we need to polyfill it.

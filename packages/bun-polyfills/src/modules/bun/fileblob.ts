@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import tty from 'node:tty';
 import streams from 'node:stream';
+import { ReadableStream as NodeWebReadableStream } from 'node:stream/web';
 import { FileSink } from './filesink.js';
 import { SystemError } from '../../utils/errors.js';
 import type { FileBlob as BunFileBlob, FileSink as BunFileSink } from 'bun';
@@ -28,7 +29,6 @@ export const NodeJSStreamFileBlob = class FileBlob extends Blob {
     constructor(source: NodeJSStream, slice: [number?, number?] = [undefined, undefined]) {
         super(undefined, { type: 'application/octet-stream' });
         Reflect.deleteProperty(this, 'size');
-        // @ts-expect-error Caused by the conflicting stream types
         if (source === process.stdout || source === process.stdin || source === process.stderr) {
             this.#iostream = true;
         }
@@ -118,7 +118,7 @@ export class FileBlob extends Blob implements BunFileBlob {
             this.#readable = streams.Readable.toWeb(rstream);
         }
     }
-    readonly #readable?: ReadableStream;
+    readonly #readable?: NodeWebReadableStream;
     readonly #error?: SystemError;
     readonly #slice: [number?, number?] = [];
     readonly #sliceSize: number = 0;
@@ -134,7 +134,7 @@ export class FileBlob extends Blob implements BunFileBlob {
     //! Bun 0.2 seems to return undefined for this, this might not be accurate or it's broken on Bun's side
     get readable(): ReadableStream<any> {
         if (this.#error) throw this.#error;
-        return this.#readable!;
+        return this.#readable! as ReadableStream;
     }
 
     get lastModified(): number {

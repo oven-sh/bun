@@ -108,7 +108,7 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
-            if (comptime FunctionEnum != .readdir and FunctionEnum != .lstat and FunctionEnum != .stat) {
+            if (comptime FunctionEnum != .readdir and FunctionEnum != .lstat and FunctionEnum != .stat and FunctionEnum != .readFile) {
                 globalObject.throw("Not implemented yet", .{});
                 return .zero;
             }
@@ -122,6 +122,7 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
                     // we might've already thrown
                     if (exceptionref != null)
                         globalObject.throwValue(JSC.JSValue.c(exceptionref));
+                    slice.deinit();
                     return .zero;
                 })
             else
@@ -131,17 +132,23 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 
             if (exception1 != .zero) {
                 globalObject.throwValue(exception1);
+
+                slice.deinit();
                 return .zero;
             }
 
             // TODO: handle globalObject.throwValue
 
             if (comptime FunctionEnum == .readdir) {
-                return JSC.Node.AsyncReaddirTask.create(globalObject, args, slice.vm);
+                return JSC.Node.AsyncReaddirTask.create(globalObject, args, slice.vm, slice.arena);
+            }
+
+            if (comptime FunctionEnum == .readFile) {
+                return JSC.Node.AsyncReadFileTask.create(globalObject, args, slice.vm, slice.arena);
             }
 
             if (comptime FunctionEnum == .stat or FunctionEnum == .lstat) {
-                return JSC.Node.AsyncStatTask.create(globalObject, args, slice.vm, FunctionEnum == .lstat);
+                return JSC.Node.AsyncStatTask.create(globalObject, args, slice.vm, FunctionEnum == .lstat, slice.arena);
             }
 
             // defer {

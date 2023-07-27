@@ -208,6 +208,9 @@ pub const FSWatcher = struct {
 
     pub fn onUpdateEnd(ctx: ?*anyopaque) void {
         const this = bun.cast(*FSWatcher, ctx.?);
+        if (this.verbose) {
+            Output.flush();
+        }
         // we only enqueue after all events are processed
         // this is called by FSEventsWatcher or PathWatcher
         this.current_task.enqueue();

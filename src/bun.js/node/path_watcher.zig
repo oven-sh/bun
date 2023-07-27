@@ -147,6 +147,10 @@ pub const PathWatcherManager = struct {
             counts[event.index] = update_count;
             const kind = kinds[event.index];
 
+            if (comptime Environment.isDebug) {
+                Output.prettyErrorln("[watch] {s} ({s}, {})", .{ file_path, @tagName(kind), event.op });
+            }
+
             switch (kind) {
                 .file => {
                     if (event.op.delete) {
@@ -160,7 +164,6 @@ pub const PathWatcherManager = struct {
 
                     if (event.op.write or event.op.delete or event.op.rename) {
                         const event_type: PathWatcher.EventType = if (event.op.delete or event.op.rename or event.op.move_to) .rename else .change;
-
                         const hash = Watcher.getHash(file_path);
 
                         for (watchers) |w| {
@@ -265,6 +268,9 @@ pub const PathWatcherManager = struct {
             }
         }
 
+        if (comptime Environment.isDebug) {
+            Output.flush();
+        }
         for (watchers) |w| {
             if (w) |watcher| {
                 if (watcher.needs_flush) watcher.flush();

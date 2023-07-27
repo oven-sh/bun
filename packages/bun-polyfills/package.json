@@ -1,0 +1,28 @@
+{
+  "type": "module",
+  "name": "bun-polyfills",
+  "module": "src/index.ts",
+  "devDependencies": {
+    "@types/murmurhash3js-revisited": "^3.0.1",
+    "@types/node": "^20.4.5",
+    "@types/which": "^3.0.0",
+    "bun-types": "^0.7.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "scripts": {
+    "clean": "rm -rf dist",
+    "check": "bunx tsc"
+  },
+  "dependencies": {
+    "@foxglove/crc": "^0.0.3",
+    "adler-32": "^1.3.1",
+    "farmhash": "^3.3.0",
+    "js-md4": "^0.3.2",
+    "murmurhash3js-revisited": "^3.0.0",
+    "open-editor": "^4.0.0",
+    "supports-color": "^9.4.0",
+    "which": "^3.0.1"
+  }
+}

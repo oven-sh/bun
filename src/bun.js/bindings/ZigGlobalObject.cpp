@@ -261,6 +261,8 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::useJITCage() = false;
         JSC::Options::useShadowRealm() = true;
         JSC::Options::useResizableArrayBuffer() = true;
+        JSC::Options::usePromiseWithResolversMethod() = true;
+
 #ifdef BUN_DEBUG
         JSC::Options::showPrivateScriptsInStackTraces() = true;
 #endif
@@ -4467,6 +4469,16 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
                 JSC::CustomGetterSetter::create(vm, lazyProcessEnvGetter, lazyProcessEnvSetter),
                 JSC::PropertyAttribute::DontDelete
                     | JSC::PropertyAttribute::CustomValue
+                    | 0);
+        }
+
+        {
+
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "isMainThread"_s);
+            object->putDirect(vm, identifier,
+                jsBoolean(scriptExecutionContext()->isMainThread()),
+                JSC::PropertyAttribute::DontDelete
+                    | JSC::PropertyAttribute::ReadOnly
                     | 0);
         }
 

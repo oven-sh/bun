@@ -159,6 +159,109 @@ it("readdirSync on import.meta.dir", () => {
   expect(match).toBe(true);
 });
 
+it("promises.readdir on a large folder", async () => {
+  const huge = join(tmpdir(), "huge-folder-" + Math.random().toString(32));
+  rmSync(huge, { force: true, recursive: true });
+  mkdirSync(huge, { recursive: true });
+  for (let i = 0; i < 128; i++) {
+    writeFileSync(join(huge, "file-" + i), "");
+  }
+  for (let j = 0; j < 4; j++) {
+    const promises = await Promise.all([
+      fs.promises.readdir(huge),
+      fs.promises.readdir(huge),
+      fs.promises.readdir(huge),
+      fs.promises.readdir(huge),
+    ]);
+
+    for (let chunk of promises) {
+      expect(chunk).toHaveLength(128);
+      chunk.sort();
+
+      let count = 0;
+      for (let i = 0; i < 128; i++) {
+        const current = chunk[i];
+        if (!current.startsWith("file-")) {
+          throw new Error("invalid file name");
+        }
+
+        const num = parseInt(current.slice(5));
+        // @ts-expect-error
+        count += !!(num >= 0 && num < 128);
+      }
+
+      expect(count).toBe(128);
+    }
+  }
+  rmSync(huge, { force: true, recursive: true });
+});
+
+it("promises.readFile", async () => {
+  expect(await fs.promises.readFile(import.meta.path, "utf-8")).toEqual(readFileSync(import.meta.path, "utf-8"));
+  expect(await fs.promises.readFile(import.meta.path, { encoding: "latin1" })).toEqual(
+    readFileSync(import.meta.path, { encoding: "latin1" }),
+  );
+
+  // We do this 20 times to check for any GC issues.
+  for (let i = 0; i < 20; i++) {
+    try {
+      await fs.promises.readFile("/i-dont-exist", "utf-8");
+      expect(false).toBeTrue();
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(Error);
+      expect(e.message).toBe("No such file or directory");
+      expect(e.code).toBe("ENOENT");
+      expect(e.errno).toBe(-2);
+      expect(e.path).toBe("/i-dont-exist");
+    }
+  }
+});
+
+it("promises.readFile with buffer as file path", async () => {
+  for (let i = 0; i < 10; i++)
+    expect(await fs.promises.readFile(Buffer.from(import.meta.path), "utf-8")).toEqual(
+      readFileSync(import.meta.path, "utf-8"),
+    );
+});
+
+it("promises.readdir on a large folder withFileTypes", async () => {
+  const huge = join(tmpdir(), "huge-folder-" + Math.random().toString(32));
+  rmSync(huge, { force: true, recursive: true });
+  mkdirSync(huge, { recursive: true });
+  let withFileTypes = { withFileTypes: true } as const;
+  for (let i = 0; i < 128; i++) {
+    writeFileSync(join(huge, "file-" + i), "");
+  }
+  for (let j = 0; j < 4; j++) {
+    const promises = await Promise.all([
+      fs.promises.readdir(huge, withFileTypes),
+      fs.promises.readdir(huge, withFileTypes),
+      fs.promises.readdir(huge, withFileTypes),
+      fs.promises.readdir(huge, withFileTypes),
+    ]);
+
+    for (let chunk of promises) {
+      expect(chunk).toHaveLength(128);
+      chunk.sort();
+
+      let count = 0;
+      for (let i = 0; i < 128; i++) {
+        const current = chunk[i].name;
+        if (!current.startsWith("file-")) {
+          throw new Error("invalid file name");
+        }
+
+        const num = parseInt(current.slice(5));
+        // @ts-expect-error
+        count += !!(num >= 0 && num < 128);
+      }
+
+      expect(count).toBe(128);
+    }
+  }
+  rmSync(huge, { force: true, recursive: true });
+});
+
 it("statSync throwIfNoEntry", () => {
   expect(statSync("/tmp/404/not-found/ok", { throwIfNoEntry: false })).toBeUndefined();
   expect(lstatSync("/tmp/404/not-found/ok", { throwIfNoEntry: false })).toBeUndefined();
@@ -169,6 +272,12 @@ it("statSync throwIfNoEntry: true", () => {
   expect(() => statSync("/tmp/404/not-found/ok")).toThrow("No such file or directory");
   expect(() => lstatSync("/tmp/404/not-found/ok", { throwIfNoEntry: true })).toThrow("No such file or directory");
   expect(() => lstatSync("/tmp/404/not-found/ok")).toThrow("No such file or directory");
+});
+
+it("stat == statSync", async () => {
+  const sync = statSync(import.meta.path);
+  const async = await promises.stat(import.meta.path);
+  expect(Object.entries(sync)).toEqual(Object.entries(async));
 });
 
 // https://github.com/oven-sh/bun/issues/1887

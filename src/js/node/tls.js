@@ -145,6 +145,12 @@ function splitEscapedAltNames(altNames) {
   ArrayPrototypePush.call(result, currentToken);
   return result;
 }
+
+// TODO:
+function canonicalizeIP(ip) {
+  return ip;
+}
+
 function checkServerIdentity(hostname, cert) {
   const subject = cert.subject;
   const altNames = cert.subjectaltname;

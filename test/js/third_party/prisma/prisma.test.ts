@@ -3,7 +3,7 @@ import { generateClient } from "./helper.ts";
 import type { PrismaClient } from "./prisma/types.d.ts";
 
 function* TestIDGenerator(): Generator<number> {
-  let i = 0;
+  let i = Math.floor(Math.random() * 10000);
   while (true) {
     yield i++;
   }

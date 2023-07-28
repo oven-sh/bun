@@ -12062,7 +12062,14 @@ fn NewParser_(
                                         // https://github.com/oven-sh/bun/issues/1907
                                         if (opts.is_class and is_typescript_enabled and strings.eqlComptime(raw, "declare")) {
                                             const scope_index = p.scopes_in_order.items.len;
-                                            _ = try p.parseProperty(kind, opts, null);
+                                            if (try p.parseProperty(kind, opts, null)) |_prop| {
+                                                var prop = _prop;
+                                                if (prop.kind == .normal and prop.value == null and opts.ts_decorators.len > 0) {
+                                                    prop.kind = .declare;
+                                                    return prop;
+                                                }
+                                            }
+
                                             p.discardScopesUpTo(scope_index);
                                             return null;
                                         }
@@ -19511,6 +19518,8 @@ fn NewParser_(
                                 }
                             }
                         }
+
+                        // TODO: prop.kind == .declare and prop.value == null
 
                         if (prop.ts_decorators.len > 0) {
                             const loc = prop.key.?.loc;

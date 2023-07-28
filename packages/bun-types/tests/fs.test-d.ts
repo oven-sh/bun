@@ -13,3 +13,5 @@ watch(".", (eventType, filename) => {
     console.log(`filename = ${filename}`);
   }
 });
+
+Bun.file("sdf").exists();

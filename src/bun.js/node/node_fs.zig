@@ -55,6 +55,247 @@ const ArrayBuffer = JSC.MarkedArrayBuffer;
 const Buffer = JSC.Buffer;
 const FileSystemFlags = JSC.Node.FileSystemFlags;
 
+pub const AsyncReaddirTask = struct {
+    promise: JSC.JSPromise.Strong,
+    args: Arguments.Readdir,
+    globalObject: *JSC.JSGlobalObject,
+    task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
+    result: JSC.Maybe(Return.Readdir),
+    ref: JSC.PollRef = .{},
+    arena: bun.ArenaAllocator,
+
+    pub fn create(globalObject: *JSC.JSGlobalObject, readdir_args: Arguments.Readdir, vm: *JSC.VirtualMachine, arena: bun.ArenaAllocator) JSC.JSValue {
+        var task = bun.default_allocator.create(AsyncReaddirTask) catch @panic("out of memory");
+        task.* = AsyncReaddirTask{
+            .promise = JSC.JSPromise.Strong.init(globalObject),
+            .args = readdir_args,
+            .result = undefined,
+            .globalObject = globalObject,
+            .arena = arena,
+        };
+        task.ref.ref(vm);
+
+        JSC.WorkPool.schedule(&task.task);
+
+        return task.promise.value();
+    }
+
+    fn workPoolCallback(task: *JSC.WorkPoolTask) void {
+        var this: *AsyncReaddirTask = @fieldParentPtr(AsyncReaddirTask, "task", task);
+
+        var node_fs = NodeFS{};
+        this.result = node_fs.readdir(this.args, .promise);
+
+        this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
+    }
+
+    fn runFromJSThread(this: *AsyncReaddirTask) void {
+        var globalObject = this.globalObject;
+        var success = @as(JSC.Maybe(Return.Readdir).Tag, this.result) == .result;
+        const result = switch (this.result) {
+            .err => |err| err.toJSC(globalObject),
+            .result => |res| brk: {
+                var exceptionref: JSC.C.JSValueRef = null;
+                const out = JSC.JSValue.c(JSC.To.JS.withType(Return.Readdir, res, globalObject, &exceptionref));
+                const exception = JSC.JSValue.c(exceptionref);
+                if (exception != .zero) {
+                    success = false;
+                    break :brk exception;
+                }
+
+                break :brk out;
+            },
+        };
+        var promise_value = this.promise.value();
+        var promise = this.promise.get();
+        promise_value.ensureStillAlive();
+
+        this.deinit();
+        switch (success) {
+            false => {
+                promise.reject(globalObject, result);
+            },
+            true => {
+                promise.resolve(globalObject, result);
+            },
+        }
+    }
+
+    pub fn deinit(this: *AsyncReaddirTask) void {
+        this.arena.deinit();
+        this.ref.unref(this.globalObject.bunVM());
+        this.args.deinitAndUnprotect();
+        this.promise.strong.deinit();
+        bun.default_allocator.destroy(this);
+    }
+};
+
+pub const AsyncStatTask = struct {
+    promise: JSC.JSPromise.Strong,
+    args: Arguments.Stat,
+    globalObject: *JSC.JSGlobalObject,
+    task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
+    result: JSC.Maybe(Return.Stat),
+    ref: JSC.PollRef = .{},
+    is_lstat: bool = false,
+    arena: bun.ArenaAllocator,
+
+    pub fn create(
+        globalObject: *JSC.JSGlobalObject,
+        readdir_args: Arguments.Stat,
+        vm: *JSC.VirtualMachine,
+        is_lstat: bool,
+        arena: bun.ArenaAllocator,
+    ) JSC.JSValue {
+        var task = bun.default_allocator.create(AsyncStatTask) catch @panic("out of memory");
+        task.* = AsyncStatTask{
+            .promise = JSC.JSPromise.Strong.init(globalObject),
+            .args = readdir_args,
+            .result = undefined,
+            .globalObject = globalObject,
+            .is_lstat = is_lstat,
+            .arena = arena,
+        };
+        task.ref.ref(vm);
+
+        JSC.WorkPool.schedule(&task.task);
+
+        return task.promise.value();
+    }
+
+    fn workPoolCallback(task: *JSC.WorkPoolTask) void {
+        var this: *AsyncStatTask = @fieldParentPtr(AsyncStatTask, "task", task);
+
+        var node_fs = NodeFS{};
+        this.result = if (this.is_lstat)
+            node_fs.lstat(this.args, .promise)
+        else
+            node_fs.stat(this.args, .promise);
+
+        this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
+    }
+
+    fn runFromJSThread(this: *AsyncStatTask) void {
+        var globalObject = this.globalObject;
+        var success = @as(JSC.Maybe(Return.Lstat).Tag, this.result) == .result;
+        const result = switch (this.result) {
+            .err => |err| err.toJSC(globalObject),
+            .result => |res| brk: {
+                var exceptionref: JSC.C.JSValueRef = null;
+                const out = JSC.JSValue.c(JSC.To.JS.withType(Return.Lstat, res, globalObject, &exceptionref));
+                const exception = JSC.JSValue.c(exceptionref);
+                if (exception != .zero) {
+                    success = false;
+                    break :brk exception;
+                }
+
+                break :brk out;
+            },
+        };
+        var promise_value = this.promise.value();
+        var promise = this.promise.get();
+        promise_value.ensureStillAlive();
+
+        this.deinit();
+        switch (success) {
+            false => {
+                promise.reject(globalObject, result);
+            },
+            true => {
+                promise.resolve(globalObject, result);
+            },
+        }
+    }
+
+    pub fn deinit(this: *AsyncStatTask) void {
+        this.arena.deinit();
+        this.ref.unref(this.globalObject.bunVM());
+        this.args.deinitAndUnprotect();
+        this.promise.strong.deinit();
+        bun.default_allocator.destroy(this);
+    }
+};
+
+pub const AsyncReadFileTask = struct {
+    promise: JSC.JSPromise.Strong,
+    args: Arguments.ReadFile,
+    globalObject: *JSC.JSGlobalObject,
+    task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
+    result: JSC.Maybe(Return.ReadFile),
+    ref: JSC.PollRef = .{},
+    arena: bun.ArenaAllocator,
+
+    pub fn create(
+        globalObject: *JSC.JSGlobalObject,
+        args: Arguments.ReadFile,
+        vm: *JSC.VirtualMachine,
+        arena: bun.ArenaAllocator,
+    ) JSC.JSValue {
+        var task = bun.default_allocator.create(AsyncReadFileTask) catch @panic("out of memory");
+        task.* = AsyncReadFileTask{
+            .promise = JSC.JSPromise.Strong.init(globalObject),
+            .args = args,
+            .result = undefined,
+            .globalObject = globalObject,
+            .arena = arena,
+        };
+        task.ref.ref(vm);
+
+        JSC.WorkPool.schedule(&task.task);
+
+        return task.promise.value();
+    }
+
+    fn workPoolCallback(task: *JSC.WorkPoolTask) void {
+        var this: *AsyncReadFileTask = @fieldParentPtr(AsyncReadFileTask, "task", task);
+
+        var node_fs = NodeFS{};
+        this.result = node_fs.readFile(this.args, .promise);
+
+        this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
+    }
+
+    fn runFromJSThread(this: *AsyncReadFileTask) void {
+        var globalObject = this.globalObject;
+        var success = @as(JSC.Maybe(Return.ReadFile).Tag, this.result) == .result;
+        const result = switch (this.result) {
+            .err => |err| err.toJSC(globalObject),
+            .result => |res| brk: {
+                var exceptionref: JSC.C.JSValueRef = null;
+                const out = JSC.JSValue.c(JSC.To.JS.withType(Return.ReadFile, res, globalObject, &exceptionref));
+                const exception = JSC.JSValue.c(exceptionref);
+                if (exception != .zero) {
+                    success = false;
+                    break :brk exception;
+                }
+
+                break :brk out;
+            },
+        };
+        var promise_value = this.promise.value();
+        var promise = this.promise.get();
+        promise_value.ensureStillAlive();
+
+        this.deinit();
+        switch (success) {
+            false => {
+                promise.reject(globalObject, result);
+            },
+            true => {
+                promise.resolve(globalObject, result);
+            },
+        }
+    }
+
+    pub fn deinit(this: *AsyncReadFileTask) void {
+        this.ref.unref(this.globalObject.bunVM());
+        this.args.deinitAndUnprotect();
+        this.promise.strong.deinit();
+        this.arena.deinit();
+        bun.default_allocator.destroy(this);
+    }
+};
+
 // TODO: to improve performance for all of these
 // The tagged unions for each type should become regular unions
 // and the tags should be passed in as comptime arguments to the functions performing the syscalls
@@ -658,6 +899,10 @@ pub const Arguments = struct {
             this.path.deinit();
         }
 
+        pub fn deinitAndUnprotect(this: Stat) void {
+            this.path.deinitAndUnprotect();
+        }
+
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Stat {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
                 if (exception.* == null) {
@@ -1153,6 +1398,10 @@ pub const Arguments = struct {
 
         pub fn deinit(this: Readdir) void {
             this.path.deinit();
+        }
+
+        pub fn deinitAndUnprotect(this: Readdir) void {
+            this.path.deinitAndUnprotect();
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Readdir {
@@ -1716,6 +1965,10 @@ pub const Arguments = struct {
 
         pub fn deinit(self: ReadFile) void {
             self.path.deinit();
+        }
+
+        pub fn deinitAndUnprotect(self: ReadFile) void {
+            self.path.deinitAndUnprotect();
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?ReadFile {
@@ -2624,11 +2877,20 @@ const Return = struct {
         };
 
         pub fn toJS(this: Readdir, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-            return switch (this) {
-                .with_file_types => JSC.To.JS.withType([]const Dirent, this.with_file_types, ctx, exception),
-                .buffers => JSC.To.JS.withType([]const Buffer, this.buffers, ctx, exception),
-                .files => JSC.To.JS.withType([]const bun.String, this.files, ctx, exception),
-            };
+            switch (this) {
+                .with_file_types => {
+                    defer bun.default_allocator.free(this.with_file_types);
+                    return JSC.To.JS.withType([]const Dirent, this.with_file_types, ctx, exception);
+                },
+                .buffers => {
+                    defer bun.default_allocator.free(this.buffers);
+                    return JSC.To.JS.withType([]const Buffer, this.buffers, ctx, exception);
+                },
+                .files => {
+                    // automatically freed
+                    return JSC.To.JS.withType([]const bun.String, this.files, ctx, exception);
+                },
+            }
         }
     };
     pub const ReadFile = JSC.Node.StringOrNodeBuffer;
@@ -3145,28 +3407,22 @@ pub const NodeFS = struct {
         return Maybe(Return.Link).todo;
     }
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, comptime flavor: Flavor) Maybe(Return.Lstat) {
+        _ = flavor;
         if (args.big_int) return Maybe(Return.Lstat).todo;
 
-        switch (comptime flavor) {
-            .sync => {
-                return switch (Syscall.lstat(
-                    args.path.sliceZ(
-                        &this.sync_error_buf,
-                    ),
-                )) {
-                    .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = Stats.init(result, args.big_int) } },
-                    .err => |err| brk: {
-                        if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
-                            return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
-                        }
-                        break :brk Maybe(Return.Lstat){ .err = err };
-                    },
-                };
+        return switch (Syscall.lstat(
+            args.path.sliceZ(
+                &this.sync_error_buf,
+            ),
+        )) {
+            .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = Stats.init(result, args.big_int) } },
+            .err => |err| brk: {
+                if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
+                    return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
+                }
+                break :brk Maybe(Return.Lstat){ .err = err };
             },
-            else => {},
-        }
-
-        return Maybe(Return.Lstat).todo;
+        };
     }
 
     pub fn mkdir(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
@@ -3575,7 +3831,7 @@ pub const NodeFS = struct {
     pub fn readdir(this: *NodeFS, args: Arguments.Readdir, comptime flavor: Flavor) Maybe(Return.Readdir) {
         return switch (args.encoding) {
             .buffer => _readdir(
-                this,
+                &this.sync_error_buf,
                 args,
                 Buffer,
                 flavor,
@@ -3583,7 +3839,7 @@ pub const NodeFS = struct {
             else => {
                 if (!args.with_file_types) {
                     return _readdir(
-                        this,
+                        &this.sync_error_buf,
                         args,
                         bun.String,
                         flavor,
@@ -3591,7 +3847,7 @@ pub const NodeFS = struct {
                 }
 
                 return _readdir(
-                    this,
+                    &this.sync_error_buf,
                     args,
                     Dirent,
                     flavor,
@@ -3601,10 +3857,10 @@ pub const NodeFS = struct {
     }
 
     pub fn _readdir(
-        this: *NodeFS,
+        buf: *[bun.MAX_PATH_BYTES]u8,
         args: Arguments.Readdir,
         comptime ExpectedType: type,
-        comptime flavor: Flavor,
+        comptime _: Flavor,
     ) Maybe(Return.Readdir) {
         const file_type = comptime switch (ExpectedType) {
             Dirent => "with_file_types",
@@ -3613,73 +3869,66 @@ pub const NodeFS = struct {
             else => unreachable,
         };
 
-        switch (comptime flavor) {
-            .sync => {
-                var path = args.path.sliceZ(&this.sync_error_buf);
-                const flags = os.O.DIRECTORY | os.O.RDONLY;
-                const fd = switch (Syscall.open(path, flags, 0)) {
-                    .err => |err| return .{
-                        .err = err.withPath(args.path.slice()),
-                    },
-                    .result => |fd_| fd_,
-                };
-                defer {
-                    _ = Syscall.close(fd);
-                }
+        var path = args.path.sliceZ(buf);
+        const flags = os.O.DIRECTORY | os.O.RDONLY;
+        const fd = switch (Syscall.open(path, flags, 0)) {
+            .err => |err| return .{
+                .err = err.withPath(args.path.slice()),
+            },
+            .result => |fd_| fd_,
+        };
+        defer {
+            _ = Syscall.close(fd);
+        }
 
-                var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
-                var dir = std.fs.Dir{ .fd = fd };
-                var iterator = DirIterator.iterate(dir);
-                var entry = iterator.next();
-                while (switch (entry) {
-                    .err => |err| {
-                        for (entries.items) |*item| {
-                            switch (comptime ExpectedType) {
-                                Dirent => {
-                                    item.name.deref();
-                                },
-                                Buffer => {
-                                    item.destroy();
-                                },
-                                bun.String => {
-                                    item.deref();
-                                },
-                                else => unreachable,
-                            }
-                        }
-
-                        entries.deinit();
-
-                        return .{
-                            .err = err.withPath(args.path.slice()),
-                        };
-                    },
-                    .result => |ent| ent,
-                }) |current| : (entry = iterator.next()) {
-                    const utf8_name = current.name.slice();
+        var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
+        var dir = std.fs.Dir{ .fd = fd };
+        var iterator = DirIterator.iterate(dir);
+        var entry = iterator.next();
+        while (switch (entry) {
+            .err => |err| {
+                for (entries.items) |*item| {
                     switch (comptime ExpectedType) {
                         Dirent => {
-                            entries.append(.{
-                                .name = bun.String.create(utf8_name),
-                                .kind = current.kind,
-                            }) catch unreachable;
+                            item.name.deref();
                         },
                         Buffer => {
-                            entries.append(Buffer.fromString(utf8_name, bun.default_allocator) catch unreachable) catch unreachable;
+                            item.destroy();
                         },
                         bun.String => {
-                            entries.append(bun.String.create(utf8_name)) catch unreachable;
+                            item.deref();
                         },
                         else => unreachable,
                     }
                 }
 
-                return .{ .result = @unionInit(Return.Readdir, file_type, entries.items) };
+                entries.deinit();
+
+                return .{
+                    .err = err.withPath(args.path.slice()),
+                };
             },
-            else => {},
+            .result => |ent| ent,
+        }) |current| : (entry = iterator.next()) {
+            const utf8_name = current.name.slice();
+            switch (comptime ExpectedType) {
+                Dirent => {
+                    entries.append(.{
+                        .name = bun.String.create(utf8_name),
+                        .kind = current.kind,
+                    }) catch unreachable;
+                },
+                Buffer => {
+                    entries.append(Buffer.fromString(utf8_name, bun.default_allocator) catch unreachable) catch unreachable;
+                },
+                bun.String => {
+                    entries.append(bun.String.create(utf8_name)) catch unreachable;
+                },
+                else => unreachable,
+            }
         }
 
-        return Maybe(Return.Readdir).todo;
+        return .{ .result = @unionInit(Return.Readdir, file_type, entries.items) };
     }
 
     pub const StringType = enum {
@@ -3707,193 +3956,186 @@ pub const NodeFS = struct {
         };
     }
 
-    pub fn readFileWithOptions(this: *NodeFS, args: Arguments.ReadFile, comptime flavor: Flavor, comptime string_type: StringType) Maybe(Return.ReadFileWithOptions) {
+    pub fn readFileWithOptions(this: *NodeFS, args: Arguments.ReadFile, comptime _: Flavor, comptime string_type: StringType) Maybe(Return.ReadFileWithOptions) {
         var path: [:0]const u8 = undefined;
-        switch (comptime flavor) {
-            .sync => {
-                const fd = switch (args.path) {
-                    .path => brk: {
-                        path = args.path.path.sliceZ(&this.sync_error_buf);
-                        if (this.vm) |vm| {
-                            if (vm.standalone_module_graph) |graph| {
-                                if (graph.find(path)) |file| {
-                                    if (args.encoding == .buffer) {
-                                        return .{
-                                            .result = .{
-                                                .buffer = Buffer.fromBytes(
-                                                    bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"),
-                                                    bun.default_allocator,
-                                                    .Uint8Array,
-                                                ),
-                                            },
-                                        };
-                                    } else if (comptime string_type == .default)
-                                        return .{
-                                            .result = .{
-                                                .string = bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"),
-                                            },
-                                        }
-                                    else
-                                        return .{
-                                            .result = .{
-                                                .null_terminated = bun.default_allocator.dupeZ(u8, file.contents) catch @panic("out of memory"),
-                                            },
-                                        };
+        const fd = switch (args.path) {
+            .path => brk: {
+                path = args.path.path.sliceZ(&this.sync_error_buf);
+                if (this.vm) |vm| {
+                    if (vm.standalone_module_graph) |graph| {
+                        if (graph.find(path)) |file| {
+                            if (args.encoding == .buffer) {
+                                return .{
+                                    .result = .{
+                                        .buffer = Buffer.fromBytes(
+                                            bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"),
+                                            bun.default_allocator,
+                                            .Uint8Array,
+                                        ),
+                                    },
+                                };
+                            } else if (comptime string_type == .default)
+                                return .{
+                                    .result = .{
+                                        .string = bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"),
+                                    },
                                 }
-                            }
+                            else
+                                return .{
+                                    .result = .{
+                                        .null_terminated = bun.default_allocator.dupeZ(u8, file.contents) catch @panic("out of memory"),
+                                    },
+                                };
                         }
-
-                        break :brk switch (Syscall.open(
-                            path,
-                            os.O.RDONLY | os.O.NOCTTY,
-                            0,
-                        )) {
-                            .err => |err| return .{
-                                .err = err.withPath(if (args.path == .path) args.path.path.slice() else ""),
-                            },
-                            .result => |fd_| fd_,
-                        };
-                    },
-                    .fd => |_fd| _fd,
-                };
-
-                defer {
-                    if (args.path == .path)
-                        _ = Syscall.close(fd);
+                    }
                 }
 
-                const stat_ = switch (Syscall.fstat(fd)) {
+                break :brk switch (Syscall.open(
+                    path,
+                    os.O.RDONLY | os.O.NOCTTY,
+                    0,
+                )) {
+                    .err => |err| return .{
+                        .err = err.withPath(if (args.path == .path) args.path.path.slice() else ""),
+                    },
+                    .result => |fd_| fd_,
+                };
+            },
+            .fd => |_fd| _fd,
+        };
+
+        defer {
+            if (args.path == .path)
+                _ = Syscall.close(fd);
+        }
+
+        const stat_ = switch (Syscall.fstat(fd)) {
+            .err => |err| return .{
+                .err = err,
+            },
+            .result => |stat_| stat_,
+        };
+
+        // Only used in DOMFormData
+        if (args.offset > 0) {
+            std.os.lseek_SET(fd, args.offset) catch {};
+        }
+
+        // For certain files, the size might be 0 but the file might still have contents.
+        const size = @as(
+            u64,
+            @intCast(@max(
+                @min(
+                    stat_.size,
+                    @as(
+                        @TypeOf(stat_.size),
+                        // Only used in DOMFormData
+                        @intCast(args.max_size orelse std.math.maxInt(
+                            JSC.WebCore.Blob.SizeType,
+                        )),
+                    ),
+                ),
+                0,
+            )),
+        ) + if (comptime string_type == .null_terminated) 1 else 0;
+
+        var buf = std.ArrayList(u8).init(bun.default_allocator);
+        buf.ensureTotalCapacityPrecise(size + 16) catch unreachable;
+        buf.expandToCapacity();
+        var total: usize = 0;
+
+        while (total < size) {
+            switch (Syscall.read(fd, buf.items.ptr[total..buf.capacity])) {
+                .err => |err| return .{
+                    .err = err,
+                },
+                .result => |amt| {
+                    total += amt;
+                    // There are cases where stat()'s size is wrong or out of date
+                    if (total > size and amt != 0) {
+                        buf.ensureUnusedCapacity(8096) catch unreachable;
+                        buf.expandToCapacity();
+                        continue;
+                    }
+
+                    if (amt == 0) {
+                        break;
+                    }
+                },
+            }
+        } else {
+            // https://github.com/oven-sh/bun/issues/1220
+            while (true) {
+                switch (Syscall.read(fd, buf.items.ptr[total..buf.capacity])) {
                     .err => |err| return .{
                         .err = err,
                     },
-                    .result => |stat_| stat_,
-                };
-
-                // Only used in DOMFormData
-                if (args.offset > 0) {
-                    std.os.lseek_SET(fd, args.offset) catch {};
-                }
-
-                // For certain files, the size might be 0 but the file might still have contents.
-                const size = @as(
-                    u64,
-                    @intCast(@max(
-                        @min(
-                            stat_.size,
-                            @as(
-                                @TypeOf(stat_.size),
-                                // Only used in DOMFormData
-                                @intCast(args.max_size orelse std.math.maxInt(
-                                    JSC.WebCore.Blob.SizeType,
-                                )),
-                            ),
-                        ),
-                        0,
-                    )),
-                ) + if (comptime string_type == .null_terminated) 1 else 0;
-
-                var buf = std.ArrayList(u8).init(bun.default_allocator);
-                buf.ensureTotalCapacityPrecise(size + 16) catch unreachable;
-                buf.expandToCapacity();
-                var total: usize = 0;
-
-                while (total < size) {
-                    switch (Syscall.read(fd, buf.items.ptr[total..buf.capacity])) {
-                        .err => |err| return .{
-                            .err = err,
-                        },
-                        .result => |amt| {
-                            total += amt;
-                            // There are cases where stat()'s size is wrong or out of date
-                            if (total > size and amt != 0) {
-                                buf.ensureUnusedCapacity(8096) catch unreachable;
-                                buf.expandToCapacity();
-                                continue;
-                            }
-
-                            if (amt == 0) {
-                                break;
-                            }
-                        },
-                    }
-                } else {
-                    // https://github.com/oven-sh/bun/issues/1220
-                    while (true) {
-                        switch (Syscall.read(fd, buf.items.ptr[total..buf.capacity])) {
-                            .err => |err| return .{
-                                .err = err,
-                            },
-                            .result => |amt| {
-                                total += amt;
-                                // There are cases where stat()'s size is wrong or out of date
-                                if (total > size and amt != 0) {
-                                    buf.ensureUnusedCapacity(8096) catch unreachable;
-                                    buf.expandToCapacity();
-                                    continue;
-                                }
-
-                                if (amt == 0) {
-                                    break;
-                                }
-                            },
+                    .result => |amt| {
+                        total += amt;
+                        // There are cases where stat()'s size is wrong or out of date
+                        if (total > size and amt != 0) {
+                            buf.ensureUnusedCapacity(8096) catch unreachable;
+                            buf.expandToCapacity();
+                            continue;
                         }
-                    }
-                }
 
-                buf.items.len = if (comptime string_type == .null_terminated) total + 1 else total;
-                if (total == 0) {
-                    buf.deinit();
-                    return switch (args.encoding) {
-                        .buffer => .{
+                        if (amt == 0) {
+                            break;
+                        }
+                    },
+                }
+            }
+        }
+
+        buf.items.len = if (comptime string_type == .null_terminated) total + 1 else total;
+        if (total == 0) {
+            buf.deinit();
+            return switch (args.encoding) {
+                .buffer => .{
+                    .result = .{
+                        .buffer = Buffer.empty,
+                    },
+                },
+                else => brk: {
+                    if (comptime string_type == .default) {
+                        break :brk .{
                             .result = .{
-                                .buffer = Buffer.empty,
+                                .string = "",
                             },
+                        };
+                    } else {
+                        break :brk .{
+                            .result = .{
+                                .null_terminated = "",
+                            },
+                        };
+                    }
+                },
+            };
+        }
+
+        return switch (args.encoding) {
+            .buffer => .{
+                .result = .{
+                    .buffer = Buffer.fromBytes(buf.items, bun.default_allocator, .Uint8Array),
+                },
+            },
+            else => brk: {
+                if (comptime string_type == .default) {
+                    break :brk .{
+                        .result = .{
+                            .string = buf.items,
                         },
-                        else => brk: {
-                            if (comptime string_type == .default) {
-                                break :brk .{
-                                    .result = .{
-                                        .string = "",
-                                    },
-                                };
-                            } else {
-                                break :brk .{
-                                    .result = .{
-                                        .null_terminated = "",
-                                    },
-                                };
-                            }
+                    };
+                } else {
+                    break :brk .{
+                        .result = .{
+                            .null_terminated = buf.toOwnedSliceSentinel(0) catch unreachable,
                         },
                     };
                 }
-
-                return switch (args.encoding) {
-                    .buffer => .{
-                        .result = .{
-                            .buffer = Buffer.fromBytes(buf.items, bun.default_allocator, .Uint8Array),
-                        },
-                    },
-                    else => brk: {
-                        if (comptime string_type == .default) {
-                            break :brk .{
-                                .result = .{
-                                    .string = buf.items,
-                                },
-                            };
-                        } else {
-                            break :brk .{
-                                .result = .{
-                                    .null_terminated = buf.toOwnedSliceSentinel(0) catch unreachable,
-                                },
-                            };
-                        }
-                    },
-                };
             },
-            else => {},
-        }
-
-        return Maybe(Return.ReadFile).todo;
+        };
     }
 
     pub fn writeFileWithPathBuffer(pathbuf: *[bun.MAX_PATH_BYTES]u8, args: Arguments.WriteFile) Maybe(Return.WriteFile) {
@@ -4354,28 +4596,22 @@ pub const NodeFS = struct {
         return Maybe(Return.Rm).todo;
     }
     pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime flavor: Flavor) Maybe(Return.Stat) {
+        _ = flavor;
         if (args.big_int) return Maybe(Return.Stat).todo;
 
-        switch (comptime flavor) {
-            .sync => {
-                return @as(Maybe(Return.Stat), switch (Syscall.stat(
-                    args.path.sliceZ(
-                        &this.sync_error_buf,
-                    ),
-                )) {
-                    .result => |result| Maybe(Return.Stat){ .result = .{ .stats = Stats.init(result, args.big_int) } },
-                    .err => |err| brk: {
-                        if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
-                            return Maybe(Return.Stat){ .result = .{ .not_found = {} } };
-                        }
-                        break :brk Maybe(Return.Stat){ .err = err };
-                    },
-                });
+        return @as(Maybe(Return.Stat), switch (Syscall.stat(
+            args.path.sliceZ(
+                &this.sync_error_buf,
+            ),
+        )) {
+            .result => |result| Maybe(Return.Stat){ .result = .{ .stats = Stats.init(result, args.big_int) } },
+            .err => |err| brk: {
+                if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
+                    return Maybe(Return.Stat){ .result = .{ .not_found = {} } };
+                }
+                break :brk Maybe(Return.Stat){ .err = err };
             },
-            else => {},
-        }
-
-        return Maybe(Return.Stat).todo;
+        });
     }
 
     pub fn symlink(this: *NodeFS, args: Arguments.Symlink, comptime flavor: Flavor) Maybe(Return.Symlink) {
@@ -4488,8 +4724,13 @@ pub const NodeFS = struct {
     }
     pub fn watch(_: *NodeFS, args: Arguments.Watch, comptime _: Flavor) Maybe(Return.Watch) {
         const watcher = args.createFSWatcher() catch |err| {
-            args.global_this.throwError(err, "Failed to watch filename");
-            return Maybe(Return.Watch){ .result = JSC.JSValue.jsUndefined() };
+            var buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), strings.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
+            defer bun.default_allocator.free(buf);
+            args.global_this.throwValue((JSC.SystemError{
+                .message = bun.String.init(buf),
+                .path = bun.String.init(args.path.slice()),
+            }).toErrorInstance(args.global_this));
+            return Maybe(Return.Watch){ .result = JSC.JSValue.undefined };
         };
         return Maybe(Return.Watch){ .result = watcher };
     }

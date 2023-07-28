@@ -189,6 +189,8 @@ pub const SavedSourceMap = struct {
     /// This is a pointer to the map located on the VirtualMachine struct
     map: *HashTable,
 
+    mutex: bun.Lock = bun.Lock.init(),
+
     pub fn onSourceMapChunk(this: *SavedSourceMap, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
         try this.putMappings(source, chunk.buffer);
     }
@@ -196,6 +198,8 @@ pub const SavedSourceMap = struct {
     pub const SourceMapHandler = js_printer.SourceMapHandler.For(SavedSourceMap, onSourceMapChunk);
 
     pub fn putMappings(this: *SavedSourceMap, source: logger.Source, mappings: MutableString) !void {
+        this.mutex.lock();
+        defer this.mutex.unlock();
         var entry = try this.map.getOrPut(bun.hash(source.path.text));
         if (entry.found_existing) {
             var value = Value.from(entry.value_ptr.*);
@@ -239,6 +243,9 @@ pub const SavedSourceMap = struct {
         line: i32,
         column: i32,
     ) ?SourceMap.Mapping {
+        this.mutex.lock();
+        defer this.mutex.unlock();
+
         var mappings = this.get(path) orelse return null;
         return SourceMap.Mapping.find(mappings, line, column);
     }
@@ -436,6 +443,8 @@ pub const VirtualMachine = struct {
     /// Used by bun:test to set global hooks for beforeAll, beforeEach, etc.
     is_in_preload: bool = false,
 
+    transpiler_store: JSC.RuntimeTranspilerStore,
+
     /// The arguments used to launch the process _after_ the script name and bun and any flags applied to Bun
     ///     "bun run foo --bar"
     ///          ["--bar"]
@@ -460,6 +469,7 @@ pub const VirtualMachine = struct {
     event_loop: *EventLoop = undefined,
 
     ref_strings: JSC.RefString.Map = undefined,
+    ref_strings_mutex: Lock = undefined,
     file_blobs: JSC.WebCore.Blob.Store.Map,
 
     source_mappings: SavedSourceMap = undefined,
@@ -741,6 +751,7 @@ pub const VirtualMachine = struct {
         this.macro_mode = true;
         this.event_loop = &this.macro_event_loop;
         Analytics.Features.macros = true;
+        this.transpiler_store.enabled = false;
     }
 
     pub fn disableMacroMode(this: *VirtualMachine) void {
@@ -748,6 +759,7 @@ pub const VirtualMachine = struct {
         this.bundler.resolver.caches.fs.use_alternate_source_cache = false;
         this.macro_mode = false;
         this.event_loop = &this.regular_event_loop;
+        this.transpiler_store.enabled = true;
     }
 
     pub fn getAPIGlobals() []js.JSClassRef {
@@ -810,7 +822,7 @@ pub const VirtualMachine = struct {
     pub inline fn isLoaded() bool {
         return VMHolder.vm != null;
     }
-
+    const RuntimeTranspilerStore = JSC.RuntimeTranspilerStore;
     pub fn initWithModuleGraph(
         allocator: std.mem.Allocator,
         log: *logger.Log,
@@ -830,6 +842,7 @@ pub const VirtualMachine = struct {
 
         vm.* = VirtualMachine{
             .global = undefined,
+            .transpiler_store = RuntimeTranspilerStore.init(allocator),
             .allocator = allocator,
             .entry_point = ServerEntryPoint{},
             .event_listeners = EventListenerMixin.Map.init(allocator),
@@ -847,6 +860,7 @@ pub const VirtualMachine = struct {
             .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
+            .ref_strings_mutex = Lock.init(),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .standalone_module_graph = graph,
             .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
@@ -932,6 +946,7 @@ pub const VirtualMachine = struct {
 
         vm.* = VirtualMachine{
             .global = undefined,
+            .transpiler_store = RuntimeTranspilerStore.init(allocator),
             .allocator = allocator,
             .entry_point = ServerEntryPoint{},
             .event_listeners = EventListenerMixin.Map.init(allocator),
@@ -949,6 +964,7 @@ pub const VirtualMachine = struct {
             .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
+            .ref_strings_mutex = Lock.init(),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
         };
@@ -1034,6 +1050,7 @@ pub const VirtualMachine = struct {
         vm.* = VirtualMachine{
             .global = undefined,
             .allocator = allocator,
+            .transpiler_store = RuntimeTranspilerStore.init(allocator),
             .entry_point = ServerEntryPoint{},
             .event_listeners = EventListenerMixin.Map.init(allocator),
             .bundler = bundler,
@@ -1050,6 +1067,7 @@ pub const VirtualMachine = struct {
             .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
+            .ref_strings_mutex = Lock.init(),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
             .standalone_module_graph = worker.parent.standalone_module_graph,
@@ -1135,6 +1153,8 @@ pub const VirtualMachine = struct {
     pub fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
         JSC.markBinding(@src());
         const hash = hash_ orelse JSC.RefString.computeHash(input_);
+        this.ref_strings_mutex.lock();
+        defer this.ref_strings_mutex.unlock();
 
         var entry = this.ref_strings.getOrPut(hash) catch unreachable;
         if (!entry.found_existing) {
@@ -1763,6 +1783,7 @@ pub const VirtualMachine = struct {
 
     pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
         this.main = entry_path;
+
         try this.entry_point.generate(
             this.allocator,
             this.bun_watcher != null,

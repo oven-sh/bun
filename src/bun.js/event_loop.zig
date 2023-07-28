@@ -179,6 +179,40 @@ pub const AnyTask = struct {
     }
 };
 
+pub const ManagedTask = struct {
+    ctx: ?*anyopaque,
+    callback: *const (fn (*anyopaque) void),
+
+    pub fn task(this: *ManagedTask) Task {
+        return Task.init(this);
+    }
+
+    pub fn run(this: *ManagedTask) void {
+        @setRuntimeSafety(false);
+        var callback = this.callback;
+        var ctx = this.ctx;
+        callback(ctx.?);
+        bun.default_allocator.destroy(this);
+    }
+
+    pub fn New(comptime Type: type, comptime Callback: anytype) type {
+        return struct {
+            pub fn init(ctx: *Type) Task {
+                var managed = bun.default_allocator.create(ManagedTask) catch @panic("out of memory!");
+                managed.* = ManagedTask{
+                    .callback = wrap,
+                    .ctx = ctx,
+                };
+                return managed.task();
+            }
+
+            pub fn wrap(this: ?*anyopaque) void {
+                @call(.always_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
+            }
+        };
+    }
+};
+
 pub const AnyTaskWithExtraContext = struct {
     ctx: ?*anyopaque,
     callback: *const (fn (*anyopaque, *anyopaque) void),
@@ -267,6 +301,7 @@ pub const Task = TaggedPointerUnion(.{
     CopyFilePromiseTask,
     WriteFileTask,
     AnyTask,
+    ManagedTask,
     napi_async_work,
     ThreadSafeFunction,
     CppTask,
@@ -291,6 +326,20 @@ pub const ConcurrentTask = struct {
         manual_deinit,
         auto_deinit,
     };
+    pub fn create(task: Task) *ConcurrentTask {
+        var created = bun.default_allocator.create(ConcurrentTask) catch @panic("out of memory!");
+        created.* = .{
+            .task = task,
+            .next = null,
+            .auto_delete = true,
+        };
+        return created;
+    }
+
+    pub fn fromCallback(ptr: anytype, comptime callback: anytype) *ConcurrentTask {
+        return create(ManagedTask.New(std.meta.Child(@TypeOf(ptr)), callback).init(ptr));
+    }
+
     pub fn from(this: *ConcurrentTask, of: anytype, auto_deinit: AutoDeinit) *ConcurrentTask {
         this.* = .{
             .task = Task.init(of),
@@ -518,6 +567,10 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, typeBaseName(@typeName(AnyTask))) => {
                     var any: *AnyTask = task.get(AnyTask).?;
+                    any.run();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ManagedTask))) => {
+                    var any: *ManagedTask = task.get(ManagedTask).?;
                     any.run();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(CppTask))) => {

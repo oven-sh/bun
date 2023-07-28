@@ -3565,7 +3565,7 @@ interface WorkerOptions {
   /**
    * Does nothing in Bun
    */
-  type?: string
+  type?: string;
 }
 
 interface WorkerEventMap {
@@ -3648,3 +3648,31 @@ declare var EventSource: {
   readonly CONNECTING: number;
   readonly OPEN: number;
 };
+
+interface PromiseConstructor {
+  /**
+   * Create a deferred promise, with exposed `resolve` and `reject` methods which can be called
+   * separately.
+   *
+   * This is useful when you want to return a Promise and have code outside the Promise
+   * resolve or reject it.
+   *
+   * ## Example
+   * ```ts
+   * const { promise, resolve, reject } = Promise.withResolvers();
+   *
+   * setTimeout(() => {
+   *  resolve("Hello world!");
+   * }, 1000);
+   *
+   * await promise; // "Hello world!"
+   * ```
+   *
+   * `Promise.withResolvers()` is a [stage3 proposal](https://github.com/tc39/proposal-promise-with-resolvers).
+   */
+  withResolvers<T>(): {
+    promise: Promise<T>;
+    resolve: (value?: T | PromiseLike<T>) => void;
+    reject: (reason?: any) => void;
+  };
+}

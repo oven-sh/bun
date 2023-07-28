@@ -60,6 +60,16 @@ us_socket_context_t* ScriptExecutionContext::webSocketContextSSL()
 
     return m_ssl_client_websockets_ctx;
 }
+extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
+
+void ScriptExecutionContext::refEventLoop()
+{
+    Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(vm())->bunVM, 1);
+}
+void ScriptExecutionContext::unrefEventLoop()
+{
+    Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(vm())->bunVM, -1);
+}
 
 ScriptExecutionContext::~ScriptExecutionContext()
 {

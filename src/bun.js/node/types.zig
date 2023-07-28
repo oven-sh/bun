@@ -629,6 +629,18 @@ pub const PathLike = union(Tag) {
         }
     }
 
+    pub fn deinitAndUnprotect(this: *const PathLike) void {
+        switch (this.*) {
+            .slice_with_underlying_string => |val| {
+                val.deinit();
+            },
+            .buffer => |val| {
+                val.buffer.value.unprotect();
+            },
+            else => {},
+        }
+    }
+
     pub inline fn slice(this: PathLike) string {
         return switch (this) {
             .string => this.string.slice(),
@@ -917,6 +929,15 @@ pub const ArgumentsSlice = struct {
         };
     }
 
+    pub fn initAsync(vm: *JSC.VirtualMachine, arguments: []const JSC.JSValue) ArgumentsSlice {
+        return ArgumentsSlice{
+            .remaining = bun.default_allocator.dupe(JSC.JSValue, arguments),
+            .vm = vm,
+            .all = arguments,
+            .arena = bun.ArenaAllocator.init(bun.default_allocator),
+        };
+    }
+
     pub inline fn len(this: *const ArgumentsSlice) u16 {
         return @as(u16, @truncate(this.remaining.len));
     }
@@ -1026,6 +1047,12 @@ pub const PathOrFileDescriptor = union(Tag) {
     pub fn deinit(this: PathOrFileDescriptor) void {
         if (this == .path) {
             this.path.deinit();
+        }
+    }
+
+    pub fn deinitAndUnprotect(this: PathOrFileDescriptor) void {
+        if (this == .path) {
+            this.path.deinitAndUnprotect();
         }
     }
 
@@ -1937,27 +1964,20 @@ pub const Path = struct {
     ) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
         if (args_len == 0) return JSC.ZigString.init("").toValue(globalThis);
-
-        var stack_fallback_allocator = std.heap.stackFallback(
-            (32 * @sizeOf(string)),
-            heap_allocator,
-        );
-        var allocator = stack_fallback_allocator.get();
         var arena = @import("root").bun.ArenaAllocator.init(heap_allocator);
         var arena_allocator = arena.allocator();
+        var stack_fallback_allocator = std.heap.stackFallback(
+            ((32 * @sizeOf(string)) + 1024),
+            arena_allocator,
+        );
+        var allocator = stack_fallback_allocator.get();
+
         defer arena.deinit();
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var to_join = allocator.alloc(string, args_len) catch unreachable;
-        var possibly_utf16 = false;
         for (args_ptr[0..args_len], 0..) |arg, i| {
             const zig_str: JSC.ZigString = arg.getZigString(globalThis);
-            if (zig_str.is16Bit()) {
-                // TODO: remove this string conversion
-                to_join[i] = zig_str.toSlice(arena_allocator).slice();
-                possibly_utf16 = true;
-            } else {
-                to_join[i] = zig_str.slice();
-            }
+            to_join[i] = zig_str.toSlice(allocator).slice();
         }
 
         const out = if (!isWindows)
@@ -1965,13 +1985,11 @@ pub const Path = struct {
         else
             PathHandler.joinStringBuf(&buf, to_join, .windows);
 
-        var out_str = JSC.ZigString.init(out);
-        if (possibly_utf16) {
-            out_str.setOutputEncoding();
-        }
-
-        return out_str.toValueGC(globalThis);
+        var str = bun.String.create(out);
+        defer str.deref();
+        return str.toJS(globalThis);
     }
+
     pub fn normalize(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
         if (args_len == 0) return JSC.ZigString.init("").toValue(globalThis);

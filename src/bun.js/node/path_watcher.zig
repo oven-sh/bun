@@ -576,7 +576,7 @@ pub const PathWatcherManager = struct {
 
                     this._decrementPathRefNoLock(watcher.path.path);
                     if (comptime Environment.isMac) {
-                        if (watcher.fsevents_watcher!null) {
+                        if (watcher.fsevents_watcher != null) {
                             break;
                         }
                     }

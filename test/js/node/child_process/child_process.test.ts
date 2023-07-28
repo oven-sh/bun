@@ -241,18 +241,6 @@ describe("exec()", () => {
   });
 });
 
-describe("fork()", () => {
-  it("should throw an error when used", () => {
-    let err;
-    try {
-      fork("index.js");
-    } catch (e) {
-      err = e;
-    }
-    expect(err instanceof Error).toBe(true);
-  });
-});
-
 describe("spawnSync()", () => {
   it("should spawn a process synchronously", () => {
     const { stdout } = spawnSync("echo", ["hello"], { encoding: "utf8" });

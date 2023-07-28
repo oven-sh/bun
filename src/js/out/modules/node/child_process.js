@@ -226,7 +226,7 @@ function execSync(command, options) {
 }
 var stdioStringToArray = function(stdio, channel) {
   const options = [];
-  switch (console.log("stdioStringToArray", stdio, channel, options, typeof options), stdio) {
+  switch (stdio) {
     case "ignore":
     case "overlapped":
     case "pipe":
@@ -241,7 +241,8 @@ var stdioStringToArray = function(stdio, channel) {
   if (channel)
     ArrayPrototypePush.call(options, channel);
   return options;
-}, fork = function(modulePath, args = [], options) {
+};
+function fork(modulePath, args = [], options) {
   modulePath = getValidatedPath(modulePath, "modulePath");
   let execArgv;
   if (args == null)
@@ -263,8 +264,9 @@ var stdioStringToArray = function(stdio, channel) {
     options.stdio = stdioStringToArray(options.silent ? "pipe" : "inherit", "ipc");
   else if (!ArrayPrototypeIncludes.call(options.stdio, "ipc"))
     throw new ERR_CHILD_PROCESS_IPC_REQUIRED("options.stdio");
-  return console.log(options.execPath, args, options), spawn(options.execPath, args, options);
-}, convertToValidSignal = function(signal) {
+  return spawn(options.execPath, args, options);
+}
+var convertToValidSignal = function(signal) {
   if (typeof signal === "number" && getSignalsToNamesMapping()[signal])
     return signal;
   if (typeof signal === "string") {
@@ -745,6 +747,7 @@ var child_process_default = {
 export {
   spawnSync,
   spawn,
+  fork,
   execSync,
   execFileSync,
   execFile,

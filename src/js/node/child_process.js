@@ -721,7 +721,7 @@ function stdioStringToArray(stdio, channel) {
  *   }} [options]
  * @returns {ChildProcess}
  */
-function fork(modulePath, args = [], options) {
+export function fork(modulePath, args = [], options) {
   modulePath = getValidatedPath(modulePath, 'modulePath');
 
   // Get options and args arguments.

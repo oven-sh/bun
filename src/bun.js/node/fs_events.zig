@@ -107,12 +107,6 @@ var fsevents_mutex: Mutex = Mutex.init();
 var fsevents_default_loop_mutex: Mutex = Mutex.init();
 var fsevents_default_loop: ?*FSEventsLoop = null;
 
-fn symlinkPath(path: string, buffer: *[bun.MAX_PATH_BYTES + 1]u8) ?string {
-    return std.fs.cwd().readLink(path, buffer[0..]) catch {
-        return null;
-    };
-}
-
 fn dlsym(handle: ?*anyopaque, comptime Type: type, comptime symbol: [:0]const u8) ?Type {
     if (std.c.dlsym(handle, symbol)) |ptr| {
         return bun.cast(Type, ptr);
@@ -358,26 +352,9 @@ pub const FSEventsLoop = struct {
         var loop = bun.cast(*FSEventsLoop, info);
         const event_flags = bun.cast([*]FSEventStreamEventFlags, eventFlags);
 
-        var buffer: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-
         for (loop.watchers.slice()) |watcher| {
             if (watcher) |handle| {
-                // get resolved path once
-                if (handle.symlink_path == null) {
-                    handle.symlink_path = symlinkPath(handle.path, &buffer);
-                    if (handle.symlink_path) |path| {
-                        handle.symlink_path = bun.default_allocator.dupe(u8, path) catch |err| {
-                            handle.emit(@errorName(err), false, .@"error");
-                            handle.flush();
-                            continue;
-                        };
-                    } else {
-                        handle.symlink_path = "";
-                    }
-                }
-                const symlink_path = handle.symlink_path.?;
-                // if real symlink path exists we use it to check path events if not we use the watcher path
-                const handle_path = if (symlink_path.len > 0) symlink_path else handle.path;
+                const handle_path = handle.path;
 
                 for (paths, 0..) |path_ptr, i| {
                     var flags = event_flags[i];
@@ -597,7 +574,6 @@ pub const FSEventsLoop = struct {
 
 pub const FSEventsWatcher = struct {
     path: string,
-    symlink_path: ?string = null,
     callback: Callback,
     flushCallback: UpdateEndCallback,
     loop: ?*FSEventsLoop,
@@ -640,11 +616,6 @@ pub const FSEventsWatcher = struct {
     pub fn deinit(this: *FSEventsWatcher) void {
         if (this.loop) |loop| {
             loop.unregisterWatcher(this);
-        }
-        if (this.symlink_path) |path| {
-            if (path.len > 0) {
-                bun.default_allocator.free(path);
-            }
         }
         bun.default_allocator.destroy(this);
     }

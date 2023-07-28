@@ -524,9 +524,40 @@ describe("fs.promises.watch", () => {
     })();
   });
 
+  test("should work with symlink -> symlink -> dir", async () => {
+    const filepath = path.join(testDir, "sym-symlink-indirect");
+    const dest = path.join(testDir, "sym-symlink-dest");
+
+    fs.rmSync(filepath, { recursive: true, force: true });
+    fs.rmSync(dest, { recursive: true, force: true });
+    fs.mkdirSync(dest, { recursive: true });
+    await fs.promises.symlink(dest, filepath);
+    const indirect_sym = path.join(testDir, "sym-symlink-to-symlink-dir");
+    await fs.promises.symlink(filepath, indirect_sym);
+
+    const watcher = fs.promises.watch(indirect_sym);
+    const interval = setInterval(() => {
+      fs.writeFileSync(path.join(indirect_sym, "hello.txt"), "hello");
+    }, 10);
+
+    const promise = (async () => {
+      try {
+        for await (const event of watcher) {
+          return event.eventType;
+        }
+      } catch {
+        expect("unreacheable").toBe(false);
+      } finally {
+        clearInterval(interval);
+      }
+    })();
+    expect(promise).resolves.toBe("rename");
+  });
+
   test("should work with symlink dir", async () => {
     const filepath = path.join(testDir, "sym-symlink-dir");
     const dest = path.join(testDir, "sym-symlink-dest");
+
     fs.rmSync(filepath, { recursive: true, force: true });
     fs.rmSync(dest, { recursive: true, force: true });
     fs.mkdirSync(dest, { recursive: true });
@@ -550,6 +581,7 @@ describe("fs.promises.watch", () => {
     })();
     expect(promise).resolves.toBe("rename");
   });
+
   test("should work with symlink", async () => {
     const filepath = path.join(testDir, "sym-symlink.txt");
     await fs.promises.symlink(path.join(testDir, "sym.txt"), filepath);

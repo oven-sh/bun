@@ -654,7 +654,8 @@ pub const PathWatcher = struct {
     mutex: Mutex,
     pending_directories: u32 = 0,
     finalized: bool = false,
-
+    // only used on macOS
+    resolved_path: ?string = null,
     pub const ChangeEvent = struct {
         hash: PathWatcherManager.Watcher.HashType = 0,
         event_type: EventType = .change,
@@ -674,11 +675,21 @@ pub const PathWatcher = struct {
 
         if (comptime Environment.isMac) {
             if (!path.is_file) {
+                var buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const resolved_path_temp = std.os.getFdPath(path.fd, &buffer) catch |err| {
+                    bun.default_allocator.destroy(this);
+                    return err;
+                };
+                const resolved_path = bun.default_allocator.dupeZ(u8, resolved_path_temp) catch |err| {
+                    bun.default_allocator.destroy(this);
+                    return err;
+                };
+                this.resolved_path = resolved_path;
                 this.* = PathWatcher{
                     .path = path,
                     .callback = callback,
                     .fsevents_watcher = FSEvents.watch(
-                        path.path,
+                        resolved_path,
                         recursive,
                         bun.cast(FSEvents.FSEventsWatcher.Callback, callback),
                         bun.cast(FSEvents.FSEventsWatcher.UpdateEndCallback, updateEndCallback),
@@ -698,7 +709,6 @@ pub const PathWatcher = struct {
                 errdefer this.deinit();
 
                 // TODO: unify better FSEvents with PathWatcherManager
-                // at this point we only need to register the watcher to keep the path alive (this just avoids another copy)
                 try manager.registerWatcher(this);
 
                 return this;
@@ -766,6 +776,12 @@ pub const PathWatcher = struct {
             } else {
                 manager.unregisterWatcher(this);
                 this.file_paths.deinitWithAllocator(bun.default_allocator);
+            }
+        }
+
+        if (comptime Environment.isMac) {
+            if (this.resolved_path) |path| {
+                bun.default_allocator.free(path);
             }
         }
 

@@ -19,7 +19,7 @@ This adds a new flag --bail to bun test. When set, it will stop running tests af
 
 ### Checklist
 
-<!-- **Please delete the sections which are not relevant, including this line. If there were no code changes, feel free to delete or ignore this section entirely** -->
+<!-- **Please delete the sections which are not relevant. If there were no code changes, feel free to delete or ignore this section entirely** -->
 
 If JavaScript/TypeScript modules or builtins changed:
 

@@ -1203,3 +1203,13 @@ it("new Request(https://example.com, otherRequest) uses url from left instead of
   expect(req2.url).toBe("http://localhost/def");
   expect(req2.headers.get("foo")).toBe("bar");
 });
+
+it("fetch() file:// works", async () => {
+  expect(await (await fetch(import.meta.url)).text()).toEqual(await Bun.file(import.meta.path).text());
+  expect(await (await fetch(new URL("fetch.test.ts", import.meta.url))).text()).toEqual(
+    await Bun.file(Bun.fileURLToPath(new URL("fetch.test.ts", import.meta.url))).text(),
+  );
+  expect(await (await fetch(new URL("file with space in the name.txt", import.meta.url))).text()).toEqual(
+    await Bun.file(Bun.fileURLToPath(new URL("file with space in the name.txt", import.meta.url))).text(),
+  );
+});

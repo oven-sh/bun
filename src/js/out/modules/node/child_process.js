@@ -23,7 +23,7 @@ function spawn(file, args, options) {
   }
   if (options.signal) {
     let onAbortListener = function() {
-      abortChildProcess(child, killSignal2);
+      abortChildProcess(child, killSignal2, options.signal.reason);
     };
     const signal = options.signal;
     if (signal.aborted)
@@ -422,12 +422,12 @@ var convertToValidSignal = function(signal) {
   }
 }, onSpawnNT = function(self) {
   self.emit("spawn");
-}, abortChildProcess = function(child, killSignal2) {
+}, abortChildProcess = function(child, killSignal2, reason) {
   if (!child)
     return;
   try {
     if (child.kill(killSignal2))
-      child.emit("error", new AbortError);
+      child.emit("error", new AbortError(void 0, { cause: reason }));
   } catch (err) {
     child.emit("error", err);
   }
@@ -486,7 +486,7 @@ var validateFunction = function(value, name) {
   const err = new TypeError(`Unknown signal: ${name}`);
   return err.code = "ERR_UNKNOWN_SIGNAL", err;
 }, ERR_INVALID_ARG_TYPE = function(name, type, value) {
-  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value}`);
+  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value?.toString()}`);
   return err.code = "ERR_INVALID_ARG_TYPE", err;
 }, ERR_INVALID_OPT_VALUE = function(name, value) {
   return new TypeError(`The value "${value}" is invalid for option "${name}"`);
@@ -542,7 +542,11 @@ class ChildProcess extends EventEmitter {
   #handleOnExit(exitCode, signalCode, err) {
     if (this.#exited)
       return;
-    if (this.exitCode = this.#handle.exitCode, this.signalCode = exitCode > 0 ? signalCode : null, this.#stdin)
+    if (signalCode)
+      this.signalCode = signalCode;
+    else
+      this.exitCode = exitCode;
+    if (this.#stdin)
       this.#stdin.destroy();
     if (this.#handle)
       this.#handle = null;

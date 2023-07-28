@@ -196,7 +196,7 @@ export function spawn(file, args, options) {
     }
 
     function onAbortListener() {
-      abortChildProcess(child, killSignal);
+      abortChildProcess(child, killSignal, options.signal.reason);
     }
   }
   return child;
@@ -998,8 +998,11 @@ export class ChildProcess extends EventEmitter {
 
   #handleOnExit(exitCode, signalCode, err) {
     if (this.#exited) return;
-    this.exitCode = this.#handle.exitCode;
-    this.signalCode = exitCode > 0 ? signalCode : null;
+    if (signalCode) {
+      this.signalCode = signalCode;
+    } else {
+      this.exitCode = exitCode;
+    }
 
     if (this.#stdin) {
       this.#stdin.destroy();
@@ -1375,11 +1378,11 @@ function onSpawnNT(self) {
   self.emit("spawn");
 }
 
-function abortChildProcess(child, killSignal) {
+function abortChildProcess(child, killSignal, reason) {
   if (!child) return;
   try {
     if (child.kill(killSignal)) {
-      child.emit("error", new AbortError());
+      child.emit("error", new AbortError(undefined, { cause: reason }));
     }
   } catch (err) {
     child.emit("error", err);
@@ -1785,7 +1788,7 @@ function ERR_UNKNOWN_SIGNAL(name) {
 }
 
 function ERR_INVALID_ARG_TYPE(name, type, value) {
-  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value}`);
+  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value?.toString()}`);
   err.code = "ERR_INVALID_ARG_TYPE";
   return err;
 }

@@ -510,7 +510,7 @@ pub const PathWatcherManager = struct {
             try this.main_watcher.addFile(path.fd, path.path, path.hash, options.Loader.file, 0, null, false);
         } else {
             if (comptime Environment.isMac) {
-                if (this.fsevents_watcher != null) {
+                if (watcher.fsevents_watcher != null) {
                     return;
                 }
             }

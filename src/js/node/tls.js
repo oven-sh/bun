@@ -5,6 +5,9 @@ const InternalTCPSocket = net[Symbol.for("::bunternal::")];
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
 
 const { RegExp, Array, String } = $lazy("primordials");
+
+const { rootCertificates, canonicalizeIP } = $lazy("internal/tls");
+
 const SymbolReplace = Symbol.replace;
 const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];
 const RegExpPrototypeExec = RegExp.prototype.exec;
@@ -144,11 +147,6 @@ function splitEscapedAltNames(altNames) {
   }
   ArrayPrototypePush.call(result, currentToken);
   return result;
-}
-
-// TODO:
-function canonicalizeIP(ip) {
-  return ip;
 }
 
 function checkServerIdentity(hostname, cert) {
@@ -683,7 +681,7 @@ function convertALPNProtocols(protocols, out) {
     out.ALPNProtocols = protocols;
   }
 }
-var rootCertificates = $lazy("rootCertificates");
+
 var exports = {
   [Symbol.for("CommonJS")]: 0,
   CLIENT_RENEG_LIMIT,

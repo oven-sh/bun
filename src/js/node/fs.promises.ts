@@ -27,7 +27,7 @@ export function watch(
     eventType: string;
     filename: string | Buffer | undefined;
   };
-  const events: Array<Event> = [];
+
   if (filename instanceof URL) {
     throw new TypeError("Watch URLs are not supported yet");
   } else if (Buffer.isBuffer(filename)) {

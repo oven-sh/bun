@@ -216,5 +216,5 @@ export function createRequireCache() {
 
 $getter;
 export function main(this: ImportMetaObject) {
-  return this.path === Bun.main;
+  return this.path === Bun.main && Bun.isMainThread;
 }

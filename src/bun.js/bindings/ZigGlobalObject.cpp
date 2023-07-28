@@ -4454,6 +4454,16 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
 
         {
 
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "isMainThread"_s);
+            object->putDirect(vm, identifier,
+                jsBoolean(scriptExecutionContext()->isMainThread()),
+                JSC::PropertyAttribute::DontDelete
+                    | JSC::PropertyAttribute::ReadOnly
+                    | 0);
+        }
+
+        {
+
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, pathToFileURLString);
             object->putDirectNativeFunction(vm, this, identifier, 1, functionPathToFileURL, ImplementationVisibility::Public, NoIntrinsic,
                 JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);

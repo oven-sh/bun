@@ -3179,6 +3179,11 @@ declare module "bun" {
 
   const plugin: BunRegisterPlugin;
 
+  /**
+   * Is the current global scope the main thread?
+   */
+  const isMainThread: boolean;
+
   interface Socket<Data = undefined> {
     /**
      * Write `data` to the socket

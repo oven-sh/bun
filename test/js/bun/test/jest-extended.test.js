@@ -15,17 +15,22 @@ const inspect = isBun ? Bun.inspect : require("util").inspect;
 
 // https://jest-extended.jestcommunity.dev/docs/matchers/
 describe("jest-extended", () => {
-  test.todo("pass()", () => {
-    expect(typeof expect().pass).toBe("function");
-    expect(() => expect().not.pass()).toThrow();
+  test("pass()", () => {
+    expect(expect().pass).toBeTypeOf("function");
+    expect(() => expect("ignored value").not.pass()).toThrow("passes by .pass() assertion");
+    expect(() => expect().not.pass("message here")).toThrow("message here");
+    expect(() => expect().pass(1)).toThrow("Expected message to be a string for 'pass'.");
     expect().pass();
     expect().pass("message ignored");
   });
 
-  test.todo("fail()", () => {
-    expect(typeof expect().fail).toBe("function");
+  test("fail()", () => {
+    expect(expect().fail).toBeTypeOf("function");
     expect(() => expect("ignored value").fail("message here")).toThrow("message here");
+    expect(() => expect().fail()).toThrow("fails by .fail() assertion");
+    expect(() => expect().fail(1)).toThrow("Expected message to be a string for 'fail'.");
     expect().not.fail();
+    expect().not.fail("message ignored");
   });
 
   describe("toBeEmpty()", () => {

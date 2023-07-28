@@ -108,6 +108,14 @@ export default [
       },
     },
     proto: {
+      pass: {
+        fn: "_pass",
+        length: 1,
+      },
+      fail: {
+        fn: "fail",
+        length: 1,
+      },
       toBe: {
         fn: "toBe",
         length: 1,

@@ -224,10 +224,47 @@ function execSync(command, options) {
     throw err;
   return ret.stdout;
 }
-function fork() {
-  throw new Error("Not implemented");
-}
-var convertToValidSignal = function(signal) {
+var stdioStringToArray = function(stdio, channel) {
+  const options = [];
+  switch (console.log("stdioStringToArray", stdio, channel, options, typeof options), stdio) {
+    case "ignore":
+    case "overlapped":
+    case "pipe":
+      ArrayPrototypePush.call(options, stdio, stdio, stdio);
+      break;
+    case "inherit":
+      ArrayPrototypePush.call(options, 0, 1, 2);
+      break;
+    default:
+      throw new ERR_INVALID_ARG_VALUE("stdio", stdio);
+  }
+  if (channel)
+    ArrayPrototypePush.call(options, channel);
+  return options;
+}, fork = function(modulePath, args = [], options) {
+  modulePath = getValidatedPath(modulePath, "modulePath");
+  let execArgv;
+  if (args == null)
+    args = [];
+  else if (typeof args === "object" && !ArrayIsArray(args))
+    options = args, args = [];
+  else
+    validateArray(args, "args");
+  if (options != null)
+    validateObject(options, "options");
+  if (options = { __proto__: null, ...options, shell: !1 }, options.execPath = options.execPath || process.execPath, validateArgumentNullCheck(options.execPath, "options.execPath"), execArgv = options.execArgv || process.execArgv, validateArgumentsNullCheck(execArgv, "options.execArgv"), execArgv === process.execArgv && process._eval != null) {
+    const index = ArrayPrototypeLastIndexOf.call(execArgv, process._eval);
+    if (index > 0)
+      execArgv = ArrayPrototypeSlice.call(execArgv), ArrayPrototypeSplice.call(execArgv, index - 1, 2);
+  }
+  if (args = [...execArgv, modulePath, ...args], typeof options.stdio === "string")
+    options.stdio = stdioStringToArray(options.stdio, "ipc");
+  else if (!ArrayIsArray(options.stdio))
+    options.stdio = stdioStringToArray(options.silent ? "pipe" : "inherit", "ipc");
+  else if (!ArrayPrototypeIncludes.call(options.stdio, "ipc"))
+    throw new ERR_CHILD_PROCESS_IPC_REQUIRED("options.stdio");
+  return console.log(options.execPath, args, options), spawn(options.execPath, args, options);
+}, convertToValidSignal = function(signal) {
   if (typeof signal === "number" && getSignalsToNamesMapping()[signal])
     return signal;
   if (typeof signal === "string") {
@@ -453,7 +490,10 @@ var validateFunction = function(value, name) {
   return new TypeError(`The value "${value}" is invalid for option "${name}"`);
 }, ERR_INVALID_ARG_VALUE = function(name, value, reason) {
   return new Error(`The value "${value}" is invalid for argument '${name}'. Reason: ${reason}`);
-}, signals = constants.signals, { ArrayBuffer, Uint8Array, String, Object, Buffer, Promise: Promise2 } = globalThis[Symbol.for("Bun.lazy")]("primordials"), ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty, ObjectCreate = Object.create, ObjectAssign = Object.assign, ObjectDefineProperty = Object.defineProperty, BufferConcat = Buffer.concat, BufferIsEncoding = Buffer.isEncoding, kEmptyObject = ObjectCreate(null), ArrayPrototypePush = Array.prototype.push, ArrayPrototypeJoin = Array.prototype.join, ArrayPrototypeMap = Array.prototype.map, ArrayPrototypeIncludes = Array.prototype.includes, ArrayPrototypeSlice = Array.prototype.slice, ArrayPrototypeUnshift = Array.prototype.unshift, ArrayIsArray = Array.isArray, ArrayBufferIsView = ArrayBuffer.isView, NumberIsInteger = Number.isInteger;
+}, ERR_CHILD_PROCESS_IPC_REQUIRED = function(name) {
+  const err = new TypeError(`Forked processes must have an IPC channel, missing value 'ipc' in ${name}`);
+  return err.code = "ERR_CHILD_PROCESS_IPC_REQUIRED", err;
+}, signals = constants.signals, { ArrayBuffer, Uint8Array, String, Object, Buffer, Promise: Promise2 } = globalThis[Symbol.for("Bun.lazy")]("primordials"), ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty, ObjectCreate = Object.create, ObjectAssign = Object.assign, ObjectDefineProperty = Object.defineProperty, BufferConcat = Buffer.concat, BufferIsEncoding = Buffer.isEncoding, kEmptyObject = ObjectCreate(null), ArrayPrototypePush = Array.prototype.push, ArrayPrototypeJoin = Array.prototype.join, ArrayPrototypeMap = Array.prototype.map, ArrayPrototypeIncludes = Array.prototype.includes, ArrayPrototypeSlice = Array.prototype.slice, ArrayPrototypeUnshift = Array.prototype.unshift, ArrayPrototypeLastIndexOf = Array.prototype.lastIndexOf, ArrayPrototypeSplice = Array.prototype.splice, ArrayIsArray = Array.isArray, ArrayBufferIsView = ArrayBuffer.isView, NumberIsInteger = Number.isInteger;
 var StringPrototypeToUpperCase = String.prototype.toUpperCase, StringPrototypeIncludes = String.prototype.includes, StringPrototypeSlice = String.prototype.slice, Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes, MAX_BUFFER = 1048576, __DEBUG__ = process.env.DEBUG || !1, __TRACK_STDIO__ = process.env.DEBUG_STDIO, debug = __DEBUG__ ? console.log : () => {
 };
 if (__TRACK_STDIO__)
@@ -705,7 +745,6 @@ var child_process_default = {
 export {
   spawnSync,
   spawn,
-  fork,
   execSync,
   execFileSync,
   execFile,

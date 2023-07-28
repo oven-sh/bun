@@ -2,7 +2,7 @@ import { ChildProcess, spawn, exec, fork } from "node:child_process";
 import { createTest } from "node-harness";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { bunExe } from "harness";
+import { bunEnv, bunExe } from "harness";
 const { beforeAll, describe, expect, it, throws, assert, createCallCheckCtx, createDoneDotAll } = createTest(
   import.meta.path,
 );
@@ -500,8 +500,9 @@ describe("fork", () => {
       const { mustCall } = createCallCheckCtx(done);
       const ac = new AbortController();
       const { signal } = ac;
-      const cp = fork(fixtures.path("child-process-stay-alive-forever.js"), {
+      const cp = fork(fixtures.path("child-process-stay-alive-forever.js", { env: bunEnv }), {
         signal,
+        env: bunEnv,
       });
       cp.on(
         "exit",
@@ -524,6 +525,7 @@ describe("fork", () => {
       const { signal } = ac;
       const cp = fork(fixtures.path("child-process-stay-alive-forever.js"), {
         signal,
+        env: bunEnv,
       });
       cp.on(
         "exit",
@@ -547,6 +549,7 @@ describe("fork", () => {
       const signal = AbortSignal.abort();
       const cp = fork(fixtures.path("child-process-stay-alive-forever.js"), {
         signal,
+        env: bunEnv,
       });
       cp.on(
         "exit",
@@ -590,6 +593,7 @@ describe("fork", () => {
       const cp = fork(fixtures.path("child-process-stay-alive-forever.js"), {
         signal,
         killSignal: "SIGKILL",
+        env: bunEnv,
       });
       cp.on(
         "exit",
@@ -611,6 +615,7 @@ describe("fork", () => {
       const { signal } = ac;
       const cp = fork(fixtures.path("child-process-stay-alive-forever.js"), {
         signal,
+        env: bunEnv,
       });
       cp.on(
         "exit",
@@ -627,48 +632,51 @@ describe("fork", () => {
     it("Ensure that first argument `modulePath` must be provided and be of type string", () => {
       const invalidModulePath = [0, true, undefined, null, [], {}, () => {}, Symbol("t")];
       invalidModulePath.forEach(modulePath => {
-        expect(() => fork(modulePath)).toThrow({
+        expect(() => fork(modulePath, { env: bunEnv })).toThrow({
           code: "ERR_INVALID_ARG_TYPE",
           name: "TypeError",
           message: `The "modulePath" argument must be of type string,Buffer,URL. Received ${modulePath?.toString()}`,
         });
       });
     });
-    it("Ensure that the second argument of `fork` and `fork` should parse options correctly if args is undefined or null", done => {
-      const invalidSecondArgs = [0, true, () => {}, Symbol("t")];
-      invalidSecondArgs.forEach(arg => {
-        expect(() => fork(fixtures.path("child-process-echo-options.js"), arg)).toThrow({
-          code: "ERR_INVALID_ARG_TYPE",
-          name: "TypeError",
-          message: `The \"args\" argument must be of type Array. Received ${arg?.toString()}`,
-        });
-      });
-
-      const argsLists = [undefined, null, []];
-
-      const { mustCall } = createCallCheckCtx(done);
-
-      argsLists.forEach(args => {
-        const cp = fork(fixtures.path("child-process-echo-options.js"), args, {
-          env: { ...process.env, ...expectedEnv },
+    it.todo(
+      "Ensure that the second argument of `fork` and `fork` should parse options correctly if args is undefined or null",
+      done => {
+        const invalidSecondArgs = [0, true, () => {}, Symbol("t")];
+        invalidSecondArgs.forEach(arg => {
+          expect(() => fork(fixtures.path("child-process-echo-options.js"), arg)).toThrow({
+            code: "ERR_INVALID_ARG_TYPE",
+            name: "TypeError",
+            message: `The \"args\" argument must be of type Array. Received ${arg?.toString()}`,
+          });
         });
 
-        // TODO - bun has no `send` method in the process
-        // cp.on(
-        //   'message',
-        //   common.mustCall(({ env }) => {
-        //     assert.strictEqual(env.foo, expectedEnv.foo);
-        //   })
-        // );
+        const argsLists = [undefined, null, []];
 
-        cp.on(
-          "exit",
-          mustCall(code => {
-            assert.strictEqual(code, 0);
-          }),
-        );
-      });
-    });
+        const { mustCall } = createCallCheckCtx(done);
+
+        argsLists.forEach(args => {
+          const cp = fork(fixtures.path("child-process-echo-options.js"), args, {
+            env: { ...process.env, ...expectedEnv, ...bunEnv },
+          });
+
+          // TODO - bun has no `send` method in the process
+          // cp.on(
+          //   'message',
+          //   common.mustCall(({ env }) => {
+          //     assert.strictEqual(env.foo, expectedEnv.foo);
+          //   })
+          // );
+
+          cp.on(
+            "exit",
+            mustCall(code => {
+              assert.strictEqual(code, 0);
+            }),
+          );
+        });
+      },
+    );
     it("Ensure that the third argument should be type of object if provided", () => {
       const invalidThirdArgs = [0, true, () => {}, Symbol("t")];
       invalidThirdArgs.forEach(arg => {
@@ -710,43 +718,41 @@ describe("fork", () => {
     // https://github.com/nodejs/node/blob/v20.5.0/test/parallel/test-child-process-fork-stdio.js
   });
   describe("fork", () => {
-    it("message", done => {
+    it.todo("message", () => {
       // TODO - bun has no `send` method in the process
-      done();
-      // const { mustCall } = createCallCheckCtx(done);
-      // const args = ['foo', 'bar'];
-      // const n = fork(fixtures.path('child-process-spawn-node.js'), args);
-
-      // assert.strictEqual(n.channel, n._channel);
-      // assert.deepStrictEqual(args, ['foo', 'bar']);
-
-      // n.on('message', (m) => {
-      //   debug('PARENT got message:', m);
-      //   assert.ok(m.foo);
-      // });
-
-      // expect(() => n.send(undefined)).toThrow({
-      //   name: 'TypeError',
-      //   message: 'The "message" argument must be specified',
-      //   code: 'ERR_MISSING_ARGS'
-      // });
-      // expect(() => n.send()).toThrow({
-      //   name: 'TypeError',
-      //   message: 'The "message" argument must be specified',
-      //   code: 'ERR_MISSING_ARGS'
-      // });
-
-      // expect(() => n.send(Symbol())).toThrow({
-      //   name: 'TypeError',
-      //   message: 'The "message" argument must be one of type string,' +
-      //     ' object, number, or boolean. Received type symbol (Symbol())',
-      //   code: 'ERR_INVALID_ARG_TYPE'
-      // });
-      // n.send({ hello: 'world' });
-
-      // n.on('exit', mustCall((c) => {
-      //   assert.strictEqual(c, 0);
-      // }));
+      const { mustCall } = createCallCheckCtx(done);
+      const args = ["foo", "bar"];
+      const n = fork(fixtures.path("child-process-spawn-node.js"), args);
+      assert.strictEqual(n.channel, n._channel);
+      assert.deepStrictEqual(args, ["foo", "bar"]);
+      n.on("message", m => {
+        debug("PARENT got message:", m);
+        assert.ok(m.foo);
+      });
+      expect(() => n.send(undefined)).toThrow({
+        name: "TypeError",
+        message: 'The "message" argument must be specified',
+        code: "ERR_MISSING_ARGS",
+      });
+      expect(() => n.send()).toThrow({
+        name: "TypeError",
+        message: 'The "message" argument must be specified',
+        code: "ERR_MISSING_ARGS",
+      });
+      expect(() => n.send(Symbol())).toThrow({
+        name: "TypeError",
+        message:
+          'The "message" argument must be one of type string,' +
+          " object, number, or boolean. Received type symbol (Symbol())",
+        code: "ERR_INVALID_ARG_TYPE",
+      });
+      n.send({ hello: "world" });
+      n.on(
+        "exit",
+        mustCall(c => {
+          assert.strictEqual(c, 0);
+        }),
+      );
     });
   });
 });

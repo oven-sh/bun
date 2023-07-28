@@ -11,7 +11,7 @@ test("simple usage", done => {
   port1.postMessage("hello");
 });
 
-test("transferable", done => {
+test("transfer message port", done => {
   var channel = new MessageChannel();
   var anotherChannel = new MessageChannel();
   var port1 = channel.port1;
@@ -25,6 +25,22 @@ test("transferable", done => {
   };
 
   port1.postMessage("hello", [anotherChannel.port2]);
+});
+
+test("tranfer array buffer", done => {
+  var channel = new MessageChannel();
+  var port1 = channel.port1;
+  var port2 = channel.port2;
+
+  port2.onmessage = function (e) {
+    expect(e.data).toBeInstanceOf(ArrayBuffer);
+    expect(e.data.byteLength).toEqual(8);
+    done();
+  };
+
+  const buffer = new ArrayBuffer(8);
+
+  port1.postMessage(buffer, [buffer]);
 });
 
 test("non-transferable", () => {

@@ -2288,9 +2288,9 @@ const char* const s_importMetaObjectCreateRequireCacheCode = "(function (){\"use
 const JSC::ConstructAbility s_importMetaObjectMainCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_importMetaObjectMainCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_importMetaObjectMainCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_importMetaObjectMainCodeLength = 57;
+const int s_importMetaObjectMainCodeLength = 76;
 static const JSC::Intrinsic s_importMetaObjectMainCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_importMetaObjectMainCode = "(function (){\"use strict\";return this.path===@Bun.main})\n";
+const char* const s_importMetaObjectMainCode = "(function (){\"use strict\";return this.path===@Bun.main&&@Bun.isMainThread})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \

@@ -112,6 +112,7 @@ public:
     {
         return m_url;
     }
+    bool isMainThread() const { return static_cast<unsigned>(m_identifier) == 1; }
     bool activeDOMObjectsAreSuspended() { return false; }
     bool activeDOMObjectsAreStopped() { return false; }
     bool isContextThread() { return true; }

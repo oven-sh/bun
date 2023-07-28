@@ -194,8 +194,7 @@ pub const RuntimeTranspilerStore = struct {
         referrer: []const u8,
     ) *anyopaque {
         debug("transpile({s})", .{path.text});
-        var was_new = true;
-        var job: *TranspilerJob = this.store.getAndSeeIfNew(&was_new);
+        var job: *TranspilerJob = this.store.get();
         var owned_path = Fs.Path.init(bun.default_allocator.dupe(u8, path.text) catch unreachable);
         var promise = JSC.JSInternalPromise.create(globalObject);
         job.* = TranspilerJob{
@@ -467,6 +466,21 @@ pub const RuntimeTranspilerStore = struct {
                         ) catch {};
                     }
                 }
+            }
+
+            if (parse_result.already_bundled) {
+                this.resolved_source = ResolvedSource{
+                    .allocator = null,
+                    .source_code = bun.String.createLatin1(parse_result.source.contents),
+                    .specifier = String.create(specifier),
+                    .source_url = ZigString.init(path.text),
+                    // // TODO: change hash to a bitfield
+                    // .hash = 1,
+
+                    // having JSC own the memory causes crashes
+                    .hash = 0,
+                };
+                return;
             }
 
             for (parse_result.ast.import_records.slice()) |*import_record_| {

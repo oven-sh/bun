@@ -3251,6 +3251,7 @@ pub const NodeFS = struct {
         var reada: usize = 0;
 
         var buffer = std.ArrayList(u8).init(bun.default_allocator);
+        defer buffer.deinit();
         buffer.ensureTotalCapacityPrecise(size + 16) catch unreachable;
         buffer.expandToCapacity();
 
@@ -3272,8 +3273,6 @@ pub const NodeFS = struct {
                 .err => |_err| return Maybe(Return.CopyFile){ .err = _err.withPath(src) },
             }
         }
-
-        buffer.deinit();
 
         // if 0 bytes were read, just write an empty file
         if (reada == 0) {

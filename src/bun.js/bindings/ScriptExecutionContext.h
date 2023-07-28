@@ -107,6 +107,8 @@ public:
     }
 
     static ScriptExecutionContext* getScriptExecutionContext(ScriptExecutionContextIdentifier identifier);
+    void refEventLoop();
+    void unrefEventLoop();
 
     const WTF::URL& url() const
     {

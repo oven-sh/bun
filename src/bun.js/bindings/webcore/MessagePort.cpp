@@ -162,8 +162,8 @@ MessagePort::~MessagePort()
     if (m_entangled)
         close();
 
-    if (auto* context = scriptExecutionContext())
-        context->destroyedMessagePort(*this);
+    if (auto contextId = portToContextIdentifier().get(m_identifier))
+        ScriptExecutionContext::getScriptExecutionContext(contextId)->destroyedMessagePort(*this);
 }
 
 void MessagePort::entangle()

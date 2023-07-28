@@ -301,7 +301,7 @@ pub const Expect = struct {
         const arguments_ = callFrame.arguments(1);
         const arguments = arguments_.ptr[0..arguments_.len];
 
-        var msg: []const u8 = "passes by .pass() assertion";
+        var _msg: ZigString = ZigString.Empty;
 
         if (arguments.len > 0) {
             const value = arguments[0];
@@ -312,7 +312,9 @@ pub const Expect = struct {
                 return .zero;
             }
 
-            msg = value.toString(globalObject).toSlice(globalObject, default_allocator).slice();
+            value.toZigString(&_msg, globalObject);
+        } else {
+            _msg = ZigString.fromBytes("passes by .pass() assertion");
         }
             
         active_test_expectation_counter.actual += 1;
@@ -323,14 +325,17 @@ pub const Expect = struct {
         if (not) pass = !pass;
         if (pass) return thisValue;
 
+        var msg = _msg.toSlice(default_allocator);
+        defer msg.deinit();
+
         if (not) {
             const signature = comptime getSignature("pass", "", true);
             const fmt = signature ++ "\n\n{s}\n";
             if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{msg});
+                globalObject.throw(Output.prettyFmt(fmt, true), .{msg.slice()});
                 return .zero;
             }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{msg});
+            globalObject.throw(Output.prettyFmt(fmt, false), .{msg.slice()});
             return .zero;
         }
 
@@ -349,7 +354,7 @@ pub const Expect = struct {
         const arguments_ = callFrame.arguments(1);
         const arguments = arguments_.ptr[0..arguments_.len];
 
-        var msg: []const u8 = "fails by .fail() assertion";
+        var _msg: ZigString = ZigString.Empty;
 
         if (arguments.len > 0) {
             const value = arguments[0];
@@ -359,8 +364,10 @@ pub const Expect = struct {
                 globalObject.throwInvalidArgumentType("fail", "message", "string");
                 return .zero;
             }
-
-            msg = value.toString(globalObject).toSlice(globalObject, default_allocator).slice();
+   
+            value.toZigString(&_msg, globalObject);
+        } else {
+            _msg = ZigString.fromBytes("fails by .fail() assertion");
         }
             
         active_test_expectation_counter.actual += 1;
@@ -371,13 +378,16 @@ pub const Expect = struct {
         if (not) pass = !pass;
         if (pass) return thisValue;
 
+        var msg = _msg.toSlice(default_allocator);
+        defer msg.deinit();
+
         const signature = comptime getSignature("fail", "", true);
         const fmt = signature ++ "\n\n{s}\n";
         if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{msg});
+            globalObject.throw(Output.prettyFmt(fmt, true), .{msg.slice()});
             return .zero;
         }
-        globalObject.throw(Output.prettyFmt(fmt, false), .{msg});
+        globalObject.throw(Output.prettyFmt(fmt, false), .{msg.slice()});
         return .zero;
     }
 

@@ -3195,7 +3195,7 @@ pub const NodeFS = struct {
                                 switch (err.getErrno()) {
                                     // https://github.com/oven-sh/bun/issues/1675
                                     .XDEV => {
-                                        const rwfresult = XDEVReadWriteFallback(src_fd, dest_fd, src);
+                                        const rwfresult = XDEVReadWriteFallback(src_fd, dest_fd, src, size);
 
                                         switch (rwfresult) {
                                             .result => |r| written = r,
@@ -3218,7 +3218,7 @@ pub const NodeFS = struct {
                                 switch (err.getErrno()) {
                                     // https://github.com/oven-sh/bun/issues/1675
                                     .XDEV => {
-                                        const rwfresult = XDEVReadWriteFallback(src_fd, dest_fd, src);
+                                        const rwfresult = XDEVReadWriteFallback(src_fd, dest_fd, src, size);
 
                                         switch (rwfresult) {
                                             .result => |r| written = r,
@@ -3246,23 +3246,59 @@ pub const NodeFS = struct {
     }
 
     // Fallback for EXDEV, just a classic read/write loop, https://github.com/oven-sh/bun/issues/1675
-    fn XDEVReadWriteFallback(src_fd: i32, dest_fd: i32, src: [:0]const u8) Maybe(usize) {
-        var buffer: [4096]u8 = undefined;
+    fn XDEVReadWriteFallback(src_fd: i32, dest_fd: i32, src: [:0]const u8, size: usize) Maybe(usize) {
+        var written: usize = 0;
+        
+        var reada: usize = 0;
+        var buffer = std.ArrayList(u8).init(bun.default_allocator);
+        defer buffer.deinit();
+        buffer.ensureTotalCapacityPrecise(size + 16) catch |err| return Maybe(Return.CopyFile){ .err = err };
+        buffer.expandToCapacity();
 
-        var bytes_read = switch (Syscall.read(src_fd, &buffer)) {
-            .result => |result| result,
-            .err => |_err| return Maybe(Return.CopyFile){ .err = _err.withPath(src) },
-        };
+        while (true) {
+            switch (Syscall.read(src_fd, buffer.items.items.ptr[reada..buffer.capacity])) {
+                .result => |amt| {
+                    reada += amt;
 
-        if (bytes_read == 0)
-            return Maybe(Return.CopyFile).todo;
+                    if (reada > size and amt != 0) {
+                        buffer.ensureUnusedCapacity(8096) catch unreachable;
+                        buffer.expandToCapacity();
+                        continue;
+                    }
 
-        var slice = buffer[0..bytes_read];
+                    if (amt == 0) {
+                        break;
+                    }
+                },
+                .err => |_err| return Maybe(Return.CopyFile){ .err = _err.withPath(src) },
+            }
+        }
 
-        return switch (Syscall.write(dest_fd, slice)) {
-            .result => |result| Maybe(usize){ .result = result },
-            .err => |_err| Maybe(Return.CopyFile){ .err = _err.withPath(src) },
-        };
+        // if 0 bytes were read, just write an empty file
+        if (reada == 0) {
+            return switch (Syscall.write(dest_fd, "")) {
+                .result => |amt| amt,
+                .err => |_err| Maybe(Return.CopyFile){ .err = _err.withPath(src) }
+            };
+        }
+
+        var buf = buffer[0..reada];
+
+        while (buf.len > 0) {
+            switch (Syscall.write(dest_fd, buf)) {
+                .result => |amt| {
+                    buf = buf[amt..];
+                    written += amt;
+
+                    if (amt == 0) {
+                        break;
+                    }
+                },
+                .err => |_err| return Maybe(Return.CopyFile){ .err = _err.withPath(src) },
+            }
+        }
+
+        return written;
     }
 
     pub fn exists(this: *NodeFS, args: Arguments.Exists, comptime flavor: Flavor) Maybe(Return.Exists) {
@@ -4290,13 +4326,11 @@ pub const NodeFS = struct {
                         },
                         else => if (args.path == .slice_with_underlying_string and
                             strings.eqlLong(args.path.slice_with_underlying_string.slice(), outbuf[0..len], true))
-                            .{
-                                .BunString = args.path.slice_with_underlying_string.underlying.dupeRef(),
-                            }
-                        else
-                            .{
-                                .BunString = bun.String.create(outbuf[0..len]),
-                            },
+                        .{
+                            .BunString = args.path.slice_with_underlying_string.underlying.dupeRef(),
+                        } else .{
+                            .BunString = bun.String.create(outbuf[0..len]),
+                        },
                     },
                 };
             },
@@ -4350,13 +4384,11 @@ pub const NodeFS = struct {
                         },
                         else => if (args.path == .slice_with_underlying_string and
                             strings.eqlLong(args.path.slice_with_underlying_string.slice(), buf, true))
-                            .{
-                                .BunString = args.path.slice_with_underlying_string.underlying.dupeRef(),
-                            }
-                        else
-                            .{
-                                .BunString = bun.String.create(buf),
-                            },
+                        .{
+                            .BunString = args.path.slice_with_underlying_string.underlying.dupeRef(),
+                        } else .{
+                            .BunString = bun.String.create(buf),
+                        },
                     },
                 };
             },

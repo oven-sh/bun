@@ -26,6 +26,7 @@
 #include "JavaScriptCore/VMTrapsInlines.h"
 #include "SerializedScriptValue.h"
 #include "ExceptionOr.h"
+#include "MessagePort.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
@@ -552,8 +553,8 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize, (JSGlobalObject * lexicalGlobalObjec
     }
 
     Vector<JSC::Strong<JSC::JSObject>> transferList;
-
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList));
+    Vector<RefPtr<MessagePort>> dummyPorts;
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), dummyPorts);
 
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());

@@ -65,7 +65,7 @@ public:
 
     void removeFirstEventListenerCreatedFromMarkup(const AtomString& eventType);
     void copyEventListenersNotCreatedFromMarkupToTarget(EventTarget*);
-    
+
     template<typename Visitor> void visitJSEventListeners(Visitor&);
     Lock& lock() { return m_lock; }
 

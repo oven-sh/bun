@@ -41,7 +41,7 @@ export interface ClassDefinition {
 
   configurable?: boolean;
   enumerable?: boolean;
-  structuredClone?: boolean | { transferrable: boolean; tag: number };
+  structuredClone?: boolean | { transferable: boolean; tag: number };
 }
 
 export interface CustomField {

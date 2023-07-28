@@ -7,21 +7,19 @@ const { beforeAll, describe, expect, it, throws, assert, createCallCheckCtx, cre
   import.meta.path,
 );
 const strictEqual = (a, b) => expect(a).toStrictEqual(b);
-const debug = process.env.DEBUG ? console.log : () => { };
+const debug = process.env.DEBUG ? console.log : () => {};
 
 const platformTmpDir = require("fs").realpathSync(tmpdir());
 
 const TYPE_ERR_NAME = "TypeError";
 
-const fixturesDir = path.join(__dirname, 'fixtures');
-
-
+const fixturesDir = path.join(__dirname, "fixtures");
 
 const fixtures = {
   path(...args) {
     return path.join(fixturesDir, ...args);
-  }
-}
+  },
+};
 
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -237,7 +235,7 @@ describe("child_process cwd", () => {
   // - whether the child pid is undefined or number,
   // - whether the exit code equals expectCode,
   // - optionally whether the trimmed stdout result matches expectData
-  function testCwd(options, { expectPidType, expectCode = 0, expectData }, done = () => { }) {
+  function testCwd(options, { expectPidType, expectCode = 0, expectData }, done = () => {}) {
     const createDone = createDoneDotAll(done);
     const { mustCall } = createCallCheckCtx(createDone(1500));
     const exitDone = createDone(5000);
@@ -496,134 +494,153 @@ describe("child_process double pipe", () => {
 });
 
 describe("fork", () => {
-  const expectedEnv = { foo: 'bar' };
+  const expectedEnv = { foo: "bar" };
   describe("abort-signal", () => {
     it("Test aborting a forked child_process after calling fork", done => {
       const { mustCall } = createCallCheckCtx(done);
       const ac = new AbortController();
       const { signal } = ac;
-      const cp = fork(fixtures.path('child-process-stay-alive-forever.js'), {
-        signal
+      const cp = fork(fixtures.path("child-process-stay-alive-forever.js"), {
+        signal,
       });
-      cp.on('exit', mustCall((code, killSignal) => {
-        strictEqual(code, null);
-        strictEqual(killSignal, 'SIGTERM');
-      }));
-      cp.on('error', mustCall((err) => {
-        strictEqual(err.name, 'AbortError');
-      }));
+      cp.on(
+        "exit",
+        mustCall((code, killSignal) => {
+          strictEqual(code, null);
+          strictEqual(killSignal, "SIGTERM");
+        }),
+      );
+      cp.on(
+        "error",
+        mustCall(err => {
+          strictEqual(err.name, "AbortError");
+        }),
+      );
       process.nextTick(() => ac.abort());
     });
     it("Test aborting with custom error", done => {
       const { mustCall } = createCallCheckCtx(done);
       const ac = new AbortController();
       const { signal } = ac;
-      const cp = fork(fixtures.path('child-process-stay-alive-forever.js'), {
-        signal
+      const cp = fork(fixtures.path("child-process-stay-alive-forever.js"), {
+        signal,
       });
-      cp.on('exit', mustCall((code, killSignal) => {
-        strictEqual(code, null);
-        strictEqual(killSignal, 'SIGTERM');
-      }));
-      cp.on('error', mustCall((err) => {
-        strictEqual(err.name, 'AbortError');
-        strictEqual(err.cause.name, 'Error');
-        strictEqual(err.cause.message, 'boom');
-      }));
-      process.nextTick(() => ac.abort(new Error('boom')));
+      cp.on(
+        "exit",
+        mustCall((code, killSignal) => {
+          strictEqual(code, null);
+          strictEqual(killSignal, "SIGTERM");
+        }),
+      );
+      cp.on(
+        "error",
+        mustCall(err => {
+          strictEqual(err.name, "AbortError");
+          strictEqual(err.cause.name, "Error");
+          strictEqual(err.cause.message, "boom");
+        }),
+      );
+      process.nextTick(() => ac.abort(new Error("boom")));
     });
     it("Test passing an already aborted signal to a forked child_process", done => {
       const { mustCall } = createCallCheckCtx(done);
       const signal = AbortSignal.abort();
-      const cp = fork(fixtures.path('child-process-stay-alive-forever.js'), {
-        signal
+      const cp = fork(fixtures.path("child-process-stay-alive-forever.js"), {
+        signal,
       });
-      cp.on('exit', mustCall((code, killSignal) => {
-        strictEqual(code, null);
-        strictEqual(killSignal, 'SIGTERM');
-      }));
-      cp.on('error', mustCall((err) => {
-        strictEqual(err.name, 'AbortError');
-      }));
+      cp.on(
+        "exit",
+        mustCall((code, killSignal) => {
+          strictEqual(code, null);
+          strictEqual(killSignal, "SIGTERM");
+        }),
+      );
+      cp.on(
+        "error",
+        mustCall(err => {
+          strictEqual(err.name, "AbortError");
+        }),
+      );
     });
     it("Test passing an aborted signal with custom error to a forked child_process", done => {
       const { mustCall } = createCallCheckCtx(done);
-      const signal = AbortSignal.abort(new Error('boom'));
-      const cp = fork(fixtures.path('child-process-stay-alive-forever.js'), {
-        signal
+      const signal = AbortSignal.abort(new Error("boom"));
+      const cp = fork(fixtures.path("child-process-stay-alive-forever.js"), {
+        signal,
       });
-      cp.on('exit', mustCall((code, killSignal) => {
-        strictEqual(code, null);
-        strictEqual(killSignal, 'SIGTERM');
-      }));
-      cp.on('error', mustCall((err) => {
-        strictEqual(err.name, 'AbortError');
-        strictEqual(err.cause.name, 'Error');
-        strictEqual(err.cause.message, 'boom');
-      }));
+      cp.on(
+        "exit",
+        mustCall((code, killSignal) => {
+          strictEqual(code, null);
+          strictEqual(killSignal, "SIGTERM");
+        }),
+      );
+      cp.on(
+        "error",
+        mustCall(err => {
+          strictEqual(err.name, "AbortError");
+          strictEqual(err.cause.name, "Error");
+          strictEqual(err.cause.message, "boom");
+        }),
+      );
     });
     it("Test passing a different kill signal", done => {
       const { mustCall } = createCallCheckCtx(done);
       const signal = AbortSignal.abort();
-      const cp = fork(fixtures.path('child-process-stay-alive-forever.js'), {
+      const cp = fork(fixtures.path("child-process-stay-alive-forever.js"), {
         signal,
-        killSignal: 'SIGKILL',
+        killSignal: "SIGKILL",
       });
-      cp.on('exit', mustCall((code, killSignal) => {
-        strictEqual(code, null);
-        strictEqual(killSignal, 'SIGKILL');
-      }));
-      cp.on('error', mustCall((err) => {
-        strictEqual(err.name, 'AbortError');
-      }));
+      cp.on(
+        "exit",
+        mustCall((code, killSignal) => {
+          strictEqual(code, null);
+          strictEqual(killSignal, "SIGKILL");
+        }),
+      );
+      cp.on(
+        "error",
+        mustCall(err => {
+          strictEqual(err.name, "AbortError");
+        }),
+      );
     });
     it("Test aborting a cp before close but after exit", done => {
       const { mustCall, mustNotCall } = createCallCheckCtx(done);
       const ac = new AbortController();
       const { signal } = ac;
-      const cp = fork(fixtures.path('child-process-stay-alive-forever.js'), {
-        signal
+      const cp = fork(fixtures.path("child-process-stay-alive-forever.js"), {
+        signal,
       });
-      cp.on('exit', mustCall(() => {
-        ac.abort();
-      }));
-      cp.on('error', mustNotCall());
+      cp.on(
+        "exit",
+        mustCall(() => {
+          ac.abort();
+        }),
+      );
+      cp.on("error", mustNotCall());
 
       setTimeout(() => cp.kill(), 1);
     });
   });
   describe("args", () => {
     it("Ensure that first argument `modulePath` must be provided and be of type string", () => {
-      const invalidModulePath = [
-        0,
-        true,
-        undefined,
-        null,
-        [],
-        {},
-        () => { },
-        Symbol('t'),
-      ];
-      invalidModulePath.forEach((modulePath) => {
+      const invalidModulePath = [0, true, undefined, null, [], {}, () => {}, Symbol("t")];
+      invalidModulePath.forEach(modulePath => {
         expect(() => fork(modulePath)).toThrow({
-          code: 'ERR_INVALID_ARG_TYPE',
-          name: 'TypeError',
-          message: `The "modulePath" argument must be of type string,Buffer,URL. Received ${modulePath?.toString()}`
+          code: "ERR_INVALID_ARG_TYPE",
+          name: "TypeError",
+          message: `The "modulePath" argument must be of type string,Buffer,URL. Received ${modulePath?.toString()}`,
         });
       });
     });
     it("Ensure that the second argument of `fork` and `fork` should parse options correctly if args is undefined or null", done => {
-      const invalidSecondArgs = [
-        0,
-        true,
-        () => { },
-        Symbol('t'),
-      ];
-      invalidSecondArgs.forEach((arg) => {
-        expect(() => fork(fixtures.path('child-process-echo-options.js'), arg)).toThrow({
-          code: 'ERR_INVALID_ARG_TYPE',
-          name: 'TypeError',
-          message: `The \"args\" argument must be of type Array. Received ${arg?.toString()}`
+      const invalidSecondArgs = [0, true, () => {}, Symbol("t")];
+      invalidSecondArgs.forEach(arg => {
+        expect(() => fork(fixtures.path("child-process-echo-options.js"), arg)).toThrow({
+          code: "ERR_INVALID_ARG_TYPE",
+          name: "TypeError",
+          message: `The \"args\" argument must be of type Array. Received ${arg?.toString()}`,
         });
       });
 
@@ -631,9 +648,9 @@ describe("fork", () => {
 
       const { mustCall } = createCallCheckCtx(done);
 
-      argsLists.forEach((args) => {
-        const cp = fork(fixtures.path('child-process-echo-options.js'), args, {
-          env: { ...process.env, ...expectedEnv }
+      argsLists.forEach(args => {
+        const cp = fork(fixtures.path("child-process-echo-options.js"), args, {
+          env: { ...process.env, ...expectedEnv },
         });
 
         // TODO - bun has no `send` method in the process
@@ -645,31 +662,23 @@ describe("fork", () => {
         // );
 
         cp.on(
-          'exit',
-          mustCall((code) => {
+          "exit",
+          mustCall(code => {
             assert.strictEqual(code, 0);
-          })
+          }),
         );
       });
     });
     it("Ensure that the third argument should be type of object if provided", () => {
-      const invalidThirdArgs = [
-        0,
-        true,
-        () => { },
-        Symbol('t'),
-      ];
-      invalidThirdArgs.forEach((arg) => {
-        expect(
-          () => {
-            fork(fixtures.path('child-process-echo-options.js'), [], arg);
-          }).toThrow(
-            {
-              code: 'ERR_INVALID_ARG_TYPE',
-              name: 'TypeError',
-              message: `The \"options\" argument must be of type object. Received ${arg?.toString()}`
-            }
-          );
+      const invalidThirdArgs = [0, true, () => {}, Symbol("t")];
+      invalidThirdArgs.forEach(arg => {
+        expect(() => {
+          fork(fixtures.path("child-process-echo-options.js"), [], arg);
+        }).toThrow({
+          code: "ERR_INVALID_ARG_TYPE",
+          name: "TypeError",
+          message: `The \"options\" argument must be of type object. Received ${arg?.toString()}`,
+        });
       });
     });
   });
@@ -738,6 +747,6 @@ describe("fork", () => {
       // n.on('exit', mustCall((c) => {
       //   assert.strictEqual(c, 0);
       // }));
-    })
+    });
   });
-})
+});

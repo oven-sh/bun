@@ -686,12 +686,16 @@ function stdioStringToArray(stdio, channel) {
   const options = [];
 
   switch (stdio) {
-    case 'ignore':
-    case 'overlapped':
-    case 'pipe': ArrayPrototypePush.call(options, stdio, stdio, stdio); break;
-    case 'inherit': ArrayPrototypePush.call(options, 0, 1, 2); break;
+    case "ignore":
+    case "overlapped":
+    case "pipe":
+      ArrayPrototypePush.call(options, stdio, stdio, stdio);
+      break;
+    case "inherit":
+      ArrayPrototypePush.call(options, 0, 1, 2);
+      break;
     default:
-      throw new ERR_INVALID_ARG_VALUE('stdio', stdio);
+      throw new ERR_INVALID_ARG_VALUE("stdio", stdio);
   }
 
   if (channel) ArrayPrototypePush.call(options, channel);
@@ -722,30 +726,30 @@ function stdioStringToArray(stdio, channel) {
  * @returns {ChildProcess}
  */
 export function fork(modulePath, args = [], options) {
-  modulePath = getValidatedPath(modulePath, 'modulePath');
+  modulePath = getValidatedPath(modulePath, "modulePath");
 
   // Get options and args arguments.
   let execArgv;
 
   if (args == null) {
     args = [];
-  } else if (typeof args === 'object' && !ArrayIsArray(args)) {
+  } else if (typeof args === "object" && !ArrayIsArray(args)) {
     options = args;
     args = [];
   } else {
-    validateArray(args, 'args');
+    validateArray(args, "args");
   }
 
   if (options != null) {
-    validateObject(options, 'options');
+    validateObject(options, "options");
   }
   options = { __proto__: null, ...options, shell: false };
   options.execPath = options.execPath || process.execPath;
-  validateArgumentNullCheck(options.execPath, 'options.execPath');
+  validateArgumentNullCheck(options.execPath, "options.execPath");
 
   // Prepare arguments for fork:
   execArgv = options.execArgv || process.execArgv;
-  validateArgumentsNullCheck(execArgv, 'options.execArgv');
+  validateArgumentsNullCheck(execArgv, "options.execArgv");
 
   if (execArgv === process.execArgv && process._eval != null) {
     const index = ArrayPrototypeLastIndexOf.call(execArgv, process._eval);
@@ -758,16 +762,14 @@ export function fork(modulePath, args = [], options) {
 
   args = [...execArgv, modulePath, ...args];
 
-  if (typeof options.stdio === 'string') {
-    options.stdio = stdioStringToArray(options.stdio, 'ipc');
+  if (typeof options.stdio === "string") {
+    options.stdio = stdioStringToArray(options.stdio, "ipc");
   } else if (!ArrayIsArray(options.stdio)) {
     // Use a separate fd=3 for the IPC channel. Inherit stdin, stdout,
     // and stderr from the parent if silent isn't set.
-    options.stdio = stdioStringToArray(
-      options.silent ? 'pipe' : 'inherit',
-      'ipc');
-  } else if (!ArrayPrototypeIncludes.call(options.stdio, 'ipc')) {
-    throw new ERR_CHILD_PROCESS_IPC_REQUIRED('options.stdio');
+    options.stdio = stdioStringToArray(options.silent ? "pipe" : "inherit", "ipc");
+  } else if (!ArrayPrototypeIncludes.call(options.stdio, "ipc")) {
+    throw new ERR_CHILD_PROCESS_IPC_REQUIRED("options.stdio");
   }
 
   return spawn(options.execPath, args, options);

@@ -1,6 +1,7 @@
 const c = @import("std").c;
 const std = @import("std");
 const bun = @import("root").bun;
+const JSC = bun.JSC;
 const strings = bun.strings;
 const iovec = @import("std").os.iovec;
 const struct_in_addr = std.os.sockaddr.in;
@@ -180,8 +181,6 @@ pub const struct_hostent = extern struct {
     h_length: c_int,
     h_addr_list: [*c][*c]u8,
 
-    const JSC = bun.JSC;
-
     pub fn toJSReponse(this: *struct_hostent, _: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime lookup_name: []const u8) JSC.JSValue {
 
         // A cname lookup always returns a single record but we follow the common API here.
@@ -296,12 +295,11 @@ pub const AddrInfo_node = extern struct {
         return len;
     }
 };
+
 pub const AddrInfo = extern struct {
     cnames_: [*c]AddrInfo_cname = null,
     node: ?*AddrInfo_node = null,
     name_: ?[*:0]u8 = null,
-
-    const JSC = bun.JSC;
 
     pub fn toJSArray(
         addr_info: *AddrInfo,
@@ -624,8 +622,6 @@ pub const struct_ares_caa_reply = extern struct {
     value: [*c]u8,
     length: usize,
 
-    const JSC = bun.JSC;
-
     pub fn toJSReponse(this: *struct_ares_caa_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
         var arena = @import("root").bun.ArenaAllocator.init(stack.get());
@@ -703,7 +699,6 @@ pub const struct_ares_srv_reply = extern struct {
     priority: c_ushort,
     weight: c_ushort,
     port: c_ushort,
-    const JSC = bun.JSC;
 
     pub fn toJSReponse(this: *struct_ares_srv_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
@@ -788,8 +783,6 @@ pub const struct_ares_mx_reply = extern struct {
     host: [*c]u8,
     priority: c_ushort,
 
-    const JSC = bun.JSC;
-
     pub fn toJSReponse(this: *struct_ares_mx_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
         var arena = @import("root").bun.ArenaAllocator.init(stack.get());
@@ -863,8 +856,6 @@ pub const struct_ares_txt_reply = extern struct {
     next: ?*struct_ares_txt_reply,
     txt: [*c]u8,
     length: usize,
-
-    const JSC = bun.JSC;
 
     pub fn toJSReponse(this: *struct_ares_txt_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
@@ -945,8 +936,6 @@ pub const struct_ares_naptr_reply = extern struct {
     replacement: [*c]u8,
     order: c_ushort,
     preference: c_ushort,
-
-    const JSC = bun.JSC;
 
     pub fn toJSReponse(this: *struct_ares_naptr_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
@@ -1039,8 +1028,6 @@ pub const struct_ares_soa_reply = extern struct {
     retry: c_uint,
     expire: c_uint,
     minttl: c_uint,
-
-    const JSC = bun.JSC;
 
     pub fn toJSReponse(this: *struct_ares_soa_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
@@ -1377,3 +1364,63 @@ pub const ares_soa_reply = struct_ares_soa_reply;
 pub const ares_uri_reply = struct_ares_uri_reply;
 pub const ares_addr_node = struct_ares_addr_node;
 pub const ares_addr_port_node = struct_ares_addr_port_node;
+
+pub export fn BUN__canonicalizeIP(
+    ctx: *JSC.JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) callconv(.C) JSC.JSValue {
+    JSC.markBinding(@src());
+
+    const globalThis = ctx.ptr();
+    const arguments = callframe.arguments(1);
+
+    if (arguments.len == 0) {
+        globalThis.throwInvalidArguments("canonicalizeIP() expects a string but received no arguments.", .{});
+        return .zero;
+    }
+    // windows uses 65 bytes for ipv6 addresses and linux/macos uses 46
+    const INET6_ADDRSTRLEN = if (comptime bun.Environment.isWindows) 65 else 46;
+
+    var script_ctx = globalThis.bunVM();
+    var args = JSC.Node.ArgumentsSlice.init(script_ctx, arguments.ptr[0..arguments.len]);
+    var addr_arg = args.nextEat().?;
+
+    if (bun.String.tryFromJS(addr_arg, globalThis)) |addr| {
+        const addr_slice = addr.toSlice(bun.default_allocator);
+        defer addr_slice.deinit();
+        const addr_str = addr_slice.slice();
+        if (addr_str.len >= INET6_ADDRSTRLEN) {
+            return JSC.JSValue.jsUndefined();
+        }
+
+        var ip_std_text: [INET6_ADDRSTRLEN + 1]u8 = undefined;
+        // we need a null terminated string as input
+        var ip_addr: [INET6_ADDRSTRLEN + 1]u8 = undefined;
+        bun.copy(u8, &ip_addr, addr_str);
+        ip_addr[addr_str.len] = 0;
+
+        var af: c_int = std.os.AF.INET;
+        // get the standard text representation of the IP
+        if (ares_inet_pton(af, &ip_addr, &ip_std_text) != 1) {
+            af = std.os.AF.INET6;
+            if (ares_inet_pton(af, &ip_addr, &ip_std_text) != 1) {
+                return JSC.JSValue.jsUndefined();
+            }
+        }
+        // ip_addr will contain the null-terminated string of the cannonicalized IP
+        if (ares_inet_ntop(af, &ip_std_text, &ip_addr, @sizeOf(@TypeOf(ip_addr))) == null) {
+            return JSC.JSValue.jsUndefined();
+        }
+        // use the null-terminated size to return the string
+        const size = bun.len(bun.cast([*:0]u8, &ip_addr));
+        return JSC.ZigString.init(ip_addr[0..size]).toValueGC(globalThis);
+    } else {
+        globalThis.throwInvalidArguments("address must be a string", .{});
+        return .zero;
+    }
+}
+comptime {
+    if (!JSC.is_bindgen) {
+        _ = BUN__canonicalizeIP;
+    }
+}

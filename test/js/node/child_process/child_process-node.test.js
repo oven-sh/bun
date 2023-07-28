@@ -709,7 +709,7 @@ describe("fork", () => {
   describe.todo("stdio", () => {
     // https://github.com/nodejs/node/blob/v20.5.0/test/parallel/test-child-process-fork-stdio.js
   });
-  describe.only("fork", () => {
+  describe("fork", () => {
     it("message", done => {
       // TODO - bun has no `send` method in the process
       done();

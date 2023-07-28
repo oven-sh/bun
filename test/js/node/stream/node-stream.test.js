@@ -65,6 +65,61 @@ describe("Readable", () => {
 
     stream.pipe(writable);
   });
+  it("should be able to be piped via .pipe, both start and end are 0", done => {
+    const path = `${tmpdir()}/${Date.now()}.testReadStream2.txt`;
+    writeFileSync(path, "12345");
+    const stream = createReadStream(path, { start: 0, end: 0 });
+
+    const writable = new Writable({
+      write(chunk, encoding, callback) {
+        try {
+          // Both start and end are inclusive and start counting at 0.
+          expect(chunk.toString()).toBe("1");
+        } catch (err) {
+          done(err);
+          return;
+        }
+        callback();
+        done();
+      },
+    });
+
+    stream.on("error", err => {
+      done(err);
+    });
+
+    stream.pipe(writable);
+  });
+  it("should be able to be piped via .pipe with a large file", done => {
+    const length = 128 * 1024;
+    const data = "B".repeat(length);
+    const path = `${tmpdir()}/${Date.now()}.testReadStreamLargeFile.txt`;
+    writeFileSync(path, data);
+    const stream = createReadStream(path, { start: 0, end: length - 1 });
+
+    let res = "";
+    let count = 0;
+    const writable = new Writable({
+      write(chunk, encoding, callback) {
+        count += 1;
+        res += chunk;
+        callback();
+      },
+    });
+    writable.on("finish", () => {
+      try {
+        expect(res).toEqual(data);
+        expect(count).toBeGreaterThan(1);
+      } catch (err) {
+        return done(err);
+      }
+      done();
+    });
+    stream.on("error", err => {
+      done(err);
+    });
+    stream.pipe(writable);
+  });
 });
 
 describe("Duplex", () => {

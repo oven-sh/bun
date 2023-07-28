@@ -1684,12 +1684,7 @@ JSC:
             auto rootCertificates = JSC::JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), size);
             for (auto i = 0; i < size; i++) {
                 auto raw = out[i];
-                auto len = raw.len;
-                // TODO: this is a hack to remove the null terminator but should unnecessary when perl script is fixed
-                if (raw.str[raw.len - 1] == '\0') {
-                    len -= 1;
-                }
-                auto str = WTF::String::fromUTF8(raw.str, len);
+                auto str = WTF::String::fromUTF8(raw.str, raw.len);
                 rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
             }
             obj->putDirect(

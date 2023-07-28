@@ -127,6 +127,7 @@
 using namespace Bun;
 
 extern "C" JSC::EncodedJSValue Bun__fetch(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+extern "C" JSC::EncodedJSValue Bun__canonicalizeIP(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 
 using JSGlobalObject
     = JSC::JSGlobalObject;
@@ -1634,6 +1635,7 @@ JSC:
             return JSValue::encode(
                 JSFunction::create(vm, globalObject, 1, pathToFileURLString, functionPathToFileURL, ImplementationVisibility::Public, NoIntrinsic));
         }
+
         if (string == "fileURLToPath"_s) {
             return JSValue::encode(
                 JSFunction::create(vm, globalObject, 1, fileURLToPathString, functionFileURLToPath, ImplementationVisibility::Public, NoIntrinsic));
@@ -1663,12 +1665,17 @@ JSC:
             return JSValue::encode(obj);
         }
 
-        if (string == "rootCertificates"_s) {
+        if (string == "internal/tls"_s) {
+            auto* obj = constructEmptyObject(globalObject);
+
             auto sourceOrigin = callFrame->callerSourceOrigin(vm).url();
+// expose for tests in debug mode only
+#ifndef BUN_DEBUG
             bool isBuiltin = sourceOrigin.protocolIs("builtin"_s);
             if (!isBuiltin) {
                 return JSC::JSValue::encode(JSC::jsUndefined());
             }
+#endif
             struct us_cert_string_t* out;
             auto size = us_raw_root_certs(&out);
             if (size < 0) {
@@ -1680,7 +1687,12 @@ JSC:
                 auto str = WTF::String::fromUTF8(raw.str, raw.len);
                 rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
             }
-            return JSValue::encode(rootCertificates);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "rootCertificates"_s)), rootCertificates, 0);
+
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "canonicalizeIP"_s)), JSC::JSFunction::create(vm, globalObject, 1, "canonicalizeIP"_s, Bun__canonicalizeIP, ImplementationVisibility::Public, NoIntrinsic), 0);
+            return JSValue::encode(obj);
         }
 
         if (string == "masqueradesAsUndefined"_s) {

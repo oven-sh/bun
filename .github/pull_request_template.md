@@ -34,6 +34,10 @@ If Zig files changed:
 - [ ] I included a test for the new code, or an existing test covers it
 - [ ] JSValue used outside outside of the stack is either wrapped in a JSC.Strong or is JSValueProtect'ed
 
+If new methods, getters, or setters were added to a publicly exposed class:
+
+- [ ] I added TypeScript types for the new methods, getters, or setters
+
 If dependencies in tests changed:
 
 - [ ] I made sure that specific versions of dependencies are used instead of ranged or tagged versions

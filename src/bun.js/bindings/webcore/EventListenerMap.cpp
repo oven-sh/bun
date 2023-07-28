@@ -41,7 +41,6 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
 
-
 namespace WebCore {
 
 EventListenerMap::EventListenerMap() = default;
@@ -168,7 +167,7 @@ EventListenerVector* EventListenerMap::find(const AtomString& eventType)
 
 static void removeFirstListenerCreatedFromMarkup(EventListenerVector& listenerVector)
 {
-    bool foundListener = listenerVector.removeFirstMatching([] (const auto& registeredListener) {
+    bool foundListener = listenerVector.removeFirstMatching([](const auto& registeredListener) {
         if (JSEventListener::wasCreatedFromMarkup(registeredListener->callback())) {
             registeredListener->markAsRemoved();
             return true;

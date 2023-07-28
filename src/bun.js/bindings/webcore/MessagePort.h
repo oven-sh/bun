@@ -47,7 +47,7 @@ class WebCoreOpaqueRoot;
 
 struct StructuredSerializeOptions;
 
-class MessagePort final : public ActiveDOMObject, public EventTarget {
+class MessagePort final : /* public ActiveDOMObject, */ public ContextDestructionObserver, public EventTarget {
     WTF_MAKE_NONCOPYABLE(MessagePort);
     WTF_MAKE_ISO_ALLOCATED(MessagePort);
 
@@ -77,7 +77,7 @@ public:
     // Returns null if there is no entangled port, or if the entangled port is run by a different thread.
     // This is used solely to enable a GC optimization. Some platforms may not be able to determine ownership
     // of the remote port (since it may live cross-process) - those platforms may always return null.
-    MessagePort* locallyEntangledPort() const;
+    MessagePort* locallyEntangledPort();
 
     const MessagePortIdentifier& identifier() const { return m_identifier; }
     const MessagePortIdentifier& remoteIdentifier() const { return m_remoteIdentifier; }
@@ -86,8 +86,11 @@ public:
     WEBCORE_EXPORT void deref() const;
 
     // EventTarget.
-    EventTargetInterface eventTargetInterface() const final { return MessagePortEventTargetInterfaceType; }
-    // ScriptExecutionContext* scriptExecutionContext() const final { return ActiveDOMObject::scriptExecutionContext(); }
+    EventTargetInterface eventTargetInterface() const final
+    {
+        return MessagePortEventTargetInterfaceType;
+    }
+    ScriptExecutionContext* scriptExecutionContext() const final { return ScriptExecutionContext::getScriptExecutionContext(contextIdForMessagePortId(m_identifier)); }
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
@@ -96,6 +99,10 @@ public:
     TransferredMessagePort disentangle();
     static Ref<MessagePort> entangle(ScriptExecutionContext&, TransferredMessagePort&&);
 
+    bool hasPendingActivity() const;
+
+    static ScriptExecutionContextIdentifier contextIdForMessagePortId(MessagePortIdentifier);
+
 private:
     explicit MessagePort(ScriptExecutionContext&, const MessagePortIdentifier& local, const MessagePortIdentifier& remote);
 
@@ -103,10 +110,16 @@ private:
     bool removeEventListener(const AtomString& eventType, EventListener&, const EventListenerOptions&) final;
 
     // ActiveDOMObject
-    const char* activeDOMObjectName() const final;
-    void contextDestroyed() final;
-    void stop() final { close(); }
-    bool virtualHasPendingActivity() const final;
+    // const char* activeDOMObjectName() const final;
+    // void contextDestroyed() final;
+    // void stop() final { close(); }
+    // bool virtualHasPendingActivity() const final;
+
+    EventTargetData* eventTargetData() final { return &m_eventTargetData; }
+    EventTargetData* eventTargetDataConcurrently() final { return &m_eventTargetData; }
+    EventTargetData& ensureEventTargetData() final { return m_eventTargetData; }
+
+    EventTargetData m_eventTargetData;
 
     // A port starts out its life entangled, and remains entangled until it is detached or is cloned.
     bool isEntangled() const { return !m_isDetached && m_entangled; }

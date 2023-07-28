@@ -24,17 +24,17 @@
  */
 
 #include "config.h"
-#include "MessagePortChannelProvider.h"
+// #include "MessagePortChannelProvider.h"
 
-#include "Document.h"
+// #include "Document.h"
 #include "MessagePortChannelProviderImpl.h"
-#include "WorkerGlobalScope.h"
-#include "WorkletGlobalScope.h"
+// #include "WorkerGlobalScope.h"
+// #include "WorkletGlobalScope.h"
 #include <wtf/MainThread.h>
 
 namespace WebCore {
 
-static MessagePortChannelProvider* globalProvider;
+static MessagePortChannelProviderImpl* globalProvider;
 
 MessagePortChannelProvider& MessagePortChannelProvider::singleton()
 {
@@ -48,22 +48,22 @@ MessagePortChannelProvider& MessagePortChannelProvider::singleton()
     return *globalProvider;
 }
 
-void MessagePortChannelProvider::setSharedProvider(MessagePortChannelProvider& provider)
-{
-    RELEASE_ASSERT(isMainThread());
-    RELEASE_ASSERT(!globalProvider);
-    globalProvider = &provider;
-}
+// void MessagePortChannelProvider::setSharedProvider(MessagePortChannelProvider& provider)
+// {
+//     RELEASE_ASSERT(isMainThread());
+//     RELEASE_ASSERT(!globalProvider);
+//     globalProvider = &provider;
+// }
 
 MessagePortChannelProvider& MessagePortChannelProvider::fromContext(ScriptExecutionContext& context)
 {
-    if (auto document = dynamicDowncast<Document>(context))
-        return document->messagePortChannelProvider();
+    // if (auto document = dynamicDowncast<Document>(context))
+    //     return document->messagePortChannelProvider();
 
-    if (auto workletScope = dynamicDowncast<WorkletGlobalScope>(context))
-        return workletScope->messagePortChannelProvider();
+    // if (auto workletScope = dynamicDowncast<WorkletGlobalScope>(context))
+    //     return workletScope->messagePortChannelProvider();
 
-    return downcast<WorkerGlobalScope>(context).messagePortChannelProvider();
+    return jsCast<Zig::GlobalObject*>(context.jsGlobalObject())->globalEventScope.messagePortChannelProvider();
 }
 
 } // namespace WebCore

@@ -1,10 +1,12 @@
 #include "root.h"
 #include "headers.h"
 #include "ScriptExecutionContext.h"
+#include "MessagePort.h"
 
 #include "webcore/WebSocket.h"
 #include "libusockets.h"
 #include "_libusockets.h"
+#include "BunClientData.h"
 
 extern "C" void Bun__startLoop(us_loop_t* loop);
 
@@ -59,6 +61,23 @@ us_socket_context_t* ScriptExecutionContext::webSocketContextSSL()
     return m_ssl_client_websockets_ctx;
 }
 
+ScriptExecutionContext::~ScriptExecutionContext()
+{
+    checkConsistency();
+
+    {
+        Locker locker { allScriptExecutionContextsMapLock };
+        ASSERT_WITH_MESSAGE(!allScriptExecutionContextsMap().contains(m_identifier), "A ScriptExecutionContext subclass instance implementing postTask should have already removed itself from the map");
+    }
+
+    auto postMessageCompletionHandlers = WTFMove(m_processMessageWithMessagePortsSoonHandlers);
+    for (auto& completionHandler : postMessageCompletionHandlers)
+        completionHandler();
+
+    while (auto* destructionObserver = m_destructionObservers.takeAny())
+        destructionObserver->contextDestroyed();
+}
+
 bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task)
 {
     Locker locker { allScriptExecutionContextsMapLock };
@@ -69,6 +88,125 @@ bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identif
 
     context->postTaskConcurrently(WTFMove(task));
     return true;
+}
+
+void ScriptExecutionContext::didCreateDestructionObserver(ContextDestructionObserver& observer)
+{
+    ASSERT(!m_inScriptExecutionContextDestructor);
+    m_destructionObservers.add(&observer);
+}
+
+void ScriptExecutionContext::willDestroyDestructionObserver(ContextDestructionObserver& observer)
+{
+    m_destructionObservers.remove(&observer);
+}
+
+extern "C" void* Bun__getVM();
+
+bool ScriptExecutionContext::isContextThread()
+{
+    auto clientData = WebCore::clientData(vm());
+    return clientData->bunVM == Bun__getVM();
+}
+
+bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task)
+{
+    ScriptExecutionContext* context = nullptr;
+    {
+        Locker locker { allScriptExecutionContextsMapLock };
+        context = allScriptExecutionContextsMap().get(identifier);
+
+        if (!context)
+            return false;
+
+        if (!context->isContextThread()) {
+            context->postTaskConcurrently(WTFMove(task));
+            return true;
+        }
+    }
+
+    task(*context);
+    return true;
+}
+
+bool ScriptExecutionContext::ensureOnMainThread(Function<void(ScriptExecutionContext&)>&& task)
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    auto* context = allScriptExecutionContextsMap().get(1);
+
+    if (!context) {
+        return false;
+    }
+
+    context->postTaskConcurrently(WTFMove(task));
+    return true;
+}
+
+void ScriptExecutionContext::processMessageWithMessagePortsSoon(CompletionHandler<void()>&& completionHandler)
+{
+    ASSERT(isContextThread());
+    m_processMessageWithMessagePortsSoonHandlers.append(WTFMove(completionHandler));
+
+    if (m_willProcessMessageWithMessagePortsSoon) {
+        return;
+    }
+
+    m_willProcessMessageWithMessagePortsSoon = true;
+
+    postTask([](ScriptExecutionContext& context) {
+        context.dispatchMessagePortEvents();
+    });
+}
+
+void ScriptExecutionContext::dispatchMessagePortEvents()
+{
+    ASSERT(isContextThread());
+    checkConsistency();
+
+    ASSERT(m_willprocessMessageWithMessagePortsSoon);
+    m_willProcessMessageWithMessagePortsSoon = false;
+
+    auto completionHandlers = std::exchange(m_processMessageWithMessagePortsSoonHandlers, Vector<CompletionHandler<void()>> {});
+
+    // Make a frozen copy of the ports so we can iterate while new ones might be added or destroyed.
+    for (auto* messagePort : copyToVector(m_messagePorts)) {
+        // The port may be destroyed, and another one created at the same address,
+        // but this is harmless. The worst that can happen as a result is that
+        // dispatchMessages() will be called needlessly.
+        if (m_messagePorts.contains(messagePort) && messagePort->started())
+            messagePort->dispatchMessages();
+    }
+
+    for (auto& completionHandler : completionHandlers)
+        completionHandler();
+}
+
+void ScriptExecutionContext::checkConsistency() const
+{
+    for (auto* messagePort : m_messagePorts)
+        ASSERT(messagePort->scriptExecutionContext() == this);
+
+    for (auto* destructionObserver : m_destructionObservers)
+        ASSERT(destructionObserver->scriptExecutionContext() == this);
+
+    // for (auto* activeDOMObject : m_activeDOMObjects) {
+    //     ASSERT(activeDOMObject->scriptExecutionContext() == this);
+    //     activeDOMObject->assertSuspendIfNeededWasCalled();
+    // }
+}
+
+void ScriptExecutionContext::createdMessagePort(MessagePort& messagePort)
+{
+    ASSERT(isContextThread());
+
+    m_messagePorts.add(&messagePort);
+}
+
+void ScriptExecutionContext::destroyedMessagePort(MessagePort& messagePort)
+{
+    ASSERT(isContextThread());
+
+    m_messagePorts.remove(&messagePort);
 }
 
 us_socket_context_t* ScriptExecutionContext::webSocketContextNoSSL()

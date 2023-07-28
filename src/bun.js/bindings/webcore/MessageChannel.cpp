@@ -35,8 +35,8 @@ namespace WebCore {
 
 static std::pair<Ref<MessagePort>, Ref<MessagePort>> generateMessagePorts(ScriptExecutionContext& context)
 {
-    MessagePortIdentifier id1 = { Process::identifier(), PortIdentifier::generate() };
-    MessagePortIdentifier id2 = { Process::identifier(), PortIdentifier::generate() };
+    MessagePortIdentifier id1 = { ProcessIdent::identifier(), PortIdentifier::generate() };
+    MessagePortIdentifier id2 = { ProcessIdent::identifier(), PortIdentifier::generate() };
 
     return { MessagePort::create(context, id1, id2), MessagePort::create(context, id2, id1) };
 }

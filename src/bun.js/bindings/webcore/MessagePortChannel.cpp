@@ -26,7 +26,7 @@
 #include "config.h"
 #include "MessagePortChannel.h"
 
-#include "Logging.h"
+// #include "Logging.h"
 #include "MessagePortChannelRegistry.h"
 #include <wtf/CompletionHandler.h>
 #include <wtf/MainThread.h>

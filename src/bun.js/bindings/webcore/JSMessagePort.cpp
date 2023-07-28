@@ -42,7 +42,7 @@
 #include "JSStructuredSerializeOptions.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
-#include "WebCoreOpaqueRootInlines.h"
+// #include "WebCoreOpaqueRootInlines.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSArray.h>
@@ -53,7 +53,6 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
-
 
 namespace WebCore {
 using namespace JSC;
@@ -124,8 +123,7 @@ template<> void JSMessagePortDOMConstructor::initializeProperties(VM& vm, JSDOMG
 
 /* Hash table for prototype */
 
-static const HashTableValue JSMessagePortPrototypeTableValues[] =
-{
+static const HashTableValue JSMessagePortPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsMessagePortConstructor, 0 } },
     { "onmessage"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsMessagePort_onmessage, setJSMessagePort_onmessage } },
     { "onmessageerror"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsMessagePort_onmessageerror, setJSMessagePort_onmessageerror } },
@@ -150,7 +148,7 @@ JSMessagePort::JSMessagePort(Structure* structure, JSDOMGlobalObject& globalObje
 {
 }
 
-static_assert(std::is_base_of<ActiveDOMObject, MessagePort>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
+// static_assert(std::is_base_of<ActiveDOMObject, MessagePort>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
 
 JSObject* JSMessagePort::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
@@ -169,7 +167,7 @@ JSValue JSMessagePort::getConstructor(VM& vm, const JSGlobalObject* globalObject
     return getDOMConstructor<JSMessagePortDOMConstructor, DOMConstructorID::MessagePort>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsMessagePortConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsMessagePortConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -185,7 +183,7 @@ static inline JSValue jsMessagePort_onmessageGetter(JSGlobalObject& lexicalGloba
     return eventHandlerAttribute(thisObject.wrapped(), eventNames().messageEvent, worldForDOMObject(thisObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsMessagePort_onmessage, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsMessagePort_onmessage, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSMessagePort>::get<jsMessagePort_onmessageGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -201,7 +199,7 @@ static inline bool setJSMessagePort_onmessageSetter(JSGlobalObject& lexicalGloba
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSMessagePort_onmessage, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSMessagePort_onmessage, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSMessagePort>::set<setJSMessagePort_onmessageSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
@@ -212,7 +210,7 @@ static inline JSValue jsMessagePort_onmessageerrorGetter(JSGlobalObject& lexical
     return eventHandlerAttribute(thisObject.wrapped(), eventNames().messageerrorEvent, worldForDOMObject(thisObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsMessagePort_onmessageerror, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsMessagePort_onmessageerror, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSMessagePort>::get<jsMessagePort_onmessageerrorGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -228,7 +226,7 @@ static inline bool setJSMessagePort_onmessageerrorSetter(JSGlobalObject& lexical
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSMessagePort_onmessageerror, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSMessagePort_onmessageerror, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSMessagePort>::set<setJSMessagePort_onmessageerrorSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
@@ -283,7 +281,7 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_postMessageOver
             RELEASE_AND_RETURN(throwScope, (jsMessagePortPrototypeFunction_postMessage2Body(lexicalGlobalObject, callFrame, castedThis)));
         {
             bool success = hasIteratorMethod(lexicalGlobalObject, distinguishingArg);
-            RETURN_IF_EXCEPTION(throwScope, { });
+            RETURN_IF_EXCEPTION(throwScope, {});
             if (success)
                 RELEASE_AND_RETURN(throwScope, (jsMessagePortPrototypeFunction_postMessage1Body(lexicalGlobalObject, callFrame, castedThis)));
         }
@@ -293,7 +291,7 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_postMessageOver
     return argsCount < 1 ? throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject)) : throwVMTypeError(lexicalGlobalObject, throwScope);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_postMessage, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_postMessage, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_postMessageOverloadDispatcher>(*lexicalGlobalObject, *callFrame, "postMessage");
 }
@@ -308,7 +306,7 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_startBody(JSC::
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.start(); })));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_start, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_start, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_startBody>(*lexicalGlobalObject, *callFrame, "start");
 }
@@ -323,19 +321,19 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_closeBody(JSC::
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.close(); })));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_close, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_close, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_closeBody>(*lexicalGlobalObject, *callFrame, "close");
 }
 
 JSC::GCClient::IsoSubspace* JSMessagePort::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSMessagePort, UseCustomHeapCellType::No>(vm,
-        [] (auto& spaces) { return spaces.m_clientSubspaceForMessagePort.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForMessagePort = std::forward<decltype(space)>(space); },
-        [] (auto& spaces) { return spaces.m_subspaceForMessagePort.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForMessagePort = std::forward<decltype(space)>(space); }
-    );
+    return WebCore::subspaceForImpl<JSMessagePort, UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForMessagePort.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMessagePort = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForMessagePort.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForMessagePort = std::forward<decltype(space)>(space); });
 }
 
 template<typename Visitor>
@@ -373,15 +371,16 @@ bool JSMessagePortOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
 {
     auto* jsMessagePort = jsCast<JSMessagePort*>(handle.slot()->asCell());
     auto& wrapped = jsMessagePort->wrapped();
-    if (!wrapped.isContextStopped() && wrapped.hasPendingActivity()) {
+    if (wrapped.hasPendingActivity()) {
         if (UNLIKELY(reason))
             *reason = "ActiveDOMObject with pending activity";
         return true;
-     }
+    }
     MessagePort* owner = &jsMessagePort->wrapped();
     if (UNLIKELY(reason))
         *reason = "Reachable from MessagePort";
-    return containsWebCoreOpaqueRoot(visitor, owner);
+
+    return visitor.containsOpaqueRoot(owner);
 }
 
 void JSMessagePortOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
@@ -393,10 +392,14 @@ void JSMessagePortOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* contex
 
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
-#pragma warning(disable: 4483)
-extern "C" { extern void (*const __identifier("??_7MessagePort@WebCore@@6B@")[])(); }
+#pragma warning(disable : 4483)
+extern "C" {
+extern void (*const __identifier("??_7MessagePort@WebCore@@6B@")[])();
+}
 #else
-extern "C" { extern void* _ZTVN7WebCore11MessagePortE[]; }
+extern "C" {
+extern void* _ZTVN7WebCore11MessagePortE[];
+}
 #endif
 #endif
 

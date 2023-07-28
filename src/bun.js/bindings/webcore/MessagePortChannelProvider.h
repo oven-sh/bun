@@ -26,6 +26,7 @@
 #pragma once
 
 #include "ProcessIdentifier.h"
+#include "BunWorkerGlobalScope.h"
 #include <wtf/CompletionHandler.h>
 #include <wtf/Vector.h>
 
@@ -39,7 +40,7 @@ class MessagePortChannelProvider {
 public:
     static MessagePortChannelProvider& fromContext(ScriptExecutionContext&);
     static MessagePortChannelProvider& singleton();
-    WEBCORE_EXPORT static void setSharedProvider(MessagePortChannelProvider&);
+    // WEBCORE_EXPORT static void setSharedProvider(MessagePortChannelProvider&);
 
     virtual ~MessagePortChannelProvider() {}
 

@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2008-2021 Apple Inc. All Rights Reserved.
- * Copyright (C) 2011 Google Inc. All Rights Reserved.
+ * Copyright (C) 2008 Apple Inc. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -22,25 +21,45 @@
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
  */
 
 #include "config.h"
-#include "JSMessagePort.h"
-// #include "WebCoreOpaqueRootInlines.h"
+#include "ContextDestructionObserver.h"
+
+#include "ScriptExecutionContext.h"
 
 namespace WebCore {
-using namespace JSC;
 
-template<typename Visitor>
-void JSMessagePort::visitAdditionalChildren(Visitor& visitor)
+ContextDestructionObserver::ContextDestructionObserver(ScriptExecutionContext* scriptExecutionContext)
+    : m_context(nullptr)
 {
-    // If we have a locally entangled port, we can directly mark it as reachable. Ports that are remotely entangled are marked in-use by markActiveObjectsForContext().
-    if (auto* port = wrapped().locallyEntangledPort()) {
-        visitor.addOpaqueRoot(port);
-        // addWebCoreOpaqueRoot(visitor, *port);
+    observeContext(scriptExecutionContext);
+}
+
+ContextDestructionObserver::~ContextDestructionObserver()
+{
+    observeContext(nullptr);
+}
+
+void ContextDestructionObserver::observeContext(ScriptExecutionContext* scriptExecutionContext)
+{
+    if (m_context) {
+        ASSERT(m_context->isContextThread());
+        m_context->willDestroyDestructionObserver(*this);
+    }
+
+    m_context = scriptExecutionContext;
+
+    if (m_context) {
+        ASSERT(m_context->isContextThread());
+        m_context->didCreateDestructionObserver(*this);
     }
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSMessagePort);
+void ContextDestructionObserver::contextDestroyed()
+{
+    m_context = nullptr;
+}
 
 } // namespace WebCore

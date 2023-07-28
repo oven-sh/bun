@@ -1,3 +1,5 @@
+#pragma once
+
 #include "root.h"
 
 #include "EventTarget.h"
@@ -7,8 +9,12 @@
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 
-namespace Bun {
-class GlobalScope final : public RefCounted<GlobalScope>, public EventTargetWithInlineData {
+namespace WebCore {
+
+class MessagePortChannelProvider;
+class MessagePortChannelProviderImpl;
+
+class GlobalScope : public RefCounted<GlobalScope>, public EventTargetWithInlineData {
     WTF_MAKE_ISO_ALLOCATED(GlobalScope);
 
 public:
@@ -33,6 +39,11 @@ public:
     void derefEventTarget() final { deref(); }
     void eventListenersDidChange() final {}
 
+    MessagePortChannelProvider& messagePortChannelProvider();
+
     ScriptExecutionContext* m_context;
+
+private:
+    MessagePortChannelProviderImpl* m_messagePortChannelProvider;
 };
 }

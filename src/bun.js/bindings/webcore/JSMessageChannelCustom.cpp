@@ -29,9 +29,9 @@
 
 #include "DOMWrapperWorld.h"
 #include "JSMessageChannel.h"
-#include "JSNodeCustom.h"
+// #include "JSNodeCustom.h"
 #include "MessagePort.h"
-#include "WebCoreOpaqueRootInlines.h"
+// #include "WebCoreOpaqueRootInlines.h"
 #include <JavaScriptCore/SlotVisitorInlines.h>
 
 namespace WebCore {
@@ -39,8 +39,10 @@ namespace WebCore {
 template<typename Visitor>
 void JSMessageChannel::visitAdditionalChildren(Visitor& visitor)
 {
-    addWebCoreOpaqueRoot(visitor, wrapped().port1());
-    addWebCoreOpaqueRoot(visitor, wrapped().port2());
+    visitor.addOpaqueRoot(WTF::getPtr(wrapped().port1()));
+    visitor.addOpaqueRoot(WTF::getPtr(wrapped().port2()));
+    // addWebCoreOpaqueRoot(visitor, wrapped().port1());
+    // addWebCoreOpaqueRoot(visitor, wrapped().port2());
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSMessageChannel);

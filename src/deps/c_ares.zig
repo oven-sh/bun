@@ -1365,7 +1365,7 @@ pub const ares_uri_reply = struct_ares_uri_reply;
 pub const ares_addr_node = struct_ares_addr_node;
 pub const ares_addr_port_node = struct_ares_addr_port_node;
 
-pub export fn BUN__canonicalizeIP(
+pub export fn Bun__canonicalizeIP(
     ctx: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
 ) callconv(.C) JSC.JSValue {
@@ -1421,6 +1421,6 @@ pub export fn BUN__canonicalizeIP(
 }
 comptime {
     if (!JSC.is_bindgen) {
-        _ = BUN__canonicalizeIP;
+        _ = Bun__canonicalizeIP;
     }
 }

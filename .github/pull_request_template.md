@@ -1,19 +1,25 @@
-# What does this PR do?
+## What does this PR do?
 
-**Please include a description of the changes**
+<!-- **Please include a textual description of the changes**, example: -->
+
+<!--
+
+This adds a new flag --bail to bun test. When set, it will stop running tests after the first failure. This is useful for CI environments where you want to fail fast.
+
+-->
 
 - [ ] Documentation or TypeScript types (it's okay to leave the rest blank in this case)
 - [ ] Code changes
 
-# How did you verify your code works?
+## How did you verify your code works?
 
-<!-- For code changes, please include automated tests. Feel free to uncomment the line below -->
+<!-- **For code changes, please include automated tests**. Feel free to uncomment the line below -->
 
 <!-- I wrote automated tests -->
 
 ## Checklist
 
-**Please delete the sections which are not relevant, including this line. If there were no code changes, feel free to delete or ignore this section entirely**
+<!-- **Please delete the sections which are not relevant, including this line. If there were no code changes, feel free to delete or ignore this section entirely** -->
 
 If JavaScript/TypeScript modules or builtins changed:
 

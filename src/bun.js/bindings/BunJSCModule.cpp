@@ -24,15 +24,19 @@
 #include "JavaScriptCore/DeferTermination.h"
 #include "JavaScriptCore/SamplingProfiler.h"
 #include "JavaScriptCore/VMTrapsInlines.h"
+#include "SerializedScriptValue.h"
+#include "ExceptionOr.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
 
 #include "mimalloc.h"
+#include "JSDOMConvertBase.h"
 
 using namespace JSC;
 using namespace WTF;
+using namespace WebCore;
 
 JSC_DECLARE_HOST_FUNCTION(functionStartRemoteDebugger);
 JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -525,6 +529,74 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshotForDebugging, (JSGlobalObje
     return JSValue::encode(JSONParse(globalObject, WTFMove(jsonString)));
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionSerialize, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* globalObject = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject);
+    JSC::VM& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue value = callFrame->argument(0);
+    JSValue optionsObject = callFrame->argument(1);
+    bool asNodeBuffer = false;
+    if (optionsObject.isObject()) {
+        JSC::JSObject* options = optionsObject.getObject();
+        if (JSC::JSValue binaryTypeValue = options->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "binaryType"_s))) {
+            if (!binaryTypeValue.isString()) {
+                throwTypeError(globalObject, throwScope, "binaryType must be a string"_s);
+                return JSValue::encode(jsUndefined());
+            }
+
+            asNodeBuffer = binaryTypeValue.toWTFString(globalObject) == "nodebuffer"_s;
+            RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+        }
+    }
+
+    Vector<JSC::Strong<JSC::JSObject>> transferList;
+
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList));
+
+    if (serialized.hasException()) {
+        WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
+        return JSValue::encode(jsUndefined());
+    }
+
+    auto serializedValue = serialized.releaseReturnValue();
+    auto arrayBuffer = serializedValue->toArrayBuffer();
+
+    if (asNodeBuffer) {
+        size_t byteLength = arrayBuffer->byteLength();
+        JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(arrayBuffer), 0, byteLength);
+        return JSValue::encode(uint8Array);
+    }
+
+    if (arrayBuffer->isShared()) {
+        return JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructureWithSharingMode<ArrayBufferSharingMode::Shared>(), WTFMove(arrayBuffer)));
+    }
+
+    return JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), WTFMove(arrayBuffer)));
+}
+JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = callFrame->argument(0);
+
+    JSValue result;
+
+    if (auto* jsArrayBuffer = jsDynamicCast<JSArrayBuffer*>(value)) {
+        result = SerializedScriptValue::fromArrayBuffer(*globalObject, globalObject, jsArrayBuffer->impl(), 0, jsArrayBuffer->impl()->byteLength());
+    } else if (auto* view = jsDynamicCast<JSArrayBufferView*>(value)) {
+        auto arrayBuffer = view->possiblySharedImpl()->possiblySharedBuffer();
+        result = SerializedScriptValue::fromArrayBuffer(*globalObject, globalObject, arrayBuffer.get(), view->byteOffset(), view->byteLength());
+    } else {
+        throwTypeError(globalObject, throwScope, "First argument must be an ArrayBuffer"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
 JSC::JSObject* createJSCModule(JSC::JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -561,6 +633,8 @@ JSC::JSObject* createJSCModule(JSC::JSGlobalObject* globalObject)
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "generateHeapSnapshotForDebugging"_s), 0, functionGenerateHeapSnapshotForDebugging, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "profile"_s), 0, functionRunProfiler, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "setTimeZone"_s), 0, functionSetTimeZone, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "serialize"_s), 0, functionSerialize, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "deserialize"_s), 0, functionDeserialize, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
     }
 
     return object;

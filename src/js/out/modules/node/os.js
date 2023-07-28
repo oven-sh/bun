@@ -1,7 +1,58 @@
-var bound = function(obj) {
+var lazyCpus = function({ cpus }) {
+  return () => {
+    const array = new Array(navigator.hardwareConcurrency);
+    function populate() {
+      const results = cpus(), length = results.length;
+      array.length = length;
+      for (let i = 0;i < length; i++)
+        array[i] = results[i];
+    }
+    for (let i = 0;i < array.length; i++) {
+      const instance = {
+        get model() {
+          if (array[i] === instance)
+            populate();
+          return array[i].model;
+        },
+        set model(value) {
+          if (array[i] === instance)
+            populate();
+          array[i].model = value;
+        },
+        get speed() {
+          if (array[i] === instance)
+            populate();
+          return array[i].speed;
+        },
+        set speed(value) {
+          if (array[i] === instance)
+            populate();
+          array[i].speed = value;
+        },
+        get times() {
+          if (array[i] === instance)
+            populate();
+          return array[i].times;
+        },
+        set times(value) {
+          if (array[i] === instance)
+            populate();
+          array[i].times = value;
+        },
+        toJSON() {
+          if (array[i] === instance)
+            populate();
+          return array[i];
+        }
+      };
+      array[i] = instance;
+    }
+    return array;
+  };
+}, bound = function(obj) {
   return {
     arch: obj.arch.bind(obj),
-    cpus: obj.cpus.bind(obj),
+    cpus: lazyCpus(obj),
     endianness: obj.endianness.bind(obj),
     freemem: obj.freemem.bind(obj),
     getPriority: obj.getPriority.bind(obj),
@@ -27,7 +78,7 @@ var bound = function(obj) {
     [Symbol.for("CommonJS")]: 0
   };
 }, tmpdir = function() {
-  var lazy = Symbol.for("Bun.lazy"), primordials = globalThis[lazy]("primordials"), { Bun: Bun2 } = primordials, env = Bun2.env;
+  var { Bun: Bun2 } = globalThis[Symbol.for("Bun.lazy")]("primordials"), env = Bun2.env;
   return tmpdir = function() {
     var path = env.TMPDIR || env.TMP || env.TEMP || "/tmp";
     const length = path.length;

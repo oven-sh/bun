@@ -1,4 +1,4 @@
-BUN_0.6 {
+BUN_0.7 {
     global:
 	napi*;
 	__cxa_atexit;

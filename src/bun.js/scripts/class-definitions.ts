@@ -41,6 +41,7 @@ export interface ClassDefinition {
 
   configurable?: boolean;
   enumerable?: boolean;
+  structuredClone?: boolean | { transferrable: boolean; tag: number };
 }
 
 export interface CustomField {
@@ -58,6 +59,7 @@ export function define(
     estimatedSize = false,
     call = false,
     construct = false,
+    structuredClone = false,
     ...rest
   } = {} as ClassDefinition,
 ): ClassDefinition {
@@ -66,6 +68,7 @@ export function define(
     call,
     construct,
     estimatedSize,
+    structuredClone,
     values,
     klass: Object.fromEntries(Object.entries(klass).sort(([a], [b]) => a.localeCompare(b))),
     proto: Object.fromEntries(Object.entries(proto).sort(([a], [b]) => a.localeCompare(b))),

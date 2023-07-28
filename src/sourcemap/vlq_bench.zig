@@ -30,7 +30,7 @@ const SourceMap = struct {
         value: i32,
     ) VLQ {
         return if (value >= 0 and value <= 255)
-            vlq_lookup_table[@intCast(usize, value)]
+            vlq_lookup_table[@as(usize, @intCast(value))]
         else
             encodeVLQ(value);
     }
@@ -54,9 +54,9 @@ const SourceMap = struct {
         var bytes: [vlq_max_in_bytes]u8 = undefined;
 
         var vlq: u32 = if (value >= 0)
-            @bitCast(u32, value << 1)
+            @as(u32, @bitCast(value << 1))
         else
-            @bitCast(u32, (-value << 1) | 1);
+            @as(u32, @bitCast((-value << 1) | 1));
 
         // source mappings are limited to i32
         comptime var i: usize = 0;
@@ -111,10 +111,10 @@ const SourceMap = struct {
         // inlining helps for the 1 or 2 byte case, hurts a little for larger
         comptime var i: usize = 0;
         inline while (i < vlq_max_in_bytes + 1) : (i += 1) {
-            const index = @as(u32, base64_lut[@truncate(u7, encoded_[i])]);
+            const index = @as(u32, base64_lut[@as(u7, @truncate(encoded_[i]))]);
 
             // decode a byte
-            vlq |= (index & 31) << @truncate(u5, shift);
+            vlq |= (index & 31) << @as(u5, @truncate(shift));
             shift += 5;
 
             // Stop if there's no continuation bit
@@ -122,9 +122,9 @@ const SourceMap = struct {
                 return VLQResult{
                     .start = i + start,
                     .value = if ((vlq & 1) == 0)
-                        @intCast(i32, vlq >> 1)
+                        @as(i32, @intCast(vlq >> 1))
                     else
-                        -@intCast(i32, (vlq >> 1)),
+                        -@as(i32, @intCast((vlq >> 1))),
                 };
             }
         }

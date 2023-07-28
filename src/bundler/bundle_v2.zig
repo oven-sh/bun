@@ -150,7 +150,7 @@ pub const ThreadPool = struct {
         if (existing_thread_pool) |pool| {
             this.pool = pool;
         } else {
-            var cpu_count = @truncate(u32, @max(std.Thread.getCpuCount() catch 2, 2));
+            var cpu_count = @as(u32, @truncate(@max(std.Thread.getCpuCount() catch 2, 2)));
 
             if (v2.bundler.env.map.get("GOMAXPROCS")) |max_procs| {
                 if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
@@ -158,7 +158,7 @@ pub const ThreadPool = struct {
                 } else |_| {}
             }
 
-            cpu_count = @max(@min(cpu_count, @truncate(u32, 128 - 1)), 2);
+            cpu_count = @max(@min(cpu_count, @as(u32, @truncate(128 - 1))), 2);
             this.pool = try v2.graph.allocator.create(ThreadPoolLib);
             this.pool.* = ThreadPoolLib.init(.{
                 .max_threads = cpu_count,
@@ -360,7 +360,7 @@ pub const BundleV2 = struct {
             redirect_map: PathToSourceIndexMap,
             dynamic_import_entry_points: *std.AutoArrayHashMap(Index.Int, void),
 
-            const MAX_REDIRECTS: usize = 20;
+            const MAX_REDIRECTS: usize = 64;
 
             // Find all files reachable from all entry points. This order should be
             // deterministic given that the entry point order is deterministic, since the
@@ -396,6 +396,12 @@ pub const BundleV2 = struct {
                                 if (redirect_count == MAX_REDIRECTS) {
                                     import_record.path.is_disabled = true;
                                     import_record.source_index = Index.invalid;
+                                    break;
+                                }
+
+                                // Handle redirects to a builtin or external module
+                                // https://github.com/oven-sh/bun/issues/3764
+                                if (!other_source.isValid()) {
                                     break;
                                 }
                             }
@@ -584,7 +590,7 @@ pub const BundleV2 = struct {
             path.* = path.dupeAlloc(this.graph.allocator) catch @panic("Ran out of memory");
 
             // We need to parse this
-            const source_index = Index.init(@intCast(u32, this.graph.ast.len));
+            const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
             entry.value_ptr.* = source_index.get();
             out_source_index = source_index;
             this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
@@ -795,7 +801,7 @@ pub const BundleV2 = struct {
             const entry_points = try router.getEntryPoints();
             try this.graph.entry_points.ensureUnusedCapacity(this.graph.allocator, entry_points.len);
             try this.graph.input_files.ensureUnusedCapacity(this.graph.allocator, entry_points.len);
-            try this.graph.path_to_source_index_map.ensureUnusedCapacity(this.graph.allocator, @truncate(u32, entry_points.len));
+            try this.graph.path_to_source_index_map.ensureUnusedCapacity(this.graph.allocator, @as(u32, @truncate(entry_points.len)));
 
             for (entry_points) |entry_point| {
                 const resolved = this.bundler.resolveEntryPoint(entry_point) catch continue;
@@ -809,7 +815,7 @@ pub const BundleV2 = struct {
             // Setup entry points
             try this.graph.entry_points.ensureUnusedCapacity(this.graph.allocator, user_entry_points.len);
             try this.graph.input_files.ensureUnusedCapacity(this.graph.allocator, user_entry_points.len);
-            try this.graph.path_to_source_index_map.ensureUnusedCapacity(this.graph.allocator, @truncate(u32, user_entry_points.len));
+            try this.graph.path_to_source_index_map.ensureUnusedCapacity(this.graph.allocator, @as(u32, @truncate(user_entry_points.len)));
 
             for (user_entry_points) |entry_point| {
                 const resolved = this.bundler.resolveEntryPoint(entry_point) catch continue;
@@ -915,7 +921,7 @@ pub const BundleV2 = struct {
 
             all_imported_files.setIntersection(react_client_component_boundary);
             if (all_imported_files.findFirstSet() == null) continue;
-            const source_index = Index.init(@intCast(u32, this.graph.ast.len));
+            const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
 
             var shadow = ShadowEntryPoint{
                 .from_source_index = entry_point_source_index.get(),
@@ -944,7 +950,7 @@ pub const BundleV2 = struct {
             );
 
             if (this.graph.shadow_entry_point_range.loc.start < 0) {
-                this.graph.shadow_entry_point_range.loc.start = @intCast(i32, source_index.get());
+                this.graph.shadow_entry_point_range.loc.start = @as(i32, @intCast(source_index.get()));
             }
 
             this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
@@ -1015,7 +1021,7 @@ pub const BundleV2 = struct {
 
         this.waitForParse();
 
-        minify_duration.* = @intCast(u64, @divTrunc(@truncate(i64, std.time.nanoTimestamp()) - @truncate(i64, bun.CLI.start_time), @as(i64, std.time.ns_per_ms)));
+        minify_duration.* = @as(u64, @intCast(@divTrunc(@as(i64, @truncate(std.time.nanoTimestamp())) - @as(i64, @truncate(bun.CLI.start_time)), @as(i64, std.time.ns_per_ms))));
         source_code_size.* = this.source_code_length;
 
         if (this.graph.use_directive_entry_points.len > 0) {
@@ -1108,7 +1114,7 @@ pub const BundleV2 = struct {
                         ),
                     ) catch unreachable;
                     additional_files[index].push(this.graph.allocator, AdditionalFile{
-                        .output_file = @truncate(u32, additional_output_files.items.len - 1),
+                        .output_file = @as(u32, @truncate(additional_output_files.items.len - 1)),
                     }) catch unreachable;
                 }
             }
@@ -1279,7 +1285,7 @@ pub const BundleV2 = struct {
                             to_assign_on_sourcemap = result;
                         }
 
-                        output_files_js.putIndex(globalThis, @intCast(u32, i), result);
+                        output_files_js.putIndex(globalThis, @as(u32, @intCast(i)), result);
                     }
 
                     root_obj.put(globalThis, JSC.ZigString.static("outputs"), output_files_js);
@@ -1444,7 +1450,7 @@ pub const BundleV2 = struct {
                         this.free_list.appendSlice(&.{ result.namespace, result.path }) catch {};
 
                         // We need to parse this
-                        const source_index = Index.init(@intCast(u32, this.graph.ast.len));
+                        const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
                         existing.value_ptr.* = source_index.get();
                         out_source_index = source_index;
                         this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
@@ -1643,7 +1649,7 @@ pub const BundleV2 = struct {
         }
 
         defer {
-            if (this.graph.pool.pool.threadpool_context == @ptrCast(?*anyopaque, this.graph.pool)) {
+            if (this.graph.pool.pool.threadpool_context == @as(?*anyopaque, @ptrCast(this.graph.pool))) {
                 this.graph.pool.pool.threadpool_context = null;
             }
 
@@ -1892,7 +1898,7 @@ pub const BundleV2 = struct {
                 }
             }
 
-            if (this.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, @truncate(u32, i), ast.target)) {
+            if (this.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, @as(u32, @truncate(i)), ast.target)) {
                 continue;
             }
 
@@ -2052,9 +2058,9 @@ pub const BundleV2 = struct {
 
         defer {
             if (diff > 0)
-                _ = @atomicRmw(usize, &graph.parse_pending, .Add, @intCast(usize, diff), .Monotonic)
+                _ = @atomicRmw(usize, &graph.parse_pending, .Add, @as(usize, @intCast(diff)), .Monotonic)
             else
-                _ = @atomicRmw(usize, &graph.parse_pending, .Sub, @intCast(usize, -diff), .Monotonic);
+                _ = @atomicRmw(usize, &graph.parse_pending, .Sub, @as(usize, @intCast(-diff)), .Monotonic);
         }
 
         var resolve_queue = ResolveQueue.init(this.graph.allocator);
@@ -2212,7 +2218,7 @@ pub const BundleV2 = struct {
                         record.source_index.value = source_index;
 
                         if (getRedirectId(result.ast.redirect_import_record_index)) |compare| {
-                            if (compare == @truncate(u32, i)) {
+                            if (compare == @as(u32, @truncate(i))) {
                                 graph.path_to_source_index_map.put(
                                     graph.allocator,
                                     result.source.path.hashKey(),
@@ -2279,6 +2285,7 @@ pub const ParseTask = struct {
     known_target: ?options.Target = null,
     module_type: options.ModuleType = .unknown,
     ctx: *BundleV2,
+    package_version: string = "",
 
     /// Used by generated client components
     presolved_source_indices: []const Index.Int = &.{},
@@ -2299,6 +2306,7 @@ pub const ParseTask = struct {
             .jsx = resolve_result.jsx,
             .source_index = source_index orelse Index.invalid,
             .module_type = resolve_result.module_type,
+            .package_version = if (resolve_result.package_json) |package_json| package_json.version else "",
         };
     }
 
@@ -2591,6 +2599,8 @@ pub const ParseTask = struct {
         opts.warn_about_unbundled_modules = false;
         opts.macro_context = &this.data.macro_context;
         opts.bundle = true;
+        opts.package_version = task.package_version;
+
         opts.features.top_level_await = true;
         opts.features.jsx_optimization_inline = target.isBun() and (bundler.options.jsx_optimization_inline orelse !task.jsx.development);
         opts.features.auto_import_jsx = task.jsx.parse and bundler.options.auto_import_jsx;
@@ -3079,8 +3089,8 @@ const LinkerGraph = struct {
         var source_symbols = &this.symbols.symbols_for_source.slice()[source_index];
 
         var ref = Ref.init(
-            @truncate(Ref.Int, source_symbols.len),
-            @truncate(Ref.Int, source_index),
+            @as(Ref.Int, @truncate(source_symbols.len)),
+            @as(Ref.Int, @truncate(source_index)),
             false,
         );
         ref.tag = .symbol;
@@ -3123,7 +3133,7 @@ const LinkerGraph = struct {
         part: js_ast.Part,
     ) !u32 {
         var parts: *js_ast.Part.List = &graph.ast.items(.parts)[id];
-        const part_id = @truncate(u32, parts.len);
+        const part_id = @as(u32, @truncate(parts.len));
         try parts.push(graph.allocator, part);
         var top_level_symbol_to_parts_overlay: ?*TopLevelSymbolToParts = null;
 
@@ -3235,7 +3245,7 @@ const LinkerGraph = struct {
         for (part_ids, new_dependencies) |part_id, *dependency| {
             dependency.* = .{
                 .source_index = source_index_to_import_from,
-                .part_index = @truncate(u32, part_id),
+                .part_index = @as(u32, @truncate(part_id)),
             };
         }
     }
@@ -3341,7 +3351,7 @@ const LinkerGraph = struct {
                     // Loop #2: For each import in the entire module graph
                     for (this.reachable_files) |source_id| {
                         const use_directive = this.useDirectiveBoundary(source_id.get());
-                        const source_i32 = @intCast(i32, source_id.get());
+                        const source_i32 = @as(i32, @intCast(source_id.get()));
                         const is_shadow_entrypoint = shadow_entry_point_range.contains(source_i32);
 
                         // If the reachable file has a "use client"; at the top
@@ -3417,7 +3427,7 @@ const LinkerGraph = struct {
                 files.items(.distance_from_entry_point),
                 file.distance_from_entry_point,
             );
-            this.stable_source_indices = @ptrCast([]const u32, stable_source_indices);
+            this.stable_source_indices = @as([]const u32, @ptrCast(stable_source_indices));
         }
 
         {
@@ -3438,7 +3448,7 @@ const LinkerGraph = struct {
             }
 
             if (count > 0) {
-                try const_values.ensureTotalCapacity(this.allocator, @truncate(u32, count));
+                try const_values.ensureTotalCapacity(this.allocator, @as(u32, @truncate(count)));
                 for (this.ast.items(.const_values)) |const_value| {
                     for (const_value.keys(), const_value.values()) |key, value| {
                         const_values.putAssumeCapacityNoClobber(key, value);
@@ -3608,7 +3618,7 @@ const LinkerContext = struct {
                 source.contents,
 
                 // We don't support sourcemaps for source files with more than 2^31 lines
-                @intCast(i32, @truncate(u31, approximate_line_count)),
+                @as(i32, @intCast(@as(u31, @truncate(approximate_line_count)))),
             );
         }
 
@@ -3691,8 +3701,8 @@ const LinkerContext = struct {
     ) void {
         this.source_maps.line_offset_wait_group.init();
         this.source_maps.quoted_contents_wait_group.init();
-        this.source_maps.line_offset_wait_group.counter = @truncate(u32, reachable.len);
-        this.source_maps.quoted_contents_wait_group.counter = @truncate(u32, reachable.len);
+        this.source_maps.line_offset_wait_group.counter = @as(u32, @truncate(reachable.len));
+        this.source_maps.quoted_contents_wait_group.counter = @as(u32, @truncate(reachable.len));
         this.source_maps.line_offset_tasks = this.allocator.alloc(SourceMapData.Task, reachable.len) catch unreachable;
         this.source_maps.quoted_contents_tasks = this.allocator.alloc(SourceMapData.Task, reachable.len) catch unreachable;
 
@@ -3720,7 +3730,7 @@ const LinkerContext = struct {
     }
 
     pub fn scheduleTasks(this: *LinkerContext, batch: ThreadPoolLib.Batch) void {
-        _ = this.pending_task_count.fetchAdd(@truncate(u32, batch.len), .Monotonic);
+        _ = this.pending_task_count.fetchAdd(@as(u32, @truncate(batch.len)), .Monotonic);
         this.parse_graph.pool.pool.schedule(batch);
     }
 
@@ -3744,7 +3754,7 @@ const LinkerContext = struct {
         );
 
         if (this.options.source_maps != .none) {
-            this.computeDataForSourceMap(@ptrCast([]Index.Int, reachable));
+            this.computeDataForSourceMap(@as([]Index.Int, @ptrCast(reachable)));
         }
 
         if (comptime FeatureFlags.help_catch_memory_issues) {
@@ -3811,7 +3821,7 @@ const LinkerContext = struct {
 
         // Create chunks for entry points
         for (entry_source_indices, 0..) |source_index, entry_id_| {
-            const entry_bit = @truncate(Chunk.EntryPoint.ID, entry_id_);
+            const entry_bit = @as(Chunk.EntryPoint.ID, @truncate(entry_id_));
 
             var entry_bits = &this.graph.files.items(.entry_bits)[source_index];
             entry_bits.set(entry_bit);
@@ -3840,7 +3850,7 @@ const LinkerContext = struct {
             allocator: std.mem.Allocator,
             source_id: u32,
             pub fn next(c: *@This(), chunk_id: usize) void {
-                _ = c.chunks[chunk_id].files_with_parts_in_chunk.getOrPut(c.allocator, @truncate(u32, c.source_id)) catch unreachable;
+                _ = c.chunks[chunk_id].files_with_parts_in_chunk.getOrPut(c.allocator, @as(u32, @truncate(c.source_id))) catch unreachable;
             }
         };
 
@@ -3867,7 +3877,7 @@ const LinkerContext = struct {
                         };
                     }
 
-                    _ = js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator, @truncate(u32, source_index.get())) catch unreachable;
+                    _ = js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator, @as(u32, @truncate(source_index.get()))) catch unreachable;
                 } else {
                     var handler = Handler{
                         .chunks = js_chunks.values(),
@@ -3889,7 +3899,7 @@ const LinkerContext = struct {
         // to look up the path for this chunk to use with the import.
         for (chunks, 0..) |*chunk, chunk_id| {
             if (chunk.entry_point.is_entry_point) {
-                entry_point_chunk_indices[chunk.entry_point.source_index] = @truncate(u32, chunk_id);
+                entry_point_chunk_indices[chunk.entry_point.source_index] = @as(u32, @truncate(chunk_id));
             }
         }
 
@@ -4064,7 +4074,7 @@ const LinkerContext = struct {
                 const records = v.import_records[source_index].slice();
 
                 for (parts, 0..) |part, part_index_| {
-                    const part_index = @truncate(u32, part_index_);
+                    const part_index = @as(u32, @truncate(part_index_));
                     const is_part_in_this_chunk = is_file_in_chunk and part.is_live;
                     for (part.import_record_indices.slice()) |record_id| {
                         const record: *const ImportRecord = &records[record_id];
@@ -4105,7 +4115,7 @@ const LinkerContext = struct {
                             .{
                                 .source_index = Index.init(source_index),
                                 .part_index_begin = 0,
-                                .part_index_end = @truncate(u32, parts.len),
+                                .part_index_end = @as(u32, @truncate(parts.len)),
                             },
                         ) catch unreachable;
                     }
@@ -4990,7 +5000,7 @@ const LinkerContext = struct {
                             continue;
                         }
 
-                        std.debug.assert(@intCast(usize, other_id) < this.graph.meta.len);
+                        std.debug.assert(@as(usize, @intCast(other_id)) < this.graph.meta.len);
                         const other_flags = flags[other_id];
                         const other_export_kind = exports_kind[other_id];
                         const other_source_index = other_id;
@@ -5000,7 +5010,7 @@ const LinkerContext = struct {
                             const wrapper_ref = wrapper_refs[other_id];
                             this.graph.generateSymbolImportAndUse(
                                 source_index,
-                                @intCast(u32, part_index),
+                                @as(u32, @intCast(part_index)),
                                 wrapper_ref,
                                 1,
                                 Index.source(other_source_index),
@@ -5021,7 +5031,7 @@ const LinkerContext = struct {
                             if (other_flags.wrap == .esm and kind != .stmt) {
                                 this.graph.generateSymbolImportAndUse(
                                     source_index,
-                                    @intCast(u32, part_index),
+                                    @as(u32, @intCast(part_index)),
                                     this.graph.ast.items(.exports_ref)[other_id],
                                     1,
                                     Index.source(other_source_index),
@@ -5049,7 +5059,7 @@ const LinkerContext = struct {
                             // dynamic export fallback object doesn't end up being needed.
                             this.graph.generateSymbolImportAndUse(
                                 source_index,
-                                @intCast(u32, part_index),
+                                @as(u32, @intCast(part_index)),
                                 this.graph.ast.items(.exports_ref)[other_id],
                                 1,
                                 Index.source(other_source_index),
@@ -5098,7 +5108,7 @@ const LinkerContext = struct {
                         if (record.source_index.isValid()) {
                             var other_source_index = record.source_index.get();
                             const other_id = other_source_index;
-                            std.debug.assert(@intCast(usize, other_id) < this.graph.meta.len);
+                            std.debug.assert(@as(usize, @intCast(other_id)) < this.graph.meta.len);
                             const other_export_kind = exports_kind[other_id];
                             if (other_source_index != source_index and other_export_kind.isDynamic()) {
                                 happens_at_runtime = true;
@@ -5111,7 +5121,7 @@ const LinkerContext = struct {
                                 // in a different chunk than this export star.
                                 this.graph.generateSymbolImportAndUse(
                                     source_index,
-                                    @intCast(u32, part_index),
+                                    @as(u32, @intCast(part_index)),
                                     this.graph.ast.items(.exports_ref)[other_id],
                                     1,
                                     Index.source(other_source_index),
@@ -5123,7 +5133,7 @@ const LinkerContext = struct {
                             // Depend on this file's "exports" object for the first argument to "__reExport"
                             this.graph.generateSymbolImportAndUse(
                                 source_index,
-                                @intCast(u32, part_index),
+                                @as(u32, @intCast(part_index)),
                                 this.graph.ast.items(.exports_ref)[id],
                                 1,
                                 Index.source(source_index),
@@ -5519,9 +5529,9 @@ const LinkerContext = struct {
                 const other_parts = c.topLevelSymbolsToParts(id, ref);
 
                 for (other_parts) |other_part_index| {
-                    var local = local_dependencies.getOrPut(@intCast(u32, other_part_index)) catch unreachable;
+                    var local = local_dependencies.getOrPut(@as(u32, @intCast(other_part_index))) catch unreachable;
                     if (!local.found_existing or local.value_ptr.* != part_index) {
-                        local.value_ptr.* = @intCast(u32, part_index);
+                        local.value_ptr.* = @as(u32, @intCast(part_index));
                         // note: if we crash on append, it is due to threadlocal heaps in mimalloc
                         part.dependencies.push(
                             allocator_,
@@ -5535,7 +5545,7 @@ const LinkerContext = struct {
 
                 // Also map from imports to parts that use them
                 if (named_imports.getPtr(ref)) |existing| {
-                    existing.local_parts_with_uses.push(allocator_, @intCast(u32, part_index)) catch unreachable;
+                    existing.local_parts_with_uses.push(allocator_, @as(u32, @intCast(part_index))) catch unreachable;
                 }
             }
         }
@@ -5702,7 +5712,7 @@ const LinkerContext = struct {
                     // the same name should already be marked as all being in a single
                     // chunk. In that case this will overwrite the same value below which
                     // is fine.
-                    deps.symbols.assignChunkIndex(part.declared_symbols, @truncate(u32, chunk_index));
+                    deps.symbols.assignChunkIndex(part.declared_symbols, @as(u32, @truncate(chunk_index)));
 
                     const used_refs = part.symbol_uses.keys();
 
@@ -5857,7 +5867,7 @@ const LinkerContext = struct {
                         }
                         _ = js.imports_from_other_chunks.getOrPutValue(
                             c.allocator,
-                            @truncate(u32, other_chunk_index),
+                            @as(u32, @truncate(other_chunk_index)),
                             CrossChunkImport.Item.List{},
                         ) catch unreachable;
                     }
@@ -5909,7 +5919,7 @@ const LinkerContext = struct {
                             &stable_ref_list,
                         );
                         var clause_items = BabyList(js_ast.ClauseItem).initCapacity(c.allocator, stable_ref_list.items.len) catch unreachable;
-                        clause_items.len = @truncate(u32, stable_ref_list.items.len);
+                        clause_items.len = @as(u32, @truncate(stable_ref_list.items.len));
                         repr.exports_to_other_chunks.ensureUnusedCapacity(c.allocator, stable_ref_list.items.len) catch unreachable;
                         r.clearRetainingCapacity();
 
@@ -5973,7 +5983,7 @@ const LinkerContext = struct {
                 for (cross_chunk_imports_input) |cross_chunk_import| {
                     switch (c.options.output_format) {
                         .esm => {
-                            const import_record_index = @intCast(u32, cross_chunk_imports.len);
+                            const import_record_index = @as(u32, @intCast(cross_chunk_imports.len));
 
                             var clauses = std.ArrayList(js_ast.ClauseItem).initCapacity(c.allocator, cross_chunk_import.sorted_import_items.len) catch unreachable;
                             for (cross_chunk_import.sorted_import_items.slice()) |item| {
@@ -6676,7 +6686,7 @@ const LinkerContext = struct {
         chunk.intermediate_output = c.breakOutputIntoPieces(
             worker.allocator,
             &j,
-            @truncate(u32, ctx.chunks.len),
+            @as(u32, @truncate(ctx.chunks.len)),
         ) catch @panic("Unhandled out of memory error in breakOutputIntoPieces()");
 
         // TODO: meta contents
@@ -6774,7 +6784,7 @@ const LinkerContext = struct {
             var res = try source_index_to_sources_index.getOrPut(current_source_index);
             if (res.found_existing) continue;
             res.value_ptr.* = next_source_index;
-            const source_index = @intCast(i32, next_source_index);
+            const source_index = @as(i32, @intCast(next_source_index));
             next_source_index += 1;
 
             var start_state = sourcemap.SourceMapState{
@@ -8170,7 +8180,7 @@ const LinkerContext = struct {
 
         // Add all other parts in this chunk
         for (parts, 0..) |part, index_| {
-            const index = part_range.part_index_begin + @truncate(u32, index_);
+            const index = part_range.part_index_begin + @as(u32, @truncate(index_));
             if (!part.is_live) {
                 // Skip the part if it's not in this chunk
                 continue;
@@ -8665,7 +8675,7 @@ const LinkerContext = struct {
                 wait_group.deinit();
                 c.allocator.destroy(wait_group);
             }
-            wait_group.counter = @truncate(u32, chunks.len);
+            wait_group.counter = @as(u32, @truncate(chunks.len));
             var ctx = GenerateChunkCtx{ .chunk = &chunks[0], .wg = wait_group, .c = c, .chunks = chunks };
             try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, ctx, generateJSRenamer, chunks);
         }
@@ -8704,7 +8714,7 @@ const LinkerContext = struct {
                     for (chunk.content.javascript.parts_in_chunk_in_order, 0..) |part_range, i| {
                         remaining_part_ranges[0] = .{
                             .part_range = part_range,
-                            .i = @truncate(u32, i),
+                            .i = @as(u32, @truncate(i)),
                             .task = ThreadPoolLib.Task{
                                 .callback = &generateCompileResultForJSChunk,
                             },
@@ -8715,7 +8725,7 @@ const LinkerContext = struct {
                         remaining_part_ranges = remaining_part_ranges[1..];
                     }
                 }
-                wait_group.counter = @truncate(u32, total_count);
+                wait_group.counter = @as(u32, @truncate(total_count));
                 c.parse_graph.pool.pool.schedule(batch);
                 wait_group.wait();
             }
@@ -8732,7 +8742,7 @@ const LinkerContext = struct {
                 debug(" START {d} postprocess chunks", .{chunks.len});
                 defer debug("  DONE {d} postprocess chunks", .{chunks.len});
                 wait_group.init();
-                wait_group.counter = @truncate(u32, chunks.len);
+                wait_group.counter = @as(u32, @truncate(chunks.len));
 
                 try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, chunk_contexts[0], generateChunkJS, chunks);
             }
@@ -8779,14 +8789,14 @@ const LinkerContext = struct {
             defer sorted_client_component_ids.deinit();
             while (react_client_components_iterator.next()) |source_index| {
                 if (!c.graph.files_live.isSet(source_index)) continue;
-                sorted_client_component_ids.appendAssumeCapacity(@intCast(u32, source_index));
+                sorted_client_component_ids.appendAssumeCapacity(@as(u32, @intCast(source_index)));
             }
 
             var sorted_server_component_ids = std.ArrayList(u32).initCapacity(c.allocator, server_modules.capacity) catch unreachable;
             defer sorted_server_component_ids.deinit();
             while (react_server_components_iterator.next()) |source_index| {
                 if (!c.graph.files_live.isSet(source_index)) continue;
-                sorted_server_component_ids.appendAssumeCapacity(@intCast(u32, source_index));
+                sorted_server_component_ids.appendAssumeCapacity(@as(u32, @intCast(source_index)));
             }
 
             const Sorter = struct {
@@ -8813,7 +8823,7 @@ const LinkerContext = struct {
                     var chunk: *Chunk = brk2: {
                         for (chunks) |*chunk_| {
                             if (!chunk_.entry_point.is_entry_point) continue;
-                            if (chunk_.entry_point.source_index == @intCast(u32, component_source_index)) {
+                            if (chunk_.entry_point.source_index == @as(u32, @intCast(component_source_index))) {
                                 break :brk2 chunk_;
                             }
 
@@ -8831,8 +8841,8 @@ const LinkerContext = struct {
                     const named_exports = all_named_exports[source_index_for_named_exports].keys();
 
                     try export_names.ensureUnusedCapacity(named_exports.len);
-                    const exports_len = @intCast(u32, named_exports.len);
-                    const exports_start = @intCast(u32, export_names.items.len);
+                    const exports_len = @as(u32, @intCast(named_exports.len));
+                    const exports_start = @as(u32, @intCast(export_names.items.len));
 
                     grow_length += chunk.final_rel_path.len;
 
@@ -8840,8 +8850,8 @@ const LinkerContext = struct {
 
                     for (named_exports) |export_name| {
                         try export_names.append(Api.StringPointer{
-                            .offset = @intCast(u32, bytes.items.len + grow_length),
-                            .length = @intCast(u32, export_name.len),
+                            .offset = @as(u32, @intCast(bytes.items.len + grow_length)),
+                            .length = @as(u32, @intCast(export_name.len)),
                         });
                         grow_length += export_name.len;
                     }
@@ -8849,15 +8859,15 @@ const LinkerContext = struct {
                     try bytes.ensureUnusedCapacity(grow_length);
 
                     const input_name = Api.StringPointer{
-                        .offset = @intCast(u32, bytes.items.len),
-                        .length = @intCast(u32, all_sources[component_source_index].path.pretty.len),
+                        .offset = @as(u32, @intCast(bytes.items.len)),
+                        .length = @as(u32, @intCast(all_sources[component_source_index].path.pretty.len)),
                     };
 
                     bytes.appendSliceAssumeCapacity(all_sources[component_source_index].path.pretty);
 
                     const asset_name = Api.StringPointer{
-                        .offset = @intCast(u32, bytes.items.len),
-                        .length = @intCast(u32, chunk.final_rel_path.len),
+                        .offset = @as(u32, @intCast(bytes.items.len)),
+                        .length = @as(u32, @intCast(chunk.final_rel_path.len)),
                     };
 
                     bytes.appendSliceAssumeCapacity(chunk.final_rel_path);
@@ -9006,7 +9016,7 @@ const LinkerContext = struct {
                             .hash = chunk.isolated_hash,
                             .loader = .js,
                             .input_path = input_path,
-                            .display_size = @truncate(u32, display_size),
+                            .display_size = @as(u32, @truncate(display_size)),
                             .output_kind = if (chunk.entry_point.is_entry_point)
                                 c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index].OutputKind()
                             else
@@ -9015,7 +9025,7 @@ const LinkerContext = struct {
                             .output_path = try bun.default_allocator.dupe(u8, chunk.final_rel_path),
                             .is_executable = chunk.is_executable,
                             .source_map_index = if (sourcemap_output_file != null)
-                                @truncate(u32, output_files.items.len + 1)
+                                @as(u32, @truncate(output_files.items.len + 1))
                             else
                                 null,
                         },
@@ -9159,13 +9169,13 @@ const LinkerContext = struct {
                                     .buffer = .{
                                         .ptr = @constCast(output_source_map.ptr),
                                         // TODO: handle > 4 GB files
-                                        .len = @truncate(u32, output_source_map.len),
-                                        .byte_len = @truncate(u32, output_source_map.len),
+                                        .len = @as(u32, @truncate(output_source_map.len)),
+                                        .byte_len = @as(u32, @truncate(output_source_map.len)),
                                     },
                                 },
                             },
                             .encoding = .buffer,
-                            .dirfd = @intCast(bun.FileDescriptor, root_dir.dir.fd),
+                            .dirfd = @as(bun.FileDescriptor, @intCast(root_dir.dir.fd)),
                             .file = .{
                                 .path = JSC.Node.PathLike{
                                     .string = JSC.PathString.init(source_map_final_rel_path),
@@ -9174,8 +9184,10 @@ const LinkerContext = struct {
                         },
                     )) {
                         .err => |err| {
+                            var message = err.toSystemError().message.toUTF8(bun.default_allocator);
+                            defer message.deinit();
                             c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing sourcemap for chunk {}", .{
-                                bun.fmt.quote(err.toSystemError().message.slice()),
+                                bun.fmt.quote(message.slice()),
                                 bun.fmt.quote(chunk.final_rel_path),
                             }) catch unreachable;
                             return error.WriteFailed;
@@ -9190,7 +9202,7 @@ const LinkerContext = struct {
                             .loader = .json,
                             .input_loader = .file,
                             .output_kind = .sourcemap,
-                            .size = @truncate(u32, output_source_map.len),
+                            .size = @as(u32, @truncate(output_source_map.len)),
                             .data = .{
                                 .saved = 0,
                             },
@@ -9225,15 +9237,15 @@ const LinkerContext = struct {
                             .buffer = .{
                                 .ptr = @constCast(code_result.buffer.ptr),
                                 // TODO: handle > 4 GB files
-                                .len = @truncate(u32, code_result.buffer.len),
-                                .byte_len = @truncate(u32, code_result.buffer.len),
+                                .len = @as(u32, @truncate(code_result.buffer.len)),
+                                .byte_len = @as(u32, @truncate(code_result.buffer.len)),
                             },
                         },
                     },
                     .encoding = .buffer,
                     .mode = if (chunk.is_executable) 0o755 else 0o644,
 
-                    .dirfd = @intCast(bun.FileDescriptor, root_dir.dir.fd),
+                    .dirfd = @as(bun.FileDescriptor, @intCast(root_dir.dir.fd)),
                     .file = .{
                         .path = JSC.Node.PathLike{
                             .string = JSC.PathString.init(rel_path),
@@ -9242,8 +9254,10 @@ const LinkerContext = struct {
                 },
             )) {
                 .err => |err| {
+                    var message = err.toSystemError().message.toUTF8(bun.default_allocator);
+                    defer message.deinit();
                     c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing chunk {}", .{
-                        bun.fmt.quote(err.toSystemError().message.slice()),
+                        bun.fmt.quote(message.slice()),
                         bun.fmt.quote(chunk.final_rel_path),
                     }) catch unreachable;
                     return error.WriteFailed;
@@ -9267,11 +9281,11 @@ const LinkerContext = struct {
                             .chunk,
                         .loader = .js,
                         .source_map_index = if (source_map_output_file != null)
-                            @truncate(u32, output_files.items.len + 1)
+                            @as(u32, @truncate(output_files.items.len + 1))
                         else
                             null,
-                        .size = @truncate(u32, code_result.buffer.len),
-                        .display_size = @truncate(u32, display_size),
+                        .size = @as(u32, @truncate(code_result.buffer.len)),
+                        .display_size = @as(u32, @truncate(display_size)),
                         .is_executable = chunk.is_executable,
                         .data = .{
                             .saved = 0,
@@ -9294,13 +9308,13 @@ const LinkerContext = struct {
                             .buffer = .{
                                 .ptr = @constCast(react_client_components_manifest.ptr),
                                 // TODO: handle > 4 GB files
-                                .len = @truncate(u32, react_client_components_manifest.len),
-                                .byte_len = @truncate(u32, react_client_components_manifest.len),
+                                .len = @as(u32, @truncate(react_client_components_manifest.len)),
+                                .byte_len = @as(u32, @truncate(react_client_components_manifest.len)),
                             },
                         },
                     },
                     .encoding = .buffer,
-                    .dirfd = @intCast(bun.FileDescriptor, root_dir.dir.fd),
+                    .dirfd = @as(bun.FileDescriptor, @intCast(root_dir.dir.fd)),
                     .file = .{
                         .path = JSC.Node.PathLike{
                             .string = JSC.PathString.init(components_manifest_path),
@@ -9309,8 +9323,10 @@ const LinkerContext = struct {
                 },
             )) {
                 .err => |err| {
+                    const utf8 = err.toSystemError().message.toUTF8(bun.default_allocator);
+                    defer utf8.deinit();
                     c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing chunk {}", .{
-                        bun.fmt.quote(err.toSystemError().message.slice()),
+                        bun.fmt.quote(utf8.slice()),
                         bun.fmt.quote(components_manifest_path),
                     }) catch unreachable;
                     return error.WriteFailed;
@@ -9327,7 +9343,7 @@ const LinkerContext = struct {
                         .loader = .file,
                         .input_loader = .file,
                         .output_kind = .@"component-manifest",
-                        .size = @truncate(u32, react_client_components_manifest.len),
+                        .size = @as(u32, @truncate(react_client_components_manifest.len)),
                         .input_path = bun.default_allocator.dupe(u8, components_manifest_path) catch unreachable,
                         .output_path = bun.default_allocator.dupe(u8, components_manifest_path) catch unreachable,
                     },
@@ -9368,13 +9384,13 @@ const LinkerContext = struct {
                                 .buffer = .{
                                     .ptr = @constCast(bytes.ptr),
                                     // TODO: handle > 4 GB files
-                                    .len = @truncate(u32, bytes.len),
-                                    .byte_len = @truncate(u32, bytes.len),
+                                    .len = @as(u32, @truncate(bytes.len)),
+                                    .byte_len = @as(u32, @truncate(bytes.len)),
                                 },
                             },
                         },
                         .encoding = .buffer,
-                        .dirfd = @intCast(bun.FileDescriptor, root_dir.dir.fd),
+                        .dirfd = @as(bun.FileDescriptor, @intCast(root_dir.dir.fd)),
                         .file = .{
                             .path = JSC.Node.PathLike{
                                 .string = JSC.PathString.init(src.dest_path),
@@ -9383,8 +9399,10 @@ const LinkerContext = struct {
                     },
                 )) {
                     .err => |err| {
+                        const utf8 = err.toSystemError().message.toUTF8(bun.default_allocator);
+                        defer utf8.deinit();
                         c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing file {}", .{
-                            bun.fmt.quote(err.toSystemError().message.slice()),
+                            bun.fmt.quote(utf8.slice()),
                             bun.fmt.quote(src.src_path.text),
                         }) catch unreachable;
                         return error.WriteFailed;
@@ -9396,7 +9414,7 @@ const LinkerContext = struct {
                 dest.value = .{
                     .saved = .{},
                 };
-                dest.size = @truncate(u32, bytes.len);
+                dest.size = @as(u32, @truncate(bytes.len));
             }
         }
     }
@@ -9589,7 +9607,7 @@ const LinkerContext = struct {
                 entry_point_kinds[id].isEntryPoint()))
             {
                 _ = c.markPartLiveForTreeShaking(
-                    @intCast(u32, part_index),
+                    @as(u32, @intCast(part_index)),
                     id,
                     side_effects,
                     parts,
@@ -10492,14 +10510,14 @@ const LinkerContext = struct {
                 },
             }
 
-            output_piece_index.index = @intCast(u30, index);
+            output_piece_index.index = @as(u30, @intCast(index));
 
             // If we're at the end, generate one final piece
             if (boundary == invalid_boundary) {
                 try pieces.append(Chunk.OutputPiece{
                     .index = output_piece_index,
                     .data_ptr = output.ptr,
-                    .data_len = @truncate(u32, output.len),
+                    .data_len = @as(u32, @truncate(output.len)),
                 });
                 break;
             }
@@ -10510,7 +10528,7 @@ const LinkerContext = struct {
                 .data_ptr = output.ptr,
 
                 // sliced this way to panic if out of bounds
-                .data_len = @truncate(u32, output[0..boundary].len),
+                .data_len = @as(u32, @truncate(output[0..boundary].len)),
             });
             output = output[boundary + prefix.len + 9 ..];
         }
@@ -11318,12 +11336,12 @@ const ShadowEntryPoint = struct {
             ,
                 .{
                     path.pretty,
-                    ImportsFormatter{ .ctx = this.ctx, .source_index = @intCast(Index.Int, source_index), .pretty = path.pretty },
+                    ImportsFormatter{ .ctx = this.ctx, .source_index = @as(Index.Int, @intCast(source_index)), .pretty = path.pretty },
                     bun.fmt.hexIntUpper(bun.hash(path.pretty)),
-                    ExportsFormatter{ .ctx = this.ctx, .source_index = @intCast(Index.Int, source_index), .pretty = path.pretty, .shadow = this.shadow },
+                    ExportsFormatter{ .ctx = this.ctx, .source_index = @as(Index.Int, @intCast(source_index)), .pretty = path.pretty, .shadow = this.shadow },
                 },
             ) catch unreachable;
-            this.resolved_source_indices.append(@truncate(Index.Int, source_index)) catch unreachable;
+            this.resolved_source_indices.append(@as(Index.Int, @truncate(source_index))) catch unreachable;
         }
     };
     const ImportsFormatter = struct {

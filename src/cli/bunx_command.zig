@@ -365,10 +365,10 @@ pub const BunxCommand = struct {
                 }
             },
             .Signal => |signal| {
-                Global.exit(@truncate(u7, signal));
+                Global.exit(@as(u7, @truncate(signal)));
             },
             .Stopped => |signal| {
-                Global.exit(@truncate(u7, signal));
+                Global.exit(@as(u7, @truncate(signal)));
             },
             // shouldn't happen
             else => {

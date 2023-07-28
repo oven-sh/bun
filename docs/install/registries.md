@@ -24,3 +24,7 @@ To configure a private registry scoped to a particular organization:
 # registry with token
 "@myorg3" = { token = "$npm_token", url = "https://registry.myorg.com/" }
 ```
+
+### `.npmrc`
+
+Bun does not currently read `.npmrc` files. For private registries, migrate your registry configuration to `bunfig.toml` as documented above.

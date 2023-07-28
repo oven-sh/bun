@@ -344,6 +344,7 @@ declare module "bun:ffi" {
      *
      */
     u64_fast = 16,
+    function = 17,
   }
 
   type UNTYPED = never;
@@ -364,21 +365,22 @@ declare module "bun:ffi" {
     [FFIType.int]: number;
     [FFIType.uint32_t]: number;
     [FFIType.u32]: number;
-    [FFIType.int64_t]: UNTYPED;
-    [FFIType.i64]: UNTYPED;
-    [FFIType.uint64_t]: UNTYPED;
-    [FFIType.u64]: UNTYPED;
-    [FFIType.double]: UNTYPED;
-    [FFIType.f64]: UNTYPED;
-    [FFIType.float]: UNTYPED;
-    [FFIType.f32]: UNTYPED;
+    [FFIType.int64_t]: number;
+    [FFIType.i64]: number;
+    [FFIType.uint64_t]: number;
+    [FFIType.u64]: number;
+    [FFIType.double]: number;
+    [FFIType.f64]: number;
+    [FFIType.float]: number;
+    [FFIType.f32]: number;
     [FFIType.bool]: boolean;
     [FFIType.ptr]: Pointer;
     [FFIType.pointer]: Pointer;
-    [FFIType.void]: UNTYPED;
+    [FFIType.void]: void;
     [FFIType.cstring]: CString;
     [FFIType.i64_fast]: number | bigint;
     [FFIType.u64_fast]: number | bigint;
+    [FFIType.function]: (...args: any[]) => any;
   }
   interface FFITypeStringToType {
     ["char"]: FFIType.char;

@@ -1,5 +1,7 @@
+import { spawnSync } from "bun";
 import { it, expect } from "bun:test";
-
+import { bunEnv, bunExe } from "harness";
+import path from "node:path";
 it("setTimeout", async () => {
   var lastID = -1;
   const result = await new Promise((resolve, reject) => {
@@ -172,11 +174,56 @@ it.skip("order of setTimeouts", done => {
   Promise.resolve().then(maybeDone(() => nums.push(1)));
 });
 
+it("setTimeout -> refresh", () => {
+  const { exitCode, stdout } = spawnSync({
+    cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-unref-fixture.js")],
+    env: bunEnv,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString()).toBe("SUCCESS\n");
+});
+
+it("setTimeout -> unref -> ref works", () => {
+  const { exitCode, stdout } = spawnSync({
+    cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-unref-fixture-4.js")],
+    env: bunEnv,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString()).toBe("TEST PASSED!\n");
+});
+
+it("setTimeout -> ref -> unref works, even if there is another timer", () => {
+  const { exitCode, stdout } = spawnSync({
+    cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-unref-fixture-2.js")],
+    env: bunEnv,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString()).toBe("");
+});
+
+it("setTimeout -> ref -> unref works", () => {
+  const { exitCode, stdout } = spawnSync({
+    cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-unref-fixture-5.js")],
+    env: bunEnv,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString()).toBe("");
+});
+
+it("setTimeout -> unref doesn't keep event loop alive forever", () => {
+  const { exitCode, stdout } = spawnSync({
+    cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-unref-fixture-3.js")],
+    env: bunEnv,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString()).toBe("");
+});
+
 it("setTimeout should refresh N times", done => {
   let count = 0;
   let timer = setTimeout(() => {
     count++;
-    timer.refresh();
+    expect(timer.refresh()).toBe(timer);
   }, 50);
 
   setTimeout(() => {

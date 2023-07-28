@@ -1335,6 +1335,62 @@ describe("expect()", () => {
     expect([1, 2, 3, 4]).not.toEqual([1, 2, 3]);
   });
 
+  test("toEqual() - private class fields", () => {
+    class A {
+      #three = 3;
+      set three(value) {
+        this.#three = value;
+      }
+
+      get three() {
+        return this.#three;
+      }
+    }
+
+    class B {
+      #three = 3;
+      set three(value) {
+        this.#three = value;
+      }
+
+      get three() {
+        return this.#three;
+      }
+    }
+
+    let a1 = new A();
+    let a2 = new A();
+    a1.three = 4;
+    expect(a1).toEqual(a2);
+    expect(a2).toEqual(a1);
+
+    let a3 = new A();
+    let a4 = new A();
+    a3.three = 4;
+    // use indexed properties for slow path
+    a3[1] = 2;
+    a4[1] = 2;
+    expect(a3).toEqual(a4);
+    expect(a4).toEqual(a3);
+
+    let b1 = new B();
+    let a5 = new A();
+    expect(b1).toEqual(a5);
+    expect(a5).toEqual(b1);
+
+    b1.three = 4;
+    expect(b1).toEqual(a5);
+    expect(a5).toEqual(b1);
+
+    b1[1] = 2;
+    expect(b1).not.toEqual(a5);
+    expect(a5).not.toEqual(b1);
+
+    a5[1] = 2;
+    expect(b1).toEqual(a5);
+    expect(a5).toEqual(b1);
+  });
+
   test("properties with different circularity are not equal", () => {
     const a = {};
     a.x = { y: a };

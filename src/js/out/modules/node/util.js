@@ -386,7 +386,9 @@ var isRegExp2 = types.isRegExp, isDate2 = types.isDate, isError = types.isNative
   return Object.defineProperties(fn, getOwnPropertyDescriptors(original));
 };
 promisify.custom = kCustomPromisifiedSymbol;
-var { TextDecoder, TextEncoder } = globalThis;
+var { TextDecoder, TextEncoder } = globalThis, toUSVString = (input) => {
+  return (input + "").toWellFormed();
+};
 Object.assign(cjs_exports, {
   format,
   deprecate,
@@ -411,6 +413,7 @@ Object.assign(cjs_exports, {
   isBuffer,
   log,
   inherits,
+  toUSVString,
   promisify,
   callbackify,
   isDeepStrictEqual,
@@ -420,6 +423,7 @@ Object.assign(cjs_exports, {
 });
 export {
   default2 as types,
+  toUSVString,
   promisify,
   log,
   isUndefined,

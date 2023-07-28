@@ -106,6 +106,13 @@ describe("Bun.Transpiler", () => {
       ts.expectPrinted_("import Foo = Baz.Bar;\nexport default Foo;", "const Foo = Baz.Bar;\nexport default Foo");
     });
 
+    it("ternary should parse correctly when parsing typescript fails", () => {
+      ts.expectPrinted_(
+        "var c = Math.random() ? ({ ...{} }) : ({ ...{} })",
+        "var c = Math.random() ? { ...{} } : { ...{} }",
+      );
+    });
+
     it.todo("instantiation expressions", async () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
@@ -2800,9 +2807,31 @@ console.log(foo, array);
       expectPrinted("'a' + 1", '"a" + 1');
       expectPrinted("x * 'a' + 'b'", 'x * "a" + "b"');
 
+      // rope string push another rope string
+      expectPrinted("'a' + ('b' + 'c') + 'd'", '"abcd"');
+      expectPrinted("('a' + 'b') + 'c'", '"abc"');
+      expectPrinted("'a' + ('b' + 'c')", '"abc"');
+      expectPrinted("'a' + ('b' + ('c' + 'd')) + 'e'", '"abcde"');
+      expectPrinted("'a' + ('b' + ('c' + ('d' + 'e')))", '"abcde"');
+      expectPrinted("('a' + ('b' + ('c' + 'd'))) + 'e'", '"abcde"');
+      expectPrinted("('a' + ('b' + 'c')) + ('d' + 'e')", '"abcde"');
+      expectPrinted("('a' + 'b') + ('c' + 'd')", '"abcd"');
+      expectPrinted("'a' + ('b' + 'c') + 'd'", '"abcd"');
+      expectPrinted("'a' + ('b' + ('c' + 'd'))", '"abcd"');
+
+      function check(input, output) {
+        expect(transpiler.transformSync(input)).toEqual(output);
+      }
+
+      var output = `var boop = "bcd";\nconst ropy = "a" + boop + "d", ropy2 = "b" + boop;\n`;
+      check(`var boop = ('b' + 'c') + 'd'; const ropy = "a" + boop + 'd'; const ropy2 = 'b' + boop;`, output);
+
+      output = `var boop = "fbcd", ropy = "a" + boop + "d", ropy2 = "b" + (ropy + "d");\n`;
+      check(`var boop = "f" + ("b" + "c") + "d";var ropy = "a" + boop + "d";var ropy2 = "b" + (ropy + "d")`, output);
+
       expectPrinted("'string' + `template`", `"stringtemplate"`);
 
-      expectPrinted("`template` + 'string'", "`templatestring`");
+      expectPrinted("`template` + 'string'", '"templatestring"');
 
       // TODO: string template simplification
       // expectPrinted("'string' + `a${foo}b`", "`stringa${foo}b`");
@@ -3081,7 +3110,7 @@ console.log(foo, array);
       expectPrinted_('const x = `str` + "``";', "const x = `str\\`\\``");
       expectPrinted_('const x = `` + "`";', "const x = `\\``");
       expectPrinted_('const x = `` + "``";', "const x = `\\`\\``");
-      expectPrinted_('const x = "``" + ``;', 'const x = "``"');
+      expectPrinted_('const x = "``" + ``;', "const x = `\\`\\``");
     });
   });
 

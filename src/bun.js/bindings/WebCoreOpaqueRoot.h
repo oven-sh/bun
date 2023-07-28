@@ -26,7 +26,6 @@
 
 #pragma once
 
-
 namespace WebCore {
 
 class WebCoreOpaqueRoot {
@@ -37,7 +36,7 @@ public:
     {
     }
 
-    WebCoreOpaqueRoot(std::nullptr_t) { }
+    WebCoreOpaqueRoot(std::nullptr_t) {}
 
     bool isNode() const { return false; }
     void* pointer() const { return m_pointer; }

@@ -2084,6 +2084,30 @@ declare module "buffer" {
       values(): IterableIterator<number>;
     }
     var Buffer: BufferConstructor;
+
+    /**
+     * This function returns `true` if `input` contains only valid UTF-8-encoded data,
+     * including the case in which `input` is empty.
+     *
+     * Throws if the `input` is a detached array buffer.
+     * @since Bun v0.6.13
+     * @param input The input to validate.
+     */
+    export function isUtf8(
+      input: TypedArray | ArrayBufferLike | DataView,
+    ): boolean;
+
+    /**
+     * This function returns `true` if `input` contains only valid ASCII-encoded data,
+     * including the case in which `input` is empty.
+     *
+     * Throws if the `input` is a detached array buffer.
+     * @since Bun v0.6.13
+     * @param input The input to validate.
+     */
+    export function isAscii(
+      input: TypedArray | ArrayBufferLike | DataView,
+    ): boolean;
   }
 }
 declare module "node:buffer" {

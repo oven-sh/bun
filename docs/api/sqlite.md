@@ -75,7 +75,7 @@ Note: `close()` is called automatically when the database is garbage collected. 
 ```ts
 const olddb = new Database("mydb.sqlite");
 const contents = olddb.serialize(); // => Uint8Array
-const newdb = new Database(contents);
+const newdb = Database.deserialize(contents);
 ```
 
 Internally, `.serialize()` calls [`sqlite3_serialize`](https://www.sqlite.org/c3ref/serialize.html).
@@ -250,7 +250,7 @@ Transactions are a mechanism for executing multiple queries in an _atomic_ way; 
 
 ```ts
 const insertCat = db.prepare("INSERT INTO cats (name) VALUES ($name)");
-const insertCats = db.transaction((cats) => {
+const insertCats = db.transaction(cats => {
   for (const cat of cats) insertCat.run(cat);
 });
 ```
@@ -261,7 +261,7 @@ To execute the transaction, call this function. All arguments will be passed thr
 
 ```ts
 const insert = db.prepare("INSERT INTO cats (name) VALUES ($name)");
-const insertCats = db.transaction((cats) => {
+const insertCats = db.transaction(cats => {
   for (const cat of cats) insert.run(cat);
   return cats.length;
 });
@@ -296,11 +296,11 @@ const insertExpense = db.prepare(
   "INSERT INTO expenses (note, dollars) VALUES (?, ?)",
 );
 const insert = db.prepare("INSERT INTO cats (name, age) VALUES ($name, $age)");
-const insertCats = db.transaction((cats) => {
+const insertCats = db.transaction(cats => {
   for (const cat of cats) insert.run(cat);
 });
 
-const adopt = db.transaction((cats) => {
+const adopt = db.transaction(cats => {
   insertExpense.run("adoption fees", 20);
   insertCats(cats); // nested transaction
 });

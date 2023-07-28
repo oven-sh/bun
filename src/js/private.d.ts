@@ -7,9 +7,8 @@
 declare function $bundleError(error: string);
 
 type BunFSWatchOptions = { encoding?: BufferEncoding; persistent?: boolean; recursive?: boolean; signal?: AbortSignal };
-
 type BunWatchEventType = "rename" | "change" | "error" | "close";
-type BunWatchListener<T> = (event: WatchEventType, filename: T | Error | undefined) => void;
+type BunWatchListener<T> = (event: WatchEventType, filename: T | undefined) => void;
 
 interface BunFSWatcher {
   /**
@@ -96,10 +95,12 @@ declare module "bun" {
   };
   function fs(): BunFS;
   function _Os(): typeof import("node:os");
+  function _Path(isWindows?: boolean): typeof import("node:path");
   function jest(): typeof import("bun:test");
   var main: string;
   var tty: Array<{ hasColors: boolean }>;
   var FFI: any;
+  /** This version of fetch is untamperable */
   var fetch: typeof globalThis.fetch;
 }
 
@@ -138,6 +139,63 @@ declare interface Error {
   code?: string;
 }
 
-declare interface ImportMeta {
-  primordials: {};
+/**
+ * Load an internal native module. To see implementation details, open ZigGlobalObject.cpp and cmd+f `static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad`
+ *
+ * This is only valid in src/js/ as it is replaced with `globalThis[Symbol.for("Bun.lazy")]` at bundle time.
+ */
+function $lazy<T extends keyof BunLazyModules>(id: T): BunLazyModules[T];
+function $lazy(id: "createImportMeta", from: string): BunLazyModules[T];
+
+interface BunLazyModules {
+  /**
+   * Primordials is a dynamic object that contains builtin functions and values.
+   *
+   * like primordials.isPromise -> $isPromise, etc
+   * Also primordials.Bun -> $Bun, etc; untampered globals
+   *
+   * The implmentation of this is done using createBuiltin('(function (){ return @<name here>; })')
+   * Meaning you can crash bun if you try returning something like `getInternalField`
+   */
+  primordials: any;
+
+  "bun:jsc": Omit<typeof import("bun:jsc"), "jscDescribe" | "jscDescribeArray"> & {
+    describe: typeof import("bun:jsc").jscDescribe;
+    describeArray: typeof import("bun:jsc").jscDescribe;
+  };
+  "bun:stream": {
+    maybeReadMore: Function;
+    resume: Function;
+    emitReadable: Function;
+    onEofChunk: Function;
+    ReadableState: Function;
+  };
+  sqlite: any;
+  "vm": {
+    createContext: Function;
+    isContext: Function;
+    Script: typeof import("node:vm").Script;
+    runInNewContext: Function;
+    runInThisContext: Function;
+  };
+  /** typeof === 'undefined', but callable -> throws not implemented */
+  "masqueradesAsUndefined": (...args: any) => any;
+  pathToFileURL: typeof import("node:url").pathToFileURL;
+  fileURLToPath: typeof import("node:url").fileURLToPath;
+  noop: {
+    getterSetter: any;
+    function: any;
+    functionRegular: any;
+    callback: any;
+  };
+  "async_hooks": {
+    get: typeof import("./builtins/AsyncContext").getAsyncContext;
+    set: typeof import("./builtins/AsyncContext").setAsyncContext;
+    cleanupLater: () => void;
+  };
+
+  // ReadableStream related
+  [1]: any;
+  [2]: any;
+  [4]: any;
 }

@@ -91,10 +91,10 @@ pub fn parse(possibly_encoded_pathname_: string) !URLPath {
     var first_segment_end: i16 = std.math.maxInt(i16);
     var last_slash: i16 = -1;
 
-    var i: i16 = @intCast(i16, decoded_pathname.len) - 1;
+    var i: i16 = @as(i16, @intCast(decoded_pathname.len)) - 1;
 
     while (i >= 0) : (i -= 1) {
-        const c = decoded_pathname[@intCast(usize, i)];
+        const c = decoded_pathname[@as(usize, @intCast(i))];
 
         switch (c) {
             '?' => {
@@ -130,18 +130,18 @@ pub fn parse(possibly_encoded_pathname_: string) !URLPath {
     const extname = brk: {
         if (question_mark_i > -1 and period_i > -1) {
             period_i += 1;
-            break :brk decoded_pathname[@intCast(usize, period_i)..@intCast(usize, question_mark_i)];
+            break :brk decoded_pathname[@as(usize, @intCast(period_i))..@as(usize, @intCast(question_mark_i))];
         } else if (period_i > -1) {
             period_i += 1;
-            break :brk decoded_pathname[@intCast(usize, period_i)..];
+            break :brk decoded_pathname[@as(usize, @intCast(period_i))..];
         } else {
             break :brk &([_]u8{});
         }
     };
 
-    var path = if (question_mark_i < 0) decoded_pathname[1..] else decoded_pathname[1..@intCast(usize, question_mark_i)];
+    var path = if (question_mark_i < 0) decoded_pathname[1..] else decoded_pathname[1..@as(usize, @intCast(question_mark_i))];
 
-    const first_segment = decoded_pathname[1..@min(@intCast(usize, first_segment_end), decoded_pathname.len)];
+    const first_segment = decoded_pathname[1..@min(@as(usize, @intCast(first_segment_end)), decoded_pathname.len)];
     const is_source_map = strings.eqlComptime(extname, "map");
     var backup_extname: string = extname;
     if (is_source_map and path.len > ".map".len) {
@@ -158,7 +158,7 @@ pub fn parse(possibly_encoded_pathname_: string) !URLPath {
         .pathname = decoded_pathname,
         .first_segment = first_segment,
         .path = if (decoded_pathname.len == 1) "." else path,
-        .query_string = if (question_mark_i > -1) decoded_pathname[@intCast(usize, question_mark_i)..@intCast(usize, decoded_pathname.len)] else "",
+        .query_string = if (question_mark_i > -1) decoded_pathname[@as(usize, @intCast(question_mark_i))..@as(usize, @intCast(decoded_pathname.len))] else "",
         .needs_redirect = needs_redirect,
     };
 }

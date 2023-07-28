@@ -542,7 +542,7 @@ pub fn toAST(
             return Expr{
                 .data = .{
                     .e_number = .{
-                        .value = @floatFromInt(f64, value),
+                        .value = @as(f64, @floatFromInt(value)),
                     },
                 },
                 .loc = logger.Loc{},
@@ -552,7 +552,7 @@ pub fn toAST(
             return Expr{
                 .data = .{
                     .e_number = .{
-                        .value = @floatCast(f64, value),
+                        .value = @as(f64, @floatCast(value)),
                     },
                 },
                 .loc = logger.Loc{},

@@ -1,6 +1,6 @@
 const std = @import("std");
 const Wyhash = @import("./src/wyhash.zig").Wyhash;
-
+var is_debug_build = false;
 fn moduleSource(comptime out: []const u8) FileSource {
     if (comptime std.fs.path.dirname(@src().file)) |base| {
         const outpath = comptime base ++ std.fs.path.sep_str ++ out;
@@ -8,27 +8,6 @@ fn moduleSource(comptime out: []const u8) FileSource {
     } else {
         return FileSource.relative(out);
     }
-}
-pub fn addPicoHTTP(step: *CompileStep, comptime with_obj: bool) void {
-    step.addIncludePath("src/deps");
-
-    if (with_obj) {
-        step.addObjectFile("src/deps/picohttpparser.o");
-    }
-
-    step.addIncludePath("src/deps");
-
-    if (with_obj) {
-        step.addObjectFile(panicIfNotFound("src/deps/picohttpparser.o"));
-        step.addObjectFile(panicIfNotFound("src/deps/libssl.a"));
-        step.addObjectFile(panicIfNotFound("src/deps/libcrypto.a"));
-    }
-
-    // step.add("/Users/jarred/Code/WebKit/WebKitBuild/Release/lib/libWTF.a");
-
-    // ./Tools/Scripts/build-jsc --jsc-only  --cmakeargs="-DENABLE_STATIC_JSC=ON"
-    // set -gx ICU_INCLUDE_DIRS "/usr/local/opt/icu4c/include"
-    // homebrew-provided icu4c
 }
 
 const color_map = std.ComptimeStringMap([]const u8, .{
@@ -76,18 +55,31 @@ const BunBuildOptions = struct {
     fallback_html_version: u64 = 0,
 
     pub fn updateRuntime(this: *BunBuildOptions) anyerror!void {
-        var runtime_out_file = try std.fs.cwd().openFile("src/runtime.out.js", .{ .mode = .read_only });
-        const runtime_hash = Wyhash.hash(
-            0,
-            try runtime_out_file.readToEndAlloc(std.heap.page_allocator, try runtime_out_file.getEndPos()),
-        );
-        this.runtime_js_version = runtime_hash;
-        var fallback_out_file = try std.fs.cwd().openFile("src/fallback.out.js", .{ .mode = .read_only });
-        const fallback_hash = Wyhash.hash(
-            0,
-            try fallback_out_file.readToEndAlloc(std.heap.page_allocator, try fallback_out_file.getEndPos()),
-        );
-        this.fallback_html_version = fallback_hash;
+        if (std.fs.cwd().openFile("src/runtime.out.js", .{ .mode = .read_only })) |file| {
+            defer file.close();
+            const runtime_hash = Wyhash.hash(
+                0,
+                try file.readToEndAlloc(std.heap.page_allocator, try file.getEndPos()),
+            );
+            this.runtime_js_version = runtime_hash;
+        } else |_| {
+            if (!is_debug_build) {
+                @panic("Runtime file was not read successfully. Please run `make setup`");
+            }
+        }
+
+        if (std.fs.cwd().openFile("src/fallback.out.js", .{ .mode = .read_only })) |file| {
+            defer file.close();
+            const fallback_hash = Wyhash.hash(
+                0,
+                try file.readToEndAlloc(std.heap.page_allocator, try file.getEndPos()),
+            );
+            this.fallback_html_version = fallback_hash;
+        } else |_| {
+            if (!is_debug_build) {
+                @panic("Fallback file was not read successfully. Please run `make setup`");
+            }
+        }
     }
 
     pub fn step(this: BunBuildOptions, b: anytype) *std.build.OptionsStep {
@@ -187,6 +179,7 @@ pub fn build(b: *Build) !void {
     }
 
     std.fs.cwd().makePath(output_dir) catch {};
+    is_debug_build = optimize == OptimizeMode.Debug;
     const bun_executable_name = if (optimize == std.builtin.OptimizeMode.Debug) "bun-debug" else "bun";
     const root_src = if (target.getOsTag() == std.Target.Os.Tag.freestanding)
         "src/main_wasm.zig"
@@ -247,7 +240,6 @@ pub fn build(b: *Build) !void {
     };
 
     {
-        addPicoHTTP(obj, false);
         obj.setMainPkgPath(b.pathFromRoot("."));
 
         try addInternalPackages(
@@ -468,8 +460,6 @@ pub fn configureObjectStep(b: *std.build.Builder, obj: *CompileStep, comptime Ta
 
     // obj.setTarget(target);
     try addInternalPackages(b, obj, std.heap.page_allocator, b.zig_exe, target);
-    if (target.getOsTag() != .freestanding)
-        addPicoHTTP(obj, false);
 
     obj.strip = false;
 

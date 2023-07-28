@@ -95,7 +95,7 @@ pub const Features = struct {
 
     pub const Serializer = struct {
         inline fn shiftIndex(index: u32) !u32 {
-            return @intCast(u32, @as(Bitset.MaskInt, 1) << @intCast(Bitset.ShiftInt, index));
+            return @as(u32, @intCast(@as(Bitset.MaskInt, 1) << @as(Bitset.ShiftInt, @intCast(index))));
         }
 
         fn writeField(comptime WriterType: type, writer: WriterType, field_name: string, index: u32) !void {
@@ -200,7 +200,7 @@ pub const Event = struct {
     pub fn init(comptime name: EventName) Event {
         const millis = std.time.milliTimestamp();
 
-        const timestamp = if (millis < 0) 0 else @intCast(u64, millis);
+        const timestamp = if (millis < 0) 0 else @as(u64, @intCast(millis));
 
         return Event{ .timestamp = timestamp, .data = @unionInit(Data, @tagName(name), {}) };
     }
@@ -239,7 +239,7 @@ pub const GenerateHeader = struct {
             return Analytics.EventListHeader{
                 .machine_id = GenerateMachineID.forMac() catch Analytics.Uint64{},
                 .platform = GeneratePlatform.forMac(),
-                .build_id = comptime @truncate(u32, Global.build_id),
+                .build_id = comptime @as(u32, @truncate(Global.build_id)),
                 .session_id = random.random().int(u32),
                 .project_id = project_id,
             };
@@ -249,7 +249,7 @@ pub const GenerateHeader = struct {
             return Analytics.EventListHeader{
                 .machine_id = GenerateMachineID.forLinux() catch Analytics.Uint64{},
                 .platform = GeneratePlatform.forLinux(),
-                .build_id = comptime @truncate(u32, Global.build_id),
+                .build_id = comptime @as(u32, @truncate(Global.build_id)),
                 .session_id = random.random().int(u32),
                 .project_id = project_id,
             };
@@ -380,10 +380,10 @@ fn spawn() !void {}
 
 const headers_buf: string = "Content-Type binary/peechy";
 const header_entry = Headers.Kv{
-    .name = .{ .offset = 0, .length = @intCast(u32, "Content-Type".len) },
+    .name = .{ .offset = 0, .length = @as(u32, @intCast("Content-Type".len)) },
     .value = .{
         .offset = std.mem.indexOf(u8, headers_buf, "binary/peechy").?,
-        .length = @intCast(u32, "binary/peechy".len),
+        .length = @as(u32, @intCast("binary/peechy".len)),
     },
 };
 
@@ -435,7 +435,7 @@ pub const EventList = struct {
     in_buffer: MutableString,
 
     pub fn init() EventList {
-        random = std.rand.DefaultPrng.init(@intCast(u64, std.time.milliTimestamp()));
+        random = std.rand.DefaultPrng.init(@as(u64, @intCast(std.time.milliTimestamp())));
         return EventList{
             .header = GenerateHeader.generate(),
             .events = std.ArrayList(Event).init(default_allocator),
@@ -472,12 +472,12 @@ pub const EventList = struct {
             0;
         const now = std.time.nanoTimestamp();
 
-        this.header.session_length = @truncate(u32, @intCast(u64, (now - start_time)) / std.time.ns_per_ms);
+        this.header.session_length = @as(u32, @truncate(@as(u64, @intCast((now - start_time))) / std.time.ns_per_ms));
         this.header.feature_usage = Features.toInt();
 
         var list = Analytics.EventList{
             .header = this.header,
-            .event_count = @intCast(u32, this.events.items.len),
+            .event_count = @as(u32, @intCast(this.events.items.len)),
         };
 
         try list.encode(&analytics_writer);
@@ -540,8 +540,8 @@ pub const EventList = struct {
         }
 
         @atomicStore(bool, &is_stuck, retry_remaining == 0, .Release);
-        stuck_count += @intCast(u8, @intFromBool(retry_remaining == 0));
-        stuck_count *= @intCast(u8, @intFromBool(retry_remaining == 0));
+        stuck_count += @as(u8, @intCast(@intFromBool(retry_remaining == 0)));
+        stuck_count *= @as(u8, @intCast(@intFromBool(retry_remaining == 0)));
         disabled = disabled or stuck_count > 4;
 
         this.in_buffer.reset();

@@ -78,8 +78,8 @@ pub const Os = struct {
         return if (comptime Environment.isLinux)
             cpusImplLinux(globalThis) catch {
                 const err = JSC.SystemError{
-                    .message = JSC.ZigString.init("Failed to get cpu information"),
-                    .code = JSC.ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                    .message = bun.String.static("Failed to get cpu information"),
+                    .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
                 };
 
                 globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
@@ -88,8 +88,8 @@ pub const Os = struct {
         else if (comptime Environment.isMac)
             cpusImplDarwin(globalThis) catch {
                 const err = JSC.SystemError{
-                    .message = JSC.ZigString.init("Failed to get cpu information"),
-                    .code = JSC.ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                    .message = bun.String.static("Failed to get cpu information"),
+                    .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
                 };
 
                 globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
@@ -110,9 +110,14 @@ pub const Os = struct {
         // Read /proc/stat to get number of CPUs and times
         if (std.fs.openFileAbsolute("/proc/stat", .{})) |file| {
             defer file.close();
-            var reader = file.reader();
+            // TODO: remove all usages of file.reader(). zig's std.io.Reader()
+            // is extremely slow and should rarely ever be used in Bun until
+            // that is fixed.
+            var buffered_reader = std.io.BufferedReader(8096, @TypeOf(file.reader())){ .unbuffered_reader = file.reader() };
+            var reader = buffered_reader.reader();
 
             // Skip the first line (aggregate of all CPUs)
+            // TODO: use indexOfNewline
             try reader.skipUntilDelimiterOrEof('\n');
 
             // Read each CPU line
@@ -148,18 +153,23 @@ pub const Os = struct {
         // Read /proc/cpuinfo to get model information (optional)
         if (std.fs.openFileAbsolute("/proc/cpuinfo", .{})) |file| {
             defer file.close();
-            var reader = file.reader();
+            // TODO: remove all usages of file.reader(). zig's std.io.Reader()
+            // is extremely slow and should rarely ever be used in Bun until
+            // that is fixed.
+            var buffered_reader = std.io.BufferedReader(8096, @TypeOf(file.reader())){ .unbuffered_reader = file.reader() };
+            var reader = buffered_reader.reader();
+
             const key_processor = "processor\t: ";
             const key_model_name = "model name\t: ";
 
             var cpu_index: u32 = 0;
             while (try reader.readUntilDelimiterOrEof(&line_buffer, '\n')) |line| {
-                if (std.mem.startsWith(u8, line, key_processor)) {
+                if (strings.hasPrefixComptime(line, key_processor)) {
                     // If this line starts a new processor, parse the index from the line
                     const digits = std.mem.trim(u8, line[key_processor.len..], " \t\n");
                     cpu_index = try std.fmt.parseInt(u32, digits, 10);
                     if (cpu_index >= num_cpus) return error.too_may_cpus;
-                } else if (std.mem.startsWith(u8, line, key_model_name)) {
+                } else if (strings.hasPrefixComptime(line, key_model_name)) {
                     // If this is the model name, extract it and store on the current cpu
                     const model_name = line[key_model_name.len..];
                     const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
@@ -176,9 +186,8 @@ pub const Os = struct {
         }
 
         // Read /sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq to get current frequency (optional)
-        var cpu_index: u32 = 0;
-        while (cpu_index < num_cpus) : (cpu_index += 1) {
-            const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+        for (0..num_cpus) |cpu_index| {
+            const cpu = JSC.JSObject.getIndex(values, globalThis, @truncate(cpu_index));
 
             var path_buf: [128]u8 = undefined;
             const path = try std.fmt.bufPrint(&path_buf, "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", .{cpu_index});
@@ -199,6 +208,7 @@ pub const Os = struct {
         return values;
     }
 
+    extern fn bun_sysconf__SC_CLK_TCK() isize;
     fn cpusImplDarwin(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
         const local_bindings = @import("../../darwin_c.zig");
         const c = std.c;
@@ -207,7 +217,7 @@ pub const Os = struct {
         var num_cpus: c.natural_t = 0;
         var info: [*]local_bindings.processor_cpu_load_info = undefined;
         var info_size: std.c.mach_msg_type_number_t = 0;
-        if (local_bindings.host_processor_info(std.c.mach_host_self(), local_bindings.PROCESSOR_CPU_LOAD_INFO, &num_cpus, @ptrCast(*local_bindings.processor_info_array_t, &info), &info_size) != .SUCCESS) {
+        if (local_bindings.host_processor_info(std.c.mach_host_self(), local_bindings.PROCESSOR_CPU_LOAD_INFO, &num_cpus, @as(*local_bindings.processor_info_array_t, @ptrCast(&info)), &info_size) != .SUCCESS) {
             return error.no_processor_info;
         }
         defer _ = std.c.vm_deallocate(std.c.mach_task_self(), @intFromPtr(info), info_size);
@@ -243,14 +253,11 @@ pub const Os = struct {
         }
 
         // Get the multiplier; this is the number of ms/tick
-        const unistd = @cImport({
-            @cInclude("unistd.h");
-        });
-        const ticks: i64 = unistd.sysconf(unistd._SC_CLK_TCK);
-        const multiplier = 1000 / @intCast(u64, ticks);
+        const ticks: i64 = bun_sysconf__SC_CLK_TCK();
+        const multiplier = 1000 / @as(u64, @intCast(ticks));
 
         // Set up each CPU value in the return
-        const values = JSC.JSValue.createEmptyArray(globalThis, @intCast(u32, num_cpus));
+        const values = JSC.JSValue.createEmptyArray(globalThis, @as(u32, @intCast(num_cpus)));
         var cpu_index: u32 = 0;
         while (cpu_index < num_cpus) : (cpu_index += 1) {
             const times = CPUTimes{
@@ -318,11 +325,11 @@ pub const Os = struct {
             //info.put(globalThis, JSC.ZigString.static("syscall"), JSC.ZigString.init("uv_os_getpriority").withEncoding().toValueGC(globalThis));
 
             const err = JSC.SystemError{
-                .message = JSC.ZigString.init("A system error occurred: uv_os_getpriority returned ESRCH (no such process)"),
-                .code = JSC.ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                .message = bun.String.static("A system error occurred: uv_os_getpriority returned ESRCH (no such process)"),
+                .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
                 //.info = info,
                 .errno = -3,
-                .syscall = JSC.ZigString.init("uv_os_getpriority"),
+                .syscall = bun.String.static("uv_os_getpriority"),
             };
 
             globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
@@ -377,10 +384,10 @@ pub const Os = struct {
         const rc = C.getifaddrs(&interface_start);
         if (rc != 0) {
             const err = JSC.SystemError{
-                .message = JSC.ZigString.init("A system error occurred: getifaddrs returned an error"),
-                .code = JSC.ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                .message = bun.String.static("A system error occurred: getifaddrs returned an error"),
+                .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
                 .errno = @intFromEnum(std.os.errno(rc)),
-                .syscall = JSC.ZigString.init("getifaddrs"),
+                .syscall = bun.String.static("getifaddrs"),
             };
 
             globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
@@ -436,8 +443,8 @@ pub const Os = struct {
             if (helpers.skip(iface) or helpers.isLinkLayer(iface)) continue;
 
             const interface_name = std.mem.sliceTo(iface.ifa_name, 0);
-            const addr = std.net.Address.initPosix(@alignCast(4, @ptrCast(*std.os.sockaddr, iface.ifa_addr)));
-            const netmask = std.net.Address.initPosix(@alignCast(4, @ptrCast(*std.os.sockaddr, iface.ifa_netmask)));
+            const addr = std.net.Address.initPosix(@alignCast(@as(*std.os.sockaddr, @ptrCast(iface.ifa_addr))));
+            const netmask = std.net.Address.initPosix(@alignCast(@as(*std.os.sockaddr, @ptrCast(iface.ifa_netmask))));
 
             var interface = JSC.JSValue.createEmptyObject(globalThis, 7);
 
@@ -448,7 +455,7 @@ pub const Os = struct {
                 //  be converted to a CIDR suffix
                 const maybe_suffix: ?u8 = switch (addr.any.family) {
                     std.os.AF.INET => netmaskToCIDRSuffix(netmask.in.sa.addr),
-                    std.os.AF.INET6 => netmaskToCIDRSuffix(@bitCast(u128, netmask.in6.sa.addr)),
+                    std.os.AF.INET6 => netmaskToCIDRSuffix(@as(u128, @bitCast(netmask.in6.sa.addr))),
                     else => null,
                 };
 
@@ -500,9 +507,9 @@ pub const Os = struct {
                     // This is the correct link-layer interface entry for the current interface,
                     //  cast to a link-layer socket address
                     if (comptime Environment.isLinux) {
-                        break @ptrCast(?*std.os.sockaddr.ll, @alignCast(4, ll_iface.ifa_addr));
+                        break @as(?*std.os.sockaddr.ll, @ptrCast(@alignCast(ll_iface.ifa_addr)));
                     } else if (comptime Environment.isMac) {
-                        break @ptrCast(?*C.sockaddr_dl, @alignCast(2, ll_iface.ifa_addr));
+                        break @as(?*C.sockaddr_dl, @ptrCast(@alignCast(ll_iface.ifa_addr)));
                     } else unreachable;
                 } else null;
 
@@ -530,7 +537,7 @@ pub const Os = struct {
             // Does this entry already exist?
             if (ret.get(globalThis, interface_name)) |array| {
                 // Add this interface entry to the existing array
-                const next_index = @intCast(u32, array.getLength(globalThis));
+                const next_index = @as(u32, @intCast(array.getLength(globalThis)));
                 array.putIndex(globalThis, next_index, interface);
             } else {
                 // Add it as an array with this interface as an element
@@ -591,11 +598,11 @@ pub const Os = struct {
         switch (errcode) {
             .SRCH => {
                 const err = JSC.SystemError{
-                    .message = JSC.ZigString.init("A system error occurred: uv_os_setpriority returned ESRCH (no such process)"),
-                    .code = JSC.ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                    .message = bun.String.static("A system error occurred: uv_os_setpriority returned ESRCH (no such process)"),
+                    .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
                     //.info = info,
                     .errno = -3,
-                    .syscall = JSC.ZigString.init("uv_os_setpriority"),
+                    .syscall = bun.String.static("uv_os_setpriority"),
                 };
 
                 globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
@@ -603,11 +610,11 @@ pub const Os = struct {
             },
             .ACCES => {
                 const err = JSC.SystemError{
-                    .message = JSC.ZigString.init("A system error occurred: uv_os_setpriority returned EACCESS (permission denied)"),
-                    .code = JSC.ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                    .message = bun.String.static("A system error occurred: uv_os_setpriority returned EACCESS (permission denied)"),
+                    .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
                     //.info = info,
                     .errno = -13,
-                    .syscall = JSC.ZigString.init("uv_os_setpriority"),
+                    .syscall = bun.String.static("uv_os_setpriority"),
                 };
 
                 globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
@@ -750,7 +757,7 @@ test "netmaskToCIDRSuffix" {
     };
     inline for (ipv6_tests) |t| {
         const addr = try std.net.Address.parseIp6(t[0], 0);
-        const bits = @bitCast(u128, addr.in6.sa.addr);
+        const bits = @as(u128, @bitCast(addr.in6.sa.addr));
         try std.testing.expectEqual(@as(?u8, t[1]), netmaskToCIDRSuffix(bits));
     }
 }

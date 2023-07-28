@@ -176,7 +176,7 @@ pub const Body = struct {
             if (response_init.fastGet(ctx, .status)) |status_value| {
                 const number = status_value.coerceToInt64(ctx);
                 if ((200 <= number and number < 600) or number == 101) {
-                    result.status_code = @truncate(u16, @intCast(u32, number));
+                    result.status_code = @as(u16, @truncate(@as(u32, @intCast(number))));
                 } else {
                     const err = ctx.createRangeErrorInstance("The status provided ({d}) must be 101 or in the range of [200, 599]", .{number});
                     ctx.throwValue(err);
@@ -241,12 +241,23 @@ pub const Body = struct {
                 //     .JavaScript
                 // }
                 switch (action) {
-                    .getText, .getJSON, .getBlob, .getArrayBuffer => {
+                    .getFormData, .getText, .getJSON, .getBlob, .getArrayBuffer => {
                         value.promise = switch (action) {
                             .getJSON => globalThis.readableStreamToJSON(readable.value),
                             .getArrayBuffer => globalThis.readableStreamToArrayBuffer(readable.value),
                             .getText => globalThis.readableStreamToText(readable.value),
                             .getBlob => globalThis.readableStreamToBlob(readable.value),
+                            .getFormData => |form_data| brk: {
+                                defer {
+                                    form_data.?.deinit();
+                                    value.action.getFormData = null;
+                                }
+
+                                break :brk globalThis.readableStreamToFormData(readable.value, switch (form_data.?.encoding) {
+                                    .Multipart => |multipart| bun.String.init(multipart).toJSConst(globalThis),
+                                    .URLEncoded => JSC.JSValue.jsUndefined(),
+                                });
+                            },
                             else => unreachable,
                         };
                         value.promise.?.ensureStillAlive();
@@ -257,8 +268,6 @@ pub const Body = struct {
 
                         return value.promise.?;
                     },
-                    // TODO:
-                    .getFormData => {},
 
                     .none => {},
                 }
@@ -365,8 +374,8 @@ pub const Body = struct {
         pub fn size(this: *const Value) Blob.SizeType {
             return switch (this.*) {
                 .Blob => this.Blob.size,
-                .InternalBlob => @truncate(Blob.SizeType, this.InternalBlob.sliceConst().len),
-                .WTFStringImpl => @truncate(Blob.SizeType, this.WTFStringImpl.utf8ByteLength()),
+                .InternalBlob => @as(Blob.SizeType, @truncate(this.InternalBlob.sliceConst().len)),
+                .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.utf8ByteLength())),
                 // .InlineBlob => @truncate(Blob.SizeType, this.InlineBlob.sliceConst().len),
                 else => 0,
             };
@@ -375,8 +384,8 @@ pub const Body = struct {
         pub fn fastSize(this: *const Value) Blob.SizeType {
             return switch (this.*) {
                 .Blob => this.Blob.size,
-                .InternalBlob => @truncate(Blob.SizeType, this.InternalBlob.sliceConst().len),
-                .WTFStringImpl => @truncate(Blob.SizeType, this.WTFStringImpl.byteSlice().len),
+                .InternalBlob => @as(Blob.SizeType, @truncate(this.InternalBlob.sliceConst().len)),
+                .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.byteSlice().len)),
                 // .InlineBlob => @truncate(Blob.SizeType, this.InlineBlob.sliceConst().len),
                 else => 0,
             };
@@ -481,11 +490,11 @@ pub const Body = struct {
                     reader.context.setup();
 
                     if (drain_result == .estimated_size) {
-                        reader.context.highWaterMark = @truncate(Blob.SizeType, drain_result.estimated_size);
-                        reader.context.size_hint = @truncate(Blob.SizeType, drain_result.estimated_size);
+                        reader.context.highWaterMark = @as(Blob.SizeType, @truncate(drain_result.estimated_size));
+                        reader.context.size_hint = @as(Blob.SizeType, @truncate(drain_result.estimated_size));
                     } else if (drain_result == .owned) {
                         reader.context.buffer = drain_result.owned.list;
-                        reader.context.size_hint = @truncate(Blob.SizeType, drain_result.owned.size_hint);
+                        reader.context.size_hint = @as(Blob.SizeType, @truncate(drain_result.owned.size_hint));
                     }
 
                     locked.readable = .{

@@ -35,9 +35,7 @@ export function binding(bindingName) {
     // TODO: make this less hacky.
     // This calls require("node:fs").constants
     // except, outside an ESM module.
-    const { constants: fs } = globalThis[globalThis.Symbol.for("Bun.lazy")]("createImportMeta", "node:process").require(
-      "node:fs",
-    );
+    const { constants: fs } = $lazy("createImportMeta", "node:process").require("node:fs");
     constants = {
       fs,
       zlib: {},
@@ -49,9 +47,14 @@ export function binding(bindingName) {
   return constants;
 }
 
-export function getStdioWriteStream(fd_, rawRequire) {
-  var module = { path: "node:process", require: rawRequire };
-  var require = path => module.require(path);
+export function getStdioWriteStream(fd_, getWindowSize) {
+  var require = path => {
+    var existing = $requireMap.get(path);
+    if (existing) return existing.exports;
+
+    return $internalRequire(path);
+  };
+  var module = { path: "node:process", require };
 
   function createStdioWriteStream(fd_) {
     var { Duplex, eos, destroy } = require("node:stream");
@@ -220,8 +223,9 @@ export function getStdioWriteStream(fd_, rawRequire) {
   }
 
   var readline;
+  var windowSizeArray = [0, 0];
 
-  var FastStdioWriteStream = class StdioWriteStream extends EventEmitter {
+  var FastStdioWriteStreamInternal = class StdioWriteStream extends EventEmitter {
     #fd;
     #innerStream;
     #writer;
@@ -267,31 +271,6 @@ export function getStdioWriteStream(fd_, rawRequire) {
     get fd() {
       return this.#fd;
     }
-
-    get isTTY() {
-      return (this.#isTTY ??= require("node:tty").isatty(this.#fd));
-    }
-
-    cursorTo(x, y, callback) {
-      return (readline ??= require("readline")).cursorTo(this, x, y, callback);
-    }
-
-    moveCursor(dx, dy, callback) {
-      return (readline ??= require("readline")).moveCursor(this, dx, dy, callback);
-    }
-
-    clearLine(dir, callback) {
-      return (readline ??= require("readline")).clearLine(this, dir, callback);
-    }
-
-    clearScreenDown(callback) {
-      return (readline ??= require("readline")).clearScreenDown(this, callback);
-    }
-
-    // TODO: once implemented this.columns and this.rows should be uncommented
-    // getWindowSize() {
-    //   return [this.columns, this.rows];
-    // }
 
     ref() {
       this.#getWriter().ref();
@@ -405,6 +384,10 @@ export function getStdioWriteStream(fd_, rawRequire) {
       return !!(writeResult || flushResult);
     }
 
+    get isTTY() {
+      return false;
+    }
+
     write(chunk, encoding, callback) {
       const result = this._write(chunk, encoding, callback);
 
@@ -468,14 +451,62 @@ export function getStdioWriteStream(fd_, rawRequire) {
       return this;
     }
   };
+  if (getWindowSize(fd_, windowSizeArray)) {
+    var WriteStream = class WriteStream extends FastStdioWriteStreamInternal {
+      get isTTY() {
+        return true;
+      }
 
-  return new FastStdioWriteStream(fd_);
+      cursorTo(x, y, callback) {
+        return (readline ??= require("node:readline")).cursorTo(this, x, y, callback);
+      }
+
+      moveCursor(dx, dy, callback) {
+        return (readline ??= require("node:readline")).moveCursor(this, dx, dy, callback);
+      }
+
+      clearLine(dir, callback) {
+        return (readline ??= require("node:readline")).clearLine(this, dir, callback);
+      }
+
+      clearScreenDown(callback) {
+        return (readline ??= require("node:readline")).clearScreenDown(this, callback);
+      }
+
+      getWindowSize() {
+        if (getWindowSize(fd_, windowSizeArray) === true) {
+          return [windowSizeArray[0], windowSizeArray[1]];
+        }
+      }
+
+      get columns() {
+        if (getWindowSize(fd_, windowSizeArray) === true) {
+          return windowSizeArray[0];
+        }
+      }
+
+      get rows() {
+        if (getWindowSize(fd_, windowSizeArray) === true) {
+          return windowSizeArray[1];
+        }
+      }
+    };
+
+    return new WriteStream(fd_);
+  }
+
+  return new FastStdioWriteStreamInternal(fd_);
 }
 
-export function getStdinStream(fd_, rawRequire, Bun) {
-  var module = { path: "node:process", require: rawRequire };
-  var require = path => module.require(path);
+export function getStdinStream(fd_) {
+  var require = path => {
+    var existing = $requireMap.get(path);
+    if (existing) return existing.exports;
 
+    return $internalRequire(path);
+  };
+
+  var module = { path: "node:process", require: require };
   var { Duplex, eos, destroy } = require("node:stream");
 
   var StdinStream = class StdinStream extends Duplex {
@@ -494,7 +525,7 @@ export function getStdinStream(fd_, rawRequire, Bun) {
     #onDrain;
 
     get isTTY() {
-      return require("tty").isatty(fd_);
+      return require("node:tty").isatty(fd_);
     }
 
     get fd() {

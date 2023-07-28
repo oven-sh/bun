@@ -149,7 +149,9 @@ test("peek", () => {
   // If we peek a rejected promise, it:
   // - returns the error
   // - does not mark the promise as handled
-  const rejected = Promise.reject(new Error("Successfully tested promise rejection"));
+  const rejected = Promise.reject(
+    new Error("Successfully tested promise rejection"),
+  );
   expect(peek(rejected).message).toBe("Successfully tested promise rejection");
 });
 ```
@@ -245,7 +247,7 @@ Bun.deepEquals(new Foo(), { a: 1 }, true); // false
 
 ## `Bun.escapeHTML()`
 
-`Bun.escapeHTML(value: string | object | number | boolean): boolean`
+`Bun.escapeHTML(value: string | object | number | boolean): string`
 
 Escapes the following characters from an input string:
 
@@ -283,7 +285,7 @@ console.log(url); // "file:///foo/bar.txt"
 
 ## `Bun.gzipSync()`
 
-Compresses a `Uint8Array` using zlib's DEFLATE algorithm.
+Compresses a `Uint8Array` using zlib's GZIP algorithm.
 
 ```ts
 const buf = Buffer.from("hello".repeat(100)); // Buffer extends Uint8Array
@@ -372,7 +374,7 @@ export type ZlibCompressionOptions = {
 
 ## `Bun.gunzipSync()`
 
-Uncompresses a `Uint8Array` using zlib's INFLATE algorithm.
+Decompresses a `Uint8Array` using zlib's GUNZIP algorithm.
 
 ```ts
 const buf = Buffer.from("hello".repeat(100)); // Buffer extends Uint8Array
@@ -400,15 +402,15 @@ The second argument supports the same set of configuration options as [`Bun.gzip
 
 ## `Bun.inflateSync()`
 
-Uncompresses a `Uint8Array` using zlib's INFLATE algorithm.
+Decompresses a `Uint8Array` using zlib's INFLATE algorithm.
 
 ```ts
 const buf = Buffer.from("hello".repeat(100));
 const compressed = Bun.deflateSync(buf);
 
 const dec = new TextDecoder();
-const uncompressed = Bun.inflateSync(compressed);
-dec.decode(uncompressed);
+const decompressed = Bun.inflateSync(compressed);
+dec.decode(decompressed);
 // => "hellohellohello..."
 ```
 
@@ -458,6 +460,12 @@ await Bun.readableStreamToText(stream);
 // returns all chunks as an array
 await Bun.readableStreamToArray(stream);
 // => unknown[]
+
+// returns all chunks as a FormData object (encoded as x-www-form-urlencoded)
+await Bun.readableStreamToFormData(stream);
+
+// returns all chunks as a FormData object (encoded as multipart/form-data)
+await Bun.readableStreamToFormData(stream, multipartFormBoundary);
 ```
 
 ## `Bun.resolveSync()`
@@ -484,3 +492,17 @@ To resolve relative to the directory containing the current file, pass `import.m
 ```ts
 Bun.resolveSync("./foo.ts", import.meta.dir);
 ```
+
+## `serialize` & `deserialize` in `bun:jsc`
+
+To save a JavaScript value into an ArrayBuffer & back, use `serialize` and `deserialize` from the `"bun:jsc"` module.
+
+```js
+import { serialize, deserialize } from "bun:jsc";
+
+const buf = serialize({ foo: "bar" });
+const obj = deserialize(buf);
+console.log(obj); // => { foo: "bar" }
+```
+
+Internally, [`structuredClone`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone) and [`postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage) serialize and deserialize the same way. This exposes the underlying [HTML Structured Clone Algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm) to JavaScript as an ArrayBuffer.

@@ -96,7 +96,7 @@ pub const SymbolSlot = struct {
 
         pub fn init(str: []const u8) InlineString {
             var this: InlineString = .{};
-            this.len = @intCast(u8, @min(str.len, 15));
+            this.len = @as(u8, @intCast(@min(str.len, 15)));
             for (this.bytes[0..this.len], str[0..this.len]) |*b, c| {
                 b.* = c;
             }
@@ -291,9 +291,9 @@ pub const MinifyRenamer = struct {
             try sorted.ensureUnusedCapacity(slots.items.len);
             sorted.items.len = slots.items.len;
 
-            for (sorted.items, 0..) |*slot, i| {
-                slot.* = SlotAndCount{
-                    .slot = @intCast(u32, i),
+            for (sorted.items, slots.items, 0..) |*elem, slot, i| {
+                elem.* = SlotAndCount{
+                    .slot = @as(u32, @intCast(i)),
                     .count = slot.count,
                 };
             }
@@ -596,7 +596,7 @@ pub const NumberRenamer = struct {
             std.sort.block(u32, sorted.items, {}, std.sort.asc(u32));
 
             for (sorted.items) |inner_index| {
-                r.assignName(s, Ref.init(@intCast(Ref.Int, inner_index), source_index, false));
+                r.assignName(s, Ref.init(@as(Ref.Int, @intCast(inner_index)), source_index, false));
             }
         }
 
@@ -884,7 +884,7 @@ pub fn computeInitialReservedNames(
 
     try names.ensureTotalCapacityContext(
         allocator,
-        @truncate(u32, JSLexer.Keywords.keys().len + JSLexer.StrictModeReservedWords.keys().len + 1 + extras.len),
+        @as(u32, @truncate(JSLexer.Keywords.keys().len + JSLexer.StrictModeReservedWords.keys().len + 1 + extras.len)),
         bun.StringHashMapContext{},
     );
 

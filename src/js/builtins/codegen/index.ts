@@ -3,12 +3,43 @@ import path from "path";
 import { sliceSourceCode } from "./builtin-parser";
 import { applyGlobalReplacements, enums, globalsToPrefix } from "./replacements";
 import { cap, fmtCPPString, low } from "./helpers";
+import { spawn } from "bun";
 
+async function createStaticHashtables() {
+  const STATIC_HASH_TABLES = ["src/bun.js/bindings/Process.cpp"];
+  console.time("Creating static hash tables...");
+  const create_hash_table = path.join(import.meta.dir, "../../../../src/bun.js/scripts/create_hash_table");
+  if (!create_hash_table) {
+    console.warn(
+      "Could not find create_hash_table executable. Run `bun i` or clone webkit to build static hash tables",
+    );
+    return;
+  }
+  for (let cpp of STATIC_HASH_TABLES) {
+    cpp = path.join(import.meta.dir, "../../../../", cpp);
+    const { stdout, exited } = spawn({
+      cmd: [create_hash_table, cpp],
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    await exited;
+    let str = await new Response(stdout).text();
+    str = str.replaceAll(/^\/\/.*$/gm, "");
+    str = str.replaceAll(/^#include.*$/gm, "");
+    str = str.replaceAll(`namespace JSC {`, "");
+    str = str.replaceAll(`} // namespace JSC`, "");
+    str = "// File generated via `make generate-builtins`\n" + str.trim() + "\n";
+    await Bun.write(cpp.replace(/\.cpp$/, ".lut.h"), str);
+  }
+  console.timeEnd("Creating static hash tables...");
+}
+
+const staticHashTablePromise = createStaticHashtables();
 console.log("Bundling Bun builtins...");
 
 const MINIFY = process.argv.includes("--minify") || process.argv.includes("-m");
 const PARALLEL = process.argv.includes("--parallel") || process.argv.includes("-p");
-const KEEP_TMP = process.argv.includes("--keep-tmp") || process.argv.includes("-k");
+const KEEP_TMP = process.argv.includes("--keep-tmp") || process.argv.includes("-k") || true;
 
 const SRC_DIR = path.join(import.meta.dir, "../");
 const OUT_DIR = path.join(SRC_DIR, "../out");
@@ -198,6 +229,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     const finalReplacement =
       (fn.directives.sloppy ? captured : captured.replace(/function\s*\(.*?\)\s*{/, '$&"use strict";'))
         .replace(/^\((async )?function\(/, "($1function (")
+        .replace(/__intrinsic__lazy\(/g, "globalThis[globalThis.Symbol.for('Bun.lazy')](")
         .replace(/__intrinsic__/g, "@") + "\n";
 
     bundledFunctions.push({
@@ -617,6 +649,8 @@ const totalJSSize = files.reduce(
 if (!KEEP_TMP) {
   await rmSync(TMP_DIR, { recursive: true });
 }
+
+await staticHashTablePromise;
 
 console.log(
   `Embedded JS size: %s bytes (across %s functions, %s files)`,

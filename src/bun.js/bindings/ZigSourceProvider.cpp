@@ -64,10 +64,6 @@ Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, Reso
     auto stringImpl = Bun::toWTFString(resolvedSource.source_code);
     auto sourceURLString = toStringCopy(resolvedSource.source_url);
 
-    if (stringImpl.impl()->refCount() > 1)
-        // Deref because we don't call a destructor for BunString
-        stringImpl.impl()->deref();
-
     auto provider = adoptRef(*new SourceProvider(
         globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
         resolvedSource, stringImpl.releaseImpl().releaseNonNull(),

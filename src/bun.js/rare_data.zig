@@ -9,6 +9,7 @@ const std = @import("std");
 const BoringSSL = @import("root").bun.BoringSSL;
 const bun = @import("root").bun;
 const WebSocketClientMask = @import("../http/websocket_http_client.zig").Mask;
+const UUID = @import("./uuid.zig");
 
 boring_ssl_engine: ?*BoringSSL.ENGINE = null,
 editor_context: EditorContext = EditorContext{},
@@ -47,13 +48,16 @@ pub fn filePolls(this: *RareData, vm: *JSC.VirtualMachine) *JSC.FilePoll.HiveArr
     };
 }
 
-pub fn nextUUID(this: *RareData) [16]u8 {
+pub fn nextUUID(this: *RareData) UUID {
     if (this.entropy_cache == null) {
         this.entropy_cache = default_allocator.create(EntropyCache) catch unreachable;
         this.entropy_cache.?.init();
     }
 
-    return this.entropy_cache.?.get();
+    this.entropy_cache.?.fill();
+
+    const bytes = this.entropy_cache.?.get();
+    return UUID.initWith(&bytes);
 }
 
 pub fn entropySlice(this: *RareData, len: usize) []u8 {

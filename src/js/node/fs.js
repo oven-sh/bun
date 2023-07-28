@@ -4,7 +4,7 @@ export var WriteStream;
 import { EventEmitter } from "node:events";
 
 // Hardcoded module "node:fs"
-var { direct, isPromise, isCallable } = globalThis[Symbol.for("Bun.lazy")]("primordials");
+var { direct, isPromise, isCallable } = $lazy("primordials");
 import promises from "node:fs/promises";
 export { default as promises } from "node:fs/promises";
 import * as Stream from "node:stream";
@@ -122,9 +122,6 @@ export var access = function access(...args) {
   link = function link(...args) {
     callbackify(fs.linkSync, args);
   },
-  lstat = function lstat(...args) {
-    callbackify(fs.lstatSync, args);
-  },
   mkdir = function mkdir(...args) {
     callbackify(fs.mkdirSync, args);
   },
@@ -141,10 +138,22 @@ export var access = function access(...args) {
     callbackify(fs.writeSync, args);
   },
   readdir = function readdir(...args) {
-    callbackify(fs.readdirSync, args);
+    const callback = args[args.length - 1];
+    if (typeof callback !== "function") {
+      // TODO: set code
+      throw new TypeError("Callback must be a function");
+    }
+
+    fs.readdir(...args).then(result => callback(null, result), callback);
   },
   readFile = function readFile(...args) {
-    callbackify(fs.readFileSync, args);
+    const callback = args[args.length - 1];
+    if (typeof callback !== "function") {
+      // TODO: set code
+      throw new TypeError("Callback must be a function");
+    }
+
+    fs.readFile(...args).then(result => callback(null, result), callback);
   },
   writeFile = function writeFile(...args) {
     callbackify(fs.writeFileSync, args);
@@ -158,8 +167,23 @@ export var access = function access(...args) {
   rename = function rename(...args) {
     callbackify(fs.renameSync, args);
   },
+  lstat = function lstat(...args) {
+    const callback = args[args.length - 1];
+    if (typeof callback !== "function") {
+      // TODO: set code
+      throw new TypeError("Callback must be a function");
+    }
+
+    fs.lstat(...args).then(result => callback(null, result), callback);
+  },
   stat = function stat(...args) {
-    callbackify(fs.statSync, args);
+    const callback = args[args.length - 1];
+    if (typeof callback !== "function") {
+      // TODO: set code
+      throw new TypeError("Callback must be a function");
+    }
+
+    fs.stat(...args).then(result => callback(null, result), callback);
   },
   symlink = function symlink(...args) {
     callbackify(fs.symlinkSync, args);

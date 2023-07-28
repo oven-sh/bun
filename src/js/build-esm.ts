@@ -10,7 +10,6 @@ const TMP_DIR = path.join(import.meta.dir, "out/tmp");
 const minifyList = [
   "node/stream.js",
   "node/crypto.js",
-
   "node/assert.js",
   "node/assert.strict.js",
   "node/fs.promises.ts",
@@ -20,6 +19,8 @@ const minifyList = [
   "node/stream.promises.js",
   "node/stream.consumers.js",
   "node/stream.web.js",
+  "node/url.js",
+  "node/zlib.js",
 ];
 
 if (fs.existsSync(OUT_DIR + "/modules")) {
@@ -50,26 +51,43 @@ const opts = {
   define: {
     "process.platform": JSON.stringify(process.platform),
     "process.arch": JSON.stringify(process.arch),
+    "$lazy": "$$BUN_LAZY$$",
   },
 } as const;
+
+const productionOpts = {
+  ...opts,
+  define: {
+    ...opts.define,
+    "IS_BUN_DEVELOPMENT": "false",
+  },
+};
+
+const devOpts = {
+  ...opts,
+  define: {
+    ...opts.define,
+    "IS_BUN_DEVELOPMENT": "true",
+  },
+};
 
 const build_prod_minified = await Bun.build({
   entrypoints: entrypoints.filter(file => minifyList.includes(file.slice(import.meta.dir.length + 1))),
   minify: true,
-  ...opts,
+  ...productionOpts,
 });
 
 const build_prod_unminified = await Bun.build({
   entrypoints: entrypoints.filter(file => !minifyList.includes(file.slice(import.meta.dir.length + 1))),
   minify: { syntax: true },
-  ...opts,
+  ...productionOpts,
 });
 
 const build_dev = await Bun.build({
   entrypoints: entrypoints,
-  minify: { syntax: true },
+  minify: { syntax: false },
   sourcemap: "external",
-  ...opts,
+  ...devOpts,
 });
 
 for (const [build, outdir] of [
@@ -93,7 +111,9 @@ for (const [build, outdir] of [
     fs.mkdirSync(path.join(outdir, path.dirname(output.path)), { recursive: true });
 
     if (output.kind === "entry-point" || output.kind === "chunk") {
-      const transformedOutput = (await output.text()).replace(/^(\/\/.*?\n)+/g, "");
+      const transformedOutput = (await output.text())
+        .replace(/^(\/\/.*?\n)+/g, "")
+        .replace(/\$\$BUN_LAZY\$\$/g, 'globalThis[Symbol.for("Bun.lazy")]');
 
       if (transformedOutput.includes("$bundleError")) {
         // attempt to find the string that was passed to $bundleError

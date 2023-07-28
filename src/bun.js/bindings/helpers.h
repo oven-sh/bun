@@ -342,10 +342,10 @@ static const WTF::String toStringStatic(ZigString str)
     }
 
     if (isTaggedUTF16Ptr(str.ptr)) {
-        return WTF::String(WTF::ExternalStringImpl::createStatic(reinterpret_cast<const UChar*>(untag(str.ptr)), str.len));
+        return WTF::String(AtomStringImpl::add(reinterpret_cast<const UChar*>(untag(str.ptr)), str.len));
     }
 
-    return WTF::String(WTF::ExternalStringImpl::createStatic(
+    return WTF::String(AtomStringImpl::add(
         reinterpret_cast<const LChar*>(untag(str.ptr)), str.len));
 }
 
@@ -390,6 +390,19 @@ static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC__JSGlobalObj
 }
 
 }; // namespace Zig
+
+JSC::JSValue createSystemError(JSC::JSGlobalObject* global, ASCIILiteral message, ASCIILiteral syscall, int err);
+JSC::JSValue createSystemError(JSC::JSGlobalObject* global, ASCIILiteral syscall, int err);
+
+static void throwSystemError(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral syscall, int err)
+{
+    scope.throwException(globalObject, createSystemError(globalObject, syscall, err));
+}
+
+static void throwSystemError(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral message, ASCIILiteral syscall, int err)
+{
+    scope.throwException(globalObject, createSystemError(globalObject, message, syscall, err));
+}
 
 template<typename WebCoreType, typename OutType>
 OutType* WebCoreCast(JSC__JSValue JSValue0)

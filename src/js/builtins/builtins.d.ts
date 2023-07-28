@@ -57,6 +57,13 @@ declare function $getPromiseInternalField<K extends PromiseFieldType, V>(
   promise: Promise<V>,
   key: K,
 ): PromiseFieldToValue<K, V>;
+declare function $getInternalField<Fields extends any[], N extends keyof Fields>(
+  base: InternalFieldObject<Fields>,
+  number: N,
+): Fields[N];
+declare function $fulfillPromise(...args: any[]): TODO;
+declare function $evaluateCommonJSModule(...args: any[]): TODO;
+declare function $loadCJS2ESM(...args: any[]): TODO;
 declare function $getGeneratorInternalField(): TODO;
 declare function $getAsyncGeneratorInternalField(): TODO;
 declare function $getAbstractModuleRecordInternalField(): TODO;
@@ -107,6 +114,11 @@ declare function $putByIdDirectPrivate(obj: any, key: PropertyKey, value: any): 
 declare function $putByValDirect(obj: any, key: PropertyKey, value: any): void;
 declare function $putByValWithThisSloppy(): TODO;
 declare function $putByValWithThisStrict(): TODO;
+declare function $putInternalField<Fields extends any[], N extends keyof Fields>(
+  base: InternalFieldObject<Fields>,
+  number: N,
+  value: Fields[N],
+): void;
 declare function $putPromiseInternalField<T extends PromiseFieldType, P extends Promise<any>>(
   promise: P,
   key: T,
@@ -152,8 +164,8 @@ declare const $promiseStateRejected: number;
 declare const $promiseStateMask: number;
 declare const $promiseFlagsIsHandled: number;
 declare const $promiseFlagsIsFirstResolvingFunctionCalled: number;
-declare const $promiseFieldFlags: unique symbol;
-declare const $promiseFieldReactionsOrResult: unique symbol;
+declare const $promiseFieldFlags: 0;
+declare const $promiseFieldReactionsOrResult: 1;
 declare const $proxyFieldTarget: TODO;
 declare const $proxyFieldHandler: TODO;
 declare const $generatorFieldState: TODO;
@@ -187,6 +199,7 @@ declare const $AsyncGeneratorSuspendReasonYield: TODO;
 declare const $AsyncGeneratorSuspendReasonAwait: TODO;
 declare const $AsyncGeneratorSuspendReasonNone: TODO;
 declare const $abstractModuleRecordFieldState: TODO;
+declare const $asyncContext: InternalFieldObject<[ReadonlyArray<any> | undefined]>;
 
 // We define our intrinsics in ./BunBuiltinNames.h. Some of those are globals.
 
@@ -229,7 +242,7 @@ declare function $createFIFO(): TODO;
 declare function $createNativeReadableStream(): TODO;
 declare function $createReadableStream(): TODO;
 declare function $createUninitializedArrayBuffer(size: number): ArrayBuffer;
-declare function $createWritableStreamFromInternal(): TODO;
+declare function $createWritableStreamFromInternal(...args: any[]): TODO;
 declare function $cwd(): TODO;
 declare function $data(): TODO;
 declare function $dataView(): TODO;
@@ -330,6 +343,7 @@ declare function $read(): TODO;
 declare function $readIntoRequests(): TODO;
 declare function $readRequests(): TODO;
 declare function $readable(): TODO;
+declare function $readableByteStreamControllerGetDesiredSize(...args: any): TODO;
 declare function $readableStreamController(): TODO;
 declare function $readableStreamToArray(): TODO;
 declare function $reader(): TODO;
@@ -413,6 +427,11 @@ declare function $newPromiseCapability(C: PromiseConstructor): TODO;
 /** @deprecated, use new TypeError instead */
 declare function $makeTypeError(message: string): TypeError;
 declare function $newHandledRejectedPromise(error: unknown): Promise<never>;
+
+declare const __internal: unique symbol;
+interface InternalFieldObject<T extends any[]> {
+  [__internal]: T;
+}
 
 // Types used in the above functions
 type PromiseFieldType = typeof $promiseFieldFlags | typeof $promiseFieldReactionsOrResult;

@@ -1,15 +1,20 @@
 // Hardcoded module "node:stream" / "readable-stream"
 // "readable-stream" npm package
 // just transpiled
-var { isPromise, isCallable, direct, Object } = globalThis[Symbol.for("Bun.lazy")]("primordials");
-import { EventEmitter as EE } from "bun:events_native";
-import { StringDecoder } from "node:string_decoder";
 
-globalThis.__IDS_TO_TRACK = process.env.DEBUG_TRACK_EE?.length
-  ? process.env.DEBUG_TRACK_EE.split(",")
-  : process.env.DEBUG_STREAMS?.length
-  ? process.env.DEBUG_STREAMS.split(",")
-  : null;
+// This must go at the top of the file, before any side effects.
+// IS_BUN_DEVELOPMENT is a bundle-only global variable that is set to true when
+// building a development bundle.
+const __TRACK_EE__ = IS_BUN_DEVELOPMENT && !!process.env.DEBUG_TRACK_EE;
+const __DEBUG__ = IS_BUN_DEVELOPMENT && !!(process.env.DEBUG || process.env.DEBUG_STREAMS || __TRACK_EE__);
+
+if (__DEBUG__) {
+  globalThis.__IDS_TO_TRACK = process.env.DEBUG_TRACK_EE?.length
+    ? process.env.DEBUG_TRACK_EE.split(",")
+    : process.env.DEBUG_STREAMS?.length
+    ? process.env.DEBUG_STREAMS.split(",")
+    : null;
+}
 
 // Separating DEBUG, DEBUG_STREAMS and DEBUG_TRACK_EE env vars makes it easier to focus on the
 // events in this file rather than all debug output across all files
@@ -17,9 +22,6 @@ globalThis.__IDS_TO_TRACK = process.env.DEBUG_TRACK_EE?.length
 // You can include comma-delimited IDs as the value to either DEBUG_STREAMS or DEBUG_TRACK_EE and it will track
 // The events and/or all of the outputs for the given stream IDs assigned at stream construction
 // By default, child_process gives
-
-const __TRACK_EE__ = !!process.env.DEBUG_TRACK_EE;
-const __DEBUG__ = !!(process.env.DEBUG || process.env.DEBUG_STREAMS || __TRACK_EE__);
 
 var debug = __DEBUG__
   ? globalThis.__IDS_TO_TRACK
@@ -31,6 +33,10 @@ var debug = __DEBUG__
       }
     : (...args) => console.log(...args.slice(0, -1))
   : () => {};
+
+var { isPromise, isCallable, direct, Object } = $lazy("primordials");
+import { EventEmitter as EE } from "bun:events_native";
+import { StringDecoder } from "node:string_decoder";
 
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -2303,7 +2309,7 @@ var require_readable = __commonJS({
       Symbol: Symbol2,
     } = require_primordials();
 
-    var ReadableState = globalThis[Symbol.for("Bun.lazy")]("bun:stream").ReadableState;
+    var ReadableState = $lazy("bun:stream").ReadableState;
     var { Stream, prependListener } = require_legacy();
 
     function Readable(options) {
@@ -2553,12 +2559,7 @@ var require_readable = __commonJS({
 
     var { addAbortSignal } = require_add_abort_signal();
     var eos = require_end_of_stream();
-    const {
-      maybeReadMore: _maybeReadMore,
-      resume,
-      emitReadable: _emitReadable,
-      onEofChunk,
-    } = globalThis[Symbol.for("Bun.lazy")]("bun:stream");
+    const { maybeReadMore: _maybeReadMore, resume, emitReadable: _emitReadable, onEofChunk } = $lazy("bun:stream");
     function maybeReadMore(stream, state) {
       process.nextTick(_maybeReadMore, stream, state);
     }
@@ -5209,7 +5210,7 @@ var require_ours = __commonJS({
  *
  */
 function createNativeStreamReadable(nativeType, Readable) {
-  var [pull, start, cancel, setClose, deinit, updateRef, drainFn] = globalThis[Symbol.for("Bun.lazy")](nativeType);
+  var [pull, start, cancel, setClose, deinit, updateRef, drainFn] = $lazy(nativeType);
 
   var closer = [false];
   var handleNumberResult = function (nativeReadable, result, view, isClosed) {
@@ -5350,10 +5351,10 @@ function createNativeStreamReadable(nativeType, Readable) {
       return chunk;
     }
 
-    push(result, encoding) {
-      __DEBUG__ && debug("NativeReadable push -- result, encoding", result, encoding, this.__id);
-      return super.push(...arguments);
-    }
+    // push(result, encoding) {
+    //   __DEBUG__ && debug("NativeReadable push -- result, encoding", result, encoding, this.__id);
+    //   return super.push(...arguments);
+    // }
 
     #handleResult(result, view, isClosed) {
       __DEBUG__ && debug("result, isClosed @ #handleResult", result, isClosed, this.__id);
@@ -5366,7 +5367,9 @@ function createNativeStreamReadable(nativeType, Readable) {
 
         return handleNumberResult(this, result, view, isClosed);
       } else if (typeof result === "boolean") {
-        this.push(null);
+        process.nextTick(() => {
+          this.push(null);
+        });
         return view?.byteLength ?? 0 > 0 ? view : undefined;
       } else if (ArrayBuffer.isView(result)) {
         if (result.byteLength >= this.#highWaterMark && !this.#hasResized && !isClosed) {

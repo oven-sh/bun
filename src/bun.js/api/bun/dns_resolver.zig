@@ -176,7 +176,7 @@ pub fn addressToString(
         switch (address.any.family) {
             std.os.AF.INET => {
                 var self = address.in;
-                const bytes = @ptrCast(*const [4]u8, &self.sa.addr);
+                const bytes = @as(*const [4]u8, @ptrCast(&self.sa.addr));
                 break :brk std.fmt.allocPrint(allocator, "{}.{}.{}.{}", .{
                     bytes[0],
                     bytes[1],
@@ -554,7 +554,7 @@ pub const GetAddrInfo = struct {
                     .list => |list| brk: {
                         var stack = std.heap.stackFallback(2048, globalThis.allocator());
                         var arena = @import("root").bun.ArenaAllocator.init(stack.get());
-                        const array = JSC.JSValue.createEmptyArray(globalThis, @truncate(u32, list.items.len));
+                        const array = JSC.JSValue.createEmptyArray(globalThis, @as(u32, @truncate(list.items.len)));
                         var i: u32 = 0;
                         const items: []const Result = list.items;
                         for (items) |item| {
@@ -594,7 +594,7 @@ pub const GetAddrInfo = struct {
 
         pub fn fromAddrInfo(addrinfo: *std.c.addrinfo) ?Result {
             return Result{
-                .address = std.net.Address.initPosix(@alignCast(4, addrinfo.addr orelse return null)),
+                .address = std.net.Address.initPosix(@alignCast(addrinfo.addr orelse return null)),
                 // no TTL in POSIX getaddrinfo()
                 .ttl = 0,
             };
@@ -650,8 +650,8 @@ pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const
                 request.cache = @This().CacheConfig{
                     .pending_cache = true,
                     .entry_cache = false,
-                    .pos_in_pending = @truncate(u5, @field(resolver.?, cache_field).indexOf(cache.new).?),
-                    .name_len = @truncate(u9, name.len),
+                    .pos_in_pending = @as(u5, @truncate(@field(resolver.?, cache_field).indexOf(cache.new).?)),
+                    .name_len = @as(u9, @truncate(name.len)),
                 };
                 cache.new.lookup = request;
             }
@@ -682,7 +682,7 @@ pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const
                 const hash = hasher.final();
                 return PendingCacheKey{
                     .hash = hash,
-                    .len = @truncate(u16, name.len),
+                    .len = @as(u16, @truncate(name.len)),
                     .lookup = undefined,
                 };
             }
@@ -751,8 +751,8 @@ pub const GetAddrInfoRequest = struct {
             request.cache = CacheConfig{
                 .pending_cache = true,
                 .entry_cache = false,
-                .pos_in_pending = @truncate(u5, @field(resolver.?, cache_field).indexOf(cache.new).?),
-                .name_len = @truncate(u9, query.name.len),
+                .pos_in_pending = @as(u5, @truncate(@field(resolver.?, cache_field).indexOf(cache.new).?)),
+                .name_len = @as(u9, @truncate(query.name.len)),
             };
             cache.new.lookup = request;
         }
@@ -782,7 +782,7 @@ pub const GetAddrInfoRequest = struct {
         pub fn init(query: GetAddrInfo) PendingCacheKey {
             return PendingCacheKey{
                 .hash = query.hash(),
-                .len = @truncate(u16, query.name.len),
+                .len = @as(u16, @truncate(query.name.len)),
                 .lookup = undefined,
             };
         }
@@ -793,7 +793,7 @@ pub const GetAddrInfoRequest = struct {
         addr_info: ?*std.c.addrinfo,
         arg: ?*anyopaque,
     ) callconv(.C) void {
-        const this = @ptrFromInt(*GetAddrInfoRequest, @intFromPtr(arg));
+        const this = @as(*GetAddrInfoRequest, @ptrFromInt(@intFromPtr(arg)));
         log("getAddrInfoAsyncCallback: status={d}", .{status});
 
         if (this.backend == .libinfo) {
@@ -1394,13 +1394,13 @@ pub const DNSResolver = struct {
         poll: *JSC.FilePoll,
     ) void {
         var channel = this.channel orelse {
-            _ = this.polls.orderedRemove(@intCast(i32, poll.fd));
+            _ = this.polls.orderedRemove(@as(i32, @intCast(poll.fd)));
             poll.deinit();
             return;
         };
 
         channel.process(
-            @intCast(i32, poll.fd),
+            @as(i32, @intCast(poll.fd)),
             poll.isReadable(),
             poll.isWritable(),
         );
@@ -1925,8 +1925,8 @@ pub const DNSResolver = struct {
             .err => |err| {
                 const system_error = JSC.SystemError{
                     .errno = -1,
-                    .code = JSC.ZigString.init(err.code()),
-                    .message = JSC.ZigString.init(err.label()),
+                    .code = bun.String.static(err.code()),
+                    .message = bun.String.static(err.label()),
                 };
 
                 globalThis.throwValue(system_error.toErrorInstance(globalThis));
@@ -1972,8 +1972,8 @@ pub const DNSResolver = struct {
             .err => |err| {
                 const system_error = JSC.SystemError{
                     .errno = -1,
-                    .code = JSC.ZigString.init(err.code()),
-                    .message = JSC.ZigString.init(err.label()),
+                    .code = bun.String.static(err.code()),
+                    .message = bun.String.static(err.label()),
                 };
 
                 globalThis.throwValue(system_error.toErrorInstance(globalThis));

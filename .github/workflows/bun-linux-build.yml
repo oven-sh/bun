@@ -46,7 +46,7 @@ jobs:
             arch: x86_64
             build_arch: amd64
             runner: big-ubuntu
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/may20-2/bun-webkit-linux-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-july23/bun-webkit-linux-amd64-lto.tar.gz"
             webkit_basename: "bun-webkit-linux-amd64-lto"
             build_machine_arch: x86_64
           - cpu: nehalem
@@ -54,7 +54,7 @@ jobs:
             arch: x86_64
             build_arch: amd64
             runner: big-ubuntu
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/may20-2/bun-webkit-linux-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-july23/bun-webkit-linux-amd64-lto.tar.gz"
             webkit_basename: "bun-webkit-linux-amd64-lto"
             build_machine_arch: x86_64
 
@@ -191,6 +191,10 @@ jobs:
           ./bun --version
       - id: test
         name: Test (node runner)
+        env:
+          SMTP_SENDGRID_SENDER: ${{ secrets.SMTP_SENDGRID_SENDER }}
+          TLS_MONGODB_DATABASE_URL: ${{ secrets.TLS_MONGODB_DATABASE_URL }}
+          TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
         # if: ${{github.event.inputs.use_bun == 'false'}}
         run: |
           bun install

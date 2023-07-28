@@ -366,7 +366,6 @@ pub const Prompt = struct {
 };
 
 pub const Crypto = struct {
-    const UUID = @import("./uuid.zig");
     const BoringSSL = @import("root").bun.BoringSSL;
     pub const Class = JSC.NewClass(
         void,
@@ -420,7 +419,7 @@ pub const Crypto = struct {
         var cost: ?usize = null;
         var parallelization: ?usize = null;
         var maxmem: usize = 32 * 1024 * 1024;
-        const keylen = @intCast(u32, @truncate(i33, keylen_int));
+        const keylen = @as(u32, @intCast(@as(i33, @truncate(keylen_int))));
 
         if (options) |options_value| outer: {
             if (options_value.isUndefined() or options_value == .zero)
@@ -442,7 +441,7 @@ pub const Crypto = struct {
                         .{},
                     );
                 } else if (N_int != 0) {
-                    cost = @intCast(usize, N_int);
+                    cost = @as(usize, @intCast(N_int));
                 }
             }
 
@@ -457,7 +456,7 @@ pub const Crypto = struct {
                         .{},
                     );
                 } else if (r_int != 0) {
-                    blockSize = @intCast(usize, r_int);
+                    blockSize = @as(usize, @intCast(r_int));
                 }
             }
 
@@ -472,7 +471,7 @@ pub const Crypto = struct {
                         .{},
                     );
                 } else if (p_int != 0) {
-                    parallelization = @intCast(usize, p_int);
+                    parallelization = @as(usize, @intCast(p_int));
                 }
             }
 
@@ -486,7 +485,7 @@ pub const Crypto = struct {
                         .{},
                     );
                 } else if (p_int != 0) {
-                    maxmem = @intCast(usize, p_int);
+                    maxmem = @as(usize, @intCast(p_int));
                 }
             }
         }
@@ -665,7 +664,7 @@ pub const Crypto = struct {
     ) callconv(.C) JSC.JSValue {
         var slice = array.slice();
         randomData(globalThis, slice.ptr, slice.len);
-        return @enumFromInt(JSC.JSValue, @bitCast(i64, @intFromPtr(array)));
+        return @as(JSC.JSValue, @enumFromInt(@as(i64, @bitCast(@intFromPtr(array)))));
     }
 
     fn randomData(
@@ -693,9 +692,8 @@ pub const Crypto = struct {
         _: []const JSC.JSValue,
     ) JSC.JSValue {
         var out: [36]u8 = undefined;
-        const uuid: UUID = .{
-            .bytes = globalThis.bunVM().rareData().nextUUID(),
-        };
+        const uuid = globalThis.bunVM().rareData().nextUUID();
+
         uuid.print(&out);
         return JSC.ZigString.init(&out).toValueGC(globalThis);
     }
@@ -723,9 +721,8 @@ pub const Crypto = struct {
         _: *anyopaque,
     ) callconv(.C) JSC.JSValue {
         var out: [36]u8 = undefined;
-        const uuid: UUID = .{
-            .bytes = globalThis.bunVM().rareData().nextUUID(),
-        };
+        const uuid = globalThis.bunVM().rareData().nextUUID();
+
         uuid.print(&out);
         return JSC.ZigString.init(&out).toValueGC(globalThis);
     }

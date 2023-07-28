@@ -159,6 +159,127 @@ it("readdirSync on import.meta.dir", () => {
   expect(match).toBe(true);
 });
 
+it("promises.readdir on a large folder", async () => {
+  const huge = join(tmpdir(), "huge-folder-" + Math.random().toString(32));
+  rmSync(huge, { force: true, recursive: true });
+  mkdirSync(huge, { recursive: true });
+  for (let i = 0; i < 128; i++) {
+    writeFileSync(join(huge, "file-" + i), "");
+  }
+  for (let j = 0; j < 4; j++) {
+    const promises = await Promise.all([
+      fs.promises.readdir(huge),
+      fs.promises.readdir(huge),
+      fs.promises.readdir(huge),
+      fs.promises.readdir(huge),
+    ]);
+
+    for (let chunk of promises) {
+      expect(chunk).toHaveLength(128);
+      chunk.sort();
+
+      let count = 0;
+      for (let i = 0; i < 128; i++) {
+        const current = chunk[i];
+        if (!current.startsWith("file-")) {
+          throw new Error("invalid file name");
+        }
+
+        const num = parseInt(current.slice(5));
+        // @ts-expect-error
+        count += !!(num >= 0 && num < 128);
+      }
+
+      expect(count).toBe(128);
+    }
+  }
+  rmSync(huge, { force: true, recursive: true });
+});
+
+it("promises.readFile", async () => {
+  expect(await fs.promises.readFile(import.meta.path, "utf-8")).toEqual(readFileSync(import.meta.path, "utf-8"));
+  expect(await fs.promises.readFile(import.meta.path, { encoding: "latin1" })).toEqual(
+    readFileSync(import.meta.path, { encoding: "latin1" }),
+  );
+
+  // We do this 20 times to check for any GC issues.
+  for (let i = 0; i < 20; i++) {
+    try {
+      await fs.promises.readFile("/i-dont-exist", "utf-8");
+      expect(false).toBeTrue();
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(Error);
+      expect(e.message).toBe("No such file or directory");
+      expect(e.code).toBe("ENOENT");
+      expect(e.errno).toBe(-2);
+      expect(e.path).toBe("/i-dont-exist");
+    }
+  }
+});
+
+it("promises.readFile with buffer as file path", async () => {
+  for (let i = 0; i < 10; i++)
+    expect(await fs.promises.readFile(Buffer.from(import.meta.path), "utf-8")).toEqual(
+      readFileSync(import.meta.path, "utf-8"),
+    );
+});
+
+it("promises.readdir on a large folder withFileTypes", async () => {
+  const huge = join(tmpdir(), "huge-folder-" + Math.random().toString(32));
+  rmSync(huge, { force: true, recursive: true });
+  mkdirSync(huge, { recursive: true });
+  let withFileTypes = { withFileTypes: true } as const;
+  for (let i = 0; i < 128; i++) {
+    writeFileSync(join(huge, "file-" + i), "");
+  }
+  for (let j = 0; j < 4; j++) {
+    const promises = await Promise.all([
+      fs.promises.readdir(huge, withFileTypes),
+      fs.promises.readdir(huge, withFileTypes),
+      fs.promises.readdir(huge, withFileTypes),
+      fs.promises.readdir(huge, withFileTypes),
+    ]);
+
+    for (let chunk of promises) {
+      expect(chunk).toHaveLength(128);
+      chunk.sort();
+
+      let count = 0;
+      for (let i = 0; i < 128; i++) {
+        const current = chunk[i].name;
+        if (!current.startsWith("file-")) {
+          throw new Error("invalid file name");
+        }
+
+        const num = parseInt(current.slice(5));
+        // @ts-expect-error
+        count += !!(num >= 0 && num < 128);
+      }
+
+      expect(count).toBe(128);
+    }
+  }
+  rmSync(huge, { force: true, recursive: true });
+});
+
+it("statSync throwIfNoEntry", () => {
+  expect(statSync("/tmp/404/not-found/ok", { throwIfNoEntry: false })).toBeUndefined();
+  expect(lstatSync("/tmp/404/not-found/ok", { throwIfNoEntry: false })).toBeUndefined();
+});
+
+it("statSync throwIfNoEntry: true", () => {
+  expect(() => statSync("/tmp/404/not-found/ok", { throwIfNoEntry: true })).toThrow("No such file or directory");
+  expect(() => statSync("/tmp/404/not-found/ok")).toThrow("No such file or directory");
+  expect(() => lstatSync("/tmp/404/not-found/ok", { throwIfNoEntry: true })).toThrow("No such file or directory");
+  expect(() => lstatSync("/tmp/404/not-found/ok")).toThrow("No such file or directory");
+});
+
+it("stat == statSync", async () => {
+  const sync = statSync(import.meta.path);
+  const async = await promises.stat(import.meta.path);
+  expect(Object.entries(sync)).toEqual(Object.entries(async));
+});
+
 // https://github.com/oven-sh/bun/issues/1887
 it("mkdtempSync, readdirSync, rmdirSync and unlinkSync with non-ascii", () => {
   const tempdir = mkdtempSync(`${tmpdir()}/emoji-fruit-🍇 🍈 🍉 🍊 🍋`);
@@ -278,6 +399,41 @@ it("readdirSync throws when given a file path with trailing slash", () => {
 
 describe("readSync", () => {
   const firstFourBytes = new Uint32Array(new TextEncoder().encode("File").buffer)[0];
+
+  it("works on large files", () => {
+    const dest = join(tmpdir(), "readSync-large-file.txt");
+    rmSync(dest, { force: true });
+
+    const writefd = openSync(dest, "w");
+    writeSync(writefd, Buffer.from([0x10]), 0, 1, 4_900_000_000);
+    closeSync(writefd);
+
+    const fd = openSync(dest, "r");
+    const out = Buffer.alloc(1);
+    const bytes = readSync(fd, out, 0, 1, 4_900_000_000);
+    expect(bytes).toBe(1);
+    expect(out[0]).toBe(0x10);
+    closeSync(fd);
+    rmSync(dest, { force: true });
+  });
+
+  it("works with bigint on read", () => {
+    const dest = join(tmpdir(), "readSync-large-file-bigint.txt");
+    rmSync(dest, { force: true });
+
+    const writefd = openSync(dest, "w");
+    writeSync(writefd, Buffer.from([0x10]), 0, 1, 400);
+    closeSync(writefd);
+
+    const fd = openSync(dest, "r");
+    const out = Buffer.alloc(1);
+    const bytes = readSync(fd, out, 0, 1, 400n as any);
+    expect(bytes).toBe(1);
+    expect(out[0]).toBe(0x10);
+    closeSync(fd);
+    rmSync(dest, { force: true });
+  });
+
   it("works with a position set to 0", () => {
     const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
     const four = new Uint8Array(4);
@@ -367,6 +523,23 @@ it("preadv", () => {
 });
 
 describe("writeSync", () => {
+  it("works with bigint", () => {
+    const dest = join(tmpdir(), "writeSync-large-file-bigint.txt");
+    rmSync(dest, { force: true });
+
+    const writefd = openSync(dest, "w");
+    writeSync(writefd, Buffer.from([0x10]), 0, 1, 400n as any);
+    closeSync(writefd);
+
+    const fd = openSync(dest, "r");
+    const out = Buffer.alloc(1);
+    const bytes = readSync(fd, out, 0, 1, 400 as any);
+    expect(bytes).toBe(1);
+    expect(out[0]).toBe(0x10);
+    closeSync(fd);
+    rmSync(dest, { force: true });
+  });
+
   it("works with a position set to 0", () => {
     const fd = openSync(import.meta.dir + "/writeFileSync.txt", "w+");
     const four = new Uint8Array(4);
@@ -484,7 +657,12 @@ describe("writeFileSync", () => {
 
     expect(readFileSync(path, "utf8")).toBe("File written successfully");
   });
-
+  it("write file with mode, issue #3740", () => {
+    const path = `${tmpdir()}/${Date.now()}.writeFileSyncWithMode.txt`;
+    writeFileSync(path, "bun", { mode: 33188 });
+    const stat = fs.statSync(path);
+    expect(stat.mode).toBe(33188);
+  });
   it("returning Buffer works", () => {
     const buffer = new Buffer([
       70, 105, 108, 101, 32, 119, 114, 105, 116, 116, 101, 110, 32, 115, 117, 99, 99, 101, 115, 115, 102, 117, 108, 108,
@@ -1394,5 +1572,28 @@ describe("utimesSync", () => {
 
     expect(finalStats.mtime).toEqual(prevModifiedTime);
     expect(finalStats.atime).toEqual(prevAccessTime);
+  });
+});
+
+it("createReadStream on a large file emits readable event correctly", () => {
+  return new Promise<void>((resolve, reject) => {
+    const tmp = mkdtempSync(`${tmpdir()}/readable`);
+    // write a 10mb file
+    writeFileSync(`${tmp}/large.txt`, "a".repeat(10 * 1024 * 1024));
+    var stream = createReadStream(`${tmp}/large.txt`);
+    var ended = false;
+    var timer: Timer;
+    stream.on("readable", () => {
+      const v = stream.read();
+      if (ended) {
+        clearTimeout(timer);
+        reject(new Error("readable emitted after end"));
+      } else if (v == null) {
+        ended = true;
+        timer = setTimeout(() => {
+          resolve();
+        }, 20);
+      }
+    });
   });
 });

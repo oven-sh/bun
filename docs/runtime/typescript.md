@@ -76,6 +76,7 @@ These are the recommended `compilerOptions` for a Bun project.
 
     // if TS 5.x+
     "moduleResolution": "bundler",
+    "noEmit": true,
     "allowImportingTsExtensions": true,
     "moduleDetection": "force",
     // if TS 4.x or earlier
@@ -92,6 +93,17 @@ These are the recommended `compilerOptions` for a Bun project.
   }
 }
 ```
+
+### Add DOM types
+
+Settings `"types": ["bun-types"]` means TypeScript will ignore other global type definitions, including `lib: ["dom"]`. To add DOM types into your project, add the following [triple-slash directives](https://www.typescriptlang.org/docs/handbook/triple-slash-directives.html) at the top of any TypeScript file in your project.
+
+```ts
+/// <reference lib="dom" />
+/// <reference lib="dom.iterable" />
+```
+
+The same applies to other global type definition _libs_ like `webworker`.
 
 ## Path mapping
 

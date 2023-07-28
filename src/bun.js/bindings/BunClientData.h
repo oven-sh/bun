@@ -24,6 +24,7 @@ class DOMWrapperWorld;
 #include "JavaScriptCore/IsoSubspacePerVM.h"
 #include "wtf/StdLibExtras.h"
 #include "WebCoreJSBuiltins.h"
+#include "JSCTaskScheduler.h"
 
 namespace Zig {
 }
@@ -80,7 +81,7 @@ public:
 
     virtual ~JSVMClientData();
 
-    static void create(JSC::VM*);
+    static void create(JSC::VM*, void*);
 
     JSHeapData& heapData() { return *m_heapData; }
     BunBuiltinNames& builtinNames() { return m_builtinNames; }
@@ -106,6 +107,9 @@ public:
         for (auto* space : m_outputConstraintSpaces)
             func(*space);
     }
+
+    void* bunVM;
+    Bun::JSCTaskScheduler deferredWorkTimer;
 
 private:
     BunBuiltinNames m_builtinNames;

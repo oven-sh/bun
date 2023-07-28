@@ -184,6 +184,8 @@ template<> JSValue JSDOMFormDataDOMConstructor::prototypeForStructure(JSC::VM& v
     return globalObject.functionPrototype();
 }
 
+extern "C" EncodedJSValue FormData__jsFunctionFromMultipartData(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe);
+
 template<> void JSDOMFormDataDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
     putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
@@ -191,6 +193,7 @@ template<> void JSDOMFormDataDOMConstructor::initializeProperties(VM& vm, JSDOMG
     m_originalName.set(vm, this, nameString);
     putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     putDirect(vm, vm.propertyNames->prototype, JSDOMFormData::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    putDirectNativeFunction(vm, &globalObject, vm.propertyNames->from, 1, FormData__jsFunctionFromMultipartData, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
 }
 
 /* Hash table for prototype */
@@ -533,16 +536,26 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_toJSONBody(JSC:
         if (seenKeys.contains(key)) {
             JSValue jsValue = obj->getDirect(vm, ident);
             if (jsValue.isString() || jsValue.inherits<JSBlob>()) {
-                GCDeferralContext deferralContext(lexicalGlobalObject->vm());
-                JSC::ObjectInitializationScope initializationScope(lexicalGlobalObject->vm());
+                // Make sure this runs before the deferral scope is called.
+                JSValue resultValue = toJSValue(value);
+                ensureStillAliveHere(resultValue);
 
-                JSC::JSArray* array = JSC::JSArray::tryCreateUninitializedRestricted(
-                    initializationScope, &deferralContext,
-                    lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
-                    2);
+                JSC::JSArray* array = nullptr;
 
-                array->initializeIndex(initializationScope, 0, jsValue);
-                array->initializeIndex(initializationScope, 1, toJSValue(value));
+                {
+                    GCDeferralContext deferralContext(lexicalGlobalObject->vm());
+                    JSC::ObjectInitializationScope initializationScope(lexicalGlobalObject->vm());
+
+                    array = JSC::JSArray::tryCreateUninitializedRestricted(
+                        initializationScope, &deferralContext,
+                        lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
+                        2);
+                    RELEASE_ASSERT(array);
+
+                    array->initializeIndex(initializationScope, 0, jsValue);
+                    array->initializeIndex(initializationScope, 1, resultValue);
+                }
+
                 obj->putDirect(vm, ident, array, 0);
             } else if (jsValue.isObject() && jsValue.getObject()->inherits<JSC::JSArray>()) {
                 JSC::JSArray* array = jsCast<JSC::JSArray*>(jsValue.getObject());

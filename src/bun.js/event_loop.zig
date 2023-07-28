@@ -73,7 +73,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
 
         pub fn onFinish(this: *This) void {
-            this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this));
+            this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
         }
 
         pub fn deinit(this: *This) void {
@@ -136,7 +136,7 @@ pub fn WorkTask(comptime Context: type, comptime async_io: bool) type {
         }
 
         pub fn onFinish(this: *This) void {
-            this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this));
+            this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
         }
 
         pub fn deinit(this: *This) void {
@@ -173,7 +173,41 @@ pub const AnyTask = struct {
             }
 
             pub fn wrap(this: ?*anyopaque) void {
-                @call(.always_inline, Callback, .{@ptrCast(*Type, @alignCast(@alignOf(Type), this.?))});
+                @call(.always_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
+            }
+        };
+    }
+};
+
+pub const ManagedTask = struct {
+    ctx: ?*anyopaque,
+    callback: *const (fn (*anyopaque) void),
+
+    pub fn task(this: *ManagedTask) Task {
+        return Task.init(this);
+    }
+
+    pub fn run(this: *ManagedTask) void {
+        @setRuntimeSafety(false);
+        var callback = this.callback;
+        var ctx = this.ctx;
+        callback(ctx.?);
+        bun.default_allocator.destroy(this);
+    }
+
+    pub fn New(comptime Type: type, comptime Callback: anytype) type {
+        return struct {
+            pub fn init(ctx: *Type) Task {
+                var managed = bun.default_allocator.create(ManagedTask) catch @panic("out of memory!");
+                managed.* = ManagedTask{
+                    .callback = wrap,
+                    .ctx = ctx,
+                };
+                return managed.task();
+            }
+
+            pub fn wrap(this: ?*anyopaque) void {
+                @call(.always_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
             }
         };
     }
@@ -205,8 +239,8 @@ pub const AnyTaskWithExtraContext = struct {
                     .always_inline,
                     Callback,
                     .{
-                        @ptrCast(*Type, @alignCast(@alignOf(Type), this.?)),
-                        @ptrCast(*ContextType, @alignCast(@alignOf(ContextType), extra.?)),
+                        @as(*Type, @ptrCast(@alignCast(this.?))),
+                        @as(*ContextType, @ptrCast(@alignCast(extra.?))),
                     },
                 );
             }
@@ -221,6 +255,35 @@ pub const CppTask = opaque {
         Bun__performTask(global, this);
     }
 };
+pub const JSCScheduler = struct {
+    pub const JSCDeferredWorkTask = opaque {
+        extern fn Bun__runDeferredWork(task: *JSCScheduler.JSCDeferredWorkTask) void;
+        pub const run = Bun__runDeferredWork;
+    };
+
+    export fn Bun__eventLoop__incrementRefConcurrently(jsc_vm: *VirtualMachine, delta: c_int) void {
+        JSC.markBinding(@src());
+
+        if (delta > 0) {
+            jsc_vm.uws_event_loop.?.refConcurrently();
+        } else {
+            jsc_vm.uws_event_loop.?.unrefConcurrently();
+        }
+    }
+
+    export fn Bun__queueJSCDeferredWorkTaskConcurrently(jsc_vm: *VirtualMachine, task: *JSCScheduler.JSCDeferredWorkTask) void {
+        JSC.markBinding(@src());
+        var loop = jsc_vm.eventLoop();
+        var concurrent_task = bun.default_allocator.create(ConcurrentTask) catch @panic("out of memory!");
+        loop.enqueueTaskConcurrent(concurrent_task.from(task, .auto_deinit));
+    }
+
+    comptime {
+        _ = Bun__eventLoop__incrementRefConcurrently;
+        _ = Bun__queueJSCDeferredWorkTaskConcurrently;
+    }
+};
+
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const MicrotaskForDefaultGlobalObject = JSC.MicrotaskForDefaultGlobalObject;
 const HotReloadTask = JSC.HotReloader.HotReloadTask;
@@ -228,6 +291,7 @@ const FSWatchTask = JSC.Node.FSWatcher.FSWatchTask;
 const PollPendingModulesTask = JSC.ModuleLoader.AsyncModule.Queue;
 // const PromiseTask = JSInternalPromise.Completion.PromiseTask;
 const GetAddrInfoRequestTask = JSC.DNS.GetAddrInfoRequest.Task;
+const JSCDeferredWorkTask = JSCScheduler.JSCDeferredWorkTask;
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
     Microtask,
@@ -237,6 +301,7 @@ pub const Task = TaggedPointerUnion(.{
     CopyFilePromiseTask,
     WriteFileTask,
     AnyTask,
+    ManagedTask,
     napi_async_work,
     ThreadSafeFunction,
     CppTask,
@@ -244,6 +309,8 @@ pub const Task = TaggedPointerUnion(.{
     PollPendingModulesTask,
     GetAddrInfoRequestTask,
     FSWatchTask,
+    JSCDeferredWorkTask,
+
     // PromiseTask,
     // TimeoutTasklet,
 });
@@ -255,10 +322,29 @@ pub const ConcurrentTask = struct {
 
     pub const Queue = UnboundedQueue(ConcurrentTask, .next);
 
-    pub fn from(this: *ConcurrentTask, of: anytype) *ConcurrentTask {
+    pub const AutoDeinit = enum {
+        manual_deinit,
+        auto_deinit,
+    };
+    pub fn create(task: Task) *ConcurrentTask {
+        var created = bun.default_allocator.create(ConcurrentTask) catch @panic("out of memory!");
+        created.* = .{
+            .task = task,
+            .next = null,
+            .auto_delete = true,
+        };
+        return created;
+    }
+
+    pub fn fromCallback(ptr: anytype, comptime callback: anytype) *ConcurrentTask {
+        return create(ManagedTask.New(std.meta.Child(@TypeOf(ptr)), callback).init(ptr));
+    }
+
+    pub fn from(this: *ConcurrentTask, of: anytype, auto_deinit: AutoDeinit) *ConcurrentTask {
         this.* = .{
             .task = Task.init(of),
             .next = null,
+            .auto_delete = auto_deinit == .auto_deinit,
         };
         return this;
     }
@@ -457,6 +543,11 @@ pub const EventLoop = struct {
                     transform_task.*.runFromJS();
                     transform_task.deinit();
                 },
+                @field(Task.Tag, bun.meta.typeBaseName(@typeName(JSCDeferredWorkTask))) => {
+                    var jsc_task: *JSCDeferredWorkTask = task.get(JSCDeferredWorkTask).?;
+                    JSC.markBinding(@src());
+                    jsc_task.run();
+                },
                 @field(Task.Tag, @typeName(WriteFileTask)) => {
                     var transform_task: *WriteFileTask = task.get(WriteFileTask).?;
                     transform_task.*.runFromJS();
@@ -476,6 +567,10 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, typeBaseName(@typeName(AnyTask))) => {
                     var any: *AnyTask = task.get(AnyTask).?;
+                    any.run();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ManagedTask))) => {
+                    var any: *ManagedTask = task.get(ManagedTask).?;
                     any.run();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(CppTask))) => {
@@ -503,7 +598,7 @@ pub const EventLoop = struct {
         }
 
         this.tasks.head = if (this.tasks.count == 0) 0 else this.tasks.head;
-        return @truncate(u32, counter);
+        return @as(u32, @truncate(counter));
     }
 
     pub fn tickConcurrent(this: *EventLoop) void {
@@ -627,10 +722,6 @@ pub const EventLoop = struct {
             break;
         }
 
-        // TODO: unify the event loops
-        // This needs a hook into JSC to schedule timers
-        this.global.vm().doWork();
-
         while (this.tickWithCount() > 0) {
             this.tickConcurrent();
         }
@@ -746,14 +837,16 @@ pub const EventLoop = struct {
         this.virtual_machine.gc_controller.performGC();
     }
 
+    pub fn wakeup(this: *EventLoop) void {
+        if (this.virtual_machine.uws_event_loop) |loop| {
+            loop.wakeup();
+        }
+    }
     pub fn enqueueTaskConcurrent(this: *EventLoop, task: *ConcurrentTask) void {
         JSC.markBinding(@src());
 
         this.concurrent_tasks.push(task);
-
-        if (this.virtual_machine.uws_event_loop) |loop| {
-            loop.wakeup();
-        }
+        this.wakeup();
     }
 };
 

@@ -311,9 +311,9 @@ pub const FFI = struct {
                 break :brk std.DynLib.open(backup_name) catch {
                     // Then, if that fails, report an error.
                     const system_error = JSC.SystemError{
-                        .code = ZigString.init(@tagName(JSC.Node.ErrorCode.ERR_DLOPEN_FAILED)),
-                        .message = ZigString.init("Failed to open library. This is usually caused by a missing library or an invalid library path."),
-                        .syscall = ZigString.init("dlopen"),
+                        .code = bun.String.create(@tagName(JSC.Node.ErrorCode.ERR_DLOPEN_FAILED)),
+                        .message = bun.String.create("Failed to open library. This is usually caused by a missing library or an invalid library path."),
+                        .syscall = bun.String.create("dlopen"),
                     };
                     return system_error.toErrorInstance(global);
                 };
@@ -383,7 +383,7 @@ pub const FFI = struct {
                     const cb = JSC.NewRuntimeFunction(
                         global,
                         &str,
-                        @intCast(u32, function.arg_types.items.len),
+                        @as(u32, @intCast(function.arg_types.items.len)),
                         bun.cast(JSC.JSHostFunctionPtr, compiled.ptr),
                         false,
                     );
@@ -479,7 +479,7 @@ pub const FFI = struct {
                     const cb = JSC.NewRuntimeFunction(
                         global,
                         name,
-                        @intCast(u32, function.arg_types.items.len),
+                        @as(u32, @intCast(function.arg_types.items.len)),
                         bun.cast(JSC.JSHostFunctionPtr, compiled.ptr),
                         false,
                     );
@@ -523,7 +523,7 @@ pub const FFI = struct {
                     const int = val.to(i32);
                     switch (int) {
                         0...ABIType.max => {
-                            abi_types.appendAssumeCapacity(@enumFromInt(ABIType, int));
+                            abi_types.appendAssumeCapacity(@as(ABIType, @enumFromInt(int)));
                             continue;
                         },
                         else => {
@@ -560,7 +560,7 @@ pub const FFI = struct {
                 const int = ret_value.toInt32();
                 switch (int) {
                     0...ABIType.max => {
-                        return_type = @enumFromInt(ABIType, int);
+                        return_type = @as(ABIType, @enumFromInt(int));
                         break :brk;
                     },
                     else => {
@@ -594,11 +594,11 @@ pub const FFI = struct {
             if (ptr.isNumber()) {
                 const num = ptr.asPtrAddress();
                 if (num > 0)
-                    function.symbol_from_dynamic_library = @ptrFromInt(*anyopaque, num);
+                    function.symbol_from_dynamic_library = @as(*anyopaque, @ptrFromInt(num));
             } else {
                 const num = ptr.toUInt64NoTruncate();
                 if (num > 0) {
-                    function.symbol_from_dynamic_library = @ptrFromInt(*anyopaque, num);
+                    function.symbol_from_dynamic_library = @as(*anyopaque, @ptrFromInt(num));
                 }
             }
         }
@@ -831,7 +831,7 @@ pub const FFI = struct {
                 return;
             }
 
-            var bytes: []u8 = try allocator.alloc(u8, @intCast(usize, relocation_size));
+            var bytes: []u8 = try allocator.alloc(u8, @as(usize, @intCast(relocation_size)));
             defer {
                 if (this.step == .failed) {
                     allocator.free(bytes);
@@ -1001,7 +1001,7 @@ pub const FFI = struct {
                 return;
             }
 
-            var bytes: []u8 = try allocator.alloc(u8, @intCast(usize, relocation_size));
+            var bytes: []u8 = try allocator.alloc(u8, @as(usize, @intCast(relocation_size)));
             defer {
                 if (this.step == .failed) {
                     allocator.free(bytes);

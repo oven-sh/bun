@@ -83,9 +83,9 @@ pub const Response = struct {
 
     pub fn estimatedSize(this: *Response) callconv(.C) usize {
         return this.reported_estimated_size orelse brk: {
-            this.reported_estimated_size = @intCast(
+            this.reported_estimated_size = @as(
                 u63,
-                this.body.value.estimatedSize() + this.url.len + this.status_text.len + @sizeOf(Response),
+                @intCast(this.body.value.estimatedSize() + this.url.len + this.status_text.len + @sizeOf(Response)),
             );
             break :brk this.reported_estimated_size.?;
         };
@@ -387,22 +387,23 @@ pub const Response = struct {
         const json_value = args.nextEat() orelse JSC.JSValue.zero;
 
         if (@intFromEnum(json_value) != 0) {
-            var zig_str = JSC.ZigString.init("");
+            var str = bun.String.empty;
             // calling JSON.stringify on an empty string adds extra quotes
             // so this is correct
-            json_value.jsonStringify(globalThis.ptr(), 0, &zig_str);
+            json_value.jsonStringify(globalThis, 0, &str);
 
-            if (zig_str.len > 0) {
-                const allocator = getAllocator(globalThis);
-                var zig_str_slice = zig_str.toSlice(allocator);
-
-                if (zig_str_slice.isAllocated()) {
+            if (!str.isEmpty()) {
+                if (str.value.WTFStringImpl.toUTF8IfNeeded(bun.default_allocator)) |bytes| {
+                    defer str.deref();
                     response.body.value = .{
-                        .Blob = Blob.initWithAllASCII(zig_str_slice.mut(), allocator, globalThis.ptr(), false),
+                        .InternalBlob = InternalBlob{
+                            .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(bytes.slice())),
+                            .was_string = true,
+                        },
                     };
                 } else {
-                    response.body.value = .{
-                        .Blob = Blob.initWithAllASCII(allocator.dupe(u8, zig_str_slice.slice()) catch unreachable, allocator, globalThis.ptr(), true),
+                    response.body.value = Body.Value{
+                        .WTFStringImpl = str.value.WTFStringImpl,
                     };
                 }
             }
@@ -410,7 +411,7 @@ pub const Response = struct {
 
         if (args.nextEat()) |init| {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                response.body.init.status_code = @intCast(u16, @min(@max(0, init.toInt32()), std.math.maxInt(u16)));
+                response.body.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
             } else {
                 if (Body.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
                     response.body.init = _init;
@@ -456,7 +457,7 @@ pub const Response = struct {
 
         if (args.nextEat()) |init| {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                response.body.init.status_code = @intCast(u16, @min(@max(0, init.toInt32()), std.math.maxInt(u16)));
+                response.body.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
             } else {
                 if (Body.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
                     response.body.init = _init;
@@ -777,15 +778,15 @@ pub const Fetch = struct {
             }
 
             const fetch_error = JSC.SystemError{
-                .code = ZigString.init(@errorName(this.result.fail)),
+                .code = bun.String.static(@errorName(this.result.fail)),
                 .message = switch (this.result.fail) {
-                    error.ConnectionClosed => ZigString.init("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"),
-                    error.FailedToOpenSocket => ZigString.init("Was there a typo in the url or port?"),
-                    error.TooManyRedirects => ZigString.init("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),
-                    error.ConnectionRefused => ZigString.init("Unable to connect. Is the computer able to access the url?"),
-                    else => ZigString.init("fetch() failed. For more information, pass `verbose: true` in the second argument to fetch()"),
+                    error.ConnectionClosed => bun.String.static("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"),
+                    error.FailedToOpenSocket => bun.String.static("Was there a typo in the url or port?"),
+                    error.TooManyRedirects => bun.String.static("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),
+                    error.ConnectionRefused => bun.String.static("Unable to connect. Is the computer able to access the url?"),
+                    else => bun.String.static("fetch() failed. For more information, pass `verbose: true` in the second argument to fetch()"),
                 },
-                .path = ZigString.init(this.http.?.url.href),
+                .path = bun.String.create(this.http.?.url.href),
             };
 
             return fetch_error.toErrorInstance(this.global_this);
@@ -826,7 +827,7 @@ pub const Fetch = struct {
                 .body = .{
                     .init = .{
                         .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
-                        .status_code = @truncate(u16, http_response.status_code),
+                        .status_code = @as(u16, @truncate(http_response.status_code)),
                     },
                     .value = this.toBodyValue(),
                 },
@@ -837,7 +838,7 @@ pub const Fetch = struct {
             const allocator = bun.default_allocator;
             var response = allocator.create(Response) catch unreachable;
             response.* = this.toResponse(allocator);
-            return Response.makeMaybePooled(@ptrCast(js.JSContextRef, this.global_this), response);
+            return Response.makeMaybePooled(@as(js.JSContextRef, @ptrCast(this.global_this)), response);
         }
 
         pub fn get(
@@ -978,7 +979,7 @@ pub const Fetch = struct {
         pub fn callback(task: *FetchTasklet, result: HTTPClient.HTTPClientResult) void {
             task.response_buffer = result.body.?.*;
             task.result = result;
-            task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task));
+            task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
         }
     };
 
@@ -1039,9 +1040,7 @@ pub const Fetch = struct {
         if (first_arg.as(Request)) |request| {
             request.ensureURL() catch unreachable;
 
-            var url_slice = bun.default_allocator.dupe(u8, request.url) catch unreachable;
-
-            if (url_slice.len == 0) {
+            if (request.url.len == 0) {
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
                 // clean hostname if any
                 if (hostname) |host| {
@@ -1050,8 +1049,19 @@ pub const Fetch = struct {
                 return JSPromise.rejectedPromiseValue(globalThis, err);
             }
 
-            url = ZigURL.parse(url_slice);
-            url_proxy_buffer = url_slice;
+            url = ZigURL.fromUTF8(bun.default_allocator, request.url) catch {
+                const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() URL is invalid", .{}, ctx);
+                // clean hostname if any
+                if (hostname) |host| {
+                    bun.default_allocator.free(host);
+                }
+
+                return JSPromise.rejectedPromiseValue(
+                    globalThis,
+                    err,
+                );
+            };
+            url_proxy_buffer = url.href;
 
             if (args.nextEat()) |options| {
                 if (options.isObject() or options.jsType() == .DOMWrapper) {
@@ -1137,22 +1147,25 @@ pub const Fetch = struct {
 
                     if (options.get(globalThis, "proxy")) |proxy_arg| {
                         if (proxy_arg.isString() and proxy_arg.getLength(ctx) > 0) {
-                            defer bun.default_allocator.free(url_slice);
+                            var href = JSC.URL.hrefFromJS(proxy_arg, globalThis);
+                            if (href.tag == .Dead) {
+                                const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{}, ctx);
+                                // clean hostname if any
+                                if (hostname) |host| {
+                                    bun.default_allocator.free(host);
+                                }
+                                bun.default_allocator.free(url_proxy_buffer);
 
-                            var proxy_str = proxy_arg.toStringOrNull(globalThis) orelse return .zero;
-                            var proxy_url_zig = proxy_str.toSlice(globalThis, bun.default_allocator);
-                            defer proxy_url_zig.deinit();
-
-                            var buffer = getAllocator(ctx).alloc(u8, url_slice.len + proxy_url_zig.len) catch {
-                                JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
+                                return JSPromise.rejectedPromiseValue(globalThis, err);
+                            }
+                            defer href.deref();
+                            var buffer = std.fmt.allocPrint(bun.default_allocator, "{s}{}", .{ url_proxy_buffer, href }) catch {
+                                globalThis.throwOutOfMemory();
                                 return .zero;
                             };
-                            @memcpy(buffer[0..url_slice.len], url_slice);
-                            var proxy_url_slice = buffer[url_slice.len..];
-                            @memcpy(proxy_url_slice[0..proxy_url_zig.len], proxy_url_zig.ptr[0..proxy_url_zig.len]);
-
-                            url = ZigURL.parse(buffer[0..url_slice.len]);
-                            proxy = ZigURL.parse(proxy_url_slice);
+                            url = ZigURL.parse(buffer[0..url.href.len]);
+                            proxy = ZigURL.parse(buffer[url.href.len..]);
+                            bun.default_allocator.free(url_proxy_buffer);
                             url_proxy_buffer = buffer;
                         }
                     }
@@ -1171,19 +1184,8 @@ pub const Fetch = struct {
                     signal = signal_;
                 }
             }
-        } else if (first_arg.toStringOrNull(globalThis)) |jsstring| {
-
-            // Check the URL
-            var url_slice = jsstring.toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
-                // clean hostname if any
-                if (hostname) |host| {
-                    bun.default_allocator.free(host);
-                }
-                JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
-                return .zero;
-            };
-
-            if (url_slice.len == 0) {
+        } else if (bun.String.tryFromJS(first_arg, globalThis)) |str| {
+            if (str.isEmpty()) {
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
                 // clean hostname if any
                 if (hostname) |host| {
@@ -1192,8 +1194,15 @@ pub const Fetch = struct {
                 return JSPromise.rejectedPromiseValue(globalThis, err);
             }
 
-            url = ZigURL.parse(url_slice.slice());
-            url_proxy_buffer = url_slice.slice();
+            url = ZigURL.fromString(bun.default_allocator, str) catch {
+                // clean hostname if any
+                if (hostname) |host| {
+                    bun.default_allocator.free(host);
+                }
+                const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() URL is invalid", .{}, ctx);
+                return JSPromise.rejectedPromiseValue(globalThis, err);
+            };
+            url_proxy_buffer = url.href;
 
             if (args.nextEat()) |options| {
                 if (options.isObject() or options.jsType() == .DOMWrapper) {
@@ -1273,22 +1282,25 @@ pub const Fetch = struct {
 
                     if (options.getTruthy(globalThis, "proxy")) |proxy_arg| {
                         if (proxy_arg.isString() and proxy_arg.getLength(globalThis) > 0) {
-                            defer url_slice.deinit();
+                            var href = JSC.URL.hrefFromJS(proxy_arg, globalThis);
+                            if (href.tag == .Dead) {
+                                const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{}, ctx);
+                                // clean hostname if any
+                                if (hostname) |host| {
+                                    bun.default_allocator.free(host);
+                                }
+                                bun.default_allocator.free(url_proxy_buffer);
 
-                            var proxy_str = proxy_arg.toStringOrNull(globalThis) orelse return .zero;
-                            var proxy_url_zig = proxy_str.toSlice(globalThis, bun.default_allocator);
-                            defer proxy_url_zig.deinit();
-
-                            var buffer = getAllocator(ctx).alloc(u8, url_slice.len + proxy_url_zig.len) catch {
-                                JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
+                                return JSPromise.rejectedPromiseValue(globalThis, err);
+                            }
+                            defer href.deref();
+                            var buffer = std.fmt.allocPrint(bun.default_allocator, "{s}{}", .{ url_proxy_buffer, href }) catch {
+                                globalThis.throwOutOfMemory();
                                 return .zero;
                             };
-                            @memcpy(buffer[0..url_slice.len], url_slice.ptr[0..url_slice.len]);
-                            var proxy_url_slice = buffer[url_slice.len..];
-                            @memcpy(proxy_url_slice[0..proxy_url_zig.len], proxy_url_zig.ptr[0..proxy_url_zig.len]);
-
-                            url = ZigURL.parse(buffer[0..url_slice.len]);
-                            proxy = ZigURL.parse(proxy_url_slice);
+                            url = ZigURL.parse(buffer[0..url.href.len]);
+                            proxy = ZigURL.parse(buffer[url.href.len..]);
+                            bun.default_allocator.free(url_proxy_buffer);
                             url_proxy_buffer = buffer;
                         }
                     }
@@ -1374,7 +1386,7 @@ pub const Fetch = struct {
                         }
 
                         const original_size = body.Blob.size;
-                        const stat_size = @intCast(Blob.SizeType, stat.size);
+                        const stat_size = @as(Blob.SizeType, @intCast(stat.size));
                         const blob_size = if (std.os.S.ISREG(stat.mode))
                             stat_size
                         else
@@ -1508,7 +1520,7 @@ pub const Headers = struct {
             if (options.body) |body| {
                 if (body.hasContentTypeFromUser() and (fetch_headers_ref == null or !fetch_headers_ref.?.fastHas(.ContentType))) {
                     header_count += 1;
-                    buf_len += @truncate(u32, body.contentType().len + "Content-Type".len);
+                    buf_len += @as(u32, @truncate(body.contentType().len + "Content-Type".len));
                     break :brk true;
                 }
             }
@@ -1535,7 +1547,7 @@ pub const Headers = struct {
             bun.copy(u8, headers.buf.items[buf_len_before_content_type + "Content-Type".len ..], options.body.?.contentType());
             values[header_count - 1] = .{
                 .offset = buf_len_before_content_type + @as(u32, "Content-Type".len),
-                .length = @truncate(u32, options.body.?.contentType().len),
+                .length = @as(u32, @truncate(options.body.?.contentType().len)),
             };
         }
 
@@ -1695,7 +1707,7 @@ pub const FetchEvent = struct {
 
         defer {
             if (!VirtualMachine.get().had_errors) {
-                Output.printElapsed(@floatFromInt(f64, (request_context.timer.lap())) / std.time.ns_per_ms);
+                Output.printElapsed(@as(f64, @floatFromInt((request_context.timer.lap()))) / std.time.ns_per_ms);
 
                 Output.prettyError(
                     " <b>{s}<r><d> - <b>{d}<r> <d>transpiled, <d><b>{d}<r> <d>imports<r>\n",

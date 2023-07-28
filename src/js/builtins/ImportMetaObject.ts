@@ -70,8 +70,10 @@ export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
 
     entry.dependencies = dependencies;
     // All dependencies resolved, set instantiate and satisfy field directly.
-    entry.instantiate = Promise.resolve(entry);
-    entry.satisfy = Promise.resolve(entry);
+    entry.instantiate = Promise.$resolve(entry);
+    entry.satisfy = Promise.$resolve(entry);
+    entry.isSatisfied = true;
+
     key = queue.shift();
     while (key && (loader.registry.$get(key)?.state ?? $ModuleFetch) >= $ModuleLink) {
       key = queue.shift();
@@ -212,11 +214,7 @@ export function createRequireCache() {
   });
 }
 
-export function require(this: string, name) {
-  return $internalRequire($resolveSync(name, $toString(this), false));
-}
-
 $getter;
 export function main(this: ImportMetaObject) {
-  return this.path === Bun.main;
+  return this.path === Bun.main && Bun.isMainThread;
 }

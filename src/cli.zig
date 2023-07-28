@@ -153,6 +153,7 @@ pub const Arguments = struct {
         clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi") catch unreachable,
         clap.parseParam("-u, --origin <STR>                Rewrite import URLs to start with --origin. Default: \"\"") catch unreachable,
         clap.parseParam("-p, --port <STR>                  Port to serve bun's dev server on. Default: \"3000\"") catch unreachable,
+        clap.parseParam("--smol                            Use less memory, but run garbage collection more often") catch unreachable,
         clap.parseParam("--minify                          Minify (experimental)") catch unreachable,
         clap.parseParam("--minify-syntax                   Minify syntax and inline data (experimental)") catch unreachable,
         clap.parseParam("--minify-whitespace               Minify whitespace (experimental)") catch unreachable,
@@ -217,6 +218,7 @@ pub const Arguments = struct {
         clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
         clap.parseParam("--only                           Only run tests that are marked with \"test.only()\"") catch unreachable,
         clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
+        clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
     };
 
     const build_params_public = public_params ++ build_only_params;
@@ -383,7 +385,21 @@ pub const Arguments = struct {
                     };
                 }
             }
-            ctx.test_options.update_snapshots = args.flag("--update-snapshots");
+            if (args.option("--bail")) |bail| {
+                if (bail.len > 0) {
+                    ctx.test_options.bail = std.fmt.parseInt(u32, bail, 10) catch |e| {
+                        Output.prettyErrorln("--bail expects a number: {s}", .{@errorName(e)});
+                        Global.exit(1);
+                    };
+
+                    if (ctx.test_options.bail == 0) {
+                        Output.prettyErrorln("--bail expects a number greater than 0", .{});
+                        Global.exit(1);
+                    }
+                } else {
+                    ctx.test_options.bail = 1;
+                }
+            }
             if (args.option("--rerun-each")) |repeat_count| {
                 if (repeat_count.len > 0) {
                     ctx.test_options.repeat_count = std.fmt.parseInt(u32, repeat_count, 10) catch |e| {
@@ -392,6 +408,7 @@ pub const Arguments = struct {
                     };
                 }
             }
+            ctx.test_options.update_snapshots = args.flag("--update-snapshots");
             ctx.test_options.run_todo = args.flag("--todo");
             ctx.test_options.only = args.flag("--only");
         }
@@ -463,6 +480,8 @@ pub const Arguments = struct {
             } else if (preloads.len > 0) {
                 ctx.preloads = preloads;
             }
+
+            ctx.runtime_options.smol = args.flag("--smol");
         }
 
         if (opts.port != null and opts.origin == null) {
@@ -830,7 +849,7 @@ pub const HelpCommand = struct {
             \\
         ;
 
-        var rand_state = std.rand.DefaultPrng.init(@intCast(u64, @max(std.time.milliTimestamp(), 0)));
+        var rand_state = std.rand.DefaultPrng.init(@as(u64, @intCast(@max(std.time.milliTimestamp(), 0))));
         const rand = rand_state.random();
         const package_add_i = rand.uintAtMost(usize, packages_to_add_filler.len - 1);
         const package_remove_i = rand.uintAtMost(usize, packages_to_remove_filler.len - 1);
@@ -929,6 +948,7 @@ pub const Command = struct {
         repeat_count: u32 = 0,
         run_todo: bool = false,
         only: bool = false,
+        bail: u32 = 0,
     };
 
     pub const Context = struct {
@@ -943,9 +963,14 @@ pub const Command = struct {
         debug: DebugOptions = DebugOptions{},
         test_options: TestOptions = TestOptions{},
         bundler_options: BundlerOptions = BundlerOptions{},
+        runtime_options: RuntimeOptions = RuntimeOptions{},
 
         preloads: []const string = &[_]string{},
         has_loaded_global_config: bool = false,
+
+        pub const RuntimeOptions = struct {
+            smol: bool = false,
+        };
 
         pub const BundlerOptions = struct {
             compile: bool = false,

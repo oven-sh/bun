@@ -387,6 +387,25 @@ describe("fetch", () => {
       }).toThrow("fetch() request with GET/HEAD/OPTIONS method cannot have body.");
     }),
   );
+
+  it("content length is inferred", async () => {
+    startServer({
+      fetch(req) {
+        return new Response(req.headers.get("content-length"));
+      },
+      hostname: "localhost",
+    });
+
+    // POST with body
+    const url = `http://${server.hostname}:${server.port}`;
+    const response = await fetch(url, { method: "POST", body: "buntastic" });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("9");
+
+    const response2 = await fetch(url, { method: "POST", body: "" });
+    expect(response2.status).toBe(200);
+    expect(await response2.text()).toBe("0");
+  });
 });
 
 it("simultaneous HTTPS fetch", async () => {
@@ -1154,6 +1173,10 @@ it("#874", () => {
 it("#2794", () => {
   expect(typeof globalThis.fetch.bind).toBe("function");
   expect(typeof Bun.fetch.bind).toBe("function");
+});
+
+it("#3545", () => {
+  expect(() => fetch("http://example.com?a=b")).not.toThrow();
 });
 
 it("invalid header doesnt crash", () => {

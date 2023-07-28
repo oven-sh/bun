@@ -38,6 +38,10 @@ export default {
     page("templates", "Templates", {
       description: "Hit the ground running with one of Bun's official templates, or download a template from GitHub.",
     }),
+    page("templates", "Guides", {
+      description: "A set of walkthrough guides and code snippets for performing common tasks with Bun",
+      href: "/guides",
+    }),
     // page("typescript", "TypeScript"),
 
     // divider("CLI"),
@@ -135,12 +139,12 @@ export default {
       description:
         "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
     }),
-    page("install/workspaces", "Workspaces", {
-      description: "Bun's package manager supports workspaces and mono-repo development workflows.",
-    }),
     page("install/cache", "Global cache", {
       description:
         "Bun's package manager installs all packages into a shared global cache to avoid redundant re-downloads.",
+    }),
+    page("install/workspaces", "Workspaces", {
+      description: "Bun's package manager supports workspaces and mono-repo development workflows.",
     }),
     page("install/lockfile", "Lockfile", {
       description:
@@ -180,6 +184,9 @@ export default {
     page("cli/test", "`bun test`", {
       description: "Bun's test runner uses Jest-compatible syntax but runs 100x faster.",
     }),
+    page("test/hot", "Watch mode", {
+      description: "Reload your tests automatically on change.",
+    }),
     page("test/writing", "Writing tests", {
       description:
         "Write your tests using Jest-like expect matchers, plus setup/teardown hooks, snapshot testing, and more",
@@ -187,14 +194,17 @@ export default {
     page("test/lifecycle", "Lifecycle hooks", {
       description: "Add lifecycle hooks to your tests that run before/after each test or test run",
     }),
+    page("test/mocks", "Mocks", {
+      description: "Mocks functions and track method calls",
+    }),
     page("test/snapshots", "Snapshots", {
       description: "Add lifecycle hooks to your tests that run before/after each test or test run",
     }),
+    page("test/time", "Dates and times", {
+      description: "Control the date & time in your tests for more reliable and deterministic tests",
+    }),
     page("test/dom", "DOM testing", {
       description: "Write headless tests for UI and React/Vue/Svelte/Lit components with happy-dom",
-    }),
-    page("test/hot", "Watch mode", {
-      description: "Reload your tests automatically on change.",
     }),
 
     divider("Package runner"),
@@ -236,6 +246,9 @@ export default {
     page("api/websockets", "WebSockets", {
       description: `Bun supports server-side WebSockets with on-the-fly compression, TLS support, and a Bun-native pubsub API.`,
     }), // "`Bun.serve`"),
+    page("api/workers", "Workers", {
+      description: `Run code in a separate thread with Bun's native Worker API.`,
+    }), // "`Worker`"),
     page("api/binary-data", "Binary data", {
       description: `How to represent and manipulate binary data in Bun.`,
     }), // "`Bun.serve`"),

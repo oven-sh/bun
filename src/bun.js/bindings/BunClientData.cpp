@@ -21,6 +21,7 @@
 #include "JavaScriptCore/JSCInlines.h"
 
 #include "JSDOMWrapper.h"
+#include <JavaScriptCore/DeferredWorkTimer.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -69,9 +70,14 @@ JSVMClientData::~JSVMClientData()
     ASSERT(m_normalWorld->hasOneRef());
     m_normalWorld = nullptr;
 }
-void JSVMClientData::create(VM* vm)
+void JSVMClientData::create(VM* vm, void* bunVM)
 {
     JSVMClientData* clientData = new JSVMClientData(*vm);
+    clientData->bunVM = bunVM;
+    vm->deferredWorkTimer->onAddPendingWork = Bun::JSCTaskScheduler::onAddPendingWork;
+    vm->deferredWorkTimer->onScheduleWorkSoon = Bun::JSCTaskScheduler::onScheduleWorkSoon;
+    vm->deferredWorkTimer->onCancelPendingWork = Bun::JSCTaskScheduler::onCancelPendingWork;
+
     vm->clientData = clientData; // ~VM deletes this pointer.
     clientData->m_normalWorld = DOMWrapperWorld::create(*vm, DOMWrapperWorld::Type::Normal);
 

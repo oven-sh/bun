@@ -40,7 +40,7 @@ NATIVE_OR_OLD_MARCH = -march=nehalem
 endif
 
 MIN_MACOS_VERSION ?= $(DEFAULT_MIN_MACOS_VERSION)
-BUN_BASE_VERSION = 0.6
+BUN_BASE_VERSION = 0.7
 
 CI ?= false
 
@@ -51,6 +51,8 @@ ifeq ($(CI), false)
 endif
 
 BUN_OR_NODE = $(shell which bun 2>/dev/null || which node 2>/dev/null)
+
+
 
 CXX_VERSION=c++2a
 TRIPLET = $(OS_NAME)-$(ARCH_NAME)
@@ -453,7 +455,8 @@ MINIMUM_ARCHIVE_FILES = -L$(BUN_DEPS_OUT_DIR) \
 	-ldecrepit \
 	-lssl \
 	-lcrypto \
-	-llolhtml
+	-llolhtml \
+	-lbase64
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
 		-larchive \
@@ -683,8 +686,19 @@ require:
 	@which pkg-config > /dev/null || (echo -e "ERROR: pkg-config is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install pkg-config"; exit 1)
 	@echo "You have the dependencies installed! Woo"
 
-init-submodules:
-	git submodule update --init --recursive --progress --depth=1 --checkout
+# the following allows you to run `make submodule` to update or init submodules. but we will exclude webkit
+# unless you explicity clone it yourself (a huge download)
+SUBMODULE_NAMES=$(shell cat .gitmodules | grep 'path = ' | awk '{print $$3}')
+ifeq ("$(wildcard src/bun.js/WebKit/.git)", "")
+	SUBMODULE_NAMES := $(filter-out src/bun.js/WebKit, $(SUBMODULE_NAMES))
+endif
+
+.PHONY: init-submodules
+init-submodules: submodule # (backwards-compatibility alias)
+
+.PHONY: submodule
+submodule: ## to init or update all submodules
+	git submodule update --init --recursive --progress --depth=1 --checkout $(SUBMODULE_NAMES)
 
 .PHONY: build-obj
 build-obj:
@@ -1079,16 +1093,32 @@ test/wiptest/run: test/wiptest/run.o
 release-bin-dir:
 	echo $(PACKAGE_DIR)
 
+
+.PHONY: dev-obj-track
+dev-obj-track:
+	bun .scripts/make-dev-timer.ts $(ZIG) build obj -freference-trace -Dcpu="$(CPU_TARGET)"
+
+.PHONY: dev-obj-notrack
+dev-obj-notrack:
+	$(ZIG) build obj -freference-trace -Dcpu="$(CPU_TARGET)"
+
+
 .PHONY: dev-obj
 dev-obj:
-	$(ZIG) build obj -freference-trace -Dcpu="$(CPU_TARGET)"
+
+ifeq ($(shell which bun),)
+dev-obj : dev-obj-notrack
+else
+dev-obj : dev-obj-track
+endif
+
 
 .PHONY: dev-obj-linux
 dev-obj-linux:
 	$(ZIG) build obj -Dtarget=x86_64-linux-gnu -Dcpu="$(CPU_TARGET)"
 
 .PHONY: dev
-dev: mkdir-dev esm dev-obj link
+dev: mkdir-dev esm dev-obj link ## compile zig changes + link bun
 
 mkdir-dev:
 	mkdir -p $(DEBUG_PACKAGE_DIR)
@@ -1173,7 +1203,7 @@ jsc-build-mac-compile:
 			-DPORT="JSCOnly" \
 			-DENABLE_STATIC_JSC=ON \
 			-DENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE=ON \
-			-DCMAKE_BUILD_TYPE=relwithdebuginfo \
+			-DCMAKE_BUILD_TYPE=Release \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DBUN_FAST_TLS=ON \
 			-DENABLE_FTL_JIT=ON \
@@ -1240,7 +1270,7 @@ jsc-build-linux-compile-config:
 		cmake \
 			-DPORT="JSCOnly" \
 			-DENABLE_STATIC_JSC=ON \
-			-DCMAKE_BUILD_TYPE=relwithdebuginfo \
+			-DCMAKE_BUILD_TYPE=Release \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DENABLE_FTL_JIT=ON \
 			-DENABLE_REMOTE_INSPECTOR=ON \
@@ -1363,9 +1393,8 @@ mimalloc-wasm:
 .PHONY: bun-link-lld-debug
 bun-link-lld-debug: link
 
-# link a debug build of bun
 .PHONY: link
-link:
+link: ## link a debug build of bun
 	$(CXX) $(BUN_LLD_FLAGS_DEBUG) $(DEBUG_FLAGS) $(SYMBOLS) \
 		-g \
 		$(DEBUG_BIN)/bun-debug.o \
@@ -1460,7 +1489,7 @@ generate-classes:
 generate-sink:
 	bun src/bun.js/scripts/generate-jssink.js
 	$(CLANG_FORMAT) -i  src/bun.js/bindings/JSSink.cpp  src/bun.js/bindings/JSSink.h
-	$(WEBKIT_DIR)/Source/JavaScriptCore/create_hash_table src/bun.js/bindings/JSSink.cpp > src/bun.js/bindings/JSSinkLookupTable.h
+	./src/bun.js/scripts/create_hash_table src/bun.js/bindings/JSSink.cpp > src/bun.js/bindings/JSSinkLookupTable.h
 	$(SED) -i -e 's/#include "Lookup.h"//' src/bun.js/bindings/JSSinkLookupTable.h
 	$(SED) -i -e 's/namespace JSC {//' src/bun.js/bindings/JSSinkLookupTable.h
 	$(SED) -i -e 's/} \/\/ namespace JSC//' src/bun.js/bindings/JSSinkLookupTable.h
@@ -1790,7 +1819,7 @@ endif
 endif
 
 .PHONY: build-unit
-build-unit: ## to build your unit tests
+build-unit: # to build your unit tests
 	@rm -rf zig-out/bin/$(testname)
 	@mkdir -p zig-out/bin
 	zig test  $(realpath $(testpath)) \
@@ -1808,7 +1837,7 @@ build-unit: ## to build your unit tests
 	cp zig-out/bin/$(testname) $(testbinpath)
 
 .PHONY: run-all-unit-tests
-run-all-unit-tests: ## to run your unit tests
+run-all-unit-tests: # to run your unit tests
 	@rm -rf zig-out/bin/__main_test
 	@mkdir -p zig-out/bin
 	zig test src/main.zig \
@@ -1828,15 +1857,11 @@ run-all-unit-tests: ## to run your unit tests
 run-unit:
 	@zig-out/bin/$(testname) $(ZIG)
 
-.PHONY: help
-help: ## to print this help
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {gsub("\\\\n",sprintf("\n%22c",""), $$2);printf "\033[36m%-20s\033[0m \t\t%s\n", $$1, $$2}' $(MAKEFILE_LIST)
-
 .PHONY: test
 test: build-unit run-unit
 
 .PHONY: integration-test-dev
-integration-test-dev: ## to run integration tests
+integration-test-dev: # to run integration tests
 	USE_EXISTING_PROCESS=true TEST_SERVER_URL=http://localhost:3000 node test/scripts/browser.js
 
 copy-install:
@@ -1850,6 +1875,10 @@ copy-to-bun-release-dir-bin:
 
 PACKAGE_MAP = --pkg-begin async_io $(BUN_DIR)/src/io/io_darwin.zig --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end --pkg-end --pkg-begin javascript_core $(BUN_DIR)/src/jsc.zig --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end --pkg-end --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end
 
+.PHONY: base64
+base64:
+	cd $(BUN_DEPS_DIR)/base64 && make clean && cmake $(CMAKE_FLAGS) . && make
+	cp $(BUN_DEPS_DIR)/base64/libbase64.a $(BUN_DEPS_OUT_DIR)/libbase64.a
 
 .PHONY: cold-jsc-start
 cold-jsc-start:
@@ -1868,22 +1897,23 @@ cold-jsc-start:
 		misctools/cold-jsc-start.cpp -o cold-jsc-start
 
 .PHONY: vendor-without-npm
-vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws tinycc c-ares zstd
+vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws tinycc c-ares zstd base64
+
 
 .PHONY: vendor-without-check
 vendor-without-check: npm-install vendor-without-npm
 
 .PHONY: vendor
-vendor: require init-submodules vendor-without-check
+vendor: require submodule vendor-without-check
 
 .PHONY: vendor-dev
-vendor-dev: require init-submodules npm-install-dev vendor-without-npm
+vendor-dev: require submodule npm-install-dev vendor-without-npm
 
 .PHONY: bun
 bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local
 
 .PHONY: regenerate-bindings
-regenerate-bindings:
+regenerate-bindings: ## compile src/js/builtins + all c++ code, does not link
 	@make clean-bindings builtins
 	@make bindings -j$(CPU_COUNT)
 
@@ -1895,3 +1925,8 @@ setup: vendor-dev identifier-cache clean-bindings
 	@echo "Development environment setup complete"
 	@echo "Run \`make dev\` to build \`bun-debug\`"
 	@echo ""
+
+.PHONY: help
+help: ## to print this help
+	@echo "For detailed build instructions, see https://bun.sh/docs/project/development"
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {gsub("\\\\n",sprintf("\n%22c",""), $$2);printf "\033[36m%-20s\033[0m \t\t%s\n", $$1, $$2}' $(MAKEFILE_LIST)

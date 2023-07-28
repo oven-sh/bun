@@ -3,7 +3,7 @@ const env = "process" in globalThis ? process.env : "Deno" in globalThis ? Deno.
 const SERVER = env.SERVER || "ws://0.0.0.0:4001";
 const WebSocket = globalThis.WebSocket || (await import("ws")).WebSocket;
 const LOG_MESSAGES = env.LOG_MESSAGES === "1";
-const CLIENTS_TO_WAIT_FOR = parseInt(env.CLIENTS_COUNT || "", 10) || 16;
+const CLIENTS_TO_WAIT_FOR = parseInt(env.CLIENTS_COUNT || "", 10) || 32;
 const DELAY = 64;
 const MESSAGES_TO_SEND = Array.from({ length: 32 }, () => [
   "Hello World!",

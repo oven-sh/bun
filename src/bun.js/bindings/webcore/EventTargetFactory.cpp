@@ -63,8 +63,8 @@ JSC::JSValue toJS(JSC::JSGlobalObject* state, JSDOMGlobalObject* globalObject, E
         //         return toJS(state, globalObject, static_cast<Clipboard&>(impl));
         //     case DOMApplicationCacheEventTargetInterfaceType:
         //         return toJS(state, globalObject, static_cast<DOMApplicationCache&>(impl));
-        //     case DOMWindowEventTargetInterfaceType:
-        //         return toJS(state, globalObject, static_cast<DOMWindow&>(impl));
+    case DOMWindowEventTargetInterfaceType:
+        return globalObject;
         //     case DedicatedWorkerGlobalScopeEventTargetInterfaceType:
         //         return toJS(state, globalObject, static_cast<DedicatedWorkerGlobalScope&>(impl));
         //     case EventSourceEventTargetInterfaceType:
@@ -265,8 +265,8 @@ JSC::JSValue toJS(JSC::JSGlobalObject* state, JSDOMGlobalObject* globalObject, E
         //     case WebXRSystemEventTargetInterfaceType:
         //         return toJS(state, globalObject, static_cast<WebXRSystem&>(impl));
         // #endif
-        //     case WorkerEventTargetInterfaceType:
-        //         return toJS(state, globalObject, static_cast<Worker&>(impl));
+    case WorkerEventTargetInterfaceType:
+        return toJS(state, globalObject, static_cast<Worker&>(impl));
         //     case WorkletGlobalScopeEventTargetInterfaceType:
         //         return toJS(state, globalObject, static_cast<WorkletGlobalScope&>(impl));
         //     case XMLHttpRequestEventTargetInterfaceType:

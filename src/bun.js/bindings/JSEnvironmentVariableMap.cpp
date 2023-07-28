@@ -30,7 +30,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
     if (UNLIKELY(name.len == 0))
         return JSValue::encode(jsUndefined());
 
-    if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
+    if (!Bun__getEnvValue(globalObject, &name, &value)) {
         return JSValue::encode(jsUndefined());
     }
 

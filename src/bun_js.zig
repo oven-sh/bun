@@ -151,6 +151,7 @@ pub const Run = struct {
                 ctx.log,
                 null,
                 ctx.debug.hot_reload != .none,
+                ctx.runtime_options.smol,
             ),
             .arena = arena,
             .ctx = ctx,
@@ -248,6 +249,8 @@ pub const Run = struct {
                     vm.eventLoop().tick();
                     vm.eventLoop().tickPossiblyForever();
                 } else {
+                    vm.exit_handler.exit_code = 1;
+                    vm.onExit();
                     Global.exit(1);
                 }
             }
@@ -279,6 +282,8 @@ pub const Run = struct {
                 vm.eventLoop().tick();
                 vm.eventLoop().tickPossiblyForever();
             } else {
+                vm.exit_handler.exit_code = 1;
+                vm.onExit();
                 Global.exit(1);
             }
         }
@@ -315,6 +320,8 @@ pub const Run = struct {
                         vm.eventLoop().autoTickActive();
                     }
 
+                    vm.onBeforeExit();
+
                     if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
                         prev_promise = this.vm.pending_internal_promise;
                         vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
@@ -332,6 +339,8 @@ pub const Run = struct {
                     vm.tick();
                     vm.eventLoop().autoTickActive();
                 }
+
+                vm.onBeforeExit();
             }
 
             if (vm.log.msgs.items.len > 0) {
@@ -347,10 +356,14 @@ pub const Run = struct {
 
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
         vm.global.handleRejectedPromises();
+        if (this.any_unhandled and this.vm.exit_handler.exit_code == 0) {
+            this.vm.exit_handler.exit_code = 1;
+        }
+        const exit_code = this.vm.exit_handler.exit_code;
 
         vm.onExit();
 
         if (!JSC.is_bindgen) JSC.napi.fixDeadCodeElimination();
-        Global.exit(@intFromBool(this.any_unhandled));
+        Global.exit(exit_code);
     }
 };

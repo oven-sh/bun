@@ -820,7 +820,7 @@ function urlToHttpOptions(url) {
   return options;
 }
 
-const lazy = globalThis[Symbol.for("Bun.lazy")];
+const lazy = $lazy;
 const pathToFileURL = lazy("pathToFileURL");
 const fileURLToPath = lazy("fileURLToPath");
 const defaultObject = {
@@ -834,6 +834,7 @@ const defaultObject = {
   pathToFileURL,
   fileURLToPath,
   urlToHttpOptions,
+  [Symbol.for("CommonJS")]: 0,
 };
 
 export {

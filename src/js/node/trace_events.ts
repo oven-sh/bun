@@ -13,10 +13,12 @@ function ERR_INVALID_ARG_TYPE(name, type, value) {
 
 function createTracing(opts) {
   if (typeof opts !== "object" || opts == null) {
+    // @ts-ignore
     throw new ERR_INVALID_ARG_TYPE("options", "Object", opts);
   }
 
   // TODO: validate categories
+  // @ts-ignore
   return new Tracing(opts);
 }
 

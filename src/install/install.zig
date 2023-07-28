@@ -151,8 +151,8 @@ pub fn ExternalSliceAligned(comptime Type: type, comptime alignment_: ?u29) type
             // }
 
             return Slice{
-                .off = @truncate(u32, (@intFromPtr(in.ptr) - @intFromPtr(buf.ptr)) / @sizeOf(Type)),
-                .len = @truncate(u32, in.len),
+                .off = @as(u32, @truncate((@intFromPtr(in.ptr) - @intFromPtr(buf.ptr)) / @sizeOf(Type))),
+                .len = @as(u32, @truncate(in.len)),
             };
         }
     };
@@ -346,12 +346,12 @@ const NetworkTask = struct {
             try header_builder.entries.append(
                 allocator,
                 .{
-                    .name = .{ .offset = 0, .length = @truncate(u32, "Accept".len) },
-                    .value = .{ .offset = "Accept".len, .length = @truncate(u32, default_headers_buf.len - "Accept".len) },
+                    .name = .{ .offset = 0, .length = @as(u32, @truncate("Accept".len)) },
+                    .value = .{ .offset = "Accept".len, .length = @as(u32, @truncate(default_headers_buf.len - "Accept".len)) },
                 },
             );
             header_builder.header_count = 1;
-            header_builder.content = GlobalStringBuilder{ .ptr = @ptrFromInt([*]u8, @intFromPtr(bun.span(default_headers_buf).ptr)), .len = default_headers_buf.len, .cap = default_headers_buf.len };
+            header_builder.content = GlobalStringBuilder{ .ptr = @as([*]u8, @ptrFromInt(@intFromPtr(bun.span(default_headers_buf).ptr))), .len = default_headers_buf.len, .cap = default_headers_buf.len };
         }
 
         this.response_buffer = try MutableString.init(allocator, 0);
@@ -479,7 +479,7 @@ pub const Features = struct {
         out |= @as(u8, @intFromBool(this.dev_dependencies)) << 3;
         out |= @as(u8, @intFromBool(this.peer_dependencies)) << 4;
         out |= @as(u8, @intFromBool(this.workspaces)) << 5;
-        return @enumFromInt(Behavior, out);
+        return @as(Behavior, @enumFromInt(out));
     }
 
     pub const main = Features{
@@ -545,28 +545,28 @@ const Task = struct {
             hasher.update(package_name);
             hasher.update("@");
             hasher.update(std.mem.asBytes(&package_version));
-            return @as(u64, 0 << 61) | @as(u64, @truncate(u61, hasher.final()));
+            return @as(u64, 0 << 61) | @as(u64, @as(u61, @truncate(hasher.final())));
         }
 
         pub fn forBinLink(package_id: PackageID) u64 {
             const hash = bun.Wyhash.hash(0, std.mem.asBytes(&package_id));
-            return @as(u64, 1 << 61) | @as(u64, @truncate(u61, hash));
+            return @as(u64, 1 << 61) | @as(u64, @as(u61, @truncate(hash)));
         }
 
         pub fn forManifest(name: string) u64 {
-            return @as(u64, 2 << 61) | @as(u64, @truncate(u61, bun.Wyhash.hash(0, name)));
+            return @as(u64, 2 << 61) | @as(u64, @as(u61, @truncate(bun.Wyhash.hash(0, name))));
         }
 
         pub fn forTarball(url: string) u64 {
             var hasher = bun.Wyhash.init(0);
             hasher.update(url);
-            return @as(u64, 3 << 61) | @as(u64, @truncate(u61, hasher.final()));
+            return @as(u64, 3 << 61) | @as(u64, @as(u61, @truncate(hasher.final())));
         }
 
         pub fn forGitClone(url: string) u64 {
             var hasher = bun.Wyhash.init(0);
             hasher.update(url);
-            return @as(u64, 4 << 61) | @as(u64, @truncate(u61, hasher.final()));
+            return @as(u64, 4 << 61) | @as(u64, @as(u61, @truncate(hasher.final())));
         }
 
         pub fn forGitCheckout(url: string, resolved: string) u64 {
@@ -574,7 +574,7 @@ const Task = struct {
             hasher.update(url);
             hasher.update("@");
             hasher.update(resolved);
-            return @as(u64, 5 << 61) | @as(u64, @truncate(u61, hasher.final()));
+            return @as(u64, 5 << 61) | @as(u64, @as(u61, @truncate(hasher.final())));
         }
     };
 
@@ -1408,7 +1408,7 @@ const PackageInstall = struct {
             const rc = Syscall.system.open(path, @as(u32, std.os.O.PATH | 0), @as(u32, 0));
             switch (Syscall.getErrno(rc)) {
                 .SUCCESS => {
-                    const fd = @intCast(std.os.fd_t, rc);
+                    const fd = @as(std.os.fd_t, @intCast(rc));
                     _ = Syscall.system.close(fd);
                     return false;
                 },
@@ -1742,55 +1742,51 @@ pub const PackageManager = struct {
     pub fn enqueueDependencyToRoot(
         this: *PackageManager,
         name: []const u8,
-        version_buf: []const u8,
         version: *const Dependency.Version,
+        version_buf: []const u8,
         behavior: Dependency.Behavior,
     ) DependencyToEnqueue {
-        const str_buf = this.lockfile.buffers.string_bytes.items;
-        for (this.lockfile.buffers.dependencies.items, 0..) |dependency, dependency_id| {
-            if (!strings.eqlLong(dependency.name.slice(str_buf), name, true)) continue;
-            if (!dependency.version.eql(version, str_buf, version_buf)) continue;
-            return switch (this.lockfile.buffers.resolutions.items[dependency_id]) {
-                invalid_package_id => .{
-                    .pending = @truncate(DependencyID, dependency_id),
-                },
-                else => |resolution_id| .{
-                    .resolution = .{
-                        .resolution = this.lockfile.packages.items(.resolution)[resolution_id],
-                        .package_id = resolution_id,
-                    },
-                },
+        const dep_id = @as(DependencyID, @truncate(brk: {
+            const str_buf = this.lockfile.buffers.string_bytes.items;
+            for (this.lockfile.buffers.dependencies.items, 0..) |dep, id| {
+                if (!strings.eqlLong(dep.name.slice(str_buf), name, true)) continue;
+                if (!dep.version.eql(version, str_buf, version_buf)) continue;
+                break :brk id;
+            }
+
+            var builder = this.lockfile.stringBuilder();
+            const dummy = Dependency{
+                .name = String.init(name, name),
+                .name_hash = String.Builder.stringHash(name),
+                .version = version.*,
+                .behavior = behavior,
+            };
+            dummy.countWithDifferentBuffers(name, version_buf, @TypeOf(&builder), &builder);
+
+            builder.allocate() catch |err| return .{ .failure = err };
+
+            const dep = dummy.cloneWithDifferentBuffers(name, version_buf, @TypeOf(&builder), &builder) catch unreachable;
+            builder.clamp();
+            const index = this.lockfile.buffers.dependencies.items.len;
+            this.lockfile.buffers.dependencies.append(this.allocator, dep) catch unreachable;
+            this.lockfile.buffers.resolutions.append(this.allocator, invalid_package_id) catch unreachable;
+            if (comptime Environment.allow_assert) std.debug.assert(this.lockfile.buffers.dependencies.items.len == this.lockfile.buffers.resolutions.items.len);
+            break :brk index;
+        }));
+
+        if (this.lockfile.buffers.resolutions.items[dep_id] == invalid_package_id) {
+            this.enqueueDependencyWithMainAndSuccessFn(
+                dep_id,
+                &this.lockfile.buffers.dependencies.items[dep_id],
+                invalid_package_id,
+                assignRootResolution,
+                failRootResolution,
+            ) catch |err| {
+                return .{ .failure = err };
             };
         }
 
-        var builder = this.lockfile.stringBuilder();
-        const dependency = Dependency{
-            .name = String.init(name, name),
-            .name_hash = String.Builder.stringHash(name),
-            .version = version.*,
-            .behavior = behavior,
-        };
-        dependency.countWithDifferentBuffers(name, version_buf, @TypeOf(&builder), &builder);
-
-        builder.allocate() catch |err| return .{ .failure = err };
-
-        const cloned_dependency = dependency.cloneWithDifferentBuffers(name, version_buf, @TypeOf(&builder), &builder) catch unreachable;
-        builder.clamp();
-        const index = @truncate(DependencyID, this.lockfile.buffers.dependencies.items.len);
-        this.lockfile.buffers.dependencies.append(this.allocator, cloned_dependency) catch unreachable;
-        this.lockfile.buffers.resolutions.append(this.allocator, invalid_package_id) catch unreachable;
-        if (comptime Environment.allow_assert) std.debug.assert(this.lockfile.buffers.dependencies.items.len == this.lockfile.buffers.resolutions.items.len);
-        this.enqueueDependencyWithMainAndSuccessFn(
-            index,
-            &cloned_dependency,
-            invalid_package_id,
-            assignRootResolution,
-            failRootResolution,
-        ) catch |err| {
-            return .{ .failure = err };
-        };
-
-        const resolution_id = switch (this.lockfile.buffers.resolutions.items[index]) {
+        const resolution_id = switch (this.lockfile.buffers.resolutions.items[dep_id]) {
             invalid_package_id => brk: {
                 this.drainDependencyList();
 
@@ -1815,7 +1811,7 @@ pub const PackageManager = struct {
                     },
                 }
 
-                break :brk this.lockfile.buffers.resolutions.items[index];
+                break :brk this.lockfile.buffers.resolutions.items[dep_id];
             },
             // we managed to synchronously resolve the dependency
             else => |pkg_id| pkg_id,
@@ -2605,7 +2601,9 @@ pub const PackageManager = struct {
             },
             .workspace => {
                 // relative to cwd
-                const res = FolderResolution.getOrPut(.{ .relative = .workspace }, version, this.lockfile.str(&version.value.workspace), this);
+                const workspace_path: *const String = this.lockfile.workspace_paths.getPtr(@truncate(String.Builder.stringHash(this.lockfile.str(&version.value.workspace)))) orelse &version.value.workspace;
+
+                const res = FolderResolution.getOrPut(.{ .relative = .workspace }, version, this.lockfile.str(workspace_path), this);
 
                 switch (res) {
                     .err => |err| return err,
@@ -2810,7 +2808,7 @@ pub const PackageManager = struct {
         tmpname_buf[0..8].* = "tmplock-".*;
         var tmpfile = FileSystem.RealFS.Tmpfile{};
         var secret: [32]u8 = undefined;
-        std.mem.writeIntNative(u64, secret[0..8], @intCast(u64, std.time.milliTimestamp()));
+        std.mem.writeIntNative(u64, secret[0..8], @as(u64, @intCast(std.time.milliTimestamp())));
         var base64_bytes: [64]u8 = undefined;
         std.crypto.random.bytes(&base64_bytes);
 
@@ -3170,7 +3168,7 @@ pub const PackageManager = struct {
                     this.enqueueNetworkTask(network_task);
                 }
             },
-            .symlink, .workspace => {
+            inline .symlink, .workspace => |dependency_tag| {
                 const _result = this.getOrPutResolvedPackage(
                     name_hash,
                     name,
@@ -3187,7 +3185,15 @@ pub const PackageManager = struct {
                     return err;
                 };
 
-                const not_found_fmt =
+                const workspace_not_found_fmt =
+                    \\workspace dependency "{[name]s}" not found
+                    \\
+                    \\Searched in <b>{[search_path]}<r>
+                    \\
+                    \\Workspace documentation: https://bun.sh/docs/install/workspaces
+                    \\
+                ;
+                const link_not_found_fmt =
                     \\package "{[name]s}" is not linked
                     \\
                     \\To install a linked package:
@@ -3218,25 +3224,51 @@ pub const PackageManager = struct {
                     // should not trigger a network call
                     if (comptime Environment.allow_assert) std.debug.assert(result.network_task == null);
                 } else if (dependency.behavior.isRequired()) {
-                    this.log.addErrorFmt(
-                        null,
-                        logger.Loc.Empty,
-                        this.allocator,
-                        not_found_fmt,
-                        .{
-                            .name = this.lockfile.str(&name),
-                        },
-                    ) catch unreachable;
+                    if (comptime dependency_tag == .workspace) {
+                        this.log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            this.allocator,
+                            workspace_not_found_fmt,
+                            .{
+                                .name = this.lockfile.str(&name),
+                                .search_path = FolderResolution.PackageWorkspaceSearchPathFormatter{ .manager = this, .version = version },
+                            },
+                        ) catch unreachable;
+                    } else {
+                        this.log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            this.allocator,
+                            link_not_found_fmt,
+                            .{
+                                .name = this.lockfile.str(&name),
+                            },
+                        ) catch unreachable;
+                    }
                 } else if (this.options.log_level.isVerbose()) {
-                    this.log.addWarningFmt(
-                        null,
-                        logger.Loc.Empty,
-                        this.allocator,
-                        not_found_fmt,
-                        .{
-                            .name = this.lockfile.str(&name),
-                        },
-                    ) catch unreachable;
+                    if (comptime dependency_tag == .workspace) {
+                        this.log.addWarningFmt(
+                            null,
+                            logger.Loc.Empty,
+                            this.allocator,
+                            workspace_not_found_fmt,
+                            .{
+                                .name = this.lockfile.str(&name),
+                                .search_path = FolderResolution.PackageWorkspaceSearchPathFormatter{ .manager = this, .version = version },
+                            },
+                        ) catch unreachable;
+                    } else {
+                        this.log.addWarningFmt(
+                            null,
+                            logger.Loc.Empty,
+                            this.allocator,
+                            link_not_found_fmt,
+                            .{
+                                .name = this.lockfile.str(&name),
+                            },
+                        ) catch unreachable;
+                    }
                 }
             },
             .tarball => {
@@ -3344,8 +3376,8 @@ pub const PackageManager = struct {
     pub fn scheduleTasks(manager: *PackageManager) usize {
         const count = manager.task_batch.len + manager.network_resolve_batch.len + manager.network_tarball_batch.len;
 
-        manager.pending_tasks += @truncate(u32, count);
-        manager.total_tasks += @truncate(u32, count);
+        manager.pending_tasks += @as(u32, @truncate(count));
+        manager.total_tasks += @as(u32, @truncate(count));
         manager.thread_pool.schedule(manager.task_batch);
         manager.network_resolve_batch.push(manager.network_tarball_batch);
         HTTP.http_thread.schedule(manager.network_resolve_batch);
@@ -3803,7 +3835,7 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.isVerbose()) {
                         Output.prettyError("    ", .{});
-                        Output.printElapsed(@floatFromInt(f64, task.http.elapsed) / std.time.ns_per_ms);
+                        Output.printElapsed(@as(f64, @floatFromInt(task.http.elapsed)) / std.time.ns_per_ms);
                         Output.prettyError("\n <d>Downloaded <r><green>{s}<r> versions\n", .{name.slice()});
                         Output.flush();
                     }
@@ -3815,7 +3847,7 @@ pub const PackageManager = struct {
                             entry.value_ptr.* = manifest;
 
                             if (timestamp_this_tick == null) {
-                                timestamp_this_tick = @truncate(u32, @intCast(u64, @max(0, std.time.timestamp()))) +| 300;
+                                timestamp_this_tick = @as(u32, @truncate(@as(u64, @intCast(@max(0, std.time.timestamp()))))) +| 300;
                             }
 
                             entry.value_ptr.*.pkg.public_max_age = timestamp_this_tick.?;
@@ -3937,7 +3969,7 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.isVerbose()) {
                         Output.prettyError("    ", .{});
-                        Output.printElapsed(@floatCast(f64, @floatFromInt(f64, task.http.elapsed) / std.time.ns_per_ms));
+                        Output.printElapsed(@as(f64, @floatCast(@as(f64, @floatFromInt(task.http.elapsed)) / std.time.ns_per_ms)));
                         Output.prettyError(" <d>Downloaded <r><green>{s}<r> tarball\n", .{extract.name.slice()});
                         Output.flush();
                     }
@@ -4443,7 +4475,23 @@ pub const PackageManager = struct {
                     for (scoped.scopes, 0..) |name, i| {
                         var registry = scoped.registries[i];
                         if (registry.url.len == 0) registry.url = base.url;
-                        try this.registries.put(allocator, Npm.Registry.Scope.hash(name), try Npm.Registry.Scope.fromAPI(name, registry, allocator, env));
+                        try this.registries.put(allocator, Npm.Registry.Scope.hash(name), Npm.Registry.Scope.fromAPI(name, registry, allocator, env) catch |err| {
+                            if (err == error.InvalidURL) {
+                                log.addErrorFmt(
+                                    null,
+                                    logger.Loc.Empty,
+                                    allocator,
+                                    "{} is not a valid registry URL",
+                                    .{
+                                        strings.QuotedFormatter{
+                                            .text = registry.url,
+                                        },
+                                    },
+                                ) catch unreachable;
+                            }
+
+                            return err;
+                        });
                     }
                 }
 
@@ -4556,12 +4604,21 @@ pub const PackageManager = struct {
                             {
                                 const prev_scope = this.scope;
                                 var api_registry = std.mem.zeroes(Api.NpmRegistry);
-                                api_registry.url = registry_;
-                                api_registry.token = prev_scope.token;
-                                this.scope = try Npm.Registry.Scope.fromAPI("", api_registry, allocator, env);
-                                did_set = true;
-                                // stage1 bug: break inside inline is broken
-                                // break :load_registry;
+                                var href = bun.JSC.URL.hrefFromString(bun.String.fromUTF8(registry_));
+                                if (href.tag == .Dead) {
+                                    try log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "${s} has invalid URL {}", .{
+                                        registry_key, strings.QuotedFormatter{
+                                            .text = registry_,
+                                        },
+                                    });
+                                } else {
+                                    defer href.deref();
+
+                                    api_registry.token = prev_scope.token;
+                                    this.scope = try Npm.Registry.Scope.fromAPI("", api_registry, allocator, env);
+                                    api_registry.url = try href.toOwnedSlice(bun.default_allocator);
+                                    did_set = true;
+                                }
                             }
                         }
                     }
@@ -4594,7 +4651,15 @@ pub const PackageManager = struct {
                 if (cli.registry.len > 0 and strings.startsWith(cli.registry, "https://") or
                     strings.startsWith(cli.registry, "http://"))
                 {
-                    this.scope.url = URL.parse(cli.registry);
+                    if (URL.fromUTF8(instance.allocator, cli.registry)) |url| {
+                        this.scope.url = url;
+                    } else |_| {
+                        try log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "--registry has invalid URL {}", .{
+                            strings.QuotedFormatter{
+                                .text = cli.registry,
+                            },
+                        });
+                    }
                 }
 
                 if (cli.exact) {
@@ -5148,7 +5213,7 @@ pub const PackageManager = struct {
                 initializeStore();
                 const json = try json_parser.ParseJSONUTF8(&json_source, ctx.log, ctx.allocator);
                 if (json.asProperty("workspaces")) |prop| {
-                    var workspace_names = bun.StringMap.init(ctx.allocator, true);
+                    var workspace_names = Package.WorkspaceMap.init(ctx.allocator);
                     defer workspace_names.deinit();
                     const json_array = switch (prop.expr.data) {
                         .e_array => |arr| arr,
@@ -5223,7 +5288,7 @@ pub const PackageManager = struct {
             Output.flush();
         }
 
-        var cpu_count = @truncate(u32, ((try std.Thread.getCpuCount()) + 1));
+        var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
 
         if (env.map.get("GOMAXPROCS")) |max_procs| {
             if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
@@ -5279,7 +5344,7 @@ pub const PackageManager = struct {
             ctx.install,
         );
 
-        manager.timestamp_for_manifest_cache_control = @truncate(u32, @intCast(u64, @max(std.time.timestamp(), 0)));
+        manager.timestamp_for_manifest_cache_control = @as(u32, @truncate(@as(u64, @intCast(@max(std.time.timestamp(), 0)))));
         return manager;
     }
 
@@ -5294,7 +5359,7 @@ pub const PackageManager = struct {
             PackageManager.verbose_install = true;
         }
 
-        var cpu_count = @truncate(u32, ((try std.Thread.getCpuCount()) + 1));
+        var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
 
         if (env.map.get("GOMAXPROCS")) |max_procs| {
             if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
@@ -5364,15 +5429,15 @@ pub const PackageManager = struct {
             bun_install,
         );
 
-        manager.timestamp_for_manifest_cache_control = @truncate(
+        manager.timestamp_for_manifest_cache_control = @as(
             u32,
-            @intCast(
+            @truncate(@as(
                 u64,
-                @max(
+                @intCast(@max(
                     std.time.timestamp(),
                     0,
-                ),
-            ),
+                )),
+            )),
             // When using "bun install", we check for updates with a 300 second cache.
             // When using bun, we only do staleness checks once per day
         ) -| std.time.s_per_day;
@@ -5558,7 +5623,7 @@ pub const PackageManager = struct {
             // Done
             if (manager.options.log_level != .silent)
                 Output.prettyln(
-                    \\<r><green>Success!<r> Registered \"{[name]s}\"
+                    \\<r><green>Success!<r> Registered "{[name]s}"
                     \\
                     \\To use {[name]s} in a project, run:
                     \\  <cyan>bun link {[name]s}<r>
@@ -6105,15 +6170,15 @@ pub const PackageManager = struct {
         if (manager.options.positionals.len == 1) {
             var examples_to_print: [3]string = undefined;
 
-            const off = @intCast(u64, std.time.milliTimestamp());
+            const off = @as(u64, @intCast(std.time.milliTimestamp()));
 
             switch (op) {
                 .update, .add => {
                     const filler = @import("../cli.zig").HelpCommand.packages_to_add_filler;
 
-                    examples_to_print[0] = filler[@intCast(usize, (off) % filler.len)];
-                    examples_to_print[1] = filler[@intCast(usize, (off + 1) % filler.len)];
-                    examples_to_print[2] = filler[@intCast(usize, (off + 2) % filler.len)];
+                    examples_to_print[0] = filler[@as(usize, @intCast((off) % filler.len))];
+                    examples_to_print[1] = filler[@as(usize, @intCast((off + 1) % filler.len))];
+                    examples_to_print[2] = filler[@as(usize, @intCast((off + 2) % filler.len))];
 
                     Output.prettyErrorln(
                         \\
@@ -6149,9 +6214,9 @@ pub const PackageManager = struct {
                 .remove => {
                     const filler = @import("../cli.zig").HelpCommand.packages_to_remove_filler;
 
-                    examples_to_print[0] = filler[@intCast(usize, (off) % filler.len)];
-                    examples_to_print[1] = filler[@intCast(usize, (off + 1) % filler.len)];
-                    examples_to_print[2] = filler[@intCast(usize, (off + 2) % filler.len)];
+                    examples_to_print[0] = filler[@as(usize, @intCast((off) % filler.len))];
+                    examples_to_print[1] = filler[@as(usize, @intCast((off + 1) % filler.len))];
+                    examples_to_print[2] = filler[@as(usize, @intCast((off + 2) % filler.len))];
 
                     Output.prettyErrorln(
                         \\
@@ -6312,7 +6377,7 @@ pub const PackageManager = struct {
 
                                 const changed = new_len != dependencies.len;
                                 if (changed) {
-                                    query.expr.data.e_object.properties.len = @truncate(u32, new_len);
+                                    query.expr.data.e_object.properties.len = @as(u32, @truncate(new_len));
 
                                     // If the dependencies list is now empty, remove it from the package.json
                                     // since we're swapRemove, we have to re-sort it
@@ -6785,7 +6850,7 @@ pub const PackageManager = struct {
                             }
                         }
 
-                        if (resolution.tag == .workspace or this.lockfile.trusted_dependencies.contains(@truncate(u32, String.Builder.stringHash(name)))) {
+                        if (resolution.tag == .workspace or this.lockfile.trusted_dependencies.contains(@as(u32, @truncate(String.Builder.stringHash(name))))) {
                             var scripts = this.lockfile.packages.items(.scripts)[package_id];
                             if (scripts.hasAny()) {
                                 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -7501,8 +7566,8 @@ pub const PackageManager = struct {
                             new_dep.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
                         }
 
-                        const off = @truncate(u32, manager.lockfile.buffers.dependencies.items.len);
-                        const len = @truncate(u32, new_dependencies.len);
+                        const off = @as(u32, @truncate(manager.lockfile.buffers.dependencies.items.len));
+                        const len = @as(u32, @truncate(new_dependencies.len));
                         var packages = manager.lockfile.packages.slice();
                         var dep_lists = packages.items(.dependencies);
                         var resolution_lists = packages.items(.resolutions);
@@ -7540,7 +7605,7 @@ pub const PackageManager = struct {
                         if (manager.summary.add > 0 or manager.summary.update > 0) {
                             var remaining = mapping;
                             var dependency_i: PackageID = off;
-                            const changes = @truncate(PackageID, mapping.len);
+                            const changes = @as(PackageID, @truncate(mapping.len));
 
                             _ = manager.getCacheDirectory();
                             _ = manager.getTemporaryDirectory();
@@ -7767,7 +7832,7 @@ pub const PackageManager = struct {
         }
 
         if (needs_new_lockfile) {
-            manager.summary.add = @truncate(u32, manager.lockfile.packages.len);
+            manager.summary.add = @as(u32, @truncate(manager.lockfile.packages.len));
         }
 
         if (manager.options.do.save_yarn_lock) {
@@ -7816,9 +7881,9 @@ pub const PackageManager = struct {
                     // it's confusing when it shows 3 packages and says it installed 1
                     Output.pretty("\n <green>{d}<r> packages<r> installed ", .{@max(
                         install_summary.success,
-                        @truncate(
+                        @as(
                             u32,
-                            manager.package_json_updates.len,
+                            @truncate(manager.package_json_updates.len),
                         ),
                     )});
                     Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
@@ -7842,7 +7907,7 @@ pub const PackageManager = struct {
                 } else if (install_summary.skipped > 0 and install_summary.fail == 0 and manager.package_json_updates.len == 0) {
                     Output.pretty("\n", .{});
 
-                    const count = @truncate(PackageID, manager.lockfile.packages.len);
+                    const count = @as(PackageID, @truncate(manager.lockfile.packages.len));
                     if (count != install_summary.skipped) {
                         Output.pretty("Checked <green>{d} installs<r> across {d} packages <d>(no changes)<r> ", .{
                             install_summary.skipped,

@@ -5,6 +5,7 @@
 #include "webcore/WebSocket.h"
 #include "libusockets.h"
 #include "_libusockets.h"
+#include "BunClientData.h"
 
 extern "C" void Bun__startLoop(us_loop_t* loop);
 
@@ -18,6 +19,12 @@ static HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allSc
     static NeverDestroyed<HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>> contexts;
     ASSERT(allScriptExecutionContextsMapLock.isLocked());
     return contexts;
+}
+
+ScriptExecutionContext* ScriptExecutionContext::getScriptExecutionContext(ScriptExecutionContextIdentifier identifier)
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    return allScriptExecutionContextsMap().get(identifier);
 }
 
 template<bool SSL, bool isServer>
@@ -51,6 +58,16 @@ us_socket_context_t* ScriptExecutionContext::webSocketContextSSL()
     }
 
     return m_ssl_client_websockets_ctx;
+}
+extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
+
+void ScriptExecutionContext::refEventLoop()
+{
+    Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(vm())->bunVM, 1);
+}
+void ScriptExecutionContext::unrefEventLoop()
+{
+    Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(vm())->bunVM, -1);
 }
 
 bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task)
@@ -104,31 +121,38 @@ us_socket_context_t* ScriptExecutionContext::connectedWebSocketKindClientSSL()
     return registerWebSocketClientContext<true>(this, webSocketContextSSL());
 }
 
+ScriptExecutionContextIdentifier ScriptExecutionContext::generateIdentifier()
+{
+    return ++lastUniqueIdentifier;
+}
+
 void ScriptExecutionContext::regenerateIdentifier()
 {
-    Locker locker { allScriptExecutionContextsMapLock };
-
-    // ASSERT(allScriptExecutionContextsMap().contains(m_identifier));
-    // allScriptExecutionContextsMap().remove(m_identifier);
 
     m_identifier = ++lastUniqueIdentifier;
 
-    // ASSERT(!allScriptExecutionContextsMap().contains(m_identifier));
-    allScriptExecutionContextsMap().add(m_identifier, this);
+    addToContextsMap();
 }
 
 void ScriptExecutionContext::addToContextsMap()
 {
     Locker locker { allScriptExecutionContextsMapLock };
     ASSERT(!allScriptExecutionContextsMap().contains(m_identifier));
-    // allScriptExecutionContextsMap().add(m_identifier, this);
+    allScriptExecutionContextsMap().add(m_identifier, this);
 }
 
 void ScriptExecutionContext::removeFromContextsMap()
 {
     Locker locker { allScriptExecutionContextsMapLock };
     ASSERT(allScriptExecutionContextsMap().contains(m_identifier));
-    // allScriptExecutionContextsMap().remove(m_identifier);
+    allScriptExecutionContextsMap().remove(m_identifier);
+}
+
+ScriptExecutionContext* executionContext(JSC::JSGlobalObject* globalObject)
+{
+    if (!globalObject || !globalObject->inherits<JSDOMGlobalObject>())
+        return nullptr;
+    return JSC::jsCast<JSDOMGlobalObject*>(globalObject)->scriptExecutionContext();
 }
 
 }

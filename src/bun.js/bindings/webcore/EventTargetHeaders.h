@@ -254,13 +254,15 @@
 // #include "JSWebXRSystem.h"
 // #include "WebXRSystem.h"
 // #endif
-// #include "Worker.h"
-// #include "JSWorker.h"
+#include "Worker.h"
+#include "JSWorker.h"
 // #include "WorkletGlobalScope.h"
 // #include "JSWorkletGlobalScope.h"
 // #include "XMLHttpRequest.h"
 // #include "JSXMLHttpRequest.h"
 // #include "XMLHttpRequestUpload.h"
 // #include "JSXMLHttpRequestUpload.h"
+
+#include "BunWorkerGlobalScope.h"
 
 #endif // EventTargetHeaders_h

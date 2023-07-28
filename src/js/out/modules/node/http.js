@@ -14,6 +14,14 @@ var checkInvalidHeaderChar = function(val) {
         return !1;
     return !0;
   }
+}, validateMsecs = function(numberlike, field) {
+  if (typeof numberlike !== "number" || numberlike < 0)
+    throw new ERR_INVALID_ARG_TYPE(field, "number", numberlike);
+  return numberlike;
+}, validateFunction = function(callable, field) {
+  if (typeof callable !== "function")
+    throw new ERR_INVALID_ARG_TYPE(field, "Function", callable);
+  return callable;
 }, getHeader = function(headers, name) {
   if (!headers)
     return;
@@ -91,6 +99,8 @@ var _writeHead = function(statusCode, reason, obj, response) {
           response.setHeader(k, obj[k]);
     }
   }
+  if (statusCode === 204 || statusCode === 304 || statusCode >= 100 && statusCode <= 199)
+    response._hasBody = !1;
 };
 function request(url, options, cb) {
   return new ClientRequest(url, options, cb);
@@ -108,7 +118,15 @@ var headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/, validateHeaderName = (name, lab
   if (checkInvalidHeaderChar(value))
     throw new Error("ERR_INVALID_CHAR");
 }, { URL } = globalThis, { newArrayWithSize, String, Object, Array } = globalThis[Symbol.for("Bun.lazy")]("primordials"), globalReportError = globalThis.reportError, setTimeout = globalThis.setTimeout, fetch = Bun.fetch, nop = () => {
-}, __DEBUG__ = process.env.__DEBUG__, debug = __DEBUG__ ? (...args) => console.log("node:http", ...args) : nop, kEmptyObject = Object.freeze(Object.create(null)), kOutHeaders = Symbol.for("kOutHeaders"), kEndCalled = Symbol.for("kEndCalled"), kAbortController = Symbol.for("kAbortController"), kClearTimeout = Symbol("kClearTimeout"), kCorked = Symbol.for("kCorked"), searchParamsSymbol = Symbol.for("query"), StringPrototypeSlice = String.prototype.slice, StringPrototypeStartsWith = String.prototype.startsWith, StringPrototypeToUpperCase = String.prototype.toUpperCase, StringPrototypeIncludes = String.prototype.includes, StringPrototypeCharCodeAt = String.prototype.charCodeAt, StringPrototypeIndexOf = String.prototype.indexOf, ArrayIsArray = Array.isArray, RegExpPrototypeExec = RegExp.prototype.exec, ObjectAssign = Object.assign, ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty, INVALID_PATH_REGEX = /[^\u0021-\u00ff]/, NODE_HTTP_WARNING = "WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.", _defaultHTTPSAgent, kInternalRequest = Symbol("kInternalRequest"), kInternalSocketData = Symbol.for("::bunternal::"), kEmptyBuffer = Buffer.alloc(0), FakeSocket = class Socket extends Duplex {
+}, __DEBUG__ = process.env.__DEBUG__, debug = __DEBUG__ ? (...args) => console.log("node:http", ...args) : nop, kEmptyObject = Object.freeze(Object.create(null)), kOutHeaders = Symbol.for("kOutHeaders"), kEndCalled = Symbol.for("kEndCalled"), kAbortController = Symbol.for("kAbortController"), kClearTimeout = Symbol("kClearTimeout"), kCorked = Symbol.for("kCorked"), searchParamsSymbol = Symbol.for("query"), StringPrototypeSlice = String.prototype.slice, StringPrototypeStartsWith = String.prototype.startsWith, StringPrototypeToUpperCase = String.prototype.toUpperCase, StringPrototypeIncludes = String.prototype.includes, StringPrototypeCharCodeAt = String.prototype.charCodeAt, StringPrototypeIndexOf = String.prototype.indexOf, ArrayIsArray = Array.isArray, RegExpPrototypeExec = RegExp.prototype.exec, ObjectAssign = Object.assign, ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty, INVALID_PATH_REGEX = /[^\u0021-\u00ff]/, NODE_HTTP_WARNING = "WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.", _defaultHTTPSAgent, kInternalRequest = Symbol("kInternalRequest"), kInternalSocketData = Symbol.for("::bunternal::"), kEmptyBuffer = Buffer.alloc(0);
+
+class ERR_INVALID_ARG_TYPE extends TypeError {
+  constructor(name, expected, actual) {
+    super(`The ${name} argument must be of type ${expected}. Received type ${typeof actual}`);
+    this.code = "ERR_INVALID_ARG_TYPE";
+  }
+}
+var FakeSocket = class Socket extends Duplex {
   bytesRead = 0;
   bytesWritten = 0;
   connecting = !1;
@@ -514,10 +532,11 @@ class OutgoingMessage extends Writable {
   headersSent = !1;
   sendDate = !0;
   req;
+  timeout;
   #finished = !1;
   [kEndCalled] = !1;
   #fakeSocket;
-  #timeoutTimer = null;
+  #timeoutTimer;
   [kAbortController] = null;
   _implicitHeader() {
   }
@@ -592,23 +611,30 @@ class OutgoingMessage extends Writable {
   }
   [kClearTimeout]() {
     if (this.#timeoutTimer)
-      clearTimeout(this.#timeoutTimer), this.#timeoutTimer = null;
+      clearTimeout(this.#timeoutTimer), this.removeAllListeners("timeout"), this.#timeoutTimer = void 0;
+  }
+  #onTimeout() {
+    this.#timeoutTimer = void 0, this[kAbortController]?.abort(), this.emit("timeout");
   }
   setTimeout(msecs, callback) {
-    if (this.#timeoutTimer)
+    if (this.destroyed)
       return this;
-    if (callback)
-      this.on("timeout", callback);
-    return this.#timeoutTimer = setTimeout(async () => {
-      this.#timeoutTimer = null, this[kAbortController]?.abort(), this.emit("timeout");
-    }, msecs), this;
+    if (this.timeout = msecs = validateMsecs(msecs, "msecs"), clearTimeout(this.#timeoutTimer), msecs === 0) {
+      if (callback !== void 0)
+        validateFunction(callback, "callback"), this.removeListener("timeout", callback);
+      this.#timeoutTimer = void 0;
+    } else if (this.#timeoutTimer = setTimeout(this.#onTimeout.bind(this), msecs).unref(), callback !== void 0)
+      validateFunction(callback, "callback"), this.once("timeout", callback);
+    return this;
   }
 }
+var OriginalWriteHeadFn, OriginalImplicitHeadFn;
 
 class ServerResponse extends Writable {
   constructor({ req, reply }) {
     super();
-    this.req = req, this._reply = reply, this.sendDate = !0, this.statusCode = 200, this.headersSent = !1, this.statusMessage = void 0, this.#controller = void 0, this.#firstWrite = void 0, this._writableState.decodeStrings = !1, this.#deferred = void 0;
+    if (this.req = req, this._reply = reply, this.sendDate = !0, this.statusCode = 200, this.headersSent = !1, this.statusMessage = void 0, this.#controller = void 0, this.#firstWrite = void 0, this._writableState.decodeStrings = !1, this.#deferred = void 0, req.method === "HEAD")
+      this._hasBody = !1;
   }
   req;
   _reply;
@@ -623,9 +649,11 @@ class ServerResponse extends Writable {
   _defaultKeepAlive = !1;
   _removedConnection = !1;
   _removedContLen = !1;
+  _hasBody = !0;
   #deferred = void 0;
   #finished = !1;
   _implicitHeader() {
+    this.writeHead(this.statusCode);
   }
   _write(chunk, encoding, callback) {
     if (!this.#firstWrite && !this.headersSent) {
@@ -669,10 +697,15 @@ class ServerResponse extends Writable {
       statusText: this.statusMessage ?? STATUS_CODES[this.statusCode]
     }));
   }
+  #drainHeadersIfObservable() {
+    if (this._implicitHeader === OriginalImplicitHeadFn && this.writeHead === OriginalWriteHeadFn)
+      return;
+    this._implicitHeader();
+  }
   _final(callback) {
     if (!this.headersSent) {
       var data = this.#firstWrite || "";
-      this.#firstWrite = void 0, this.#finished = !0, this._reply(new Response(data, {
+      this.#firstWrite = void 0, this.#finished = !0, this.#drainHeadersIfObservable(), this._reply(new Response(data, {
         headers: this.#headers,
         status: this.statusCode,
         statusText: this.statusMessage ?? STATUS_CODES[this.statusCode]
@@ -758,6 +791,8 @@ class ServerResponse extends Writable {
     return _writeHead(statusCode, statusMessage, headers, this), this;
   }
 }
+OriginalWriteHeadFn = ServerResponse.prototype.writeHead;
+OriginalImplicitHeadFn = ServerResponse.prototype._implicitHeader;
 
 class ClientRequest extends OutgoingMessage {
   #timeout;
@@ -780,7 +815,7 @@ class ClientRequest extends OutgoingMessage {
   #fetchRequest;
   #signal = null;
   [kAbortController] = null;
-  #timeoutTimer = null;
+  #timeoutTimer = void 0;
   #options;
   #finished;
   get path() {
@@ -827,7 +862,8 @@ class ClientRequest extends OutgoingMessage {
         body: body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS" ? body : void 0,
         redirect: "manual",
         verbose: Boolean(__DEBUG__),
-        signal: this[kAbortController].signal
+        signal: this[kAbortController].signal,
+        timeout: !1
       }).then((response) => {
         var res = this.#res = new IncomingMessage(response, {
           type: "response",
@@ -910,8 +946,7 @@ class ClientRequest extends OutgoingMessage {
     const defaultPort = protocol === "https:" ? 443 : 80;
     this.#port = options.port || options.defaultPort || this.#agent?.defaultPort || defaultPort, this.#useDefaultPort = this.#port === defaultPort;
     const host = this.#host = options.host = validateHost(options.hostname, "hostname") || validateHost(options.host, "host") || "localhost";
-    if (this.#socketPath = options.socketPath, options.timeout !== void 0)
-      this.setTimeout(options.timeout, null);
+    this.#socketPath = options.socketPath;
     const signal = options.signal;
     if (signal)
       signal.addEventListener("abort", () => {
@@ -932,7 +967,11 @@ class ClientRequest extends OutgoingMessage {
     var _joinDuplicateHeaders = options.joinDuplicateHeaders;
     if (this.#joinDuplicateHeaders = _joinDuplicateHeaders, this.#path = options.path || "/", cb)
       this.once("response", cb);
-    if (__DEBUG__ && debug(`new ClientRequest: ${this.#method} ${this.#protocol}//${this.#host}:${this.#port}${this.#path}`), this.#finished = !1, this.#res = null, this.#upgradeOrConnect = !1, this.#parser = null, this.#maxHeadersCount = null, this.#reusedSocket = !1, this.#host = host, this.#protocol = protocol, this.#timeoutTimer = null, !ArrayIsArray(headers)) {
+    __DEBUG__ && debug(`new ClientRequest: ${this.#method} ${this.#protocol}//${this.#host}:${this.#port}${this.#path}`), this.#finished = !1, this.#res = null, this.#upgradeOrConnect = !1, this.#parser = null, this.#maxHeadersCount = null, this.#reusedSocket = !1, this.#host = host, this.#protocol = protocol;
+    var timeout = options.timeout;
+    if (timeout !== void 0 && timeout !== 0)
+      this.setTimeout(timeout, void 0);
+    if (!ArrayIsArray(headers)) {
       var headers = options.headers;
       if (headers)
         for (let key in headers)
@@ -941,13 +980,8 @@ class ClientRequest extends OutgoingMessage {
       if (auth && !this.getHeader("Authorization"))
         this.setHeader("Authorization", "Basic " + Buffer.from(auth).toString("base64"));
     }
-    var optsWithoutSignal = options;
-    if (optsWithoutSignal.signal)
-      optsWithoutSignal = ObjectAssign({}, options), delete optsWithoutSignal.signal;
+    var { signal: _signal, ...optsWithoutSignal } = options;
     this.#options = optsWithoutSignal;
-    var timeout = options.timeout;
-    if (timeout)
-      this.setTimeout(timeout);
   }
   setSocketKeepAlive(enable = !0, initialDelay = 0) {
     __DEBUG__ && debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setSocketKeepAlive is a no-op");
@@ -957,16 +991,21 @@ class ClientRequest extends OutgoingMessage {
   }
   [kClearTimeout]() {
     if (this.#timeoutTimer)
-      clearTimeout(this.#timeoutTimer), this.#timeoutTimer = null;
+      clearTimeout(this.#timeoutTimer), this.#timeoutTimer = void 0, this.removeAllListeners("timeout");
+  }
+  #onTimeout() {
+    this.#timeoutTimer = void 0, this[kAbortController]?.abort(), this.emit("timeout");
   }
   setTimeout(msecs, callback) {
-    if (this.#timeoutTimer)
+    if (this.destroyed)
       return this;
-    if (callback)
-      this.on("timeout", callback);
-    return this.#timeoutTimer = setTimeout(async () => {
-      this.#timeoutTimer = null, this[kAbortController]?.abort(), this.emit("timeout");
-    }, msecs), this;
+    if (this.timeout = msecs = validateMsecs(msecs, "msecs"), clearTimeout(this.#timeoutTimer), msecs === 0) {
+      if (callback !== void 0)
+        validateFunction(callback, "callback"), this.removeListener("timeout", callback);
+      this.#timeoutTimer = void 0;
+    } else if (this.#timeoutTimer = setTimeout(this.#onTimeout.bind(this), msecs).unref(), callback !== void 0)
+      validateFunction(callback, "callback"), this.once("timeout", callback);
+    return this;
   }
 }
 var tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/, METHODS = [
@@ -1085,6 +1124,8 @@ var tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/, METHODS = [
     debug(`${NODE_HTTP_WARNING}\n`, "setMaxIdleHTTPParsers() is a no-op");
   },
   globalAgent,
+  ClientRequest,
+  OutgoingMessage,
   [Symbol.for("CommonJS")]: 0
 }, http_default = defaultObject;
 export {

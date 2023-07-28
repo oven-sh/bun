@@ -226,6 +226,21 @@ describe("FormData", () => {
     }
   });
 
+  test("FormData.from (URLSearchParams)", () => {
+    expect(
+      // @ts-expect-error
+      FormData.from(
+        new URLSearchParams({
+          a: "b",
+          c: "d",
+        }).toString(),
+      ).toJSON(),
+    ).toEqual({
+      a: "b",
+      c: "d",
+    });
+  });
+
   it("should throw on bad boundary", async () => {
     const response = new Response('foo\r\nContent-Disposition: form-data; name="foo"\r\n\r\nbar\r\n', {
       headers: {
@@ -301,17 +316,18 @@ describe("FormData", () => {
     expect(await (body.get("foo") as Blob).text()).toBe("baz");
     server.stop(true);
   });
-
+  type FetchReqArgs = [request: Request, init?: RequestInit];
+  type FetchURLArgs = [url: string | URL | Request, init?: FetchRequestInit];
   for (let useRequestConstructor of [true, false]) {
     describe(useRequestConstructor ? "Request constructor" : "fetch()", () => {
-      function send(args: Parameters<typeof fetch>) {
+      function send(args: FetchReqArgs | FetchURLArgs) {
         if (useRequestConstructor) {
-          return fetch(new Request(...args));
+          return fetch(new Request(...(args as FetchReqArgs)));
         } else {
-          return fetch(...args);
+          return fetch(...(args as FetchURLArgs));
         }
       }
-      for (let headers of [{}, undefined, { headers: { X: "Y" } }]) {
+      for (let headers of [{} as {}, undefined, { headers: { X: "Y" } }]) {
         describe("headers: " + Bun.inspect(headers).replaceAll(/([\n ])/gim, ""), () => {
           it("send on HTTP server with FormData & Blob (roundtrip)", async () => {
             let contentType = "";
@@ -330,11 +346,10 @@ describe("FormData", () => {
             form.append("bar", "baz");
 
             // @ts-ignore
-            const reqBody = [
+            const reqBody: FetchURLArgs = [
               `http://${server.hostname}:${server.port}`,
               {
                 body: form,
-
                 headers,
                 method: "POST",
               },
@@ -364,7 +379,6 @@ describe("FormData", () => {
             form.append("foo", file);
             form.append("bar", "baz");
 
-            // @ts-ignore
             const reqBody = [
               `http://${server.hostname}:${server.port}`,
               {
@@ -374,7 +388,7 @@ describe("FormData", () => {
                 method: "POST",
               },
             ];
-            const res = await send(reqBody);
+            const res = await send(reqBody as FetchURLArgs);
             const body = await res.formData();
             expect(await (body.get("foo") as Blob).text()).toBe(text);
             expect(contentType).toContain("multipart/form-data");
@@ -410,7 +424,7 @@ describe("FormData", () => {
                 method: "POST",
               },
             ];
-            const res = await send(reqBody);
+            const res = await send(reqBody as FetchURLArgs);
             const body = await res.formData();
             expect(contentType).toContain("multipart/form-data");
             expect(body.get("foo")).toBe("boop");

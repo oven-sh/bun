@@ -176,9 +176,9 @@ pub const fmt = struct {
     pub fn size(value: anytype) SizeFormatter {
         return switch (@TypeOf(value)) {
             f64, f32, f128 => SizeFormatter{
-                .value = @intFromFloat(u64, value),
+                .value = @as(u64, @intFromFloat(value)),
             },
-            else => SizeFormatter{ .value = @intCast(u64, value) },
+            else => SizeFormatter{ .value = @as(u64, @intCast(value)) },
         };
     }
 
@@ -231,7 +231,7 @@ pub const fmt = struct {
                 comptime var i: usize = 0;
                 inline while (i < buf.len) : (i += 1) {
                     // value relative to the current nibble
-                    buf[i] = table[@as(u8, @truncate(u4, value >> comptime ((buf.len - i - 1) * 4))) & 0xF];
+                    buf[i] = table[@as(u8, @as(u4, @truncate(value >> comptime ((buf.len - i - 1) * 4)))) & 0xF];
                 }
 
                 return buf;
@@ -288,12 +288,12 @@ pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.MAX_P
 
 pub inline fn cast(comptime To: type, value: anytype) To {
     if (comptime std.meta.trait.isIntegral(@TypeOf(value))) {
-        return @ptrFromInt(To, @bitCast(usize, value));
+        return @as(To, @ptrFromInt(@as(usize, @bitCast(value))));
     }
 
     // TODO: file issue about why std.meta.Child only is necessary on Linux aarch64
     // it should be necessary on all targets
-    return @ptrCast(To, @alignCast(@alignOf(std.meta.Child(To)), value));
+    return @ptrCast(@alignCast(value));
 }
 
 extern fn strlen(ptr: [*c]const u8) usize;
@@ -327,7 +327,7 @@ pub fn len(value: anytype) usize {
             .Many => {
                 const sentinel_ptr = info.sentinel orelse
                     @compileError("length of pointer with no sentinel");
-                const sentinel = @ptrCast(*align(1) const info.child, sentinel_ptr).*;
+                const sentinel = @as(*align(1) const info.child, @ptrCast(sentinel_ptr)).*;
 
                 return indexOfSentinel(info.child, sentinel, value);
             },
@@ -406,7 +406,7 @@ pub fn span(ptr: anytype) Span(@TypeOf(ptr)) {
     const l = len(ptr);
     const ptr_info = @typeInfo(Result).Pointer;
     if (ptr_info.sentinel) |s_ptr| {
-        const s = @ptrCast(*align(1) const ptr_info.child, s_ptr).*;
+        const s = @as(*align(1) const ptr_info.child, @ptrCast(s_ptr)).*;
         return ptr[0..l :s];
     } else {
         return ptr[0..l];
@@ -572,7 +572,7 @@ pub fn hashWithSeed(seed: u64, content: []const u8) u64 {
 
 pub fn hash32(content: []const u8) u32 {
     const res = hash(content);
-    return @truncate(u32, res);
+    return @as(u32, @truncate(res));
 }
 
 pub const HiveArray = @import("./hive_array.zig").HiveArray;
@@ -688,8 +688,8 @@ pub inline fn isSliceInBuffer(slice: []const u8, buffer: []const u8) bool {
 pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
     if (!isSliceInBuffer(slice, buffer)) return null;
     const r = [_]u32{
-        @truncate(u32, @intFromPtr(slice.ptr) -| @intFromPtr(buffer.ptr)),
-        @truncate(u32, slice.len),
+        @as(u32, @truncate(@intFromPtr(slice.ptr) -| @intFromPtr(buffer.ptr))),
+        @as(u32, @truncate(slice.len)),
     };
     if (comptime Environment.allow_assert)
         std.debug.assert(strings.eqlLong(slice, buffer[r[0]..][0..r[1]], false));
@@ -729,10 +729,38 @@ pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
     return sliceTo(ptr, 0);
 }
 
+//TODO: add windows support
+pub const FDHashMapContext = struct {
+    pub fn hash(_: @This(), fd: FileDescriptor) u64 {
+        return @as(u64, @intCast(fd));
+    }
+    pub fn eql(_: @This(), a: FileDescriptor, b: FileDescriptor) bool {
+        return a == b;
+    }
+    pub fn pre(input: FileDescriptor) Prehashed {
+        return Prehashed{
+            .value = @This().hash(.{}, input),
+            .input = input,
+        };
+    }
+
+    pub const Prehashed = struct {
+        value: u64,
+        input: FileDescriptor,
+        pub fn hash(this: @This(), fd: FileDescriptor) u64 {
+            if (fd == this.input) return this.value;
+            return @as(u64, @intCast(fd));
+        }
+
+        pub fn eql(_: @This(), a: FileDescriptor, b: FileDescriptor) bool {
+            return a == b;
+        }
+    };
+};
 // These wrappers exist to use our strings.eqlLong function
 pub const StringArrayHashMapContext = struct {
     pub fn hash(_: @This(), s: []const u8) u32 {
-        return @truncate(u32, std.hash.Wyhash.hash(0, s));
+        return @as(u32, @truncate(std.hash.Wyhash.hash(0, s)));
     }
     pub fn eql(_: @This(), a: []const u8, b: []const u8, _: usize) bool {
         return strings.eqlLong(a, b, true);
@@ -751,7 +779,7 @@ pub const StringArrayHashMapContext = struct {
         pub fn hash(this: @This(), s: []const u8) u32 {
             if (s.ptr == this.input.ptr and s.len == this.input.len)
                 return this.value;
-            return @truncate(u32, std.hash.Wyhash.hash(0, s));
+            return @as(u32, @truncate(std.hash.Wyhash.hash(0, s)));
         }
 
         pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
@@ -831,6 +859,10 @@ pub fn StringHashMapUnmanaged(comptime Type: type) type {
     return std.HashMapUnmanaged([]const u8, Type, StringHashMapContext, std.hash_map.default_max_load_percentage);
 }
 
+pub fn FDHashMap(comptime Type: type) type {
+    return std.HashMap(StoredFileDescriptorType, Type, FDHashMapContext, std.hash_map.default_max_load_percentage);
+}
+
 const CopyFile = @import("./copy_file.zig");
 pub const copyFileRange = CopyFile.copyFileRange;
 pub const copyFile = CopyFile.copyFile;
@@ -882,7 +914,7 @@ pub const SignalCode = enum(u8) {
     }
 
     pub fn from(value: anytype) SignalCode {
-        return @enumFromInt(SignalCode, @truncate(u7, std.mem.asBytes(&value)[0]));
+        return @enumFromInt(std.mem.asBytes(&value)[0]);
     }
 
     pub fn format(self: SignalCode, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
@@ -965,8 +997,8 @@ pub fn ComptimeEnumMap(comptime T: type) type {
 /// Ignores default struct values.
 pub fn zero(comptime Type: type) Type {
     var out: [@sizeOf(Type)]u8 align(@alignOf(Type)) = undefined;
-    @memset(@ptrCast([*]u8, &out)[0..out.len], 0);
-    return @bitCast(Type, out);
+    @memset(@as([*]u8, @ptrCast(&out))[0..out.len], 0);
+    return @as(Type, @bitCast(out));
 }
 pub const c_ares = @import("./deps/c_ares.zig");
 pub const URL = @import("./url.zig").URL;
@@ -1016,7 +1048,7 @@ fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
             .One => switch (@typeInfo(ptr_info.child)) {
                 .Array => |array_info| {
                     if (array_info.sentinel) |sentinel_ptr| {
-                        const sentinel = @ptrCast(*align(1) const array_info.child, sentinel_ptr).*;
+                        const sentinel = @as(*align(1) const array_info.child, @ptrCast(sentinel_ptr)).*;
                         if (sentinel == end) {
                             return indexOfSentinel(array_info.child, end, ptr);
                         }
@@ -1026,7 +1058,7 @@ fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
                 else => {},
             },
             .Many => if (ptr_info.sentinel) |sentinel_ptr| {
-                const sentinel = @ptrCast(*align(1) const ptr_info.child, sentinel_ptr).*;
+                const sentinel = @as(*align(1) const ptr_info.child, @ptrCast(sentinel_ptr)).*;
                 // We may be looking for something other than the sentinel,
                 // but iterating past the sentinel would be a bug so we need
                 // to check for both.
@@ -1040,7 +1072,7 @@ fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
             },
             .Slice => {
                 if (ptr_info.sentinel) |sentinel_ptr| {
-                    const sentinel = @ptrCast(*align(1) const ptr_info.child, sentinel_ptr).*;
+                    const sentinel = @as(*align(1) const ptr_info.child, @ptrCast(sentinel_ptr)).*;
                     if (sentinel == end) {
                         return indexOfSentinel(ptr_info.child, sentinel, ptr);
                     }
@@ -1070,7 +1102,7 @@ fn SliceTo(comptime T: type, comptime end: meta.Elem(T)) type {
                         // to find the value searched for, which is only the case if it matches
                         // the sentinel of the type passed.
                         if (array_info.sentinel) |sentinel_ptr| {
-                            const sentinel = @ptrCast(*align(1) const array_info.child, sentinel_ptr).*;
+                            const sentinel = @as(*align(1) const array_info.child, @ptrCast(sentinel_ptr)).*;
                             if (end == sentinel) {
                                 new_ptr_info.sentinel = &end;
                             } else {
@@ -1085,7 +1117,7 @@ fn SliceTo(comptime T: type, comptime end: meta.Elem(T)) type {
                     // to find the value searched for, which is only the case if it matches
                     // the sentinel of the type passed.
                     if (ptr_info.sentinel) |sentinel_ptr| {
-                        const sentinel = @ptrCast(*align(1) const ptr_info.child, sentinel_ptr).*;
+                        const sentinel = @as(*align(1) const ptr_info.child, @ptrCast(sentinel_ptr)).*;
                         if (end == sentinel) {
                             new_ptr_info.sentinel = &end;
                         } else {
@@ -1123,7 +1155,7 @@ pub fn sliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) SliceTo(@Typ
     const length = lenSliceTo(ptr, end);
     const ptr_info = @typeInfo(Result).Pointer;
     if (ptr_info.sentinel) |s_ptr| {
-        const s = @ptrCast(*align(1) const ptr_info.child, s_ptr).*;
+        const s = @as(*align(1) const ptr_info.child, @ptrCast(s_ptr)).*;
         return ptr[0..length :s];
     } else {
         return ptr[0..length];
@@ -1139,7 +1171,7 @@ pub fn cstring(input: []const u8) [:0]const u8 {
             input.ptr[input.len] == 0,
         );
     }
-    return @ptrCast([*:0]const u8, input.ptr)[0..input.len :0];
+    return @as([*:0]const u8, @ptrCast(input.ptr))[0..input.len :0];
 }
 
 pub const Semver = @import("./install/semver.zig");
@@ -1267,10 +1299,10 @@ pub fn reloadProcess(
     const exec_path = (allocator.dupeZ(u8, std.fs.selfExePathAlloc(allocator) catch unreachable) catch unreachable).ptr;
 
     // we clone argv so that the memory address isn't the same as the libc one
-    const argv = @ptrCast([*:null]?[*:0]const u8, dupe_argv.ptr);
+    const argv = @as([*:null]?[*:0]const u8, @ptrCast(dupe_argv.ptr));
 
     // we clone envp so that the memory address of environment variables isn't the same as the libc one
-    const envp = @ptrCast([*:null]?[*:0]const u8, environ.ptr);
+    const envp = @as([*:null]?[*:0]const u8, @ptrCast(environ.ptr));
 
     // Clear the terminal
     if (clear_terminal) {
@@ -1295,7 +1327,7 @@ pub fn reloadProcess(
                 C.POSIX_SPAWN_SETEXEC |
                 C.POSIX_SPAWN_SETSIGDEF | C.POSIX_SPAWN_SETSIGMASK,
         ) catch unreachable;
-        switch (PosixSpawn.spawnZ(exec_path, actions, attrs, @ptrCast([*:null]?[*:0]const u8, argv), @ptrCast([*:null]?[*:0]const u8, envp))) {
+        switch (PosixSpawn.spawnZ(exec_path, actions, attrs, @as([*:null]?[*:0]const u8, @ptrCast(argv)), @as([*:null]?[*:0]const u8, @ptrCast(envp)))) {
             .err => |err| {
                 Output.panic("Unexpected error while reloading: {d} {s}", .{ err.errno, @tagName(err.getErrno()) });
             },

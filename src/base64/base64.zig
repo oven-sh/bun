@@ -5,6 +5,22 @@ pub const DecodeResult = struct {
     fail: bool = false,
 };
 
+pub const LibBase64 = struct {
+    pub const State = extern struct {
+        eof: c_int,
+        bytes: c_int,
+        flags: c_int,
+        carry: u8,
+    };
+    pub extern fn base64_encode(src: [*]const u8, srclen: usize, out: [*]u8, outlen: *usize, flags: c_int) void;
+    pub extern fn base64_stream_encode_init(state: *State, flags: c_int) void;
+    pub extern fn base64_stream_encode(state: *State, src: [*]const u8, srclen: usize, out: [*]u8, outlen: *usize) void;
+    pub extern fn base64_stream_encode_final(state: *State, out: [*]u8, outlen: *usize) void;
+    pub extern fn base64_decode(src: [*]const u8, srclen: usize, out: [*]u8, outlen: *usize, flags: c_int) c_int;
+    pub extern fn base64_stream_decode_init(state: *State, flags: c_int) void;
+    pub extern fn base64_stream_decode(state: *State, src: [*]const u8, srclen: usize, out: [*]u8, outlen: *usize) c_int;
+};
+
 const mixed_decoder = brk: {
     var decoder = zig_base64.standard.decoderWithIgnore("\xff \t\r\n" ++ [_]u8{
         std.ascii.control_code.vt,
@@ -12,7 +28,7 @@ const mixed_decoder = brk: {
     });
 
     for (zig_base64.url_safe_alphabet_chars[62..], 62..) |c, i| {
-        decoder.decoder.char_to_index[c] = @intCast(u8, i);
+        decoder.decoder.char_to_index[c] = @as(u8, @intCast(i));
     }
 
     break :brk decoder;
@@ -30,7 +46,9 @@ pub fn decode(destination: []u8, source: []const u8) DecodeResult {
 }
 
 pub fn encode(destination: []u8, source: []const u8) usize {
-    return zig_base64.standard.Encoder.encode(destination, source).len;
+    var outlen: usize = destination.len;
+    LibBase64.base64_encode(source.ptr, source.len, destination.ptr, &outlen, 0);
+    return outlen;
 }
 
 pub fn decodeLenUpperBound(len: usize) usize {
@@ -171,12 +189,12 @@ const zig_base64 = struct {
                 acc_len += 8;
                 while (acc_len >= 6) {
                     acc_len -= 6;
-                    dest[out_idx] = encoder.alphabet_chars[@truncate(u6, (acc >> acc_len))];
+                    dest[out_idx] = encoder.alphabet_chars[@as(u6, @truncate((acc >> acc_len)))];
                     out_idx += 1;
                 }
             }
             if (acc_len > 0) {
-                dest[out_idx] = encoder.alphabet_chars[@truncate(u6, (acc << 6 - acc_len))];
+                dest[out_idx] = encoder.alphabet_chars[@as(u6, @truncate((acc << 6 - acc_len)))];
                 out_idx += 1;
             }
             if (encoder.pad_char) |pad_char| {
@@ -207,7 +225,7 @@ const zig_base64 = struct {
                 assert(!char_in_alphabet[c]);
                 assert(pad_char == null or c != pad_char.?);
 
-                result.char_to_index[c] = @intCast(u8, i);
+                result.char_to_index[c] = @as(u8, @intCast(i));
                 char_in_alphabet[c] = true;
             }
             return result;
@@ -259,7 +277,7 @@ const zig_base64 = struct {
                 acc_len += 6;
                 if (acc_len >= 8) {
                     acc_len -= 8;
-                    dest[dest_idx] = @truncate(u8, acc >> acc_len);
+                    dest[dest_idx] = @as(u8, @truncate(acc >> acc_len));
                     dest_idx += 1;
                 }
             }
@@ -344,7 +362,7 @@ const zig_base64 = struct {
                 if (acc_len >= 8) {
                     if (dest_idx == dest.len) return error.NoSpaceLeft;
                     acc_len -= 8;
-                    dest[dest_idx] = @truncate(u8, acc >> acc_len);
+                    dest[dest_idx] = @as(u8, @truncate(acc >> acc_len));
                     dest_idx += 1;
                 }
             }

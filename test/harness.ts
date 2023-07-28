@@ -1,4 +1,4 @@
-import { gc as bunGC, unsafe } from "bun";
+import { gc as bunGC, unsafe, which } from "bun";
 import { heapStats } from "bun:jsc";
 import path from "path";
 import fs from "fs";
@@ -14,6 +14,10 @@ export const bunEnv: any = {
 
 export function bunExe() {
   return process.execPath;
+}
+
+export function nodeExe(): string | null {
+  return which("node") || null;
 }
 
 export function gc(force = true) {
@@ -80,9 +84,16 @@ export function hideFromStackTrace(block: CallableFunction) {
   });
 }
 
-export function tempDirWithFiles(basename: string, files: Record<string, string>) {
+export function tempDirWithFiles(basename: string, files: Record<string, string | Record<string, string>>) {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), basename + "_"));
   for (const [name, contents] of Object.entries(files)) {
+    if (typeof contents === "object") {
+      fs.mkdirSync(path.join(dir, name));
+      for (const [_name, _contents] of Object.entries(contents)) {
+        fs.writeFileSync(path.join(dir, name, _name), _contents);
+      }
+      continue;
+    }
     fs.writeFileSync(path.join(dir, name), contents);
   }
   return dir;

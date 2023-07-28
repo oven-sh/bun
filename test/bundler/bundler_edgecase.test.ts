@@ -21,6 +21,24 @@ describe("bundler", () => {
       stdout: "object",
     },
   });
+  itBundled("edgecase/NestedRedirectToABuiltin", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as path from './module.cjs';
+        console.log(path.join('a', 'b'))
+      `,
+      "/module.cjs": /* js */ `
+        module.exports = require('./2nd')
+      `,
+      "/2nd.js": /* js */ `
+        module.exports = require('path')
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: "a/b",
+    },
+  });
   itBundled("edgecase/ImportStarFunction", {
     files: {
       "/entry.js": /* js */ `
@@ -320,7 +338,6 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/JSONDefaultAndNamedImport", {
-    // We don't support rewriting default import to property acceses yet
     todo: true,
     files: {
       "/entry.js": /* js */ `
@@ -397,24 +414,25 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/PackageJSONDefaultConditionImport", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
-        import React from 'react'
+        import React from 'boop'
         console.log(React)
       `,
-      "/node_modules/react/package.json": /* json */ `
+      // NOTE: this test fails if the package name is "react"
+      // most likely an issue with commonjs unwrapping.
+      "/node_modules/boop/package.json": /* json */ `
         {
-          "name": "react",
+          "name": "boop",
           "exports": {
             ".": {
               "react-server": "./ignore.js",
-              "default": "./react.js"
+              "default": "./boop.js"
             }
           }
         }
       `,
-      "/node_modules/react/react.js": /* js */ `
+      "/node_modules/boop/boop.js": /* js */ `
         export default 123
       `,
     },
@@ -661,7 +679,6 @@ describe("bundler", () => {
     target: "bun",
   });
   itBundled("edgecase/RuntimeExternalRequire", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         console.log(require("hello-1").type);

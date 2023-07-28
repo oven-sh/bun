@@ -34,7 +34,7 @@ pub const Chunk = struct {
     };
 
     pub fn raw(chunk: *const Chunk, source: *const logger.Source) string {
-        return source.contents[@intCast(usize, chunk.range.loc.start)..][0..@intCast(usize, chunk.range.len)];
+        return source.contents[@as(usize, @intCast(chunk.range.loc.start))..][0..@as(usize, @intCast(chunk.range.len))];
     }
 
     // pub fn string(chunk: *const Chunk, source: *const logger.Source) string {
@@ -132,8 +132,8 @@ pub const Scanner = struct {
 
     pub fn range(scanner: *Scanner) logger.Range {
         return logger.Range{
-            .loc = .{ .start = @intCast(i32, scanner.start) },
-            .len = @intCast(i32, scanner.end - scanner.start),
+            .loc = .{ .start = @as(i32, @intCast(scanner.start)) },
+            .len = @as(i32, @intCast(scanner.end - scanner.start)),
         };
     }
 
@@ -251,7 +251,7 @@ pub const Scanner = struct {
                     return text;
                 },
                 -1 => {
-                    const loc = logger.Loc{ .start = @intCast(i32, scanner.end) };
+                    const loc = logger.Loc{ .start = @as(i32, @intCast(scanner.end)) };
                     scanner.log.addError(scanner.source, loc, "Expected \")\" to end URL token") catch {};
                     return text;
                 },
@@ -264,7 +264,7 @@ pub const Scanner = struct {
                     text.utf8 = scanner.source.contents[start..scanner.end];
 
                     if (scanner.codepoint != ')') {
-                        const loc = logger.Loc{ .start = @intCast(i32, scanner.end) };
+                        const loc = logger.Loc{ .start = @as(i32, @intCast(scanner.end)) };
                         scanner.log.addError(scanner.source, loc, "Expected \")\" to end URL token") catch {};
                         break :validURL;
                     }
@@ -273,7 +273,7 @@ pub const Scanner = struct {
                     return text;
                 },
                 '"', '\'', '(' => {
-                    const r = logger.Range{ .loc = logger.Loc{ .start = @intCast(i32, start) }, .len = @intCast(i32, scanner.end - start) };
+                    const r = logger.Range{ .loc = logger.Loc{ .start = @as(i32, @intCast(start)) }, .len = @as(i32, @intCast(scanner.end - start)) };
 
                     scanner.log.addRangeError(scanner.source, r, "Expected \")\" to end URL token") catch {};
                     break :validURL;
@@ -282,7 +282,7 @@ pub const Scanner = struct {
                     text.needs_decode_escape = true;
                     if (!scanner.isValidEscape()) {
                         var loc = logger.Loc{
-                            .start = @intCast(i32, scanner.end),
+                            .start = @as(i32, @intCast(scanner.end)),
                         };
                         scanner.log.addError(scanner.source, loc, "Expected \")\" to end URL token") catch {};
                         break :validURL;
@@ -293,7 +293,7 @@ pub const Scanner = struct {
                     if (isNonPrintable(scanner.codepoint)) {
                         const r = logger.Range{
                             .loc = logger.Loc{
-                                .start = @intCast(i32, start),
+                                .start = @as(i32, @intCast(start)),
                             },
                             .len = 1,
                         };
@@ -354,7 +354,7 @@ pub const Scanner = struct {
         restart: while (true) {
             var chunk = Chunk{
                 .range = logger.Range{
-                    .loc = .{ .start = @intCast(i32, scanner.end) },
+                    .loc = .{ .start = @as(i32, @intCast(scanner.end)) },
                     .len = 0,
                 },
                 .content = .{
@@ -372,7 +372,7 @@ pub const Scanner = struct {
                 // We also need to parse strings and comments, or else we risk resolving comments like this /* url(hi.jpg) */
                 switch (scanner.codepoint) {
                     -1 => {
-                        chunk.range.len = @intCast(i32, scanner.end) - chunk.range.loc.start;
+                        chunk.range.len = @as(i32, @intCast(scanner.end)) - chunk.range.loc.start;
                         chunk.content.t_verbatim = .{};
                         try writeChunk(writer, chunk);
                         return;
@@ -457,13 +457,13 @@ pub const Scanner = struct {
                             },
                         }
 
-                        chunk.range.len = @intCast(i32, url_start) - chunk.range.loc.start;
+                        chunk.range.len = @as(i32, @intCast(url_start)) - chunk.range.loc.start;
                         chunk.content = .{ .t_verbatim = .{} };
                         // flush the pending chunk
                         try writeChunk(writer, chunk);
 
-                        chunk.range.loc.start = @intCast(i32, url_start);
-                        chunk.range.len = @intCast(i32, scanner.end) - chunk.range.loc.start;
+                        chunk.range.loc.start = @as(i32, @intCast(url_start));
+                        chunk.range.len = @as(i32, @intCast(scanner.end)) - chunk.range.loc.start;
                         chunk.content = .{ .t_url = url_text };
                         try writeChunk(writer, chunk);
                         scanner.has_delimiter_before = false;
@@ -559,7 +559,7 @@ pub const Scanner = struct {
                         if (scanner.codepoint != ' ') continue :toplevel;
 
                         // Now that we know to expect an import url, we flush the chunk
-                        chunk.range.len = @intCast(i32, start) - chunk.range.loc.start;
+                        chunk.range.len = @as(i32, @intCast(start)) - chunk.range.loc.start;
                         chunk.content = .{ .t_verbatim = .{} };
                         // flush the pending chunk
                         try writeChunk(writer, chunk);
@@ -597,7 +597,7 @@ pub const Scanner = struct {
                                     else => {
                                         scanner.log.addError(
                                             scanner.source,
-                                            logger.Loc{ .start = @intCast(i32, scanner.end) },
+                                            logger.Loc{ .start = @as(i32, @intCast(scanner.end)) },
                                             "Expected @import to start with a string or url()",
                                         ) catch {};
                                         return error.SyntaxError;
@@ -609,7 +609,7 @@ pub const Scanner = struct {
                                     else => {
                                         scanner.log.addError(
                                             scanner.source,
-                                            logger.Loc{ .start = @intCast(i32, scanner.end) },
+                                            logger.Loc{ .start = @as(i32, @intCast(scanner.end)) },
                                             "Expected @import to start with a \", ' or url()",
                                         ) catch {};
                                         return error.SyntaxError;
@@ -619,7 +619,7 @@ pub const Scanner = struct {
                                 if (scanner.codepoint != '(') {
                                     scanner.log.addError(
                                         scanner.source,
-                                        logger.Loc{ .start = @intCast(i32, scanner.end) },
+                                        logger.Loc{ .start = @as(i32, @intCast(scanner.end)) },
                                         "Expected \"(\" in @import url",
                                     ) catch {};
                                     return error.SyntaxError;
@@ -688,7 +688,7 @@ pub const Scanner = struct {
                                 -1 => {
                                     scanner.log.addError(
                                         scanner.source,
-                                        logger.Loc{ .start = @intCast(i32, scanner.end) },
+                                        logger.Loc{ .start = @as(i32, @intCast(scanner.end)) },
                                         "Expected \";\" at end of @import",
                                     ) catch {};
                                     return;
@@ -698,7 +698,7 @@ pub const Scanner = struct {
                             scanner.step();
                         }
                         if (import_behavior == .scan or import_behavior == .keep) {
-                            chunk.range.len = @intCast(i32, scanner.end) - @max(chunk.range.loc.start, 0);
+                            chunk.range.len = @as(i32, @intCast(scanner.end)) - @max(chunk.range.loc.start, 0);
                             chunk.content = .{ .t_import = import };
                             try writeChunk(writer, chunk);
                         }
@@ -725,7 +725,7 @@ pub const Scanner = struct {
                         switch (scanner.codepoint) {
                             '*' => {
                                 scanner.step();
-                                chunk.range.len = @intCast(i32, scanner.end);
+                                chunk.range.len = @as(i32, @intCast(scanner.end));
                                 scanner.consumeToEndOfMultiLineComment(chunk.range);
                             },
                             '/' => {
@@ -824,10 +824,10 @@ pub const Scanner = struct {
 
         return switch (slice.len) {
             0 => -1,
-            1 => @intCast(CodePoint, slice[0]),
-            2 => @intCast(CodePoint, std.unicode.utf8Decode2(slice) catch unreachable),
-            3 => @intCast(CodePoint, std.unicode.utf8Decode3(slice) catch unreachable),
-            4 => @intCast(CodePoint, std.unicode.utf8Decode4(slice) catch unreachable),
+            1 => @as(CodePoint, @intCast(slice[0])),
+            2 => @as(CodePoint, @intCast(std.unicode.utf8Decode2(slice) catch unreachable)),
+            3 => @as(CodePoint, @intCast(std.unicode.utf8Decode3(slice) catch unreachable)),
+            4 => @as(CodePoint, @intCast(std.unicode.utf8Decode4(slice) catch unreachable)),
             else => unreachable,
         };
     }
@@ -1091,20 +1091,20 @@ pub fn NewWriter(
                 .t_verbatim => {
                     if (comptime std.meta.trait.hasFn("copyFileRange")(WriterType)) {
                         try writer.ctx.copyFileRange(
-                            @intCast(usize, chunk.range.loc.start),
-                            @intCast(
+                            @as(usize, @intCast(chunk.range.loc.start)),
+                            @as(
                                 usize,
-                                @intCast(
+                                @intCast(@as(
                                     usize,
-                                    chunk.range.len,
-                                ),
+                                    @intCast(chunk.range.len),
+                                )),
                             ),
                         );
                     } else {
                         try writer.ctx.writeAll(
-                            writer.source.contents[@intCast(usize, chunk.range.loc.start)..][0..@intCast(
+                            writer.source.contents[@as(usize, @intCast(chunk.range.loc.start))..][0..@as(
                                 usize,
-                                chunk.range.len,
+                                @intCast(chunk.range.len),
                             )],
                         );
                     }
@@ -1219,9 +1219,9 @@ pub fn NewBundler(
             var lines_of_code: usize = 0;
 
             // We LIFO
-            var i: i32 = @intCast(i32, this.bundle_queue.items.len - 1);
+            var i: i32 = @as(i32, @intCast(this.bundle_queue.items.len - 1));
             while (i >= 0) : (i -= 1) {
-                const item = this.bundle_queue.items[@intCast(usize, i)];
+                const item = this.bundle_queue.items[@as(usize, @intCast(i))];
                 const watcher_id = this.watcher.indexOf(item) orelse unreachable;
                 const watch_item = this.watcher.watchlist.get(watcher_id);
                 const source = try this.getSource(watch_item.file_path, if (watch_item.fd > 0) watch_item.fd else null);
@@ -1248,7 +1248,7 @@ pub fn NewBundler(
             try this.writer.done();
 
             return CodeCount{
-                .written = @intCast(usize, @max(this.writer.written - start_count, 0)),
+                .written = @as(usize, @intCast(@max(this.writer.written - start_count, 0))),
                 .approximate_newline_count = lines_of_code,
             };
         }

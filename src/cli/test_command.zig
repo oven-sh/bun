@@ -92,6 +92,7 @@ pub const CommandLineReporter = struct {
         skip: u32 = 0,
         todo: u32 = 0,
         fail: u32 = 0,
+        files: u32 = 0,
     };
 
     const DotColorMap = std.EnumMap(TestRunner.Test.Status, string);
@@ -200,6 +201,12 @@ pub const CommandLineReporter = struct {
         this.summary.fail += 1;
         this.summary.expectations += expectations;
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.fail;
+
+        if (this.jest.bail == this.summary.fail) {
+            this.printSummary();
+            Output.prettyError("\nBailed out after {d} failures<r>\n", .{this.jest.bail});
+            Global.exit(1);
+        }
     }
 
     pub fn handleTestSkip(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
@@ -245,6 +252,14 @@ pub const CommandLineReporter = struct {
         this.summary.todo += 1;
         this.summary.expectations += expectations;
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.todo;
+    }
+
+    pub fn printSummary(this: *CommandLineReporter) void {
+        const tests = this.summary.fail + this.summary.pass + this.summary.skip + this.summary.todo;
+        const files = this.summary.files;
+
+        Output.prettyError("Ran {d} tests across {d} files. ", .{ tests, files });
+        Output.printStartEnd(bun.start_time, std.time.nanoTimestamp());
     }
 };
 
@@ -363,6 +378,9 @@ const Scanner = struct {
                     return;
                 }
 
+                if (comptime Environment.allow_assert)
+                    std.debug.assert(!strings.contains(name, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str));
+
                 for (this.exclusion_names) |exclude_name| {
                     if (strings.eql(exclude_name, name)) return;
                 }
@@ -438,6 +456,7 @@ pub const TestCommand = struct {
                 .default_timeout_ms = ctx.test_options.default_timeout_ms,
                 .run_todo = ctx.test_options.run_todo,
                 .only = ctx.test_options.only,
+                .bail = ctx.test_options.bail,
                 .snapshots = Snapshots{
                     .allocator = ctx.allocator,
                     .update_snapshots = ctx.test_options.update_snapshots,
@@ -474,6 +493,7 @@ pub const TestCommand = struct {
             // in the future we should investigate if refactoring this to not
             // rely on the dir fd yields a performance improvement
             true,
+            ctx.runtime_options.smol,
         );
         vm.argv = ctx.passthrough;
         vm.preload = ctx.preloads;
@@ -647,9 +667,7 @@ pub const TestCommand = struct {
                 Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary.expectations});
             }
 
-            const total_tests = reporter.summary.fail + reporter.summary.pass + reporter.summary.skip + reporter.summary.todo;
-            Output.prettyError("Ran {d} tests across {d} files. <d>{d} total<r> ", .{ reporter.summary.fail + reporter.summary.pass, test_files.len, total_tests });
-            Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
+            reporter.printSummary();
         }
 
         Output.prettyError("\n", .{});
@@ -748,7 +766,7 @@ pub const TestCommand = struct {
         // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#grouping-log-lines
         const file_prefix = if (Output.is_github_action) "::group::" else "";
 
-        vm.main_hash = @truncate(u32, bun.hash(file_path));
+        vm.main_hash = @as(u32, @truncate(bun.hash(file_path)));
         var repeat_count = reporter.repeat_count;
         var repeat_index: u32 = 0;
         while (repeat_index < repeat_count) : (repeat_index += 1) {
@@ -760,12 +778,20 @@ pub const TestCommand = struct {
             Output.flush();
 
             var promise = try vm.loadEntryPoint(file_path);
+            reporter.summary.files += 1;
 
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
                     var result = promise.result(vm.global.vm());
                     vm.runErrorHandler(result, null);
                     reporter.summary.fail += 1;
+
+                    if (reporter.jest.bail == reporter.summary.fail) {
+                        reporter.printSummary();
+                        Output.prettyError("\nBailed out after {d} failures<r>\n", .{reporter.jest.bail});
+                        Global.exit(1);
+                    }
+
                     return;
                 },
                 else => {},
@@ -780,7 +806,6 @@ pub const TestCommand = struct {
                     vm.global.vm().drainMicrotasks();
                     vm.global.handleRejectedPromises();
                 }
-                vm.global.vm().doWork();
             }
 
             const file_end = reporter.jest.files.len;
@@ -820,7 +845,6 @@ pub const TestCommand = struct {
                 }
             }
 
-            vm.global.vm().clearMicrotaskCallback();
             vm.global.handleRejectedPromises();
             if (repeat_index > 0) {
                 vm.clearEntryPoint();

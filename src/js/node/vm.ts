@@ -1,11 +1,7 @@
 // Hardcoded module "node:vm"
 import { throwNotImplemented } from "../shared";
 
-const lazy = globalThis[Symbol.for("Bun.lazy")];
-if (!lazy || typeof lazy !== "function") {
-  throw new Error("Something went wrong while loading Bun. Expected 'Bun.lazy' to be defined.");
-}
-const vm = lazy("vm");
+const vm = $lazy("vm");
 
 const { createContext, isContext, Script, runInNewContext, runInThisContext } = vm;
 

@@ -32,6 +32,26 @@ The "naked" `bun` command is equivalent to `bun run`.
 $ bun index.tsx
 ```
 
+### `--watch`
+
+To run a file in watch mode, use the `--watch` flag.
+
+```bash
+$ bun --watch run index.tsx
+```
+
+### `--smol`
+
+{% callout %}
+Added in Bun v0.7.0.
+{% /callout %}
+
+In memory-constrained environments, use the `--smol` flag to reduce memory usage at a cost to performance.
+
+```bash
+$ bun --smol run index.tsx
+```
+
 ## Run a `package.json` script
 
 {% note %}
@@ -106,4 +126,4 @@ Under the hood Bun uses the [JavaScriptCore engine](https://developer.apple.com/
 
 {% image src="/images/bun-run-speed.jpeg" caption="Bun vs Node.js vs Deno running Hello World" /%}
 
-<!-- If no `node_modules` directory is found in the working directory or above, Bun will abandon Node.js-style module resolution in favor of the `Bun module resolution algorithm`. Under Bun-style module resolution, all packages are _auto-installed_ on the fly into a [global module cache](/docs/cli/install#global-cache). For full details on this algorithm, refer to [Runtime > Modules](/docs/runtime/modules). -->
+<!-- If no `node_modules` directory is found in the working directory or above, Bun will abandon Node.js-style module resolution in favor of the `Bun module resolution algorithm`. Under Bun-style module resolution, all packages are _auto-installed_ on the fly into a [global module cache](/docs/install/cache). For full details on this algorithm, refer to [Runtime > Modules](/docs/runtime/modules). -->

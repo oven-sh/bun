@@ -12,37 +12,6 @@ You can also create a global configuration file at the following paths:
 
 If both a global and local `bunfig` are detected, the results are shallow-merged, with local overridding global. CLI flags will override `bunfig` setting where applicable.
 
-## Environment variables
-
-These environment variables are checked by Bun to detect functionality and toggle features.
-
-{% table %}
-
-- Name
-- Description
-
----
-
-- `TMPDIR`
-- Bun occasionally requires a directory to store intermediate assets during bundling or other operations. If unset, defaults to the platform-specific temporary directory: `/tmp` on Linux, `/private/tmp` on macOS.
-
----
-
-- `NO_COLOR`
-- If `NO_COLOR=1`, then ANSI color output is [disabled](https://no-color.org/).
-
----
-
-- `FORCE_COLOR`
-- If `FORCE_COLOR=1`, then ANSI color output is force enabled, even if `NO_COLOR` is set.
-
----
-
-- `DO_NOT_TRACK`
-- If `DO_NOT_TRACK=1`, then analytics are [disabled](https://do-not-track.dev/). Bun records bundle timings (so we can answer with data, "is Bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it's not a lot of data.
-
-{% /table %}
-
 ## Runtime
 
 ```toml
@@ -56,12 +25,11 @@ jsxFactory = "h"
 jsxFragment = "Fragment"
 jsxImportSource = "react"
 
-# Set a default framework to use
-# By default, Bun will look for an npm package like `bun-framework-${framework}`, followed by `${framework}`
-logLevel = "debug"
+# Reduce memory usage at the cost of performance
+smol = true
 
-# publicDir = "public"
-# external = ["jquery"]
+# Set Bun's log level
+logLevel = "debug" # "debug", "warn", "error"
 
 [define]
 # Replace any usage of "process.env.bagel" with the string `lox`.
@@ -72,38 +40,17 @@ logLevel = "debug"
 [loaders]
 # When loading a .bagel file, run the JS parser
 ".bagel" = "js"
-# - "atom"
-# If you pass it a file path, it will open with the file path instead
-# It will recognize non-GUI editors, but I don't think it will work yet
-```
-
-### Debugging
-
-```toml
-[debug]
-# When navigating to a blob: or src: link, open the file in your editor
-# If not, it tries $EDITOR or $VISUAL
-# If that still fails, it will try Visual Studio Code, then Sublime Text, then a few others
-# This is used by Bun.openInEditor()
-editor = "code"
-
-# List of editors:
-# - "subl", "sublime"
-# - "vscode", "code"
-# - "textmate", "mate"
-# - "idea"
-# - "webstorm"
-# - "nvim", "neovim"
-# - "vim","vi"
-# - "emacs"
 ```
 
 ## Test runner
 
 ```toml
 [test]
-# setup scripts to run before all test files
+# Scripts to run before all test files
 preload = ["./setup.ts"]
+
+# Reduce memory usage at the cost of performance
+smol = true
 ```
 
 ## Package manager
@@ -210,29 +157,54 @@ save = true
 print = "yarn"
 ```
 
-## Dev server (`bun dev`)
-
-{% The `bun dev` command is likely to change soon and will likely be deprecated in an upcoming release. We recommend %}
-
-Here is an example:
+### Debugging
 
 ```toml
-# Set a default framework to use
-# By default, Bun will look for an npm package like `bun-framework-${framework}`, followed by `${framework}`
-framework = "next"
+[debug]
+# When navigating to a blob: or src: link, open the file in your editor
+# If not, it tries $EDITOR or $VISUAL
+# If that still fails, it will try Visual Studio Code, then Sublime Text, then a few others
+# This is used by Bun.openInEditor()
+editor = "code"
 
-[bundle]
-saveTo = "node_modules.bun"
-# Don't need this if `framework` is set, but showing it here as an example anyway
-entryPoints = ["./app/index.ts"]
-
-[bundle.packages]
-# If you're bundling packages that do not actually live in a `node_modules` folder or do not have the full package name in the file path, you can pass this to bundle them anyway
-"@bigapp/design-system" = true
-
-[dev]
-# Change the default port from 3000 to 5000
-# Also inherited by Bun.serve
-port = 5000
-
+# List of editors:
+# - "subl", "sublime"
+# - "vscode", "code"
+# - "textmate", "mate"
+# - "idea"
+# - "webstorm"
+# - "nvim", "neovim"
+# - "vim","vi"
+# - "emacs"
 ```
+
+## Environment variables
+
+These environment variables are checked by Bun to detect functionality and toggle features.
+
+{% table %}
+
+- Name
+- Description
+
+---
+
+- `TMPDIR`
+- Bun occasionally requires a directory to store intermediate assets during bundling or other operations. If unset, defaults to the platform-specific temporary directory: `/tmp` on Linux, `/private/tmp` on macOS.
+
+---
+
+- `NO_COLOR`
+- If `NO_COLOR=1`, then ANSI color output is [disabled](https://no-color.org/).
+
+---
+
+- `FORCE_COLOR`
+- If `FORCE_COLOR=1`, then ANSI color output is force enabled, even if `NO_COLOR` is set.
+
+---
+
+- `DO_NOT_TRACK`
+- If `DO_NOT_TRACK=1`, then analytics are [disabled](https://do-not-track.dev/). Bun records bundle timings (so we can answer with data, "is Bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it's not a lot of data.
+
+{% /table %}

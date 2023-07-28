@@ -45,7 +45,6 @@ export default [
           args: ["JSUint8Array", "bool"],
         },
       },
-
       publishText: {
         fn: "publishText",
         length: 2,
@@ -62,10 +61,21 @@ export default [
           args: ["JSString", "JSUint8Array"],
         },
       },
-
+      ping: {
+        fn: "ping",
+        length: 1,
+      },
+      pong: {
+        fn: "pong",
+        length: 1,
+      },
       close: {
         fn: "close",
-        length: 1,
+        length: 3,
+      },
+      terminate: {
+        fn: "terminate",
+        length: 0,
       },
       cork: {
         fn: "cork",
@@ -103,11 +113,6 @@ export default [
         fn: "isSubscribed",
         length: 1,
       },
-
-      // topics: {
-      //   getter: "getTopics",
-      // },
-
       remoteAddress: {
         getter: "getRemoteAddress",
         cache: true,

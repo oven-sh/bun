@@ -84,10 +84,10 @@ typedef struct ErrorableResolvedSource {
 
 typedef struct SystemError {
     int errno_;
-    ZigString code;
-    ZigString message;
-    ZigString path;
-    ZigString syscall;
+    BunString code;
+    BunString message;
+    BunString path;
+    BunString syscall;
     int fd;
 } SystemError;
 
@@ -246,6 +246,10 @@ BunString toString(WTF::String& wtfString);
 BunString toString(const WTF::String& wtfString);
 BunString toString(WTF::StringImpl* wtfString);
 
+BunString toStringRef(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
+BunString toStringRef(WTF::String& wtfString);
+BunString toStringRef(const WTF::String& wtfString);
+BunString toStringRef(WTF::StringImpl* wtfString);
 }
 
 using Uint8Array_alias = JSC::JSUint8Array;
@@ -270,6 +274,7 @@ enum SyntheticModuleType : uint64_t {
     Module = 1028,
     TTY = 1029,
     NodeUtilTypes = 1030,
+    Constants = 1031,
 };
 
 extern "C" const char* Bun__userAgent;

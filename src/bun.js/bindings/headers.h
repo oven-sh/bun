@@ -32,113 +32,113 @@ typedef void* JSClassRef;
 #include "JavaScriptCore/JSClassRef.h"
 #endif
 #include "headers-handwritten.h"
- typedef struct bJSC__ThrowScope { unsigned char bytes[8]; } bJSC__ThrowScope;
- typedef char* bJSC__ThrowScope_buf;
- typedef struct bJSC__Exception { unsigned char bytes[40]; } bJSC__Exception;
- typedef char* bJSC__Exception_buf;
- typedef struct bJSC__VM { unsigned char bytes[52176]; } bJSC__VM;
- typedef char* bJSC__VM_buf;
- typedef struct bJSC__JSString { unsigned char bytes[16]; } bJSC__JSString;
- typedef char* bJSC__JSString_buf;
- typedef struct bJSC__JSGlobalObject { unsigned char bytes[3128]; } bJSC__JSGlobalObject;
- typedef char* bJSC__JSGlobalObject_buf;
- typedef struct bJSC__JSCell { unsigned char bytes[8]; } bJSC__JSCell;
- typedef char* bJSC__JSCell_buf;
- typedef struct bJSC__JSInternalPromise { unsigned char bytes[32]; } bJSC__JSInternalPromise;
- typedef char* bJSC__JSInternalPromise_buf;
  typedef struct bJSC__JSPromise { unsigned char bytes[32]; } bJSC__JSPromise;
  typedef char* bJSC__JSPromise_buf;
+ typedef struct bJSC__JSCell { unsigned char bytes[8]; } bJSC__JSCell;
+ typedef char* bJSC__JSCell_buf;
+ typedef struct bJSC__Exception { unsigned char bytes[40]; } bJSC__Exception;
+ typedef char* bJSC__Exception_buf;
  typedef struct bJSC__JSObject { unsigned char bytes[16]; } bJSC__JSObject;
  typedef char* bJSC__JSObject_buf;
+ typedef struct bJSC__ThrowScope { unsigned char bytes[8]; } bJSC__ThrowScope;
+ typedef char* bJSC__ThrowScope_buf;
  typedef struct bJSC__CatchScope { unsigned char bytes[8]; } bJSC__CatchScope;
  typedef char* bJSC__CatchScope_buf;
+ typedef struct bJSC__JSString { unsigned char bytes[16]; } bJSC__JSString;
+ typedef char* bJSC__JSString_buf;
+ typedef struct bJSC__JSInternalPromise { unsigned char bytes[32]; } bJSC__JSInternalPromise;
+ typedef char* bJSC__JSInternalPromise_buf;
+ typedef struct bJSC__JSGlobalObject { unsigned char bytes[3128]; } bJSC__JSGlobalObject;
+ typedef char* bJSC__JSGlobalObject_buf;
+ typedef struct bJSC__VM { unsigned char bytes[52176]; } bJSC__VM;
+ typedef char* bJSC__VM_buf;
 
 #ifndef __cplusplus
- typedef bJSC__CatchScope JSC__CatchScope; // JSC::CatchScope
-  typedef ErrorableResolvedSource ErrorableResolvedSource;
-  typedef BunString BunString;
-  typedef ErrorableString ErrorableString;
- typedef bJSC__ThrowScope JSC__ThrowScope; // JSC::ThrowScope
- typedef bJSC__JSObject JSC__JSObject; // JSC::JSObject
-  typedef WebSocketClient WebSocketClient;
- typedef struct WebCore__AbortSignal WebCore__AbortSignal; // WebCore::AbortSignal
- typedef struct JSC__JSMap JSC__JSMap; // JSC::JSMap
-  typedef WebSocketHTTPSClient WebSocketHTTPSClient;
-  typedef JSClassRef JSClassRef;
- typedef bJSC__VM JSC__VM; // JSC::VM
   typedef Bun__ArrayBuffer Bun__ArrayBuffer;
-  typedef Uint8Array_alias Uint8Array_alias;
-  typedef WebSocketClientTLS WebSocketClientTLS;
- typedef bJSC__JSGlobalObject JSC__JSGlobalObject; // JSC::JSGlobalObject
-  typedef ZigException ZigException;
- typedef bJSC__JSPromise JSC__JSPromise; // JSC::JSPromise
-  typedef WebSocketHTTPClient WebSocketHTTPClient;
-  typedef SystemError SystemError;
- typedef bJSC__JSCell JSC__JSCell; // JSC::JSCell
-  typedef ZigString ZigString;
- typedef struct WebCore__DOMURL WebCore__DOMURL; // WebCore::DOMURL
-  typedef int64_t JSC__JSValue;
- typedef bJSC__JSInternalPromise JSC__JSInternalPromise; // JSC::JSInternalPromise
- typedef bJSC__Exception JSC__Exception; // JSC::Exception
  typedef bJSC__JSString JSC__JSString; // JSC::JSString
+  typedef BunString BunString;
+  typedef int64_t JSC__JSValue;
+  typedef ZigString ZigString;
  typedef struct WebCore__DOMFormData WebCore__DOMFormData; // WebCore::DOMFormData
- typedef struct JSC__CallFrame JSC__CallFrame; // JSC::CallFrame
+ typedef struct WebCore__DOMURL WebCore__DOMURL; // WebCore::DOMURL
  typedef struct WebCore__FetchHeaders WebCore__FetchHeaders; // WebCore::FetchHeaders
+  typedef ErrorableResolvedSource ErrorableResolvedSource;
+ typedef bJSC__JSPromise JSC__JSPromise; // JSC::JSPromise
+ typedef bJSC__VM JSC__VM; // JSC::VM
+ typedef bJSC__CatchScope JSC__CatchScope; // JSC::CatchScope
+  typedef ZigException ZigException;
+ typedef struct JSC__CallFrame JSC__CallFrame; // JSC::CallFrame
+ typedef bJSC__ThrowScope JSC__ThrowScope; // JSC::ThrowScope
+ typedef bJSC__Exception JSC__Exception; // JSC::Exception
+  typedef WebSocketHTTPClient WebSocketHTTPClient;
+  typedef WebSocketClient WebSocketClient;
+  typedef WebSocketClientTLS WebSocketClientTLS;
+  typedef ErrorableString ErrorableString;
+ typedef bJSC__JSObject JSC__JSObject; // JSC::JSObject
+ typedef struct JSC__JSMap JSC__JSMap; // JSC::JSMap
+  typedef SystemError SystemError;
+  typedef Uint8Array_alias Uint8Array_alias;
+ typedef bJSC__JSCell JSC__JSCell; // JSC::JSCell
+ typedef bJSC__JSGlobalObject JSC__JSGlobalObject; // JSC::JSGlobalObject
+ typedef struct WebCore__AbortSignal WebCore__AbortSignal; // WebCore::AbortSignal
+  typedef JSClassRef JSClassRef;
+ typedef bJSC__JSInternalPromise JSC__JSInternalPromise; // JSC::JSInternalPromise
+  typedef WebSocketHTTPSClient WebSocketHTTPSClient;
 
 #endif
 
 #ifdef __cplusplus
   namespace JSC {
-    class JSMap;
-    class JSCell;
-    class JSObject;
     class JSGlobalObject;
-    class JSPromise;
     class Exception;
-    class JSString;
+    class JSObject;
     class JSInternalPromise;
+    class JSString;
+    class JSCell;
+    class JSMap;
+    class JSPromise;
     class CatchScope;
     class VM;
-    class CallFrame;
     class ThrowScope;
+    class CallFrame;
   }
   namespace WebCore {
-    class DOMFormData;
-    class DOMURL;
-    class AbortSignal;
     class FetchHeaders;
+    class DOMFormData;
+    class AbortSignal;
+    class DOMURL;
   }
 
-  typedef ErrorableResolvedSource ErrorableResolvedSource;
-  typedef BunString BunString;
-  typedef ErrorableString ErrorableString;
-  typedef WebSocketClient WebSocketClient;
-  typedef WebSocketHTTPSClient WebSocketHTTPSClient;
-  typedef JSClassRef JSClassRef;
   typedef Bun__ArrayBuffer Bun__ArrayBuffer;
-  typedef Uint8Array_alias Uint8Array_alias;
-  typedef WebSocketClientTLS WebSocketClientTLS;
+  typedef BunString BunString;
+  typedef int64_t JSC__JSValue;
+  typedef ZigString ZigString;
+  typedef ErrorableResolvedSource ErrorableResolvedSource;
   typedef ZigException ZigException;
   typedef WebSocketHTTPClient WebSocketHTTPClient;
+  typedef WebSocketClient WebSocketClient;
+  typedef WebSocketClientTLS WebSocketClientTLS;
+  typedef ErrorableString ErrorableString;
   typedef SystemError SystemError;
-  typedef ZigString ZigString;
-  typedef int64_t JSC__JSValue;
-  using JSC__JSMap = JSC::JSMap;
-  using JSC__JSCell = JSC::JSCell;
-  using JSC__JSObject = JSC::JSObject;
+  typedef Uint8Array_alias Uint8Array_alias;
+  typedef JSClassRef JSClassRef;
+  typedef WebSocketHTTPSClient WebSocketHTTPSClient;
   using JSC__JSGlobalObject = JSC::JSGlobalObject;
-  using JSC__JSPromise = JSC::JSPromise;
   using JSC__Exception = JSC::Exception;
-  using JSC__JSString = JSC::JSString;
+  using JSC__JSObject = JSC::JSObject;
   using JSC__JSInternalPromise = JSC::JSInternalPromise;
+  using JSC__JSString = JSC::JSString;
+  using JSC__JSCell = JSC::JSCell;
+  using JSC__JSMap = JSC::JSMap;
+  using JSC__JSPromise = JSC::JSPromise;
   using JSC__CatchScope = JSC::CatchScope;
   using JSC__VM = JSC::VM;
-  using JSC__CallFrame = JSC::CallFrame;
   using JSC__ThrowScope = JSC::ThrowScope;
-  using WebCore__DOMFormData = WebCore::DOMFormData;
-  using WebCore__DOMURL = WebCore::DOMURL;
-  using WebCore__AbortSignal = WebCore::AbortSignal;
+  using JSC__CallFrame = JSC::CallFrame;
   using WebCore__FetchHeaders = WebCore::FetchHeaders;
+  using WebCore__DOMFormData = WebCore::DOMFormData;
+  using WebCore__AbortSignal = WebCore::AbortSignal;
+  using WebCore__DOMURL = WebCore::DOMURL;
 
 #endif
 
@@ -285,7 +285,7 @@ CPP_DECL JSC__JSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC__JSGlobalObj
 CPP_DECL JSC__JSValue JSC__JSGlobalObject__getCachedObject(JSC__JSGlobalObject* arg0, const ZigString* arg1);
 CPP_DECL void JSC__JSGlobalObject__handleRejectedPromises(JSC__JSGlobalObject* arg0);
 CPP_DECL JSC__JSValue JSC__JSGlobalObject__putCachedObject(JSC__JSGlobalObject* arg0, const ZigString* arg1, JSC__JSValue JSValue2);
-CPP_DECL void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue JSValue2, JSC__JSValue JSValue3, JSC__JSValue JSValue4);
+CPP_DECL void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue JSValue2, JSC__JSValue JSValue3);
 CPP_DECL void JSC__JSGlobalObject__reload(JSC__JSGlobalObject* arg0);
 CPP_DECL bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* arg0, unsigned char* arg1, uint16_t arg2);
 CPP_DECL JSC__VM* JSC__JSGlobalObject__vm(JSC__JSGlobalObject* arg0);
@@ -377,12 +377,13 @@ CPP_DECL JSC__JSValue JSC__JSValue__jsNumberFromChar(unsigned char arg0);
 CPP_DECL JSC__JSValue JSC__JSValue__jsNumberFromDouble(double arg0);
 CPP_DECL JSC__JSValue JSC__JSValue__jsNumberFromInt64(int64_t arg0);
 CPP_DECL JSC__JSValue JSC__JSValue__jsNumberFromU16(uint16_t arg0);
-CPP_DECL void JSC__JSValue__jsonStringify(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, uint32_t arg2, ZigString* arg3);
+CPP_DECL void JSC__JSValue__jsonStringify(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, uint32_t arg2, BunString* arg3);
 CPP_DECL JSC__JSValue JSC__JSValue__jsTDZValue();
 CPP_DECL unsigned char JSC__JSValue__jsType(JSC__JSValue JSValue0);
 CPP_DECL JSC__JSValue JSC__JSValue__jsUndefined();
 CPP_DECL JSC__JSValue JSC__JSValue__makeWithNameAndPrototype(JSC__JSGlobalObject* arg0, void* arg1, void* arg2, const ZigString* arg3);
 CPP_DECL JSC__JSValue JSC__JSValue__parseJSON(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
+CPP_DECL void JSC__JSValue__push(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL void JSC__JSValue__put(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, const ZigString* arg2, JSC__JSValue JSValue3);
 CPP_DECL void JSC__JSValue__putIndex(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, uint32_t arg2, JSC__JSValue JSValue3);
 CPP_DECL void JSC__JSValue__putRecord(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2, ZigString* arg3, size_t arg4);
@@ -418,7 +419,6 @@ CPP_DECL JSC__VM* JSC__VM__create(unsigned char HeapType0);
 CPP_DECL void JSC__VM__deferGC(JSC__VM* arg0, void* arg1, void(* ArgFn2)(void* arg0)) __attribute__((nonnull (2)));
 CPP_DECL void JSC__VM__deinit(JSC__VM* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL void JSC__VM__deleteAllCode(JSC__VM* arg0, JSC__JSGlobalObject* arg1);
-CPP_DECL void JSC__VM__doWork(JSC__VM* arg0);
 CPP_DECL void JSC__VM__drainMicrotasks(JSC__VM* arg0);
 CPP_DECL bool JSC__VM__executionForbidden(JSC__VM* arg0);
 CPP_DECL size_t JSC__VM__externalMemorySize(JSC__VM* arg0);
@@ -578,7 +578,7 @@ ZIG_DECL JSC__JSValue Crypto__timingSafeEqual__slowpath(JSC__JSGlobalObject* arg
 
 #pragma mark - Zig::GlobalObject
 
-CPP_DECL JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* arg0, int32_t arg1, void* arg2);
+CPP_DECL JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* arg0, int32_t arg1, void* arg2, int32_t arg3, bool arg4);
 CPP_DECL void* Zig__GlobalObject__getModuleRegistryMap(JSC__JSGlobalObject* arg0);
 CPP_DECL bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* arg0, void* arg1);
 
@@ -734,29 +734,31 @@ ZIG_DECL void Bun__WebSocketHTTPSClient__register(JSC__JSGlobalObject* arg0, voi
 
 #ifdef __cplusplus
 
+ZIG_DECL void Bun__WebSocketClient__cancel(WebSocketClient* arg0);
 ZIG_DECL void Bun__WebSocketClient__close(WebSocketClient* arg0, uint16_t arg1, const ZigString* arg2);
 ZIG_DECL void Bun__WebSocketClient__finalize(WebSocketClient* arg0);
 ZIG_DECL void* Bun__WebSocketClient__init(CppWebSocket* arg0, void* arg1, void* arg2, JSC__JSGlobalObject* arg3, unsigned char* arg4, size_t arg5);
 ZIG_DECL void Bun__WebSocketClient__register(JSC__JSGlobalObject* arg0, void* arg1, void* arg2);
-ZIG_DECL void Bun__WebSocketClient__writeBinaryData(WebSocketClient* arg0, const unsigned char* arg1, size_t arg2);
-ZIG_DECL void Bun__WebSocketClient__writeString(WebSocketClient* arg0, const ZigString* arg1);
+ZIG_DECL void Bun__WebSocketClient__writeBinaryData(WebSocketClient* arg0, const unsigned char* arg1, size_t arg2, unsigned char arg3);
+ZIG_DECL void Bun__WebSocketClient__writeString(WebSocketClient* arg0, const ZigString* arg1, unsigned char arg2);
 
 #endif
 
 #ifdef __cplusplus
 
+ZIG_DECL void Bun__WebSocketClientTLS__cancel(WebSocketClientTLS* arg0);
 ZIG_DECL void Bun__WebSocketClientTLS__close(WebSocketClientTLS* arg0, uint16_t arg1, const ZigString* arg2);
 ZIG_DECL void Bun__WebSocketClientTLS__finalize(WebSocketClientTLS* arg0);
 ZIG_DECL void* Bun__WebSocketClientTLS__init(CppWebSocket* arg0, void* arg1, void* arg2, JSC__JSGlobalObject* arg3, unsigned char* arg4, size_t arg5);
 ZIG_DECL void Bun__WebSocketClientTLS__register(JSC__JSGlobalObject* arg0, void* arg1, void* arg2);
-ZIG_DECL void Bun__WebSocketClientTLS__writeBinaryData(WebSocketClientTLS* arg0, const unsigned char* arg1, size_t arg2);
-ZIG_DECL void Bun__WebSocketClientTLS__writeString(WebSocketClientTLS* arg0, const ZigString* arg1);
+ZIG_DECL void Bun__WebSocketClientTLS__writeBinaryData(WebSocketClientTLS* arg0, const unsigned char* arg1, size_t arg2, unsigned char arg3);
+ZIG_DECL void Bun__WebSocketClientTLS__writeString(WebSocketClientTLS* arg0, const ZigString* arg1, unsigned char arg2);
 
 #endif
 
 #ifdef __cplusplus
 
-ZIG_DECL void Bun__Process__exit(JSC__JSGlobalObject* arg0, int32_t arg1);
+ZIG_DECL void Bun__Process__exit(JSC__JSGlobalObject* arg0, unsigned char arg1);
 ZIG_DECL JSC__JSValue Bun__Process__getArgv(JSC__JSGlobalObject* arg0);
 ZIG_DECL JSC__JSValue Bun__Process__getArgv0(JSC__JSGlobalObject* arg0);
 ZIG_DECL JSC__JSValue Bun__Process__getCwd(JSC__JSGlobalObject* arg0);

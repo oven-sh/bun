@@ -69,7 +69,7 @@ pub fn validatePath(
 pub fn stringHashMapFromArrays(comptime t: type, allocator: std.mem.Allocator, keys: anytype, values: anytype) !t {
     var hash_map = t.init(allocator);
     if (keys.len > 0) {
-        try hash_map.ensureTotalCapacity(@intCast(u32, keys.len));
+        try hash_map.ensureTotalCapacity(@as(u32, @intCast(keys.len)));
         for (keys, 0..) |key, i| {
             hash_map.putAssumeCapacity(key, values[i]);
         }
@@ -1417,6 +1417,7 @@ pub const BundleOptions = struct {
     public_path: []const u8 = "",
     extension_order: []const string = &Defaults.ExtensionOrder,
     esm_extension_order: []const string = &Defaults.ModuleExtensionOrder,
+    main_field_extension_order: []const string = &Defaults.MainFieldExtensionOrder,
     out_extensions: bun.StringHashMap(string),
     import_path_format: ImportPathFormat = ImportPathFormat.relative,
     framework: ?Framework = null,
@@ -1553,6 +1554,16 @@ pub const BundleOptions = struct {
             ".js",
             ".mjs",
             ".mts",
+            ".json",
+        };
+
+        pub const MainFieldExtensionOrder = [_]string{
+            ".js",
+            ".cjs",
+            ".cts",
+            ".tsx",
+            ".ts",
+            ".jsx",
             ".json",
         };
 
@@ -1699,7 +1710,7 @@ pub const BundleOptions = struct {
                                 opts.node_modules_bundle_pretty_path = try allocator.dupe(u8, pretty_path);
                             }
 
-                            const elapsed = @floatFromInt(f64, (std.time.nanoTimestamp() - time_start)) / std.time.ns_per_ms;
+                            const elapsed = @as(f64, @floatFromInt((std.time.nanoTimestamp() - time_start))) / std.time.ns_per_ms;
                             Output.printElapsed(elapsed);
                             Output.prettyErrorln(
                                 " <b><d>\"{s}\"<r><d> - {d} modules, {d} packages<r>",
@@ -2072,7 +2083,7 @@ pub const OutputFile = struct {
             if (mime_type) |mime| {
                 blob.content_type = mime.value;
             }
-            blob.size = @truncate(JSC.WebCore.Blob.SizeType, byte_size);
+            blob.size = @as(JSC.WebCore.Blob.SizeType, @truncate(byte_size));
             blob.allocator = bun.default_allocator;
             return blob.toJS(globalThis);
         }
@@ -2272,7 +2283,7 @@ pub const OutputFile = struct {
                     blob.content_type = this.loader.toMimeType().value;
                 }
 
-                blob.size = @truncate(JSC.WebCore.Blob.SizeType, buffer.bytes.len);
+                blob.size = @as(JSC.WebCore.Blob.SizeType, @truncate(buffer.bytes.len));
 
                 var build_output = bun.default_allocator.create(JSC.API.BuildArtifact) catch @panic("Unable to allocate Artifact");
                 build_output.* = JSC.API.BuildArtifact{
@@ -2838,7 +2849,7 @@ pub const PathTemplate = struct {
     };
 
     pub const file = PathTemplate{
-        .data = "./[name].[ext]",
+        .data = "[dir]/[name].[ext]",
         .placeholder = .{},
     };
 

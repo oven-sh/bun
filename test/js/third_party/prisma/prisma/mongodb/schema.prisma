@@ -8,7 +8,7 @@ generator client {
 
 datasource db {
   provider = "mongodb"
-  url      = env("PRISMA_MONGODB_DATABASE_URL")
+  url      = env("TLS_MONGODB_DATABASE_URL")
 }
 
 model User {

@@ -10,9 +10,9 @@ ARG ARCH=x86_64
 ARG BUILD_MACHINE_ARCH=x86_64
 ARG TRIPLET=${ARCH}-linux-gnu
 ARG BUILDARCH=amd64
-ARG WEBKIT_TAG=may20-2
+ARG WEBKIT_TAG=2023-july23
 ARG ZIG_TAG=jul1
-ARG ZIG_VERSION="0.11.0-dev.3737+9eb008717"
+ARG ZIG_VERSION="0.11.0-dev.4006+bf827d0b5"
 ARG WEBKIT_BASENAME="bun-webkit-linux-$BUILDARCH"
 
 ARG ZIG_FOLDERNAME=zig-linux-${BUILD_MACHINE_ARCH}-${ZIG_VERSION}
@@ -20,7 +20,7 @@ ARG ZIG_FILENAME=${ZIG_FOLDERNAME}.tar.xz
 ARG WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/$WEBKIT_TAG/${WEBKIT_BASENAME}.tar.gz"
 ARG ZIG_URL="https://ziglang.org/builds/${ZIG_FILENAME}"
 ARG GIT_SHA=""
-ARG BUN_BASE_VERSION=0.6
+ARG BUN_BASE_VERSION=0.7
 
 FROM bitnami/minideb:bullseye as bun-base
 
@@ -295,6 +295,27 @@ WORKDIR $BUN_DIR
 RUN cd $BUN_DIR && \
     make uws && rm -rf src/deps/uws Makefile
 
+FROM bun-base as base64
+
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
+ARG CPU_TARGET
+ENV CPU_TARGET=${CPU_TARGET}
+
+COPY Makefile ${BUN_DIR}/Makefile
+COPY src/deps/base64 ${BUN_DIR}/src/deps/base64
+
+WORKDIR $BUN_DIR
+
+RUN cd $BUN_DIR && \
+    make base64 && rm -rf src/deps/base64 Makefile
+
 FROM bun-base as picohttp
 
 ARG DEBIAN_FRONTEND
@@ -556,6 +577,7 @@ ENV JSC_BASE_DIR=${WEBKIT_DIR}
 ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
 
 COPY --from=zlib ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
+COPY --from=base64 ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=lolhtml ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/

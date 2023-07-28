@@ -2,15 +2,21 @@ import { test as bunTest, expect, describe } from "bun:test";
 import { generateClient } from "./helper.ts";
 import type { PrismaClient } from "./prisma/types.d.ts";
 
-function* TestIDGenerator() {
-  let i = 0;
+function* TestIDGenerator(): Generator<number> {
+  let i = Math.floor(Math.random() * 10000);
   while (true) {
     yield i++;
   }
 }
 const test_id = TestIDGenerator();
 
-["sqlite", "postgres", "mongodb"].forEach(async type => {
+async function cleanTestId(prisma: PrismaClient, testId: number) {
+  try {
+    await prisma.post.deleteMany({ where: { testId } });
+    await prisma.user.deleteMany({ where: { testId } });
+  } catch {}
+}
+["sqlite", "postgres" /*"mssql", "mongodb"*/].forEach(async type => {
   let Client: typeof PrismaClient;
 
   try {
@@ -26,8 +32,10 @@ const test_id = TestIDGenerator();
       label,
       async () => {
         const prisma = new Client();
+        const currentTestId = test_id.next().value;
+        await cleanTestId(prisma, currentTestId);
         try {
-          await callback(prisma, test_id.next().value);
+          await callback(prisma, currentTestId);
         } finally {
           await prisma.$disconnect();
         }

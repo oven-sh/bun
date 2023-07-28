@@ -81,6 +81,16 @@ public:
         regenerateIdentifier();
     }
 
+    ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject, ScriptExecutionContextIdentifier identifier)
+        : m_vm(vm)
+        , m_globalObject(globalObject)
+        , m_identifier(identifier)
+    {
+        addToContextsMap();
+    }
+
+    static ScriptExecutionContextIdentifier generateIdentifier();
+
     JSC::JSGlobalObject* jsGlobalObject()
     {
         return m_globalObject;
@@ -96,7 +106,15 @@ public:
         }
     }
 
-    const WTF::URL& url() const { return m_url; }
+    static ScriptExecutionContext* getScriptExecutionContext(ScriptExecutionContextIdentifier identifier);
+    void refEventLoop();
+    void unrefEventLoop();
+
+    const WTF::URL& url() const
+    {
+        return m_url;
+    }
+    bool isMainThread() const { return static_cast<unsigned>(m_identifier) == 1; }
     bool activeDOMObjectsAreSuspended() { return false; }
     bool activeDOMObjectsAreStopped() { return false; }
     bool isContextThread() { return true; }
@@ -109,6 +127,18 @@ public:
     // void reportUnhandledPromiseRejection(JSC::JSGlobalObject&, JSC::JSPromise&, RefPtr<Inspector::ScriptCallStack>&&)
     // {
     // }
+
+#if ENABLE(WEB_CRYPTO)
+    // These two methods are used when CryptoKeys are serialized into IndexedDB. As a side effect, it is also
+    // used for things that utilize the same structure clone algorithm, for example, message passing between
+    // worker and document.
+
+    // For now these will return false. In the future, we will want to implement these similar to how WorkerGlobalScope.cpp does.
+    // virtual bool wrapCryptoKey(const Vector<uint8_t>& key, Vector<uint8_t>& wrappedKey) = 0;
+    // virtual bool unwrapCryptoKey(const Vector<uint8_t>& wrappedKey, Vector<uint8_t>& key) = 0;
+    bool wrapCryptoKey(const Vector<uint8_t>& key, Vector<uint8_t>& wrappedKey) { return false; }
+    bool unwrapCryptoKey(const Vector<uint8_t>& wrappedKey, Vector<uint8_t>& key) { return false; }
+#endif
 
     static bool postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task);
 
@@ -141,6 +171,7 @@ public:
         auto* task = new EventLoopTask(WTFMove(lambda));
         postTaskOnTimeout(task, timeout);
     }
+
     template<typename... Arguments>
     void postCrossThreadTask(Arguments&&... arguments)
     {
@@ -151,6 +182,13 @@ public:
 
     JSC::VM& vm() { return *m_vm; }
     ScriptExecutionContextIdentifier identifier() const { return m_identifier; }
+
+    bool isWorker = false;
+    void setGlobalObject(JSC::JSGlobalObject* globalObject)
+    {
+        m_globalObject = globalObject;
+        m_vm = &globalObject->vm();
+    }
 
 private:
     JSC::VM* m_vm = nullptr;
@@ -188,4 +226,7 @@ public:
         }
     }
 };
+
+ScriptExecutionContext* executionContext(JSC::JSGlobalObject*);
+
 }

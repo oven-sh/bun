@@ -552,6 +552,9 @@ function callbackify(original) {
 }
 export var TextDecoder = globalThis.TextDecoder;
 export var TextEncoder = globalThis.TextEncoder;
+var toUSVString = input => {
+  return (input + "").toWellFormed();
+};
 
 Object.assign(cjs_exports, {
   format,
@@ -577,6 +580,7 @@ Object.assign(cjs_exports, {
   isBuffer,
   log,
   inherits,
+  toUSVString,
   promisify,
   callbackify,
   isDeepStrictEqual,
@@ -609,4 +613,5 @@ export {
   promisify,
   callbackify,
   isDeepStrictEqual,
+  toUSVString,
 };

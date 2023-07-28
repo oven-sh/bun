@@ -221,7 +221,7 @@ pub const Mapping = struct {
                         .msg = "Missing generated column value",
                         .err = error.MissingGeneratedColumnValue,
                         .value = generated.columns,
-                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
                     },
                 };
             }
@@ -235,7 +235,7 @@ pub const Mapping = struct {
                         .msg = "Invalid generated column value",
                         .err = error.InvalidGeneratedColumnValue,
                         .value = generated.columns,
-                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
                     },
                 };
             }
@@ -267,7 +267,7 @@ pub const Mapping = struct {
                     .fail = .{
                         .msg = "Invalid source index delta",
                         .err = error.InvalidSourceIndexDelta,
-                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
                     },
                 };
             }
@@ -279,7 +279,7 @@ pub const Mapping = struct {
                         .msg = "Invalid source index value",
                         .err = error.InvalidSourceIndexValue,
                         .value = source_index,
-                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
                     },
                 };
             }
@@ -297,7 +297,7 @@ pub const Mapping = struct {
                     .fail = .{
                         .msg = "Missing original line",
                         .err = error.MissingOriginalLine,
-                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
                     },
                 };
             }
@@ -309,7 +309,7 @@ pub const Mapping = struct {
                         .msg = "Invalid original line value",
                         .err = error.InvalidOriginalLineValue,
                         .value = original.lines,
-                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
                     },
                 };
             }
@@ -323,7 +323,7 @@ pub const Mapping = struct {
                         .msg = "Missing original column value",
                         .err = error.MissingOriginalColumnValue,
                         .value = original.columns,
-                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
                     },
                 };
             }
@@ -335,7 +335,7 @@ pub const Mapping = struct {
                         .msg = "Invalid original column value",
                         .err = error.InvalidOriginalColumnValue,
                         .value = original.columns,
-                        .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
                     },
                 };
             }
@@ -352,8 +352,8 @@ pub const Mapping = struct {
                             .fail = .{
                                 .msg = "Invalid character after mapping",
                                 .err = error.InvalidSourceMap,
-                                .value = @intCast(i32, c),
-                                .loc = .{ .start = @intCast(i32, bytes.len - remain.len) },
+                                .value = @as(i32, @intCast(c)),
+                                .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
                             },
                         };
                     },
@@ -431,7 +431,7 @@ pub const LineColumnOffset = struct {
             std.debug.assert(i < input.len);
 
             var iter = strings.CodepointIterator.initOffset(input, i);
-            var cursor = strings.CodepointIterator.Cursor{ .i = @truncate(u32, iter.i) };
+            var cursor = strings.CodepointIterator.Cursor{ .i = @as(u32, @truncate(iter.i)) };
             _ = iter.next(&cursor);
             offset = i + cursor.width;
 
@@ -596,7 +596,7 @@ pub fn appendSourceMapChunk(j: *Joiner, allocator: std.mem.Allocator, prev_end_s
     var start_state = start_state_;
     // Handle line breaks in between this mapping and the previous one
     if (start_state.generated_line > 0) {
-        j.append(try strings.repeatingAlloc(allocator, @intCast(usize, start_state.generated_line), ';'), 0, allocator);
+        j.append(try strings.repeatingAlloc(allocator, @as(usize, @intCast(start_state.generated_line)), ';'), 0, allocator);
         prev_end_state.generated_column = 0;
     }
 
@@ -668,7 +668,7 @@ pub fn encodeVLQWithLookupTable(
     value: i32,
 ) VLQ {
     return if (value >= 0 and value <= 255)
-        vlq_lookup_table[@intCast(usize, value)]
+        vlq_lookup_table[@as(usize, @intCast(value))]
     else
         encodeVLQ(value);
 }
@@ -727,9 +727,9 @@ pub fn encodeVLQ(
     var bytes: [vlq_max_in_bytes]u8 = undefined;
 
     var vlq: u32 = if (value >= 0)
-        @bitCast(u32, value << 1)
+        @as(u32, @bitCast(value << 1))
     else
-        @bitCast(u32, (-value << 1) | 1);
+        @as(u32, @bitCast((-value << 1) | 1));
 
     // source mappings are limited to i32
     comptime var i: usize = 0;
@@ -783,10 +783,10 @@ pub fn decodeVLQ(encoded: []const u8, start: usize) VLQResult {
     // inlining helps for the 1 or 2 byte case, hurts a little for larger
     comptime var i: usize = 0;
     inline while (i < vlq_max_in_bytes + 1) : (i += 1) {
-        const index = @as(u32, base64_lut[@truncate(u7, encoded_[i])]);
+        const index = @as(u32, base64_lut[@as(u7, @truncate(encoded_[i]))]);
 
         // decode a byte
-        vlq |= (index & 31) << @truncate(u5, shift);
+        vlq |= (index & 31) << @as(u5, @truncate(shift));
         shift += 5;
 
         // Stop if there's no continuation bit
@@ -794,9 +794,9 @@ pub fn decodeVLQ(encoded: []const u8, start: usize) VLQResult {
             return VLQResult{
                 .start = start + comptime (i + 1),
                 .value = if ((vlq & 1) == 0)
-                    @intCast(i32, vlq >> 1)
+                    @as(i32, @intCast(vlq >> 1))
                 else
-                    -@intCast(i32, (vlq >> 1)),
+                    -@as(i32, @intCast((vlq >> 1))),
             };
         }
     }
@@ -825,10 +825,10 @@ pub const LineOffsetTable = struct {
     pub fn findLine(byte_offsets_to_start_of_line: []const u32, loc: Logger.Loc) i32 {
         std.debug.assert(loc.start > -1); // checked by caller
         var original_line: usize = 0;
-        const loc_start = @intCast(usize, loc.start);
+        const loc_start = @as(usize, @intCast(loc.start));
 
         {
-            var count = @truncate(usize, byte_offsets_to_start_of_line.len);
+            var count = @as(usize, @truncate(byte_offsets_to_start_of_line.len));
             var i: usize = 0;
             while (count > 0) {
                 const step = count / 2;
@@ -842,13 +842,13 @@ pub const LineOffsetTable = struct {
             }
         }
 
-        return @intCast(i32, original_line) - 1;
+        return @as(i32, @intCast(original_line)) - 1;
     }
 
     pub fn generate(allocator: std.mem.Allocator, contents: []const u8, approximate_line_count: i32) List {
         var list = List{};
         // Preallocate the top-level table using the approximate line count from the lexer
-        list.ensureUnusedCapacity(allocator, @intCast(usize, @max(approximate_line_count, 1))) catch unreachable;
+        list.ensureUnusedCapacity(allocator, @as(usize, @intCast(@max(approximate_line_count, 1)))) catch unreachable;
         var column: i32 = 0;
         var byte_offset_to_first_non_ascii: u32 = 0;
         var column_byte_offset: u32 = 0;
@@ -869,9 +869,9 @@ pub const LineOffsetTable = struct {
             const cp_len = @as(usize, len_);
 
             if (column == 0) {
-                line_byte_offset = @truncate(
+                line_byte_offset = @as(
                     u32,
-                    @intFromPtr(remaining.ptr) - @intFromPtr(contents.ptr),
+                    @truncate(@intFromPtr(remaining.ptr) - @intFromPtr(contents.ptr)),
                 );
             }
 
@@ -884,23 +884,23 @@ pub const LineOffsetTable = struct {
                 // we have a non-ASCII character, so we need to keep track of the
                 // mapping from byte offsets to UTF-16 code unit counts
                 columns_for_non_ascii.appendAssumeCapacity(column);
-                column_byte_offset = @intCast(
+                column_byte_offset = @as(
                     u32,
-                    (@intFromPtr(
+                    @intCast((@intFromPtr(
                         remaining.ptr,
                     ) - @intFromPtr(
                         contents.ptr,
-                    )) - line_byte_offset,
+                    )) - line_byte_offset),
                 );
                 byte_offset_to_first_non_ascii = line_byte_offset;
             }
 
             // Update the per-byte column offsets
             if (columns_for_non_ascii.items.len > 0) {
-                const line_bytes_so_far = @intCast(u32, @truncate(
+                const line_bytes_so_far = @as(u32, @intCast(@as(
                     u32,
-                    @intFromPtr(remaining.ptr) - @intFromPtr(contents.ptr),
-                )) - line_byte_offset;
+                    @truncate(@intFromPtr(remaining.ptr) - @intFromPtr(contents.ptr)),
+                ))) - line_byte_offset;
                 columns_for_non_ascii.ensureUnusedCapacity((line_bytes_so_far - column_byte_offset) + 1) catch unreachable;
                 while (column_byte_offset <= line_bytes_so_far) : (column_byte_offset += 1) {
                     columns_for_non_ascii.appendAssumeCapacity(column);
@@ -910,11 +910,11 @@ pub const LineOffsetTable = struct {
                     (@max('\r', '\n') + 1)...127 => {
                         // skip ahead to the next newline or non-ascii character
                         if (strings.indexOfNewlineOrNonASCIICheckStart(remaining, @as(u32, len_), false)) |j| {
-                            column += @intCast(i32, j);
+                            column += @as(i32, @intCast(j));
                             remaining = remaining[j..];
                         } else {
                             // if there are no more lines, we are done!
-                            column += @intCast(i32, remaining.len);
+                            column += @as(i32, @intCast(remaining.len));
                             remaining = remaining[remaining.len..];
                         }
 
@@ -965,11 +965,11 @@ pub const LineOffsetTable = struct {
 
         // Mark the start of the next line
         if (column == 0) {
-            line_byte_offset = @intCast(u32, contents.len);
+            line_byte_offset = @as(u32, @intCast(contents.len));
         }
 
         if (columns_for_non_ascii.items.len > 0) {
-            const line_bytes_so_far = @intCast(u32, contents.len) - line_byte_offset;
+            const line_bytes_so_far = @as(u32, @intCast(contents.len)) - line_byte_offset;
             columns_for_non_ascii.ensureUnusedCapacity((line_bytes_so_far - column_byte_offset) + 1) catch unreachable;
             while (column_byte_offset <= line_bytes_so_far) : (column_byte_offset += 1) {
                 columns_for_non_ascii.appendAssumeCapacity(column);
@@ -1216,8 +1216,8 @@ pub const Chunk = struct {
             pub noinline fn generateChunk(b: *ThisBuilder, output: []const u8) Chunk {
                 b.updateGeneratedLineAndColumn(output);
                 if (b.prepend_count) {
-                    b.source_map.getBuffer().list.items[0..8].* = @bitCast([8]u8, b.source_map.getBuffer().list.items.len);
-                    b.source_map.getBuffer().list.items[8..16].* = @bitCast([8]u8, b.source_map.getCount());
+                    b.source_map.getBuffer().list.items[0..8].* = @as([8]u8, @bitCast(b.source_map.getBuffer().list.items.len));
+                    b.source_map.getBuffer().list.items[8..16].* = @as([8]u8, @bitCast(b.source_map.getCount()));
                 }
                 return Chunk{
                     .buffer = b.source_map.getBuffer(),
@@ -1235,7 +1235,7 @@ pub const Chunk = struct {
                 var needs_mapping = b.cover_lines_without_mappings and !b.line_starts_with_mapping and b.has_prev_state;
 
                 var i: usize = 0;
-                const n = @intCast(usize, slice.len);
+                const n = @as(usize, @intCast(slice.len));
                 var c: i32 = 0;
                 while (i < n) {
                     const len = strings.wtf8ByteSequenceLengthWithInvalid(slice[i]);
@@ -1244,12 +1244,12 @@ pub const Chunk = struct {
 
                     switch (c) {
                         14...127 => {
-                            if (strings.indexOfNewlineOrNonASCII(slice, @intCast(u32, i))) |j| {
-                                b.generated_column += @intCast(i32, (@as(usize, j) - i) + 1);
+                            if (strings.indexOfNewlineOrNonASCII(slice, @as(u32, @intCast(i)))) |j| {
+                                b.generated_column += @as(i32, @intCast((@as(usize, j) - i) + 1));
                                 i = j;
                                 continue;
                             } else {
-                                b.generated_column += @intCast(i32, slice[i..].len) + 1;
+                                b.generated_column += @as(i32, @intCast(slice[i..].len)) + 1;
                                 i = n;
                                 break;
                             }
@@ -1293,7 +1293,7 @@ pub const Chunk = struct {
                     }
                 }
 
-                b.last_generated_update = @truncate(u32, output.len);
+                b.last_generated_update = @as(u32, @truncate(output.len));
             }
 
             pub fn appendMapping(b: *ThisBuilder, current_state_: SourceMapState) void {
@@ -1327,12 +1327,12 @@ pub const Chunk = struct {
                 b.prev_loc = loc;
                 const list = b.line_offset_tables;
                 const original_line = LineOffsetTable.findLine(b.line_offset_table_byte_offset_list, loc);
-                const line = list.get(@intCast(usize, @max(original_line, 0)));
+                const line = list.get(@as(usize, @intCast(@max(original_line, 0))));
 
                 // Use the line to compute the column
-                var original_column = loc.start - @intCast(i32, line.byte_offset_to_start_of_line);
-                if (line.columns_for_non_ascii.len > 0 and original_column >= @intCast(i32, line.byte_offset_to_first_non_ascii)) {
-                    original_column = line.columns_for_non_ascii.ptr[@intCast(u32, original_column) - line.byte_offset_to_first_non_ascii];
+                var original_column = loc.start - @as(i32, @intCast(line.byte_offset_to_start_of_line));
+                if (line.columns_for_non_ascii.len > 0 and original_column >= @as(i32, @intCast(line.byte_offset_to_first_non_ascii))) {
+                    original_column = line.columns_for_non_ascii.ptr[@as(u32, @intCast(original_column)) - line.byte_offset_to_first_non_ascii];
                 }
 
                 b.updateGeneratedLineAndColumn(output);

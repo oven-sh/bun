@@ -37,7 +37,9 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForCommonJSModuleRecord;
     std::unique_ptr<IsoSubspace> m_subspaceForJSMockImplementation;
     std::unique_ptr<IsoSubspace> m_subspaceForJSMockFunction;
+    std::unique_ptr<IsoSubspace> m_subspaceForAsyncContextFrame;
     std::unique_ptr<IsoSubspace> m_subspaceForMockWithImplementationCleanupData;
+    std::unique_ptr<IsoSubspace> m_subspaceForProcessObject;
 
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
@@ -851,7 +853,7 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForWebFakeXRInputController;
     // std::unique_ptr<IsoSubspace> m_subspaceForWebXRTest;
     // std::unique_ptr<IsoSubspace> m_subspaceForDedicatedWorkerGlobalScope;
-    // std::unique_ptr<IsoSubspace> m_subspaceForWorker;
+    std::unique_ptr<IsoSubspace> m_subspaceForWorker;
     std::unique_ptr<IsoSubspace> m_subspaceForWorkerGlobalScope;
     // std::unique_ptr<IsoSubspace> m_subspaceForWorkerLocation;
     // std::unique_ptr<IsoSubspace> m_subspaceForExtendableEvent;

@@ -47,7 +47,7 @@ export function createWritableStream(
   highWaterMark,
   sizeAlgorithm,
 ) {
-  $assert(typeof highWaterMark === "number" && !isNaN(highWaterMark) && highWaterMark >= 0);
+  $assert(typeof highWaterMark === "number" && highWaterMark === highWaterMark && highWaterMark >= 0);
 
   const internalStream = {};
   $initializeWritableStreamSlots(internalStream, {});
@@ -162,20 +162,20 @@ export function setUpWritableStreamDefaultWriter(writer, stream) {
   const state = $getByIdDirectPrivate(stream, "state");
   if (state === "writable") {
     if ($writableStreamCloseQueuedOrInFlight(stream) || !$getByIdDirectPrivate(stream, "backpressure"))
-      readyPromiseCapability.$resolve.$call();
+      readyPromiseCapability.resolve.$call();
   } else if (state === "erroring") {
-    readyPromiseCapability.$reject.$call(undefined, $getByIdDirectPrivate(stream, "storedError"));
-    $markPromiseAsHandled(readyPromiseCapability.$promise);
+    readyPromiseCapability.reject.$call(undefined, $getByIdDirectPrivate(stream, "storedError"));
+    $markPromiseAsHandled(readyPromiseCapability.promise);
   } else if (state === "closed") {
-    readyPromiseCapability.$resolve.$call();
-    closedPromiseCapability.$resolve.$call();
+    readyPromiseCapability.resolve.$call();
+    closedPromiseCapability.resolve.$call();
   } else {
     $assert(state === "errored");
     const storedError = $getByIdDirectPrivate(stream, "storedError");
-    readyPromiseCapability.$reject.$call(undefined, storedError);
-    $markPromiseAsHandled(readyPromiseCapability.$promise);
-    closedPromiseCapability.$reject.$call(undefined, storedError);
-    $markPromiseAsHandled(closedPromiseCapability.$promise);
+    readyPromiseCapability.reject.$call(undefined, storedError);
+    $markPromiseAsHandled(readyPromiseCapability.promise);
+    closedPromiseCapability.reject.$call(undefined, storedError);
+    $markPromiseAsHandled(closedPromiseCapability.promise);
   }
 }
 
@@ -184,7 +184,7 @@ export function writableStreamAbort(stream, reason) {
   if (state === "closed" || state === "errored") return Promise.$resolve();
 
   const pendingAbortRequest = $getByIdDirectPrivate(stream, "pendingAbortRequest");
-  if (pendingAbortRequest !== undefined) return pendingAbortRequest.promise.$promise;
+  if (pendingAbortRequest !== undefined) return pendingAbortRequest.promise.promise;
 
   $assert(state === "writable" || state === "erroring");
   let wasAlreadyErroring = false;
@@ -201,7 +201,7 @@ export function writableStreamAbort(stream, reason) {
   });
 
   if (!wasAlreadyErroring) $writableStreamStartErroring(stream, reason);
-  return abortPromiseCapability.$promise;
+  return abortPromiseCapability.promise;
 }
 
 export function writableStreamClose(stream) {
@@ -217,11 +217,11 @@ export function writableStreamClose(stream) {
 
   const writer = $getByIdDirectPrivate(stream, "writer");
   if (writer !== undefined && $getByIdDirectPrivate(stream, "backpressure") && state === "writable")
-    $getByIdDirectPrivate(writer, "readyPromise").$resolve.$call();
+    $getByIdDirectPrivate(writer, "readyPromise").resolve.$call();
 
   $writableStreamDefaultControllerClose($getByIdDirectPrivate(stream, "controller"));
 
-  return closePromiseCapability.$promise;
+  return closePromiseCapability.promise;
 }
 
 export function writableStreamAddWriteRequest(stream) {
@@ -231,7 +231,7 @@ export function writableStreamAddWriteRequest(stream) {
   const writePromiseCapability = $newPromiseCapability(Promise);
   const writeRequests = $getByIdDirectPrivate(stream, "writeRequests");
   writeRequests.push(writePromiseCapability);
-  return writePromiseCapability.$promise;
+  return writePromiseCapability.promise;
 }
 
 export function writableStreamCloseQueuedOrInFlight(stream) {
@@ -264,7 +264,7 @@ export function writableStreamFinishErroring(stream) {
   const storedError = $getByIdDirectPrivate(stream, "storedError");
   const requests = $getByIdDirectPrivate(stream, "writeRequests");
   for (var request = requests.shift(); request; request = requests.shift())
-    request.$reject.$call(undefined, storedError);
+    request.reject.$call(undefined, storedError);
 
   // TODO: is this still necessary?
   $putByIdDirectPrivate(stream, "writeRequests", $createFIFO());
@@ -277,7 +277,7 @@ export function writableStreamFinishErroring(stream) {
 
   $putByIdDirectPrivate(stream, "pendingAbortRequest", undefined);
   if (abortRequest.wasAlreadyErroring) {
-    abortRequest.promise.$reject.$call(undefined, storedError);
+    abortRequest.promise.reject.$call(undefined, storedError);
     $writableStreamRejectCloseAndClosedPromiseIfNeeded(stream);
     return;
   }
@@ -286,11 +286,11 @@ export function writableStreamFinishErroring(stream) {
     .$call(undefined, abortRequest.reason)
     .$then(
       () => {
-        abortRequest.promise.$resolve.$call();
+        abortRequest.promise.resolve.$call();
         $writableStreamRejectCloseAndClosedPromiseIfNeeded(stream);
       },
       reason => {
-        abortRequest.promise.$reject.$call(undefined, reason);
+        abortRequest.promise.reject.$call(undefined, reason);
         $writableStreamRejectCloseAndClosedPromiseIfNeeded(stream);
       },
     );
@@ -298,7 +298,7 @@ export function writableStreamFinishErroring(stream) {
 
 export function writableStreamFinishInFlightClose(stream) {
   const inFlightCloseRequest = $getByIdDirectPrivate(stream, "inFlightCloseRequest");
-  inFlightCloseRequest.$resolve.$call();
+  inFlightCloseRequest.resolve.$call();
 
   $putByIdDirectPrivate(stream, "inFlightCloseRequest", undefined);
 
@@ -309,7 +309,7 @@ export function writableStreamFinishInFlightClose(stream) {
     $putByIdDirectPrivate(stream, "storedError", undefined);
     const abortRequest = $getByIdDirectPrivate(stream, "pendingAbortRequest");
     if (abortRequest !== undefined) {
-      abortRequest.promise.$resolve.$call();
+      abortRequest.promise.resolve.$call();
       $putByIdDirectPrivate(stream, "pendingAbortRequest", undefined);
     }
   }
@@ -317,7 +317,7 @@ export function writableStreamFinishInFlightClose(stream) {
   $putByIdDirectPrivate(stream, "state", "closed");
 
   const writer = $getByIdDirectPrivate(stream, "writer");
-  if (writer !== undefined) $getByIdDirectPrivate(writer, "closedPromise").$resolve.$call();
+  if (writer !== undefined) $getByIdDirectPrivate(writer, "closedPromise").resolve.$call();
 
   $assert($getByIdDirectPrivate(stream, "pendingAbortRequest") === undefined);
   $assert($getByIdDirectPrivate(stream, "storedError") === undefined);
@@ -326,7 +326,7 @@ export function writableStreamFinishInFlightClose(stream) {
 export function writableStreamFinishInFlightCloseWithError(stream, error) {
   const inFlightCloseRequest = $getByIdDirectPrivate(stream, "inFlightCloseRequest");
   $assert(inFlightCloseRequest !== undefined);
-  inFlightCloseRequest.$reject.$call(undefined, error);
+  inFlightCloseRequest.reject.$call(undefined, error);
 
   $putByIdDirectPrivate(stream, "inFlightCloseRequest", undefined);
 
@@ -335,7 +335,7 @@ export function writableStreamFinishInFlightCloseWithError(stream, error) {
 
   const abortRequest = $getByIdDirectPrivate(stream, "pendingAbortRequest");
   if (abortRequest !== undefined) {
-    abortRequest.promise.$reject.$call(undefined, error);
+    abortRequest.promise.reject.$call(undefined, error);
     $putByIdDirectPrivate(stream, "pendingAbortRequest", undefined);
   }
 
@@ -345,7 +345,7 @@ export function writableStreamFinishInFlightCloseWithError(stream, error) {
 export function writableStreamFinishInFlightWrite(stream) {
   const inFlightWriteRequest = $getByIdDirectPrivate(stream, "inFlightWriteRequest");
   $assert(inFlightWriteRequest !== undefined);
-  inFlightWriteRequest.$resolve.$call();
+  inFlightWriteRequest.resolve.$call();
 
   $putByIdDirectPrivate(stream, "inFlightWriteRequest", undefined);
 }
@@ -353,7 +353,7 @@ export function writableStreamFinishInFlightWrite(stream) {
 export function writableStreamFinishInFlightWriteWithError(stream, error) {
   const inFlightWriteRequest = $getByIdDirectPrivate(stream, "inFlightWriteRequest");
   $assert(inFlightWriteRequest !== undefined);
-  inFlightWriteRequest.$reject.$call(undefined, error);
+  inFlightWriteRequest.reject.$call(undefined, error);
 
   $putByIdDirectPrivate(stream, "inFlightWriteRequest", undefined);
 
@@ -396,15 +396,15 @@ export function writableStreamRejectCloseAndClosedPromiseIfNeeded(stream) {
   const closeRequest = $getByIdDirectPrivate(stream, "closeRequest");
   if (closeRequest !== undefined) {
     $assert($getByIdDirectPrivate(stream, "inFlightCloseRequest") === undefined);
-    closeRequest.$reject.$call(undefined, storedError);
+    closeRequest.reject.$call(undefined, storedError);
     $putByIdDirectPrivate(stream, "closeRequest", undefined);
   }
 
   const writer = $getByIdDirectPrivate(stream, "writer");
   if (writer !== undefined) {
     const closedPromise = $getByIdDirectPrivate(writer, "closedPromise");
-    closedPromise.$reject.$call(undefined, storedError);
-    $markPromiseAsHandled(closedPromise.$promise);
+    closedPromise.reject.$call(undefined, storedError);
+    $markPromiseAsHandled(closedPromise.promise);
   }
 }
 
@@ -432,7 +432,7 @@ export function writableStreamUpdateBackpressure(stream, backpressure) {
   const writer = $getByIdDirectPrivate(stream, "writer");
   if (writer !== undefined && backpressure !== $getByIdDirectPrivate(stream, "backpressure")) {
     if (backpressure) $putByIdDirectPrivate(writer, "readyPromise", $newPromiseCapability(Promise));
-    else $getByIdDirectPrivate(writer, "readyPromise").$resolve.$call();
+    else $getByIdDirectPrivate(writer, "readyPromise").resolve.$call();
   }
   $putByIdDirectPrivate(stream, "backpressure", backpressure);
 }
@@ -465,29 +465,29 @@ export function writableStreamDefaultWriterCloseWithErrorPropagation(writer) {
 
 export function writableStreamDefaultWriterEnsureClosedPromiseRejected(writer, error) {
   let closedPromiseCapability = $getByIdDirectPrivate(writer, "closedPromise");
-  let closedPromise = closedPromiseCapability.$promise;
+  let closedPromise = closedPromiseCapability.promise;
 
   if (($getPromiseInternalField(closedPromise, $promiseFieldFlags) & $promiseStateMask) !== $promiseStatePending) {
     closedPromiseCapability = $newPromiseCapability(Promise);
-    closedPromise = closedPromiseCapability.$promise;
+    closedPromise = closedPromiseCapability.promise;
     $putByIdDirectPrivate(writer, "closedPromise", closedPromiseCapability);
   }
 
-  closedPromiseCapability.$reject.$call(undefined, error);
+  closedPromiseCapability.reject.$call(undefined, error);
   $markPromiseAsHandled(closedPromise);
 }
 
 export function writableStreamDefaultWriterEnsureReadyPromiseRejected(writer, error) {
   let readyPromiseCapability = $getByIdDirectPrivate(writer, "readyPromise");
-  let readyPromise = readyPromiseCapability.$promise;
+  let readyPromise = readyPromiseCapability.promise;
 
   if (($getPromiseInternalField(readyPromise, $promiseFieldFlags) & $promiseStateMask) !== $promiseStatePending) {
     readyPromiseCapability = $newPromiseCapability(Promise);
-    readyPromise = readyPromiseCapability.$promise;
+    readyPromise = readyPromiseCapability.promise;
     $putByIdDirectPrivate(writer, "readyPromise", readyPromiseCapability);
   }
 
-  readyPromiseCapability.$reject.$call(undefined, error);
+  readyPromiseCapability.reject.$call(undefined, error);
   $markPromiseAsHandled(readyPromise);
 }
 
@@ -610,16 +610,17 @@ export function setUpWritableStreamDefaultControllerFromUnderlyingSink(
   highWaterMark,
   sizeAlgorithm,
 ) {
+  // @ts-ignore
   const controller = new $WritableStreamDefaultController();
 
-  let startAlgorithm = () => {};
-  let writeAlgorithm = () => {
+  let startAlgorithm: (...args: any[]) => any = () => {};
+  let writeAlgorithm: (...args: any[]) => any = () => {
     return Promise.$resolve();
   };
-  let closeAlgorithm = () => {
+  let closeAlgorithm: (...args: any[]) => any = () => {
     return Promise.$resolve();
   };
-  let abortAlgorithm = () => {
+  let abortAlgorithm: (...args: any[]) => any = () => {
     return Promise.$resolve();
   };
 

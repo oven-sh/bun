@@ -72,11 +72,11 @@ NS.then(({ fn: fn2 }) => {
 "
 `;
 
-exports[`Bun.build BuildArtifact properties: hash 1`] = `"6d09d5a2f0a15119"`;
+exports[`Bun.build BuildArtifact properties: hash 1`] = `"eed0054b0aa2037b"`;
 
 exports[`Bun.build BuildArtifact properties + entry.naming: hash 1`] = `"82b2e1b4a1117627"`;
 
-exports[`Bun.build BuildArtifact properties sourcemap: hash index.js 1`] = `"6d09d5a2f0a15119"`;
+exports[`Bun.build BuildArtifact properties sourcemap: hash index.js 1`] = `"eed0054b0aa2037b"`;
 
 exports[`Bun.build BuildArtifact properties sourcemap: hash index.js.map 1`] = `"0000000000000000"`;
 

@@ -42,7 +42,7 @@ const HiveArray = @import("./hive_array.zig").HiveArray;
 const Batch = NetworkThread.Batch;
 const TaggedPointerUnion = @import("./tagged_pointer.zig").TaggedPointerUnion;
 const DeadSocket = opaque {};
-var dead_socket = @ptrFromInt(*DeadSocket, 1);
+var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
 //TODO: this needs to be freed when Worker Threads are implemented
 var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, *uws.Socket).init(bun.default_allocator);
 var async_http_id: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0);
@@ -99,19 +99,19 @@ pub const Sendfile = struct {
     ) Status {
         const adjusted_count_temporary = @min(@as(u64, this.remain), @as(u63, std.math.maxInt(u63)));
         // TODO we should not need this int cast; improve the return type of `@min`
-        const adjusted_count = @intCast(u63, adjusted_count_temporary);
+        const adjusted_count = @as(u63, @intCast(adjusted_count_temporary));
 
         if (Environment.isLinux) {
-            var signed_offset = @intCast(i64, this.offset);
+            var signed_offset = @as(i64, @intCast(this.offset));
             const begin = this.offset;
             const val =
                 // this does the syscall directly, without libc
                 std.os.linux.sendfile(socket.fd(), this.fd, &signed_offset, this.remain);
-            this.offset = @intCast(u64, signed_offset);
+            this.offset = @as(u64, @intCast(signed_offset));
 
             const errcode = std.os.linux.getErrno(val);
 
-            this.remain -|= @intCast(u64, this.offset -| begin);
+            this.remain -|= @as(u64, @intCast(this.offset -| begin));
 
             if (errcode != .SUCCESS or this.remain == 0 or val == 0) {
                 if (errcode == .SUCCESS) {
@@ -122,7 +122,7 @@ pub const Sendfile = struct {
             }
         } else {
             var sbytes: std.os.off_t = adjusted_count;
-            const signed_offset = @bitCast(i64, @as(u64, this.offset));
+            const signed_offset = @as(i64, @bitCast(@as(u64, this.offset)));
             const errcode = std.c.getErrno(std.c.sendfile(
                 this.fd,
                 socket.fd(),
@@ -132,7 +132,7 @@ pub const Sendfile = struct {
                 null,
                 0,
             ));
-            const wrote = @intCast(u64, sbytes);
+            const wrote = @as(u64, @intCast(sbytes));
             this.offset +|= wrote;
             this.remain -|= wrote;
             if (errcode != .AGAIN or this.remain == 0 or sbytes == 0) {
@@ -200,7 +200,7 @@ const ProxyTunnel = struct {
             var out_bio: *BoringSSL.BIO = undefined;
             if (comptime is_ssl) {
                 //TLS -> TLS
-                var proxy_ssl: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, socket.getNativeHandle());
+                var proxy_ssl: *BoringSSL.SSL = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
                 //create new SSL BIO
                 out_bio = BoringSSL.BIO_new(BoringSSL.BIO_f_ssl()) orelse unreachable;
                 //chain SSL bio with proxy BIO
@@ -208,7 +208,7 @@ const ProxyTunnel = struct {
                 _ = BoringSSL.BIO_push(out_bio, proxy_bio);
             } else {
                 // socket output bio for non-TLS -> TLS
-                var fd = @intCast(c_int, @intFromPtr(socket.getNativeHandle()));
+                var fd = @as(c_int, @intCast(@intFromPtr(socket.getNativeHandle())));
                 out_bio = BoringSSL.BIO_new_fd(fd, BoringSSL.BIO_NOCLOSE);
             }
 
@@ -315,13 +315,13 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 unreachable;
             }
 
-            return @ptrCast(*BoringSSL.SSL_CTX, this.us_socket_context.getNativeHandle(true));
+            return @as(*BoringSSL.SSL_CTX, @ptrCast(this.us_socket_context.getNativeHandle(true)));
         }
 
         pub fn init(this: *@This()) !void {
             var opts: uws.us_socket_context_options_t = undefined;
             const size = @sizeOf(uws.us_socket_context_options_t);
-            @memset(@ptrCast([*]u8, &opts)[0..size], 0);
+            @memset(@as([*]u8, @ptrCast(&opts))[0..size], 0);
             this.us_socket_context = uws.us_create_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts).?;
             if (comptime ssl) {
                 this.sslCtx().setup();
@@ -356,7 +356,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
                     pending.http_socket = socket;
                     @memcpy(pending.hostname_buf[0..hostname.len], hostname);
-                    pending.hostname_len = @truncate(u8, hostname.len);
+                    pending.hostname_len = @as(u8, @truncate(hostname.len));
                     pending.port = port;
 
                     log("Keep-Alive release {s}:{d} (0x{})", .{ hostname, port, @intFromPtr(socket.socket) });
@@ -484,10 +484,10 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 ptr: *anyopaque,
                 socket: HTTPSocket,
             ) void {
-                var tagged = ActiveSocket.from(@ptrCast(**anyopaque, @alignCast(@alignOf(**anyopaque), ptr)).*);
+                var tagged = ActiveSocket.from(@as(**anyopaque, @ptrCast(@alignCast(ptr))).*);
                 {
                     @setRuntimeSafety(false);
-                    socket.ext(**anyopaque).?.* = @ptrCast(**anyopaque, @alignCast(@alignOf(**anyopaque), ActiveSocket.init(dead_socket).ptrUnsafe()));
+                    socket.ext(**anyopaque).?.* = @as(**anyopaque, @ptrCast(@alignCast(ActiveSocket.init(dead_socket).ptrUnsafe())));
                 }
 
                 if (tagged.get(HTTPClient)) |client| {
@@ -512,7 +512,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             var iter = this.pending_sockets.available.iterator(.{ .kind = .unset });
 
             while (iter.next()) |pending_socket_index| {
-                var socket = this.pending_sockets.at(@intCast(u16, pending_socket_index));
+                var socket = this.pending_sockets.at(@as(u16, @intCast(pending_socket_index)));
                 if (socket.port != port) {
                     continue;
                 }
@@ -708,7 +708,7 @@ pub const HTTPThread = struct {
             this.loop.run();
             if (comptime Environment.isDebug) {
                 var end = std.time.nanoTimestamp();
-                threadlog("Waited {any}\n", .{std.fmt.fmtDurationSigned(@truncate(i64, end - start_time))});
+                threadlog("Waited {any}\n", .{std.fmt.fmtDurationSigned(@as(i64, @truncate(end - start_time)))});
                 Output.flush();
             }
         }
@@ -768,7 +768,7 @@ pub fn onOpen(
     }
 
     if (comptime is_ssl) {
-        var ssl: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, socket.getNativeHandle());
+        var ssl: *BoringSSL.SSL = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
         if (!ssl.isInitFinished()) {
             var _hostname = client.hostname orelse client.url.hostname;
             if (client.http_proxy) |proxy| {
@@ -1095,7 +1095,7 @@ pub const InternalState = struct {
             this.content_encoding_i = std.math.maxInt(@TypeOf(this.content_encoding_i));
         }
 
-        this.body_size = @truncate(usize, body_out_str.list.items.len);
+        this.body_size = @as(usize, @truncate(body_out_str.list.items.len));
     }
 };
 
@@ -1629,7 +1629,6 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var override_accept_encoding = false;
     var override_accept_header = false;
     var override_host_header = false;
-
     var override_user_agent = false;
 
     for (header_names, 0..) |head, i| {
@@ -1710,7 +1709,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
         header_count += 1;
     }
 
-    if (body_len > 0) {
+    if (body_len > 0 or this.method.hasRequestBody()) {
         request_headers_buf[header_count] = .{
             .name = content_length_header_name,
             .value = std.fmt.bufPrint(&this.request_content_len_buf, "{d}", .{body_len}) catch "0",
@@ -1898,7 +1897,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 return;
             }
 
-            this.state.request_sent_len += @intCast(usize, amount);
+            this.state.request_sent_len += @as(usize, @intCast(amount));
             const has_sent_headers = this.state.request_sent_len >= headers_len;
 
             if (has_sent_headers and this.state.request_body.len > 0) {
@@ -1924,7 +1923,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 );
 
                 // we sent everything, but there's some body leftover
-                if (amount == @intCast(c_int, to_send.len)) {
+                if (amount == @as(c_int, @intCast(to_send.len))) {
                     this.onWritable(false, is_ssl, socket);
                 }
             } else {
@@ -1943,8 +1942,8 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                         return;
                     }
 
-                    this.state.request_sent_len += @intCast(usize, amount);
-                    this.state.request_body = this.state.request_body[@intCast(usize, amount)..];
+                    this.state.request_sent_len += @as(usize, @intCast(amount));
+                    this.state.request_body = this.state.request_body[@as(usize, @intCast(amount))..];
 
                     if (this.state.request_body.len == 0) {
                         this.state.request_stage = .done;
@@ -1986,8 +1985,8 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 return;
             };
 
-            this.state.request_sent_len += @intCast(usize, amount);
-            this.state.request_body = this.state.request_body[@intCast(usize, amount)..];
+            this.state.request_sent_len += @as(usize, @intCast(amount));
+            this.state.request_body = this.state.request_body[@as(usize, @intCast(amount))..];
 
             if (this.state.request_body.len == 0) {
                 this.state.request_stage = .done;
@@ -2047,7 +2046,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 }
             }
 
-            this.state.request_sent_len += @intCast(usize, amount);
+            this.state.request_sent_len += @as(usize, @intCast(amount));
             const has_sent_headers = this.state.request_sent_len >= headers_len;
 
             if (has_sent_headers and this.state.request_body.len > 0) {
@@ -2066,7 +2065,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 std.debug.assert(this.state.request_body.len > 0);
 
                 // we sent everything, but there's some body leftover
-                if (amount == @intCast(c_int, to_send.len)) {
+                if (amount == @as(c_int, @intCast(to_send.len))) {
                     this.onWritable(false, is_ssl, socket);
                 }
             } else {
@@ -2201,7 +2200,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
 
             this.state.pending_response = response;
 
-            var body_buf = to_read[@min(@intCast(usize, response.bytes_read), to_read.len)..];
+            var body_buf = to_read[@min(@as(usize, @intCast(response.bytes_read)), to_read.len)..];
 
             var deferred_redirect: ?*URLBufferPool.Node = null;
             const can_continue = this.handleResponseMetadata(
@@ -2541,7 +2540,7 @@ pub const HTTPClientResult = struct {
                 }
 
                 pub fn wrapped_callback(ptr: *anyopaque, result: HTTPClientResult) void {
-                    var casted = @ptrCast(Type, @alignCast(std.meta.alignment(Type), ptr));
+                    var casted = @as(Type, @ptrCast(@alignCast(ptr)));
                     @call(.always_inline, callback, .{ casted, result });
                 }
             };
@@ -2583,8 +2582,8 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
     if (this.state.encoding.isCompressed()) {
         var body_buffer = this.state.body_out_str.?;
         if (body_buffer.list.capacity == 0) {
-            const min = @min(@ceil(@floatFromInt(f64, incoming_data.len) * 1.5), @as(f64, 1024 * 1024 * 2));
-            try body_buffer.growBy(@max(@intFromFloat(usize, min), 32));
+            const min = @min(@ceil(@as(f64, @floatFromInt(incoming_data.len)) * 1.5), @as(f64, 1024 * 1024 * 2));
+            try body_buffer.growBy(@max(@as(usize, @intFromFloat(min)), 32));
         }
 
         try ZlibPool.decompress(incoming_data, body_buffer, default_allocator);
@@ -2799,12 +2798,10 @@ pub fn handleResponseMetadata(
             hashHeaderConst("Content-Encoding") => {
                 if (strings.eqlComptime(header.value, "gzip")) {
                     this.state.encoding = Encoding.gzip;
-                    this.state.content_encoding_i = @truncate(u8, header_i);
+                    this.state.content_encoding_i = @as(u8, @truncate(header_i));
                 } else if (strings.eqlComptime(header.value, "deflate")) {
                     this.state.encoding = Encoding.deflate;
-                    this.state.content_encoding_i = @truncate(u8, header_i);
-                } else if (!strings.eqlComptime(header.value, "identity")) {
-                    return error.UnsupportedContentEncoding;
+                    this.state.content_encoding_i = @as(u8, @truncate(header_i));
                 }
             },
             hashHeaderConst("Transfer-Encoding") => {

@@ -66,7 +66,7 @@ pub const DefineData = struct {
     }
 
     pub fn from_mergable_input(defines: RawDefines, user_defines: *UserDefines, log: *logger.Log, allocator: std.mem.Allocator) !void {
-        try user_defines.ensureUnusedCapacity(@truncate(u32, defines.count()));
+        try user_defines.ensureUnusedCapacity(@as(u32, @truncate(defines.count())));
         var iter = defines.iterator();
         while (iter.next()) |entry| {
             var splitter = std.mem.split(u8, entry.key_ptr.*, ".");

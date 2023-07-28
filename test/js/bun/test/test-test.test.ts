@@ -27,7 +27,7 @@ it("shouldn't crash when async test runner callback throws", async () => {
   })
 `;
 
-  const test_dir = realpathSync(await mkdtemp(join(tmpdir(), "test")));
+  const test_dir = await mkdtemp(join(tmp, "test"));
   try {
     await writeFile(join(test_dir, "bad.test.js"), code);
     const { stdout, stderr, exited } = spawn({
@@ -247,7 +247,7 @@ test("test async exceptions fail tests", () => {
   });
 
   `;
-  const dir = join(tmpdir(), "test-throwing-bun");
+  const dir = join(tmp, "test-throwing-bun");
   const filepath = join(dir, "test-throwing-eventemitter.test.js");
   rmSync(filepath, {
     force: true,
@@ -259,7 +259,7 @@ test("test async exceptions fail tests", () => {
   writeFileSync(filepath, code);
 
   const { stderr, exitCode } = spawnSync([bunExe(), "test", "test-throwing-eventemitter"], {
-    cwd: realpathSync(dir),
+    cwd: dir,
     env: bunEnv,
   });
 
@@ -277,7 +277,7 @@ test("test async exceptions fail tests", () => {
 });
 
 it("should return non-zero exit code for invalid syntax", async () => {
-  const test_dir = realpathSync(await mkdtemp(join(tmpdir(), "test")));
+  const test_dir = await mkdtemp(join(tmp, "test"));
   try {
     await writeFile(join(test_dir, "bad.test.js"), "!!!");
     const { stdout, stderr, exited } = spawn({
@@ -298,6 +298,34 @@ it("should return non-zero exit code for invalid syntax", async () => {
     expect(await exited).toBe(1);
   } finally {
     await rm(test_dir, { force: true, recursive: true });
+  }
+});
+
+it("invalid syntax counts towards bail", async () => {
+  const test_dir = await mkdtemp(join(tmp, "test"));
+  try {
+    await writeFile(join(test_dir, "bad1.test.js"), "!!!");
+    await writeFile(join(test_dir, "bad2.test.js"), "!!!");
+    await writeFile(join(test_dir, "bad3.test.js"), "!!!");
+    await writeFile(join(test_dir, "bad4.test.js"), "!!!");
+    await writeFile(join(test_dir, "bad5.test.js"), "!!!");
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "test", "--bail", "3"],
+      cwd: test_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Bailed out after 3 failures");
+    expect(err).not.toContain("DO NOT RUN ME");
+    expect(err).toContain("Ran 3 tests across 3 files");
+    expect(stdout).toBeDefined();
+    expect(await new Response(stdout).text()).toBe("");
+    expect(await exited).toBe(1);
+  } finally {
+    // await rm(test_dir, { force: true, recursive: true });
   }
 });
 
@@ -455,7 +483,7 @@ it("test.todo", () => {
     stdout: "pipe",
     stderr: "pipe",
     env: bunEnv,
-    cwd: realpathSync(dirname(path)),
+    cwd: dirname(path),
   });
   const err = stderr!.toString();
   expect(err).toContain("this test is marked as todo but passes");
@@ -476,7 +504,7 @@ it("test.todo doesnt cause exit code 1", () => {
     stdout: "pipe",
     stderr: "pipe",
     env: bunEnv,
-    cwd: realpathSync(dirname(path)),
+    cwd: dirname(path),
   });
 
   const err = stderr!.toString();
@@ -491,7 +519,7 @@ it("test timeouts when expected", () => {
     stdout: "pipe",
     stderr: "pipe",
     env: bunEnv,
-    cwd: realpathSync(dirname(path)),
+    cwd: dirname(path),
   });
 
   const err = stderr!.toString();
@@ -507,7 +535,7 @@ it("expect().toEqual() on objects with property indices doesn't print undefined"
     stdout: "pipe",
     stderr: "pipe",
     env: bunEnv,
-    cwd: realpathSync(dirname(path)),
+    cwd: dirname(path),
   });
 
   let err = stderr!.toString();
@@ -527,7 +555,7 @@ it("test --preload supports global lifecycle hooks", () => {
     stdout: "pipe",
     stderr: "pipe",
     env: bunEnv,
-    cwd: realpathSync(dirname(path)),
+    cwd: dirname(path),
   });
   expect(stdout.toString().trim()).toBe(
     `
@@ -540,18 +568,18 @@ beforeEach: #2
 beforeEach: TEST-FILE
 beforeEach: one describe scope
 -- inside one describe scope --
+afterEach: one describe scope
+afterEach: TEST-FILE
 afterEach: #1
 afterEach: #2
-afterEach: TEST-FILE
-afterEach: one describe scope
 afterAll: one describe scope
 beforeEach: #1
 beforeEach: #2
 beforeEach: TEST-FILE
 -- the top-level test --
+afterEach: TEST-FILE
 afterEach: #1
 afterEach: #2
-afterEach: TEST-FILE
 afterAll: TEST-FILE
 afterAll: #1
 afterAll: #2
@@ -567,10 +595,50 @@ it("skip() and skipIf()", () => {
     stdout: "pipe",
     stderr: "pipe",
     env: bunEnv,
-    cwd: realpathSync(dirname(path)),
+    cwd: dirname(path),
   });
   const result = stdout!.toString();
   expect(result).not.toContain("unreachable");
   expect(result).toMatch(/reachable/);
   expect(result.match(/reachable/g)).toHaveLength(6);
+});
+
+it("should run beforeAll() & afterAll() even without tests", async () => {
+  const test_dir = await mkdtemp(join(tmp, "test-hooks-empty"));
+  try {
+    await writeFile(
+      join(test_dir, "empty.test.js"),
+      `
+beforeAll(() => console.log("before all"));
+beforeEach(() => console.log("before each"));
+afterEach(() => console.log("after each"));
+afterAll(() => console.log("after all"));
+
+describe("empty", () => {
+  beforeAll(() => console.log("before all scoped"));
+  beforeEach(() => console.log("before each scoped"));
+  afterEach(() => console.log("after each scoped"));
+  afterAll(() => console.log("after all scoped"));
+});
+    `,
+    );
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "test", "empty.test.js"],
+      cwd: test_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err).toContain("0 pass");
+    expect(err).toContain("0 fail");
+    expect(stdout).toBeDefined();
+    const out = await new Response(stdout).text();
+    expect(out.split(/\r?\n/)).toEqual(["before all", "before all scoped", "after all scoped", "after all", ""]);
+    expect(await exited).toBe(0);
+  } finally {
+    await rm(test_dir, { force: true, recursive: true });
+  }
 });

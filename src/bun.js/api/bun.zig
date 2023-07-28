@@ -105,12 +105,12 @@ pub fn onImportCSS(
     var writer = css_imports_buf.writer();
     const offset = css_imports_buf.items.len;
     css_imports_list[css_imports_list_tail] = .{
-        .offset = @truncate(u32, offset),
+        .offset = @as(u32, @truncate(offset)),
         .length = 0,
     };
     getPublicPath(resolve_result.path_pair.primary.text, origin, @TypeOf(writer), writer);
     const length = css_imports_buf.items.len - offset;
-    css_imports_list[css_imports_list_tail].length = @truncate(u32, length);
+    css_imports_list[css_imports_list_tail].length = @as(u32, @truncate(length));
     css_imports_list_tail += 1;
 }
 
@@ -239,7 +239,7 @@ pub fn inspect(
     ZigConsoleClient.format(
         .Debug,
         ctx.ptr(),
-        @ptrCast([*]const JSValue, arguments.ptr),
+        @as([*]const JSValue, @ptrCast(arguments.ptr)),
         arguments.len,
         Writer,
         Writer,
@@ -303,7 +303,7 @@ pub fn registerMacro(
         return js.JSValueMakeUndefined(ctx);
     }
     // TODO: make this faster
-    const id = @truncate(i32, @intFromFloat(i64, js.JSValueToNumber(ctx, arguments[0], exception)));
+    const id = @as(i32, @truncate(@as(i64, @intFromFloat(js.JSValueToNumber(ctx, arguments[0], exception)))));
     if (id == -1 or id == 0) {
         JSError(getAllocator(ctx), "Internal error registering macros: invalid id", .{}, ctx, exception);
         return js.JSValueMakeUndefined(ctx);
@@ -882,7 +882,7 @@ pub fn sleepSync(
         return ret;
     }
 
-    std.time.sleep(@intCast(u64, milliseconds) * std.time.ns_per_ms);
+    std.time.sleep(@as(u64, @intCast(milliseconds)) * std.time.ns_per_ms);
     return ret;
 }
 
@@ -1398,21 +1398,21 @@ pub fn indexOfLine(
 
     var offset: usize = 0;
     if (arguments.len > 1) {
-        offset = @intCast(
+        offset = @as(
             usize,
-            @max(
+            @intCast(@max(
                 arguments[1].to(u32),
                 0,
-            ),
+            )),
         );
     }
 
     const bytes = buffer.byteSlice();
     var current_offset = offset;
-    const end = @truncate(u32, bytes.len);
+    const end = @as(u32, @truncate(bytes.len));
 
     while (current_offset < end) {
-        if (strings.indexOfNewlineOrNonASCII(bytes, @truncate(u32, current_offset))) |i| {
+        if (strings.indexOfNewlineOrNonASCII(bytes, @as(u32, @truncate(current_offset)))) |i| {
             const byte = bytes[i];
             if (byte > 0x7F) {
                 current_offset += @max(strings.wtf8ByteSequenceLength(byte), 1);
@@ -1537,7 +1537,7 @@ pub const Crypto = struct {
         }
 
         pub fn hash(this: *EVP, engine: *BoringSSL.ENGINE, input: []const u8, output: []u8) ?u32 {
-            var outsize: c_uint = @min(@truncate(u16, output.len), this.size());
+            var outsize: c_uint = @min(@as(u16, @truncate(output.len)), this.size());
             if (BoringSSL.EVP_Digest(input.ptr, input.len, output.ptr, &outsize, this.md, engine) != 1) {
                 return null;
             }
@@ -1546,7 +1546,7 @@ pub const Crypto = struct {
         }
 
         pub fn final(this: *EVP, engine: *BoringSSL.ENGINE, output: []u8) []const u8 {
-            var outsize: u32 = @min(@truncate(u16, output.len), this.size());
+            var outsize: u32 = @min(@as(u16, @truncate(output.len)), this.size());
             if (BoringSSL.EVP_DigestFinal_ex(
                 &this.ctx,
                 output.ptr,
@@ -1565,7 +1565,7 @@ pub const Crypto = struct {
         }
 
         pub fn size(this: *EVP) u16 {
-            return @truncate(u16, BoringSSL.EVP_MD_CTX_size(&this.ctx));
+            return @as(u16, @truncate(BoringSSL.EVP_MD_CTX_size(&this.ctx)));
         }
 
         pub fn copy(this: *const EVP, engine: *BoringSSL.ENGINE) error{OutOfMemory}!EVP {
@@ -1683,7 +1683,7 @@ pub const Crypto = struct {
                                             return null;
                                         }
 
-                                        algorithm.bcrypt = @intCast(u6, rounds);
+                                        algorithm.bcrypt = @as(u6, @intCast(rounds));
                                     }
 
                                     return algorithm;
@@ -1704,7 +1704,7 @@ pub const Crypto = struct {
                                             return null;
                                         }
 
-                                        argon.time_cost = @intCast(u32, time_cost);
+                                        argon.time_cost = @as(u32, @intCast(time_cost));
                                     }
 
                                     if (value.getTruthy(globalObject, "memoryCost")) |memory_value| {
@@ -1720,7 +1720,7 @@ pub const Crypto = struct {
                                             return null;
                                         }
 
-                                        argon.memory_cost = @intCast(u32, memory_cost);
+                                        argon.memory_cost = @as(u32, @intCast(memory_cost));
                                     }
 
                                     return @unionInit(Algorithm.Value, @tagName(tag), argon);
@@ -2444,7 +2444,7 @@ pub const Crypto = struct {
             this: *CryptoHasher,
             _: *JSC.JSGlobalObject,
         ) callconv(.C) JSC.JSValue {
-            return JSC.JSValue.jsNumber(@truncate(u16, this.evp.size()));
+            return JSC.JSValue.jsNumber(@as(u16, @truncate(this.evp.size())));
         }
 
         pub fn getAlgorithm(
@@ -3100,12 +3100,12 @@ pub fn allocUnsafe(
 ) js.JSValueRef {
     var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
 
-    const length = @intCast(
+    const length = @as(
         usize,
-        @min(
+        @intCast(@min(
             @max(1, (args.nextEat() orelse JSC.JSValue.jsNumber(@as(i32, 1))).toInt32()),
             std.math.maxInt(i32),
-        ),
+        )),
     );
     var bytes = bun.default_allocator.alloc(u8, length) catch {
         JSC.JSError(bun.default_allocator, "OOM! Out of memory", .{}, ctx, exception);
@@ -3152,11 +3152,11 @@ pub fn mmapFile(
         flags |= @as(u32, if (shared.toBoolean()) std.os.MAP.SHARED else std.os.MAP.PRIVATE);
 
         if (opts.get(ctx.ptr(), "size")) |value| {
-            map_size = @intCast(usize, value.toInt64());
+            map_size = @as(usize, @intCast(value.toInt64()));
         }
 
         if (opts.get(ctx.ptr(), "offset")) |value| {
-            offset = @intCast(usize, value.toInt64());
+            offset = @as(usize, @intCast(value.toInt64()));
             offset = std.mem.alignBackwardAnyAlign(offset, std.mem.page_size);
         }
     } else {
@@ -3172,11 +3172,11 @@ pub fn mmapFile(
         },
     };
 
-    return JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(ctx, JSC.C.JSTypedArrayType.kJSTypedArrayTypeUint8Array, @ptrCast(?*anyopaque, map.ptr), map.len, struct {
+    return JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(ctx, JSC.C.JSTypedArrayType.kJSTypedArrayTypeUint8Array, @as(?*anyopaque, @ptrCast(map.ptr)), map.len, struct {
         pub fn x(ptr: ?*anyopaque, size: ?*anyopaque) callconv(.C) void {
-            _ = JSC.Node.Syscall.munmap(@ptrCast([*]align(std.mem.page_size) u8, @alignCast(std.mem.page_size, ptr))[0..@intFromPtr(size)]);
+            _ = JSC.Node.Syscall.munmap(@as([*]align(std.mem.page_size) u8, @ptrCast(@alignCast(ptr)))[0..@intFromPtr(size)]);
         }
-    }.x, @ptrFromInt(?*anyopaque, map.len), exception);
+    }.x, @as(?*anyopaque, @ptrFromInt(map.len)), exception);
 }
 
 pub fn getTranspilerConstructor(
@@ -3327,17 +3327,17 @@ pub const Hash = struct {
                         }
                     }
                     if (comptime std.meta.trait.isNumber(@TypeOf(function_args[0]))) {
-                        function_args[0] = @intCast(@TypeOf(function_args[0]), seed);
+                        function_args[0] = @as(@TypeOf(function_args[0]), @intCast(seed));
                         function_args[1] = input;
                     } else {
-                        function_args[1] = @intCast(@TypeOf(function_args[1]), seed);
+                        function_args[1] = @as(@TypeOf(function_args[1]), @intCast(seed));
                         function_args[0] = input;
                     }
 
                     const value = @call(.auto, Function, function_args);
 
                     if (@TypeOf(value) == u32) {
-                        return JSC.JSValue.jsNumber(@bitCast(i32, value)).asObjectRef();
+                        return JSC.JSValue.jsNumber(@as(i32, @bitCast(value))).asObjectRef();
                     }
                     return JSC.JSValue.jsNumber(value).asObjectRef();
                 }
@@ -3443,7 +3443,7 @@ pub const Unsafe = struct {
         switch (array_buffer.typed_array_type) {
             .Uint16Array, .Int16Array => {
                 var zig_str = ZigString.init("");
-                zig_str._unsafe_ptr_do_not_use = @ptrCast([*]const u8, @alignCast(@alignOf([*]align(1) const u16), array_buffer.ptr));
+                zig_str._unsafe_ptr_do_not_use = @as([*]const u8, @ptrCast(@alignCast(array_buffer.ptr)));
                 zig_str.len = array_buffer.len;
                 zig_str.markUTF16();
                 // the deinitializer for string causes segfaults
@@ -3715,21 +3715,32 @@ pub const Timer = struct {
             const kind = this.kind;
             var map: *TimeoutMap = vm.timer.maps.get(kind);
 
-            // This doesn't deinit the timer
-            // Timers are deinit'd separately
-            // We do need to handle when the timer is cancelled after the job has been enqueued
-            if (kind != .setInterval) {
-                if (map.fetchSwapRemove(this.id) == null) {
-                    // if the timeout was cancelled, don't run the callback
-                    this.deinit();
-                    return;
+            const should_cancel_job = brk: {
+                // This doesn't deinit the timer
+                // Timers are deinit'd separately
+                // We do need to handle when the timer is cancelled after the job has been enqueued
+                if (kind != .setInterval) {
+                    if (map.get(this.id)) |tombstone_or_timer| {
+                        break :brk tombstone_or_timer != null;
+                    } else {
+                        // clearTimeout has been called
+                        break :brk true;
+                    }
+                } else {
+                    if (map.get(this.id)) |tombstone_or_timer| {
+                        // .refresh() was called after CallbackJob enqueued
+                        break :brk tombstone_or_timer == null;
+                    }
                 }
-            } else {
-                if (!map.contains(this.id)) {
-                    // if the interval was cancelled, don't run the callback
-                    this.deinit();
-                    return;
-                }
+
+                break :brk false;
+            };
+
+            if (should_cancel_job) {
+                this.deinit();
+                return;
+            } else if (kind != .setInterval) {
+                _ = map.swapRemove(this.id);
             }
 
             var args_buf: [8]JSC.JSValue = undefined;
@@ -3755,7 +3766,7 @@ pub const Timer = struct {
                         var arg = args.ptr;
                         var i: u32 = 0;
                         while (i < count) : (i += 1) {
-                            arg[0] = JSC.JSObject.getIndex(arguments, globalThis, @truncate(u32, i));
+                            arg[0] = JSC.JSObject.getIndex(arguments, globalThis, @as(u32, @truncate(i)));
                             arg += 1;
                         }
                     }
@@ -3794,6 +3805,8 @@ pub const Timer = struct {
                         result.then(globalThis, this, CallbackJob__onResolve, CallbackJob__onReject);
                     },
                 }
+            } else {
+                this.deinit();
             }
         }
     };
@@ -3823,10 +3836,29 @@ pub const Timer = struct {
             return timer_js;
         }
 
-        pub fn doRef(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+        pub fn doRef(this: *TimerObject, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            const this_value = callframe.this();
+            this_value.ensureStillAlive();
             if (this.ref_count > 0)
                 this.ref_count +|= 1;
-            return JSValue.jsUndefined();
+
+            var vm = globalObject.bunVM();
+            switch (this.kind) {
+                .setTimeout, .setImmediate, .setInterval => {
+                    if (vm.timer.maps.get(this.kind).getPtr(this.id)) |val_| {
+                        if (val_.*) |*val| {
+                            val.poll_ref.ref(vm);
+
+                            if (val.did_unref_timer) {
+                                val.did_unref_timer = false;
+                                vm.uws_event_loop.?.num_polls += 1;
+                            }
+                        }
+                    }
+                },
+            }
+
+            return this_value;
         }
 
         pub fn doRefresh(this: *TimerObject, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
@@ -3922,20 +3954,27 @@ pub const Timer = struct {
             return JSValue.jsUndefined();
         }
 
-        pub fn doUnref(this: *TimerObject, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+        pub fn doUnref(this: *TimerObject, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            const this_value = callframe.this();
+            this_value.ensureStillAlive();
             this.ref_count -|= 1;
-            if (this.ref_count == 0) {
-                switch (this.kind) {
-                    .setTimeout, .setImmediate => {
-                        _ = clearTimeout(globalObject, JSValue.jsNumber(this.id));
-                    },
-                    .setInterval => {
-                        _ = clearInterval(globalObject, JSValue.jsNumber(this.id));
-                    },
-                }
+            var vm = globalObject.bunVM();
+            switch (this.kind) {
+                .setTimeout, .setImmediate, .setInterval => {
+                    if (vm.timer.maps.get(this.kind).getPtr(this.id)) |val_| {
+                        if (val_.*) |*val| {
+                            val.poll_ref.unref(vm);
+
+                            if (!val.did_unref_timer) {
+                                val.did_unref_timer = true;
+                                vm.uws_event_loop.?.num_polls -= 1;
+                            }
+                        }
+                    }
+                },
             }
 
-            return JSValue.jsUndefined();
+            return this_value;
         }
         pub fn hasRef(this: *TimerObject, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
             return JSValue.jsBoolean(this.ref_count > 0 and globalObject.bunVM().timer.maps.get(this.kind).contains(this.id));
@@ -3957,6 +3996,7 @@ pub const Timer = struct {
         callback: JSC.Strong = .{},
         globalThis: *JSC.JSGlobalObject,
         timer: *uws.Timer,
+        did_unref_timer: bool = false,
         poll_ref: JSC.PollRef = JSC.PollRef.init(),
         arguments: JSC.Strong = .{},
 
@@ -4058,8 +4098,13 @@ pub const Timer = struct {
 
             var vm = this.globalThis.bunVM();
 
-            this.poll_ref.unrefOnNextTick(vm);
+            this.poll_ref.unref(vm);
+
             this.timer.deinit();
+
+            // balance double unreffing in doUnref
+            vm.uws_event_loop.?.num_polls += @as(i32, @intFromBool(this.did_unref_timer));
+
             this.callback.deinit();
             this.arguments.deinit();
         }
@@ -4152,10 +4197,12 @@ pub const Timer = struct {
             0,
         );
 
-        Timer.set(id, globalThis, callback, interval, arguments, false) catch
+        const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
+
+        Timer.set(id, globalThis, wrappedCallback, interval, arguments, false) catch
             return JSValue.jsUndefined();
 
-        return TimerObject.init(globalThis, id, .setTimeout, interval, callback, arguments);
+        return TimerObject.init(globalThis, id, .setTimeout, interval, wrappedCallback, arguments);
     }
     pub fn setInterval(
         globalThis: *JSGlobalObject,
@@ -4167,16 +4214,18 @@ pub const Timer = struct {
         const id = globalThis.bunVM().timer.last_id;
         globalThis.bunVM().timer.last_id +%= 1;
 
+        const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
+
         // We don't deal with nesting levels directly
         // but we do set the minimum timeout to be 1ms for repeating timers
         const interval: i32 = @max(
             countdown.coerce(i32, globalThis),
             1,
         );
-        Timer.set(id, globalThis, callback, interval, arguments, true) catch
+        Timer.set(id, globalThis, wrappedCallback, interval, arguments, true) catch
             return JSValue.jsUndefined();
 
-        return TimerObject.init(globalThis, id, .setInterval, interval, callback, arguments);
+        return TimerObject.init(globalThis, id, .setInterval, interval, wrappedCallback, arguments);
     }
 
     pub fn clearTimer(timer_id_value: JSValue, globalThis: *JSGlobalObject, repeats: bool) void {
@@ -4320,8 +4369,8 @@ pub const FFI = struct {
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
-            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
-            const value = @ptrFromInt(*align(1) u8, addr).*;
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+            const value = @as(*align(1) u8, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
         pub fn @"u16"(
@@ -4329,8 +4378,8 @@ pub const FFI = struct {
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
-            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
-            const value = @ptrFromInt(*align(1) u16, addr).*;
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+            const value = @as(*align(1) u16, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
         pub fn @"u32"(
@@ -4338,8 +4387,8 @@ pub const FFI = struct {
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
-            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
-            const value = @ptrFromInt(*align(1) u32, addr).*;
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+            const value = @as(*align(1) u32, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
         pub fn ptr(
@@ -4347,8 +4396,8 @@ pub const FFI = struct {
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
-            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
-            const value = @ptrFromInt(*align(1) u64, addr).*;
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+            const value = @as(*align(1) u64, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
         pub fn @"i8"(
@@ -4356,8 +4405,8 @@ pub const FFI = struct {
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
-            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
-            const value = @ptrFromInt(*align(1) i8, addr).*;
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+            const value = @as(*align(1) i8, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
         pub fn @"i16"(
@@ -4365,8 +4414,8 @@ pub const FFI = struct {
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
-            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
-            const value = @ptrFromInt(*align(1) i16, addr).*;
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+            const value = @as(*align(1) i16, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
         pub fn @"i32"(
@@ -4374,8 +4423,8 @@ pub const FFI = struct {
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
-            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
-            const value = @ptrFromInt(*align(1) i32, addr).*;
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+            const value = @as(*align(1) i32, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
         pub fn intptr(
@@ -4383,8 +4432,8 @@ pub const FFI = struct {
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
-            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
-            const value = @ptrFromInt(*align(1) i64, addr).*;
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+            const value = @as(*align(1) i64, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
 
@@ -4393,8 +4442,8 @@ pub const FFI = struct {
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
-            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
-            const value = @ptrFromInt(*align(1) f32, addr).*;
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+            const value = @as(*align(1) f32, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
 
@@ -4403,8 +4452,8 @@ pub const FFI = struct {
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
-            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
-            const value = @ptrFromInt(*align(1) f64, addr).*;
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+            const value = @as(*align(1) f64, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
 
@@ -4413,8 +4462,8 @@ pub const FFI = struct {
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
-            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
-            const value = @ptrFromInt(*align(1) i64, addr).*;
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+            const value = @as(*align(1) i64, @ptrFromInt(addr)).*;
             return JSValue.fromInt64NoTruncate(global, value);
         }
 
@@ -4423,8 +4472,8 @@ pub const FFI = struct {
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
-            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
-            const value = @ptrFromInt(*align(1) u64, addr).*;
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
+            const value = @as(*align(1) u64, @ptrFromInt(addr)).*;
             return JSValue.fromUInt64NoTruncate(global, value);
         }
 
@@ -4434,8 +4483,8 @@ pub const FFI = struct {
             raw_addr: i64,
             offset: i32,
         ) callconv(.C) JSValue {
-            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
-            const value = @ptrFromInt(*align(1) u8, addr).*;
+            const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+            const value = @as(*align(1) u8, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
         pub fn u16WithoutTypeChecks(
@@ -4444,8 +4493,8 @@ pub const FFI = struct {
             raw_addr: i64,
             offset: i32,
         ) callconv(.C) JSValue {
-            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
-            const value = @ptrFromInt(*align(1) u16, addr).*;
+            const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+            const value = @as(*align(1) u16, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
         pub fn u32WithoutTypeChecks(
@@ -4454,8 +4503,8 @@ pub const FFI = struct {
             raw_addr: i64,
             offset: i32,
         ) callconv(.C) JSValue {
-            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
-            const value = @ptrFromInt(*align(1) u32, addr).*;
+            const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+            const value = @as(*align(1) u32, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
         pub fn ptrWithoutTypeChecks(
@@ -4464,8 +4513,8 @@ pub const FFI = struct {
             raw_addr: i64,
             offset: i32,
         ) callconv(.C) JSValue {
-            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
-            const value = @ptrFromInt(*align(1) u64, addr).*;
+            const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+            const value = @as(*align(1) u64, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
         pub fn i8WithoutTypeChecks(
@@ -4474,8 +4523,8 @@ pub const FFI = struct {
             raw_addr: i64,
             offset: i32,
         ) callconv(.C) JSValue {
-            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
-            const value = @ptrFromInt(*align(1) i8, addr).*;
+            const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+            const value = @as(*align(1) i8, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
         pub fn i16WithoutTypeChecks(
@@ -4484,8 +4533,8 @@ pub const FFI = struct {
             raw_addr: i64,
             offset: i32,
         ) callconv(.C) JSValue {
-            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
-            const value = @ptrFromInt(*align(1) i16, addr).*;
+            const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+            const value = @as(*align(1) i16, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
         pub fn i32WithoutTypeChecks(
@@ -4494,8 +4543,8 @@ pub const FFI = struct {
             raw_addr: i64,
             offset: i32,
         ) callconv(.C) JSValue {
-            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
-            const value = @ptrFromInt(*align(1) i32, addr).*;
+            const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+            const value = @as(*align(1) i32, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
         pub fn intptrWithoutTypeChecks(
@@ -4504,8 +4553,8 @@ pub const FFI = struct {
             raw_addr: i64,
             offset: i32,
         ) callconv(.C) JSValue {
-            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
-            const value = @ptrFromInt(*align(1) i64, addr).*;
+            const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+            const value = @as(*align(1) i64, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
 
@@ -4515,8 +4564,8 @@ pub const FFI = struct {
             raw_addr: i64,
             offset: i32,
         ) callconv(.C) JSValue {
-            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
-            const value = @ptrFromInt(*align(1) f32, addr).*;
+            const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+            const value = @as(*align(1) f32, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
 
@@ -4526,8 +4575,8 @@ pub const FFI = struct {
             raw_addr: i64,
             offset: i32,
         ) callconv(.C) JSValue {
-            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
-            const value = @ptrFromInt(*align(1) f64, addr).*;
+            const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+            const value = @as(*align(1) f64, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
 
@@ -4537,8 +4586,8 @@ pub const FFI = struct {
             raw_addr: i64,
             offset: i32,
         ) callconv(.C) JSValue {
-            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
-            const value = @ptrFromInt(*align(1) u64, addr).*;
+            const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+            const value = @as(*align(1) u64, @ptrFromInt(addr)).*;
             return JSValue.fromUInt64NoTruncate(global, value);
         }
 
@@ -4548,8 +4597,8 @@ pub const FFI = struct {
             raw_addr: i64,
             offset: i32,
         ) callconv(.C) JSValue {
-            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
-            const value = @ptrFromInt(*align(1) i64, addr).*;
+            const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
+            const value = @as(*align(1) i64, @ptrFromInt(addr)).*;
             return JSValue.fromInt64NoTruncate(global, value);
         }
 
@@ -4626,9 +4675,9 @@ pub const FFI = struct {
 
             const bytei64 = off.toInt64();
             if (bytei64 < 0) {
-                addr -|= @intCast(usize, bytei64 * -1);
+                addr -|= @as(usize, @intCast(bytei64 * -1));
             } else {
-                addr += @intCast(usize, bytei64);
+                addr += @as(usize, @intCast(bytei64));
             }
 
             if (addr > @intFromPtr(array_buffer.ptr) + @as(usize, array_buffer.byte_len)) {
@@ -4674,15 +4723,15 @@ pub const FFI = struct {
         //     return .{ .err = JSC.toInvalidArguments("ptr must be a finite number.", .{}, globalThis) };
         // }
 
-        var addr = @bitCast(usize, num);
+        var addr = @as(usize, @bitCast(num));
 
         if (byteOffset) |byte_off| {
             if (byte_off.isNumber()) {
                 const off = byte_off.toInt64();
                 if (off < 0) {
-                    addr -|= @intCast(usize, off * -1);
+                    addr -|= @as(usize, @intCast(off * -1));
                 } else {
-                    addr +|= @intCast(usize, off);
+                    addr +|= @as(usize, @intCast(off));
                 }
 
                 if (addr == 0) {
@@ -4722,12 +4771,12 @@ pub const FFI = struct {
                     return .{ .err = JSC.toInvalidArguments("length exceeds max addressable memory. This usually means a bug in your code.", .{}, globalThis) };
                 }
 
-                const length = @intCast(usize, length_i);
-                return .{ .slice = @ptrFromInt([*]u8, addr)[0..length] };
+                const length = @as(usize, @intCast(length_i));
+                return .{ .slice = @as([*]u8, @ptrFromInt(addr))[0..length] };
             }
         }
 
-        return .{ .slice = bun.span(@ptrFromInt([*:0]u8, addr)) };
+        return .{ .slice = bun.span(@as([*:0]u8, @ptrFromInt(addr))) };
     }
 
     fn getCPtr(value: JSValue) ?usize {
@@ -4736,7 +4785,7 @@ pub const FFI = struct {
             const addr = value.asPtrAddress();
             if (addr > 0) return addr;
         } else if (value.isBigInt()) {
-            const addr = @bitCast(u64, value.toUInt64NoTruncate());
+            const addr = @as(u64, @bitCast(value.toUInt64NoTruncate()));
             if (addr > 0) {
                 return addr;
             }
@@ -4762,11 +4811,11 @@ pub const FFI = struct {
                 var ctx: ?*anyopaque = null;
                 if (finalizationCallback) |callback_value| {
                     if (getCPtr(callback_value)) |callback_ptr| {
-                        callback = @ptrFromInt(JSC.C.JSTypedArrayBytesDeallocator, callback_ptr);
+                        callback = @as(JSC.C.JSTypedArrayBytesDeallocator, @ptrFromInt(callback_ptr));
 
                         if (finalizationCtxOrPtr) |ctx_value| {
                             if (getCPtr(ctx_value)) |ctx_ptr| {
-                                ctx = @ptrFromInt(*anyopaque, ctx_ptr);
+                                ctx = @as(*anyopaque, @ptrFromInt(ctx_ptr));
                             } else if (!ctx_value.isUndefinedOrNull()) {
                                 return JSC.toInvalidArguments("Expected user data to be a C pointer (number or BigInt)", .{}, globalThis);
                             }
@@ -4776,7 +4825,7 @@ pub const FFI = struct {
                     }
                 } else if (finalizationCtxOrPtr) |callback_value| {
                     if (getCPtr(callback_value)) |callback_ptr| {
-                        callback = @ptrFromInt(JSC.C.JSTypedArrayBytesDeallocator, callback_ptr);
+                        callback = @as(JSC.C.JSTypedArrayBytesDeallocator, @ptrFromInt(callback_ptr));
                     } else if (!callback_value.isEmptyOrUndefinedOrNull()) {
                         return JSC.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{}, globalThis);
                     }
@@ -4804,11 +4853,11 @@ pub const FFI = struct {
                 var ctx: ?*anyopaque = null;
                 if (finalizationCallback) |callback_value| {
                     if (getCPtr(callback_value)) |callback_ptr| {
-                        callback = @ptrFromInt(JSC.C.JSTypedArrayBytesDeallocator, callback_ptr);
+                        callback = @as(JSC.C.JSTypedArrayBytesDeallocator, @ptrFromInt(callback_ptr));
 
                         if (finalizationCtxOrPtr) |ctx_value| {
                             if (getCPtr(ctx_value)) |ctx_ptr| {
-                                ctx = @ptrFromInt(*anyopaque, ctx_ptr);
+                                ctx = @as(*anyopaque, @ptrFromInt(ctx_ptr));
                             } else if (!ctx_value.isEmptyOrUndefinedOrNull()) {
                                 return JSC.toInvalidArguments("Expected user data to be a C pointer (number or BigInt)", .{}, globalThis);
                             }
@@ -4818,7 +4867,7 @@ pub const FFI = struct {
                     }
                 } else if (finalizationCtxOrPtr) |callback_value| {
                     if (getCPtr(callback_value)) |callback_ptr| {
-                        callback = @ptrFromInt(JSC.C.JSTypedArrayBytesDeallocator, callback_ptr);
+                        callback = @as(JSC.C.JSTypedArrayBytesDeallocator, @ptrFromInt(callback_ptr));
                     } else if (!callback_value.isEmptyOrUndefinedOrNull()) {
                         return JSC.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{}, globalThis);
                     }

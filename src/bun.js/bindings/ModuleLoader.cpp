@@ -34,6 +34,7 @@
 #include "../modules/ObjectModule.h"
 #include "../modules/NodeModuleModule.h"
 #include "../modules/TTYModule.h"
+#include "../modules/ConstantsModule.h"
 #include "node_util_types.h"
 #include "CommonJSModuleRecord.h"
 #include <JavaScriptCore/JSModuleLoader.h>
@@ -351,6 +352,18 @@ extern "C" void Bun__onFulfillAsyncModule(
         return promise->reject(promise->globalObject(), exception);
     }
 
+    if (res->result.value.commonJSExportsLen) {
+        auto created = Bun::createCommonJSModule(jsCast<Zig::GlobalObject*>(globalObject), res->result.value);
+
+        if (created.has_value()) {
+            return promise->resolve(promise->globalObject(), JSSourceCode::create(vm, WTFMove(created.value())));
+        } else {
+            auto* exception = scope.exception();
+            scope.clearException();
+            return promise->reject(promise->globalObject(), exception);
+        }
+    }
+
     auto provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
     promise->resolve(promise->globalObject(), JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
 }
@@ -419,9 +432,32 @@ JSValue fetchCommonJSModule(
         }
     }
 
-    // if (JSC::JSValue virtualModuleResult = JSValue::decode(Bun__runVirtualModule(globalObject, specifier))) {
-    //     return handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer);
-    // }
+    if (JSC::JSValue virtualModuleResult = JSValue::decode(Bun__runVirtualModule(globalObject, specifier))) {
+        JSPromise* promise = jsCast<JSPromise*>(handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer));
+        switch (promise->status(vm)) {
+        case JSPromise::Status::Rejected: {
+            uint32_t promiseFlags = promise->internalField(JSPromise::Field::Flags).get().asUInt32AsAnyInt();
+            promise->internalField(JSPromise::Field::Flags).set(vm, promise, jsNumber(promiseFlags | JSPromise::isHandledFlag));
+            JSC::throwException(globalObject, scope, promise->result(vm));
+            RELEASE_AND_RETURN(scope, JSValue {});
+        }
+        case JSPromise::Status::Pending: {
+            JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, Bun::toWTFString(*specifier), "\" is unsupported. use \"await import()\" instead."_s));
+            RELEASE_AND_RETURN(scope, JSValue {});
+        }
+        case JSPromise::Status::Fulfilled: {
+            if (!res->success) {
+                throwException(scope, res->result.err, globalObject);
+                RELEASE_AND_RETURN(scope, {});
+            }
+            auto* jsSourceCode = jsCast<JSSourceCode*>(promise->result(vm));
+            globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, jsSourceCode->sourceCode());
+            RETURN_IF_EXCEPTION(scope, {});
+            RELEASE_AND_RETURN(scope, jsNumber(-1));
+        }
+        }
+    }
+
     auto* loader = globalObject->moduleLoader();
     JSMap* registry = jsCast<JSMap*>(loader->getDirect(vm, Identifier::fromString(vm, "registry"_s)));
 
@@ -566,6 +602,13 @@ static JSValue fetchSourceCode(
         case SyntheticModuleType::StringDecoder: {
             auto source = JSC::SourceCode(
                 JSC::SyntheticSourceProvider::create(generateStringDecoderSourceCode,
+                    JSC::SourceOrigin(), WTFMove(moduleKey)));
+
+            return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));
+        }
+        case SyntheticModuleType::Constants: {
+            auto source = JSC::SourceCode(
+                JSC::SyntheticSourceProvider::create(generateConstantsSourceCode,
                     JSC::SourceOrigin(), WTFMove(moduleKey)));
 
             return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));

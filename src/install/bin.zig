@@ -56,7 +56,7 @@ pub const Bin = extern struct {
                 for (list) |*extern_string| {
                     builder.count(extern_string.slice(buf));
                 }
-                return @truncate(u32, list.len);
+                return @as(u32, @truncate(list.len));
             },
             else => {},
         }
@@ -461,7 +461,7 @@ pub const Bin = extern struct {
                     var dir = std.fs.Dir{ .fd = this.package_installed_node_modules };
 
                     var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
-                    @ptrFromInt([*]u8, @intFromPtr(joined.ptr))[joined.len] = 0;
+                    @as([*]u8, @ptrFromInt(@intFromPtr(joined.ptr)))[joined.len] = 0;
                     var joined_: [:0]const u8 = joined.ptr[0..joined.len :0];
                     var child_dir = bun.openDir(dir, joined_) catch |err| {
                         this.err = err;
@@ -613,7 +613,7 @@ pub const Bin = extern struct {
                     var dir = std.fs.Dir{ .fd = this.package_installed_node_modules };
 
                     var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
-                    @ptrFromInt([*]u8, @intFromPtr(joined.ptr))[joined.len] = 0;
+                    @as([*]u8, @ptrFromInt(@intFromPtr(joined.ptr)))[joined.len] = 0;
                     var joined_: [:0]const u8 = joined.ptr[0..joined.len :0];
                     var child_dir = bun.openDir(dir, joined_) catch |err| {
                         this.err = err;

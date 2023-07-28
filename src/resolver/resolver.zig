@@ -283,10 +283,10 @@ pub const Result = struct {
         if (strings.lastIndexOf(module, node_module_root)) |end_| {
             var end: usize = end_ + node_module_root.len;
 
-            return @truncate(u32, bun.hash(module[end..]));
+            return @as(u32, @truncate(bun.hash(module[end..])));
         }
 
-        return @truncate(u32, bun.hash(this.path_pair.primary.text));
+        return @as(u32, @truncate(bun.hash(this.path_pair.primary.text)));
     }
 };
 
@@ -763,6 +763,9 @@ pub const Resolver = struct {
         kind: ast.ImportKind,
         global_cache: GlobalCache,
     ) Result.Union {
+        const tracer = bun.tracy.traceNamed(@src(), "ModuleResolver.resolve");
+        defer tracer.end();
+
         const original_order = r.extension_order;
         defer r.extension_order = original_order;
         r.extension_order = switch (kind) {
@@ -1256,19 +1259,13 @@ pub const Resolver = struct {
 
         if (check_package) {
             if (r.opts.polyfill_node_globals) {
-                var import_path_without_node_prefix = import_path;
-                const had_node_prefix = import_path_without_node_prefix.len > "node:".len and
-                    strings.eqlComptime(import_path_without_node_prefix[0.."node:".len], "node:");
-
-                import_path_without_node_prefix = if (had_node_prefix)
-                    import_path_without_node_prefix["node:".len..]
-                else
-                    import_path_without_node_prefix;
+                const had_node_prefix = strings.hasPrefixComptime(import_path, "node:");
+                const import_path_without_node_prefix = if (had_node_prefix) import_path["node:".len..] else import_path;
 
                 if (NodeFallbackModules.Map.get(import_path_without_node_prefix)) |*fallback_module| {
                     result.path_pair.primary = fallback_module.path;
                     result.module_type = .cjs;
-                    result.package_json = @ptrFromInt(*PackageJSON, @intFromPtr(fallback_module.package_json));
+                    result.package_json = @as(*PackageJSON, @ptrFromInt(@intFromPtr(fallback_module.package_json)));
                     result.is_from_node_modules = true;
                     return .{ .success = result };
                     // "node:*
@@ -1278,7 +1275,7 @@ pub const Resolver = struct {
                 } else if (had_node_prefix or
                     (strings.hasPrefixComptime(import_path_without_node_prefix, "fs") and
                     (import_path_without_node_prefix.len == 2 or
-                    import_path_without_node_prefix[3] == '/')))
+                    import_path_without_node_prefix[2] == '/')))
                 {
                     result.path_pair.primary.namespace = "node";
                     result.path_pair.primary.text = import_path_without_node_prefix;
@@ -1698,8 +1695,9 @@ pub const Resolver = struct {
                 // If the source directory doesn't have a node_modules directory, we can
                 // check the global cache directory for a package.json file.
                 var manager = r.getPackageManager();
-                var dependency_version: Dependency.Version = .{};
-                var dependency_behavior = @enumFromInt(Dependency.Behavior, Dependency.Behavior.normal);
+                var dependency_version = Dependency.Version{};
+                var dependency_behavior = @as(Dependency.Behavior, @enumFromInt(Dependency.Behavior.normal));
+                var string_buf = esm.version;
 
                 // const initial_pending_tasks = manager.pending_tasks;
                 var resolved_package_id: Install.PackageID = brk: {
@@ -1707,7 +1705,6 @@ pub const Resolver = struct {
                     // and try to look up the dependency from there
                     if (dir_info.package_json_for_dependencies) |package_json| {
                         var dependencies_list: []const Dependency = &[_]Dependency{};
-                        var string_buf: []const u8 = "";
                         const resolve_from_lockfile = package_json.package_manager_package_id != Install.invalid_package_id;
 
                         if (resolve_from_lockfile) {
@@ -1723,24 +1720,21 @@ pub const Resolver = struct {
                         }
 
                         for (dependencies_list, 0..) |dependency, dependency_id| {
-                            const dep_name = dependency.name.slice(string_buf);
-                            if (dep_name.len == esm.name.len) {
-                                if (!strings.eqlLong(dep_name, esm.name, false)) {
-                                    continue;
-                                }
-
-                                dependency_version = dependency.version;
-                                dependency_behavior = dependency.behavior;
-
-                                if (resolve_from_lockfile) {
-                                    const resolutions = &manager.lockfile.packages.items(.resolutions)[package_json.package_manager_package_id];
-
-                                    // found it!
-                                    break :brk resolutions.get(manager.lockfile.buffers.resolutions.items)[dependency_id];
-                                }
-
-                                break;
+                            if (!strings.eqlLong(dependency.name.slice(string_buf), esm.name, true)) {
+                                continue;
                             }
+
+                            dependency_version = dependency.version;
+                            dependency_behavior = dependency.behavior;
+
+                            if (resolve_from_lockfile) {
+                                const resolutions = &manager.lockfile.packages.items(.resolutions)[package_json.package_manager_package_id];
+
+                                // found it!
+                                break :brk resolutions.get(manager.lockfile.buffers.resolutions.items)[dependency_id];
+                            }
+
+                            break;
                         }
                     }
 
@@ -1770,6 +1764,7 @@ pub const Resolver = struct {
                             if (esm_.?.version.len > 0 and dir_info.enclosing_package_json != null and global_cache.allowVersionSpecifier()) {
                                 return .{ .failure = error.VersionSpecifierNotAllowedHere };
                             }
+                            string_buf = esm.version;
                             dependency_version = Dependency.parse(
                                 r.allocator,
                                 Semver.String.init(esm.name, esm.name),
@@ -1795,6 +1790,7 @@ pub const Resolver = struct {
                         dependency_behavior,
                         &resolved_package_id,
                         dependency_version,
+                        string_buf,
                     )) {
                         .resolution => |res| break :brk res,
                         .pending => |pending| return .{ .pending = pending },
@@ -2073,6 +2069,7 @@ pub const Resolver = struct {
         behavior: Dependency.Behavior,
         input_package_id_: *Install.PackageID,
         version: Dependency.Version,
+        version_buf: []const u8,
     ) DependencyToResolve {
         if (r.debug_logs) |*debug| {
             debug.addNoteFmt("Enqueueing pending dependency \"{s}@{s}\"", .{ esm.name, esm.version });
@@ -2135,7 +2132,7 @@ pub const Resolver = struct {
 
             // All packages are enqueued to the root
             // because we download all the npm package dependencies
-            switch (pm.enqueueDependencyToRoot(esm.name, esm.version, &version, behavior)) {
+            switch (pm.enqueueDependencyToRoot(esm.name, &version, version_buf, behavior)) {
                 .resolution => |result| {
                     input_package_id_.* = result.package_id;
                     return .{ .resolution = result.resolution };
@@ -2472,15 +2469,15 @@ pub const Resolver = struct {
                 top_parent = result;
                 break;
             }
-            bufs(.dir_entry_paths_to_resolve)[@intCast(usize, i)] = DirEntryResolveQueueItem{
+            bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))] = DirEntryResolveQueueItem{
                 .unsafe_path = top,
                 .result = result,
                 .fd = 0,
             };
 
             if (rfs.entries.get(top)) |top_entry| {
-                bufs(.dir_entry_paths_to_resolve)[@intCast(usize, i)].safe_path = top_entry.entries.dir;
-                bufs(.dir_entry_paths_to_resolve)[@intCast(usize, i)].fd = top_entry.entries.fd;
+                bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))].safe_path = top_entry.entries.dir;
+                bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))].fd = top_entry.entries.fd;
             }
             i += 1;
         }
@@ -2490,21 +2487,21 @@ pub const Resolver = struct {
             if (result.status != .unknown) {
                 top_parent = result;
             } else {
-                bufs(.dir_entry_paths_to_resolve)[@intCast(usize, i)] = DirEntryResolveQueueItem{
+                bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))] = DirEntryResolveQueueItem{
                     .unsafe_path = root_path,
                     .result = result,
                     .fd = 0,
                 };
                 if (rfs.entries.get(top)) |top_entry| {
-                    bufs(.dir_entry_paths_to_resolve)[@intCast(usize, i)].safe_path = top_entry.entries.dir;
-                    bufs(.dir_entry_paths_to_resolve)[@intCast(usize, i)].fd = top_entry.entries.fd;
+                    bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))].safe_path = top_entry.entries.dir;
+                    bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))].fd = top_entry.entries.fd;
                 }
 
                 i += 1;
             }
         }
 
-        var queue_slice: []DirEntryResolveQueueItem = bufs(.dir_entry_paths_to_resolve)[0..@intCast(usize, i)];
+        var queue_slice: []DirEntryResolveQueueItem = bufs(.dir_entry_paths_to_resolve)[0..@as(usize, @intCast(i))];
         if (Environment.allow_assert) std.debug.assert(queue_slice.len > 0);
         var open_dir_count: usize = 0;
 
@@ -2632,7 +2629,7 @@ pub const Resolver = struct {
 
                 // Directories must always end in a trailing slash or else various bugs can occur.
                 // This covers "what happens when the trailing"
-                end += @intCast(usize, @intFromBool(safe_path.len > end and end > 0 and safe_path[end - 1] != std.fs.path.sep and safe_path[end] == std.fs.path.sep));
+                end += @as(usize, @intCast(@intFromBool(safe_path.len > end and end > 0 and safe_path[end - 1] != std.fs.path.sep and safe_path[end] == std.fs.path.sep)));
                 break :brk safe_path[dir_path_i..end];
             };
 
@@ -2785,8 +2782,8 @@ pub const Resolver = struct {
                     (prefix.len >= longest_match_prefix_length and
                     suffix.len > longest_match_suffix_length))
                 {
-                    longest_match_prefix_length = @intCast(i32, prefix.len);
-                    longest_match_suffix_length = @intCast(i32, suffix.len);
+                    longest_match_prefix_length = @as(i32, @intCast(prefix.len));
+                    longest_match_suffix_length = @as(i32, @intCast(suffix.len));
                     longest_match = TSConfigMatch{ .prefix = prefix, .suffix = suffix, .original_paths = original_paths };
                 }
             }
@@ -3384,7 +3381,13 @@ pub const Resolver = struct {
                         continue;
                     };
 
-                    var _result = r.loadFromMainField(path, dir_info, field_rel_path, key, extension_order) orelse continue;
+                    var _result = r.loadFromMainField(
+                        path,
+                        dir_info,
+                        field_rel_path,
+                        key,
+                        if (strings.eqlComptime(key, "main")) r.opts.main_field_extension_order else extension_order,
+                    ) orelse continue;
 
                     // If the user did not manually configure a "main" field order, then
                     // use a special per-module automatic algorithm to decide whether to
@@ -3395,13 +3398,13 @@ pub const Resolver = struct {
 
                         if (main_field_values.get("main")) |main_rel_path| {
                             if (main_rel_path.len > 0) {
-                                absolute_result = r.loadFromMainField(path, dir_info, main_rel_path, "main", extension_order);
+                                absolute_result = r.loadFromMainField(path, dir_info, main_rel_path, "main", r.opts.main_field_extension_order);
                             }
                         } else {
                             // Some packages have a "module" field without a "main" field but
                             // still have an implicit "index.js" file. In that case, treat that
                             // as the value for "main".
-                            absolute_result = r.loadAsIndexWithBrowserRemapping(dir_info, path, extension_order);
+                            absolute_result = r.loadAsIndexWithBrowserRemapping(dir_info, path, r.opts.main_field_extension_order);
                         }
 
                         if (absolute_result) |auto_main_result| {

@@ -104,7 +104,7 @@ pub const disable_lolhtml = false;
 /// on macOS that specifically impacts localhost and not
 /// other ipv4 hosts. This is a workaround for that.
 /// "localhost" fails to connect.
-pub const hardcode_localhost_to_127_0_0_1 = true;
+pub const hardcode_localhost_to_127_0_0_1 = false;
 
 /// React doesn't do anything with jsxs
 /// If the "jsxs" import is development, "jsxs" isn't supported
@@ -172,3 +172,5 @@ pub const alignment_tweak = false;
 pub const export_star_redirect = false;
 
 pub const streaming_file_uploads_for_http_client = true;
+
+pub const concurrent_transpiler = true;

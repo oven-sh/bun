@@ -41,9 +41,7 @@ $ brew install llvm@15
 ```
 
 ```bash#Ubuntu/Debian
-# On Ubuntu 22.04 and newer, LLVM 15 is available in the default repositories
-$ sudo apt install llvm-15 lld-15 clang-15
-# On older versions,
+$ # LLVM has an automatic installation script that is compatible with all versions of Ubuntu
 $ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 15 all
 ```
 
@@ -85,7 +83,7 @@ $ brew install automake ccache cmake coreutils esbuild gnu-sed go libiconv libto
 ```
 
 ```bash#Ubuntu/Debian
-$ sudo apt install cargo ccache cmake esbuild git golang libtool ninja-build pkg-config rustc
+$ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config rustc esbuild
 ```
 
 ```bash#Arch
@@ -94,7 +92,19 @@ $ pacman -S base-devel ccache cmake esbuild git go libiconv libtool make ninja p
 
 {% /codetabs %}
 
-In addition to this, you will need either `bun` or `npm` installed to install the package.json dependencies.
+{% details summary="Ubuntu — Unable to locate package esbuild" %}
+
+The `apt install esbuild` command may fail with an `Unable to locate package` error if you are using a Ubuntu mirror that does not contain an exact copy of the original Ubuntu server. Note that the same error may occur if you are not using any mirror but have the Ubuntu Universe enabled in the `sources.list`. In this case, you can install esbuild manually:
+
+```bash
+$ curl -fsSL https://esbuild.github.io/dl/latest | sh
+$ chmod +x ./esbuild
+$ sudo mv ./esbuild /usr/local/bin
+```
+
+{% /details %}
+
+In addition to this, you will need an npm package manager (`bun`, `npm`, etc) to install the `package.json` dependencies.
 
 ## Install Zig
 
@@ -102,12 +112,12 @@ Zig can be installed either with our npm package [`@oven/zig`](https://www.npmjs
 
 ```bash
 $ bun install -g @oven/zig
-$ zigup 0.11.0-dev.3737+9eb008717
+$ zigup 0.11.0-dev.4006+bf827d0b5
 ```
 
 ## Building
 
-After cloning the repository, prepare bun to be built:
+After cloning the repository, run the following command. The runs
 
 ```bash
 $ make setup
@@ -217,7 +227,71 @@ You'll need a very recent version of Valgrind due to DWARF 5 debug symbols. You 
 $ valgrind --fair-sched=try --track-origins=yes bun-debug <args>
 ```
 
+## Updating `WebKit`
+
+The Bun team will occasionally bump the version of WebKit used in Bun. When this happens, you may see something like this with you run `git status`.
+
+```bash
+$ git status
+On branch my-branch
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   src/bun.js/WebKit (new commits)
+```
+
+For performance reasons, `make submodule` does not automatically update the WebKit submodule. To update, run the following commands from the root of the Bun repo:
+
+```bash
+$ bun install
+$ make regenerate-bindings
+```
+
+<!-- Check the [Bun repo](https://github.com/oven-sh/bun/tree/main/src/bun.js) to get the hash of the commit of WebKit is currently being used.
+
+{% image width="270" src="https://github.com/oven-sh/bun/assets/3084745/51730b73-89ef-4358-9a41-9563a60a54be" /%} -->
+
+<!--
+```bash
+$ cd src/bun.js/WebKit
+$ git fetch
+$ git checkout <hash>
+``` -->
+
 ## Troubleshooting
+
+### 'span' file not found on Ubuntu
+
+> ⚠️ Please note that the instructions below are specific to issues occurring on Ubuntu. It is unlikely that the same issues will occur on other Linux distributions.
+
+The Clang compiler typically uses the `libstdc++` C++ standard library by default. `libstdc++` is the default C++ Standard Library implementation provided by the GNU Compiler Collection (GCC). While Clang may link against the `libc++` library, this requires explicitly providing the `-stdlib` flag when running Clang.
+
+Bun relies on C++20 features like `std::span`, which are not available in GCC versions lower than 11. GCC 10 doesn't have all of the C++20 features implemented. As a result, running `make setup` may fail with the following error:
+
+```
+fatal error: 'span' file not found
+#include <span>
+         ^~~~~~
+```
+
+To fix the error, we need to update the GCC version to 11. To do this, we'll need to check if the latest version is available in the distribution's official repositories or use a third-party repository that provides GCC 11 packages. Here are general steps:
+
+```bash
+$ sudo apt update
+$ sudo apt install gcc-11 g++-11
+# If the above command fails with `Unable to locate package gcc-11` we need
+# to add the APT repository
+$ sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+# Now run `apt install` again
+$ sudo apt install gcc-11 g++-11
+```
+
+Now, we need to set GCC 11 as the default compiler:
+
+```bash
+$ sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
+$ sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
+```
 
 ### libarchive
 

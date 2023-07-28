@@ -57,7 +57,7 @@ function isIPv6(input) {
 // Importing from node:url is unnecessary
 const { URL } = globalThis;
 
-const { newArrayWithSize, String, Object, Array } = globalThis[Symbol.for("Bun.lazy")]("primordials");
+const { newArrayWithSize, String, Object, Array } = $lazy("primordials");
 
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
@@ -107,6 +107,28 @@ function isValidTLSArray(obj) {
     }
     return true;
   }
+}
+
+class ERR_INVALID_ARG_TYPE extends TypeError {
+  constructor(name, expected, actual) {
+    super(`The ${name} argument must be of type ${expected}. Received type ${typeof actual}`);
+    this.code = "ERR_INVALID_ARG_TYPE";
+  }
+}
+
+function validateMsecs(numberlike: any, field: string) {
+  if (typeof numberlike !== "number" || numberlike < 0) {
+    throw new ERR_INVALID_ARG_TYPE(field, "number", numberlike);
+  }
+
+  return numberlike;
+}
+function validateFunction(callable: any, field: string) {
+  if (typeof callable !== "function") {
+    throw new ERR_INVALID_ARG_TYPE(field, "Function", callable);
+  }
+
+  return callable;
 }
 
 function getHeader(headers, name) {
@@ -792,12 +814,13 @@ export class OutgoingMessage extends Writable {
   headersSent = false;
   sendDate = true;
   req;
+  timeout;
 
   #finished = false;
   [kEndCalled] = false;
 
   #fakeSocket;
-  #timeoutTimer: Timer | null = null;
+  #timeoutTimer?: Timer;
   [kAbortController]: AbortController | null = null;
 
   // Express "compress" package uses this
@@ -894,26 +917,47 @@ export class OutgoingMessage extends Writable {
   [kClearTimeout]() {
     if (this.#timeoutTimer) {
       clearTimeout(this.#timeoutTimer);
-      this.#timeoutTimer = null;
+      this.removeAllListeners("timeout");
+      this.#timeoutTimer = undefined;
     }
   }
 
-  setTimeout(msecs, callback) {
-    if (this.#timeoutTimer) return this;
-    if (callback) {
-      this.on("timeout", callback);
-    }
+  #onTimeout() {
+    this.#timeoutTimer = undefined;
+    this[kAbortController]?.abort();
+    this.emit("timeout");
+  }
 
-    this.#timeoutTimer = setTimeout(async () => {
-      this.#timeoutTimer = null;
-      this[kAbortController]?.abort();
-      this.emit("timeout");
-    }, msecs);
+  setTimeout(msecs, callback) {
+    if (this.destroyed) return this;
+
+    this.timeout = msecs = validateMsecs(msecs, "msecs");
+
+    // Attempt to clear an existing timer in both cases -
+    //  even if it will be rescheduled we don't want to leak an existing timer.
+    clearTimeout(this.#timeoutTimer!);
+
+    if (msecs === 0) {
+      if (callback !== undefined) {
+        validateFunction(callback, "callback");
+        this.removeListener("timeout", callback);
+      }
+
+      this.#timeoutTimer = undefined;
+    } else {
+      this.#timeoutTimer = setTimeout(this.#onTimeout.bind(this), msecs).unref();
+
+      if (callback !== undefined) {
+        validateFunction(callback, "callback");
+        this.once("timeout", callback);
+      }
+    }
 
     return this;
   }
 }
 
+let OriginalWriteHeadFn, OriginalImplicitHeadFn;
 export class ServerResponse extends Writable {
   declare _writableState: any;
 
@@ -929,6 +973,10 @@ export class ServerResponse extends Writable {
     this.#firstWrite = undefined;
     this._writableState.decodeStrings = false;
     this.#deferred = undefined;
+
+    // this is matching node's behaviour
+    // https://github.com/nodejs/node/blob/cf8c6994e0f764af02da4fa70bc5962142181bf3/lib/_http_server.js#L192
+    if (req.method === "HEAD") this._hasBody = false;
   }
 
   req;
@@ -944,11 +992,14 @@ export class ServerResponse extends Writable {
   _defaultKeepAlive = false;
   _removedConnection = false;
   _removedContLen = false;
+  _hasBody = true;
   #deferred: (() => void) | undefined = undefined;
   #finished = false;
-
   // Express "compress" package uses this
-  _implicitHeader() {}
+  _implicitHeader() {
+    // @ts-ignore
+    this.writeHead(this.statusCode);
+  }
 
   _write(chunk, encoding, callback) {
     if (!this.#firstWrite && !this.headersSent) {
@@ -1010,11 +1061,20 @@ export class ServerResponse extends Writable {
     );
   }
 
+  #drainHeadersIfObservable() {
+    if (this._implicitHeader === OriginalImplicitHeadFn && this.writeHead === OriginalWriteHeadFn) {
+      return;
+    }
+
+    this._implicitHeader();
+  }
+
   _final(callback) {
     if (!this.headersSent) {
       var data = this.#firstWrite || "";
       this.#firstWrite = undefined;
       this.#finished = true;
+      this.#drainHeadersIfObservable();
       this._reply(
         new Response(data, {
           headers: this.#headers,
@@ -1133,6 +1193,9 @@ export class ServerResponse extends Writable {
   }
 }
 
+OriginalWriteHeadFn = ServerResponse.prototype.writeHead;
+OriginalImplicitHeadFn = ServerResponse.prototype._implicitHeader;
+
 export class ClientRequest extends OutgoingMessage {
   #timeout;
   #res: IncomingMessage | null = null;
@@ -1155,7 +1218,7 @@ export class ClientRequest extends OutgoingMessage {
   #fetchRequest;
   #signal: AbortSignal | null = null;
   [kAbortController]: AbortController | null = null;
-  #timeoutTimer: Timer | null = null;
+  #timeoutTimer?: Timer = undefined;
   #options;
   #finished;
 
@@ -1224,6 +1287,9 @@ export class ClientRequest extends OutgoingMessage {
           redirect: "manual",
           verbose: Boolean(__DEBUG__),
           signal: this[kAbortController].signal,
+
+          // Timeouts are handled via this.setTimeout.
+          timeout: false,
         },
       )
         .then(response => {
@@ -1348,8 +1414,6 @@ export class ClientRequest extends OutgoingMessage {
 
     this.#socketPath = options.socketPath;
 
-    if (options.timeout !== undefined) this.setTimeout(options.timeout, null);
-
     const signal = options.signal;
     if (signal) {
       //We still want to control abort function and timeout so signal call our AbortController
@@ -1427,7 +1491,12 @@ export class ClientRequest extends OutgoingMessage {
     this.#reusedSocket = false;
     this.#host = host;
     this.#protocol = protocol;
-    this.#timeoutTimer = null;
+
+    var timeout = options.timeout;
+    if (timeout !== undefined && timeout !== 0) {
+      this.setTimeout(timeout, undefined);
+    }
+
     const headersArray = ArrayIsArray(headers);
     if (!headersArray) {
       var headers = options.headers;
@@ -1482,17 +1551,8 @@ export class ClientRequest extends OutgoingMessage {
 
     // this[kUniqueHeaders] = parseUniqueHeadersOption(options.uniqueHeaders);
 
-    var optsWithoutSignal = options;
-    if (optsWithoutSignal.signal) {
-      optsWithoutSignal = ObjectAssign({}, options);
-      delete optsWithoutSignal.signal;
-    }
+    var { signal: _signal, ...optsWithoutSignal } = options;
     this.#options = optsWithoutSignal;
-
-    var timeout = options.timeout;
-    if (timeout) {
-      this.setTimeout(timeout);
-    }
   }
 
   setSocketKeepAlive(enable = true, initialDelay = 0) {
@@ -1505,21 +1565,41 @@ export class ClientRequest extends OutgoingMessage {
   [kClearTimeout]() {
     if (this.#timeoutTimer) {
       clearTimeout(this.#timeoutTimer);
-      this.#timeoutTimer = null;
+      this.#timeoutTimer = undefined;
+      this.removeAllListeners("timeout");
     }
   }
 
-  setTimeout(msecs, callback?) {
-    if (this.#timeoutTimer) return this;
-    if (callback) {
-      this.on("timeout", callback);
-    }
+  #onTimeout() {
+    this.#timeoutTimer = undefined;
+    this[kAbortController]?.abort();
+    this.emit("timeout");
+  }
 
-    this.#timeoutTimer = setTimeout(async () => {
-      this.#timeoutTimer = null;
-      this[kAbortController]?.abort();
-      this.emit("timeout");
-    }, msecs);
+  setTimeout(msecs, callback) {
+    if (this.destroyed) return this;
+
+    this.timeout = msecs = validateMsecs(msecs, "msecs");
+
+    // Attempt to clear an existing timer in both cases -
+    //  even if it will be rescheduled we don't want to leak an existing timer.
+    clearTimeout(this.#timeoutTimer!);
+
+    if (msecs === 0) {
+      if (callback !== undefined) {
+        validateFunction(callback, "callback");
+        this.removeListener("timeout", callback);
+      }
+
+      this.#timeoutTimer = undefined;
+    } else {
+      this.#timeoutTimer = setTimeout(this.#onTimeout.bind(this), msecs).unref();
+
+      if (callback !== undefined) {
+        validateFunction(callback, "callback");
+        this.once("timeout", callback);
+      }
+    }
 
     return this;
   }
@@ -1759,6 +1839,20 @@ function _writeHead(statusCode, reason, obj, response) {
         if (k) response.setHeader(k, obj[k]);
       }
     }
+  }
+
+  if (statusCode === 204 || statusCode === 304 || (statusCode >= 100 && statusCode <= 199)) {
+    // RFC 2616, 10.2.5:
+    // The 204 response MUST NOT include a message-body, and thus is always
+    // terminated by the first empty line after the header fields.
+    // RFC 2616, 10.3.5:
+    // The 304 response MUST NOT contain a message-body, and thus is always
+    // terminated by the first empty line after the header fields.
+    // RFC 2616, 10.1 Informational 1xx:
+    // This class of status code indicates a provisional response,
+    // consisting only of the Status-Line and optional headers, and is
+    // terminated by an empty line.
+    response._hasBody = false;
   }
 }
 

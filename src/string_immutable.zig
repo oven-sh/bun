@@ -52,16 +52,16 @@ pub fn indexOfAny(slice: string, comptime str: anytype) ?OptionalUsize {
     if (comptime Environment.enableSIMD) {
         while (remaining.len >= ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-            var cmp = @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, str[0])));
+            var cmp: AsciiVectorU1 = @bitCast(vec == @as(AsciiVector, @splat(@as(u8, str[0]))));
             inline for (str[1..]) |c| {
-                cmp |= @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, c)));
+                cmp |= @bitCast(vec == @as(AsciiVector, @splat(@as(u8, c))));
             }
 
             if (@reduce(.Max, cmp) > 0) {
-                const bitmask = @bitCast(AsciiVectorInt, cmp);
+                const bitmask = @as(AsciiVectorInt, @bitCast(cmp));
                 const first = @ctz(bitmask);
 
-                return @intCast(OptionalUsize, first + slice.len - remaining.len);
+                return @as(OptionalUsize, @intCast(first + slice.len - remaining.len));
             }
 
             remaining = remaining[ascii_vector_size..];
@@ -72,7 +72,7 @@ pub fn indexOfAny(slice: string, comptime str: anytype) ?OptionalUsize {
 
     for (remaining, 0..) |c, i| {
         if (strings.indexOfChar(str, c) != null) {
-            return @intCast(OptionalUsize, i + slice.len - remaining.len);
+            return @as(OptionalUsize, @intCast(i + slice.len - remaining.len));
         }
     }
 
@@ -82,7 +82,7 @@ pub fn indexOfAny16(self: []const u16, comptime str: anytype) ?OptionalUsize {
     for (self, 0..) |c, i| {
         inline for (str) |a| {
             if (c == a) {
-                return @intCast(OptionalUsize, i);
+                return @as(OptionalUsize, @intCast(i));
             }
         }
     }
@@ -94,7 +94,7 @@ pub inline fn containsComptime(self: string, comptime str: string) bool {
     const Int = std.meta.Int(.unsigned, str.len * 8);
 
     while (remain.len >= comptime str.len) {
-        if (@bitCast(Int, remain.ptr[0..str.len].*) == @bitCast(Int, str.ptr[0..str.len].*)) {
+        if (@as(Int, @bitCast(remain.ptr[0..str.len].*)) == @as(Int, @bitCast(str.ptr[0..str.len].*))) {
             return true;
         }
         remain = remain[str.len..];
@@ -179,7 +179,7 @@ pub fn repeatingBuf(self: []u8, char: u8) void {
 pub fn indexOfCharNeg(self: string, char: u8) i32 {
     var i: u32 = 0;
     while (i < self.len) : (i += 1) {
-        if (self[i] == char) return @intCast(i32, i);
+        if (self[i] == char) return @as(i32, @intCast(i));
     }
     return -1;
 }
@@ -259,7 +259,7 @@ pub const FormatValidIdentifier = struct {
 
 pub fn indexOfSigned(self: string, str: string) i32 {
     const i = std.mem.indexOf(u8, self, str) orelse return -1;
-    return @intCast(i32, i);
+    return @as(i32, @intCast(i));
 }
 
 pub inline fn lastIndexOfChar(self: string, char: u8) ?usize {
@@ -291,7 +291,7 @@ pub inline fn indexOf(self: string, str: string) ?usize {
 
     const i = @intFromPtr(start) - @intFromPtr(self_ptr);
     std.debug.assert(i < self_len);
-    return @intCast(usize, i);
+    return @as(usize, @intCast(i));
 }
 
 pub fn split(self: string, delimiter: string) SplitIterator {
@@ -400,7 +400,7 @@ pub const StringOrTinyString = struct {
         // This is a switch expression instead of a statement to make sure it uses the faster assembly
         return switch (this.is_tiny_string) {
             1 => this.remainder_buf[0..this.remainder_len],
-            0 => @ptrFromInt([*]const u8, std.mem.readIntNative(usize, this.remainder_buf[0..@sizeOf(usize)]))[0..std.mem.readIntNative(usize, this.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2])],
+            0 => @as([*]const u8, @ptrFromInt(std.mem.readIntNative(usize, this.remainder_buf[0..@sizeOf(usize)])))[0..std.mem.readIntNative(usize, this.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2])],
         };
     }
 
@@ -436,7 +436,7 @@ pub const StringOrTinyString = struct {
                 @setRuntimeSafety(false);
                 var tiny = StringOrTinyString{
                     .is_tiny_string = 1,
-                    .remainder_len = @truncate(u7, stringy.len),
+                    .remainder_len = @as(u7, @truncate(stringy.len)),
                 };
                 @memcpy(tiny.remainder_buf[0..tiny.remainder_len], stringy[0..tiny.remainder_len]);
                 return tiny;
@@ -462,7 +462,7 @@ pub const StringOrTinyString = struct {
                 @setRuntimeSafety(false);
                 var tiny = StringOrTinyString{
                     .is_tiny_string = 1,
-                    .remainder_len = @truncate(u7, stringy.len),
+                    .remainder_len = @as(u7, @truncate(stringy.len)),
                 };
                 _ = copyLowercase(stringy, &tiny.remainder_buf);
                 return tiny;
@@ -672,15 +672,7 @@ pub fn startsWith(self: string, str: string) bool {
         return false;
     }
 
-    var i: usize = 0;
-    while (i < str.len) {
-        if (str[i] != self[i]) {
-            return false;
-        }
-        i += 1;
-    }
-
-    return true;
+    return eqlLong(self[0..str.len], str, false);
 }
 
 pub inline fn endsWith(self: string, str: string) bool {
@@ -734,9 +726,9 @@ pub fn endsWithAny(self: string, str: string) bool {
 // - Strips ANSI output as it will appear malformed.
 pub fn githubActionWriter(writer: anytype, self: string) !void {
     var offset: usize = 0;
-    const end = @truncate(u32, self.len);
+    const end = @as(u32, @truncate(self.len));
     while (offset < end) {
-        if (indexOfNewlineOrNonASCIIOrANSI(self, @truncate(u32, offset))) |i| {
+        if (indexOfNewlineOrNonASCIIOrANSI(self, @as(u32, @truncate(offset)))) |i| {
             const byte = self[i];
             if (byte > 0x7F) {
                 offset += @max(wtf8ByteSequenceLength(byte), 1);
@@ -842,11 +834,11 @@ pub fn countChar(self: string, char: u8) usize {
     var total: usize = 0;
     var remaining = self;
 
-    const splatted: AsciiVector = @splat(ascii_vector_size, char);
+    const splatted: AsciiVector = @splat(char);
 
     while (remaining.len >= 16) {
         const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-        const cmp = @popCount(@bitCast(@Vector(ascii_vector_size, u1), vec == splatted));
+        const cmp = @popCount(@as(@Vector(ascii_vector_size, u1), @bitCast(vec == splatted)));
         total += @as(usize, @reduce(.Add, cmp));
         remaining = remaining[ascii_vector_size..];
     }
@@ -936,7 +928,7 @@ inline fn eqlComptimeCheckLenWithKnownType(comptime Type: type, a: []const Type,
     comptime var b_ptr: usize = 0;
 
     inline while (dword_length > 0) : (dword_length -= 1) {
-        if (@bitCast(usize, a[b_ptr..][0 .. @sizeOf(usize) / divisor].*) != comptime @bitCast(usize, (slice[b_ptr..])[0 .. @sizeOf(usize) / divisor].*))
+        if (@as(usize, @bitCast(a[b_ptr..][0 .. @sizeOf(usize) / divisor].*)) != comptime @as(usize, @bitCast((slice[b_ptr..])[0 .. @sizeOf(usize) / divisor].*)))
             return false;
         comptime b_ptr += @sizeOf(usize);
         if (comptime b_ptr == b.len) return true;
@@ -944,7 +936,7 @@ inline fn eqlComptimeCheckLenWithKnownType(comptime Type: type, a: []const Type,
 
     if (comptime @sizeOf(usize) == 8) {
         if (comptime (len & 4) != 0) {
-            if (@bitCast(u32, a[b_ptr..][0 .. @sizeOf(u32) / divisor].*) != comptime @bitCast(u32, (slice[b_ptr..])[0 .. @sizeOf(u32) / divisor].*))
+            if (@as(u32, @bitCast(a[b_ptr..][0 .. @sizeOf(u32) / divisor].*)) != comptime @as(u32, @bitCast((slice[b_ptr..])[0 .. @sizeOf(u32) / divisor].*)))
                 return false;
 
             comptime b_ptr += @sizeOf(u32);
@@ -954,7 +946,7 @@ inline fn eqlComptimeCheckLenWithKnownType(comptime Type: type, a: []const Type,
     }
 
     if (comptime (len & 2) != 0) {
-        if (@bitCast(u16, a[b_ptr..][0 .. @sizeOf(u16) / divisor].*) != comptime @bitCast(u16, slice[b_ptr .. b_ptr + (@sizeOf(u16) / divisor)].*))
+        if (@as(u16, @bitCast(a[b_ptr..][0 .. @sizeOf(u16) / divisor].*)) != comptime @as(u16, @bitCast(slice[b_ptr .. b_ptr + (@sizeOf(u16) / divisor)].*)))
             return false;
 
         comptime b_ptr += @sizeOf(u16);
@@ -1027,7 +1019,7 @@ pub fn eqlLong(a_str: string, b_str: string, comptime check_len: bool) bool {
     {
         var dword_length = len >> 3;
         while (dword_length > 0) : (dword_length -= 1) {
-            if (@bitCast(usize, a[0..@sizeOf(usize)].*) != @bitCast(usize, b[0..@sizeOf(usize)].*))
+            if (@as(usize, @bitCast(a[0..@sizeOf(usize)].*)) != @as(usize, @bitCast(b[0..@sizeOf(usize)].*)))
                 return false;
             b += @sizeOf(usize);
             if (b == end) return true;
@@ -1037,7 +1029,7 @@ pub fn eqlLong(a_str: string, b_str: string, comptime check_len: bool) bool {
 
     if (comptime @sizeOf(usize) == 8) {
         if ((len & 4) != 0) {
-            if (@bitCast(u32, a[0..@sizeOf(u32)].*) != @bitCast(u32, b[0..@sizeOf(u32)].*))
+            if (@as(u32, @bitCast(a[0..@sizeOf(u32)].*)) != @as(u32, @bitCast(b[0..@sizeOf(u32)].*)))
                 return false;
 
             b += @sizeOf(u32);
@@ -1047,7 +1039,7 @@ pub fn eqlLong(a_str: string, b_str: string, comptime check_len: bool) bool {
     }
 
     if ((len & 2) != 0) {
-        if (@bitCast(u16, a[0..@sizeOf(u16)].*) != @bitCast(u16, b[0..@sizeOf(u16)].*))
+        if (@as(u16, @bitCast(a[0..@sizeOf(u16)].*)) != @as(u16, @bitCast(b[0..@sizeOf(u16)].*)))
             return false;
 
         b += @sizeOf(u16);
@@ -1098,7 +1090,7 @@ pub inline fn joinBuf(out: []u8, parts: anytype, comptime parts_len: usize) []u8
 
 pub fn index(self: string, str: string) i32 {
     if (strings.indexOf(self, str)) |i| {
-        return @intCast(i32, i);
+        return @as(i32, @intCast(i));
     } else {
         return -1;
     }
@@ -1117,12 +1109,12 @@ pub fn toUTF8Alloc(allocator: std.mem.Allocator, js: []const u16) !string {
 }
 
 pub inline fn appendUTF8MachineWordToUTF16MachineWord(output: *[@sizeOf(usize) / 2]u16, input: *const [@sizeOf(usize) / 2]u8) void {
-    output[0 .. @sizeOf(usize) / 2].* = @bitCast(
+    output[0 .. @sizeOf(usize) / 2].* = @as(
         [4]u16,
-        @as(
+        @bitCast(@as(
             @Vector(4, u16),
-            @bitCast(@Vector(4, u8), input[0 .. @sizeOf(usize) / 2].*),
-        ),
+            @as(@Vector(4, u8), @bitCast(input[0 .. @sizeOf(usize) / 2].*)),
+        )),
     );
 }
 
@@ -1160,7 +1152,7 @@ pub fn copyU8IntoU16WithAlignment(comptime alignment: u21, output_: []align(alig
     }
 
     if (std.mem.isAligned(@intFromPtr(output.ptr), @alignOf(u16)) and input.len > 0) {
-        copyU8IntoU16(@alignCast(@alignOf(u16), output.ptr)[0..output.len], input);
+        copyU8IntoU16(@as([*]u16, @alignCast(output.ptr))[0..output.len], input);
         return;
     }
 
@@ -1213,7 +1205,7 @@ pub inline fn copyU16IntoU8(output_: []u8, comptime InputType: type, input_: Inp
         while (last_vector_ptr != input_ptr) {
             const input_vec1: @Vector(group, u16) = input_ptr[0..group].*;
             inline for (0..group) |i| {
-                output_ptr[i] = @truncate(u8, input_vec1[i]);
+                output_ptr[i] = @as(u8, @truncate(input_vec1[i]));
             }
 
             output_ptr += group;
@@ -1227,7 +1219,7 @@ pub inline fn copyU16IntoU8(output_: []u8, comptime InputType: type, input_: Inp
     const last_input_ptr = input_ptr + @min(input.len, output.len);
 
     while (last_input_ptr != input_ptr) {
-        output_ptr[0] = @truncate(u8, input_ptr[0]);
+        output_ptr[0] = @as(u8, @truncate(input_ptr[0]));
         output_ptr += 1;
         input_ptr += 1;
     }
@@ -1239,7 +1231,7 @@ pub fn copyLatin1IntoASCII(dest: []u8, src: []const u8) void {
     var remain = src;
     var to = dest;
 
-    const non_ascii_offset = strings.firstNonASCII(remain) orelse @truncate(u32, remain.len);
+    const non_ascii_offset = strings.firstNonASCII(remain) orelse @as(u32, @truncate(remain.len));
     if (non_ascii_offset > 0) {
         @memcpy(to[0..non_ascii_offset], remain[0..non_ascii_offset]);
         remain = remain[non_ascii_offset..];
@@ -1277,7 +1269,7 @@ pub fn copyLatin1IntoASCII(dest: []u8, src: []const u8) void {
     }
 
     for (to) |*to_byte| {
-        to_byte.* = @as(u8, @truncate(u7, remain[0]));
+        to_byte.* = @as(u8, @as(u7, @truncate(remain[0])));
         remain = remain[1..];
     }
 }
@@ -1349,7 +1341,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
             //#define U16_LENGTH(c) ((uint32_t)(c)<=0xffff ? 1 : 2)
             switch (replacement.code_point) {
                 0...0xffff => |c| {
-                    try output.append(@intCast(u16, c));
+                    try output.append(@as(u16, @intCast(c)));
                 },
                 else => |c| {
                     try output.appendSlice(&[_]u16{ strings.u16Lead(c), strings.u16Trail(c) });
@@ -1384,7 +1376,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
             //#define U16_LENGTH(c) ((uint32_t)(c)<=0xffff ? 1 : 2)
             switch (replacement.code_point) {
                 0...0xffff => |c| {
-                    try output.append(@intCast(u16, c));
+                    try output.append(@as(u16, @intCast(c)));
                 },
                 else => |c| {
                     try output.appendSlice(&[_]u16{ strings.u16Lead(c), strings.u16Trail(c) });
@@ -1499,7 +1491,7 @@ pub fn toUTF8ListWithType(list_: std.ArrayList(u8), comptime Type: type, utf16: 
     if (bun.FeatureFlags.use_simdutf and comptime Type == []const u16) {
         var list = list_;
         const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
-        try list.ensureTotalCapacityPrecise(length);
+        try list.ensureTotalCapacityPrecise(length + 16);
         return convertUTF16ToUTF8(list, Type, utf16);
     }
 
@@ -1529,7 +1521,7 @@ pub fn toUTF8ListWithTypeBun(list_: std.ArrayList(u8), comptime Type: type, utf1
         utf16_remaining = utf16_remaining[replacement.len..];
 
         const count: usize = replacement.utf8Width();
-        try list.ensureTotalCapacityPrecise(i + count + list.items.len + @intFromFloat(usize, (@floatFromInt(f64, @truncate(u52, utf16_remaining.len)) * 1.2)));
+        try list.ensureTotalCapacityPrecise(i + count + list.items.len + @as(usize, @intFromFloat((@as(f64, @floatFromInt(@as(u52, @truncate(utf16_remaining.len)))) * 1.2))));
         list.items.len += i;
 
         copyU16IntoU8(
@@ -1597,7 +1589,7 @@ pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list
                     // zig or LLVM doesn't do @ctz nicely with SIMD
                     if (comptime ascii_vector_size >= 8) {
                         {
-                            const bytes = @bitCast(Int, latin1[0..size].*);
+                            const bytes = @as(Int, @bitCast(latin1[0..size].*));
                             // https://dotat.at/@/2022-06-27-tolower-swar.html
                             const mask = bytes & 0x8080808080808080;
 
@@ -1605,19 +1597,19 @@ pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list
                                 const first_set_byte = @ctz(mask) / 8;
                                 if (comptime Environment.allow_assert) std.debug.assert(latin1[first_set_byte] >= 127);
 
-                                buf[0..size].* = @bitCast([size]u8, bytes);
+                                buf[0..size].* = @as([size]u8, @bitCast(bytes));
                                 buf = buf[first_set_byte..];
                                 latin1 = latin1[first_set_byte..];
                                 break :inner;
                             }
 
-                            buf[0..size].* = @bitCast([size]u8, bytes);
+                            buf[0..size].* = @as([size]u8, @bitCast(bytes));
                             latin1 = latin1[size..];
                             buf = buf[size..];
                         }
 
                         if (comptime ascii_vector_size >= 16) {
-                            const bytes = @bitCast(Int, latin1[0..size].*);
+                            const bytes = @as(Int, @bitCast(latin1[0..size].*));
                             // https://dotat.at/@/2022-06-27-tolower-swar.html
                             const mask = bytes & 0x8080808080808080;
 
@@ -1625,7 +1617,7 @@ pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list
                                 const first_set_byte = @ctz(mask) / 8;
                                 if (comptime Environment.allow_assert) std.debug.assert(latin1[first_set_byte] >= 127);
 
-                                buf[0..size].* = @bitCast([size]u8, bytes);
+                                buf[0..size].* = @as([size]u8, @bitCast(bytes));
                                 buf = buf[first_set_byte..];
                                 latin1 = latin1[first_set_byte..];
                                 break :inner;
@@ -1635,7 +1627,7 @@ pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list
                     unreachable;
                 }
 
-                buf[0..ascii_vector_size].* = @bitCast([ascii_vector_size]u8, vec)[0..ascii_vector_size].*;
+                buf[0..ascii_vector_size].* = @as([ascii_vector_size]u8, @bitCast(vec))[0..ascii_vector_size].*;
                 latin1 = latin1[ascii_vector_size..];
                 buf = buf[ascii_vector_size..];
             }
@@ -1644,7 +1636,7 @@ pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list
                 const Int = u64;
                 const size = @sizeOf(Int);
 
-                const bytes = @bitCast(Int, latin1[0..size].*);
+                const bytes = @as(Int, @bitCast(latin1[0..size].*));
                 // https://dotat.at/@/2022-06-27-tolower-swar.html
                 const mask = bytes & 0x8080808080808080;
 
@@ -1652,13 +1644,13 @@ pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list
                     const first_set_byte = @ctz(mask) / 8;
                     if (comptime Environment.allow_assert) std.debug.assert(latin1[first_set_byte] >= 127);
 
-                    buf[0..size].* = @bitCast([size]u8, bytes);
+                    buf[0..size].* = @as([size]u8, @bitCast(bytes));
                     latin1 = latin1[first_set_byte..];
                     buf = buf[first_set_byte..];
                     break :inner;
                 }
 
-                buf[0..size].* = @bitCast([size]u8, bytes);
+                buf[0..size].* = @as([size]u8, @bitCast(bytes));
                 latin1 = latin1[size..];
                 buf = buf[size..];
             }
@@ -1808,7 +1800,7 @@ pub fn copyLatin1IntoUTF8(buf_: []u8, comptime Type: type, latin1_: Type) Encode
 
 pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_: Type, comptime stop: bool) EncodeIntoResult {
     if (comptime bun.FeatureFlags.latin1_is_now_ascii) {
-        const to_copy = @truncate(u32, @min(buf_.len, latin1_.len));
+        const to_copy = @as(u32, @truncate(@min(buf_.len, latin1_.len)));
         @memcpy(buf_[0..to_copy], latin1_[0..to_copy]);
 
         return .{ .written = to_copy, .read = to_copy };
@@ -1834,11 +1826,11 @@ pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_
                         const size = @sizeOf(Int);
 
                         {
-                            const bytes = @bitCast(Int, latin1[0..size].*);
+                            const bytes = @as(Int, @bitCast(latin1[0..size].*));
                             // https://dotat.at/@/2022-06-27-tolower-swar.html
                             const mask = bytes & 0x8080808080808080;
 
-                            buf[0..size].* = @bitCast([size]u8, bytes);
+                            buf[0..size].* = @as([size]u8, @bitCast(bytes));
 
                             if (mask > 0) {
                                 const first_set_byte = @ctz(mask) / 8;
@@ -1854,11 +1846,11 @@ pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_
                         }
 
                         if (comptime ascii_vector_size >= 16) {
-                            const bytes = @bitCast(Int, latin1[0..size].*);
+                            const bytes = @as(Int, @bitCast(latin1[0..size].*));
                             // https://dotat.at/@/2022-06-27-tolower-swar.html
                             const mask = bytes & 0x8080808080808080;
 
-                            buf[0..size].* = @bitCast([size]u8, bytes);
+                            buf[0..size].* = @as([size]u8, @bitCast(bytes));
 
                             if (comptime Environment.allow_assert) std.debug.assert(mask > 0);
                             const first_set_byte = @ctz(mask) / 8;
@@ -1872,7 +1864,7 @@ pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_
                     unreachable;
                 }
 
-                buf[0..ascii_vector_size].* = @bitCast([ascii_vector_size]u8, vec)[0..ascii_vector_size].*;
+                buf[0..ascii_vector_size].* = @as([ascii_vector_size]u8, @bitCast(vec))[0..ascii_vector_size].*;
                 latin1 = latin1[ascii_vector_size..];
                 buf = buf[ascii_vector_size..];
             }
@@ -1881,8 +1873,8 @@ pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_
                 const Int = u64;
                 const size = @sizeOf(Int);
                 while (@min(buf.len, latin1.len) >= size) {
-                    const bytes = @bitCast(Int, latin1[0..size].*);
-                    buf[0..size].* = @bitCast([size]u8, bytes);
+                    const bytes = @as(Int, @bitCast(latin1[0..size].*));
+                    buf[0..size].* = @as([size]u8, @bitCast(bytes));
 
                     // https://dotat.at/@/2022-06-27-tolower-swar.html
 
@@ -1931,8 +1923,8 @@ pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_
     }
 
     return .{
-        .written = @truncate(u32, buf_.len - buf.len),
-        .read = @truncate(u32, latin1_.len - latin1.len),
+        .written = @as(u32, @truncate(buf_.len - buf.len)),
+        .read = @as(u32, @truncate(latin1_.len - latin1.len)),
     };
 }
 
@@ -1959,16 +1951,14 @@ pub fn elementLengthLatin1IntoUTF8(comptime Type: type, latin1_: Type) usize {
             const vec: AsciiVector = latin1[0..ascii_vector_size].*;
 
             // Shifting a unsigned 8 bit integer to the right by 7 bits always produces a value of 0 or 1.
-            const cmp = vec >> @splat(
-                ascii_vector_size,
+            const cmp = vec >> @as(AsciiVector, @splat(
                 @as(u8, 7),
-            );
+            ));
 
             // Anding that value rather than converting it into a @Vector(16, u1) produces better code from LLVM.
-            const mask = cmp & @splat(
-                ascii_vector_size,
+            const mask: AsciiVector = cmp & @as(AsciiVector, @splat(
                 @as(u8, 1),
-            );
+            ));
 
             total_non_ascii_count += @as(usize, @reduce(.Add, mask));
             latin1 = latin1[ascii_vector_size..];
@@ -1992,7 +1982,7 @@ pub fn copyLatin1IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: t
     var buf = buf_;
     var latin1 = latin1_;
     while (buf.len > 0 and latin1.len > 0) {
-        const to_write = strings.firstNonASCII(latin1) orelse @truncate(u32, @min(latin1.len, buf.len));
+        const to_write = strings.firstNonASCII(latin1) orelse @as(u32, @truncate(@min(latin1.len, buf.len)));
         if (comptime std.meta.alignment(Buffer) != @alignOf(u16)) {
             strings.copyU8IntoU16WithAlignment(std.meta.alignment(Buffer), buf, latin1[0..to_write]);
         } else {
@@ -2009,8 +1999,8 @@ pub fn copyLatin1IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: t
     }
 
     return .{
-        .read = @truncate(u32, buf_.len - buf.len),
-        .written = @truncate(u32, latin1_.len - latin1.len),
+        .read = @as(u32, @truncate(buf_.len - buf.len)),
+        .written = @as(u32, @truncate(latin1_.len - latin1.len)),
     };
 }
 
@@ -2024,7 +2014,7 @@ pub fn elementLengthLatin1IntoUTF16(comptime Type: type, latin1_: Type) usize {
     var latin1 = latin1_;
     while (latin1.len > 0) {
         const function = comptime if (std.meta.Child(Type) == u8) strings.firstNonASCIIWithType else strings.firstNonASCII16;
-        const to_write = function(Type, latin1) orelse @truncate(u32, latin1.len);
+        const to_write = function(Type, latin1) orelse @as(u32, @truncate(latin1.len));
         count += to_write;
         latin1 = latin1[to_write..];
         if (latin1.len > 0) {
@@ -2186,7 +2176,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
             const vecs: [vec_chars.len]AsciiVector = comptime brk: {
                 var _vecs: [vec_chars.len]AsciiVector = undefined;
                 for (vec_chars, 0..) |c, i| {
-                    _vecs[i] = @splat(ascii_vector_size, c);
+                    _vecs[i] = @splat(c);
                 }
                 break :brk _vecs;
             };
@@ -2204,11 +2194,11 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
                 scan_and_allocate_lazily: while (remaining.len >= ascii_vector_size) {
                     if (comptime Environment.allow_assert) std.debug.assert(!any_needs_escape);
                     const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-                    if (@reduce(.Max, @bitCast(AsciiVectorU1, (vec == vecs[0])) |
-                        @bitCast(AsciiVectorU1, (vec == vecs[1])) |
-                        @bitCast(AsciiVectorU1, (vec == vecs[2])) |
-                        @bitCast(AsciiVectorU1, (vec == vecs[3])) |
-                        @bitCast(AsciiVectorU1, (vec == vecs[4]))) == 1)
+                    if (@reduce(.Max, @as(AsciiVectorU1, @bitCast((vec == vecs[0]))) |
+                        @as(AsciiVectorU1, @bitCast((vec == vecs[1]))) |
+                        @as(AsciiVectorU1, @bitCast((vec == vecs[2]))) |
+                        @as(AsciiVectorU1, @bitCast((vec == vecs[3]))) |
+                        @as(AsciiVectorU1, @bitCast((vec == vecs[4])))) == 1)
                     {
                         if (comptime Environment.allow_assert) std.debug.assert(buf.capacity == 0);
 
@@ -2264,11 +2254,11 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
                 // so we'll go ahead and copy the buffer into a new buffer
                 while (remaining.len >= ascii_vector_size) {
                     const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-                    if (@reduce(.Max, @bitCast(AsciiVectorU1, (vec == vecs[0])) |
-                        @bitCast(AsciiVectorU1, (vec == vecs[1])) |
-                        @bitCast(AsciiVectorU1, (vec == vecs[2])) |
-                        @bitCast(AsciiVectorU1, (vec == vecs[3])) |
-                        @bitCast(AsciiVectorU1, (vec == vecs[4]))) == 1)
+                    if (@reduce(.Max, @as(AsciiVectorU1, @bitCast((vec == vecs[0]))) |
+                        @as(AsciiVectorU1, @bitCast((vec == vecs[1]))) |
+                        @as(AsciiVectorU1, @bitCast((vec == vecs[2]))) |
+                        @as(AsciiVectorU1, @bitCast((vec == vecs[3]))) |
+                        @as(AsciiVectorU1, @bitCast((vec == vecs[4])))) == 1)
                     {
                         buf.ensureUnusedCapacity(ascii_vector_size + 6) catch unreachable;
                         comptime var i: usize = 0;
@@ -2448,7 +2438,7 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                 const vecs: [vec_chars.len]AsciiU16Vector = brk: {
                     var _vecs: [vec_chars.len]AsciiU16Vector = undefined;
                     for (vec_chars, 0..) |c, i| {
-                        _vecs[i] = @splat(ascii_u16_vector_size, @as(u16, c));
+                        _vecs[i] = @splat(@as(u16, c));
                     }
                     break :brk _vecs;
                 };
@@ -2457,12 +2447,12 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                 scan_and_allocate_lazily: while (remaining.len >= ascii_u16_vector_size) {
                     if (comptime Environment.allow_assert) std.debug.assert(!any_needs_escape);
                     const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
-                    if (@reduce(.Max, @bitCast(AsciiVectorU16U1, vec > @splat(ascii_u16_vector_size, @as(u16, 127))) |
-                        @bitCast(AsciiVectorU16U1, (vec == vecs[0])) |
-                        @bitCast(AsciiVectorU16U1, (vec == vecs[1])) |
-                        @bitCast(AsciiVectorU16U1, (vec == vecs[2])) |
-                        @bitCast(AsciiVectorU16U1, (vec == vecs[3])) |
-                        @bitCast(AsciiVectorU16U1, (vec == vecs[4]))) == 1)
+                    if (@reduce(.Max, @as(AsciiVectorU16U1, @bitCast(vec > @as(AsciiU16Vector, @splat(@as(u16, 127))))) |
+                        @as(AsciiVectorU16U1, @bitCast((vec == vecs[0]))) |
+                        @as(AsciiVectorU16U1, @bitCast((vec == vecs[1]))) |
+                        @as(AsciiVectorU16U1, @bitCast((vec == vecs[2]))) |
+                        @as(AsciiVectorU16U1, @bitCast((vec == vecs[3]))) |
+                        @as(AsciiVectorU16U1, @bitCast((vec == vecs[4])))) == 1)
                     {
                         var i: u16 = 0;
                         lazy: {
@@ -2536,12 +2526,12 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                     // so we'll go ahead and copy the buffer into a new buffer
                     while (remaining.len >= ascii_u16_vector_size) {
                         const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
-                        if (@reduce(.Max, @bitCast(AsciiVectorU16U1, vec > @splat(ascii_u16_vector_size, @as(u16, 127))) |
-                            @bitCast(AsciiVectorU16U1, (vec == vecs[0])) |
-                            @bitCast(AsciiVectorU16U1, (vec == vecs[1])) |
-                            @bitCast(AsciiVectorU16U1, (vec == vecs[2])) |
-                            @bitCast(AsciiVectorU16U1, (vec == vecs[3])) |
-                            @bitCast(AsciiVectorU16U1, (vec == vecs[4]))) == 1)
+                        if (@reduce(.Max, @as(AsciiVectorU16U1, @bitCast(vec > @as(AsciiU16Vector, @splat(@as(u16, 127))))) |
+                            @as(AsciiVectorU16U1, @bitCast((vec == vecs[0]))) |
+                            @as(AsciiVectorU16U1, @bitCast((vec == vecs[1]))) |
+                            @as(AsciiVectorU16U1, @bitCast((vec == vecs[2]))) |
+                            @as(AsciiVectorU16U1, @bitCast((vec == vecs[3]))) |
+                            @as(AsciiVectorU16U1, @bitCast((vec == vecs[4])))) == 1)
                         {
                             buf.ensureUnusedCapacity(ascii_u16_vector_size) catch unreachable;
                             var i: u16 = 0;
@@ -2698,9 +2688,9 @@ test "copyLatin1IntoUTF8 - latin1" {
 }
 
 pub fn latin1ToCodepointAssumeNotASCII(char: u8, comptime CodePointType: type) CodePointType {
-    return @intCast(
+    return @as(
         CodePointType,
-        latin1ToCodepointBytesAssumeNotASCII16(char),
+        @intCast(latin1ToCodepointBytesAssumeNotASCII16(char)),
     );
 }
 
@@ -2741,12 +2731,12 @@ const latin1_to_utf16_conversion_table = [256]u16{
 
 pub fn latin1ToCodepointBytesAssumeNotASCII(char: u32) [2]u8 {
     var bytes = [4]u8{ 0, 0, 0, 0 };
-    _ = encodeWTF8Rune(&bytes, @intCast(i32, char));
+    _ = encodeWTF8Rune(&bytes, @as(i32, @intCast(char)));
     return bytes[0..2].*;
 }
 
 pub fn latin1ToCodepointBytesAssumeNotASCII16(char: u32) u16 {
-    return latin1_to_utf16_conversion_table[@truncate(u8, char)];
+    return latin1_to_utf16_conversion_table[@as(u8, @truncate(char))];
 }
 
 pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type, comptime allow_partial_write: bool) EncodeIntoResult {
@@ -2784,8 +2774,8 @@ pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, 
                     if (result.status == .surrogate) break :brk;
 
                     return EncodeIntoResult{
-                        .read = @truncate(u32, trimmed.len),
-                        .written = @truncate(u32, result.count),
+                        .read = @as(u32, @truncate(trimmed.len)),
+                        .written = @as(u32, @truncate(result.count)),
                     };
                 }
             }
@@ -2810,7 +2800,7 @@ pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, 
                 2 => {
                     if (remaining.len > 0) {
                         //only first will be written
-                        remaining[0] = @truncate(u8, 0xC0 | (replacement.code_point >> 6));
+                        remaining[0] = @as(u8, @truncate(0xC0 | (replacement.code_point >> 6)));
                         remaining = remaining[remaining.len..];
                     }
                 },
@@ -2818,12 +2808,12 @@ pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, 
                     //only first to second written
                     switch (remaining.len) {
                         1 => {
-                            remaining[0] = @truncate(u8, 0xE0 | (replacement.code_point >> 12));
+                            remaining[0] = @as(u8, @truncate(0xE0 | (replacement.code_point >> 12)));
                             remaining = remaining[remaining.len..];
                         },
                         2 => {
-                            remaining[0] = @truncate(u8, 0xE0 | (replacement.code_point >> 12));
-                            remaining[1] = @truncate(u8, 0x80 | (replacement.code_point >> 6) & 0x3F);
+                            remaining[0] = @as(u8, @truncate(0xE0 | (replacement.code_point >> 12)));
+                            remaining[1] = @as(u8, @truncate(0x80 | (replacement.code_point >> 6) & 0x3F));
                             remaining = remaining[remaining.len..];
                         },
                         else => {},
@@ -2833,18 +2823,18 @@ pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, 
                     //only 1 to 3 written
                     switch (remaining.len) {
                         1 => {
-                            remaining[0] = @truncate(u8, 0xF0 | (replacement.code_point >> 18));
+                            remaining[0] = @as(u8, @truncate(0xF0 | (replacement.code_point >> 18)));
                             remaining = remaining[remaining.len..];
                         },
                         2 => {
-                            remaining[0] = @truncate(u8, 0xF0 | (replacement.code_point >> 18));
-                            remaining[1] = @truncate(u8, 0x80 | (replacement.code_point >> 12) & 0x3F);
+                            remaining[0] = @as(u8, @truncate(0xF0 | (replacement.code_point >> 18)));
+                            remaining[1] = @as(u8, @truncate(0x80 | (replacement.code_point >> 12) & 0x3F));
                             remaining = remaining[remaining.len..];
                         },
                         3 => {
-                            remaining[0] = @truncate(u8, 0xF0 | (replacement.code_point >> 18));
-                            remaining[1] = @truncate(u8, 0x80 | (replacement.code_point >> 12) & 0x3F);
-                            remaining[2] = @truncate(u8, 0x80 | (replacement.code_point >> 6) & 0x3F);
+                            remaining[0] = @as(u8, @truncate(0xF0 | (replacement.code_point >> 18)));
+                            remaining[1] = @as(u8, @truncate(0x80 | (replacement.code_point >> 12) & 0x3F));
+                            remaining[2] = @as(u8, @truncate(0x80 | (replacement.code_point >> 6) & 0x3F));
                             remaining = remaining[remaining.len..];
                         },
                         else => {},
@@ -2869,8 +2859,8 @@ pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, 
     }
 
     return .{
-        .read = @truncate(u32, utf16.len - utf16_remaining.len),
-        .written = @truncate(u32, buf.len - remaining.len),
+        .read = @as(u32, @truncate(utf16.len - utf16_remaining.len)),
+        .written = @as(u32, @truncate(buf.len - remaining.len)),
     };
 }
 
@@ -2967,7 +2957,7 @@ pub fn encodeWTF8Rune(p: *[4]u8, r: i32) u3 {
         .{
             p,
             u32,
-            @intCast(u32, r),
+            @as(u32, @intCast(r)),
         },
     );
 }
@@ -2975,25 +2965,25 @@ pub fn encodeWTF8Rune(p: *[4]u8, r: i32) u3 {
 pub fn encodeWTF8RuneT(p: *[4]u8, comptime R: type, r: R) u3 {
     switch (r) {
         0...0x7F => {
-            p[0] = @intCast(u8, r);
+            p[0] = @as(u8, @intCast(r));
             return 1;
         },
         (0x7F + 1)...0x7FF => {
-            p[0] = @truncate(u8, 0xC0 | ((r >> 6)));
-            p[1] = @truncate(u8, 0x80 | (r & 0x3F));
+            p[0] = @as(u8, @truncate(0xC0 | ((r >> 6))));
+            p[1] = @as(u8, @truncate(0x80 | (r & 0x3F)));
             return 2;
         },
         (0x7FF + 1)...0xFFFF => {
-            p[0] = @truncate(u8, 0xE0 | ((r >> 12)));
-            p[1] = @truncate(u8, 0x80 | ((r >> 6) & 0x3F));
-            p[2] = @truncate(u8, 0x80 | (r & 0x3F));
+            p[0] = @as(u8, @truncate(0xE0 | ((r >> 12))));
+            p[1] = @as(u8, @truncate(0x80 | ((r >> 6) & 0x3F)));
+            p[2] = @as(u8, @truncate(0x80 | (r & 0x3F)));
             return 3;
         },
         else => {
-            p[0] = @truncate(u8, 0xF0 | ((r >> 18)));
-            p[1] = @truncate(u8, 0x80 | ((r >> 12) & 0x3F));
-            p[2] = @truncate(u8, 0x80 | ((r >> 6) & 0x3F));
-            p[3] = @truncate(u8, 0x80 | (r & 0x3F));
+            p[0] = @as(u8, @truncate(0xF0 | ((r >> 18))));
+            p[1] = @as(u8, @truncate(0x80 | ((r >> 12) & 0x3F)));
+            p[2] = @as(u8, @truncate(0x80 | ((r >> 6) & 0x3F)));
+            p[3] = @as(u8, @truncate(0x80 | (r & 0x3F)));
             return 4;
         },
     }
@@ -3070,17 +3060,17 @@ pub const ascii_vector_size = if (Environment.isWasm) 8 else 16;
 pub const ascii_u16_vector_size = if (Environment.isWasm) 4 else 8;
 pub const AsciiVectorInt = std.meta.Int(.unsigned, ascii_vector_size);
 pub const AsciiVectorIntU16 = std.meta.Int(.unsigned, ascii_u16_vector_size);
-pub const max_16_ascii = @splat(ascii_vector_size, @as(u8, 127));
-pub const min_16_ascii = @splat(ascii_vector_size, @as(u8, 0x20));
-pub const max_u16_ascii = @splat(ascii_u16_vector_size, @as(u16, 127));
-pub const min_u16_ascii = @splat(ascii_u16_vector_size, @as(u16, 0x20));
+pub const max_16_ascii: @Vector(ascii_vector_size, u8) = @splat(@as(u8, 127));
+pub const min_16_ascii: @Vector(ascii_vector_size, u8) = @splat(@as(u8, 0x20));
+pub const max_u16_ascii: @Vector(ascii_u16_vector_size, u16) = @splat(@as(u16, 127));
+pub const min_u16_ascii: @Vector(ascii_u16_vector_size, u16) = @splat(@as(u16, 0x20));
 pub const AsciiVector = @Vector(ascii_vector_size, u8);
 pub const AsciiVectorSmall = @Vector(8, u8);
 pub const AsciiVectorU1 = @Vector(ascii_vector_size, u1);
 pub const AsciiVectorU1Small = @Vector(8, u1);
 pub const AsciiVectorU16U1 = @Vector(ascii_u16_vector_size, u1);
 pub const AsciiU16Vector = @Vector(ascii_u16_vector_size, u16);
-pub const max_4_ascii = @splat(4, @as(u8, 127));
+pub const max_4_ascii: @Vector(4, u8) = @splat(@as(u8, 127));
 pub fn isAllASCII(slice: []const u8) bool {
     if (bun.FeatureFlags.use_simdutf)
         return bun.simdutf.validate.ascii(slice);
@@ -3103,7 +3093,7 @@ pub fn isAllASCII(slice: []const u8) bool {
     const size = @sizeOf(Int);
     const remaining_last8 = slice.ptr + slice.len - (slice.len % size);
     while (remaining.ptr != remaining_last8) : (remaining.ptr += size) {
-        const bytes = @bitCast(Int, remaining[0..size].*);
+        const bytes = @as(Int, @bitCast(remaining[0..size].*));
         // https://dotat.at/@/2022-06-27-tolower-swar.html
         const mask = bytes & 0x8080808080808080;
 
@@ -3133,12 +3123,12 @@ pub fn isAllASCIISimple(comptime slice: []const u8) bool {
 
 //#define U16_LEAD(supplementary) (UChar)(((supplementary)>>10)+0xd7c0)
 pub inline fn u16Lead(supplementary: anytype) u16 {
-    return @intCast(u16, (supplementary >> 10) + 0xd7c0);
+    return @as(u16, @intCast((supplementary >> 10) + 0xd7c0));
 }
 
 //#define U16_TRAIL(supplementary) (UChar)(((supplementary)&0x3ff)|0xdc00)
 pub inline fn u16Trail(supplementary: anytype) u16 {
-    return @intCast(u16, (supplementary & 0x3ff) | 0xdc00);
+    return @as(u16, @intCast((supplementary & 0x3ff) | 0xdc00));
 }
 
 pub fn firstNonASCII(slice: []const u8) ?u32 {
@@ -3154,7 +3144,7 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
             return null;
         }
 
-        return @truncate(u32, result.count);
+        return @as(u32, @truncate(result.count));
     }
 
     if (comptime Environment.enableSIMD) {
@@ -3171,7 +3161,7 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
                     remaining.len -= @intFromPtr(remaining.ptr) - @intFromPtr(remaining_start);
 
                     {
-                        const bytes = @bitCast(Int, remaining[0..size].*);
+                        const bytes = @as(Int, @bitCast(remaining[0..size].*));
                         // https://dotat.at/@/2022-06-27-tolower-swar.html
                         const mask = bytes & 0x8080808080808080;
 
@@ -3185,12 +3175,12 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
                                 }
                             }
 
-                            return @as(u32, first_set_byte) + @intCast(u32, slice.len - remaining.len);
+                            return @as(u32, first_set_byte) + @as(u32, @intCast(slice.len - remaining.len));
                         }
                         remaining = remaining[size..];
                     }
                     {
-                        const bytes = @bitCast(Int, remaining[0..size].*);
+                        const bytes = @as(Int, @bitCast(remaining[0..size].*));
                         const mask = bytes & 0x8080808080808080;
 
                         if (mask > 0) {
@@ -3203,7 +3193,7 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
                                 }
                             }
 
-                            return @as(u32, first_set_byte) + @intCast(u32, slice.len - remaining.len);
+                            return @as(u32, first_set_byte) + @as(u32, @intCast(slice.len - remaining.len));
                         }
                     }
                     unreachable;
@@ -3233,7 +3223,7 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
 
         if (remaining.len >= size) {
             while (remaining.ptr != remaining_end) {
-                const bytes = @bitCast(Int, remaining[0..size].*);
+                const bytes = @as(Int, @bitCast(remaining[0..size].*));
                 // https://dotat.at/@/2022-06-27-tolower-swar.html
                 const mask = bytes & 0x8080808080808080;
 
@@ -3248,7 +3238,7 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
                         }
                     }
 
-                    return @as(u32, first_set_byte) + @intCast(u32, slice.len - remaining.len);
+                    return @as(u32, first_set_byte) + @as(u32, @intCast(slice.len - remaining.len));
                 }
 
                 remaining.ptr += size;
@@ -3262,7 +3252,7 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
     for (remaining) |*char| {
         if (char.* > 127) {
             // try to prevent it from reading the length of the slice
-            return @truncate(u32, @intFromPtr(char) - @intFromPtr(slice.ptr));
+            return @as(u32, @truncate(@intFromPtr(char) - @intFromPtr(slice.ptr)));
         }
     }
 
@@ -3279,16 +3269,16 @@ pub fn indexOfNewlineOrNonASCIIOrANSI(slice_: []const u8, offset: u32) ?u32 {
     if (comptime Environment.enableSIMD) {
         while (remaining.len >= ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-            const cmp = @bitCast(AsciiVectorU1, (vec > max_16_ascii)) | @bitCast(AsciiVectorU1, (vec < min_16_ascii)) |
-                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\r'))) |
-                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\n'))) |
-                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\x1b')));
+            const cmp = @as(AsciiVectorU1, @bitCast((vec > max_16_ascii))) | @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\r'))))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\n'))))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\x1b')))));
 
             if (@reduce(.Max, cmp) > 0) {
-                const bitmask = @bitCast(AsciiVectorInt, cmp);
+                const bitmask = @as(AsciiVectorInt, @bitCast(cmp));
                 const first = @ctz(bitmask);
 
-                return @as(u32, first) + @intCast(u32, slice.len - remaining.len) + offset;
+                return @as(u32, first) + @as(u32, @intCast(slice.len - remaining.len)) + offset;
             }
 
             remaining = remaining[ascii_vector_size..];
@@ -3300,7 +3290,7 @@ pub fn indexOfNewlineOrNonASCIIOrANSI(slice_: []const u8, offset: u32) ?u32 {
     for (remaining) |*char_| {
         const char = char_.*;
         if (char > 127 or char < 0x20 or char == '\n' or char == '\r' or char == '\x1b') {
-            return @truncate(u32, (@intFromPtr(char_) - @intFromPtr(slice.ptr))) + offset;
+            return @as(u32, @truncate((@intFromPtr(char_) - @intFromPtr(slice.ptr)))) + offset;
         }
     }
 
@@ -3328,15 +3318,15 @@ pub fn indexOfNewlineOrNonASCIICheckStart(slice_: []const u8, offset: u32, compt
     if (comptime Environment.enableSIMD) {
         while (remaining.len >= ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-            const cmp = @bitCast(AsciiVectorU1, (vec > max_16_ascii)) | @bitCast(AsciiVectorU1, (vec < min_16_ascii)) |
-                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\r'))) |
-                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\n')));
+            const cmp = @as(AsciiVectorU1, @bitCast((vec > max_16_ascii))) | @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\r'))))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\n')))));
 
             if (@reduce(.Max, cmp) > 0) {
-                const bitmask = @bitCast(AsciiVectorInt, cmp);
+                const bitmask = @as(AsciiVectorInt, @bitCast(cmp));
                 const first = @ctz(bitmask);
 
-                return @as(u32, first) + @intCast(u32, slice.len - remaining.len) + offset;
+                return @as(u32, first) + @as(u32, @intCast(slice.len - remaining.len)) + offset;
             }
 
             remaining = remaining[ascii_vector_size..];
@@ -3348,7 +3338,7 @@ pub fn indexOfNewlineOrNonASCIICheckStart(slice_: []const u8, offset: u32, compt
     for (remaining) |*char_| {
         const char = char_.*;
         if (char > 127 or char < 0x20 or char == '\n' or char == '\r') {
-            return @truncate(u32, (@intFromPtr(char_) - @intFromPtr(slice.ptr))) + offset;
+            return @as(u32, @truncate((@intFromPtr(char_) - @intFromPtr(slice.ptr)))) + offset;
         }
     }
 
@@ -3365,10 +3355,10 @@ pub fn containsNewlineOrNonASCIIOrQuote(slice_: []const u8) bool {
     if (comptime Environment.enableSIMD) {
         while (remaining.len >= ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-            const cmp = @bitCast(AsciiVectorU1, (vec > max_16_ascii)) | @bitCast(AsciiVectorU1, (vec < min_16_ascii)) |
-                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\r'))) |
-                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\n'))) |
-                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '"')));
+            const cmp = @as(AsciiVectorU1, @bitCast((vec > max_16_ascii))) | @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\r'))))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\n'))))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '"')))));
 
             if (@reduce(.Max, cmp) > 0) {
                 return true;
@@ -3402,15 +3392,15 @@ pub fn indexOfNeedsEscape(slice: []const u8) ?u32 {
     if (comptime Environment.enableSIMD) {
         while (remaining.len >= ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-            const cmp = @bitCast(AsciiVectorU1, (vec > max_16_ascii)) | @bitCast(AsciiVectorU1, (vec < min_16_ascii)) |
-                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\\'))) |
-                @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '"')));
+            const cmp = @as(AsciiVectorU1, @bitCast((vec > max_16_ascii))) | @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\\'))))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '"')))));
 
             if (@reduce(.Max, cmp) > 0) {
-                const bitmask = @bitCast(AsciiVectorInt, cmp);
+                const bitmask = @as(AsciiVectorInt, @bitCast(cmp));
                 const first = @ctz(bitmask);
 
-                return @as(u32, first) + @truncate(u32, @intFromPtr(remaining.ptr) - @intFromPtr(slice.ptr));
+                return @as(u32, first) + @as(u32, @truncate(@intFromPtr(remaining.ptr) - @intFromPtr(slice.ptr)));
             }
 
             remaining = remaining[ascii_vector_size..];
@@ -3420,7 +3410,7 @@ pub fn indexOfNeedsEscape(slice: []const u8) ?u32 {
     for (remaining) |*char_| {
         const char = char_.*;
         if (char > 127 or char < 0x20 or char == '\\' or char == '"') {
-            return @truncate(u32, @intFromPtr(char_) - @intFromPtr(slice.ptr));
+            return @as(u32, @truncate(@intFromPtr(char_) - @intFromPtr(slice.ptr)));
         }
     }
 
@@ -3444,11 +3434,11 @@ pub fn indexOfCharZ(sliceZ: [:0]const u8, char: u8) ?u63 {
             @intFromPtr(ptr) < @intFromPtr(sliceZ.ptr + sliceZ.len) and
             pos <= sliceZ.len);
 
-    return @truncate(u63, pos);
+    return @as(u63, @truncate(pos));
 }
 
 pub fn indexOfChar(slice: []const u8, char: u8) ?u32 {
-    return @truncate(u32, indexOfCharUsize(slice, char) orelse return null);
+    return @as(u32, @truncate(indexOfCharUsize(slice, char) orelse return null));
 }
 
 pub fn indexOfCharUsize(slice: []const u8, char: u8) ?usize {
@@ -3493,7 +3483,7 @@ test "indexOfChar" {
     inline for (pairs) |pair| {
         try std.testing.expectEqual(
             indexOfChar(pair.@"0", pair.@"1").?,
-            @truncate(u32, std.mem.indexOfScalar(u8, pair.@"0", pair.@"1").?),
+            @as(u32, @truncate(std.mem.indexOfScalar(u8, pair.@"0", pair.@"1").?)),
         );
     }
 }
@@ -3509,11 +3499,11 @@ pub fn indexOfNotChar(slice: []const u8, char: u8) ?u32 {
     if (comptime Environment.enableSIMD) {
         while (remaining.len >= ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-            const cmp = @splat(ascii_vector_size, char) != vec;
-            if (@reduce(.Max, @bitCast(AsciiVectorU1, cmp)) > 0) {
-                const bitmask = @bitCast(AsciiVectorInt, cmp);
+            const cmp = @as(AsciiVector, @splat(char)) != vec;
+            if (@reduce(.Max, @as(AsciiVectorU1, @bitCast(cmp))) > 0) {
+                const bitmask = @as(AsciiVectorInt, @bitCast(cmp));
                 const first = @ctz(bitmask);
-                return @as(u32, first) + @intCast(u32, slice.len - remaining.len);
+                return @as(u32, first) + @as(u32, @intCast(slice.len - remaining.len));
             }
 
             remaining = remaining[ascii_vector_size..];
@@ -3522,7 +3512,7 @@ pub fn indexOfNotChar(slice: []const u8, char: u8) ?u32 {
 
     for (remaining) |*current| {
         if (current.* != char) {
-            return @truncate(u32, @intFromPtr(current) - @intFromPtr(slice.ptr));
+            return @as(u32, @truncate(@intFromPtr(current) - @intFromPtr(slice.ptr)));
         }
     }
 
@@ -3578,8 +3568,8 @@ inline fn _decodeHexToBytes(destination: []u8, comptime Char: type, source: []co
                 return error.InvalidByteSequence;
             }
         }
-        const a = hex_table[@truncate(u8, int[0])];
-        const b = hex_table[@truncate(u8, int[1])];
+        const a = hex_table[@as(u8, @truncate(int[0]))];
+        const b = hex_table[@as(u8, @truncate(int[1]))];
         if (a == invalid_char or b == invalid_char) {
             if (comptime truncate) break;
             return error.InvalidByteSequence;
@@ -3617,7 +3607,7 @@ pub fn encodeBytesToHex(destination: []u8, source: []const u8) usize {
 test "decodeHexToBytes" {
     var buffer = std.mem.zeroes([1024]u8);
     for (buffer, 0..) |_, i| {
-        buffer[i] = @truncate(u8, i % 256);
+        buffer[i] = @as(u8, @truncate(i % 256));
     }
     var written: [2048]u8 = undefined;
     var hex = std.fmt.bufPrint(&written, "{}", .{std.fmt.fmtSliceHexLower(&buffer)}) catch unreachable;
@@ -3733,24 +3723,24 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
                         // it does it element-wise for every single u8 on the vector
                         // instead of doing the SIMD instructions
                         // it removes a loop, but probably is slower in the end
-                        const cmp = @bitCast(AsciiVectorU16U1, vec > max_u16_ascii) |
-                            @bitCast(AsciiVectorU16U1, vec < min_u16_ascii);
-                        const bitmask: u8 = @bitCast(u8, cmp);
+                        const cmp = @as(AsciiVectorU16U1, @bitCast(vec > max_u16_ascii)) |
+                            @as(AsciiVectorU16U1, @bitCast(vec < min_u16_ascii));
+                        const bitmask: u8 = @as(u8, @bitCast(cmp));
                         const first = @ctz(bitmask);
 
-                        return @intCast(u32, @as(u32, first) +
-                            @intCast(u32, slice.len - remaining.len));
+                        return @as(u32, @intCast(@as(u32, first) +
+                            @as(u32, @intCast(slice.len - remaining.len))));
                     }
                 } else if (comptime !check_min) {
                     if (max_value > 127) {
                         remaining.len -= (@intFromPtr(remaining.ptr) - @intFromPtr(remaining_start)) / 2;
 
                         const cmp = vec > max_u16_ascii;
-                        const bitmask: u8 = @bitCast(u8, cmp);
+                        const bitmask: u8 = @as(u8, @bitCast(cmp));
                         const first = @ctz(bitmask);
 
-                        return @intCast(u32, @as(u32, first) +
-                            @intCast(u32, slice.len - remaining.len));
+                        return @as(u32, @intCast(@as(u32, first) +
+                            @as(u32, @intCast(slice.len - remaining.len))));
                     }
                 }
 
@@ -3764,7 +3754,7 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
         var i: usize = 0;
         for (remaining) |char| {
             if (char > 127 or char < 0x20) {
-                return @truncate(u32, i);
+                return @as(u32, @truncate(i));
             }
 
             i += 1;
@@ -3773,7 +3763,7 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
         var i: usize = 0;
         for (remaining) |char| {
             if (char > 127) {
-                return @truncate(u32, i);
+                return @as(u32, @truncate(i));
             }
 
             i += 1;
@@ -3794,17 +3784,17 @@ pub fn @"nextUTF16NonASCIIOr$`\\"(
         while (remaining.len >= ascii_u16_vector_size) {
             const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
 
-            const cmp = @bitCast(AsciiVectorU16U1, (vec > max_u16_ascii)) |
-                @bitCast(AsciiVectorU16U1, (vec < min_u16_ascii)) |
-                @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, '$')))) |
-                @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, '`')))) |
-                @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, '\\'))));
+            const cmp = @as(AsciiVectorU16U1, @bitCast((vec > max_u16_ascii))) |
+                @as(AsciiVectorU16U1, @bitCast((vec < min_u16_ascii))) |
+                @as(AsciiVectorU16U1, @bitCast((vec == @as(AsciiU16Vector, @splat(@as(u16, '$')))))) |
+                @as(AsciiVectorU16U1, @bitCast((vec == @as(AsciiU16Vector, @splat(@as(u16, '`')))))) |
+                @as(AsciiVectorU16U1, @bitCast((vec == @as(AsciiU16Vector, @splat(@as(u16, '\\'))))));
 
-            const bitmask = @bitCast(u8, cmp);
+            const bitmask = @as(u8, @bitCast(cmp));
             const first = @ctz(bitmask);
             if (first < ascii_u16_vector_size) {
-                return @intCast(u32, @as(u32, first) +
-                    @intCast(u32, slice.len - remaining.len));
+                return @as(u32, @intCast(@as(u32, first) +
+                    @as(u32, @intCast(slice.len - remaining.len))));
             }
 
             remaining = remaining[ascii_u16_vector_size..];
@@ -3814,7 +3804,7 @@ pub fn @"nextUTF16NonASCIIOr$`\\"(
     for (remaining, 0..) |char, i| {
         switch (char) {
             '$', '`', '\\', 0...0x20 - 1, 128...std.math.maxInt(u16) => {
-                return @truncate(u32, i + (slice.len - remaining.len));
+                return @as(u32, @truncate(i + (slice.len - remaining.len)));
             },
 
             else => {},
@@ -4193,7 +4183,7 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
             it.i = @min(next_, bytes.len);
 
             const slice = bytes[prev..][0..cp_len];
-            it.width = @intCast(u3, slice.len);
+            it.width = @as(u3, @intCast(slice.len));
             return slice;
         }
 
@@ -4235,10 +4225,10 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
 
             it.c = switch (slice.len) {
                 0 => zeroValue,
-                1 => @intCast(CodePointType, slice[0]),
-                2 => @intCast(CodePointType, std.unicode.utf8Decode2(slice) catch unreachable),
-                3 => @intCast(CodePointType, std.unicode.utf8Decode3(slice) catch unreachable),
-                4 => @intCast(CodePointType, std.unicode.utf8Decode4(slice) catch unreachable),
+                1 => @as(CodePointType, @intCast(slice[0])),
+                2 => @as(CodePointType, @intCast(std.unicode.utf8Decode2(slice) catch unreachable)),
+                3 => @as(CodePointType, @intCast(std.unicode.utf8Decode3(slice) catch unreachable)),
+                4 => @as(CodePointType, @intCast(std.unicode.utf8Decode4(slice) catch unreachable)),
                 else => unreachable,
             };
 

@@ -37,7 +37,9 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCommonJSModuleRecord;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMockImplementation;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMockFunction;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAsyncContextFrame;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMockWithImplementationCleanupData;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForProcessObject;
 
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
@@ -858,7 +860,7 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWebFakeXRInputController;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWebXRTest;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDedicatedWorkerGlobalScope;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWorker;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWorker;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWorkerGlobalScope;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWorkerLocation;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExtendableEvent;

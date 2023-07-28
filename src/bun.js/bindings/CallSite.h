@@ -80,7 +80,7 @@ public:
     void setLineNumber(JSC::JSValue lineNumber) { m_lineNumber = lineNumber; }
     void setColumnNumber(JSC::JSValue columnNumber) { m_columnNumber = columnNumber; }
 
-    void formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder &sb);
+    void formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb);
 
 private:
     CallSite(JSC::VM& vm, JSC::Structure* structure)

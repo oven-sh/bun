@@ -11,7 +11,6 @@ const Output = bun.Output;
 const Environment = bun.Environment;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const string = bun.string;
-const ThreadPool = bun.ThreadPool;
 const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;
 
@@ -34,8 +33,9 @@ pub const PathWatcherManager = struct {
     file_paths: bun.StringHashMap(PathInfo),
     current_fd_task: bun.FDHashMap(*DirectoryRegisterTask),
     deinit_on_last_watcher: bool = false,
+    pending_tasks: u32 = 0,
+    deinit_on_last_task: bool = false,
     mutex: Mutex,
-    thread_pool: ThreadPool,
     const PathInfo = struct {
         fd: StoredFileDescriptorType = 0,
         is_file: bool = true,
@@ -116,13 +116,6 @@ pub const PathWatcherManager = struct {
             .vm = vm,
             .watcher_count = 0,
             .mutex = Mutex.init(),
-            // we schedule directory search to run on a thread pool because we dont want to block the main thread
-            // threads are only spawned when some task is schedule
-            .thread_pool = ThreadPool.init(.{
-                .stack_size = 2 * 1024 * 1024,
-                // 2 should be enought, macOS will never spawn these threads because we are using FSEvents
-                .max_threads = @max(@as(u32, @truncate(std.Thread.getCpuCount() catch 0)), 2),
-            }),
         };
 
         this.* = manager;
@@ -335,10 +328,10 @@ pub const PathWatcherManager = struct {
     pub const DirectoryRegisterTask = struct {
         manager: *PathWatcherManager,
         path: PathInfo,
-        task: ThreadPool.Task = .{ .callback = callback },
+        task: JSC.WorkPoolTask = .{ .callback = callback },
         watcher_list: bun.BabyList(*PathWatcher) = .{},
 
-        pub fn callback(task: *ThreadPool.Task) void {
+        pub fn callback(task: *JSC.WorkPoolTask) void {
             var routine = @fieldParentPtr(@This(), "task", task);
             defer routine.deinit();
             routine.run();
@@ -382,7 +375,8 @@ pub const PathWatcherManager = struct {
                 watcher.pending_directories -= 1;
                 return err;
             };
-            ThreadPool.schedule(&manager.thread_pool, ThreadPool.Batch.from(&routine.task));
+            manager.pending_tasks += 1;
+            JSC.WorkPool.schedule(&routine.task);
             return;
         }
 
@@ -466,6 +460,15 @@ pub const PathWatcherManager = struct {
                     watcher.emit(@errorName(err), 0, std.time.milliTimestamp(), false, .@"error");
                     watcher.flush();
                 };
+            }
+
+            this.manager.mutex.lock();
+            this.manager.pending_tasks -= 1;
+            if (this.manager.deinit_on_last_task and this.manager.pending_tasks == 0) {
+                this.manager.mutex.unlock();
+                this.manager.deinit();
+            } else {
+                this.manager.mutex.unlock();
             }
         }
 
@@ -554,13 +557,8 @@ pub const PathWatcherManager = struct {
 
         var watchers = this.watchers.slice();
         defer {
-            if (this.watcher_count == 0) {
-                // TODO: if we are the last watcher we dont need to keep the thread pool alive, should we deinit/reset it?
-                // this.thread_pool.deinit();
-
-                if (this.deinit_on_last_watcher) {
-                    this.deinit();
-                }
+            if (this.deinit_on_last_watcher and this.watcher_count == 0) {
+                this.deinit();
             }
         }
 
@@ -607,7 +605,11 @@ pub const PathWatcherManager = struct {
             return;
         }
 
-        this.thread_pool.deinit();
+        if (this.pending_tasks > 0) {
+            // deinit when all tasks are done
+            this.deinit_on_last_task = true;
+            return;
+        }
 
         this.main_watcher.deinit(false);
 

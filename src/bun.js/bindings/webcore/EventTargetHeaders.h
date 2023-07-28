@@ -106,8 +106,8 @@
 // #include "JSMediaStreamTrack.h"
 // #include "MediaStreamTrack.h"
 // #endif
-// #include "MessagePort.h"
-// #include "JSMessagePort.h"
+#include "MessagePort.h"
+#include "JSMessagePort.h"
 // #include "JSNode.h"
 #include "Node.h"
 // #if ENABLE(NOTIFICATIONS)

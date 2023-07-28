@@ -117,8 +117,8 @@ JSC::JSValue toJS(JSC::JSGlobalObject* state, JSDOMGlobalObject* globalObject, E
         //     case MediaStreamTrackEventTargetInterfaceType:
         //         return toJS(state, globalObject, static_cast<MediaStreamTrack&>(impl));
         // #endif
-        //     case MessagePortEventTargetInterfaceType:
-        //         return toJS(state, globalObject, static_cast<MessagePort&>(impl));
+    case MessagePortEventTargetInterfaceType:
+        return toJS(state, globalObject, static_cast<MessagePort&>(impl));
         //     case NodeEventTargetInterfaceType:
         //         return toJS(state, globalObject, static_cast<Node&>(impl));
         // #if ENABLE(NOTIFICATIONS)

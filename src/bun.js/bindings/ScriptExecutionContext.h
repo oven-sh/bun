@@ -2,12 +2,14 @@
 
 #include "root.h"
 #include "ActiveDOMObject.h"
+#include "ContextDestructionObserver.h"
 #include <wtf/CrossThreadTask.h>
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
 #include <wtf/ObjectIdentifier.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
+#include <wtf/CompletionHandler.h>
 #include "CachedScript.h"
 #include "wtf/URL.h"
 
@@ -27,6 +29,7 @@ struct us_loop_t;
 namespace WebCore {
 
 class WebSocket;
+class MessagePort;
 
 class ScriptExecutionContext;
 
@@ -89,6 +92,8 @@ public:
         addToContextsMap();
     }
 
+    ~ScriptExecutionContext();
+
     static ScriptExecutionContextIdentifier generateIdentifier();
 
     JSC::JSGlobalObject* jsGlobalObject()
@@ -117,7 +122,7 @@ public:
     bool isMainThread() const { return static_cast<unsigned>(m_identifier) == 1; }
     bool activeDOMObjectsAreSuspended() { return false; }
     bool activeDOMObjectsAreStopped() { return false; }
-    bool isContextThread() { return true; }
+    bool isContextThread();
     bool isDocument() { return false; }
     bool isWorkerGlobalScope() { return true; }
     bool isJSExecutionForbidden() { return false; }
@@ -140,7 +145,21 @@ public:
     bool unwrapCryptoKey(const Vector<uint8_t>& wrappedKey, Vector<uint8_t>& key) { return false; }
 #endif
 
-    static bool postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task);
+    WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task);
+    WEBCORE_EXPORT static bool ensureOnContextThread(ScriptExecutionContextIdentifier, Function<void(ScriptExecutionContext&)>&& task);
+    WEBCORE_EXPORT static bool ensureOnMainThread(Function<void(ScriptExecutionContext&)>&& task);
+
+    WEBCORE_EXPORT JSC::JSGlobalObject* globalObject();
+
+    void didCreateDestructionObserver(ContextDestructionObserver&);
+    void willDestroyDestructionObserver(ContextDestructionObserver&);
+
+    void processMessageWithMessagePortsSoon(CompletionHandler<void()>&&);
+    void createdMessagePort(MessagePort&);
+    void destroyedMessagePort(MessagePort&);
+
+    void dispatchMessagePortEvents();
+    void checkConsistency() const;
 
     void regenerateIdentifier();
     void addToContextsMap();
@@ -195,6 +214,12 @@ private:
     JSC::JSGlobalObject* m_globalObject = nullptr;
     WTF::URL m_url = WTF::URL();
     ScriptExecutionContextIdentifier m_identifier;
+
+    HashSet<MessagePort*> m_messagePorts;
+    HashSet<ContextDestructionObserver*> m_destructionObservers;
+    Vector<CompletionHandler<void()>> m_processMessageWithMessagePortsSoonHandlers;
+
+    bool m_willProcessMessageWithMessagePortsSoon { false };
 
     us_socket_context_t* webSocketContextSSL();
     us_socket_context_t* webSocketContextNoSSL();

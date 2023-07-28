@@ -6,7 +6,6 @@ const Path = @import("../../resolver/resolve_path.zig");
 const Encoder = JSC.WebCore.Encoder;
 const Mutex = @import("../../lock.zig").Lock;
 
-const FSEvents = @import("./fs_events.zig");
 const PathWatcher = @import("./path_watcher.zig");
 
 const VirtualMachine = JSC.VirtualMachine;
@@ -21,15 +20,12 @@ const Environment = bun.Environment;
 pub const FSWatcher = struct {
     ctx: *VirtualMachine,
     verbose: bool = false,
-    entry_path: ?string = null,
-    entry_dir: string = "",
 
     // JSObject
     mutex: Mutex,
     signal: ?*JSC.AbortSignal,
     persistent: bool,
-    default_watcher: ?*PathWatcher.PathWatcher,
-    fsevents_watcher: ?*FSEvents.FSEventsWatcher,
+    path_watcher: ?*PathWatcher.PathWatcher,
     poll_ref: JSC.PollRef = .{},
     globalThis: *JSC.JSGlobalObject,
     js_this: JSC.JSValue,
@@ -53,10 +49,6 @@ pub const FSWatcher = struct {
     pub fn deinit(this: *FSWatcher) void {
         // stop all managers and signals
         this.detach();
-        if (this.entry_path) |path| {
-            this.entry_path = null;
-            bun.default_allocator.free(path);
-        }
         bun.default_allocator.destroy(this);
     }
 
@@ -154,33 +146,7 @@ pub const FSWatcher = struct {
         }
     };
 
-    pub fn onFSEventUpdate(
-        ctx: ?*anyopaque,
-        path: string,
-        is_file: bool,
-        is_rename: bool,
-    ) void {
-        // only called by FSEventUpdate
-
-        const this = bun.cast(*FSWatcher, ctx.?);
-
-        const relative_path = bun.default_allocator.dupe(u8, path) catch unreachable;
-        const event_type: FSWatchTask.EventType = if (is_rename) .rename else .change;
-
-        if (this.verbose) {
-            if (is_file) {
-                Output.prettyErrorln("<r> <d>File changed: {s}<r>", .{relative_path});
-            } else {
-                Output.prettyErrorln("<r> <d>Dir changed: {s}<r>", .{relative_path});
-            }
-        }
-
-        this.current_task.append(relative_path, event_type, true);
-    }
-
     pub fn onPathUpdate(ctx: ?*anyopaque, path: string, is_file: bool, event_type: PathWatcher.PathWatcher.EventType) void {
-        // only called by PathWatcher
-
         const this = bun.cast(*FSWatcher, ctx.?);
 
         const relative_path = bun.default_allocator.dupe(u8, path) catch unreachable;
@@ -212,7 +178,6 @@ pub const FSWatcher = struct {
             Output.flush();
         }
         // we only enqueue after all events are processed
-        // this is called by FSEventsWatcher or PathWatcher
         this.current_task.enqueue();
     }
 
@@ -558,14 +523,9 @@ pub const FSWatcher = struct {
             signal.detach(this);
         }
 
-        if (this.default_watcher) |default_watcher| {
-            this.default_watcher = null;
-            default_watcher.deinit();
-        }
-
-        if (this.fsevents_watcher) |fsevents_watcher| {
-            this.fsevents_watcher = null;
-            fsevents_watcher.deinit();
+        if (this.path_watcher) |path_watcher| {
+            this.path_watcher = null;
+            path_watcher.deinit();
         }
 
         if (this.persistent) {
@@ -582,37 +542,6 @@ pub const FSWatcher = struct {
 
     pub fn finalize(this: *FSWatcher) callconv(.C) void {
         this.deinit();
-    }
-
-    const PathResult = struct {
-        fd: StoredFileDescriptorType = 0,
-        is_file: bool = true,
-    };
-
-    // TODO: switch to using JSC.Maybe to avoid using "unreachable" and improve error messages
-    fn fdFromAbsolutePathZ(
-        absolute_path_z: [:0]const u8,
-    ) !PathResult {
-        if (std.fs.openIterableDirAbsoluteZ(absolute_path_z, .{
-            .access_sub_paths = true,
-        })) |iterable_dir| {
-            return PathResult{
-                .fd = iterable_dir.dir.fd,
-                .is_file = false,
-            };
-        } else |err| {
-            if (err == error.NotDir) {
-                var file = try std.fs.openFileAbsoluteZ(absolute_path_z, .{ .mode = .read_only });
-                return PathResult{
-                    .fd = file.handle,
-                    .is_file = true,
-                };
-            } else {
-                return err;
-            }
-        }
-
-        unreachable;
     }
 
     pub fn init(args: Arguments) !*FSWatcher {
@@ -635,8 +564,6 @@ pub const FSWatcher = struct {
         buf[file_path.len] = 0;
         var file_path_z = buf[0..file_path.len :0];
 
-        var fs_type = try fdFromAbsolutePathZ(file_path_z);
-
         var ctx = try bun.default_allocator.create(FSWatcher);
         const vm = args.global_this.bunVM();
         ctx.* = .{
@@ -648,8 +575,7 @@ pub const FSWatcher = struct {
             .mutex = Mutex.init(),
             .signal = if (args.signal) |s| s.ref() else null,
             .persistent = args.persistent,
-            .default_watcher = null,
-            .fsevents_watcher = null,
+            .path_watcher = null,
             .globalThis = args.global_this,
             .js_this = .zero,
             .encoding = args.encoding,
@@ -661,25 +587,7 @@ pub const FSWatcher = struct {
 
         errdefer ctx.deinit();
 
-        if (comptime Environment.isMac) {
-            if (!fs_type.is_file) {
-                var dir_path_clone = bun.default_allocator.dupeZ(u8, file_path) catch unreachable;
-                ctx.entry_path = dir_path_clone;
-                ctx.entry_dir = dir_path_clone;
-
-                ctx.fsevents_watcher = try FSEvents.watch(dir_path_clone, args.recursive, onFSEventUpdate, onUpdateEnd, bun.cast(*anyopaque, ctx));
-
-                ctx.initJS(args.listener);
-                return ctx;
-            }
-        }
-
-        var file_path_clone = bun.default_allocator.dupeZ(u8, file_path) catch unreachable;
-
-        ctx.entry_path = file_path_clone;
-        ctx.entry_dir = std.fs.path.dirname(file_path_clone) orelse file_path_clone;
-        ctx.default_watcher = try PathWatcher.watch(vm, file_path_clone, args.recursive, onPathUpdate, onUpdateEnd, bun.cast(*anyopaque, ctx));
-
+        ctx.path_watcher = try PathWatcher.watch(vm, file_path_z, args.recursive, onPathUpdate, onUpdateEnd, bun.cast(*anyopaque, ctx));
         ctx.initJS(args.listener);
         return ctx;
     }

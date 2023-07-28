@@ -1,5 +1,8 @@
 import { expect, describe, it } from "bun:test";
 import { Readable, Writable, Duplex, Transform, PassThrough } from "node:stream";
+import { createReadStream } from "node:fs";
+import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 
 describe("Readable", () => {
   it("should be able to be created without _construct method defined", done => {
@@ -37,6 +40,30 @@ describe("Readable", () => {
     });
 
     readable.pipe(writable);
+  });
+  it("should be able to be piped via .pipe, issue #3668", done => {
+    const path = `${tmpdir()}/${Date.now()}.testReadStream.txt`;
+    writeFileSync(path, "12345");
+    const stream = createReadStream(path, { start: 0, end: 4 });
+
+    const writable = new Writable({
+      write(chunk, encoding, callback) {
+        try {
+          expect(chunk.toString()).toBe("12345");
+        } catch (err) {
+          done(err);
+          return;
+        }
+        callback();
+        done();
+      },
+    });
+
+    stream.on("error", err => {
+      done(err);
+    });
+
+    stream.pipe(writable);
   });
 });
 

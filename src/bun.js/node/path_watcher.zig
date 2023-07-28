@@ -181,8 +181,9 @@ pub const PathWatcherManager = struct {
 
                         for (watchers) |w| {
                             if (w) |watcher| {
-                                if (watcher.fsevents_watcher != null) continue;
-
+                                if (comptime Environment.isMac) {
+                                    if (watcher.fsevents_watcher != null) continue;
+                                }
                                 const entry_point = watcher.path.dirname;
                                 var path = file_path;
 
@@ -253,8 +254,9 @@ pub const PathWatcherManager = struct {
                         const event_type: PathWatcher.EventType = .rename; // renaming folders, creating folder or files will be always be rename
                         for (watchers) |w| {
                             if (w) |watcher| {
-                                if (watcher.fsevents_watcher != null) continue;
-
+                                if (comptime Environment.isMac) {
+                                    if (watcher.fsevents_watcher != null) continue;
+                                }
                                 const entry_point = watcher.path.dirname;
                                 var path = path_slice;
 
@@ -506,7 +508,12 @@ pub const PathWatcherManager = struct {
         const path = watcher.path;
         if (path.is_file) {
             try this.main_watcher.addFile(path.fd, path.path, path.hash, options.Loader.file, 0, null, false);
-        } else if (watcher.fsevents_watcher == null) {
+        } else {
+            if (comptime Environment.isMac) {
+                if (this.fsevents_watcher != null) {
+                    return;
+                }
+            }
             try this._addDirectory(watcher, path);
         }
     }
@@ -568,15 +575,17 @@ pub const PathWatcherManager = struct {
                     this.watcher_count -= 1;
 
                     this._decrementPathRefNoLock(watcher.path.path);
-
-                    if (watcher.fsevents_watcher == null) {
-                        watcher.mutex.lock();
-                        while (watcher.file_paths.popOrNull()) |file_path| {
-                            this._decrementPathRefNoLock(file_path);
+                    if (comptime Environment.isMac) {
+                        if (watcher.fsevents_watcher!null) {
+                            break;
                         }
-                        watcher.mutex.unlock();
                     }
 
+                    watcher.mutex.lock();
+                    while (watcher.file_paths.popOrNull()) |file_path| {
+                        this._decrementPathRefNoLock(file_path);
+                    }
+                    watcher.mutex.unlock();
                     break;
                 }
             }
@@ -745,10 +754,15 @@ pub const PathWatcher = struct {
         this.mutex.unlock();
 
         if (this.manager) |manager| {
-            if (this.fsevents_watcher) |watcher| {
-                // first unregister on FSEvents
-                watcher.deinit();
-                manager.unregisterWatcher(this);
+            if (comptime Environment.isMac) {
+                if (this.fsevents_watcher) |watcher| {
+                    // first unregister on FSEvents
+                    watcher.deinit();
+                    manager.unregisterWatcher(this);
+                } else {
+                    manager.unregisterWatcher(this);
+                    this.file_paths.deinitWithAllocator(bun.default_allocator);
+                }
             } else {
                 manager.unregisterWatcher(this);
                 this.file_paths.deinitWithAllocator(bun.default_allocator);

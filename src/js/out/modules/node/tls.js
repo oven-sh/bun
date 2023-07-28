@@ -67,6 +67,8 @@ var parseCertString = function() {
       currentToken += StringPrototypeSubstring.call(altNames, offset), offset = altNames.length;
   }
   return ArrayPrototypePush.call(result, currentToken), result;
+}, canonicalizeIP = function(ip) {
+  return ip;
 }, checkServerIdentity = function(hostname, cert) {
   const { subject, subjectaltname: altNames } = cert, dnsNames = [], ips = [];
   if (hostname = "" + hostname, altNames) {

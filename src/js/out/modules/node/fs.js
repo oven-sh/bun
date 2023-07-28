@@ -310,12 +310,12 @@ ReadStream = function(InternalReadStream) {
           var n = this.bytesRead - currPos;
           chunk = chunk.slice(-n);
           var [_, ...rest] = arguments;
-          if (this.pos = this.bytesRead, this.end && this.bytesRead >= this.end)
+          if (this.pos = this.bytesRead, this.end !== void 0 && this.bytesRead > this.end)
             chunk = chunk.slice(0, this.end - this.start + 1);
           return super.push(chunk, ...rest);
         }
         var end = this.end;
-        if (end && this.bytesRead >= end) {
+        if (end !== void 0 && this.bytesRead > end) {
           chunk = chunk.slice(0, end - currPos + 1);
           var [_, ...rest] = arguments;
           return this.pos = this.bytesRead, super.push(chunk, ...rest);

@@ -354,25 +354,27 @@ pub const FSEventsLoop = struct {
 
         for (loop.watchers.slice()) |watcher| {
             if (watcher) |handle| {
+                const handle_path = handle.path;
+
                 for (paths, 0..) |path_ptr, i| {
                     var flags = event_flags[i];
                     var path = path_ptr[0..bun.len(path_ptr)];
                     // Filter out paths that are outside handle's request
-                    if (path.len < handle.path.len or !bun.strings.startsWith(path, handle.path)) {
+                    if (path.len < handle_path.len or !bun.strings.startsWith(path, handle_path)) {
                         continue;
                     }
                     const is_file = (flags & kFSEventStreamEventFlagItemIsDir) == 0;
 
                     // Remove common prefix, unless the watched folder is "/"
-                    if (!(handle.path.len == 1 and handle.path[0] == '/')) {
-                        path = path[handle.path.len..];
+                    if (!(handle_path.len == 1 and handle_path[0] == '/')) {
+                        path = path[handle_path.len..];
 
                         // Ignore events with path equal to directory itself
                         if (path.len <= 1 and is_file) {
                             continue;
                         }
                         if (path.len == 0) {
-                            // Since we're using fsevents to watch the file itself, path == handle.path, and we now need to get the basename of the file back
+                            // Since we're using fsevents to watch the file itself, path == handle_path, and we now need to get the basename of the file back
                             while (path.len > 0) {
                                 if (bun.strings.startsWithChar(path, '/')) {
                                     path = path[1..];
@@ -403,7 +405,7 @@ pub const FSEventsLoop = struct {
                         }
                     }
 
-                    handle.emit(path, is_file, is_rename);
+                    handle.emit(path, is_file, if (is_rename) .rename else .change);
                 }
                 handle.flush();
             }
@@ -554,7 +556,7 @@ pub const FSEventsLoop = struct {
         this.signal_source = null;
 
         this.sem.deinit();
-        this.mutex.deinit();
+
         if (this.watcher_count > 0) {
             while (this.watchers.popOrNull()) |watcher| {
                 if (watcher) |w| {
@@ -578,11 +580,18 @@ pub const FSEventsWatcher = struct {
     recursive: bool,
     ctx: ?*anyopaque,
 
-    const Callback = *const fn (ctx: ?*anyopaque, path: string, is_file: bool, is_rename: bool) void;
-    const UpdateEndCallback = *const fn (ctx: ?*anyopaque) void;
+    pub const EventType = enum {
+        rename,
+        change,
+        @"error",
+    };
+
+    pub const Callback = *const fn (ctx: ?*anyopaque, path: string, is_file: bool, event_type: EventType) void;
+    pub const UpdateEndCallback = *const fn (ctx: ?*anyopaque) void;
 
     pub fn init(loop: *FSEventsLoop, path: string, recursive: bool, callback: Callback, updateEnd: UpdateEndCallback, ctx: ?*anyopaque) *FSEventsWatcher {
         var this = bun.default_allocator.create(FSEventsWatcher) catch unreachable;
+
         this.* = FSEventsWatcher{
             .path = path,
             .callback = callback,
@@ -596,8 +605,8 @@ pub const FSEventsWatcher = struct {
         return this;
     }
 
-    pub fn emit(this: *FSEventsWatcher, path: string, is_file: bool, is_rename: bool) void {
-        this.callback(this.ctx, path, is_file, is_rename);
+    pub fn emit(this: *FSEventsWatcher, path: string, is_file: bool, event_type: EventType) void {
+        this.callback(this.ctx, path, is_file, event_type);
     }
 
     pub fn flush(this: *FSEventsWatcher) void {

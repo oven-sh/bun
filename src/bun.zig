@@ -729,6 +729,34 @@ pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
     return sliceTo(ptr, 0);
 }
 
+//TODO: add windows support
+pub const FDHashMapContext = struct {
+    pub fn hash(_: @This(), fd: FileDescriptor) u64 {
+        return @as(u64, @intCast(fd));
+    }
+    pub fn eql(_: @This(), a: FileDescriptor, b: FileDescriptor) bool {
+        return a == b;
+    }
+    pub fn pre(input: FileDescriptor) Prehashed {
+        return Prehashed{
+            .value = @This().hash(.{}, input),
+            .input = input,
+        };
+    }
+
+    pub const Prehashed = struct {
+        value: u64,
+        input: FileDescriptor,
+        pub fn hash(this: @This(), fd: FileDescriptor) u64 {
+            if (fd == this.input) return this.value;
+            return @as(u64, @intCast(fd));
+        }
+
+        pub fn eql(_: @This(), a: FileDescriptor, b: FileDescriptor) bool {
+            return a == b;
+        }
+    };
+};
 // These wrappers exist to use our strings.eqlLong function
 pub const StringArrayHashMapContext = struct {
     pub fn hash(_: @This(), s: []const u8) u32 {
@@ -829,6 +857,10 @@ pub fn StringHashMap(comptime Type: type) type {
 
 pub fn StringHashMapUnmanaged(comptime Type: type) type {
     return std.HashMapUnmanaged([]const u8, Type, StringHashMapContext, std.hash_map.default_max_load_percentage);
+}
+
+pub fn FDHashMap(comptime Type: type) type {
+    return std.HashMap(StoredFileDescriptorType, Type, FDHashMapContext, std.hash_map.default_max_load_percentage);
 }
 
 const CopyFile = @import("./copy_file.zig");

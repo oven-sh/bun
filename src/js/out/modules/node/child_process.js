@@ -23,7 +23,7 @@ function spawn(file, args, options) {
   }
   if (options.signal) {
     let onAbortListener = function() {
-      abortChildProcess(child, killSignal2);
+      abortChildProcess(child, killSignal2, options.signal.reason);
     };
     const signal = options.signal;
     if (signal.aborted)
@@ -224,8 +224,47 @@ function execSync(command, options) {
     throw err;
   return ret.stdout;
 }
-function fork() {
-  throw new Error("Not implemented");
+var stdioStringToArray = function(stdio, channel) {
+  const options = [];
+  switch (stdio) {
+    case "ignore":
+    case "overlapped":
+    case "pipe":
+      ArrayPrototypePush.call(options, stdio, stdio, stdio);
+      break;
+    case "inherit":
+      ArrayPrototypePush.call(options, 0, 1, 2);
+      break;
+    default:
+      throw new ERR_INVALID_ARG_VALUE("stdio", stdio);
+  }
+  if (channel)
+    ArrayPrototypePush.call(options, channel);
+  return options;
+};
+function fork(modulePath, args = [], options) {
+  modulePath = getValidatedPath(modulePath, "modulePath");
+  let execArgv;
+  if (args == null)
+    args = [];
+  else if (typeof args === "object" && !ArrayIsArray(args))
+    options = args, args = [];
+  else
+    validateArray(args, "args");
+  if (options != null)
+    validateObject(options, "options");
+  if (options = { __proto__: null, ...options, shell: !1 }, options.execPath = options.execPath || process.execPath, validateArgumentNullCheck(options.execPath, "options.execPath"), execArgv = options.execArgv || process.execArgv, validateArgumentsNullCheck(execArgv, "options.execArgv"), execArgv === process.execArgv && process._eval != null) {
+    const index = ArrayPrototypeLastIndexOf.call(execArgv, process._eval);
+    if (index > 0)
+      execArgv = ArrayPrototypeSlice.call(execArgv), ArrayPrototypeSplice.call(execArgv, index - 1, 2);
+  }
+  if (args = [...execArgv, modulePath, ...args], typeof options.stdio === "string")
+    options.stdio = stdioStringToArray(options.stdio, "ipc");
+  else if (!ArrayIsArray(options.stdio))
+    options.stdio = stdioStringToArray(options.silent ? "pipe" : "inherit", "ipc");
+  else if (!ArrayPrototypeIncludes.call(options.stdio, "ipc"))
+    throw new ERR_CHILD_PROCESS_IPC_REQUIRED("options.stdio");
+  return spawn(options.execPath, args, options);
 }
 var convertToValidSignal = function(signal) {
   if (typeof signal === "number" && getSignalsToNamesMapping()[signal])
@@ -383,12 +422,12 @@ var convertToValidSignal = function(signal) {
   }
 }, onSpawnNT = function(self) {
   self.emit("spawn");
-}, abortChildProcess = function(child, killSignal2) {
+}, abortChildProcess = function(child, killSignal2, reason) {
   if (!child)
     return;
   try {
     if (child.kill(killSignal2))
-      child.emit("error", new AbortError);
+      child.emit("error", new AbortError(void 0, { cause: reason }));
   } catch (err) {
     child.emit("error", err);
   }
@@ -447,13 +486,16 @@ var validateFunction = function(value, name) {
   const err = new TypeError(`Unknown signal: ${name}`);
   return err.code = "ERR_UNKNOWN_SIGNAL", err;
 }, ERR_INVALID_ARG_TYPE = function(name, type, value) {
-  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value}`);
+  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value?.toString()}`);
   return err.code = "ERR_INVALID_ARG_TYPE", err;
 }, ERR_INVALID_OPT_VALUE = function(name, value) {
   return new TypeError(`The value "${value}" is invalid for option "${name}"`);
 }, ERR_INVALID_ARG_VALUE = function(name, value, reason) {
   return new Error(`The value "${value}" is invalid for argument '${name}'. Reason: ${reason}`);
-}, signals = constants.signals, { ArrayBuffer, Uint8Array, String, Object, Buffer, Promise: Promise2 } = globalThis[Symbol.for("Bun.lazy")]("primordials"), ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty, ObjectCreate = Object.create, ObjectAssign = Object.assign, ObjectDefineProperty = Object.defineProperty, BufferConcat = Buffer.concat, BufferIsEncoding = Buffer.isEncoding, kEmptyObject = ObjectCreate(null), ArrayPrototypePush = Array.prototype.push, ArrayPrototypeJoin = Array.prototype.join, ArrayPrototypeMap = Array.prototype.map, ArrayPrototypeIncludes = Array.prototype.includes, ArrayPrototypeSlice = Array.prototype.slice, ArrayPrototypeUnshift = Array.prototype.unshift, ArrayIsArray = Array.isArray, ArrayBufferIsView = ArrayBuffer.isView, NumberIsInteger = Number.isInteger;
+}, ERR_CHILD_PROCESS_IPC_REQUIRED = function(name) {
+  const err = new TypeError(`Forked processes must have an IPC channel, missing value 'ipc' in ${name}`);
+  return err.code = "ERR_CHILD_PROCESS_IPC_REQUIRED", err;
+}, signals = constants.signals, { ArrayBuffer, Uint8Array, String, Object, Buffer, Promise: Promise2 } = globalThis[Symbol.for("Bun.lazy")]("primordials"), ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty, ObjectCreate = Object.create, ObjectAssign = Object.assign, ObjectDefineProperty = Object.defineProperty, BufferConcat = Buffer.concat, BufferIsEncoding = Buffer.isEncoding, kEmptyObject = ObjectCreate(null), ArrayPrototypePush = Array.prototype.push, ArrayPrototypeJoin = Array.prototype.join, ArrayPrototypeMap = Array.prototype.map, ArrayPrototypeIncludes = Array.prototype.includes, ArrayPrototypeSlice = Array.prototype.slice, ArrayPrototypeUnshift = Array.prototype.unshift, ArrayPrototypeLastIndexOf = Array.prototype.lastIndexOf, ArrayPrototypeSplice = Array.prototype.splice, ArrayIsArray = Array.isArray, ArrayBufferIsView = ArrayBuffer.isView, NumberIsInteger = Number.isInteger;
 var StringPrototypeToUpperCase = String.prototype.toUpperCase, StringPrototypeIncludes = String.prototype.includes, StringPrototypeSlice = String.prototype.slice, Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes, MAX_BUFFER = 1048576, __DEBUG__ = process.env.DEBUG || !1, __TRACK_STDIO__ = process.env.DEBUG_STDIO, debug = __DEBUG__ ? console.log : () => {
 };
 if (__TRACK_STDIO__)
@@ -500,7 +542,11 @@ class ChildProcess extends EventEmitter {
   #handleOnExit(exitCode, signalCode, err) {
     if (this.#exited)
       return;
-    if (this.exitCode = this.#handle.exitCode, this.signalCode = exitCode > 0 ? signalCode : null, this.#stdin)
+    if (signalCode)
+      this.signalCode = signalCode;
+    else
+      this.exitCode = exitCode;
+    if (this.#stdin)
       this.#stdin.destroy();
     if (this.#handle)
       this.#handle = null;

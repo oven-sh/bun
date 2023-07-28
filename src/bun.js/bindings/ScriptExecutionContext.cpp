@@ -5,6 +5,7 @@
 #include "webcore/WebSocket.h"
 #include "libusockets.h"
 #include "_libusockets.h"
+#include "BunClientData.h"
 
 extern "C" void Bun__startLoop(us_loop_t* loop);
 
@@ -57,6 +58,16 @@ us_socket_context_t* ScriptExecutionContext::webSocketContextSSL()
     }
 
     return m_ssl_client_websockets_ctx;
+}
+extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
+
+void ScriptExecutionContext::refEventLoop()
+{
+    Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(vm())->bunVM, 1);
+}
+void ScriptExecutionContext::unrefEventLoop()
+{
+    Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(vm())->bunVM, -1);
 }
 
 bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task)

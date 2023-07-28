@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "type": "module",
+  "name": "farmhash-wasm",
+  "module": "index.mjs",
+  "scripts": {
+    "build": "mkdir -p build && em++ -O3 -Wl,--no-entry src/bindings.cpp src/upstream/farmhash.cpp -o build/farmhash.mjs -s STANDALONE_WASM"
+  }
+}

@@ -5,16 +5,7 @@ import nodecrypto from 'crypto';
 import crc from '@foxglove/crc';
 import adler32 from 'adler-32';
 import md4, { type Md4 } from 'js-md4';
-
-let farmhash: typeof import('farmhash') | null = null;
-try {
-    farmhash = (await import('farmhash')).default;
-} catch {
-    (process as unknown as NodeJS.Process).emitWarning(
-        'Failed to load farmhash module (wrong or unsupported install platform?), cityHash functions will not be available.',
-        { type: 'BunPolyfillWarning', code: 'BUN_POLYFILLS_FARMHASH_LOAD_FAILED' }
-    );
-}
+import { Fingerprint32, Fingerprint64 } from '../../../lib/farmhash/index.mjs';
 
 export const bunHash = ((...args: Parameters<typeof Bun['hash']>): ReturnType<typeof Bun['hash']> => {
     throw new NotImplementedError('Bun.hash()', bunHash);
@@ -40,25 +31,11 @@ export const bunHashProto: typeof bunHash = {
         //crc.crc32Update(seed, data as Uint8Array);
         //return crc.crc32Final(seed);
     },
-    cityHash32(data, seed?) {
-        if (!farmhash) {
-            const err = new Error('Bun.hash.cityHash32 is not available due to missing farmhash module.');
-            Error.captureStackTrace(err, bunHashProto.cityHash32);
-            throw err;
-        }
-        if (typeof data === 'string') return farmhash.fingerprint32(data);
-        if (data instanceof ArrayBuffer || data instanceof SharedArrayBuffer) return farmhash.fingerprint32(Buffer.from(data));
-        return farmhash.fingerprint32(Buffer.from(data.buffer));
+    cityHash32(data) {
+        return Fingerprint32(data);
     },
-    cityHash64(data, seed?) {
-        if (!farmhash) {
-            const err = new Error('Bun.hash.cityHash64 is not available due to missing farmhash module.');
-            Error.captureStackTrace(err, bunHashProto.cityHash64);
-            throw err;
-        }
-        if (typeof data === 'string') return BigInt(farmhash.fingerprint64(data));
-        if (data instanceof ArrayBuffer || data instanceof SharedArrayBuffer) return BigInt(farmhash.fingerprint64(Buffer.from(data)));
-        return BigInt(farmhash.fingerprint64(Buffer.from(data.buffer)));   
+    cityHash64(data) {
+        return Fingerprint64(data);
     },
     // murmur32v2 (?)
     murmur32v3(data, seed = 0) {

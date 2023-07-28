@@ -118,7 +118,7 @@ test("message channel created on other thread", done => {
   worker.onmessage = e => {
     expect(e.data).toBeInstanceOf(MessagePort);
     var port = e.data;
-    port.onmessage = e => {
+    port.onmessage = (e: MessageEvent) => {
       expect(e.data).toEqual("done!");
       done();
     };
@@ -144,9 +144,11 @@ test("many message channels", done => {
     channel.port1.postMessage("entangled port", [channel.port2]);
   }).toThrow();
   expect(() => {
+    // @ts-ignore
     channel.port1.postMessage("null port", [channel3.port1, null, channel3.port2]);
   }).toThrow();
   expect(() => {
+    // @ts-ignore
     channel.port1.postMessage("notAPort", [channel3.port1, {}, channel3.port2]);
   }).toThrow();
   expect(() => {
@@ -159,15 +161,17 @@ test("many message channels", done => {
   }).not.toThrow();
 
   expect(() => {
+    // @ts-ignore
     channel.port1.postMessage("notAnArray", "foo");
   }).toThrow();
   expect(() => {
+    // @ts-ignore
     channel.port1.postMessage("notASequence", [{ length: 3 }]);
   }).toThrow();
 
   // Should not crash (we should figure out that the array contains undefined
   // entries).
-  var largePortArray = [];
+  var largePortArray: MessagePort[] = [];
   largePortArray[1234567890] = channel4.port1;
   expect(() => {
     channel.port1.postMessage("largeSequence", largePortArray);
@@ -175,7 +179,7 @@ test("many message channels", done => {
 
   channel.port1.postMessage("done");
 
-  function testTransfers(done) {
+  function testTransfers(done: any) {
     var channel0 = new MessageChannel();
 
     var c1 = new MessageChannel();
@@ -251,4 +255,12 @@ test("many message channels", done => {
       expect(1).toBe(2);
     }
   };
+});
+
+test("gc", () => {
+  for (let i = 0; i < 1000; i++) {
+    var e = new MessageChannel();
+    e.port1;
+    e.port2;
+  }
 });

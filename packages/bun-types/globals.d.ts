@@ -2,7 +2,7 @@
  * "blob" is not supported yet
  */
 type BinaryType = "nodebuffer" | "arraybuffer" | "blob";
-type Transferable = ArrayBuffer;
+type Transferable = ArrayBuffer | MessagePort;
 type MessageEventSource = undefined;
 type Encoding = "utf-8" | "windows-1252" | "utf-16";
 type Platform =
@@ -389,64 +389,6 @@ interface MessageChannel {
 declare var MessageChannel: {
   prototype: MessageChannel;
   new (): MessageChannel;
-};
-
-/**
- * A message received by a target object.
- *
- * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessageEvent)
- */
-interface MessageEvent<T = any> extends Event {
-  /**
-   * Returns the data of the message.
-   *
-   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessageEvent/data)
-   */
-  readonly data: T;
-  /**
-   * Returns the last event ID string, for server-sent events.
-   *
-   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessageEvent/lastEventId)
-   */
-  readonly lastEventId: string;
-  /**
-   * Returns the origin of the message, for server-sent events and cross-document messaging.
-   *
-   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessageEvent/origin)
-   */
-  readonly origin: string;
-  /**
-   * Returns the MessagePort array sent with the message, for cross-document messaging and channel messaging.
-   *
-   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessageEvent/ports)
-   */
-  readonly ports: ReadonlyArray<MessagePort>;
-  /**
-   * Returns the WindowProxy of the source window, for cross-document messaging, and the MessagePort being attached, in the connect event fired at SharedWorkerGlobalScope objects.
-   *
-   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessageEvent/source)
-   */
-  readonly source: MessageEventSource | null;
-  /**
-   * @deprecated
-   *
-   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessageEvent/initMessageEvent)
-   */
-  initMessageEvent(
-    type: string,
-    bubbles?: boolean,
-    cancelable?: boolean,
-    data?: any,
-    origin?: string,
-    lastEventId?: string,
-    source?: MessageEventSource | null,
-    ports?: MessagePort[],
-  ): void;
-}
-
-declare var MessageEvent: {
-  prototype: MessageEvent;
-  new <T>(type: string, eventInitDict?: MessageEventInit<T>): MessageEvent<T>;
 };
 
 interface MessagePortEventMap {
@@ -2037,6 +1979,8 @@ interface MessageEvent<T = any> extends Event {
   readonly lastEventId: string;
   /** Returns the origin of the message, for server-sent events and cross-document messaging. */
   readonly origin: string;
+  /** Returns the MessagePort array sent with the message, for cross-document messaging and channel messaging. */
+  readonly ports: ReadonlyArray<MessagePort>;
   readonly source: MessageEventSource;
   /** @deprecated */
   initMessageEvent(

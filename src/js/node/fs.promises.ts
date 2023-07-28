@@ -2,6 +2,7 @@
 
 // Note: `constants` is injected into the top of this file
 declare var constants: typeof import("node:fs/promises").constants;
+const { createFIFO } = $lazy("primordials");
 
 var fs = Bun.fs();
 
@@ -38,8 +39,10 @@ export function watch(
   if (typeof options === "string") {
     options = { encoding: options };
   }
+  const queue = createFIFO();
+
   const watcher = fs.watch(filename, options || {}, (eventType: string, filename: string | Buffer | undefined) => {
-    events.push({ eventType, filename });
+    queue.push({ eventType, filename });
     if (nextEventResolve) {
       const resolve = nextEventResolve;
       nextEventResolve = null;
@@ -53,11 +56,11 @@ export function watch(
       return {
         async next() {
           while (!closed) {
-            while (events.length) {
-              let event = events.shift() as Event;
+            let event: Event;
+            while ((event = queue.shift() as Event)) {
               if (event.eventType === "close") {
                 closed = true;
-                break;
+                return { value: undefined, done: true };
               }
               if (event.eventType === "error") {
                 closed = true;
@@ -65,7 +68,9 @@ export function watch(
               }
               return { value: event, done: false };
             }
-            await new Promise((resolve: Function) => (nextEventResolve = resolve));
+            const { promise, resolve } = Promise.withResolvers();
+            nextEventResolve = resolve;
+            await promise;
           }
           return { value: undefined, done: true };
         },

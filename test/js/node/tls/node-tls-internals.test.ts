@@ -6,7 +6,8 @@ const $lazy = globalThis[Symbol.for("Bun.lazy")];
 const tlsInternals = $lazy("internal/tls");
 
 describe("node/tls", () => {
-  const test = tlsInternals ? it : it.todo;
+  // this is only exposed on debug builds so we skip on release builds
+  const test = tlsInternals ? it : it.skip;
   test("canonicalizeIP", () => {
     const { canonicalizeIP } = tlsInternals;
     expect(canonicalizeIP("127.0.0.1")).toBe("127.0.0.1");

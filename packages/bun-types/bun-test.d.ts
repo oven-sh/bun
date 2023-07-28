@@ -469,6 +469,30 @@ declare module "bun:test" {
      */
     rejects: Expect<unknown>;
     /**
+     * Assertion which passes.
+     * 
+     * @link https://jest-extended.jestcommunity.dev/docs/matchers/pass
+     * @example
+     * expect().pass();
+     * expect().pass("message is optional");
+     * expect().not.pass();
+     * expect().not.pass("hi");
+     *
+     * @param message the message to display if the test fails (optional)
+     */
+    pass: (message?: string) => void;
+    /**
+     * Assertion which fails.
+     * 
+     * @link https://jest-extended.jestcommunity.dev/docs/matchers/fail
+     * @example
+     * expect().fail();
+     * expect().fail("message is optional");
+     * expect().not.fail();
+     * expect().not.fail("hi");
+     */
+    fail: (message?: string) => void;
+    /**
      * Asserts that a value equals what is expected.
      *
      * - For non-primitive values, like objects and arrays,

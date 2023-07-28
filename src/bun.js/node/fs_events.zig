@@ -109,7 +109,7 @@ var fsevents_default_loop: ?*FSEventsLoop = null;
 
 fn symlinkPath(path: string, buffer: *[bun.MAX_PATH_BYTES + 1]u8) ?string {
     return std.fs.cwd().readLink(path, buffer[0..]) catch {
-        return path;
+        return null;
     };
 }
 

@@ -22,6 +22,8 @@ var ArrayPrototypeMap = Array.prototype.map;
 var ArrayPrototypeIncludes = Array.prototype.includes;
 var ArrayPrototypeSlice = Array.prototype.slice;
 var ArrayPrototypeUnshift = Array.prototype.unshift;
+var ArrayPrototypeLastIndexOf = Array.prototype.lastIndexOf;
+var ArrayPrototypeSplice = Array.prototype.splice;
 var ArrayIsArray = Array.isArray;
 
 // var ArrayBuffer = ArrayBuffer;
@@ -194,7 +196,7 @@ export function spawn(file, args, options) {
     }
 
     function onAbortListener() {
-      abortChildProcess(child, killSignal);
+      abortChildProcess(child, killSignal, options.signal.reason);
     }
   }
   return child;
@@ -680,8 +682,97 @@ export function execSync(command, options) {
   return ret.stdout;
 }
 
-export function fork() {
-  throw new Error("Not implemented");
+function stdioStringToArray(stdio, channel) {
+  const options = [];
+
+  switch (stdio) {
+    case "ignore":
+    case "overlapped":
+    case "pipe":
+      ArrayPrototypePush.call(options, stdio, stdio, stdio);
+      break;
+    case "inherit":
+      ArrayPrototypePush.call(options, 0, 1, 2);
+      break;
+    default:
+      throw new ERR_INVALID_ARG_VALUE("stdio", stdio);
+  }
+
+  if (channel) ArrayPrototypePush.call(options, channel);
+
+  return options;
+}
+
+/**
+ * Spawns a new Node.js process + fork.
+ * @param {string|URL} modulePath
+ * @param {string[]} [args]
+ * @param {{
+ *   cwd?: string;
+ *   detached?: boolean;
+ *   env?: Record<string, string>;
+ *   execPath?: string;
+ *   execArgv?: string[];
+ *   gid?: number;
+ *   serialization?: string;
+ *   signal?: AbortSignal;
+ *   killSignal?: string | number;
+ *   silent?: boolean;
+ *   stdio?: Array | string;
+ *   uid?: number;
+ *   windowsVerbatimArguments?: boolean;
+ *   timeout?: number;
+ *   }} [options]
+ * @returns {ChildProcess}
+ */
+export function fork(modulePath, args = [], options) {
+  modulePath = getValidatedPath(modulePath, "modulePath");
+
+  // Get options and args arguments.
+  let execArgv;
+
+  if (args == null) {
+    args = [];
+  } else if (typeof args === "object" && !ArrayIsArray(args)) {
+    options = args;
+    args = [];
+  } else {
+    validateArray(args, "args");
+  }
+
+  if (options != null) {
+    validateObject(options, "options");
+  }
+  options = { __proto__: null, ...options, shell: false };
+  options.execPath = options.execPath || process.execPath;
+  validateArgumentNullCheck(options.execPath, "options.execPath");
+
+  // Prepare arguments for fork:
+  execArgv = options.execArgv || process.execArgv;
+  validateArgumentsNullCheck(execArgv, "options.execArgv");
+
+  if (execArgv === process.execArgv && process._eval != null) {
+    const index = ArrayPrototypeLastIndexOf.call(execArgv, process._eval);
+    if (index > 0) {
+      // Remove the -e switch to avoid fork bombing ourselves.
+      execArgv = ArrayPrototypeSlice.call(execArgv);
+      ArrayPrototypeSplice.call(execArgv, index - 1, 2);
+    }
+  }
+
+  args = [...execArgv, modulePath, ...args];
+
+  if (typeof options.stdio === "string") {
+    options.stdio = stdioStringToArray(options.stdio, "ipc");
+  } else if (!ArrayIsArray(options.stdio)) {
+    // Use a separate fd=3 for the IPC channel. Inherit stdin, stdout,
+    // and stderr from the parent if silent isn't set.
+    options.stdio = stdioStringToArray(options.silent ? "pipe" : "inherit", "ipc");
+  } else if (!ArrayPrototypeIncludes.call(options.stdio, "ipc")) {
+    throw new ERR_CHILD_PROCESS_IPC_REQUIRED("options.stdio");
+  }
+
+  return spawn(options.execPath, args, options);
 }
 
 //------------------------------------------------------------------------------
@@ -909,8 +1000,11 @@ export class ChildProcess extends EventEmitter {
 
   #handleOnExit(exitCode, signalCode, err) {
     if (this.#exited) return;
-    this.exitCode = this.#handle.exitCode;
-    this.signalCode = exitCode > 0 ? signalCode : null;
+    if (signalCode) {
+      this.signalCode = signalCode;
+    } else {
+      this.exitCode = exitCode;
+    }
 
     if (this.#stdin) {
       this.#stdin.destroy();
@@ -1286,11 +1380,11 @@ function onSpawnNT(self) {
   self.emit("spawn");
 }
 
-function abortChildProcess(child, killSignal) {
+function abortChildProcess(child, killSignal, reason) {
   if (!child) return;
   try {
     if (child.kill(killSignal)) {
-      child.emit("error", new AbortError());
+      child.emit("error", new AbortError(undefined, { cause: reason }));
     }
   } catch (err) {
     child.emit("error", err);
@@ -1696,7 +1790,7 @@ function ERR_UNKNOWN_SIGNAL(name) {
 }
 
 function ERR_INVALID_ARG_TYPE(name, type, value) {
-  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value}`);
+  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value?.toString()}`);
   err.code = "ERR_INVALID_ARG_TYPE";
   return err;
 }
@@ -1707,6 +1801,12 @@ function ERR_INVALID_OPT_VALUE(name, value) {
 
 function ERR_INVALID_ARG_VALUE(name, value, reason) {
   return new Error(`The value "${value}" is invalid for argument '${name}'. Reason: ${reason}`);
+}
+
+function ERR_CHILD_PROCESS_IPC_REQUIRED(name) {
+  const err = new TypeError(`Forked processes must have an IPC channel, missing value 'ipc' in ${name}`);
+  err.code = "ERR_CHILD_PROCESS_IPC_REQUIRED";
+  return err;
 }
 
 class SystemError extends Error {

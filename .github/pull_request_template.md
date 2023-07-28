@@ -1,6 +1,6 @@
 ## What does this PR do?
 
-<!-- **Please include a textual description of the changes**, example: -->
+<!-- **Please use words to describe your changes**, example: -->
 
 <!--
 

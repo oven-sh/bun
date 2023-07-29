@@ -1279,7 +1279,8 @@ fn StatsDataType(comptime T: type) type {
         uid: T,
         gid: T,
         rdev: T,
-        size: T,
+        // Always store size as a 64-bit integer
+        size: i64,
         blksize: T,
         blocks: T,
         atime_ms: f64,
@@ -1306,7 +1307,7 @@ fn StatsDataType(comptime T: type) type {
                 .uid = @as(T, @truncate(@as(i64, @intCast(stat_.uid)))),
                 .gid = @as(T, @truncate(@as(i64, @intCast(stat_.gid)))),
                 .rdev = @as(T, @truncate(@as(i64, @intCast(stat_.rdev)))),
-                .size = @as(T, @truncate(@as(i64, @intCast(stat_.size)))),
+                .size = @truncate(@as(i64, @intCast(stat_.size))),
                 .blksize = @as(T, @truncate(@as(i64, @intCast(stat_.blksize)))),
                 .blocks = @as(T, @truncate(@as(i64, @intCast(stat_.blocks)))),
                 .atime_ms = (@as(f64, @floatFromInt(@max(atime.tv_sec, 0))) * std.time.ms_per_s) + (@as(f64, @floatFromInt(@as(usize, @intCast(@max(atime.tv_nsec, 0))))) / std.time.ns_per_ms),

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { dirname } from "node:path";
 import { gc } from "harness";
 import fs, {
   closeSync,
@@ -31,6 +32,7 @@ import fs, {
   symlinkSync,
   writevSync,
   readvSync,
+  fstatSync,
 } from "node:fs";
 
 import _promises from "node:fs/promises";
@@ -1430,6 +1432,26 @@ describe("fs/promises", () => {
       expect(await exists(path)).toBe(false);
     });
   });
+});
+
+it("stat on a large file", () => {
+  var dest: string = "",
+    fd;
+  try {
+    dest = `${tmpdir()}/fs.test.js/${Date.now()}.stat.txt`;
+    mkdirSync(dirname(dest), { recursive: true });
+    const bigBuffer = new Uint8Array(1024 * 1024 * 1024);
+    fd = openSync(dest, "w");
+    let offset = 0;
+    while (offset < 5 * 1024 * 1024 * 1024) {
+      offset += writeSync(fd, bigBuffer, 0, bigBuffer.length, offset);
+    }
+
+    expect(fstatSync(fd).size).toEqual(offset);
+  } finally {
+    if (fd) closeSync(fd);
+    unlinkSync(dest);
+  }
 });
 
 it("fs.constants", () => {

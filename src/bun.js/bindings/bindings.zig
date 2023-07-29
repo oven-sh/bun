@@ -727,6 +727,10 @@ pub const ZigString = extern struct {
         return untagged(this._unsafe_ptr_do_not_use)[0..@min(this.len, std.math.maxInt(u32))];
     }
 
+    pub fn untaggedPtr(this: *const ZigString) [*]const u8 {
+        return untagged(this._unsafe_ptr_do_not_use);
+    }
+
     pub fn dupe(this: ZigString, allocator: std.mem.Allocator) ![]const u8 {
         return try allocator.dupe(u8, this.slice());
     }
@@ -837,11 +841,12 @@ pub const ZigString = extern struct {
     }
 
     inline fn assertGlobal(this: *const ZigString) void {
-        if (comptime bun.Environment.allow_assert) {
-            std.debug.assert(this.len == 0 or
-                bun.Mimalloc.mi_is_in_heap_region(untagged(this._unsafe_ptr_do_not_use)) or
-                bun.Mimalloc.mi_check_owned(untagged(this._unsafe_ptr_do_not_use)));
-        }
+        _ = this;
+        // if (comptime bun.Environment.allow_assert) {
+        //     std.debug.assert(this.len == 0 or
+        //         bun.Mimalloc.mi_is_in_heap_region(untagged(this._unsafe_ptr_do_not_use)) or
+        //         bun.Mimalloc.mi_check_owned(untagged(this._unsafe_ptr_do_not_use)));
+        // }
     }
 
     pub fn toValue(this: *const ZigString, global: *JSGlobalObject) JSValue {

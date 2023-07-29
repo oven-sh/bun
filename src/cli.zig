@@ -1030,6 +1030,7 @@ pub const Command = struct {
         }
     };
 
+    extern fn bun__bmalloc__init() void;
     pub fn which() Tag {
         var args_iter = ArgsIterator{ .buf = std.os.argv };
         // first one is the executable name
@@ -1152,6 +1153,8 @@ pub const Command = struct {
             // _ = UpgradeCommand;
             // _ = BunxCommand;
         }
+
+        bun__bmalloc__init();
 
         if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
             var ctx = Command.Context{

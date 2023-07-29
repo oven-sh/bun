@@ -5104,7 +5104,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .config = config,
                 .base_url_string_for_joining = bun.default_allocator.dupe(u8, strings.trim(config.base_url.href, "/")) catch unreachable,
                 .vm = JSC.VirtualMachine.get(),
-                .allocator = Arena.getThreadlocalDefault(),
+                .allocator = bun.default_allocator,
             };
 
             if (RequestContext.pool == null) {

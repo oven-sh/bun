@@ -35,8 +35,7 @@ const uws = bun.uws;
 pub const MimeType = @import("./http/mime_type.zig");
 pub const URLPath = @import("./http/url_path.zig");
 // This becomes Arena.allocator
-pub var default_allocator: std.mem.Allocator = undefined;
-var default_arena: Arena = undefined;
+pub const default_allocator = bun.default_allocator;
 pub var http_thread: HTTPThread = undefined;
 const HiveArray = @import("./hive_array.zig").HiveArray;
 const Batch = NetworkThread.Batch;
@@ -627,8 +626,7 @@ pub const HTTPThread = struct {
 
     pub fn onStart(_: FakeStruct) void {
         Output.Source.configureNamedThread("HTTP Client");
-        default_arena = Arena.init() catch unreachable;
-        default_allocator = default_arena.allocator();
+
         var loop = uws.Loop.create(struct {
             pub fn wakeup(_: *uws.Loop) callconv(.C) void {
                 http_thread.drainEvents();
@@ -869,7 +867,7 @@ pub inline fn getAllocator() std.mem.Allocator {
 }
 
 pub inline fn cleanup(force: bool) void {
-    default_arena.gc(force);
+    _ = force;
 }
 
 pub const Headers = @import("./http/headers.zig");
@@ -2475,15 +2473,6 @@ pub fn done(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ss
         this.state.request_stage = .done;
         this.state.stage = .done;
         this.proxy_tunneling = false;
-        if (comptime print_every > 0) {
-            print_every_i += 1;
-            if (print_every_i % print_every == 0) {
-                Output.prettyln("Heap stats for HTTP thread\n", .{});
-                Output.flush();
-                default_arena.dumpThreadStats();
-                print_every_i = 0;
-            }
-        }
         callback.run(result);
     }
 }

@@ -3,10 +3,7 @@ pub const Environment = @import("env.zig");
 
 pub const use_mimalloc = !Environment.isTest;
 
-pub const default_allocator: std.mem.Allocator = if (!use_mimalloc)
-    std.heap.c_allocator
-else
-    @import("./memory_allocator.zig").c_allocator;
+pub const default_allocator: std.mem.Allocator = @import("./bmalloc_allocator.zig").c_allocator;
 
 pub const huge_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
@@ -667,18 +664,8 @@ pub fn once(comptime function: anytype, comptime ReturnType: type) ReturnType {
 
     return Result.execute();
 }
-
-pub fn isHeapMemory(memory: anytype) bool {
-    if (comptime use_mimalloc) {
-        const Memory = @TypeOf(memory);
-        if (comptime std.meta.trait.isSingleItemPtr(Memory)) {
-            return Mimalloc.mi_is_in_heap_region(memory);
-        }
-        return Mimalloc.mi_is_in_heap_region(std.mem.sliceAsBytes(memory).ptr);
-    }
-    return false;
-}
-
+pub const free = @import("./bmalloc_allocator.zig").free;
+pub const bmalloc = @import("./bmalloc_allocator.zig").bmalloc;
 pub const Mimalloc = @import("./allocators/mimalloc.zig");
 
 pub inline fn isSliceInBuffer(slice: []const u8, buffer: []const u8) bool {

@@ -2,7 +2,47 @@
 #include "wtf/text/Base64.h"
 
 #include "wtf/StackTrace.h"
-#include "wtf/dtoa.h"
+#include "bmalloc/bmalloc.h"
+
+extern "C" void bun__bmalloc__init()
+{
+    WTF::initializeMainThread();
+}
+
+extern "C" void* bun__bmalloc__memalign(size_t alignment, size_t size)
+{
+    return bmalloc::api::tryMemalign(alignment, size);
+}
+
+extern "C" void bun__bmalloc__free(void* ptr)
+{
+    bmalloc::api::free(ptr);
+}
+
+extern "C" void* bun__bmalloc__realloc(void* ptr, size_t size)
+{
+    if (bmalloc_get_allocation_size(ptr) >= size)
+        return (void*)ptr;
+
+    return nullptr;
+}
+
+extern "C" size_t bun__bmalloc__size(void* ptr)
+{
+    return bmalloc_get_allocationpub fn isHeapMemory(memory
+                                                     : anytype) bool
+    {
+        if (comptime use_mimalloc) {
+            const Memory = @TypeOf(memory);
+            if (comptime std.meta.trait.isSingleItemPtr(Memory)) {
+                return Mimalloc.mi_is_in_heap_region(memory);
+            }
+            return Mimalloc.mi_is_in_heap_region(std.mem.sliceAsBytes(memory).ptr);
+        }
+        return false;
+    }
+    _size(ptr);
+}
 
 extern "C" double WTF__parseDouble(const LChar* string, size_t length, size_t* position)
 {

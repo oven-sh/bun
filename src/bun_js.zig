@@ -145,7 +145,7 @@ pub const Run = struct {
 
         run = .{
             .vm = try VirtualMachine.init(
-                arena.allocator(),
+                bun.default_allocator,
                 ctx.args,
                 null,
                 ctx.log,
@@ -163,7 +163,7 @@ pub const Run = struct {
         vm.preload = ctx.preloads;
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
-        vm.allocator = arena.allocator();
+        vm.allocator = bun.default_allocator;
 
         b.options.install = ctx.install;
         b.resolver.opts.install = ctx.install;

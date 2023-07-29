@@ -101,7 +101,7 @@ test.todo("fix this", () => {
 });
 ```
 
-To exlusively run tests marked as _todo_, use `bun test --todo`.
+To exclusively run tests marked as _todo_, use `bun test --todo`.
 
 ```sh
 $ bun test --todo

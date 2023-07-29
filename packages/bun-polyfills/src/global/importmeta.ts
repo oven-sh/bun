@@ -10,17 +10,25 @@ import { createRequire } from 'node:module';
 // the top of every module file bundled.
 
 export default function polyfillImportMeta(metaIn: ImportMeta) {
-    const require = createRequire(metaIn.url);
-    const meta = metaIn as Mutable<ImportMeta>;
-
-    meta.path = fileURLToPath(meta.url);
-    meta.dir = path.dirname(meta.path);
-    meta.file = path.basename(meta.path);
-    meta.require = require;
-    meta.resolve = async (id: string, parent?: string) => meta.resolveSync(id, parent);
-    meta.resolveSync = (id: string, parent?: string) => require.resolve(id, {
-        paths: typeof parent === 'string' ? [
-            path.resolve(parent.startsWith('file://') ? fileURLToPath(parent) : parent, '..')
-        ] : undefined,
-    });
+    const require2 = createRequire(metaIn.url);
+    const metapath = fileURLToPath(metaIn.url);
+    const meta: ImportMeta = {
+        url: metaIn.url,
+        main: metapath === process.argv[1],
+        path: metapath,
+        dir: path.dirname(metapath),
+        file: path.basename(metapath),
+        require: require2,
+        async resolve(id: string, parent?: string) {
+            return this.resolveSync(id, parent);
+        },
+        resolveSync(id: string, parent?: string) {
+            return require2.resolve(id, {
+                paths: typeof parent === 'string' ? [
+                    path.resolve(parent.startsWith('file://') ? fileURLToPath(parent) : parent, '..')
+                ] : undefined,
+            });
+        },
+    };
+    Object.assign(metaIn, meta);
 }

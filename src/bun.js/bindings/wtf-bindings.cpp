@@ -29,19 +29,7 @@ extern "C" void* bun__bmalloc__realloc(void* ptr, size_t size)
 
 extern "C" size_t bun__bmalloc__size(void* ptr)
 {
-    return bmalloc_get_allocationpub fn isHeapMemory(memory
-                                                     : anytype) bool
-    {
-        if (comptime use_mimalloc) {
-            const Memory = @TypeOf(memory);
-            if (comptime std.meta.trait.isSingleItemPtr(Memory)) {
-                return Mimalloc.mi_is_in_heap_region(memory);
-            }
-            return Mimalloc.mi_is_in_heap_region(std.mem.sliceAsBytes(memory).ptr);
-        }
-        return false;
-    }
-    _size(ptr);
+    return bmalloc_get_allocation_size(ptr);
 }
 
 extern "C" double WTF__parseDouble(const LChar* string, size_t length, size_t* position)

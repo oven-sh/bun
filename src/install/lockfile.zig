@@ -942,8 +942,8 @@ pub const Printer = struct {
                 Global.crash();
             },
             .not_found => {
-                Output.prettyErrorln("<r><red>lockfile not found:<r> {s}", .{
-                    std.mem.sliceAsBytes(lockfile_path),
+                Output.prettyErrorln("<r><red>lockfile not found:<r> {}", .{
+                    strings.QuotedFormatter{ .text = std.mem.sliceAsBytes(lockfile_path) },
                 });
                 Global.crash();
             },
@@ -1234,7 +1234,7 @@ pub const Printer = struct {
                     }
 
                     var dependency_versions = requested_version_start[0..j];
-                    if (dependency_versions.len > 1) std.sort.insertion(Dependency.Version, dependency_versions, string_buf, Dependency.Version.isLessThan);
+                    if (dependency_versions.len > 1) std.sort.insertion(Dependency.Version, dependency_versions, string_buf, Dependency.Version.isLessThanWithTag);
                     try requested_versions.put(i, dependency_versions);
                 }
             }

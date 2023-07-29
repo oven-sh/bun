@@ -973,6 +973,7 @@ pub const ModuleLoader = struct {
             referrer_: bun.String,
             log: *logger.Log,
         ) void {
+            JSC.markBinding(@src());
             var specifier = specifier_;
             var referrer = referrer_;
             defer {

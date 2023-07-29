@@ -257,6 +257,14 @@ pub const Version = struct {
         return strings.cmpStringsAsc({}, lhs.literal.slice(string_buf), rhs.literal.slice(string_buf));
     }
 
+    pub fn isLessThanWithTag(string_buf: []const u8, lhs: Dependency.Version, rhs: Dependency.Version) bool {
+        const tag_order = lhs.tag.cmp(rhs.tag);
+        if (tag_order != .eq)
+            return tag_order == .lt;
+
+        return strings.cmpStringsAsc({}, lhs.literal.slice(string_buf), rhs.literal.slice(string_buf));
+    }
+
     pub const External = [9]u8;
 
     pub fn toVersion(
@@ -337,6 +345,11 @@ pub const Version = struct {
 
         /// GitHub Repository (via REST API)
         github = 8,
+
+        pub fn cmp(this: Tag, other: Tag) std.math.Order {
+            // TODO: align with yarn
+            return std.math.order(@intFromEnum(this), @intFromEnum(other));
+        }
 
         pub inline fn isNPM(this: Tag) bool {
             return @intFromEnum(this) < 3;

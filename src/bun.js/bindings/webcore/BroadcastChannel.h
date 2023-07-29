@@ -26,8 +26,9 @@
 #pragma once
 
 #include "ActiveDOMObject.h"
+#include "ContextDestructionObserver.h"
 #include "BroadcastChannelIdentifier.h"
-#include "ClientOrigin.h"
+// #include "ClientOrigin.h"
 #include "EventTarget.h"
 #include "ExceptionOr.h"
 #include <wtf/Forward.h>
@@ -42,14 +43,14 @@ namespace WebCore {
 
 class SerializedScriptValue;
 
-class BroadcastChannel : public RefCounted<BroadcastChannel>, public EventTarget, public ActiveDOMObject {
+class BroadcastChannel : public RefCounted<BroadcastChannel>, public EventTarget /*, public ActiveDOMObject*/, public ContextDestructionObserver {
     WTF_MAKE_ISO_ALLOCATED(BroadcastChannel);
 
 public:
     static Ref<BroadcastChannel> create(ScriptExecutionContext& context, const String& name)
     {
         auto channel = adoptRef(*new BroadcastChannel(context, name));
-        channel->suspendIfNeeded();
+        // channel->suspendIfNeeded();
         return channel;
     }
     ~BroadcastChannel();
@@ -65,6 +66,10 @@ public:
 
     WEBCORE_EXPORT static void dispatchMessageTo(BroadcastChannelIdentifier, Ref<SerializedScriptValue>&&, CompletionHandler<void()>&&);
 
+    static ScriptExecutionContextIdentifier contextIdForBroadcastChannelId(BroadcastChannelIdentifier);
+
+    bool hasPendingActivity() const;
+
 private:
     BroadcastChannel(ScriptExecutionContext&, const String& name);
 
@@ -74,15 +79,21 @@ private:
 
     // EventTarget
     EventTargetInterface eventTargetInterface() const final { return BroadcastChannelEventTargetInterfaceType; }
-    ScriptExecutionContext* scriptExecutionContext() const final { return ActiveDOMObject::scriptExecutionContext(); }
+    ScriptExecutionContext* scriptExecutionContext() const;
     void refEventTarget() final { RefCounted<BroadcastChannel>::ref(); }
     void derefEventTarget() final { RefCounted<BroadcastChannel>::deref(); }
     void eventListenersDidChange() final;
 
+    EventTargetData* eventTargetData() final { return &m_eventTargetData; }
+    EventTargetData* eventTargetDataConcurrently() final { return &m_eventTargetData; }
+    EventTargetData& ensureEventTargetData() final { return m_eventTargetData; }
+
+    EventTargetData m_eventTargetData;
+
     // ActiveDOMObject
-    const char* activeDOMObjectName() const final;
-    bool virtualHasPendingActivity() const final;
-    void stop() final { close(); }
+    // const char* activeDOMObjectName() const final;
+    // bool virtualHasPendingActivity() const final;
+    // void stop() final { close(); }
 
     class MainThreadBridge;
     Ref<MainThreadBridge> m_mainThreadBridge;

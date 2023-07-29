@@ -3248,21 +3248,18 @@ pub const NodeFS = struct {
     // Fallback for EXDEV, just a classic read/write loop, https://github.com/oven-sh/bun/issues/1675
     fn XDEVReadWriteFallback(src_fd: i32, dest_fd: i32, src: [:0]const u8, size: usize) Maybe(usize) {
         var written: usize = 0;
+        var curamt: usize = 0;
         var reada: usize = 0;
 
-        var buffer = std.ArrayList(u8).init(bun.default_allocator);
-        defer buffer.deinit();
-        buffer.ensureTotalCapacityPrecise(size + 16) catch unreachable;
-        buffer.expandToCapacity();
+        var buf: [8 * 4096]u8 = undefined;
 
-        while (true) {
-            switch (Syscall.read(src_fd, buffer.items.ptr[reada..buffer.capacity])) {
+        while (written != size) {
+            switch (Syscall.read(src_fd, buf[0..buf.len])) {
                 .result => |amt| {
+                    curamt = amt;
                     reada += amt;
 
                     if (reada > size and amt != 0) {
-                        buffer.ensureUnusedCapacity(8096) catch unreachable;
-                        buffer.expandToCapacity();
                         continue;
                     }
 
@@ -3272,24 +3269,16 @@ pub const NodeFS = struct {
                 },
                 .err => |_err| return Maybe(Return.CopyFile){ .err = _err.withPath(src) },
             }
-        }
 
-        // if 0 bytes were read, just write an empty file
-        if (reada == 0) {
-            return switch (Syscall.write(dest_fd, "")) {
-                .result => |amt| .{
-                    .result = amt,
-                },
-                .err => |_err| Maybe(Return.CopyFile){ .err = _err.withPath(src) }
-            };
-        }
-
-        while (true) {
-            switch (Syscall.write(dest_fd, buffer.items.ptr[written..reada])) {
+            switch (Syscall.write(dest_fd, buf[0..curamt])) {
                 .result => |amt| {
                     written += amt;
 
-                    if (written == reada) {
+                    if (written > size) {
+                        continue;
+                    }
+
+                    if (amt == 0) {
                         break;
                     }
                 },

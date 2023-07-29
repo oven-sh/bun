@@ -619,12 +619,28 @@ pub const EventLoop = struct {
 
         this.tasks.ensureUnusedCapacity(count) catch unreachable;
         var writable = this.tasks.writableSlice(0);
+
+        // Defer destruction of the ConcurrentTask to avoid issues with pointer aliasing
+        var to_destroy: ?*ConcurrentTask = null;
+
         while (iter.next()) |task| {
+            if (to_destroy) |dest| {
+                bun.default_allocator.destroy(dest);
+                to_destroy = null;
+            }
+
+            if (task.auto_delete) {
+                to_destroy = task;
+            }
+
             writable[0] = task.task;
             writable = writable[1..];
             this.tasks.count += 1;
-            if (task.auto_delete) bun.default_allocator.destroy(task);
             if (writable.len == 0) break;
+        }
+
+        if (to_destroy) |dest| {
+            bun.default_allocator.destroy(dest);
         }
 
         return this.tasks.count - start_count;

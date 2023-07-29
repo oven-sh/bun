@@ -19,7 +19,7 @@ disableManifest = false
 
 ## Minimizing re-downloads
 
-Bun strives to avoid re-downloading packages mutiple times. When installing a package, if the cache already contains a version in the range specified by `package.json`, Bun will use the cached package instead of downloading it again.
+Bun strives to avoid re-downloading packages multiple times. When installing a package, if the cache already contains a version in the range specified by `package.json`, Bun will use the cached package instead of downloading it again.
 
 {% details summary="Installation details" %}
 If the semver version has pre-release suffix (`1.0.0-beta.0`) or a build suffix (`1.0.0+20220101`), it is replaced with a hash of that value instead, to reduce the chances of errors associated with long file paths.

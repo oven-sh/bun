@@ -886,29 +886,32 @@ pub const Printer = struct {
 
     pub const Format = enum { yarn };
 
-    var lockfile_path_buf1: [bun.MAX_PATH_BYTES]u8 = undefined;
-    var lockfile_path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
-
     pub fn print(
         allocator: Allocator,
         log: *logger.Log,
-        lockfile_path_: string,
+        input_lockfile_path: string,
         format: Format,
     ) !void {
         @setCold(true);
 
+        // We truncate longer than allowed paths. We should probably throw an error instead.
+        var path = input_lockfile_path[0..@min(input_lockfile_path.len, bun.MAX_PATH_BYTES)];
+
+        var lockfile_path_buf1: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var lockfile_path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+
         var lockfile_path: stringZ = "";
 
-        if (!std.fs.path.isAbsolute(lockfile_path_)) {
+        if (!std.fs.path.isAbsolute(path)) {
             var cwd = try std.os.getcwd(&lockfile_path_buf1);
-            var parts = [_]string{lockfile_path_};
+            var parts = [_]string{path};
             var lockfile_path__ = Path.joinAbsStringBuf(cwd, &lockfile_path_buf2, &parts, .auto);
             lockfile_path_buf2[lockfile_path__.len] = 0;
             lockfile_path = lockfile_path_buf2[0..lockfile_path__.len :0];
-        } else {
-            bun.copy(u8, &lockfile_path_buf1, lockfile_path);
-            lockfile_path_buf1[lockfile_path_.len] = 0;
-            lockfile_path = lockfile_path_buf1[0..lockfile_path_.len :0];
+        } else if (path.len > 0) {
+            @memcpy(lockfile_path_buf1[0..path.len], path);
+            lockfile_path_buf1[path.len] = 0;
+            lockfile_path = lockfile_path_buf1[0..path.len :0];
         }
 
         if (lockfile_path.len > 0 and lockfile_path[0] == std.fs.path.sep)

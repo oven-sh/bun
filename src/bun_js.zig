@@ -53,15 +53,14 @@ pub const Run = struct {
 
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);
-        var arena = try Arena.init();
+        // var arena = try Arena.init();
 
         if (!ctx.debug.loaded_bunfig) {
             try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
         }
 
         run = .{
-            .vm = try VirtualMachine.initWithModuleGraph(arena.allocator(), ctx.log, graph_ptr),
-            .arena = arena,
+            .vm = try VirtualMachine.initWithModuleGraph(bun.default_allocator, ctx.log, graph_ptr),
             .ctx = ctx,
             .entry_path = entry_path,
         };
@@ -70,8 +69,8 @@ pub const Run = struct {
         var b = &vm.bundler;
         vm.preload = ctx.preloads;
         vm.argv = ctx.passthrough;
-        vm.arena = &run.arena;
-        vm.allocator = arena.allocator();
+        // vm.arena = &run.arena;
+        vm.allocator = bun.default_allocator;
 
         b.options.install = ctx.install;
         b.resolver.opts.install = ctx.install;
@@ -137,7 +136,7 @@ pub const Run = struct {
 
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);
-        var arena = try Arena.init();
+        // var arena = try Arena.init();
 
         if (!ctx.debug.loaded_bunfig) {
             try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
@@ -153,7 +152,7 @@ pub const Run = struct {
                 ctx.debug.hot_reload != .none,
                 ctx.runtime_options.smol,
             ),
-            .arena = arena,
+            // .arena = arena,
             .ctx = ctx,
             .entry_path = entry_path,
         };
@@ -162,7 +161,7 @@ pub const Run = struct {
         var b = &vm.bundler;
         vm.preload = ctx.preloads;
         vm.argv = ctx.passthrough;
-        vm.arena = &run.arena;
+        // vm.arena = &run.arena;
         vm.allocator = bun.default_allocator;
 
         b.options.install = ctx.install;
@@ -294,7 +293,7 @@ pub const Run = struct {
             vm.eventLoop().tickConcurrentWithCount() > 0)
         {
             vm.global.vm().releaseWeakRefs();
-            _ = vm.arena.gc(false);
+            // _ = vm.arena.gc(false);
             _ = vm.global.vm().runGC(false);
             vm.tick();
         }

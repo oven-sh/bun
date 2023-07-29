@@ -1537,7 +1537,7 @@ pub const RequestContext = struct {
             vm.global.vm().holdAPILock(handler, JavaScript.OpaqueWrap(HandlerThread, startJavaScript));
         }
 
-        var __arena: ThreadlocalArena = undefined;
+        // var __arena: ThreadlocalArena = undefined;
 
         pub fn runLoop(vm: *JavaScript.VirtualMachine, thread: *HandlerThread) !void {
             var module_map = JavaScript.ZigGlobalObject.getModuleRegistryMap(vm.global);
@@ -1550,8 +1550,8 @@ pub const RequestContext = struct {
             }
 
             while (true) {
-                __arena = ThreadlocalArena.init() catch unreachable;
-                JavaScript.VirtualMachine.get().arena = &__arena;
+                // __arena = ThreadlocalArena.init() catch unreachable;
+                // JavaScript.VirtualMachine.get().arena = &__arena;
                 JavaScript.VirtualMachine.get().has_loaded = true;
                 JavaScript.VirtualMachine.get().tick();
                 defer {
@@ -1563,7 +1563,7 @@ pub const RequestContext = struct {
                     js_ast.Expr.Data.Store.reset();
                     JavaScript.API.Bun.flushCSSImports();
                     Output.flush();
-                    JavaScript.VirtualMachine.get().arena.deinit();
+                    // JavaScript.VirtualMachine.get().arena.deinit();
                     JavaScript.VirtualMachine.get().has_loaded = false;
                 }
 
@@ -1573,8 +1573,8 @@ pub const RequestContext = struct {
                 const original_origin = vm.origin;
                 vm.origin = handler.ctx.origin;
                 defer vm.origin = original_origin;
-                handler.ctx.arena = __arena;
-                handler.ctx.allocator = __arena.allocator();
+                // handler.ctx.arena = __arena;
+                // handler.ctx.allocator = __arena.allocator();
                 var req_body = handler.ctx.req_body_node;
                 JavaScript.EventListenerMixin.emitFetchEvent(
                     vm,

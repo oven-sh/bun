@@ -720,10 +720,11 @@ pub const TestCommand = struct {
             }
         };
 
-        var arena = bun.MimallocArena.init() catch @panic("Unexpected error in mimalloc");
+        // var arena = bun.MimallocArena.init() catch @panic("Unexpected error in mimalloc");
+        // _ = arena;
         vm_.eventLoop().ensureWaker();
-        vm_.arena = &arena;
-        vm_.allocator = arena.allocator();
+        // vm_.arena = &arena;
+        vm_.allocator = bun.default_allocator;
         var ctx = Context{ .reporter = reporter_, .vm = vm_, .files = files_, .allocator = allocator_ };
         vm_.runWithAPILock(Context, &ctx, Context.begin);
     }

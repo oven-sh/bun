@@ -15,13 +15,3 @@ const contents = await file.json();
 
 file.type; // => "application/json;charset=utf-8";
 ```
-
----
-
-If the path to the `.json` file is static, it can be directly imported as a module.
-
-```ts
-import pkg from "./package.json";
-
-pkg.name; // => "my-package"
-```

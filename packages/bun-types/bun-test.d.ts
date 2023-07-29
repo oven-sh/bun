@@ -426,7 +426,7 @@ declare module "bun:test" {
    * @param actual the actual value
    */
   export const expect: {
-    (actual: unknown): Expect;
+    (actual?: unknown): Expect;
     any: (
       constructor: ((..._: any[]) => any) | { new (..._: any[]): any },
     ) => Expect;
@@ -470,7 +470,7 @@ declare module "bun:test" {
     rejects: Expect<unknown>;
     /**
      * Assertion which passes.
-     * 
+     *
      * @link https://jest-extended.jestcommunity.dev/docs/matchers/pass
      * @example
      * expect().pass();
@@ -483,7 +483,7 @@ declare module "bun:test" {
     pass: (message?: string) => void;
     /**
      * Assertion which fails.
-     * 
+     *
      * @link https://jest-extended.jestcommunity.dev/docs/matchers/fail
      * @example
      * expect().fail();

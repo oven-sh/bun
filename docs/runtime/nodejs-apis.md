@@ -50,7 +50,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_crypto" %} [`node:crypto`](https://nodejs.org/api/crypto.html) {% /anchor %}
 - 🟡
-- Missing `crypto.Certificate` `crypto.ECDH` `crypto.KeyObject` `crypto.X509Certificate` `crypto.checkPrime{Sync}` `crypto.createPrivateKey` `crypto.createPublicKey` `crypto.createSecretKey` `crypto.diffieHellman` `crypto.generateKey{Sync}` `crypto.generateKeyPair{Sync}` `crypto.generatePrime{Sync}` `crypto.getCipherInfo` `crypto.{get|set}Fips` `crypto.hkdf` `crypto.hkdfSync` `crypto.secureHeapUsed` `crypto.setEngine` `crypto.sign` `crypto.verify`
+- Missing `crypto.Certificate` `crypto.ECDH` `crypto.KeyObject` `crypto.X509Certificate` `crypto.checkPrime{Sync}` `crypto.createPrivateKey` `crypto.createPublicKey` `crypto.createSecretKey` `crypto.diffieHellman` `crypto.generateKey{Sync}` `crypto.generateKeyPair{Sync}` `crypto.generatePrime{Sync}` `crypto.getCipherInfo` `crypto.{get|set}Fips` `crypto.hkdf` `crypto.hkdfSync` `crypto.secureHeapUsed` `crypto.setEngine` `crypto.sign` `crypto.verify`. Some methods are not optimized yet.
 
 ---
 
@@ -236,7 +236,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_vm" %} [`node:vm`](https://nodejs.org/api/vm.html) {% /anchor %}
 - 🟡
-- Partially implemented.
+- Core functionality works, but VM modules are not implemented. `ShadowRealm` can be used.
 
 ---
 
@@ -248,7 +248,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_worker_threads" %} [`node:worker_threads`](https://nodejs.org/api/worker_threads.html) {% /anchor %}
 - 🔴
-- Not implemented.
+- Not implemented, but coming soon.
 
 ---
 
@@ -369,7 +369,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ---
 
-- {% anchor id="node_crypto" %} [`crypto`](https://developer.mozilla.org/en-US/docs/Web/API/crypto) {% /anchor %}
+- {% anchor id="node_crypto" %} [`SubtleCrypto (crypto)`](https://developer.mozilla.org/en-US/docs/Web/API/crypto) {% /anchor %}
 - 🟢
 - Fully implemented.
 

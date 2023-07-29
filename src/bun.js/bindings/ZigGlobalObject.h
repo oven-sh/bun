@@ -390,6 +390,11 @@ public:
 
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
 
+    Structure* memoryFootprintStructure()
+    {
+        return m_memoryFootprintStructure.getInitializedOnMainThread(this);
+    }
+
     JSObject* navigatorObject();
     JSFunction* nativeMicrotaskTrampoline() { return m_nativeMicrotaskTrampoline.getInitializedOnMainThread(this); }
 
@@ -522,6 +527,7 @@ private:
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalProxyStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSModuleObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSFunctionArgumentsStructure;
+    LazyProperty<JSGlobalObject, Structure> m_memoryFootprintStructure;
 
     LazyProperty<JSGlobalObject, JSC::JSObject> m_requireFunctionUnbound;
     LazyProperty<JSGlobalObject, JSC::JSObject> m_requireResolveFunctionUnbound;

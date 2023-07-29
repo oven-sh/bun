@@ -401,7 +401,7 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForAnimationEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForAttr;
     // std::unique_ptr<IsoSubspace> m_subspaceForBeforeUnloadEvent;
-    // std::unique_ptr<IsoSubspace> m_subspaceForBroadcastChannel;
+    std::unique_ptr<IsoSubspace> m_subspaceForBroadcastChannel;
     // std::unique_ptr<IsoSubspace> m_subspaceForCDATASection;
     // std::unique_ptr<IsoSubspace> m_subspaceForCharacterData;
     // std::unique_ptr<IsoSubspace> m_subspaceForClipboardEvent;
@@ -409,7 +409,6 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForCompositionEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForCustomElementRegistry;
     std::unique_ptr<IsoSubspace> m_subspaceForCustomEvent;
-    // std::unique_ptr<IsoSubspace> m_subspaceForDOMException;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMImplementation;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMPoint;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMPointReadOnly;
@@ -436,9 +435,9 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForIdleDeadline;
     // std::unique_ptr<IsoSubspace> m_subspaceForInputEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForKeyboardEvent;
-    // std::unique_ptr<IsoSubspace> m_subspaceForMessageChannel;
+    std::unique_ptr<IsoSubspace> m_subspaceForMessageChannel;
     std::unique_ptr<IsoSubspace> m_subspaceForMessageEvent;
-    // std::unique_ptr<IsoSubspace> m_subspaceForMessagePort;
+    std::unique_ptr<IsoSubspace> m_subspaceForMessagePort;
     // std::unique_ptr<IsoSubspace> m_subspaceForMouseEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForMutationEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForMutationObserver;

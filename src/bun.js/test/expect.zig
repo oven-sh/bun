@@ -289,6 +289,108 @@ pub const Expect = struct {
         return null;
     }
 
+    // pass here has a leading underscore to avoid name collision with the pass variable in other functions
+    pub fn _pass(
+        this: *Expect,
+        globalObject: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        var _msg: ZigString = ZigString.Empty;
+
+        if (arguments.len > 0) {
+            const value = arguments[0];
+            value.ensureStillAlive();
+
+            if (!value.isString()) {
+                globalObject.throwInvalidArgumentType("pass", "message", "string");
+                return .zero;
+            }
+
+            value.toZigString(&_msg, globalObject);
+        } else {
+            _msg = ZigString.fromBytes("passes by .pass() assertion");
+        }
+            
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.flags.not;
+        var pass = true;
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        var msg = _msg.toSlice(default_allocator);
+        defer msg.deinit();
+
+        if (not) {
+            const signature = comptime getSignature("pass", "", true);
+            const fmt = signature ++ "\n\n{s}\n";
+            if (Output.enable_ansi_colors) {
+                globalObject.throw(Output.prettyFmt(fmt, true), .{msg.slice()});
+                return .zero;
+            }
+            globalObject.throw(Output.prettyFmt(fmt, false), .{msg.slice()});
+            return .zero;
+        }
+
+        // should never reach here
+        return .zero;
+    }
+
+    pub fn fail(
+        this: *Expect,
+        globalObject: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        var _msg: ZigString = ZigString.Empty;
+
+        if (arguments.len > 0) {
+            const value = arguments[0];
+            value.ensureStillAlive();
+
+            if (!value.isString()) {
+                globalObject.throwInvalidArgumentType("fail", "message", "string");
+                return .zero;
+            }
+   
+            value.toZigString(&_msg, globalObject);
+        } else {
+            _msg = ZigString.fromBytes("fails by .fail() assertion");
+        }
+            
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.flags.not;
+        var pass = false;
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        var msg = _msg.toSlice(default_allocator);
+        defer msg.deinit();
+
+        const signature = comptime getSignature("fail", "", true);
+        const fmt = signature ++ "\n\n{s}\n";
+        if (Output.enable_ansi_colors) {
+            globalObject.throw(Output.prettyFmt(fmt, true), .{msg.slice()});
+            return .zero;
+        }
+        globalObject.throw(Output.prettyFmt(fmt, false), .{msg.slice()});
+        return .zero;
+    }
+
     /// Object.is()
     pub fn toBe(
         this: *Expect,

@@ -43,11 +43,8 @@ class DOMWrapperWorld;
 #include "BunPlugin.h"
 #include "JSMockFunction.h"
 
-namespace Bun {
-class GlobalScope;
-}
-
 namespace WebCore {
+class GlobalScope;
 class SubtleCrypto;
 class EventTarget;
 }
@@ -386,6 +383,9 @@ public:
     mutable WriteBarrier<Unknown> m_JSWebSocketSetterValue;
     mutable WriteBarrier<Unknown> m_JSDOMFormDataSetterValue;
     mutable WriteBarrier<Unknown> m_JSWorkerSetterValue;
+    mutable WriteBarrier<Unknown> m_JSMessageChannelSetterValue;
+    mutable WriteBarrier<Unknown> m_JSMessagePortSetterValue;
+    mutable WriteBarrier<Unknown> m_JSBroadcastChannelSetterValue;
     mutable WriteBarrier<Unknown> m_BunCommonJSModuleValue;
 
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];

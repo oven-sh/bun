@@ -119,6 +119,9 @@
 #include "DOMIsoSubspaces.h"
 #include "BunWorkerGlobalScope.h"
 #include "JSWorker.h"
+#include "JSMessageChannel.h"
+#include "JSMessagePort.h"
+// #include "JSBroadcastChannel.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
@@ -127,6 +130,7 @@
 using namespace Bun;
 
 extern "C" JSC::EncodedJSValue Bun__fetch(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+extern "C" JSC::EncodedJSValue Bun__canonicalizeIP(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 
 using JSGlobalObject
     = JSC::JSGlobalObject;
@@ -717,6 +721,7 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure)
     , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this))
     , globalEventScope(*new Bun::GlobalScope(m_scriptExecutionContext))
 {
+    // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
     globalEventScope.m_context = m_scriptExecutionContext;
 }
@@ -731,6 +736,7 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
     , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this, contextId))
     , globalEventScope(*new Bun::GlobalScope(m_scriptExecutionContext))
 {
+    // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
     globalEventScope.m_context = m_scriptExecutionContext;
 }
@@ -929,6 +935,15 @@ WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSDOMFormData);
 
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSWorker);
 WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSWorker);
+
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSMessageChannel);
+WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSMessageChannel);
+
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSMessagePort);
+WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSMessagePort);
+
+// WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSBroadcastChannel);
+// WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSBroadcastChannel);
 
 JSC_DECLARE_CUSTOM_GETTER(JSEvent_getter);
 
@@ -1284,13 +1299,14 @@ JSC_DEFINE_HOST_FUNCTION(functionStructuredClone,
         }
     }
 
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList));
+    Vector<RefPtr<MessagePort>> ports;
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), ports);
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
         return JSValue::encode(jsUndefined());
     }
 
-    JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject);
+    JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, ports);
 
     return JSValue::encode(deserialized);
 }
@@ -1634,6 +1650,7 @@ JSC:
             return JSValue::encode(
                 JSFunction::create(vm, globalObject, 1, pathToFileURLString, functionPathToFileURL, ImplementationVisibility::Public, NoIntrinsic));
         }
+
         if (string == "fileURLToPath"_s) {
             return JSValue::encode(
                 JSFunction::create(vm, globalObject, 1, fileURLToPathString, functionFileURLToPath, ImplementationVisibility::Public, NoIntrinsic));
@@ -1663,12 +1680,17 @@ JSC:
             return JSValue::encode(obj);
         }
 
-        if (string == "rootCertificates"_s) {
+        if (string == "internal/tls"_s) {
+            auto* obj = constructEmptyObject(globalObject);
+
             auto sourceOrigin = callFrame->callerSourceOrigin(vm).url();
+// expose for tests in debug mode only
+#ifndef BUN_DEBUG
             bool isBuiltin = sourceOrigin.protocolIs("builtin"_s);
             if (!isBuiltin) {
                 return JSC::JSValue::encode(JSC::jsUndefined());
             }
+#endif
             struct us_cert_string_t* out;
             auto size = us_raw_root_certs(&out);
             if (size < 0) {
@@ -1680,7 +1702,12 @@ JSC:
                 auto str = WTF::String::fromUTF8(raw.str, raw.len);
                 rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
             }
-            return JSValue::encode(rootCertificates);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "rootCertificates"_s)), rootCertificates, 0);
+
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "canonicalizeIP"_s)), JSC::JSFunction::create(vm, globalObject, 1, "canonicalizeIP"_s, Bun__canonicalizeIP, ImplementationVisibility::Public, NoIntrinsic), 0);
+            return JSValue::encode(obj);
         }
 
         if (string == "masqueradesAsUndefined"_s) {
@@ -3653,26 +3680,28 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
         }
     }
 
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList));
+    Vector<RefPtr<MessagePort>> ports;
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), ports);
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
         return JSValue::encode(jsUndefined());
     }
 
-    RefPtr<SerializedScriptValue> message = serialized.releaseReturnValue();
-    ScriptExecutionContext::postTaskTo(context->identifier(), [message = WTFMove(message), protectedThis = Ref { *worker }](ScriptExecutionContext& context) {
+    ExceptionOr<Vector<TransferredMessagePort>> disentangledPorts = MessagePort::disentanglePorts(WTFMove(ports));
+    if (disentangledPorts.hasException()) {
+        WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
+        return JSValue::encode(jsUndefined());
+    }
+
+    MessageWithMessagePorts messageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() };
+
+    ScriptExecutionContext::postTaskTo(context->identifier(), [message = messageWithMessagePorts, protectedThis = Ref { *worker }, ports](ScriptExecutionContext& context) mutable {
         Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(context.jsGlobalObject());
-        bool didFail = false;
-        JSValue value = message->deserialize(*globalObject, globalObject, SerializationErrorMode::NonThrowing, &didFail);
 
-        if (didFail) {
-            protectedThis->dispatchEvent(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init {}, MessageEvent::IsTrusted::Yes));
-            return;
-        }
+        auto ports = MessagePort::entanglePorts(context, WTFMove(message.transferredPorts));
+        auto event = MessageEvent::create(*globalObject, message.message.releaseNonNull(), std::nullopt, WTFMove(ports));
 
-        WebCore::MessageEvent::Init init;
-        init.data = value;
-        protectedThis->dispatchEvent(MessageEvent::create(eventNames().messageEvent, WTFMove(init), MessageEvent::IsTrusted::Yes));
+        protectedThis->dispatchEvent(event.event);
     });
 
     return JSValue::encode(jsUndefined());
@@ -4215,6 +4244,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("Headers"_s, JSFetchHeaders);
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("URLSearchParams"_s, JSURLSearchParams);
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("Worker"_s, JSWorker);
+    PUT_WEBCORE_GENERATED_CONSTRUCTOR("MessageChannel"_s, JSMessageChannel);
+    PUT_WEBCORE_GENERATED_CONSTRUCTOR("MessagePort"_s, JSMessagePort);
+    // PUT_WEBCORE_GENERATED_CONSTRUCTOR("BroadcastChannel"_s, JSBroadcastChannel);
 
     putDirectCustomAccessor(vm, builtinNames.TransformStreamPublicName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_TransformStreamConstructor, nullptr), attributesForStructure(static_cast<unsigned>(JSC::PropertyAttribute::DontEnum)));
     putDirectCustomAccessor(vm, builtinNames.TransformStreamPrivateName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_TransformStreamConstructor, nullptr), attributesForStructure(static_cast<unsigned>(JSC::PropertyAttribute::DontEnum)));
@@ -4607,6 +4639,9 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_JSURLSearchParamsSetterValue);
     visitor.append(thisObject->m_JSDOMFormDataSetterValue);
     visitor.append(thisObject->m_JSWorkerSetterValue);
+    visitor.append(thisObject->m_JSMessageChannelSetterValue);
+    visitor.append(thisObject->m_JSMessagePortSetterValue);
+    visitor.append(thisObject->m_JSBroadcastChannelSetterValue);
 
     thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
     thisObject->m_JSBufferListClassStructure.visit(visitor);

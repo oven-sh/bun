@@ -135,7 +135,6 @@ private:
     bool m_isClosing { false };
     const ScriptExecutionContextIdentifier m_clientIdentifier;
     void* impl_ { nullptr };
-    size_t m_pendingActivityCount { 0 };
 };
 
 } // namespace WebCore

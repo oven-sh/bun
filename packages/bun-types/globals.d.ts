@@ -2,7 +2,7 @@
  * "blob" is not supported yet
  */
 type BinaryType = "nodebuffer" | "arraybuffer" | "blob";
-type Transferable = ArrayBuffer;
+type Transferable = ArrayBuffer | MessagePort;
 type MessageEventSource = undefined;
 type Encoding = "utf-8" | "windows-1252" | "utf-16";
 type Platform =
@@ -365,6 +365,94 @@ declare function structuredClone<T>(
   value: T,
   options?: StructuredSerializeOptions,
 ): T;
+
+/**
+ * This Channel Messaging API interface allows us to create a new message channel and send data through it via its two MessagePort properties.
+ *
+ * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessageChannel)
+ */
+interface MessageChannel {
+  /**
+   * Returns the first MessagePort object.
+   *
+   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessageChannel/port1)
+   */
+  readonly port1: MessagePort;
+  /**
+   * Returns the second MessagePort object.
+   *
+   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessageChannel/port2)
+   */
+  readonly port2: MessagePort;
+}
+
+declare var MessageChannel: {
+  prototype: MessageChannel;
+  new (): MessageChannel;
+};
+
+interface MessagePortEventMap {
+  message: MessageEvent;
+  messageerror: MessageEvent;
+}
+
+/**
+ * This Channel Messaging API interface represents one of the two ports of a MessageChannel, allowing messages to be sent from one port and listening out for them arriving at the other.
+ *
+ * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessagePort)
+ */
+interface MessagePort extends EventTarget {
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessagePort/message_event) */
+  onmessage: ((this: MessagePort, ev: MessageEvent) => any) | null;
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessagePort/messageerror_event) */
+  onmessageerror: ((this: MessagePort, ev: MessageEvent) => any) | null;
+  /**
+   * Disconnects the port, so that it is no longer active.
+   *
+   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessagePort/close)
+   */
+  close(): void;
+  /**
+   * Posts a message through the channel. Objects listed in transfer are transferred, not just cloned, meaning that they are no longer usable on the sending side.
+   *
+   * Throws a "DataCloneError" DOMException if transfer contains duplicate objects or port, or if message could not be cloned.
+   *
+   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessagePort/postMessage)
+   */
+  postMessage(message: any, transfer: Transferable[]): void;
+  postMessage(message: any, options?: StructuredSerializeOptions): void;
+  /**
+   * Begins dispatching messages received on the port.
+   *
+   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessagePort/start)
+   */
+  start(): void;
+  addEventListener<K extends keyof MessagePortEventMap>(
+    type: K,
+    listener: (this: MessagePort, ev: MessagePortEventMap[K]) => any,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  removeEventListener<K extends keyof MessagePortEventMap>(
+    type: K,
+    listener: (this: MessagePort, ev: MessagePortEventMap[K]) => any,
+    options?: boolean | EventListenerOptions,
+  ): void;
+  removeEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | EventListenerOptions,
+  ): void;
+}
+
+declare var MessagePort: {
+  prototype: MessagePort;
+  new (): MessagePort;
+};
 
 interface EncodeIntoResult {
   /**
@@ -1891,6 +1979,8 @@ interface MessageEvent<T = any> extends Event {
   readonly lastEventId: string;
   /** Returns the origin of the message, for server-sent events and cross-document messaging. */
   readonly origin: string;
+  /** Returns the MessagePort array sent with the message, for cross-document messaging and channel messaging. */
+  readonly ports: ReadonlyArray<MessagePort>;
   readonly source: MessageEventSource;
   /** @deprecated */
   initMessageEvent(

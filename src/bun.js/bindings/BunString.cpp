@@ -315,6 +315,11 @@ extern "C" void BunString__toWTFString(BunString* bunString)
     }
 }
 
+extern "C" BunString URL__getFileURLString(BunString* filePath)
+{
+    return Bun::toStringRef(WTF::URL::fileURLWithFileSystemPath(Bun::toWTFString(*filePath)).stringWithoutFragmentIdentifier());
+}
+
 extern "C" WTF::URL* URL__fromJS(EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
 {
     auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());

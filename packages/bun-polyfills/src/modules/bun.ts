@@ -27,7 +27,6 @@ import { fileURLToPath as fileURLToPathNode, pathToFileURL as pathToFileURLNode 
 import npm_which from 'which';
 import openEditor from 'open-editor';
 
-//! This is not very reliable, but it's the best we can do now (?)
 export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satisfies typeof Bun.main;
 
 export const version = '0.7.1' satisfies typeof Bun.version; // TODO: This can probably be fetched from somewhere in the repo
@@ -172,9 +171,9 @@ export const write = (async (dest: BunFileBlob | PathLike, input: string | Blob 
 }) satisfies typeof Bun.write;
 
 // @ts-expect-error bun-types mistake (TypedArray should be Uint8Array on SHA512_256.hash)
-export const sha = ((...args) => SHA512_256.hash(...args)) satisfies typeof Bun.sha;
+export const sha = SHA512_256.hash satisfies typeof Bun.sha;
 
-export const nanoseconds = () => Math.trunc(performance.now() * 1000000);
+export const nanoseconds = (() => Math.trunc(performance.now() * 1000000)) satisfies typeof Bun.nanoseconds;
 
 //? This just prints out some debug stuff in console, and as the name implies no one should be using it.
 //? But, just in case someone does, we'll make it a no-op function so at least the program doesn't crash trying to run the function.

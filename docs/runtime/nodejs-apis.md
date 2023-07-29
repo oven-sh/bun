@@ -86,7 +86,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_fs" %} [`node:fs`](https://nodejs.org/api/fs.html) {% /anchor %}
 - 🟡
-- Missing `fs.fdatasync{Sync}` `fs.opendir{Sync}` `fs.{watchFile|unwatchFile}` `fs.{cp|cpSync}`.
+- Missing `fs.fdatasync{Sync}` `fs.opendir{Sync}` `fs.{watchFile|unwatchFile}` `fs.{cp|cpSync}`. `fs.promises.open` incorrectly returns a file descriptor instead of a `FileHandle`.
 
 ---
 
@@ -442,8 +442,8 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 ---
 
 - {% anchor id="node_messagechannel" %} [`MessageChannel`](https://developer.mozilla.org/en-US/docs/Web/API/MessageChannel) {% /anchor %}
-- 🔴
-- Not implemented.
+- 🟢
+- Fully implemented.
 
 ---
 
@@ -454,8 +454,8 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 ---
 
 - {% anchor id="node_messageport" %} [`MessagePort`](https://developer.mozilla.org/en-US/docs/Web/API/MessagePort) {% /anchor %}
-- 🔴
-- Not implemented.
+- 🟢
+- Fully implemented.
 
 ---
 

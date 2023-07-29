@@ -1313,7 +1313,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
 }
 
-static int getRSS(size_t* rss)
+int getRSS(size_t* rss)
 {
 #if defined(__APPLE__)
     mach_msg_type_number_t count;

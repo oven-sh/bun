@@ -3222,6 +3222,13 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(Bun::createCommonJSModuleStructure(reinterpret_cast<Zig::GlobalObject*>(init.owner)));
         });
 
+    m_memoryFootprintStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+            init.set(
+                createMemoryFootprintStructure(
+                    init.vm, reinterpret_cast<Zig::GlobalObject*>(init.owner)));
+        });
+
     m_commonJSFunctionArgumentsStructure.initLater(
         [](const Initializer<Structure>& init) {
             auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
@@ -4688,6 +4695,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_lazyTestModuleObject.visit(visitor);
     thisObject->m_lazyPreloadTestModuleObject.visit(visitor);
     thisObject->m_commonJSModuleObjectStructure.visit(visitor);
+    thisObject->m_memoryFootprintStructure.visit(visitor);
     thisObject->m_lazyPasswordObject.visit(visitor);
     thisObject->m_commonJSFunctionArgumentsStructure.visit(visitor);
     thisObject->m_cachedGlobalObjectStructure.visit(visitor);

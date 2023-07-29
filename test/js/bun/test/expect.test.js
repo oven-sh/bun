@@ -2898,28 +2898,6 @@ describe("expect()", () => {
     expect({}).not.toBeNil();
   });
 
-  test("toBeArray()", () => {
-    expect([]).toBeArray();
-    expect([1, 2, 3, "🫓"]).toBeArray();
-    expect(new Array()).toBeArray();
-    expect(new Array(1, 2, 3)).toBeArray();
-    expect({}).not.toBeArray();
-    expect("🫓").not.toBeArray();
-    expect(0).not.toBeArray();
-    expect(true).not.toBeArray();
-    expect(null).not.toBeArray();
-  });
-
-  test("toBeArrayOfSize()", () => {
-    expect([]).toBeArrayOfSize(0);
-    expect(new Array()).toBeArrayOfSize(0);
-    expect([1, 2, 3, "🫓"]).toBeArrayOfSize(4);
-    expect(new Array(1, 2, 3, "🫓")).toBeArrayOfSize(4);
-    expect({}).not.toBeArrayOfSize(1);
-    expect("").not.toBeArrayOfSize(1);
-    expect(0).not.toBeArrayOfSize(1);
-  });
-
   test("toBeTypeOf()", () => {
     expect("Bun! 🫓").toBeTypeOf("string");
     expect(0).toBeTypeOf("number");

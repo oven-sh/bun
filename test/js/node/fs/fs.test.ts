@@ -1619,3 +1619,12 @@ it("createReadStream on a large file emits readable event correctly", () => {
     });
   });
 });
+
+it("fs.readdir recursive", async () => {
+  const tmp = mkdtempSync(`${tmpdir()}/readdir-recursive`);
+  const dir = `${tmp}/foo/bar`;
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(`${dir}/baz.txt`, "test");
+  const files = await promises.readdir(tmp, { recursive: true });
+  expect(files).toEqual(["foo", "foo/bar", "foo/bar/baz.txt"]);
+});

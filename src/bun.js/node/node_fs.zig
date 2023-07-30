@@ -1395,6 +1395,7 @@ pub const Arguments = struct {
         path: PathLike,
         encoding: Encoding = Encoding.utf8,
         with_file_types: bool = false,
+        recursive: bool = false,
 
         pub fn deinit(this: Readdir) void {
             this.path.deinit();
@@ -1421,6 +1422,7 @@ pub const Arguments = struct {
 
             var encoding = Encoding.utf8;
             var with_file_types = false;
+            var recursive = false;
 
             if (arguments.next()) |val| {
                 arguments.eat();
@@ -1441,6 +1443,13 @@ pub const Arguments = struct {
                             }) |with_file_types_| {
                                 with_file_types = with_file_types_;
                             }
+
+                            if (val.getOptional(ctx.ptr(), "recursive", bool) catch {
+                                path.deinit();
+                                return null;
+                            }) |recursive_| {
+                                recursive = recursive_;
+                            }
                         }
                     },
                 }
@@ -1450,6 +1459,7 @@ pub const Arguments = struct {
                 .path = path,
                 .encoding = encoding,
                 .with_file_types = with_file_types,
+                .recursive = recursive,
             };
         }
     };
@@ -2869,18 +2879,19 @@ const Return = struct {
         with_file_types: []Dirent,
         buffers: []const Buffer,
         files: []const bun.String,
+        recursive: bool,
 
-        pub const Tag = enum {
-            with_file_types,
-            buffers,
-            files,
-        };
+        pub const Tag = enum { with_file_types, buffers, files, recursive };
 
         pub fn toJS(this: Readdir, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
             switch (this) {
                 .with_file_types => {
                     defer bun.default_allocator.free(this.with_file_types);
                     return JSC.To.JS.withType([]const Dirent, this.with_file_types, ctx, exception);
+                },
+                .recursive => {
+                    // defer bun.default_allocator.free(this.recursive);
+                    return JSC.To.JS.withType(bool, this.recursive, ctx, exception);
                 },
                 .buffers => {
                     defer bun.default_allocator.free(this.buffers);
@@ -3856,6 +3867,16 @@ pub const NodeFS = struct {
         };
     }
 
+    fn wEntry(walker: *std.fs.IterableDir.Walker) Maybe(std.fs.IterableDir.Walker.WalkerEntry) {
+        var next = walker.next() catch return .{
+            .err = Syscall.Error{ .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(std.c.E.NOENT))), .syscall = .read },
+        };
+
+        return .{
+            .result = next.?,
+        };
+    }
+
     pub fn _readdir(
         buf: *[bun.MAX_PATH_BYTES]u8,
         args: Arguments.Readdir,
@@ -3882,53 +3903,98 @@ pub const NodeFS = struct {
         }
 
         var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
+        defer entries.deinit();
+
         var dir = std.fs.Dir{ .fd = fd };
-        var iterator = DirIterator.iterate(dir);
-        var entry = iterator.next();
-        while (switch (entry) {
-            .err => |err| {
-                for (entries.items) |*item| {
-                    switch (comptime ExpectedType) {
-                        Dirent => {
-                            item.name.deref();
-                        },
-                        Buffer => {
-                            item.destroy();
-                        },
-                        bun.String => {
-                            item.deref();
-                        },
-                        else => unreachable,
+        if (args.recursive) {
+            var walker = (std.fs.IterableDir{ .dir = dir }).walk(bun.default_allocator) catch unreachable;
+            defer walker.deinit();
+
+            while (true) {
+                const maybe_entry = walker.next() catch {
+                    for (entries.items) |*item| {
+                        switch (comptime ExpectedType) {
+                            Dirent => {
+                                item.name.deref();
+                            },
+                            Buffer => {
+                                item.destroy();
+                            },
+                            bun.String => {
+                                item.deref();
+                            },
+                            else => unreachable,
+                        }
                     }
-                }
 
-                entries.deinit();
-
-                return .{
-                    .err = err.withPath(args.path.slice()),
+                    return .{
+                        .err = Syscall.Error{ .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(std.c.E.NOENT))), .syscall = .read, .path = args.path.slice() },
+                    };
                 };
-            },
-            .result => |ent| ent,
-        }) |current| : (entry = iterator.next()) {
-            const utf8_name = current.name.slice();
-            switch (comptime ExpectedType) {
-                Dirent => {
-                    entries.append(.{
-                        .name = bun.String.create(utf8_name),
-                        .kind = current.kind,
-                    }) catch unreachable;
+                const current = maybe_entry orelse break;
+
+                const utf8_name = current.path;
+                switch (ExpectedType) {
+                    Dirent => {
+                        entries.append(.{
+                            .name = bun.String.create(utf8_name), //
+                            .kind = current.kind,
+                        }) catch unreachable;
+                    },
+                    Buffer => {
+                        entries.append(Buffer.fromString(utf8_name, bun.default_allocator) catch unreachable) catch unreachable;
+                    },
+                    bun.String => {
+                        entries.append(bun.String.create(utf8_name)) catch unreachable;
+                    },
+                    else => unreachable,
+                }
+            }
+        } else {
+            var iterator = DirIterator.iterate(dir);
+            var entry = iterator.next();
+            while (switch (entry) {
+                .err => |err| {
+                    for (entries.items) |*item| {
+                        switch (comptime ExpectedType) {
+                            Dirent => {
+                                item.name.deref();
+                            },
+                            Buffer => {
+                                item.destroy();
+                            },
+                            bun.String => {
+                                item.deref();
+                            },
+                            else => unreachable,
+                        }
+                    }
+
+                    return .{
+                        .err = err.withPath(args.path.slice()),
+                    };
                 },
-                Buffer => {
-                    entries.append(Buffer.fromString(utf8_name, bun.default_allocator) catch unreachable) catch unreachable;
-                },
-                bun.String => {
-                    entries.append(bun.String.create(utf8_name)) catch unreachable;
-                },
-                else => unreachable,
+                .result => |ent| ent,
+            }) |current| : (entry = iterator.next()) {
+                const utf8_name = current.name.slice();
+                switch (comptime ExpectedType) {
+                    Dirent => {
+                        entries.append(.{
+                            .name = bun.String.create(utf8_name),
+                            .kind = current.kind,
+                        }) catch unreachable;
+                    },
+                    Buffer => {
+                        entries.append(Buffer.fromString(utf8_name, bun.default_allocator) catch unreachable) catch unreachable;
+                    },
+                    bun.String => {
+                        entries.append(bun.String.create(utf8_name)) catch unreachable;
+                    },
+                    else => unreachable,
+                }
             }
         }
-
-        return .{ .result = @unionInit(Return.Readdir, file_type, entries.items) };
+        return .{ .result = @unionInit(Return.Readdir, file_type, entries.toOwnedSlice() catch @panic("oom")) };
     }
 
     pub const StringType = enum {

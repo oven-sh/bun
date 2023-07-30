@@ -1115,7 +1115,7 @@ endif
 
 .PHONY: dev-obj-linux
 dev-obj-linux:
-	$(ZIG) build obj -Dtarget=x86_64-linux-gnu -Dcpu="$(CPU_TARGET)"
+	$(ZIG) build obj -Dtarget=x86_64-linux-gnu -Dcpu="$(CPU_TARGET)" -freference-trace
 
 .PHONY: dev
 dev: mkdir-dev esm dev-obj link ## compile zig changes + link bun

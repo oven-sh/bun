@@ -1,35 +1,29 @@
-// Hardcoded module "detect-libc" for linux
-export function family() {
+function family() {
   return Promise.resolve(familySync());
 }
-
-export function familySync() {
-  if (process.platform === "linux") {
-    return GLIBC;
-  } else {
-    return null;
-  }
+function familySync() {
+  return null;
 }
-
-export const GLIBC = "glibc";
-export const MUSL = "musl";
-
-export function versionAsync() {
+function versionAsync() {
   return Promise.resolve(version());
 }
-
-export function version() {
-  if (process.platform === "linux") {
-    return "2.29";
-  } else {
-    return null;
-  }
+function version() {
+  return null;
 }
-
-export function isNonGlibcLinuxSync() {
-  return false;
+function isNonGlibcLinuxSync() {
+  return !1;
 }
-
-export function isNonGlibcLinux() {
+function isNonGlibcLinux() {
   return Promise.resolve(isNonGlibcLinuxSync());
 }
+var GLIBC = "glibc", MUSL = "musl";
+export {
+  versionAsync,
+  version,
+  isNonGlibcLinuxSync,
+  isNonGlibcLinux,
+  familySync,
+  family,
+  MUSL,
+  GLIBC
+};

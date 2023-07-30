@@ -1,10 +1,14 @@
-// Hardcoded module "detect-libc" for darwin
+// Hardcoded module "detect-libc" for linux
 export function family() {
   return Promise.resolve(familySync());
 }
 
 export function familySync() {
-  return null;
+  if (process.platform === "linux") {
+    return GLIBC;
+  } else {
+    return null;
+  }
 }
 
 export const GLIBC = "glibc";
@@ -15,7 +19,11 @@ export function versionAsync() {
 }
 
 export function version() {
-  return null;
+  if (process.platform === "linux") {
+    return "2.29";
+  } else {
+    return null;
+  }
 }
 
 export function isNonGlibcLinuxSync() {

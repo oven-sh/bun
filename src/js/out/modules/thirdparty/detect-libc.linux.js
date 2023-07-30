@@ -1,29 +1,27 @@
-function family() {
+// Hardcoded module "detect-libc" for darwin
+export function family() {
   return Promise.resolve(familySync());
 }
-function familySync() {
-  return GLIBC;
+
+export function familySync() {
+  return null;
 }
-function versionAsync() {
+
+export const GLIBC = "glibc";
+export const MUSL = "musl";
+
+export function versionAsync() {
   return Promise.resolve(version());
 }
-function version() {
-  return "2.29";
+
+export function version() {
+  return null;
 }
-function isNonGlibcLinuxSync() {
-  return !1;
+
+export function isNonGlibcLinuxSync() {
+  return false;
 }
-function isNonGlibcLinux() {
+
+export function isNonGlibcLinux() {
   return Promise.resolve(isNonGlibcLinuxSync());
 }
-var GLIBC = "glibc", MUSL = "musl";
-export {
-  versionAsync,
-  version,
-  isNonGlibcLinuxSync,
-  isNonGlibcLinux,
-  familySync,
-  family,
-  MUSL,
-  GLIBC
-};

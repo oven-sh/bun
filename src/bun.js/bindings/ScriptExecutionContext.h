@@ -34,7 +34,7 @@ class MessagePort;
 class ScriptExecutionContext;
 
 class EventLoopTask {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_ISO_ALLOCATED(EventLoopTask);
 
 public:
     enum CleanupTaskTag { CleanupTask };
@@ -74,6 +74,7 @@ protected:
 using ScriptExecutionContextIdentifier = uint32_t;
 
 class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext> {
+    WTF_MAKE_ISO_ALLOCATED(ScriptExecutionContext);
 
 public:
     ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject)

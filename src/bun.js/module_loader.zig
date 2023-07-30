@@ -1665,6 +1665,12 @@ pub const ModuleLoader = struct {
                     out.* = ZigString.fromUTF8(name);
                 }
 
+                defer {
+                    if (is_main) {
+                        jsc_vm.has_loaded = true;
+                    }
+                }
+
                 if (jsc_vm.isWatcherEnabled()) {
                     var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, input_specifier, path.text, null, false);
 
@@ -2058,7 +2064,10 @@ pub const ModuleLoader = struct {
             &display_specifier,
         );
         const path = Fs.Path.init(specifier);
-        const loader: options.Loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse options.Loader.js;
+
+        // Deliberately optional.
+        // The concurrent one only handles javascript-like loaders right now.
+        const loader: ?options.Loader = jsc_vm.bundler.options.loaders.get(path.name.ext);
 
         // We only run the transpiler concurrently when we can.
         // Today, that's:
@@ -2067,7 +2076,8 @@ pub const ModuleLoader = struct {
         //   Import Expressions (import('foo'))
         //
         if (comptime bun.FeatureFlags.concurrent_transpiler) {
-            if (allow_promise and loader.isJavaScriptLike() and
+            const concurrent_loader = loader orelse .file;
+            if (allow_promise and (jsc_vm.has_loaded or jsc_vm.is_in_preload) and concurrent_loader.isJavaScriptLike() and
                 // Plugins make this complicated,
                 // TODO: allow running concurrently when no onLoad handlers match a plugin.
                 jsc_vm.plugin_runner == null and jsc_vm.transpiler_store.enabled)
@@ -2083,6 +2093,15 @@ pub const ModuleLoader = struct {
             }
         }
 
+        const synchronous_loader = loader orelse
+            // Unknown extensions are to be treated as file loader
+            if (jsc_vm.has_loaded or jsc_vm.is_in_preload)
+            options.Loader.file
+        else
+            // Unless it's potentially the main module
+            // This is important so that "bun run ./foo-i-have-no-extension" works
+            options.Loader.js;
+
         var promise: ?*JSC.JSInternalPromise = null;
         ret.* = ErrorableResolvedSource.ok(
             ModuleLoader.transpileSourceCode(
@@ -2092,7 +2111,7 @@ pub const ModuleLoader = struct {
                 referrer_slice.slice(),
                 specifier_ptr.*,
                 path,
-                loader,
+                synchronous_loader,
                 &log,
                 null,
                 ret,

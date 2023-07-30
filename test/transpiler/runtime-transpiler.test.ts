@@ -8,13 +8,15 @@ describe("// @bun", () => {
   });
 
   test("async transpiler", async () => {
-    const { default: value } = await import("./async-transpiler-entry");
+    const { default: value, hbs } = await import("./async-transpiler-entry");
     expect(value).toBe(42);
+    expect(hbs).toBeString();
   });
 
   test("require()", async () => {
-    const { default: value } = require("./async-transpiler-entry");
+    const { default: value, hbs } = require("./async-transpiler-entry");
     expect(value).toBe(42);
+    expect(hbs).toBeString();
   });
 
   test("synchronous", async () => {

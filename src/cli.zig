@@ -1564,7 +1564,6 @@ pub const Command = struct {
 
         BunJS.Run.boot(
             ctx.*,
-            file,
             absolute_script_path,
         ) catch |err| {
             if (Output.enable_ansi_colors) {

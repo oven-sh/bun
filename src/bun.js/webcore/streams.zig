@@ -4433,6 +4433,10 @@ pub const FileReader = struct {
                     var readable_file = File{ .loop = this.globalThis().bunVM().eventLoop() };
 
                     const result = readable_file.start(&blob.data.file);
+                    if (result == .empty) {
+                        this.lazy_readable = .{ .empty = {} };
+                        return result;
+                    }
                     if (result != .ready) {
                         return result;
                     }

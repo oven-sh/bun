@@ -1220,17 +1220,16 @@ pub const ModuleLoader = struct {
             var printer = VirtualMachine.source_code_printer.?.*;
             printer.ctx.reset();
 
-            const written = brk: {
+            {
                 defer VirtualMachine.source_code_printer.?.* = printer;
-                break :brk try jsc_vm.bundler.printWithSourceMap(
+                _ = try jsc_vm.bundler.printWithSourceMap(
                     parse_result,
                     @TypeOf(&printer),
                     &printer,
                     .esm_ascii,
                     SavedSourceMap.SourceMapHandler.init(&jsc_vm.source_mappings),
                 );
-            };
-            _ = written;
+            }
 
             if (comptime Environment.dump_source) {
                 try dumpSource(specifier, &printer);

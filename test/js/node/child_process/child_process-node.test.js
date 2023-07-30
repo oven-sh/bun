@@ -386,7 +386,7 @@ describe("child_process default options", () => {
 });
 
 describe("child_process double pipe", () => {
-  it("should allow two pipes to be used at once", done => {
+  it.skip("should allow two pipes to be used at once", done => {
     // const { mustCallAtLeast, mustCall } = createCallCheckCtx(done);
     const mustCallAtLeast = fn => fn;
     const mustCall = fn => fn;

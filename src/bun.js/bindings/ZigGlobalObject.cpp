@@ -227,11 +227,11 @@ public:
         if (encodedString.isNull())
             return String();
 
-        auto decodedData = base64Decode(encodedString, Base64DecodeMode::DefaultValidatePaddingAndIgnoreWhitespace);
+        auto decodedData = base64DecodeToString(encodedString, Base64DecodeMode::DefaultValidatePaddingAndIgnoreWhitespace);
         if (!decodedData)
             return Exception { InvalidCharacterError };
 
-        return String(decodedData->data(), decodedData->size());
+        return decodedData;
     }
 };
 

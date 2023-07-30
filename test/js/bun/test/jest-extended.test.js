@@ -135,7 +135,7 @@ describe("jest-extended", () => {
     expect("").not.toBeArrayOfSize(1);
     expect(0).not.toBeArrayOfSize(1);
   });
-  
+
   // test('toIncludeAllMembers()')
   // test('toIncludeAllPartialMembers()')
   // test('toIncludeAnyMembers()')

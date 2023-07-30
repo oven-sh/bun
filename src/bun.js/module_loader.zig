@@ -533,9 +533,9 @@ pub const RuntimeTranspilerStore = struct {
             var printer = source_code_printer.?.*;
             printer.ctx.reset();
 
-            const written = brk: {
+            {
                 defer source_code_printer.?.* = printer;
-                break :brk bundler.printWithSourceMap(
+                _ = bundler.printWithSourceMap(
                     parse_result,
                     @TypeOf(&printer),
                     &printer,
@@ -545,11 +545,6 @@ pub const RuntimeTranspilerStore = struct {
                     this.parse_error = err;
                     return;
                 };
-            };
-
-            if (written == 0) {
-                this.parse_error = error.PrintingErrorWriteFailed;
-                return;
             }
 
             if (comptime Environment.dump_source) {
@@ -1235,10 +1230,7 @@ pub const ModuleLoader = struct {
                     SavedSourceMap.SourceMapHandler.init(&jsc_vm.source_mappings),
                 );
             };
-
-            if (written == 0) {
-                return error.PrintingErrorWriteFailed;
-            }
+            _ = written;
 
             if (comptime Environment.dump_source) {
                 try dumpSource(specifier, &printer);
@@ -1653,7 +1645,6 @@ pub const ModuleLoader = struct {
                             .hash = 0,
                         };
                     }
-                    return error.PrintingErrorWriteFailed;
                 }
 
                 if (comptime Environment.dump_source) {
@@ -2196,7 +2187,7 @@ pub const ModuleLoader = struct {
 
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = bun.String.createLatin1(jsc_vm.entry_point.source.contents),
+                        .source_code = bun.String.create(jsc_vm.entry_point.source.contents),
                         .specifier = specifier,
                         .source_url = ZigString.init(bun.asByteSlice(JSC.VirtualMachine.main_file_name)),
                         .hash = 0,

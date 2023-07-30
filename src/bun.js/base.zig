@@ -3967,78 +3967,7 @@ pub const FilePoll = struct {
     }
 };
 
-pub const Strong = extern struct {
-    ref: ?*JSC.napi.Ref = null,
-
-    pub fn init() Strong {
-        return .{};
-    }
-
-    pub fn create(
-        value: JSC.JSValue,
-        globalThis: *JSC.JSGlobalObject,
-    ) Strong {
-        var str = Strong.init();
-        if (value != .zero)
-            str.set(globalThis, value);
-        return str;
-    }
-
-    pub fn get(this: *Strong) ?JSValue {
-        var ref = this.ref orelse return null;
-        const result = ref.get();
-        if (result == .zero) {
-            return null;
-        }
-
-        return result;
-    }
-
-    pub fn swap(this: *Strong) JSValue {
-        var ref = this.ref orelse return .zero;
-        const result = ref.get();
-        if (result == .zero) {
-            return .zero;
-        }
-
-        ref.set(.zero);
-        return result;
-    }
-
-    pub fn has(this: *Strong) bool {
-        var ref = this.ref orelse return false;
-        return ref.get() != .zero;
-    }
-
-    pub fn trySwap(this: *Strong) ?JSValue {
-        const result = this.swap();
-        if (result == .zero) {
-            return null;
-        }
-
-        return result;
-    }
-
-    pub fn set(this: *Strong, globalThis: *JSC.JSGlobalObject, value: JSValue) void {
-        var ref: *JSC.napi.Ref = this.ref orelse {
-            if (value == .zero) return;
-            this.ref = JSC.napi.Ref.create(globalThis, value);
-            return;
-        };
-        ref.set(value);
-    }
-
-    pub fn clear(this: *Strong) void {
-        var ref: *JSC.napi.Ref = this.ref orelse return;
-        ref.set(JSC.JSValue.zero);
-    }
-
-    pub fn deinit(this: *Strong) void {
-        var ref: *JSC.napi.Ref = this.ref orelse return;
-        this.ref = null;
-        ref.destroy();
-    }
-};
+pub const Strong = @import("./Strong.zig").Strong;
 
 pub const BinaryType = enum {
     Buffer,

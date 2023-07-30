@@ -794,7 +794,7 @@ pub export fn napi_get_dataview_info(env: napi_env, dataview: napi_value, bytele
     var array_buffer = dataview.asArrayBuffer(env) orelse return .object_expected;
     bytelength.* = array_buffer.byte_len;
     data.* = array_buffer.ptr;
-    // TODO: will this work? will it fail due to being a DataView instead of a TypedArray?
+
     arraybuffer.* = JSValue.c(JSC.C.JSObjectGetTypedArrayBuffer(env.ref(), dataview.asObjectRef(), null));
     byte_offset.* = array_buffer.offset;
     return .ok;
@@ -806,24 +806,24 @@ pub export fn napi_get_version(_: napi_env, result: *u32) napi_status {
 }
 pub export fn napi_create_promise(env: napi_env, deferred: *napi_deferred, promise: *napi_value) napi_status {
     log("napi_create_promise", .{});
-    deferred.* = JSC.JSPromise.Strong.init(env).strong.ref.?;
-    promise.* = deferred.*.get();
+    var js_promise = JSC.JSPromise.create(env);
+    var promise_value = js_promise.asValue(env);
+    deferred.* = Ref.create(env, promise_value);
+    promise.* = promise_value;
     return .ok;
 }
 pub export fn napi_resolve_deferred(env: napi_env, deferred: napi_deferred, resolution: napi_value) napi_status {
     log("napi_resolve_deferred", .{});
-    var prom = JSC.JSPromise.Strong{
-        .strong = .{ .ref = deferred },
-    };
+    var prom = deferred.get().asPromise() orelse return .object_expected;
     prom.resolve(env, resolution);
+    deferred.destroy();
     return .ok;
 }
 pub export fn napi_reject_deferred(env: napi_env, deferred: napi_deferred, rejection: napi_value) napi_status {
     log("napi_reject_deferred", .{});
-    var prom = JSC.JSPromise.Strong{
-        .strong = .{ .ref = deferred },
-    };
+    var prom = deferred.get().asPromise() orelse return .object_expected;
     prom.reject(env, rejection);
+    deferred.destroy();
     return .ok;
 }
 pub export fn napi_is_promise(_: napi_env, value: napi_value, is_promise: *bool) napi_status {

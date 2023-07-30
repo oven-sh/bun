@@ -14,6 +14,9 @@ namespace WebCore {
 
 static std::atomic<unsigned> lastUniqueIdentifier = 0;
 
+WTF_MAKE_ISO_ALLOCATED_IMPL(EventLoopTask);
+WTF_MAKE_ISO_ALLOCATED_IMPL(ScriptExecutionContext);
+
 static Lock allScriptExecutionContextsMapLock;
 static HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allScriptExecutionContextsMap() WTF_REQUIRES_LOCK(allScriptExecutionContextsMapLock)
 {

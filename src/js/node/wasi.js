@@ -8,6 +8,7 @@
 
 /** **/
 // constants is injected into the top of this file
+import { constants } from "fs";
 const nodeFsConstants = constants;
 
 var __getOwnPropNames = Object.getOwnPropertyNames;

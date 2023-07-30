@@ -1,3 +1,4 @@
+import {constants} from "node:fs";
 var nodeFsConstants = constants, __getOwnPropNames = Object.getOwnPropertyNames, __commonJS = (cb, mod) => function __require2() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 }, require_types = __commonJS({

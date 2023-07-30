@@ -41,6 +41,32 @@ describe("Readable", () => {
 
     readable.pipe(writable);
   });
+  it("should be able to be piped via .pipe, issue #3607", done => {
+    const path = `${tmpdir()}/${Date.now()}.testReadStreamEmptyFile.txt`;
+    writeFileSync(path, "");
+    const stream = createReadStream(path);
+    stream.on("error", err => {
+      done(err);
+    });
+
+    let called = false;
+    const writable = new Writable({
+      write(chunk, encoding, callback) {
+        called = true;
+        callback();
+      },
+    });
+    writable.on("finish", () => {
+      try {
+        expect(called).toBeFalse();
+      } catch (err) {
+        return done(err);
+      }
+      done();
+    });
+
+    stream.pipe(writable);
+  });
   it("should be able to be piped via .pipe, issue #3668", done => {
     const path = `${tmpdir()}/${Date.now()}.testReadStream.txt`;
     writeFileSync(path, "12345");

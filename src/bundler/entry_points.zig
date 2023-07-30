@@ -183,7 +183,7 @@ pub const ServerEntryPoint = struct {
             if (is_hot_reload_enabled) {
                 break :brk try std.fmt.allocPrint(
                     allocator,
-                    \\//Auto-generated file
+                    \\// @bun
                     \\var hmrSymbol = Symbol.for("BunServerHMR");
                     \\import * as start from '{s}{s}';
                     \\var entryNamespace = start;
@@ -218,7 +218,7 @@ pub const ServerEntryPoint = struct {
             }
             break :brk try std.fmt.allocPrint(
                 allocator,
-                \\//Auto-generated file
+                \\// @bun
                 \\import * as start from '{s}{s}';
                 \\var entryNamespace = start;
                 \\if (typeof entryNamespace?.then === 'function') {{

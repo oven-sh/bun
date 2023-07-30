@@ -933,7 +933,10 @@ pub const LineOffsetTable = struct {
                         continue;
                     }
 
-                    var owned = columns_for_non_ascii.toOwnedSlice() catch unreachable;
+                    // We don't call .toOwnedSlice() because it is expensive to
+                    // reallocate the array AND when inside an Arena, it's
+                    // hideously expensive
+                    var owned = columns_for_non_ascii.items;
                     if (stack_fallback.fixed_buffer_allocator.ownsSlice(std.mem.sliceAsBytes(owned))) {
                         owned = allocator.dupe(i32, owned) catch unreachable;
                     }

@@ -12,7 +12,7 @@ const Dir = std.fs.Dir;
 const JSC = @import("root").bun.JSC;
 const PathString = JSC.PathString;
 
-pub const IteratorError = error{ AccessDenied, SystemResources } || os.UnexpectedError;
+const IteratorError = error{ AccessDenied, SystemResources } || os.UnexpectedError;
 const mem = std.mem;
 const strings = @import("root").bun.strings;
 const Maybe = JSC.Maybe;

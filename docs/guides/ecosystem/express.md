@@ -1,5 +1,5 @@
 ---
-name: Build an HTTP server using Express
+name: Build an HTTP server using Express and Bun
 ---
 
 Express and other major Node.js HTTP libraries should work out of the box. Bun implements the [`node:http`](https://nodejs.org/api/http.html) and [`node:https`](https://nodejs.org/api/https.html) modules that these libraries rely on.

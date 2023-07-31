@@ -28,7 +28,7 @@ const stream = blob.stream();
 
 The chunk size can be set by passing a number to the `.stream()` method.
 
-```
+```ts
 const arr = new Uint8Array(64);
 const blob = new Blob([arr]);
 

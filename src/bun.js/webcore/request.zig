@@ -58,7 +58,7 @@ const BodyValueHiveAllocator = bun.HiveArray(BodyValueRef, body_value_pool_size)
 
 var body_value_hive_allocator = BodyValueHiveAllocator.init(bun.default_allocator);
 
-pub fn InitRequestBodyValue(value: Body.Value) !*BodyValueRef {
+pub fn createBodyValueRef(value: Body.Value) !*BodyValueRef {
     return try BodyValueRef.init(value, &body_value_hive_allocator);
 }
 // https://developer.mozilla.org/en-US/docs/Web/API/Request
@@ -68,6 +68,7 @@ pub const Request = struct {
     headers: ?*FetchHeaders = null,
     signal: ?*AbortSignal = null,
     body: *BodyValueRef,
+    teed_body: ?*BodyValueRef = null,
     method: Method = Method.GET,
     uws_request: ?*uws.Request = null,
     https: bool = false,
@@ -102,9 +103,9 @@ pub const Request = struct {
             }
         }
 
-        if (this.body.value == .Blob) {
-            if (this.body.value.Blob.content_type.len > 0)
-                return ZigString.Slice.fromUTF8NeverFree(this.body.value.Blob.content_type);
+        if (this.getBodyValue().* == .Blob) {
+            if (this.getBodyValue().Blob.content_type.len > 0)
+                return ZigString.Slice.fromUTF8NeverFree(this.getBodyValue().Blob.content_type);
         }
 
         return null;
@@ -149,22 +150,23 @@ pub const Request = struct {
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
             formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
+            var body = this.getBodyValue();
 
-            if (this.body.value == .Blob) {
+            if (body.* == .Blob) {
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
-                try this.body.value.Blob.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
-            } else if (this.body.value == .InternalBlob or this.body.value == .WTFStringImpl) {
+                try body.Blob.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
+            } else if (body.* == .InternalBlob or body.* == .WTFStringImpl) {
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
-                const size = this.body.value.size();
+                const size = body.size();
                 if (size == 0) {
                     try Blob.initEmpty(undefined).writeFormat(Formatter, formatter, writer, enable_ansi_colors);
                 } else {
                     try Blob.writeFormatForSize(size, writer, enable_ansi_colors);
                 }
-            } else if (this.body.value == .Locked) {
-                if (this.body.value.Locked.readable) |stream| {
+            } else if (body.* == .Locked) {
+                if (body.Locked.readable) |stream| {
                     try writer.writeAll("\n");
                     try formatter.writeIndent(Writer, writer);
                     formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
@@ -179,7 +181,7 @@ pub const Request = struct {
     pub fn fromRequestContext(ctx: *RequestContext) !Request {
         var req = Request{
             .url = bun.String.create(ctx.full_url),
-            .body = try InitRequestBodyValue(.{ .Null = {} }),
+            .body = try createBodyValueRef(.{ .Null = {} }),
             .method = ctx.method,
             .headers = FetchHeaders.createFromPicoHeaders(ctx.request.headers),
         };
@@ -281,6 +283,9 @@ pub const Request = struct {
     pub fn finalize(this: *Request) callconv(.C) void {
         this.finalizeWithoutDeinit();
         _ = this.body.unref();
+        if (this.teed_body) |teed| {
+            _ = teed.unref();
+        }
         bun.default_allocator.destroy(this);
     }
 
@@ -439,7 +444,7 @@ pub const Request = struct {
         arguments: []const JSC.JSValue,
     ) ?Request {
         var req = Request{
-            .body = InitRequestBodyValue(.{ .Null = {} }) catch {
+            .body = createBodyValueRef(.{ .Null = {} }) catch {
                 return null;
             },
         };
@@ -545,10 +550,10 @@ pub const Request = struct {
                     }
 
                     if (!fields.contains(.body)) {
-                        switch (response.body.value) {
+                        switch (response.getBodyValue().*) {
                             .Null, .Empty, .Used => {},
                             else => {
-                                req.body.value = response.body.value.clone(globalThis);
+                                req.getBodyValue().* = response.getBodyValue().*.clone(globalThis);
                                 fields.insert(.body);
                             },
                         }
@@ -675,7 +680,7 @@ pub const Request = struct {
     pub fn getBodyValue(
         this: *Request,
     ) *Body.Value {
-        return &this.body.value;
+        return if (this.teed_body) |teed| &teed.value else &this.body.value;
     }
 
     pub fn getFetchHeaders(
@@ -743,10 +748,26 @@ pub const Request = struct {
         _ = allocator;
         this.ensureURL() catch {};
 
-        var body = InitRequestBodyValue(this.body.value.clone(globalThis)) catch {
+        var teed_value: Body.Value = undefined;
+        var did_tee = false;
+        var reference_value = this.getBodyValue();
+
+        var body = createBodyValueRef(reference_value.cloneAllowTee(&teed_value, &did_tee, globalThis)) catch {
             globalThis.throw("Failed to clone request", .{});
             return;
         };
+        if (did_tee) {
+            var new_teed_body = createBodyValueRef(teed_value) catch {
+                globalThis.throw("Failed to clone request", .{});
+                _ = body.unref();
+                return;
+            };
+            if (this.teed_body != null) {
+                _ = this.teed_body.?.unref();
+            }
+            this.teed_body = new_teed_body;
+        }
+
         var original_url = req.url;
 
         req.* = Request{

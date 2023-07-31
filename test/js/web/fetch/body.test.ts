@@ -211,11 +211,6 @@ for (const { body, fn } of bodyTypes) {
                 },
               }),
             content: "bye\n",
-            // TODO: fix this
-            // Doesn't work on clone()
-            // it just duplicates the data
-            // haven't figured out why yet
-            skipClone: true,
           },
           {
             label: "Bun.file() stream",
@@ -249,8 +244,8 @@ for (const { body, fn } of bodyTypes) {
           },
         ];
         for (let clone of [false, true]) {
-          for (const { label, stream, content, skip = false, skipClone = false } of streams) {
-            const it = skip || (skipClone && clone) ? test.skip : test;
+          for (const { label, stream, content, skip = false } of streams) {
+            const it = skip ? test.skip : test;
             it((clone ? "clone -> " : "") + label, async () => {
               expect(async () => fn(await stream())).not.toThrow();
               let call = fn(await stream());

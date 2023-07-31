@@ -1714,9 +1714,9 @@ fn NewSocket(comptime ssl: bool) type {
                     if (args.ptr[0].as(JSC.WebCore.Blob)) |blob| {
                         break :getter JSC.WebCore.AnyBlob{ .Blob = blob.* };
                     } else if (args.ptr[0].as(JSC.WebCore.Response)) |response| {
-                        response.body.value.toBlobIfPossible();
+                        response.getBodyValue().toBlobIfPossible();
 
-                        if (response.body.value.tryUseAsAnyBlob()) |blob| {
+                        if (response.getBodyValue().tryUseAsAnyBlob()) |blob| {
                             break :getter blob;
                         }
 

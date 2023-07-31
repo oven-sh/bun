@@ -236,7 +236,7 @@ pub const Body = struct {
         pub fn setPromise(value: *PendingValue, globalThis: *JSC.JSGlobalObject, action: Action) JSValue {
             value.action = action;
 
-            if (value.readable) |readable| {
+            if (value.readable) |*readable| {
                 // switch (readable.ptr) {
                 //     .JavaScript
                 // }
@@ -938,43 +938,6 @@ pub const Body = struct {
         const debug = Output.scoped(.body, false);
 
         pub fn clone(this: *Value, globalThis: *JSC.JSGlobalObject) Value {
-            if (this.* == .Locked) {
-                if (this.Locked.toAnyBlob()) |blob| {
-                    debug("Locked -> {s}", .{@tagName(blob)});
-
-                    this.* = switch (blob) {
-                        .Blob => .{ .Blob = blob.Blob },
-                        .InternalBlob => .{ .InternalBlob = blob.InternalBlob },
-                        .WTFStringImpl => .{ .WTFStringImpl = blob.WTFStringImpl },
-                        // .InlineBlob => .{ .InlineBlob = blob.InlineBlob },
-                    };
-                } else if (this.Locked.promise == null and !this.Locked.deinit) {
-                    debug("Locked -> ReadableStream", .{});
-                    _ = this.toReadableStream(globalThis);
-                    if (this.Locked.readable) |*readable| {
-                        if (!readable.isLocked(globalThis)) {
-                            const tee_result = readable.tee(globalThis);
-                            if (tee_result != .zero) {
-                                tee_result.protect();
-                                return Value{
-                                    .Locked = .{
-                                        .readable = JSC.WebCore.ReadableStream{
-                                            .ptr = .{ .JavaScript = {} },
-                                            .value = tee_result,
-                                        },
-                                        .global = globalThis,
-                                    },
-                                };
-                            } else {
-                                debug("ReadableStream tee failed! TODO: error", .{});
-                            }
-                        } else {
-                            debug("ReadableStream is locked", .{});
-                        }
-                    }
-                }
-            }
-
             if (this.* == .InternalBlob) {
                 var internal_blob = this.InternalBlob;
                 debug("InternalBlob -> Blob", .{});
@@ -1005,6 +968,48 @@ pub const Body = struct {
             }
 
             return Value{ .Empty = {} };
+        }
+
+        pub fn cloneAllowTee(this: *Value, teed: *Value, did_tee: *bool, globalThis: *JSC.JSGlobalObject) Value {
+            if (this.* == .Locked) {
+                if (this.Locked.toAnyBlob()) |blob| {
+                    debug("Locked -> {s}", .{@tagName(blob)});
+
+                    this.* = switch (blob) {
+                        .Blob => .{ .Blob = blob.Blob },
+                        .InternalBlob => .{ .InternalBlob = blob.InternalBlob },
+                        .WTFStringImpl => .{ .WTFStringImpl = blob.WTFStringImpl },
+                        // .InlineBlob => .{ .InlineBlob = blob.InlineBlob },
+                    };
+                } else if (this.Locked.promise == null and !this.Locked.deinit) {
+                    debug("Locked -> ReadableStream", .{});
+                    _ = this.toReadableStream(globalThis);
+                    if (this.Locked.readable) |*readable| {
+                        if (!readable.isLocked(globalThis)) {
+                            if (readable.tee(globalThis)) |branches| {
+                                did_tee.* = true;
+                                teed.* = Value{
+                                    .Locked = .{
+                                        .readable = branches[0],
+                                        .global = globalThis,
+                                    },
+                                };
+
+                                return Value{
+                                    .Locked = .{
+                                        .readable = branches[1],
+                                        .global = globalThis,
+                                    },
+                                };
+                            }
+                        } else {
+                            debug("ReadableStream is locked", .{});
+                        }
+                    }
+                }
+            }
+
+            return this.clone(globalThis);
         }
     };
 

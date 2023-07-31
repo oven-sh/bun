@@ -58,7 +58,12 @@ pub const Response = struct {
     pub usingnamespace JSC.Codegen.JSResponse;
 
     allocator: std.mem.Allocator,
+    /// Avoid accessing .body directly, use .getBodyValue() instead
     body: Body,
+    /// When the Response has been cloned and it was originally a stream
+    /// We have to preserve the pointer of the original Body
+    /// Therefore, we have a separate pointer and it becomes the "public" body
+    teed_body_value: ?*JSC.WebCore.BodyValueRef = null,
     url: bun.String = bun.String.empty,
     status_text: bun.String = bun.String.empty,
     redirected: bool = false,
@@ -94,7 +99,7 @@ pub const Response = struct {
     pub fn getBodyValue(
         this: *Response,
     ) *Body.Value {
-        return &this.body.value;
+        return if (this.teed_body_value) |body| &body.value else &this.body.value;
     }
 
     pub fn getFetchHeaders(
@@ -254,9 +259,30 @@ pub const Response = struct {
         allocator: std.mem.Allocator,
         globalThis: *JSGlobalObject,
     ) void {
+        var teed_value: Body.Value = undefined;
+        var did_tee = false;
+        var reference_value = this.getBodyValue();
+
+        var value = reference_value.cloneAllowTee(&teed_value, &did_tee, globalThis);
+
+        if (did_tee) {
+            var new_teed_body = JSC.WebCore.createBodyValueRef(teed_value) catch {
+                globalThis.throw("Failed to clone Response", .{});
+                value.deinit();
+                return;
+            };
+            if (this.teed_body_value) |teed| {
+                _ = teed.unref();
+            }
+            this.teed_body_value = new_teed_body;
+        }
+
         new_response.* = Response{
             .allocator = allocator,
-            .body = this.body.clone(globalThis),
+            .body = .{
+                .init = this.body.init.clone(globalThis),
+                .value = value,
+            },
             .url = this.url.clone(),
             .status_text = this.status_text.clone(),
             .redirected = this.redirected,
@@ -281,6 +307,10 @@ pub const Response = struct {
         this: *Response,
     ) callconv(.C) void {
         this.body.deinit(this.allocator);
+        if (this.teed_body_value) |teed_body_value| {
+            this.teed_body_value = null;
+            _ = teed_body_value.unref();
+        }
 
         var allocator = this.allocator;
 
@@ -304,15 +334,15 @@ pub const Response = struct {
                 return MimeType.byExtension(request_ctx.url.extname).value;
             }
         }
-
-        switch (response.body.value) {
+        var body = @constCast(response).getBodyValue();
+        switch (body.*) {
             .Blob => |blob| {
                 if (blob.content_type.len > 0) {
                     return blob.content_type;
                 }
 
                 // auto-detect HTML if unspecified
-                if (strings.hasPrefixComptime(response.body.value.slice(), "<!DOCTYPE html>")) {
+                if (strings.hasPrefixComptime(body.slice(), "<!DOCTYPE html>")) {
                     return MimeType.html.value;
                 }
 
@@ -327,11 +357,11 @@ pub const Response = struct {
             },
             .InternalBlob => {
                 // auto-detect HTML if unspecified
-                if (strings.hasPrefixComptime(response.body.value.slice(), "<!DOCTYPE html>")) {
+                if (strings.hasPrefixComptime(body.slice(), "<!DOCTYPE html>")) {
                     return MimeType.html.value;
                 }
 
-                return response.body.value.InternalBlob.contentType();
+                return body.InternalBlob.contentType();
             },
             .Null, .Used, .Locked, .Empty, .Error => return default.value,
         }

@@ -134,21 +134,17 @@ pub const ReadableStream = struct {
         ReadableStream__detach(value, globalThis);
     }
 
-    pub fn tee(this: *ReadableStream, globalThis: *JSGlobalObject) JSC.JSValue {
+    pub fn tee(this: *ReadableStream, globalThis: *JSGlobalObject) ?[2]ReadableStream {
         JSC.markBinding(@src());
         const value = this.value;
-        defer value.unprotect();
         var new_value1 = JSC.JSValue.zero;
         var new_value2 = JSC.JSValue.zero;
         _ = ReadableStream__tee(value, globalThis, &new_value1, &new_value2);
-        if (new_value1 != .zero) {
-            new_value1.protect();
-            this.value = new_value1;
-        } else {
-            value.protect();
-        }
 
-        return new_value2;
+        return [2]ReadableStream{
+            .{ .ptr = .{ .JavaScript = {} }, .value = new_value1 },
+            .{ .ptr = .{ .JavaScript = {} }, .value = new_value2 },
+        };
     }
 
     pub const Tag = enum(i32) {

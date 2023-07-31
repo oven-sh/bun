@@ -1636,6 +1636,5 @@ it("recursive fs.readdir should not follow symlinks", async () => {
   writeFileSync(`${dir}/baz.txt`, "test");
   symlinkSync(`${tmp}/foo`, `${tmp}/link`);
   const files = await promises.readdir(tmp, { recursive: true });
-  console.log(tmp)
   expect(files.sort()).toEqual(["foo", "foo/bar", "foo/bar/baz.txt", "link"].sort());
 });

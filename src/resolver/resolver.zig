@@ -1262,6 +1262,12 @@ pub const Resolver = struct {
                 const had_node_prefix = strings.hasPrefixComptime(import_path, "node:");
                 const import_path_without_node_prefix = if (had_node_prefix) import_path["node:".len..] else import_path;
 
+                if (had_node_prefix) {
+                    // because all node modules are already checked in ../linker.zig (JSC.HardcodedModule.Aliases.get) if module is not found here, it is not found at all
+                    // so we can just return not_found
+                    return .{ .not_found = {} };
+                }
+
                 if (NodeFallbackModules.Map.get(import_path_without_node_prefix)) |*fallback_module| {
                     result.path_pair.primary = fallback_module.path;
                     result.module_type = .cjs;

@@ -192,7 +192,6 @@ extern "C" BunString BunString__fromUTF16Unitialized(size_t length)
     if (UNLIKELY(!ptr))
         return { BunStringTag::Dead };
 
-    impl->ref();
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
 
@@ -203,7 +202,6 @@ extern "C" BunString BunString__fromLatin1Unitialized(size_t length)
     auto impl = WTF::StringImpl::createUninitialized(latin1Length, ptr);
     if (UNLIKELY(!ptr))
         return { BunStringTag::Dead };
-    impl->ref();
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
 
@@ -369,7 +367,7 @@ extern "C" BunString URL__getHrefFromJS(EncodedJSValue encodedValue, JSC::JSGlob
 
 extern "C" BunString URL__getHref(BunString* input)
 {
-    auto str = Bun::toWTFString(*input);
+    auto&& str = Bun::toWTFString(*input);
     auto url = WTF::URL(str);
     if (!url.isValid() || url.isEmpty())
         return { BunStringTag::Dead };
@@ -379,7 +377,7 @@ extern "C" BunString URL__getHref(BunString* input)
 
 extern "C" WTF::URL* URL__fromString(BunString* input)
 {
-    auto str = Bun::toWTFString(*input);
+    auto&& str = Bun::toWTFString(*input);
     auto url = WTF::URL(str);
     if (!url.isValid())
         return nullptr;

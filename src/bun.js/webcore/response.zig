@@ -1034,7 +1034,7 @@ pub const Fetch = struct {
         if (first_arg.as(Request)) |request| {
             request.ensureURL() catch unreachable;
 
-            if (request.url.len == 0) {
+            if (request.url.isEmpty()) {
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
                 // clean hostname if any
                 if (hostname) |host| {
@@ -1043,7 +1043,7 @@ pub const Fetch = struct {
                 return JSPromise.rejectedPromiseValue(globalThis, err);
             }
 
-            url = ZigURL.fromUTF8(bun.default_allocator, request.url) catch {
+            url = ZigURL.fromString(bun.default_allocator, request.url) catch {
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() URL is invalid", .{}, ctx);
                 // clean hostname if any
                 if (hostname) |host| {

@@ -75,6 +75,8 @@ const DeprecatedGlobalRouter = struct {
         };
 
         var path_: ?ZigString.Slice = null;
+        var req_url_slice: ZigString.Slice = .{};
+        defer req_url_slice.deinit();
         var pathname: string = "";
         defer {
             if (path_) |path| {
@@ -88,7 +90,8 @@ const DeprecatedGlobalRouter = struct {
             var url = URL.parse(path_.?.slice());
             pathname = url.pathname;
         } else if (arg.as(Request)) |req| {
-            var url = URL.parse(req.url);
+            req_url_slice = req.url.toUTF8(bun.default_allocator);
+            var url = URL.parse(req_url_slice.slice());
             pathname = url.pathname;
         }
 
@@ -389,7 +392,7 @@ pub const FileSystemRouter = struct {
             if (argument.isCell()) {
                 if (argument.as(JSC.WebCore.Request)) |req| {
                     req.ensureURL() catch unreachable;
-                    break :brk ZigString.Slice.fromUTF8NeverFree(req.url).clone(globalThis.allocator()) catch unreachable;
+                    break :brk req.url.toUTF8(globalThis.allocator());
                 }
 
                 if (argument.as(JSC.WebCore.Response)) |resp| {

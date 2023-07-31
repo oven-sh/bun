@@ -1562,8 +1562,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.flags.is_waiting_body = false;
                 }
             }
-
-            if (comptime debug_mode) {}
         }
         pub fn finalize(this: *RequestContext) void {
             ctxLog("finalize<d> ({*})<r>", .{this});

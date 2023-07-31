@@ -5,6 +5,48 @@ import { realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "os";
 
+it("TransformStream", async () => {
+  // https://developer.mozilla.org/en-US/docs/Web/API/TransformStream
+  const TextEncoderStreamInterface = {
+    start() {
+      this.encoder = new TextEncoder();
+    },
+    transform(chunk, controller) {
+      controller.enqueue(this.encoder.encode(chunk));
+    },
+  };
+
+  let instances = new WeakMap();
+  class JSTextEncoderStream extends TransformStream {
+    constructor() {
+      super(TextEncoderStreamInterface);
+      instances.set(this, TextEncoderStreamInterface);
+    }
+    get encoding() {
+      return instances.get(this).encoder.encoding;
+    }
+  }
+
+  const stream = new JSTextEncoderStream();
+  const { writable, readable } = stream;
+
+  const writer = writable.getWriter();
+  writer.write("hello");
+  writer.write("world");
+  writer.close();
+
+  const reader = readable.getReader();
+  const chunks = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  reader.cancel();
+
+  expect(Buffer.concat(chunks).toString()).toEqual("helloworld");
+});
+
 describe("readableStreamToFormData", () => {
   const fixtures = {
     withTextFile: [
@@ -171,10 +213,7 @@ describe("WritableStream", () => {
         write(chunk, controller) {
           chunks.push(chunk);
         },
-        close(er) {
-          console.log("closed");
-          console.log(er);
-        },
+        close(er) {},
         abort(reason) {
           console.log("aborted!");
           console.log(reason);

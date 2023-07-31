@@ -6,6 +6,7 @@
 #include "wtf/text/ExternalStringImpl.h"
 #include "GCDefferalContext.h"
 #include <JavaScriptCore/JSONObject.h>
+#include <wtf/text/AtomString.h>
 
 using namespace JSC;
 
@@ -25,9 +26,21 @@ extern "C" void Bun__WTFStringImpl__ref(WTF::StringImpl* impl)
 
 extern "C" bool BunString__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, BunString* bunString)
 {
+
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
     *bunString = Bun::toString(globalObject, value);
     return bunString->tag != BunStringTag::Dead;
+}
+
+extern "C" BunString BunString__createAtom(const char* bytes, size_t length)
+{
+    if (simdutf::validate_ascii(bytes, length)) {
+        auto atom = makeAtomString(String(StringImpl::createWithoutCopying(bytes, length)));
+        atom.impl()->ref();
+        return { BunStringTag::WTFStringImpl, { .wtf = atom.impl() } };
+    }
+
+    return { BunStringTag::Dead, {} };
 }
 
 namespace Bun {
@@ -179,7 +192,6 @@ extern "C" BunString BunString__fromUTF16Unitialized(size_t length)
     if (UNLIKELY(!ptr))
         return { BunStringTag::Dead };
 
-    impl->ref();
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
 
@@ -190,7 +202,6 @@ extern "C" BunString BunString__fromLatin1Unitialized(size_t length)
     auto impl = WTF::StringImpl::createUninitialized(latin1Length, ptr);
     if (UNLIKELY(!ptr))
         return { BunStringTag::Dead };
-    impl->ref();
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
 
@@ -302,10 +313,10 @@ extern "C" EncodedJSValue BunString__createArray(
 extern "C" void BunString__toWTFString(BunString* bunString)
 {
     if (bunString->tag == BunStringTag::ZigString) {
-        if (Zig::isTaggedUTF8Ptr(bunString->impl.zig.ptr)) {
-            bunString->impl.wtf = Zig::toStringCopy(bunString->impl.zig).impl();
-        } else {
+        if (Zig::isTaggedExternalPtr(bunString->impl.zig.ptr)) {
             bunString->impl.wtf = Zig::toString(bunString->impl.zig).impl();
+        } else {
+            bunString->impl.wtf = Zig::toStringCopy(bunString->impl.zig).impl();
         }
 
         bunString->tag = BunStringTag::WTFStringImpl;
@@ -356,7 +367,7 @@ extern "C" BunString URL__getHrefFromJS(EncodedJSValue encodedValue, JSC::JSGlob
 
 extern "C" BunString URL__getHref(BunString* input)
 {
-    auto str = Bun::toWTFString(*input);
+    auto&& str = Bun::toWTFString(*input);
     auto url = WTF::URL(str);
     if (!url.isValid() || url.isEmpty())
         return { BunStringTag::Dead };
@@ -366,7 +377,7 @@ extern "C" BunString URL__getHref(BunString* input)
 
 extern "C" WTF::URL* URL__fromString(BunString* input)
 {
-    auto str = Bun::toWTFString(*input);
+    auto&& str = Bun::toWTFString(*input);
     auto url = WTF::URL(str);
     if (!url.isValid())
         return nullptr;

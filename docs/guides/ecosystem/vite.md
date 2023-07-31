@@ -1,5 +1,5 @@
 ---
-name: Build a frontend using Vite
+name: Build a frontend using Vite and Bun
 ---
 
 {% callout %}

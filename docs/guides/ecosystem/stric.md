@@ -1,5 +1,5 @@
 ---
-name: Build an HTTP server using StricJS
+name: Build an HTTP server using StricJS and Bun
 ---
 
 [StricJS](https://github.com/bunsvr) is a minimalist, fast web framework for Bun. Use `bun init` to create an empty project.

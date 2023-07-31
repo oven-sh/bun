@@ -1,5 +1,5 @@
 ---
-name: Use Prisma
+name: Get started using Prisma
 ---
 
 Prisma works our of the box with Bun. First, create a directory and initialize it with `bun init`.

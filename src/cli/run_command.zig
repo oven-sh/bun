@@ -893,7 +893,7 @@ pub const RunCommand = struct {
         }
 
         if (log_errors or force_using_bun) {
-            if (script_name_to_search.len > 0) {
+            if (script_name_to_search.len > 0 and !strings.eqlComptime(script_name_to_search, "start")) {
                 possibly_open_with_bun_js: {
                     const ext = std.fs.path.extension(script_name_to_search);
                     var has_loader = false;
@@ -998,6 +998,7 @@ pub const RunCommand = struct {
         var this_bundler: bundler.Bundler = undefined;
         var root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, &ORIGINAL_PATH, log_errors, force_using_bun);
         this_bundler.env.map.put("npm_lifecycle_event", script_name_to_search) catch unreachable;
+
         if (root_dir_info.enclosing_package_json) |package_json| {
             if (package_json.scripts) |scripts| {
                 switch (script_name_to_search.len) {
@@ -1130,6 +1131,41 @@ pub const RunCommand = struct {
                     passthrough,
                 );
             }
+        }
+
+        if (strings.eqlComptime(script_name_to_search, "start")) {
+            var path_to_use: string = ".";
+            var relative_start_dir = root_dir_info;
+            if (root_dir_info.enclosing_package_json != root_dir_info.package_json or (root_dir_info.package_json != null and root_dir_info.abs_path.len < root_dir_info.package_json.?.source.path.name.dir.len)) {
+                if (root_dir_info.enclosing_package_json) |package_json| {
+                    if (this_bundler.resolver.readDirInfo(package_json.source.path.name.dirWithTrailingSlash()) catch null) |read_dir| {
+                        relative_start_dir = read_dir;
+                    }
+                }
+            }
+
+            if (relative_start_dir.getEntriesConst()) |entries| {
+                if (entries.data.contains("server.ts")) {
+                    path_to_use = try bun.default_allocator.dupe(u8, bun.path.joinAbs(relative_start_dir.abs_path, .auto, "./server.ts"));
+                } else if (entries.data.contains("server.js")) {
+                    path_to_use = try bun.default_allocator.dupe(u8, bun.path.joinAbs(relative_start_dir.abs_path, .auto, "./server.js"));
+                }
+            }
+
+            Run.boot(ctx, path_to_use) catch |err| {
+                if (Output.enable_ansi_colors) {
+                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                } else {
+                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                }
+
+                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
+                    ".",
+                    @errorName(err),
+                });
+                Global.exit(1);
+            };
+            return true;
         }
 
         if (comptime log_errors) {

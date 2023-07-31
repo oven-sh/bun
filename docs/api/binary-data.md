@@ -927,7 +927,7 @@ Buffer.from(Bun.readableStreamToArrayBuffer(stream));
 new Response(stream).text();
 
 // with Bun function
-await Bun.readableStreamToString(stream);
+await Bun.readableStreamToText(stream);
 ```
 
 #### To `number[]`

@@ -4,15 +4,15 @@ describe("Server", () => {
   test("should not allow Bun.serve without first argument being a object", () => {
     expect(() => {
       //@ts-ignore
-      const server = Bun.serve();
-      server.stop(true);
+      Bun.serve();
+      throw new Error("Should not reach here");
     }).toThrow("Bun.serve expects an object");
 
     [undefined, null, 1, "string", true, false, Symbol("symbol")].forEach(value => {
       expect(() => {
         //@ts-ignore
-        const server = Bun.serve(value);
-        server.stop(true);
+        Bun.serve(value);
+        throw new Error("Should not reach here");
       }).toThrow("Bun.serve expects an object");
     });
   });

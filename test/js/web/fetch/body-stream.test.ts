@@ -13,126 +13,139 @@ var port = 0;
   ];
   const useRequestObjectValues = [true, false];
 
-  for (let RequestPrototypeMixin of BodyMixin) {
-    for (let useRequestObject of useRequestObjectValues) {
-      describe(`Request.prototoype.${RequestPrototypeMixin.name}() ${
-        useRequestObject ? "fetch(req)" : "fetch(url)"
-      }`, () => {
-        const inputFixture = [
-          [JSON.stringify("Hello World"), JSON.stringify("Hello World")],
-          [JSON.stringify("Hello World 123"), Buffer.from(JSON.stringify("Hello World 123")).buffer],
-          [JSON.stringify("Hello World 456"), Buffer.from(JSON.stringify("Hello World 456"))],
-          [
-            JSON.stringify("EXTREMELY LONG VERY LONG STRING WOW SO LONG YOU WONT BELIEVE IT! ".repeat(100)),
-            Buffer.from(
+  for (let doClone of [0, "before", "after"]) {
+    for (let RequestPrototypeMixin of BodyMixin) {
+      for (let useRequestObject of useRequestObjectValues) {
+        describe(`${doClone ? `[clone - ${doClone}] ` : ""}Request.prototoype.${RequestPrototypeMixin.name}() ${
+          useRequestObject ? "fetch(req)" : "fetch(url)"
+        }`, () => {
+          const inputFixture = [
+            [JSON.stringify("Hello World"), JSON.stringify("Hello World")],
+            [JSON.stringify("Hello World 123"), Buffer.from(JSON.stringify("Hello World 123")).buffer],
+            [JSON.stringify("Hello World 456"), Buffer.from(JSON.stringify("Hello World 456"))],
+            [
               JSON.stringify("EXTREMELY LONG VERY LONG STRING WOW SO LONG YOU WONT BELIEVE IT! ".repeat(100)),
-            ),
-          ],
-          [
-            JSON.stringify("EXTREMELY LONG 🔥 UTF16 🔥 VERY LONG STRING WOW SO LONG YOU WONT BELIEVE IT! ".repeat(100)),
-            Buffer.from(
+              Buffer.from(
+                JSON.stringify("EXTREMELY LONG VERY LONG STRING WOW SO LONG YOU WONT BELIEVE IT! ".repeat(100)),
+              ),
+            ],
+            [
               JSON.stringify(
                 "EXTREMELY LONG 🔥 UTF16 🔥 VERY LONG STRING WOW SO LONG YOU WONT BELIEVE IT! ".repeat(100),
               ),
-            ),
-          ],
-        ];
+              Buffer.from(
+                JSON.stringify(
+                  "EXTREMELY LONG 🔥 UTF16 🔥 VERY LONG STRING WOW SO LONG YOU WONT BELIEVE IT! ".repeat(100),
+                ),
+              ),
+            ],
+          ];
 
-        for (const [name, input] of inputFixture) {
-          test(`${name.slice(0, Math.min(name.length ?? name.byteLength, 64))}`, async () => {
-            await runInServer(
-              {
-                async fetch(req) {
-                  var result = await RequestPrototypeMixin.call(req);
-                  if (RequestPrototypeMixin === Request.prototype.json) {
-                    result = JSON.stringify(result);
-                  }
-                  if (typeof result === "string") {
-                    expect(result.length).toBe(name.length);
-                    expect(result).toBe(name);
-                  } else if (result && result instanceof Blob) {
-                    expect(result.size).toBe(new TextEncoder().encode(name).byteLength);
-                    expect(await result.text()).toBe(name);
-                  } else {
-                    expect(result.byteLength).toBe(Buffer.from(input).byteLength);
-                    expect(Bun.SHA1.hash(result, "base64")).toBe(Bun.SHA1.hash(input, "base64"));
-                  }
-                  return new Response(result, {
-                    headers: req.headers,
-                  });
+          for (const [name, input] of inputFixture) {
+            test(`${name.slice(0, Math.min(name.length ?? name.byteLength, 64))}`, async () => {
+              await runInServer(
+                {
+                  async fetch(req) {
+                    if (doClone === "after") {
+                      await 1;
+                    }
+
+                    if (doClone) {
+                      req = req.clone();
+                    }
+
+                    var result = await RequestPrototypeMixin.call(req);
+
+                    if (RequestPrototypeMixin === Request.prototype.json) {
+                      result = JSON.stringify(result);
+                    }
+                    if (typeof result === "string") {
+                      expect(result.length).toBe(name.length);
+                      expect(result).toBe(name);
+                    } else if (result && result instanceof Blob) {
+                      expect(result.size).toBe(new TextEncoder().encode(name).byteLength);
+                      expect(await result.text()).toBe(name);
+                    } else {
+                      expect(result.byteLength).toBe(Buffer.from(input).byteLength);
+                      expect(Bun.SHA1.hash(result, "base64")).toBe(Bun.SHA1.hash(input, "base64"));
+                    }
+                    return new Response(result, {
+                      headers: req.headers,
+                    });
+                  },
                 },
-              },
-              async url => {
-                var response;
+                async url => {
+                  var response;
 
-                // once, then batch of 5
+                  // once, then batch of 5
 
-                if (useRequestObject) {
-                  response = await fetch(
-                    new Request({
-                      body: input,
-                      method: "POST",
-                      url: url,
-                      headers: {
-                        "content-type": "text/plain",
-                      },
-                    }),
-                  );
-                } else {
-                  response = await fetch(url, {
-                    body: input,
-                    method: "POST",
-                    headers: {
-                      "content-type": "text/plain",
-                    },
-                  });
-                }
-
-                expect(response.status).toBe(200);
-                expect(response.headers.get("content-length")).toBe(String(Buffer.from(input).byteLength));
-                expect(response.headers.get("content-type")).toBe("text/plain");
-                expect(await response.text()).toBe(name);
-
-                var promises = new Array(5);
-                for (let i = 0; i < 5; i++) {
                   if (useRequestObject) {
-                    promises[i] = await fetch(
+                    response = await fetch(
                       new Request({
                         body: input,
                         method: "POST",
                         url: url,
                         headers: {
                           "content-type": "text/plain",
-                          "x-counter": i,
                         },
                       }),
                     );
                   } else {
-                    promises[i] = await fetch(url, {
+                    response = await fetch(url, {
                       body: input,
                       method: "POST",
                       headers: {
                         "content-type": "text/plain",
-                        "x-counter": i,
                       },
                     });
                   }
-                }
 
-                const results = await Promise.all(promises);
-                for (let i = 0; i < 5; i++) {
-                  const response = results[i];
                   expect(response.status).toBe(200);
                   expect(response.headers.get("content-length")).toBe(String(Buffer.from(input).byteLength));
                   expect(response.headers.get("content-type")).toBe("text/plain");
-                  expect(response.headers.get("x-counter")).toBe(String(i));
                   expect(await response.text()).toBe(name);
-                }
-              },
-            );
-          });
-        }
-      });
+
+                  var promises = new Array(5);
+                  for (let i = 0; i < 5; i++) {
+                    if (useRequestObject) {
+                      promises[i] = await fetch(
+                        new Request({
+                          body: input,
+                          method: "POST",
+                          url: url,
+                          headers: {
+                            "content-type": "text/plain",
+                            "x-counter": i,
+                          },
+                        }),
+                      );
+                    } else {
+                      promises[i] = await fetch(url, {
+                        body: input,
+                        method: "POST",
+                        headers: {
+                          "content-type": "text/plain",
+                          "x-counter": i,
+                        },
+                      });
+                    }
+                  }
+
+                  const results = await Promise.all(promises);
+                  for (let i = 0; i < 5; i++) {
+                    const response = results[i];
+                    expect(response.status).toBe(200);
+                    expect(response.headers.get("content-length")).toBe(String(Buffer.from(input).byteLength));
+                    expect(response.headers.get("content-type")).toBe("text/plain");
+                    expect(response.headers.get("x-counter")).toBe(String(i));
+                    expect(await response.text()).toBe(name);
+                  }
+                },
+              );
+            });
+          }
+        });
+      }
     }
   }
 }
@@ -334,8 +347,212 @@ describe("reader", function () {
             },
           );
 
+          for (let position of ["clone-begin", "clone-end"]) {
+            for (let isDirectStream of [true, false]) {
+              it(`streaming back ${thisArray.constructor.name}(${
+                thisArray.byteLength ?? thisArray.size
+              }:${inputLength}) from a request.clone().body at ${position} (${
+                isDirectStream ? "direct" : "web"
+              })`, async () => {
+                var huge = thisArray;
+                gc();
+
+                const expectedHash =
+                  huge instanceof Blob
+                    ? Bun.SHA1.hash(new Uint8Array(await huge.arrayBuffer()), "base64")
+                    : Bun.SHA1.hash(huge, "base64");
+                const expectedSize = huge instanceof Blob ? huge.size : huge.byteLength;
+
+                const out = await runInServer(
+                  {
+                    async fetch(req) {
+                      try {
+                        if (withDelay) await 1;
+
+                        if (position === "clone-begin") {
+                          req = req.clone();
+                        }
+
+                        expect(req.headers.get("x-custom")).toBe("hello");
+                        expect(req.headers.get("content-type")).toBe("text/plain");
+                        expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
+
+                        gc();
+                        expect(req.headers.get("x-custom")).toBe("hello");
+                        expect(req.headers.get("content-type")).toBe("text/plain");
+                        expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
+
+                        if (position === "clone-end") {
+                          await 1;
+
+                          req = req.clone();
+                        }
+
+                        return new Response(req.body, {
+                          headers: req.headers,
+                        });
+                      } catch (e) {
+                        console.error(e);
+                        throw e;
+                      }
+                    },
+                  },
+                  async url => {
+                    gc();
+                    const response = await fetch(url, {
+                      body: huge,
+                      method: "POST",
+                      headers: {
+                        "content-type": "text/plain",
+                        "x-custom": "hello",
+                        "x-typed-array": thisArray.constructor.name,
+                      },
+                    });
+                    huge = undefined;
+                    expect(response.status).toBe(200);
+                    const response_body = new Uint8Array(await response.arrayBuffer());
+
+                    expect(response_body.byteLength).toBe(expectedSize);
+                    expect(Bun.SHA1.hash(response_body, "base64")).toBe(expectedHash);
+
+                    gc();
+                    if (!response.headers.has("content-type")) {
+                      console.error(Object.fromEntries(response.headers.entries()));
+                    }
+
+                    expect(response.headers.get("content-type")).toBe("text/plain");
+                    gc();
+                  },
+                );
+                gc();
+                return out;
+              });
+            }
+          }
+
+          for (let position of ["tee-begin", "tee-end"]) {
+            for (let isDirectStream of [true, false]) {
+              it(`streaming back ${thisArray.constructor.name}(${
+                thisArray.byteLength ?? thisArray.size
+              }:${inputLength}) from a request.body.tee() at ${position} (${
+                isDirectStream ? "direct" : "web"
+              })`, async () => {
+                var huge = thisArray;
+                var called = false;
+                gc();
+
+                const expectedHash =
+                  huge instanceof Blob
+                    ? Bun.SHA1.hash(new Uint8Array(await huge.arrayBuffer()), "base64")
+                    : Bun.SHA1.hash(huge, "base64");
+                const expectedSize = huge instanceof Blob ? huge.size : huge.byteLength;
+
+                const out = await runInServer(
+                  {
+                    async fetch(req) {
+                      try {
+                        var reader;
+
+                        if (withDelay) await 1;
+
+                        if (position === "tee-begin") {
+                          reader = req.body.tee()[1].getReader();
+                        }
+
+                        if (position === "tee-end") {
+                          await 1;
+                          reader = req.body.tee()[1].getReader();
+                        }
+
+                        expect(req.headers.get("x-custom")).toBe("hello");
+                        expect(req.headers.get("content-type")).toBe("text/plain");
+                        expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
+
+                        gc();
+                        expect(req.headers.get("x-custom")).toBe("hello");
+                        expect(req.headers.get("content-type")).toBe("text/plain");
+                        expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
+
+                        const direct = {
+                          type: "direct",
+                          async pull(controller) {
+                            if (withDelay) await 1;
+
+                            while (true) {
+                              const { done, value } = await reader.read();
+                              if (done) {
+                                called = true;
+                                controller.end();
+
+                                return;
+                              }
+                              controller.write(value);
+                            }
+                          },
+                        };
+
+                        const web = {
+                          async start() {
+                            if (withDelay) await 1;
+                          },
+                          async pull(controller) {
+                            while (true) {
+                              const { done, value } = await reader.read();
+                              if (done) {
+                                called = true;
+                                controller.close();
+                                return;
+                              }
+                              controller.enqueue(value);
+                            }
+                          },
+                        };
+
+                        return new Response(new ReadableStream(isDirectStream ? direct : web), {
+                          headers: req.headers,
+                        });
+                      } catch (e) {
+                        console.error(e);
+                        throw e;
+                      }
+                    },
+                  },
+                  async url => {
+                    gc();
+                    const response = await fetch(url, {
+                      body: huge,
+                      method: "POST",
+                      headers: {
+                        "content-type": "text/plain",
+                        "x-custom": "hello",
+                        "x-typed-array": thisArray.constructor.name,
+                      },
+                    });
+                    huge = undefined;
+                    expect(response.status).toBe(200);
+                    const response_body = new Uint8Array(await response.arrayBuffer());
+
+                    expect(response_body.byteLength).toBe(expectedSize);
+                    expect(Bun.SHA1.hash(response_body, "base64")).toBe(expectedHash);
+
+                    gc();
+                    if (!response.headers.has("content-type")) {
+                      console.error(Object.fromEntries(response.headers.entries()));
+                    }
+
+                    expect(response.headers.get("content-type")).toBe("text/plain");
+                    gc();
+                  },
+                );
+                expect(called).toBe(true);
+                gc();
+                return out;
+              });
+            }
+          }
+
           for (let isDirectStream of [true, false]) {
-            const positions = ["begin", "end"];
+            const positions = ["begin", "end"] as const;
             const inner = thisArray => {
               for (let position of positions) {
                 it(`streaming back ${thisArray.constructor.name}(${

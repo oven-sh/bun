@@ -935,9 +935,49 @@ pub const Body = struct {
                 JSC.C.JSValueUnprotect(VirtualMachine.get().global, this.Error.asObjectRef());
             }
         }
+        const debug = Output.scoped(.body, false);
+
         pub fn clone(this: *Value, globalThis: *JSC.JSGlobalObject) Value {
+            if (this.* == .Locked) {
+                if (this.Locked.toAnyBlob()) |blob| {
+                    debug("Locked -> {s}", .{@tagName(blob)});
+
+                    this.* = switch (blob) {
+                        .Blob => .{ .Blob = blob.Blob },
+                        .InternalBlob => .{ .InternalBlob = blob.InternalBlob },
+                        .WTFStringImpl => .{ .WTFStringImpl = blob.WTFStringImpl },
+                        // .InlineBlob => .{ .InlineBlob = blob.InlineBlob },
+                    };
+                } else if (this.Locked.promise == null and !this.Locked.deinit) {
+                    debug("Locked -> ReadableStream", .{});
+                    _ = this.toReadableStream(globalThis);
+                    if (this.Locked.readable) |*readable| {
+                        if (!readable.isLocked(globalThis)) {
+                            const tee_result = readable.tee(globalThis);
+                            if (tee_result != .zero) {
+                                tee_result.protect();
+                                return Value{
+                                    .Locked = .{
+                                        .readable = JSC.WebCore.ReadableStream{
+                                            .ptr = .{ .JavaScript = {} },
+                                            .value = tee_result,
+                                        },
+                                        .global = globalThis,
+                                    },
+                                };
+                            } else {
+                                debug("ReadableStream tee failed! TODO: error", .{});
+                            }
+                        } else {
+                            debug("ReadableStream is locked", .{});
+                        }
+                    }
+                }
+            }
+
             if (this.* == .InternalBlob) {
                 var internal_blob = this.InternalBlob;
+                debug("InternalBlob -> Blob", .{});
                 this.* = .{
                     .Blob = Blob.init(
                         internal_blob.toOwnedSlice(),

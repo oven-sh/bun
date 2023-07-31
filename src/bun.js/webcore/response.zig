@@ -59,8 +59,8 @@ pub const Response = struct {
 
     allocator: std.mem.Allocator,
     body: Body,
-    url: string = "",
-    status_text: string = "",
+    url: bun.String = bun.String.empty,
+    status_text: bun.String = bun.String.empty,
     redirected: bool = false,
 
     // We must report a consistent value for this
@@ -85,7 +85,7 @@ pub const Response = struct {
         return this.reported_estimated_size orelse brk: {
             this.reported_estimated_size = @as(
                 u63,
-                @intCast(this.body.value.estimatedSize() + this.url.len + this.status_text.len + @sizeOf(Response)),
+                @intCast(this.body.value.estimatedSize() + this.url.byteSlice().len + this.status_text.byteSlice().len + @sizeOf(Response)),
             );
             break :brk this.reported_estimated_size.?;
         };
@@ -135,7 +135,7 @@ pub const Response = struct {
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>url<d>:<r> \"", enable_ansi_colors));
-            try writer.print(comptime Output.prettyFmt("<r><b>{s}<r>", enable_ansi_colors), .{this.url});
+            try writer.print(comptime Output.prettyFmt("<r><b>{}<r>", enable_ansi_colors), .{this.url});
             try writer.writeAll("\"");
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
@@ -148,7 +148,7 @@ pub const Response = struct {
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>statusText<d>:<r> ", enable_ansi_colors));
-            try JSPrinter.writeJSONString(this.status_text, Writer, writer, .ascii);
+            try writer.print(comptime Output.prettyFmt("<r>\"<b>{}<r>\"", enable_ansi_colors), .{this.status_text});
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
 
@@ -175,7 +175,7 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
-        return ZigString.init(this.url).toValueGC(globalThis);
+        return this.url.toJS(globalThis);
     }
 
     pub fn getResponseType(
@@ -194,7 +194,7 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/statusText
-        return ZigString.init(this.status_text).withEncoding().toValueGC(globalThis);
+        return this.status_text.toJS(globalThis);
     }
 
     pub fn getRedirected(
@@ -262,8 +262,8 @@ pub const Response = struct {
         new_response.* = Response{
             .allocator = allocator,
             .body = this.body.clone(globalThis),
-            .url = allocator.dupe(u8, this.url) catch unreachable,
-            .status_text = allocator.dupe(u8, this.status_text) catch unreachable,
+            .url = this.url.clone(),
+            .status_text = this.status_text.clone(),
             .redirected = this.redirected,
         };
     }
@@ -289,13 +289,8 @@ pub const Response = struct {
 
         var allocator = this.allocator;
 
-        if (this.status_text.len > 0) {
-            allocator.free(this.status_text);
-        }
-
-        if (this.url.len > 0) {
-            allocator.free(this.url);
-        }
+        this.status_text.deref();
+        this.url.deref();
 
         allocator.destroy(this);
     }
@@ -381,7 +376,7 @@ pub const Response = struct {
                 .value = .{ .Empty = {} },
             },
             .allocator = getAllocator(globalThis),
-            .url = "",
+            .url = bun.String.empty,
         };
 
         const json_value = args.nextEat() orelse JSC.JSValue.zero;
@@ -443,7 +438,7 @@ pub const Response = struct {
                 .value = .{ .Empty = {} },
             },
             .allocator = getAllocator(globalThis),
-            .url = "",
+            .url = bun.String.empty,
         };
 
         const url_string_value = args.nextEat() orelse JSC.JSValue.zero;
@@ -487,7 +482,6 @@ pub const Response = struct {
                 .value = .{ .Empty = {} },
             },
             .allocator = getAllocator(globalThis),
-            .url = "",
         };
 
         return response.toJS(globalThis);
@@ -534,7 +528,6 @@ pub const Response = struct {
         response.* = Response{
             .body = body,
             .allocator = getAllocator(globalThis),
-            .url = "",
         };
 
         if (response.body.value == .Blob and
@@ -821,8 +814,8 @@ pub const Fetch = struct {
             const http_response = this.result.response;
             return Response{
                 .allocator = allocator,
-                .url = allocator.dupe(u8, this.result.href) catch unreachable,
-                .status_text = allocator.dupe(u8, http_response.status) catch unreachable,
+                .url = bun.String.createAtomIfPossible(this.result.href),
+                .status_text = bun.String.createAtomIfPossible(http_response.status),
                 .redirected = this.result.redirected,
                 .body = .{
                     .init = .{
@@ -1377,7 +1370,7 @@ pub const Fetch = struct {
                     .value = .{ .Blob = bun_file },
                 },
                 .allocator = bun.default_allocator,
-                .url = file_url_string.toOwnedSlice(bun.default_allocator) catch @panic("out of memory"),
+                .url = file_url_string.clone(),
             };
 
             return JSPromise.resolvedPromiseValue(globalThis, response.toJS(globalThis));

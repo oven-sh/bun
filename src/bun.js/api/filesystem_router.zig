@@ -393,7 +393,7 @@ pub const FileSystemRouter = struct {
                 }
 
                 if (argument.as(JSC.WebCore.Response)) |resp| {
-                    break :brk ZigString.Slice.fromUTF8NeverFree(resp.url).clone(globalThis.allocator()) catch unreachable;
+                    break :brk resp.url.toUTF8(globalThis.allocator());
                 }
             }
 

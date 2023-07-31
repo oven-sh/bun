@@ -510,8 +510,8 @@ pub const Request = struct {
                     }
 
                     if (!fields.contains(.url)) {
-                        if (response.url.len > 0) {
-                            req.url = globalThis.allocator().dupe(u8, response.url) catch unreachable;
+                        if (!response.url.isEmpty()) {
+                            req.url = response.url.toOwnedSlice(bun.default_allocator) catch unreachable;
                             req.url_was_allocated = true;
                             fields.insert(.url);
                         }

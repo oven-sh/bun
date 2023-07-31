@@ -6,6 +6,7 @@
 #include "wtf/text/ExternalStringImpl.h"
 #include "GCDefferalContext.h"
 #include <JavaScriptCore/JSONObject.h>
+#include <wtf/text/AtomString.h>
 
 using namespace JSC;
 
@@ -25,9 +26,21 @@ extern "C" void Bun__WTFStringImpl__ref(WTF::StringImpl* impl)
 
 extern "C" bool BunString__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, BunString* bunString)
 {
+
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
     *bunString = Bun::toString(globalObject, value);
     return bunString->tag != BunStringTag::Dead;
+}
+
+extern "C" BunString BunString__createAtom(const char* bytes, size_t length)
+{
+    if (simdutf::validate_ascii(bytes, length)) {
+        auto atom = makeAtomString(String(StringImpl::createWithoutCopying(bytes, length)));
+        atom.impl()->ref();
+        return { BunStringTag::WTFStringImpl, { .wtf = atom.impl() } };
+    }
+
+    return { BunStringTag::Dead, {} };
 }
 
 namespace Bun {
@@ -302,10 +315,10 @@ extern "C" EncodedJSValue BunString__createArray(
 extern "C" void BunString__toWTFString(BunString* bunString)
 {
     if (bunString->tag == BunStringTag::ZigString) {
-        if (Zig::isTaggedUTF8Ptr(bunString->impl.zig.ptr)) {
-            bunString->impl.wtf = Zig::toStringCopy(bunString->impl.zig).impl();
-        } else {
+        if (Zig::isTaggedExternalPtr(bunString->impl.zig.ptr)) {
             bunString->impl.wtf = Zig::toString(bunString->impl.zig).impl();
+        } else {
+            bunString->impl.wtf = Zig::toStringCopy(bunString->impl.zig).impl();
         }
 
         bunString->tag = BunStringTag::WTFStringImpl;

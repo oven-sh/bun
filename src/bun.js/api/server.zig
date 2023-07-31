@@ -4943,7 +4943,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
 
             if (response_value.as(JSC.WebCore.Response)) |resp| {
-                resp.url = this.allocator.dupe(u8, existing_request.url) catch unreachable;
+                resp.url = bun.String.create(existing_request.url);
             }
             return JSC.JSPromise.resolvedPromiseValue(ctx, response_value).asObjectRef();
         }

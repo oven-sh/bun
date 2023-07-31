@@ -241,12 +241,7 @@ pub const Response = struct {
         _: *JSC.CallFrame,
     ) callconv(.C) JSValue {
         var cloned = this.clone(getAllocator(globalThis), globalThis);
-        const val = Response.makeMaybePooled(globalThis, cloned);
-        if (this.body.init.headers) |headers| {
-            cloned.body.init.headers = headers.cloneThis(globalThis);
-        }
-
-        return val;
+        return Response.makeMaybePooled(globalThis, cloned);
     }
 
     pub fn makeMaybePooled(globalObject: *JSC.JSGlobalObject, ptr: *Response) JSValue {

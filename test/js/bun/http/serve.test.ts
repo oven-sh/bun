@@ -1074,3 +1074,216 @@ it("does propagate type for Blob", async () => {
 
   server.stop(true);
 });
+
+it("request.url should log successfully", async () => {
+  const fixture = resolve(import.meta.dir, "./fetch.js.txt");
+  const textToExpect = readFileSync(fixture, "utf-8");
+  var expected;
+  await runTest(
+    {
+      fetch(req) {
+        expect(Bun.inspect(req).includes(expected)).toBe(true);
+        return new Response(file(fixture));
+      },
+    },
+    async server => {
+      expected = `http://localhost:${server.port}/helloooo`;
+      const response = await fetch(expected);
+      expect(response.url).toBe(expected);
+      expect(await response.text()).toBe(textToExpect);
+    },
+  );
+});
+
+it("request.url should be based on the Host header", async () => {
+  const fixture = resolve(import.meta.dir, "./fetch.js.txt");
+  const textToExpect = readFileSync(fixture, "utf-8");
+  await runTest(
+    {
+      fetch(req) {
+        expect(req.url).toBe("http://example.com/helloooo");
+        return new Response(file(fixture));
+      },
+    },
+    async server => {
+      const expected = `http://${server.hostname}:${server.port}/helloooo`;
+      const response = await fetch(expected, {
+        headers: {
+          Host: "example.com",
+        },
+      });
+      expect(response.url).toBe(expected);
+      expect(await response.text()).toBe(textToExpect);
+    },
+  );
+});
+
+it("request.json content correct", async () => {
+  const textToExpect = "OK";
+  const requestBody = { test: "123" };
+  await runTest(
+    {
+      async fetch(req) {
+        setTimeout(async () => {
+          try {
+            await req.json();
+          } catch (e: any) {
+            expect(e.message).toBe("Body already used");
+          }
+        }, 0);
+        const body = await req.json();
+        expect(body).toEqual(requestBody);
+        return new Response(textToExpect);
+      },
+    },
+    async server => {
+      const expected = `http://${server.hostname}:${server.port}/helloooo`;
+      const response = await fetch(expected, {
+        method: "POST",
+        body: JSON.stringify(requestBody),
+      });
+      expect(await response.text()).toBe(textToExpect);
+    },
+  );
+});
+
+it("request.clone json() content correct", async () => {
+  const textToExpect = "OK";
+  const requestBody = { test: "123" };
+  await runTest(
+    {
+      async fetch(req) {
+        const body = await req.clone().json();
+        console.log("here");
+        expect(body).toEqual(requestBody);
+        console.log("there");
+        try {
+          const body2 = await req.json();
+          expect(body2).toEqual(requestBody);
+        } catch (e) {
+          throw e;
+        }
+
+        return new Response(textToExpect);
+      },
+    },
+    async server => {
+      const expected = `http://${server.hostname}:${server.port}/helloooo`;
+      const response = await fetch(expected, {
+        method: "POST",
+        body: JSON.stringify(requestBody),
+      });
+      expect(await response.text()).toBe(textToExpect);
+    },
+  );
+});
+
+it("request.clone json() after requesting body", async () => {
+  const textToExpect = "OK";
+  const requestBody = { test: "123" };
+  await runTest(
+    {
+      async fetch(req) {
+        const body = req.body;
+        expect(body instanceof ReadableStream).toBe(true);
+        const cloned = await req.clone().json();
+        expect(cloned).toEqual(requestBody);
+        const cloned2 = await req.clone().json();
+        expect(cloned2).toEqual(requestBody);
+        return new Response(textToExpect);
+      },
+    },
+    async server => {
+      const expected = `http://${server.hostname}:${server.port}/helloooo`;
+      const response = await fetch(expected, {
+        method: "POST",
+        body: JSON.stringify(requestBody),
+      });
+      expect(await response.text()).toBe(textToExpect);
+    },
+  );
+});
+
+it("request.clone json() twice trigger used body", async () => {
+  const textToExpect = "OK";
+  const requestBody = { test: "123" };
+  await runTest(
+    {
+      async fetch(req) {
+        const cloned = req.clone();
+        const body1 = await cloned.json();
+        try {
+          const body2 = await cloned.json();
+        } catch (e: any) {
+          expect(e.message).toBe("Body already used");
+        }
+        expect(JSON.stringify(body1)).toBe(JSON.stringify(requestBody));
+        return new Response(textToExpect);
+      },
+    },
+    async server => {
+      const expected = `http://${server.hostname}:${server.port}/helloooo`;
+      const response = await fetch(expected, {
+        method: "POST",
+        body: JSON.stringify(requestBody),
+      });
+      expect(await response.text()).toBe(textToExpect);
+    },
+  );
+});
+
+it("request.clone not allowed when body is used", async () => {
+  const textToExpect = "OK";
+  const requestBody = { test: "123" };
+  await runTest(
+    {
+      async fetch(req) {
+        const body = await req.json();
+        expect(body).toEqual(requestBody);
+        try {
+          req.clone();
+          expect(1).toBe(2);
+        } catch (e: any) {
+          expect(e.message).toBe("Body already used");
+        }
+        return new Response(textToExpect);
+      },
+    },
+    async server => {
+      const expected = `http://${server.hostname}:${server.port}/helloooo`;
+      const response = await fetch(expected, {
+        method: "POST",
+        body: JSON.stringify(requestBody),
+      });
+      expect(await response.text()).toBe(textToExpect);
+    },
+  );
+});
+
+it("request.clone text() content correct", async () => {
+  const textToExpect = "OK";
+  const requestBody = { test: "123" };
+  await runTest(
+    {
+      async fetch(req) {
+        const cloned = req.clone();
+        const body1 = await cloned.text();
+        try {
+          const body2 = await cloned.text();
+        } catch (e: any) {
+          expect(e.message).toBe("Body already used");
+        }
+        expect(body1).toBe(JSON.stringify(requestBody));
+        return new Response(textToExpect);
+      },
+    },
+    async server => {
+      const expected = `http://${server.hostname}:${server.port}/helloooo`;
+      const response = await fetch(expected, {
+        method: "POST",
+        body: JSON.stringify(requestBody),
+      });
+      expect(await response.text()).toBe(textToExpect);
+    },
+  );
+});

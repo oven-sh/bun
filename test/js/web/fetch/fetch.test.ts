@@ -30,6 +30,14 @@ afterAll(() => {
 const payload = new Uint8Array(1024 * 1024 * 2);
 crypto.getRandomValues(payload);
 
+it("new Request(invalid url) throws", () => {
+  expect(() => new Request("http")).toThrow();
+  expect(() => new Request("")).toThrow();
+  expect(() => new Request("http://[::1")).toThrow();
+  expect(() => new Request("https://[::1")).toThrow();
+  expect(() => new Request("!")).toThrow();
+});
+
 describe("AbortSignal", () => {
   beforeEach(() => {
     startServer({
@@ -1165,9 +1173,9 @@ it("should not be able to parse json from empty body", () => {
 });
 
 it("#874", () => {
-  expect(new Request(new Request("https://example.com"), {}).url).toBe("https://example.com");
-  expect(new Request(new Request("https://example.com")).url).toBe("https://example.com");
-  expect(new Request({ url: "https://example.com" }).url).toBe("https://example.com");
+  expect(new Request(new Request("https://example.com"), {}).url).toBe("https://example.com/");
+  expect(new Request(new Request("https://example.com")).url).toBe("https://example.com/");
+  expect(new Request({ url: "https://example.com" }).url).toBe("https://example.com/");
 });
 
 it("#2794", () => {
@@ -1202,4 +1210,40 @@ it("new Request(https://example.com, otherRequest) uses url from left instead of
   // Should be `http://localhost/def` But actual: http://localhost/abc
   expect(req2.url).toBe("http://localhost/def");
   expect(req2.headers.get("foo")).toBe("bar");
+});
+
+it("fetch() file:// works", async () => {
+  expect(await (await fetch(import.meta.url)).text()).toEqual(await Bun.file(import.meta.path).text());
+  expect(await (await fetch(new URL("fetch.test.ts", import.meta.url))).text()).toEqual(
+    await Bun.file(Bun.fileURLToPath(new URL("fetch.test.ts", import.meta.url))).text(),
+  );
+  expect(await (await fetch(new URL("file with space in the name.txt", import.meta.url))).text()).toEqual(
+    await Bun.file(Bun.fileURLToPath(new URL("file with space in the name.txt", import.meta.url))).text(),
+  );
+});
+
+it("cloned response headers are independent before accessing", () => {
+  const response = new Response("hello", {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+    },
+  });
+  const cloned = response.clone();
+  cloned.headers.set("content-type", "text/plain");
+  expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
+});
+
+it("cloned response headers are independent after accessing", () => {
+  const response = new Response("hello", {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+    },
+  });
+
+  // create the headers
+  response.headers;
+
+  const cloned = response.clone();
+  cloned.headers.set("content-type", "text/plain");
+  expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
 });

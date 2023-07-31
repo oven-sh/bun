@@ -883,8 +883,12 @@ pub const JSExpect = struct {
             @compileLog("Expect.finalize is not a finalizer");
         }
 
+        if (@TypeOf(Expect.fail) != CallbackType)
+            @compileLog("Expected Expect.fail to be a callback but received " ++ @typeName(@TypeOf(Expect.fail)));
         if (@TypeOf(Expect.getNot) != GetterTypeWithThisValue)
             @compileLog("Expected Expect.getNot to be a getter with thisValue");
+        if (@TypeOf(Expect._pass) != CallbackType)
+            @compileLog("Expected Expect._pass to be a callback but received " ++ @typeName(@TypeOf(Expect._pass)));
         if (@TypeOf(Expect.getRejects) != GetterTypeWithThisValue)
             @compileLog("Expected Expect.getRejects to be a getter with thisValue");
         if (@TypeOf(Expect.getResolves) != GetterTypeWithThisValue)
@@ -1037,6 +1041,7 @@ pub const JSExpect = struct {
         if (@TypeOf(Expect.call) != StaticCallbackType)
             @compileLog("Expected Expect.call to be a static callback");
         if (!JSC.is_bindgen) {
+            @export(Expect._pass, .{ .name = "ExpectPrototype___pass" });
             @export(Expect.addSnapshotSerializer, .{ .name = "ExpectClass__addSnapshotSerializer" });
             @export(Expect.any, .{ .name = "ExpectClass__any" });
             @export(Expect.anything, .{ .name = "ExpectClass__anything" });
@@ -1045,6 +1050,7 @@ pub const JSExpect = struct {
             @export(Expect.call, .{ .name = "ExpectClass__call" });
             @export(Expect.constructor, .{ .name = "ExpectClass__construct" });
             @export(Expect.extend, .{ .name = "ExpectClass__extend" });
+            @export(Expect.fail, .{ .name = "ExpectPrototype__fail" });
             @export(Expect.finalize, .{ .name = "ExpectClass__finalize" });
             @export(Expect.getNot, .{ .name = "ExpectPrototype__getNot" });
             @export(Expect.getRejects, .{ .name = "ExpectPrototype__getRejects" });

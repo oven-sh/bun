@@ -4751,8 +4751,8 @@ pub const JSValue = enum(JSValueReprInt) {
     /// It knows not to free it
     /// This mimicks the implementation in JavaScriptCore's C++
     pub inline fn ensureStillAlive(this: JSValue) void {
-        if (this.isEmpty() or this.isNumber() or this.isBoolean() or this.isUndefinedOrNull()) return;
-        std.mem.doNotOptimizeAway(@as(C_API.JSObjectRef, @ptrCast(this.asVoid())));
+        if (!this.isCell()) return;
+        std.mem.doNotOptimizeAway(this.asEncoded().asPtr);
     }
 
     pub inline fn asNullableVoid(this: JSValue) ?*anyopaque {
@@ -5391,10 +5391,17 @@ pub const URL = opaque {
     extern fn URL__pathname(*URL) String;
     extern fn URL__getHrefFromJS(JSValue, *JSC.JSGlobalObject) String;
     extern fn URL__getHref(*String) String;
+    extern fn URL__getFileURLString(*String) String;
     pub fn hrefFromString(str: bun.String) String {
         JSC.markBinding(@src());
         var input = str;
         return URL__getHref(&input);
+    }
+
+    pub fn fileURLFromString(str: bun.String) String {
+        JSC.markBinding(@src());
+        var input = str;
+        return URL__getFileURLString(&input);
     }
 
     /// This percent-encodes the URL, punycode-encodes the hostname, and returns the result

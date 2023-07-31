@@ -36,6 +36,10 @@ pub const URL = struct {
     username: string = "",
     port_was_automatically_set: bool = false,
 
+    pub fn isFile(this: *const URL) bool {
+        return strings.eqlComptime(this.protocol, "file");
+    }
+
     pub fn fromJS(js_value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator) !URL {
         var href = JSC.URL.hrefFromJS(globalObject, js_value);
         if (href.tag == .Dead) {
@@ -61,6 +65,10 @@ pub const URL = struct {
 
     pub fn isLocalhost(this: *const URL) bool {
         return this.hostname.len == 0 or strings.eqlComptime(this.hostname, "localhost") or strings.eqlComptime(this.hostname, "0.0.0.0");
+    }
+
+    pub inline fn isUnix(this: *const URL) bool {
+        return strings.hasPrefixComptime(this.protocol, "unix");
     }
 
     pub fn displayProtocol(this: *const URL) string {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { dirname } from "node:path";
 import { gc } from "harness";
 import fs, {
   closeSync,
@@ -31,6 +32,7 @@ import fs, {
   symlinkSync,
   writevSync,
   readvSync,
+  fstatSync,
 } from "node:fs";
 
 import _promises from "node:fs/promises";
@@ -194,6 +196,34 @@ it("promises.readdir on a large folder", async () => {
     }
   }
   rmSync(huge, { force: true, recursive: true });
+});
+
+it("promises.readFile", async () => {
+  expect(await fs.promises.readFile(import.meta.path, "utf-8")).toEqual(readFileSync(import.meta.path, "utf-8"));
+  expect(await fs.promises.readFile(import.meta.path, { encoding: "latin1" })).toEqual(
+    readFileSync(import.meta.path, { encoding: "latin1" }),
+  );
+
+  // We do this 20 times to check for any GC issues.
+  for (let i = 0; i < 20; i++) {
+    try {
+      await fs.promises.readFile("/i-dont-exist", "utf-8");
+      expect(false).toBeTrue();
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(Error);
+      expect(e.message).toBe("No such file or directory");
+      expect(e.code).toBe("ENOENT");
+      expect(e.errno).toBe(-2);
+      expect(e.path).toBe("/i-dont-exist");
+    }
+  }
+});
+
+it("promises.readFile with buffer as file path", async () => {
+  for (let i = 0; i < 10; i++)
+    expect(await fs.promises.readFile(Buffer.from(import.meta.path), "utf-8")).toEqual(
+      readFileSync(import.meta.path, "utf-8"),
+    );
 });
 
 it("promises.readdir on a large folder withFileTypes", async () => {
@@ -1402,6 +1432,26 @@ describe("fs/promises", () => {
       expect(await exists(path)).toBe(false);
     });
   });
+});
+
+it("stat on a large file", () => {
+  var dest: string = "",
+    fd;
+  try {
+    dest = `${tmpdir()}/fs.test.js/${Math.trunc(Math.random() * 10000000000).toString(32)}.stat.txt`;
+    mkdirSync(dirname(dest), { recursive: true });
+    const bigBuffer = new Uint8Array(1024 * 1024 * 1024);
+    fd = openSync(dest, "w");
+    let offset = 0;
+    while (offset < 5 * 1024 * 1024 * 1024) {
+      offset += writeSync(fd, bigBuffer, 0, bigBuffer.length, offset);
+    }
+
+    expect(fstatSync(fd).size).toEqual(offset);
+  } finally {
+    if (fd) closeSync(fd);
+    unlinkSync(dest);
+  }
 });
 
 it("fs.constants", () => {

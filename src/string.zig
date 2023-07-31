@@ -276,6 +276,10 @@ pub const String = extern struct {
     extern fn BunString__fromLatin1Unitialized(len: usize) String;
     extern fn BunString__fromUTF16Unitialized(len: usize) String;
 
+    pub fn isGlobal(this: String) bool {
+        return this.tag == Tag.ZigString and this.value.ZigString.isGloballyAllocated();
+    }
+
     pub fn toOwnedSlice(this: String, allocator: std.mem.Allocator) ![]u8 {
         switch (this.tag) {
             .ZigString => return try this.value.ZigString.toOwnedSlice(allocator),
@@ -337,6 +341,54 @@ pub const String = extern struct {
     pub fn dupeRef(this: String) String {
         this.ref();
         return this;
+    }
+
+    pub fn clone(this: String) String {
+        if (this.tag == .WTFStringImpl) {
+            return this.dupeRef();
+        }
+
+        if (this.isEmpty()) {
+            return this;
+        }
+
+        if (this.isUTF16()) {
+            var new = createUninitializedUTF16(this.length());
+            @memcpy(@constCast(new.byteSlice()), this.byteSlice());
+            return new;
+        }
+
+        return create(this.byteSlice());
+    }
+
+    extern fn BunString__createAtom(bytes: [*]const u8, len: usize) String;
+
+    /// May return .Dead if the string is too long or non-ascii.
+    pub fn createAtom(bytes: []const u8) String {
+        JSC.markBinding(@src());
+        return BunString__createAtom(bytes.ptr, bytes.len);
+    }
+
+    pub fn tryCreateAtom(bytes: []const u8) ?String {
+        const atom = createAtom(bytes);
+        if (atom.isEmpty()) {
+            return null;
+        }
+
+        return atom;
+    }
+
+    /// Atomized strings are interned strings
+    /// They're de-duplicated in a threadlocal hash table
+    /// They cannot be used from other threads.
+    pub fn createAtomIfPossible(bytes: []const u8) String {
+        if (bytes.len < 64) {
+            if (tryCreateAtom(bytes)) |atom| {
+                return atom;
+            }
+        }
+
+        return create(bytes);
     }
 
     pub fn utf8ByteLength(this: String) usize {

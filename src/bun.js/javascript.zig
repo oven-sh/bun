@@ -1210,7 +1210,7 @@ pub const VirtualMachine = struct {
     ) anyerror!ResolvedSource {
         std.debug.assert(VirtualMachine.isLoaded());
 
-        if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier, log, comptime flags.disableTranspiling())) |builtin| {
+        if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier)) |builtin| {
             return builtin;
         }
         var display_specifier = _specifier.toUTF8(bun.default_allocator);
@@ -1782,6 +1782,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
+        this.has_loaded = false;
         this.main = entry_path;
 
         try this.entry_point.generate(

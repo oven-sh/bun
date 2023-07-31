@@ -28,6 +28,17 @@ pub const Counter = struct {
     actual: u32 = 0,
 };
 
+const JSTypeOfMap = bun.ComptimeStringMap([]const u8, .{
+    .{ "function", "function" },
+    .{ "object", "object" },
+    .{ "bigint", "bigint" },
+    .{ "boolean", "boolean" },
+    .{ "number", "number" },
+    .{ "string", "string" },
+    .{ "symbol", "symbol" },
+    .{ "undefined", "undefined" },
+});
+
 pub var active_test_expectation_counter: Counter = .{};
 
 /// https://jestjs.io/docs/expect
@@ -287,6 +298,108 @@ pub const Expect = struct {
     ) callconv(.C) ?*Expect {
         globalObject.throw("expect() cannot be called with new", .{});
         return null;
+    }
+
+    // pass here has a leading underscore to avoid name collision with the pass variable in other functions
+    pub fn _pass(
+        this: *Expect,
+        globalObject: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        var _msg: ZigString = ZigString.Empty;
+
+        if (arguments.len > 0) {
+            const value = arguments[0];
+            value.ensureStillAlive();
+
+            if (!value.isString()) {
+                globalObject.throwInvalidArgumentType("pass", "message", "string");
+                return .zero;
+            }
+
+            value.toZigString(&_msg, globalObject);
+        } else {
+            _msg = ZigString.fromBytes("passes by .pass() assertion");
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.flags.not;
+        var pass = true;
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        var msg = _msg.toSlice(default_allocator);
+        defer msg.deinit();
+
+        if (not) {
+            const signature = comptime getSignature("pass", "", true);
+            const fmt = signature ++ "\n\n{s}\n";
+            if (Output.enable_ansi_colors) {
+                globalObject.throw(Output.prettyFmt(fmt, true), .{msg.slice()});
+                return .zero;
+            }
+            globalObject.throw(Output.prettyFmt(fmt, false), .{msg.slice()});
+            return .zero;
+        }
+
+        // should never reach here
+        return .zero;
+    }
+
+    pub fn fail(
+        this: *Expect,
+        globalObject: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        var _msg: ZigString = ZigString.Empty;
+
+        if (arguments.len > 0) {
+            const value = arguments[0];
+            value.ensureStillAlive();
+
+            if (!value.isString()) {
+                globalObject.throwInvalidArgumentType("fail", "message", "string");
+                return .zero;
+            }
+
+            value.toZigString(&_msg, globalObject);
+        } else {
+            _msg = ZigString.fromBytes("fails by .fail() assertion");
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.flags.not;
+        var pass = false;
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        var msg = _msg.toSlice(default_allocator);
+        defer msg.deinit();
+
+        const signature = comptime getSignature("fail", "", true);
+        const fmt = signature ++ "\n\n{s}\n";
+        if (Output.enable_ansi_colors) {
+            globalObject.throw(Output.prettyFmt(fmt, true), .{msg.slice()});
+            return .zero;
+        }
+        globalObject.throw(Output.prettyFmt(fmt, false), .{msg.slice()});
+        return .zero;
     }
 
     /// Object.is()
@@ -2215,15 +2328,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        if (!std.mem.eql(u8, expectedAsStr, "function") and
-            !std.mem.eql(u8, expectedAsStr, "object") and
-            !std.mem.eql(u8, expectedAsStr, "bigint") and
-            !std.mem.eql(u8, expectedAsStr, "boolean") and
-            !std.mem.eql(u8, expectedAsStr, "number") and
-            !std.mem.eql(u8, expectedAsStr, "string") and
-            !std.mem.eql(u8, expectedAsStr, "symbol") and
-            !std.mem.eql(u8, expectedAsStr, "undefined"))
-        {
+        if (!JSTypeOfMap.has(expectedAsStr)) {
             globalThis.throwInvalidArguments("toBeTypeOf() requires a valid type string argument ('function', 'object', 'bigint', 'boolean', 'number', 'string', 'symbol', 'undefined')", .{});
             return .zero;
         }
@@ -2254,7 +2359,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        pass = std.mem.eql(u8, expectedAsStr, whatIsTheType);
+        pass = strings.eql(expectedAsStr, whatIsTheType);
 
         if (not) pass = !pass;
         if (pass) return thisValue;

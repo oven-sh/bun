@@ -43,11 +43,8 @@ class DOMWrapperWorld;
 #include "BunPlugin.h"
 #include "JSMockFunction.h"
 
-namespace Bun {
-class GlobalScope;
-}
-
 namespace WebCore {
+class GlobalScope;
 class SubtleCrypto;
 class EventTarget;
 }
@@ -386,9 +383,17 @@ public:
     mutable WriteBarrier<Unknown> m_JSWebSocketSetterValue;
     mutable WriteBarrier<Unknown> m_JSDOMFormDataSetterValue;
     mutable WriteBarrier<Unknown> m_JSWorkerSetterValue;
+    mutable WriteBarrier<Unknown> m_JSMessageChannelSetterValue;
+    mutable WriteBarrier<Unknown> m_JSMessagePortSetterValue;
+    mutable WriteBarrier<Unknown> m_JSBroadcastChannelSetterValue;
     mutable WriteBarrier<Unknown> m_BunCommonJSModuleValue;
 
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
+
+    Structure* memoryFootprintStructure()
+    {
+        return m_memoryFootprintStructure.getInitializedOnMainThread(this);
+    }
 
     JSObject* navigatorObject();
     JSFunction* nativeMicrotaskTrampoline() { return m_nativeMicrotaskTrampoline.getInitializedOnMainThread(this); }
@@ -522,6 +527,7 @@ private:
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalProxyStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSModuleObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSFunctionArgumentsStructure;
+    LazyProperty<JSGlobalObject, Structure> m_memoryFootprintStructure;
 
     LazyProperty<JSGlobalObject, JSC::JSObject> m_requireFunctionUnbound;
     LazyProperty<JSGlobalObject, JSC::JSObject> m_requireResolveFunctionUnbound;

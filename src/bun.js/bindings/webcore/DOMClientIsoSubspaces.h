@@ -410,7 +410,7 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAnimationEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAttr;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBeforeUnloadEvent;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBroadcastChannel;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBroadcastChannel;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCDATASection;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCharacterData;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForClipboardEvent;
@@ -443,9 +443,9 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForIdleDeadline;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForInputEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForKeyboardEvent;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMessageChannel;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMessageChannel;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMessageEvent;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMessagePort;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMessagePort;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMouseEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMutationEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMutationObserver;

@@ -629,6 +629,18 @@ pub const PathLike = union(Tag) {
         }
     }
 
+    pub fn deinitAndUnprotect(this: *const PathLike) void {
+        switch (this.*) {
+            .slice_with_underlying_string => |val| {
+                val.deinit();
+            },
+            .buffer => |val| {
+                val.buffer.value.unprotect();
+            },
+            else => {},
+        }
+    }
+
     pub inline fn slice(this: PathLike) string {
         return switch (this) {
             .string => this.string.slice(),
@@ -917,6 +929,15 @@ pub const ArgumentsSlice = struct {
         };
     }
 
+    pub fn initAsync(vm: *JSC.VirtualMachine, arguments: []const JSC.JSValue) ArgumentsSlice {
+        return ArgumentsSlice{
+            .remaining = bun.default_allocator.dupe(JSC.JSValue, arguments),
+            .vm = vm,
+            .all = arguments,
+            .arena = bun.ArenaAllocator.init(bun.default_allocator),
+        };
+    }
+
     pub inline fn len(this: *const ArgumentsSlice) u16 {
         return @as(u16, @truncate(this.remaining.len));
     }
@@ -1026,6 +1047,12 @@ pub const PathOrFileDescriptor = union(Tag) {
     pub fn deinit(this: PathOrFileDescriptor) void {
         if (this == .path) {
             this.path.deinit();
+        }
+    }
+
+    pub fn deinitAndUnprotect(this: PathOrFileDescriptor) void {
+        if (this == .path) {
+            this.path.deinitAndUnprotect();
         }
     }
 
@@ -1252,7 +1279,8 @@ fn StatsDataType(comptime T: type) type {
         uid: T,
         gid: T,
         rdev: T,
-        size: T,
+        // Always store size as a 64-bit integer
+        size: i64,
         blksize: T,
         blocks: T,
         atime_ms: f64,
@@ -1279,7 +1307,7 @@ fn StatsDataType(comptime T: type) type {
                 .uid = @as(T, @truncate(@as(i64, @intCast(stat_.uid)))),
                 .gid = @as(T, @truncate(@as(i64, @intCast(stat_.gid)))),
                 .rdev = @as(T, @truncate(@as(i64, @intCast(stat_.rdev)))),
-                .size = @as(T, @truncate(@as(i64, @intCast(stat_.size)))),
+                .size = @truncate(@as(i64, @intCast(stat_.size))),
                 .blksize = @as(T, @truncate(@as(i64, @intCast(stat_.blksize)))),
                 .blocks = @as(T, @truncate(@as(i64, @intCast(stat_.blocks)))),
                 .atime_ms = (@as(f64, @floatFromInt(@max(atime.tv_sec, 0))) * std.time.ms_per_s) + (@as(f64, @floatFromInt(@as(usize, @intCast(@max(atime.tv_nsec, 0))))) / std.time.ns_per_ms),
@@ -1962,6 +1990,7 @@ pub const Path = struct {
         defer str.deref();
         return str.toJS(globalThis);
     }
+
     pub fn normalize(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
         if (args_len == 0) return JSC.ZigString.init("").toValue(globalThis);

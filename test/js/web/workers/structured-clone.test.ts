@@ -183,7 +183,7 @@ describe("structured clone", () => {
     });
   });
 
-  describe("transferrables", () => {
+  describe("transferables", () => {
     test("ArrayBuffer", () => {
       const buffer = Uint8Array.from([1]).buffer;
       const cloned = structuredClone(buffer, { transfer: [buffer] });

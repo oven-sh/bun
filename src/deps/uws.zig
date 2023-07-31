@@ -207,7 +207,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             );
         }
         pub fn write(this: ThisSocket, data: []const u8, msg_more: bool) i32 {
-            return us_socket_write(
+            const result = us_socket_write(
                 comptime ssl_int,
                 this.socket,
                 data.ptr,
@@ -215,6 +215,12 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 @as(i32, @intCast(@as(u31, @truncate(data.len)))),
                 @as(i32, @intFromBool(msg_more)),
             );
+
+            if (comptime Environment.allow_assert) {
+                debug("us_socket_write({*}, {d}) = {d}", .{ this.getNativeHandle(), data.len, result });
+            }
+
+            return result;
         }
 
         pub fn rawWrite(this: ThisSocket, data: []const u8, msg_more: bool) i32 {

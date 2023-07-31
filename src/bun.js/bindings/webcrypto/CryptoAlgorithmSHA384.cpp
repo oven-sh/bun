@@ -51,10 +51,23 @@ void CryptoAlgorithmSHA384::digest(Vector<uint8_t>&& message, VectorCallback&& c
         return;
     }
 
+    if (message.size() < 64) {
+        auto moved = WTFMove(message);
+        digest->addBytes(moved.data(), moved.size());
+        auto result = digest->computeHash();
+        ScriptExecutionContext::postTaskTo(context.identifier(), [callback = WTFMove(callback), result = WTFMove(result)](auto&) {
+            callback(result);
+        });
+        return;
+    }
+
+    context.refEventLoop();
+
     workQueue.dispatch([digest = WTFMove(digest), message = WTFMove(message), callback = WTFMove(callback), contextIdentifier = context.identifier()]() mutable {
         digest->addBytes(message.data(), message.size());
         auto result = digest->computeHash();
-        ScriptExecutionContext::postTaskTo(contextIdentifier, [callback = WTFMove(callback), result = WTFMove(result)](auto&) {
+        ScriptExecutionContext::postTaskTo(contextIdentifier, [callback = WTFMove(callback), result = WTFMove(result)](auto& context) {
+            context.unrefEventLoop();
             callback(result);
         });
     });

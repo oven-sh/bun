@@ -2,6 +2,7 @@
 
 // Note: `constants` is injected into the top of this file
 declare var constants: typeof import("node:fs/promises").constants;
+const { createFIFO } = $lazy("primordials");
 
 var fs = Bun.fs();
 
@@ -26,7 +27,7 @@ export function watch(
     eventType: string;
     filename: string | Buffer | undefined;
   };
-  const events: Array<Event> = [];
+
   if (filename instanceof URL) {
     throw new TypeError("Watch URLs are not supported yet");
   } else if (Buffer.isBuffer(filename)) {
@@ -38,32 +39,55 @@ export function watch(
   if (typeof options === "string") {
     options = { encoding: options };
   }
-  fs.watch(filename, options || {}, (eventType: string, filename: string | Buffer | undefined) => {
-    events.push({ eventType, filename });
+  const queue = createFIFO();
+
+  const watcher = fs.watch(filename, options || {}, (eventType: string, filename: string | Buffer | undefined) => {
+    queue.push({ eventType, filename });
     if (nextEventResolve) {
       const resolve = nextEventResolve;
       nextEventResolve = null;
       resolve();
     }
   });
+
   return {
-    async *[Symbol.asyncIterator]() {
+    [Symbol.asyncIterator]() {
       let closed = false;
-      while (!closed) {
-        while (events.length) {
-          let event = events.shift() as Event;
-          if (event.eventType === "close") {
-            closed = true;
-            break;
+      return {
+        async next() {
+          while (!closed) {
+            let event: Event;
+            while ((event = queue.shift() as Event)) {
+              if (event.eventType === "close") {
+                closed = true;
+                return { value: undefined, done: true };
+              }
+              if (event.eventType === "error") {
+                closed = true;
+                throw event.filename;
+              }
+              return { value: event, done: false };
+            }
+            const { promise, resolve } = Promise.withResolvers();
+            nextEventResolve = resolve;
+            await promise;
           }
-          if (event.eventType === "error") {
+          return { value: undefined, done: true };
+        },
+
+        return() {
+          if (!closed) {
+            watcher.close();
             closed = true;
-            throw event.filename;
+            if (nextEventResolve) {
+              const resolve = nextEventResolve;
+              nextEventResolve = null;
+              resolve();
+            }
           }
-          yield event;
-        }
-        await new Promise((resolve: Function) => (nextEventResolve = resolve));
-      }
+          return { value: undefined, done: true };
+        },
+      };
     },
   };
 }
@@ -90,7 +114,7 @@ export var access = promisify(fs.accessSync),
   read = promisify(fs.readSync),
   write = promisify(fs.writeSync),
   readdir = fs.readdir.bind(fs),
-  readFile = promisify(fs.readFileSync),
+  readFile = fs.readFile.bind(fs),
   writeFile = promisify(fs.writeFileSync),
   readlink = promisify(fs.readlinkSync),
   realpath = promisify(fs.realpathSync),

@@ -113,7 +113,10 @@ var access = function access2(...args) {
     throw new TypeError("Callback must be a function");
   fs.readdir(...args).then((result) => callback(null, result), callback);
 }, readFile = function readFile2(...args) {
-  callbackify(fs.readFileSync, args);
+  const callback = args[args.length - 1];
+  if (typeof callback !== "function")
+    throw new TypeError("Callback must be a function");
+  fs.readFile(...args).then((result) => callback(null, result), callback);
 }, writeFile = function writeFile2(...args) {
   callbackify(fs.writeFileSync, args);
 }, readlink = function readlink2(...args) {
@@ -307,13 +310,13 @@ ReadStream = function(InternalReadStream) {
           var n = this.bytesRead - currPos;
           chunk = chunk.slice(-n);
           var [_, ...rest] = arguments;
-          if (this.pos = this.bytesRead, this.end && this.bytesRead >= this.end)
-            chunk = chunk.slice(0, this.end - this.start);
+          if (this.pos = this.bytesRead, this.end !== void 0 && this.bytesRead > this.end)
+            chunk = chunk.slice(0, this.end - this.start + 1);
           return super.push(chunk, ...rest);
         }
         var end = this.end;
-        if (end && this.bytesRead >= end) {
-          chunk = chunk.slice(0, end - currPos);
+        if (end !== void 0 && this.bytesRead > end) {
+          chunk = chunk.slice(0, end - currPos + 1);
           var [_, ...rest] = arguments;
           return this.pos = this.bytesRead, super.push(chunk, ...rest);
         }

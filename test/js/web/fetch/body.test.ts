@@ -171,20 +171,34 @@ for (const { body, fn } of bodyTypes) {
         const streams = [
           {
             label: "empty stream",
-            stream: () => new ReadableStream(),
+            stream: () => {
+              var stream = new ReadableStream();
+              stream.cancel();
+              return stream;
+            },
             content: "",
-            skip: true, // hangs
           },
           {
             label: "custom stream",
             stream: () =>
               new ReadableStream({
-                start(controller) {
-                  controller.enqueue("hello\n");
+                async start(controller) {
+                  await controller.enqueue("hello\n");
+                  await controller.close();
                 },
               }),
             content: "hello\n",
-            skip: true, // hangs
+          },
+          {
+            label: "custom stream (pull)",
+            stream: () =>
+              new ReadableStream({
+                async pull(controller) {
+                  await controller.enqueue("hello\n");
+                  await controller.close();
+                },
+              }),
+            content: "hello\n",
           },
           {
             label: "direct stream",
@@ -197,7 +211,11 @@ for (const { body, fn } of bodyTypes) {
                 },
               }),
             content: "bye\n",
-            skip: true, // hangs
+            // TODO: fix this
+            // Doesn't work on clone()
+            // it just duplicates the data
+            // haven't figured out why yet
+            skipClone: true,
           },
           {
             label: "Bun.file() stream",
@@ -230,17 +248,23 @@ for (const { body, fn } of bodyTypes) {
             content: /Example Domain/,
           },
         ];
-        for (const { label, stream, content, skip } of streams) {
-          const it = skip ? test.skip : test;
-          it(label, async () => {
-            expect(async () => fn(await stream())).not.toThrow();
-            const text = await fn(await stream()).text();
-            if (typeof content === "string") {
-              expect(text).toBe(content);
-            } else {
-              expect(content.test(text)).toBe(true);
-            }
-          });
+        for (let clone of [false, true]) {
+          for (const { label, stream, content, skip = false, skipClone = false } of streams) {
+            const it = skip || (skipClone && clone) ? test.skip : test;
+            it((clone ? "clone -> " : "") + label, async () => {
+              expect(async () => fn(await stream())).not.toThrow();
+              let call = fn(await stream());
+              if (clone) {
+                call = call.clone();
+              }
+              const text = await call.text();
+              if (typeof content === "string") {
+                expect(text).toBe(content);
+              } else {
+                expect(content.test(text)).toBe(true);
+              }
+            });
+          }
         }
       });
       test(body.name, async () => {

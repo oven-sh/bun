@@ -59,7 +59,6 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
 
   var controller = $getByIdDirectPrivate(stream, "readableStreamController");
   var queue = $getByIdDirectPrivate(controller, "queue");
-
   if (!queue) {
     // This is a ReadableStream direct controller implemented in JS
     // It hasn't been started yet.

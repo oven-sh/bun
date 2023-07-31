@@ -241,7 +241,7 @@ export function transformStreamDefaultControllerPerformTransform(controller, chu
   const transformPromise = $getByIdDirectPrivate(controller, "transformAlgorithm").$call(undefined, chunk);
   transformPromise.$then(
     () => {
-      promiseCapability.$resolve();
+      promiseCapability.resolve();
     },
     r => {
       $transformStreamError($getByIdDirectPrivate(controller, "stream"), r);
@@ -286,7 +286,7 @@ export function transformStreamDefaultSinkWriteAlgorithm(stream, chunk) {
         $assert(state === "writable");
         $transformStreamDefaultControllerPerformTransform(controller, chunk).$then(
           () => {
-            promiseCapability.$resolve();
+            promiseCapability.resolve();
           },
           e => {
             promiseCapability.reject.$call(undefined, e);
@@ -329,7 +329,7 @@ export function transformStreamDefaultSinkCloseAlgorithm(stream) {
       // FIXME: Update readableStreamDefaultControllerClose to make this check.
       if ($readableStreamDefaultControllerCanCloseOrEnqueue(readableController))
         $readableStreamDefaultControllerClose(readableController);
-      promiseCapability.$resolve();
+      promiseCapability.resolve();
     },
     r => {
       $transformStreamError($getByIdDirectPrivate(controller, "stream"), r);

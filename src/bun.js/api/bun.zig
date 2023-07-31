@@ -1375,7 +1375,8 @@ fn dump_mimalloc(
     _: []const JSC.C.JSValueRef,
     _: JSC.C.ExceptionRef,
 ) JSC.C.JSValueRef {
-    globalThis.bunVM().arena.dumpStats();
+    _ = globalThis;
+    // globalThis.bunVM().arena.dumpStats();
     return JSC.JSValue.jsUndefined().asObjectRef();
 }
 

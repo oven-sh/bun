@@ -1551,7 +1551,7 @@ pub const RequestContext = struct {
 
             while (true) {
                 __arena = ThreadlocalArena.init() catch unreachable;
-                JavaScript.VirtualMachine.get().arena = &__arena;
+                // JavaScript.VirtualMachine.get().arena = &__arena;
                 JavaScript.VirtualMachine.get().has_loaded = true;
                 JavaScript.VirtualMachine.get().tick();
                 defer {
@@ -1563,7 +1563,7 @@ pub const RequestContext = struct {
                     js_ast.Expr.Data.Store.reset();
                     JavaScript.API.Bun.flushCSSImports();
                     Output.flush();
-                    JavaScript.VirtualMachine.get().arena.deinit();
+                    // JavaScript.VirtualMachine.get().arena.deinit();
                     JavaScript.VirtualMachine.get().has_loaded = false;
                 }
 

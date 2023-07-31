@@ -424,7 +424,7 @@ pub const VirtualMachine = struct {
     /// source_mappings
     saved_source_map_table: SavedSourceMap.HashTable = undefined,
 
-    arena: *Arena = undefined,
+    // arena: *Arena = undefined,
     has_loaded: bool = false,
 
     transpiled_count: usize = 0,

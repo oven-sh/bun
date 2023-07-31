@@ -454,8 +454,8 @@ pub const HTMLRewriter = struct {
                 result.body.init.headers = headers.cloneThis(global);
             }
 
-            result.url = bun.default_allocator.dupe(u8, original.url) catch unreachable;
-            result.status_text = bun.default_allocator.dupe(u8, original.status_text) catch unreachable;
+            result.url = original.url.clone();
+            result.status_text = original.status_text.clone();
 
             var input = original.body.value.useAsAnyBlob();
             sink.input = input;

@@ -205,7 +205,7 @@ describe("Server", () => {
       },
     });
     try {
-      const url = `http://${server.hostname}:${server.port}`;
+      const url = `http://${server.hostname}:${server.port}/`;
       const response = await server.fetch(url);
       expect(await response.text()).toBe("Hello World!");
       expect(response.status).toBe(200);
@@ -222,7 +222,7 @@ describe("Server", () => {
       },
     });
     try {
-      const url = `http://${server.hostname}:${server.port}`;
+      const url = `http://${server.hostname}:${server.port}/`;
       const response = await server.fetch(new Request(url));
       expect(await response.text()).toBe("Hello World!");
       expect(response.status).toBe(200);

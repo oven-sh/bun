@@ -76,8 +76,12 @@ generateInternalModuleSourceCode(JSC::JSGlobalObject* globalObject, JSC::JSObjec
         GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
         JSC::EnsureStillAliveScope stillAlive(object);
 
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+
         PropertyNameArray properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
         object->getPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);
+
+        RETURN_IF_EXCEPTION(throwScope, {});
 
         auto len = properties.size() + 1;
         exportNames.reserveCapacity(len);
@@ -439,6 +443,8 @@ JSValue fetchCommonJSModule(
                     JSC::PropertyAttribute::ReadOnly | 0);
                 RETURN_IF_EXCEPTION(scope, {});
                 RELEASE_AND_RETURN(scope, target);
+            } else {
+                RELEASE_AND_RETURN(scope, jsNumber(-1));
             }
         }
         }
@@ -589,6 +595,9 @@ static JSValue fetchESMSourceCode(
                 auto* internalModule = jsCast<JSObject*>(globalObject->internalModuleRegistry()->requireId(globalObject, vm, static_cast<InternalModuleRegistry::Field>(tag & mask)));
                 auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateInternalModuleSourceCode(globalObject, internalModule), JSC::SourceOrigin(), WTFMove(moduleKey)));
                 return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));
+            } else {
+                auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);
+                return rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
             }
         }
         }

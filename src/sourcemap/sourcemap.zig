@@ -1021,13 +1021,13 @@ pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: 
 
     const vlq = [_]VLQ{
         // Record the generated column (the line is recorded using ';' elsewhere)
-        encodeVLQWithLookupTable(current_state.generated_column - prev_state.generated_column),
+        encodeVLQWithLookupTable(current_state.generated_column -| prev_state.generated_column),
         // Record the generated source
-        encodeVLQWithLookupTable(current_state.source_index - prev_state.source_index),
+        encodeVLQWithLookupTable(current_state.source_index -| prev_state.source_index),
         // Record the original line
-        encodeVLQWithLookupTable(current_state.original_line - prev_state.original_line),
+        encodeVLQWithLookupTable(current_state.original_line -| prev_state.original_line),
         // Record the original column
-        encodeVLQWithLookupTable(current_state.original_column - prev_state.original_column),
+        encodeVLQWithLookupTable(current_state.original_column -| prev_state.original_column),
     };
 
     // Count exactly how many bytes we need to write
@@ -1354,10 +1354,10 @@ pub const Chunk = struct {
 
                 b.appendMapping(.{
                     .generated_line = b.prev_state.generated_line,
-                    .generated_column = b.generated_column,
+                    .generated_column = @max(b.generated_column, 0),
                     .source_index = b.prev_state.source_index,
-                    .original_line = original_line,
-                    .original_column = original_column,
+                    .original_line = @max(original_line, 0),
+                    .original_column = @max(original_column, 0),
                 });
 
                 // This line now has a mapping on it, so don't insert another one

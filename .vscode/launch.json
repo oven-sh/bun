@@ -148,11 +148,7 @@
       "request": "launch",
       "name": "RUN THE ASTRO",
       "program": "bun-debug",
-      "args": [
-        "run",
-        "/private/tmp/scratchpad_20230731T231120/satellite-singularity/node_modules/astro/astro.js",
-        "dev"
-      ],
+      "args": ["/private/tmp/scratchpad_20230731T231120/satellite-singularity/node_modules/astro/astro.js", "dev"],
       "cwd": "/tmp/scratchpad_20230731T231120/satellite-singularity",
       "env": {
         "FORCE_COLOR": "1",

@@ -2762,7 +2762,7 @@ var require_readable = __commonJS({
         // Call internal read method
         try {
           var result = this._read(state.highWaterMark);
-          if (isPromise(result)) {
+          if ($isPromise(result)) {
             $debug("async _read", this.__id);
             const peeked = Bun.peek(result);
             $debug("peeked promise", peeked, this.__id);
@@ -5384,7 +5384,7 @@ function createNativeStreamReadable(nativeType, Readable) {
       $debug("#internalRead()", this.__id);
       closer[0] = false;
       var result = pull(ptr, view, closer);
-      if (isPromise(result)) {
+      if ($isPromise(result)) {
         this.#pendingRead = true;
         return result.then(
           result => {
@@ -5528,7 +5528,7 @@ var NativeWritable = class NativeWritable extends Writable {
     var fileSink = this.#fileSink;
     var result = fileSink.write(chunk);
 
-    if (isPromise(result)) {
+    if ($isPromise(result)) {
       // var writePromises = this.#writePromises;
       // var i = writePromises.length;
       // writePromises[i] = result;
@@ -5589,12 +5589,5 @@ Object.defineProperty(exports, "promises", {
 
 exports[Symbol.for("::bunternal::")] = { _ReadableFromWeb, _ReadableFromWebForUndici };
 exports.eos = require_end_of_stream();
-
-function bruh(params) {
-  console.log(callerSourceOrigin());
-}
-
-console.log(callerSourceOrigin());
-bruh();
 
 export default exports;

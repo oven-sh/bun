@@ -492,12 +492,6 @@ pub const RuntimeTranspilerStore = struct {
                     continue;
                 }
 
-                if (JSC.DisabledModule.has(import_record.path.text)) {
-                    import_record.path.is_disabled = true;
-                    import_record.do_commonjs_transform_in_printer = true;
-                    continue;
-                }
-
                 if (bundler.options.rewrite_jest_for_tests) {
                     if (strings.eqlComptime(
                         import_record.path.text,
@@ -1376,7 +1370,8 @@ pub const ModuleLoader = struct {
                     }
                 }
 
-                var allocator = arena.allocator();
+                // var allocator = arena.allocator();
+                var allocator = bun.default_allocator;
 
                 var fd: ?StoredFileDescriptorType = null;
                 var package_json: ?*PackageJSON = null;
@@ -2253,9 +2248,9 @@ pub const ModuleLoader = struct {
                 .@"node:inspector" => return jsSyntheticModule(.@"node:inspector", specifier),
                 .@"node:net" => return jsSyntheticModule(.@"node:net", specifier),
                 .@"node:os" => return jsSyntheticModule(.@"node:os", specifier),
+                .@"node:fs/promises" => return jsSyntheticModule(.@"node:fs/promises", specifier),
                 .@"node:path" => return jsSyntheticModule(.@"node:path", specifier),
                 .@"node:path/posix" => return jsSyntheticModule(.@"node:path/posix", specifier),
-                .@"node:fs/promises" => return jsSyntheticModule(.@"node:fs/promises", specifier),
                 .@"node:path/win32" => return jsSyntheticModule(.@"node:path/win32", specifier),
                 .@"node:perf_hooks" => return jsSyntheticModule(.@"node:perf_hooks", specifier),
                 .@"node:readline" => return jsSyntheticModule(.@"node:readline", specifier),
@@ -2274,6 +2269,7 @@ pub const ModuleLoader = struct {
                 .@"node:v8" => return jsSyntheticModule(.@"node:v8", specifier),
                 .@"node:vm" => return jsSyntheticModule(.@"node:vm", specifier),
                 .@"node:wasi" => return jsSyntheticModule(.@"node:wasi", specifier),
+                .@"node:worker_threads" => return jsSyntheticModule(.@"node:worker_threads", specifier),
                 .@"node:zlib" => return jsSyntheticModule(.@"node:zlib", specifier),
                 .@"detect-libc" => return jsSyntheticModule(if (Environment.isLinux) .@"detect-libc/linux" else .@"detect-libc", specifier),
                 .undici => return jsSyntheticModule(.undici, specifier),
@@ -2291,16 +2287,6 @@ pub const ModuleLoader = struct {
                     .hash = 0,
                 };
             }
-        } else if (DisabledModule.getWithEql(specifier, bun.String.eqlComptime) != null) {
-            return ResolvedSource{
-                .allocator = null,
-                .source_code = bun.String.static(
-                    \\$_BunCommonJSModule_$.module.exports=globalThis[Symbol.for("Bun.lazy")]("masqueradesAsUndefined")
-                ),
-                .specifier = specifier,
-                .source_url = specifier.toZigString(),
-                .hash = 0,
-            };
         } else if (jsc_vm.standalone_module_graph) |graph| {
             const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
             defer specifier_utf8.deinit();
@@ -2445,6 +2431,7 @@ pub const HardcodedModule = enum {
     @"node:util",
     @"node:util/types",
     @"node:vm",
+    @"node:worker_threads",
     @"node:wasi",
     @"node:zlib",
     undici,
@@ -2478,8 +2465,8 @@ pub const HardcodedModule = enum {
             .{ "node:buffer", HardcodedModule.@"node:buffer" },
             .{ "node:child_process", HardcodedModule.@"node:child_process" },
             .{ "node:cluster", HardcodedModule.@"node:cluster" },
-            .{ "node:crypto", HardcodedModule.@"node:crypto" },
             .{ "node:constants", HardcodedModule.@"node:constants" },
+            .{ "node:crypto", HardcodedModule.@"node:crypto" },
             .{ "node:dgram", HardcodedModule.@"node:dgram" },
             .{ "node:diagnostics_channel", HardcodedModule.@"node:diagnostics_channel" },
             .{ "node:dns", HardcodedModule.@"node:dns" },
@@ -2518,6 +2505,7 @@ pub const HardcodedModule = enum {
             .{ "node:v8", HardcodedModule.@"node:v8" },
             .{ "node:vm", HardcodedModule.@"node:vm" },
             .{ "node:wasi", HardcodedModule.@"node:wasi" },
+            .{ "node:worker_threads", HardcodedModule.@"node:worker_threads" },
             .{ "node:zlib", HardcodedModule.@"node:zlib" },
             .{ "undici", HardcodedModule.undici },
             .{ "ws", HardcodedModule.ws },
@@ -2669,12 +2657,3 @@ pub const HardcodedModule = enum {
         },
     );
 };
-
-pub const DisabledModule = bun.ComptimeStringMap(
-    void,
-    .{
-        // Stubbing out worker_threads will break esbuild.
-        .{"worker_threads"},
-        .{"node:worker_threads"},
-    },
-);

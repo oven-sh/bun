@@ -14,6 +14,7 @@
     "typescript": "^5.0.0"
   },
   "scripts": {
+    "repl": "node --import ./dist/src/repl.js",
     "clean": "rm -rf dist",
     "build": "bun run clean && bunx tsc && bunx copyfiles \"./**/*.wasm\" dist",
     "build/wasm": "bun run build/farmhash",

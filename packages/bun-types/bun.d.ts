@@ -2675,7 +2675,7 @@ declare module "bun" {
    * openssl sha512-256 /path/to/file
    *```
    */
-  export function sha(input: StringOrBuffer, hashInto?: Uint8Array): Uint8Array;
+  export function sha(input: StringOrBuffer, hashInto?: TypedArray): TypedArray;
 
   /**
    *

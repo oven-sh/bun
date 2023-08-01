@@ -23,25 +23,25 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// TODO: move this to native code?
 export function binding(bindingName) {
-  if (bindingName !== "constants")
-    throw new TypeError(
-      "process.binding() is not supported in Bun. If that breaks something, please file an issue and include a reproducible code sample.",
-    );
-
-  var cache = globalThis.Symbol.for("process.bindings.constants");
-  var constants = globalThis[cache];
-  if (!constants) {
-    const { constants: fs } = require("node:fs");
-    constants = {
-      fs,
-      zlib: {},
-      crypto: {},
-      os: Bun._Os().constants,
-    };
-    globalThis[cache] = constants;
+  if (bindingName === "constants") {
+    return $processBindingConstants;
   }
-  return constants;
+  const issue = {
+    fs: 3546,
+    buffer: 2020,
+    natives: 2254,
+    uv: 2891,
+  }[bindingName];
+  if (issue) {
+    throw new Error(
+      `process.binding("${bindingName}") is not implemented in Bun. Track the status & thumbs up the issue: https://github.com/oven-sh/bun/issues/${issue}`,
+    );
+  }
+  throw new TypeError(
+    `process.binding("${bindingName}") is not implemented in Bun. If that breaks something, please file an issue and include a reproducible code sample.`,
+  );
 }
 
 export function getStdioWriteStream(fd_, getWindowSize) {

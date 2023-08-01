@@ -210,6 +210,12 @@ declare const $AsyncGeneratorSuspendReasonYield: TODO;
 declare const $AsyncGeneratorSuspendReasonAwait: TODO;
 declare const $AsyncGeneratorSuspendReasonNone: TODO;
 declare const $abstractModuleRecordFieldState: TODO;
+declare const $processBindingConstants: {
+  os: typeof import("os").constants;
+  fs: typeof import("fs").constants;
+  crypto: typeof import("crypto").constants;
+  zlib: typeof import("zlib").constants;
+};
 declare const $asyncContext: InternalFieldObject<[ReadonlyArray<any> | undefined]>;
 
 // We define our intrinsics in ./BunBuiltinNames.h. Some of those are globals.

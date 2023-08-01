@@ -134,21 +134,21 @@ return __intrinsic__exports;
 
 mark("Preprocess modules");
 
-const config = ({ debug }: { debug?: boolean }) => ({
+const config = ({ platform, debug }: { platform: string; debug?: boolean }) => ({
   entrypoints: bundledEntryPoints,
   minify: { syntax: true, whitespace: !debug },
   root: TMP,
   define: {
     IS_BUN_DEVELOPMENT: String(!!debug),
     __intrinsic__debug: debug ? "$debug_log_enabled" : "false",
+    "process.platform": JSON.stringify(platform),
   },
 });
-const bundled_dev = await Bun.build(config({ debug: true }));
-const bundled_prod = await Bun.build(config({}));
-// const bundled_linux = await Bun.build(config({ platform: "linux" }));
-// const bundled_darwin = await Bun.build(config({ platform: "darwin" }));
-// const bundled_win32 = await Bun.build(config({ platform: "win32" }));
-for (const bundled of [bundled_dev, bundled_prod /*, bundled_linux, bundled_darwin, bundled_win32*/]) {
+const bundled_dev = await Bun.build(config({ platform: process.platform, debug: true }));
+const bundled_linux = await Bun.build(config({ platform: "linux" }));
+const bundled_darwin = await Bun.build(config({ platform: "darwin" }));
+const bundled_win32 = await Bun.build(config({ platform: "win32" }));
+for (const bundled of [bundled_dev, bundled_linux, bundled_darwin, bundled_win32]) {
   if (!bundled.success) {
     console.error(bundled.logs);
     process.exit(1);
@@ -159,18 +159,16 @@ mark("Bundle modules");
 
 const bundledOutputs = {
   host: new Map(),
-  prod: new Map(),
-  // linux: new Map(),
-  // darwin: new Map(),
-  // win32: new Map(),
+  linux: new Map(),
+  darwin: new Map(),
+  win32: new Map(),
 };
 
 for (const [name, bundle, outputs] of [
   ["modules_dev", bundled_dev, bundledOutputs.host],
-  ["bundled_prod", bundled_prod, bundledOutputs.prod],
-  // ["modules_linux", bundled_linux, bundledOutputs.linux],
-  // ["modules_darwin", bundled_darwin, bundledOutputs.darwin],
-  // ["modules_win32", bundled_win32, bundledOutputs.win32],
+  ["modules_linux", bundled_linux, bundledOutputs.linux],
+  ["modules_darwin", bundled_darwin, bundledOutputs.darwin],
+  ["modules_win32", bundled_win32, bundledOutputs.win32],
 ] as const) {
   for (const file of bundle.outputs) {
     const output = await file.text();
@@ -274,60 +272,43 @@ fs.writeFileSync(
 // It inlines all the strings for the module IDs.
 fs.writeFileSync(
   path.join(BASE, "out/InternalModuleRegistryConstants.h"),
-  // we dont use process.platform, but if we wanted to make use of it, we could switch to the
-  // commented version that inlines process.platform
   `#pragma once
 
-namespace Bun {
-namespace InternalModuleRegistryConstants {
+  namespace Bun {
+  namespace InternalModuleRegistryConstants {
 
-${moduleList
-  .map(
-    (id, n) =>
-      `static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
-        bundledOutputs.prod.get(id.slice(0, -3)),
-      )}_s;`,
-  )
-  .join("\n")}
-}
-}`,
-  //   `#pragma once
+  #if __APPLE__
+  ${moduleList
+    .map(
+      (id, n) =>
+        `static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
+          bundledOutputs.darwin.get(id.slice(0, -3)),
+        )}_s;`,
+    )
+    .join("\n")}
+  #elif _WIN32
+  ${moduleList
+    .map(
+      (id, n) =>
+        `static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
+          bundledOutputs.win32.get(id.slice(0, -3)),
+        )}_s;`,
+    )
+    .join("\n")}
+  #else
+  // Not 100% accurate, but basically inlining linux on non-windows non-mac platforms.
+  ${moduleList
+    .map(
+      (id, n) =>
+        `static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
+          bundledOutputs.linux.get(id.slice(0, -3)),
+        )}_s;`,
+    )
+    .join("\n")}
+  #endif
 
-  // namespace Bun {
-  // namespace InternalModuleRegistryConstants {
-
-  // #if __APPLE__
-  // ${moduleList
-  //   .map(
-  //     (id, n) =>
-  //       `static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
-  //         bundledOutputs.darwin.get(id.slice(0, -3)),
-  //       )}_s;`,
-  //   )
-  //   .join("\n")}
-  // #elif _WIN32
-  // ${moduleList
-  //   .map(
-  //     (id, n) =>
-  //       `static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
-  //         bundledOutputs.win32.get(id.slice(0, -3)),
-  //       )}_s;`,
-  //   )
-  //   .join("\n")}
-  // #else
-  // // Not 100% accurate, but basically inlining linux on non-windows non-mac platforms.
-  // ${moduleList
-  //   .map(
-  //     (id, n) =>
-  //       `static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
-  //         bundledOutputs.linux.get(id.slice(0, -3)),
-  //       )}_s;`,
-  //   )
-  //   .join("\n")}
-  // #endif
-
-  // }
-  // }`,
+  }
+  }`,
 );
 
 // This is a generated enum for zig code (exports.zig)

@@ -100,7 +100,7 @@ function bound(obj) {
     machine: obj.machine.bind(obj),
     devNull: obj.devNull,
     EOL: obj.EOL,
-    constants: obj.constants,
+    constants: $processBindingConstants.os,
   };
 }
 

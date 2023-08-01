@@ -109,6 +109,11 @@
     "editor.defaultFormatter": "xaver.clang-format"
   },
   "files.associations": {
+    "*.{setting,comp,fuse,fu}": "lua",
+    "*.ctk": "json",
+    "*.json5": "json5",
+    "*.json": "jsonc",
+    "*.scriptlib": "lua",
     "*.lock": "yarnlock",
     "*.idl": "cpp",
     "memory": "cpp",
@@ -217,7 +222,8 @@
     "regex": "cpp",
     "span": "cpp",
     "valarray": "cpp",
-    "codecvt": "cpp"
+    "codecvt": "cpp",
+    "*.zig": "zig"
   },
   "cmake.configureOnOpen": false,
   "C_Cpp.errorSquiggles": "enabled",

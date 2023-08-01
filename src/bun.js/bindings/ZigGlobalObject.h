@@ -43,6 +43,7 @@ class DOMWrapperWorld;
 #include "BunPlugin.h"
 #include "JSMockFunction.h"
 #include "InternalModuleRegistry.h"
+#include "ProcessBindingConstants.h"
 
 namespace WebCore {
 class GlobalScope;
@@ -262,6 +263,7 @@ public:
     JSObject* requireFunctionUnbound() { return m_requireFunctionUnbound.getInitializedOnMainThread(this); }
     JSObject* requireResolveFunctionUnbound() { return m_requireResolveFunctionUnbound.getInitializedOnMainThread(this); }
     Bun::InternalModuleRegistry* internalModuleRegistry() { return m_internalModuleRegistry.getInitializedOnMainThread(this); }
+    Bun::ProcessBindingConstants* processBindingConstants() { return m_processBindingConstants.getInitializedOnMainThread(this); }
 
     JSObject* lazyRequireCacheObject() { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
 
@@ -532,6 +534,7 @@ private:
     LazyProperty<JSGlobalObject, JSC::JSObject> m_requireFunctionUnbound;
     LazyProperty<JSGlobalObject, JSC::JSObject> m_requireResolveFunctionUnbound;
     LazyProperty<JSGlobalObject, Bun::InternalModuleRegistry> m_internalModuleRegistry;
+    LazyProperty<JSGlobalObject, Bun::ProcessBindingConstants> m_processBindingConstants;
     LazyProperty<JSGlobalObject, JSC::Structure> m_importMetaObjectStructure;
     LazyProperty<JSGlobalObject, JSC::Structure> m_asyncBoundFunctionStructure;
 

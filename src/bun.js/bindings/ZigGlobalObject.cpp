@@ -3403,6 +3403,14 @@ void GlobalObject::finishCreation(VM& vm)
                     InternalModuleRegistry::createStructure(init.vm, init.owner)));
         });
 
+    m_processBindingConstants.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, Bun::ProcessBindingConstants>::Initializer& init) {
+            init.set(
+                ProcessBindingConstants::create(
+                    init.vm,
+                    ProcessBindingConstants::createStructure(init.vm, init.owner)));
+        });
+
     m_importMetaObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
             init.set(Zig::ImportMetaObject::createStructure(init.vm, init.owner));
@@ -4058,6 +4066,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectNativeFunction(vm, this, builtinNames.resolveSyncPrivateName(), 1, functionImportMeta__resolveSyncPrivate, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
     putDirectNativeFunction(vm, this, builtinNames.createInternalModuleByIdPrivateName(), 1, InternalModuleRegistry::jsCreateInternalModuleById, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
     putDirect(vm, builtinNames.internalModuleRegistryPrivateName(), this->internalModuleRegistry(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    putDirect(vm, builtinNames.processBindingConstantsPrivateName(), this->processBindingConstants(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "process"_s), JSC::CustomGetterSetter::create(vm, property_lazyProcessGetter, property_lazyProcessSetter),
         JSC::PropertyAttribute::CustomAccessor | 0);
@@ -4587,6 +4596,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_requireResolveFunctionUnbound.visit(visitor);
     thisObject->m_importMetaObjectStructure.visit(visitor);
     thisObject->m_internalModuleRegistry.visit(visitor);
+    thisObject->m_processBindingConstants.visit(visitor);
     thisObject->m_asyncBoundFunctionStructure.visit(visitor);
 
     thisObject->m_dnsObject.visit(visitor);

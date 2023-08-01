@@ -8,9 +8,6 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
     case Field::BunSqlite: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "bun:sqlite"_s, "bun/sqlite.js"_s, InternalModuleRegistryConstants::BunSqliteCode);
     }
-    case Field::InternalFSConstants: {
-      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "internal:fs-constants"_s, "internal/fs-constants.js"_s, InternalModuleRegistryConstants::InternalFSConstantsCode);
-    }
     case Field::InternalShared: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "internal:shared"_s, "internal/shared.js"_s, InternalModuleRegistryConstants::InternalSharedCode);
     }

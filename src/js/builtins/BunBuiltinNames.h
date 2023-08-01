@@ -162,6 +162,7 @@ using namespace JSC;
     macro(ppid) \
     macro(prependEventListener) \
     macro(process) \
+    macro(processBindingConstants) \
     macro(protocol) \
     macro(pull) \
     macro(pullAgain) \

@@ -1,5 +1,6 @@
 // Hardcoded module "node:fs/promises"
-const constants = require("../internal/fs-constants");
+const constants = $processBindingConstants.fs;
+
 var fs = Bun.fs();
 
 // note: this is not quite the same as how node does it

@@ -206,6 +206,62 @@ pub const Linker = struct {
         return linkAllowImportingFromBundle(linker, file_path, result, origin, import_path_format, ignore_runtime, true, is_bun);
     }
 
+    fn whenModuleNotFound(
+        linker: *ThisLinker,
+        import_record: *ImportRecord,
+        result: *_bundler.ParseResult,
+        comptime is_bun: bool,
+    ) !bool {
+        if (import_record.handles_import_errors) {
+            import_record.path.is_disabled = true;
+            return false;
+        }
+
+        if (comptime is_bun) {
+            // make these happen at runtime
+            if (import_record.kind == .require or import_record.kind == .require_resolve) {
+                return false;
+            }
+        }
+
+        if (import_record.path.text.len > 0 and Resolver.isPackagePath(import_record.path.text)) {
+            if (linker.options.target.isWebLike() and Options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                try linker.log.addResolveError(
+                    &result.source,
+                    import_record.range,
+                    linker.allocator,
+                    "Could not resolve: \"{s}\". Try setting --target=\"node\"",
+                    .{import_record.path.text},
+                    import_record.kind,
+                    error.ModuleNotFound,
+                );
+            } else {
+                try linker.log.addResolveError(
+                    &result.source,
+                    import_record.range,
+                    linker.allocator,
+                    "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
+                    .{import_record.path.text},
+                    import_record.kind,
+                    error.ModuleNotFound,
+                );
+            }
+        } else {
+            try linker.log.addResolveError(
+                &result.source,
+                import_record.range,
+                linker.allocator,
+                "Could not resolve: \"{s}\"",
+                .{
+                    import_record.path.text,
+                },
+                import_record.kind,
+                error.ModuleNotFound,
+            );
+        }
+        return true;
+    }
+
     pub fn linkAllowImportingFromBundle(
         linker: *ThisLinker,
         file_path: Fs.Path,
@@ -279,6 +335,14 @@ pub const Linker = struct {
                                 externals.append(record_index) catch unreachable;
                                 continue;
                             }
+                        }
+                        if (strings.startsWith(import_record.path.text, "node:")) {
+                            // if a module is not found here, it is not found at all
+                            // so we can just disable it
+                            had_resolve_errors = try whenModuleNotFound(linker, import_record, result, is_bun);
+
+                            if (had_resolve_errors) return error.ResolveMessage;
+                            continue;
                         }
 
                         if (JSC.DisabledModule.has(import_record.path.text)) {
@@ -719,58 +783,7 @@ pub const Linker = struct {
                                 continue;
                             },
                             error.ModuleNotFound => {
-                                if (import_record.handles_import_errors) {
-                                    import_record.path.is_disabled = true;
-                                    continue;
-                                }
-
-                                if (comptime is_bun) {
-                                    // make these happen at runtime
-                                    if (import_record.kind == .require or import_record.kind == .require_resolve) {
-                                        continue;
-                                    }
-                                }
-
-                                had_resolve_errors = true;
-
-                                if (import_record.path.text.len > 0 and Resolver.isPackagePath(import_record.path.text)) {
-                                    if (linker.options.target.isWebLike() and Options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
-                                        try linker.log.addResolveError(
-                                            &result.source,
-                                            import_record.range,
-                                            linker.allocator,
-                                            "Could not resolve: \"{s}\". Try setting --target=\"node\"",
-                                            .{import_record.path.text},
-                                            import_record.kind,
-                                            err,
-                                        );
-                                        continue;
-                                    } else {
-                                        try linker.log.addResolveError(
-                                            &result.source,
-                                            import_record.range,
-                                            linker.allocator,
-                                            "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
-                                            .{import_record.path.text},
-                                            import_record.kind,
-                                            err,
-                                        );
-                                        continue;
-                                    }
-                                } else {
-                                    try linker.log.addResolveError(
-                                        &result.source,
-                                        import_record.range,
-                                        linker.allocator,
-                                        "Could not resolve: \"{s}\"",
-                                        .{
-                                            import_record.path.text,
-                                        },
-                                        import_record.kind,
-                                        err,
-                                    );
-                                    continue;
-                                }
+                                had_resolve_errors = try whenModuleNotFound(linker, import_record, result, is_bun);
                             },
                             else => {
                                 had_resolve_errors = true;

@@ -32,7 +32,7 @@ export function binding(bindingName) {
   var cache = globalThis.Symbol.for("process.bindings.constants");
   var constants = globalThis[cache];
   if (!constants) {
-    const { constants: fs } = $requireBuiltin("node:fs");
+    const { constants: fs } = require("node:fs");
     constants = {
       fs,
       zlib: {},
@@ -45,10 +45,10 @@ export function binding(bindingName) {
 }
 
 export function getStdioWriteStream(fd_, getWindowSize) {
-  var EventEmitter = $requireBuiltin("node:events");
+  var EventEmitter = require("node:events");
 
   function createStdioWriteStream(fd_) {
-    var { Duplex, eos, destroy } = $requireBuiltin("node:stream");
+    var { Duplex, eos, destroy } = require("node:stream");
     var StdioWriteStream = class StdioWriteStream extends Duplex {
       #writeStream;
       #readStream;
@@ -64,7 +64,10 @@ export function getStdioWriteStream(fd_, getWindowSize) {
       #isTTY;
 
       get isTTY() {
-        return (this.#isTTY ??= $requireBuiltin("node:tty").isatty(fd_));
+        console.log("HIII");
+        console.log(require("node:tty"));
+
+        return (this.#isTTY ??= require("node:tty").isatty(fd_));
       }
 
       get fd() {
@@ -488,12 +491,6 @@ export function getStdioWriteStream(fd_, getWindowSize) {
 }
 
 export function getStdinStream(fd_) {
-  var require = path => {
-    var existing = $requireMap.get(path);
-    if (existing) return existing.exports;
-    return $internalRequire(path);
-  };
-
   var { Duplex, eos, destroy } = require("node:stream");
 
   var StdinStream = class StdinStream extends Duplex {
@@ -512,6 +509,9 @@ export function getStdinStream(fd_) {
     #onDrain;
 
     get isTTY() {
+      console.log("HIII");
+      console.log(require("node:tty"));
+
       return require("node:tty").isatty(fd_);
     }
 

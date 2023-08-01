@@ -77,10 +77,12 @@ specifiers = [...weirdInternalSpecifiers, ...specifiers.flatMap(a => ["node:" + 
 
 for (let specifier of specifiers) {
   test(`stubbed CJS import.meta.require ${specifier}`, async () => {
+    console.log("about to", specifier);
     import.meta.require(specifier);
   });
 
   test(`stubbed CJS require ${specifier}`, async () => {
+    console.log("about to2", specifier);
     require(specifier);
   });
 

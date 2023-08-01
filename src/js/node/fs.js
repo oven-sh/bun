@@ -6,8 +6,6 @@ const promises = require("node:fs/promises");
 const Stream = require("node:stream");
 
 var fs = Bun.fs();
-var debug = process.env.DEBUG ? console.log : () => {};
-
 class FSWatcher extends EventEmitter {
   #watcher;
   #listener;
@@ -64,6 +62,7 @@ class FSWatcher extends EventEmitter {
     this.#watcher?.unref();
   }
 }
+
 var access = function access(...args) {
     callbackify(fs.accessSync, args);
   },
@@ -417,7 +416,7 @@ ReadStream = (function (InternalReadStream) {
       var stream = fileRef.stream();
       var native = $direct(stream);
       if (!native) {
-        debug("no native readable stream");
+        $debug("no native readable stream");
         throw new Error("no native readable stream");
       }
       var { stream: ptr } = native;
@@ -569,7 +568,7 @@ ReadStream = (function (InternalReadStream) {
           ? Math.min(end - pos + 1, n) // takes smaller of length of the rest of the file to read minus the cursor position, or the highwatermark
           : Math.min(end - bytesRead + 1, n); // takes the smaller of the length of the rest of the file from the bytes that we have marked read, or the highwatermark
 
-      debug("n @ fs.ReadStream.#internalRead, after clamp", n);
+      $debug("n @ fs.ReadStream.#internalRead, after clamp", n);
 
       // If n is 0 or less, then we read all the file, push null to stream, ending it
       if (n <= 0) {
@@ -589,13 +588,13 @@ ReadStream = (function (InternalReadStream) {
         if (this.#fileSize > 0 && n > this.#fileSize) {
           n = this.#fileSize + 1;
         }
-        debug("fileSize", this.#fileSize);
+        $debug("fileSize", this.#fileSize);
       }
 
       // At this point, we know the file size and how much we want to read of the file
       this[kIoDone] = false;
       var res = super._read(n);
-      debug("res -- undefined? why?", res);
+      $debug("res -- undefined? why?", res);
       if ($isPromise(res)) {
         var then = res?.then;
         if (then && $isCallable(then)) {

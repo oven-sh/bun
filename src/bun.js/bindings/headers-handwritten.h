@@ -70,9 +70,9 @@ typedef struct ResolvedSource {
     uint32_t commonJSExportsLen;
     uint32_t hash;
     void* allocator;
-    uint64_t tag;
+    uint32_t tag;
 } ResolvedSource;
-static const uint64_t ResolvedSourceTagPackageJSONTypeModule = 1;
+static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
     ZigErrorType err;

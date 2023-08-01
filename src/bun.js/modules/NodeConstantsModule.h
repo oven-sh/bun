@@ -4,8 +4,9 @@ namespace Zig {
 using namespace WebCore;
 
 DEFINE_NATIVE_MODULE(NodeConstants) {
-  INIT_NATIVE_MODULE(5);
 
+  // TODO: double check that just a platform check is enough here
+  INIT_NATIVE_MODULE(63);
   put(JSC::Identifier::fromString(vm, "RTLD_LAZY"_s), JSC::jsNumber(1));
   put(JSC::Identifier::fromString(vm, "RTLD_NOW"_s), JSC::jsNumber(2));
   put(JSC::Identifier::fromString(vm, "RTLD_GLOBAL"_s), JSC::jsNumber(256));

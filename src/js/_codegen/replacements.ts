@@ -94,30 +94,25 @@ export function applyReplacements(src: string, length: number) {
     slice = slice.replace(replacement.from, replacement.to.replaceAll("$", "__intrinsic__"));
   }
   let match;
-  if ((match = slice.match(/__intrinsic__(debug|assert)\(/))) {
+  if ((match = slice.match(/__intrinsic__(debug|assert)$/)) && rest.startsWith("(")) {
     const name = match[1];
-    const combined = slice + rest;
     if (name === "debug") {
-      const innerSlice = sliceSourceCode("(" + combined.slice(match.index + match[0].length), true);
+      const innerSlice = sliceSourceCode(rest, true);
       return [
         slice.slice(0, match.index) + "(IS_BUN_DEVELOPMENT?$debug_log" + innerSlice.result + ":void 0)",
         innerSlice.rest.slice(1),
         true,
       ];
     } else if (name === "assert") {
-      const checkSlice = sliceSourceCode("(" + combined.slice(match.index + match[0].length), true, undefined, true);
-      const messageSlice =
-        !checkSlice.result.endsWith(")") &&
-        sliceSourceCode("(" + combined.slice(match.index + match[0].length + checkSlice.result.length), true);
+      const checkSlice = sliceSourceCode(rest, true, undefined, true);
       return [
         slice.slice(0, match.index) +
           "(IS_BUN_DEVELOPMENT?$assert(" +
           checkSlice.result.slice(1, -1) +
           "," +
           JSON.stringify(checkSlice.result.slice(1, -1).replace(/__intrinsic__/g, "$")) +
-          (messageSlice ? "," + messageSlice.result.slice(1, -1) : "") +
           "):void 0)",
-        (messageSlice || checkSlice).rest,
+        checkSlice.rest,
         true,
       ];
     }

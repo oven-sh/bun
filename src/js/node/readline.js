@@ -1569,6 +1569,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
 
   input.resume();
 }
+InterfaceConstructor.prototype = {};
 
 ObjectSetPrototypeOf(InterfaceConstructor.prototype, EventEmitter.prototype);
 // ObjectSetPrototypeOf(InterfaceConstructor, EventEmitter);
@@ -2553,6 +2554,7 @@ function Interface(input, output, completer, terminal) {
     this._ttyWrite = _ttyWriteDumb.bind(this);
   }
 }
+Interface.prototype = {};
 
 ObjectSetPrototypeOf(Interface.prototype, _Interface.prototype);
 ObjectSetPrototypeOf(Interface, _Interface);

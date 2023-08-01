@@ -125,5 +125,6 @@ cold-jsc-start.d
 src/js/out/modules*
 src/js/out/functions*
 src/js/out/tmp
+src/js/out/DebugPath.h
 
 make-dev-stats.csv

@@ -652,7 +652,6 @@ var require_assertion_error = __commonJS({
         .concat(indicator);
     }
     var AssertionError = /* @__PURE__ */ (function (_Error) {
-      _inherits(AssertionError2, _Error);
       function AssertionError2(options) {
         var _this;
         if ((_classCallCheck(this, AssertionError2), _typeof(options) !== "object" || options === null))
@@ -781,6 +780,7 @@ should equal
         );
       }
       AssertionError2.prototype = {};
+      _inherits(AssertionError2, _Error);
       return (
         _createClass(AssertionError2, [
           {
@@ -830,6 +830,7 @@ var require_assert = __commonJS({
     function _classCallCheck(instance, Constructor) {
       if (!(instance instanceof Constructor)) throw new TypeError("Cannot call a class as a function");
     }
+
     var _require = require_errors(),
       _require$codes = _require.codes,
       ERR_AMBIGUOUS_ARGUMENT = _require$codes.ERR_AMBIGUOUS_ARGUMENT,

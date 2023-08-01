@@ -35,7 +35,7 @@ async function createStaticHashtables() {
 }
 
 const staticHashTablePromise = createStaticHashtables();
-console.log("Bundling Bun builtins...");
+console.log("Bundling Bun builtin functions...");
 
 const MINIFY = process.argv.includes("--minify") || process.argv.includes("-m");
 const PARALLEL = process.argv.includes("--parallel") || process.argv.includes("-p");
@@ -49,9 +49,8 @@ if (existsSync(TMP_DIR)) rmSync(TMP_DIR, { recursive: true });
 mkdirSync(TMP_DIR, { recursive: true });
 
 const define = {
-  "process.env.NODE_ENV": "development",
-  "process.platform": process.platform,
-  "process.arch": process.arch,
+  "process.env.NODE_ENV": "production",
+  "IS_BUN_DEVELOPMENT": "false",
 };
 
 for (const name in enums) {
@@ -170,12 +169,15 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
         params.shift();
       }
 
-      const { result, rest } = sliceSourceCode(contents.slice(declaration[0].length - 1), true);
+      const { result, rest } = sliceSourceCode(contents.slice(declaration[0].length - 1), true, x =>
+        globalThis.requireTransformer(x, SRC_DIR + "/" + basename),
+      );
+
       functions.push({
         name,
         params,
         directives,
-        source: result.trim().slice(1, -1),
+        source: result.trim().slice(2, -1),
         async,
       });
       contents = rest;
@@ -216,7 +218,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     const build = await Bun.build({
       entrypoints: [tmpFile],
       define,
-      minify: false,
+      minify: { syntax: true, whitespace: true },
     });
     if (!build.success) {
       throw new AggregateError(build.logs, "Failed bundling builtin function " + fn.name + " from " + basename + ".ts");

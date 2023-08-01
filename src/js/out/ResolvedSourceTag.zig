@@ -57,14 +57,13 @@ pub const ResolvedSourceTag = enum(u32) {
     @"detect-libc/linux" = 557,
     @"undici" = 558,
     @"ws" = 559,
-    // Native modules run through the same system, but with different underlying initializers.
-    // They also have bit 10 set to differentiate them from JS builtins.
-    @"bun:jsc" = 1584,
-    @"node:buffer" = 1585,
-    @"node:constants" = 1586,
-    @"node:module" = 1587,
-    @"node:process" = 1588,
-    @"node:string_decoder" = 1589,
-    @"node:tty" = 1590,
-    @"node:util/types" = 1591,
+    // Native modules run through a different system using ESM registry.
+    @"bun:jsc" = 1024,
+    @"node:buffer" = 1025,
+    @"node:constants" = 1026,
+    @"node:module" = 1027,
+    @"node:process" = 1028,
+    @"node:string_decoder" = 1029,
+    @"node:tty" = 1030,
+    @"node:util/types" = 1031,
 };

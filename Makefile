@@ -554,21 +554,12 @@ tinycc:
 
 PYTHON=$(shell which python 2>/dev/null || which python3 2>/dev/null || which python2 2>/dev/null)
 
-.PHONY: builtins
-builtins:
-	NODE_ENV=production bun src/js/builtins/codegen/index.ts --minify
-
 .PHONY: esm
 js:
 	NODE_ENV=production bun src/js/_codegen/index.ts
 
 esm-debug:
 	BUN_DEBUG_QUIET_LOGS=1 NODE_ENV=production bun-debug src/js/build-esm.ts
-
-.PHONY: generate-builtins
-generate-builtins: builtins
-
-
 
 BUN_TYPES_REPO_PATH ?= $(realpath packages/bun-types)
 
@@ -1912,7 +1903,7 @@ bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release
 
 .PHONY: regenerate-bindings
 regenerate-bindings: ## compile src/js/builtins + all c++ code, does not link
-	@make clean-bindings builtins
+	@make clean-bindings js
 	@make bindings -j$(CPU_COUNT)
 
 .PHONY: setup

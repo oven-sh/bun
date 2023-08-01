@@ -40,6 +40,7 @@
 #include "../modules/ObjectModule.h"
 
 namespace Bun {
+using namespace JSC;
 using namespace Zig;
 using namespace WebCore;
 
@@ -63,7 +64,34 @@ static JSC::JSInternalPromise* resolvedInternalPromise(JSC::JSGlobalObject* glob
     return promise;
 }
 
-using namespace JSC;
+// Converts an object from InternalModuleRegistry into { ...obj, default: obj }
+JSC::SyntheticSourceProvider::SyntheticSourceGenerator
+generateInternalModuleSourceCode(JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
+{
+    return [object](JSC::JSGlobalObject* lexicalGlobalObject,
+               JSC::Identifier moduleKey,
+               Vector<JSC::Identifier, 4>& exportNames,
+               JSC::MarkedArgumentBuffer& exportValues) -> void {
+        JSC::VM& vm = lexicalGlobalObject->vm();
+        GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
+        JSC::EnsureStillAliveScope stillAlive(object);
+
+        PropertyNameArray properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        object->getPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);
+
+        auto len = properties.size() + 1;
+        exportNames.reserveCapacity(len);
+        exportValues.ensureCapacity(len);
+
+        exportNames.append(vm.propertyNames->defaultKeyword);
+        exportValues.append(object);
+
+        for (auto& entry : properties) {
+            exportNames.append(entry);
+            exportValues.append(object->get(globalObject, entry));
+        }
+    };
+}
 
 static OnLoadResult handleOnLoadObjectResult(Zig::GlobalObject* globalObject, JSC::JSObject* object)
 {
@@ -387,15 +415,15 @@ JSValue fetchCommonJSModule(
 
         auto tag = res->result.value.tag;
         switch (tag) {
-            // Generated native module cases
-            // #define CASE(str, name, id)                                                                        \
-//     case SyntheticModuleType::name: {                                                              \
-//         target->evaluate(globalObject, Bun::toWTFString(*specifier), generateNativeModule_##name); \
-//         RETURN_IF_EXCEPTION(scope, {});                                                            \
-//         RELEASE_AND_RETURN(scope, target);                                                         \
-//     }
-            //             BUN_FOREACH_NATIVE_MODULE(CASE)
-            // #undef CASE
+// Generated native module cases
+#define CASE(str, name)                                                                            \
+    case SyntheticModuleType::name: {                                                              \
+        target->evaluate(globalObject, Bun::toWTFString(*specifier), generateNativeModule_##name); \
+        RETURN_IF_EXCEPTION(scope, {});                                                            \
+        RELEASE_AND_RETURN(scope, target);                                                         \
+    }
+            BUN_FOREACH_NATIVE_MODULE(CASE)
+#undef CASE
 
         case SyntheticModuleType::ESM: {
             RELEASE_AND_RETURN(scope, jsNumber(-1));
@@ -407,7 +435,7 @@ JSValue fetchCommonJSModule(
                 target->putDirect(
                     vm,
                     builtinNames.exportsPublicName(),
-                    globalObject->internalModuleRegistry.get(globalObject, tag & mask),
+                    globalObject->internalModuleRegistry()->requireId(globalObject, vm, static_cast<InternalModuleRegistry::Field>(tag & mask)),
                     JSC::PropertyAttribute::ReadOnly | 0);
                 RETURN_IF_EXCEPTION(scope, {});
                 RELEASE_AND_RETURN(scope, target);
@@ -546,30 +574,21 @@ static JSValue fetchESMSourceCode(
             return rejectOrResolve(JSSourceCode::create(vm, JSC::SourceCode(provider)));
         }
 
-            // #define CASE(str, name, id)                                                                                                                        \
-//     case SyntheticModuleType::name: {                                                                                                              \
-//         auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateNativeModule_##name, JSC::SourceOrigin(), WTFMove(moduleKey))); \
-//         return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));                                                                         \
-//     }
-            //             BUN_FOREACH_NATIVE_MODULE(CASE)
-            // #undef CASE
+#define CASE(str, name)                                                                                                                            \
+    case (SyntheticModuleType::name): {                                                                                                            \
+        auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateNativeModule_##name, JSC::SourceOrigin(), WTFMove(moduleKey))); \
+        return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));                                                                         \
+    }
+            BUN_FOREACH_NATIVE_MODULE(CASE)
+#undef CASE
 
         // CommonJS modules from src/js/*
         default: {
             if (tag & SyntheticModuleType::InternalModuleRegistryFlag) {
-                auto created = Bun::createCommonJSModule(globalObject, res->result.value, true);
-
-                if (created.has_value()) {
-                    return rejectOrResolve(JSSourceCode::create(vm, WTFMove(created.value())));
-                }
-
-                if constexpr (allowPromise) {
-                    auto* exception = scope.exception();
-                    scope.clearException();
-                    return rejectedInternalPromise(globalObject, exception);
-                } else {
-                    return JSC::jsUndefined();
-                }
+                constexpr auto mask = (SyntheticModuleType::InternalModuleRegistryFlag - 1);
+                auto* internalModule = jsCast<JSObject*>(globalObject->internalModuleRegistry()->requireId(globalObject, vm, static_cast<InternalModuleRegistry::Field>(tag & mask)));
+                auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateInternalModuleSourceCode(globalObject, internalModule), JSC::SourceOrigin(), WTFMove(moduleKey)));
+                return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));
             }
         }
         }
@@ -688,18 +707,3 @@ JSValue fetchESMSourceCodeAsync(
     return fetchESMSourceCode<true>(globalObject, res, specifier, referrer);
 }
 }
-namespace JSC {
-
-template<unsigned passedNumberOfInternalFields>
-template<typename Visitor>
-void JSInternalFieldObjectImpl<passedNumberOfInternalFields>::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = jsCast<JSInternalFieldObjectImpl*>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.appendValues(thisObject->m_internalFields, numberOfInternalFields);
-}
-
-DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<unsigned passedNumberOfInternalFields>, JSInternalFieldObjectImpl<passedNumberOfInternalFields>);
-
-} // namespace JSC

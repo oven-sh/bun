@@ -261,6 +261,7 @@ public:
 
     JSObject* requireFunctionUnbound() { return m_requireFunctionUnbound.getInitializedOnMainThread(this); }
     JSObject* requireResolveFunctionUnbound() { return m_requireResolveFunctionUnbound.getInitializedOnMainThread(this); }
+    Bun::InternalModuleRegistry* internalModuleRegistry() { return m_internalModuleRegistry.getInitializedOnMainThread(this); }
 
     JSObject* lazyRequireCacheObject() { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
 
@@ -446,7 +447,6 @@ public:
     void* napiInstanceDataFinalizerHint = nullptr;
 
     Bun::JSMockModule mockModule;
-    Bun::InternalModuleRegistry internalModuleRegistry;
 
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
@@ -531,6 +531,7 @@ private:
 
     LazyProperty<JSGlobalObject, JSC::JSObject> m_requireFunctionUnbound;
     LazyProperty<JSGlobalObject, JSC::JSObject> m_requireResolveFunctionUnbound;
+    LazyProperty<JSGlobalObject, Bun::InternalModuleRegistry> m_internalModuleRegistry;
     LazyProperty<JSGlobalObject, JSC::Structure> m_importMetaObjectStructure;
     LazyProperty<JSGlobalObject, JSC::Structure> m_asyncBoundFunctionStructure;
 

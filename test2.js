@@ -1,3 +1,6 @@
-import { requireBuiltin } from "./src/js/builtins/Module";
-
-console.log(requireBuiltin("node:module"));
+// import * as crypto from "node:crypto";
+try {
+  console.log(require("readline"));
+} catch (error) {
+  console.log(error.stack);
+}

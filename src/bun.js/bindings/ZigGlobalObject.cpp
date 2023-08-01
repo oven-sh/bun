@@ -218,6 +218,8 @@ constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 // #include <iostream>
 static bool has_loaded_jsc = false;
 
+Structure* createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
+
 namespace WebCore {
 class Base64Utilities {
 public:
@@ -722,7 +724,6 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure)
 {
     // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
-    internalModuleRegistry = Bun::InternalModuleRegistry::create();
     globalEventScope.m_context = m_scriptExecutionContext;
 }
 
@@ -738,7 +739,6 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
 {
     // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
-    internalModuleRegistry = Bun::InternalModuleRegistry::create();
     globalEventScope.m_context = m_scriptExecutionContext;
 }
 
@@ -1587,6 +1587,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCallNotImplemented,
 }
 
 // we're trying out a new way to do this lazy loading
+// this is $lazy() in js code
 static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
@@ -1671,19 +1672,12 @@ JSC:
                 JSC::JSFunction::create(vm, globalObject, 0, "onEofChunk"_s, jsReadable_onEofChunk, ImplementationVisibility::Public), 0);
             return JSValue::encode(obj);
         }
-
-<<<<<<< HEAD
-        if (string == "createImportMeta"_s) {
-            Zig::ImportMetaObject* obj = Zig::ImportMetaObject::create(globalObject, callFrame->argument(1));
-            return JSValue::encode(obj);
+        if (string == "events"_s) {
+            return JSValue::encode(WebCore::JSEventEmitter::getConstructor(vm, globalObject));
         }
-
         if (string == "internal/tls"_s) {
             auto* obj = constructEmptyObject(globalObject);
 
-=======
-        if (string == "rootCertificates"_s) {
->>>>>>> 02e082171 (finish commonjs stuff)
             auto sourceOrigin = callFrame->callerSourceOrigin(vm).url();
 // expose for tests in debug mode only
 #ifndef BUN_DEBUG
@@ -3212,10 +3206,6 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<JSWeakMap>& init) {
             init.set(JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
         });
-    // m_asyncHooksContext.initLater(
-    //     [](const Initializer<JSC::JSMap>& init) {
-    //         init.set(JSC::JSMap::create(init.vm, init.owner->mapStructure()));
-    //     });
 
     m_JSBufferSubclassStructure.initLater(
         [](const Initializer<Structure>& init) {
@@ -3394,6 +3384,7 @@ void GlobalObject::finishCreation(VM& vm)
                     init.owner->globalScope(),
                     JSFunction::createStructure(init.vm, init.owner, RequireFunctionPrototype::create(init.owner))));
         });
+
     m_requireResolveFunctionUnbound.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
             init.set(
@@ -3402,6 +3393,14 @@ void GlobalObject::finishCreation(VM& vm)
                     moduleRequireResolveCodeGenerator(init.vm),
                     init.owner->globalScope(),
                     JSFunction::createStructure(init.vm, init.owner, RequireResolveFunctionPrototype::create(init.owner))));
+        });
+
+    m_internalModuleRegistry.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, Bun::InternalModuleRegistry>::Initializer& init) {
+            init.set(
+                InternalModuleRegistry::create(
+                    init.vm,
+                    InternalModuleRegistry::createStructure(init.vm, init.owner)));
         });
 
     m_importMetaObjectStructure.initLater(
@@ -4054,10 +4053,11 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectBuiltinFunction(vm, this, builtinNames.requireESMPrivateName(), importMetaObjectRequireESMCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.loadCJS2ESMPrivateName(), importMetaObjectLoadCJS2ESMCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.internalRequirePrivateName(), importMetaObjectInternalRequireCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    putDirectBuiltinFunction(vm, this, builtinNames.requireNativeModulePrivateName(), moduleRequireNativeModuleCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
     putDirectNativeFunction(vm, this, builtinNames.resolveSyncPrivateName(), 1, functionImportMeta__resolveSyncPrivate, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
-    putDirectNativeFunction(vm, this, builtinNames.createAndLoadBuiltinModulePrivateName(), 1, jsFunctionCreateAndLoadBuiltinModule, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
-    putDirectNativeFunction(vm, this, builtinNames.requireIdPrivateName(), 1, InternalModuleRegistry::jsRequireId, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
+    putDirectNativeFunction(vm, this, builtinNames.createInternalModuleByIdPrivateName(), 1, InternalModuleRegistry::jsCreateInternalModuleById, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
+    putDirect(vm, builtinNames.internalModuleRegistryPrivateName(), this->internalModuleRegistry(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "process"_s), JSC::CustomGetterSetter::create(vm, property_lazyProcessGetter, property_lazyProcessSetter),
         JSC::PropertyAttribute::CustomAccessor | 0);
@@ -4586,6 +4586,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_requireFunctionUnbound.visit(visitor);
     thisObject->m_requireResolveFunctionUnbound.visit(visitor);
     thisObject->m_importMetaObjectStructure.visit(visitor);
+    thisObject->m_internalModuleRegistry.visit(visitor);
     thisObject->m_asyncBoundFunctionStructure.visit(visitor);
 
     thisObject->m_dnsObject.visit(visitor);
@@ -4600,8 +4601,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_commonJSFunctionArgumentsStructure.visit(visitor);
     thisObject->m_cachedGlobalObjectStructure.visit(visitor);
     thisObject->m_cachedGlobalProxyStructure.visit(visitor);
-
-    thisObject->internalModuleRegistry.visit(visitor);
 
     thisObject->mockModule.mockFunctionStructure.visit(visitor);
     thisObject->mockModule.mockResultStructure.visit(visitor);

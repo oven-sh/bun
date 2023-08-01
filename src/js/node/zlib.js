@@ -3603,6 +3603,7 @@ var require_binding = __commonJS({
       this.pending_close = false;
       this.gzip_id_bytes_read = 0;
     }
+    Zlib.prototype = {};
     Zlib.prototype.close = function () {
       if (this.write_in_progress) {
         this.pending_close = true;

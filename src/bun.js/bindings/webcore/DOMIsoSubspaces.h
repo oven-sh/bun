@@ -40,6 +40,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForAsyncContextFrame;
     std::unique_ptr<IsoSubspace> m_subspaceForMockWithImplementationCleanupData;
     std::unique_ptr<IsoSubspace> m_subspaceForProcessObject;
+    std::unique_ptr<IsoSubspace> m_subspaceForInternalModuleRegistry;
 
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/

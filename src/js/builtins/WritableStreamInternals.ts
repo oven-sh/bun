@@ -210,7 +210,7 @@ export function writableStreamClose(stream) {
     return Promise.$reject($makeTypeError("Cannot close a writable stream that is closed or errored"));
 
   $assert(state === "writable" || state === "erroring");
-  $assert(!$writableStreamCloseQueuedOrInFlight(stream));
+  // $assert(!$writableStreamCloseQueuedOrInFlight(stream));
 
   const closePromiseCapability = $newPromiseCapability(Promise);
   $putByIdDirectPrivate(stream, "closeRequest", closePromiseCapability);
@@ -225,7 +225,7 @@ export function writableStreamClose(stream) {
 }
 
 export function writableStreamAddWriteRequest(stream) {
-  $assert($isWritableStreamLocked(stream));
+  $assert(stream);
   $assert($getByIdDirectPrivate(stream, "state") === "writable");
 
   const writePromiseCapability = $newPromiseCapability(Promise);

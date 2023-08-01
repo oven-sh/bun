@@ -39,7 +39,7 @@ if (!nativeModuleDefine) {
     "Could not find BUN_FOREACH_NATIVE_MODULE in _NativeModule.h. Knowing native module IDs is a part of the codegen process.",
   );
 }
-let nextNativeModuleId = moduleList.length;
+let nextNativeModuleId = 0;
 const nativeModuleIds: Record<string, number> = {};
 const nativeModuleEnums: Record<string, string> = {};
 const nativeModuleEnumToId: Record<string, number> = {};
@@ -54,39 +54,49 @@ for (const [_, idString, enumValue] of nativeModuleDefine[0].matchAll(/macro\((.
 
 mark("Scan internal registry");
 
+function codegenRequireId(id: string) {
+  return `(__intrinsic__getInternalField(__intrinsic__internalModuleRegistry, ${id}) || __intrinsic__createInternalModuleById(${id}))`;
+}
+
+function codegenRequireNativeModule(id: string) {
+  return `(__intrinsic__requireNativeModule(${id}))`;
+}
+
+globalThis.requireTransformer = (specifier: string, from: string) => {
+  // this one is deprecated
+  if (specifier === "$shared") specifier = "./internal/shared.ts";
+
+  const directMatch = internalRegistry.get(specifier);
+  if (directMatch) return codegenRequireId(`${directMatch}/*${specifier}*/`);
+
+  if (specifier in nativeModuleIds) {
+    return `__intrinsic__requireNativeModule(${JSON.stringify(specifier)})`;
+  }
+
+  const relativeMatch =
+    resolveSyncOrNull(specifier, path.join(BASE, path.dirname(from))) ?? resolveSyncOrNull(specifier, BASE);
+
+  if (relativeMatch) {
+    const found = moduleList.indexOf(path.relative(BASE, relativeMatch));
+    if (found === -1) {
+      throw new Error(
+        `Builtin Bundler: "${specifier}" cannot be imported here because it doesn't get a module ID. Only files in "src/js" besides "src/js/builtins" can be used here.`,
+      );
+    }
+    return codegenRequireId(`${found}/*${path.relative(BASE, relativeMatch)}*/`);
+  }
+
+  throw new Error(`Builtin Bundler: Could not resolve "${specifier}" in ${from}. These cannot be relative.`);
+};
+
 // Preprocess builtins
 const bundledEntryPoints: string[] = [];
 for (let i = 0; i < moduleList.length; i++) {
   try {
     const input = fs.readFileSync(path.join(BASE, moduleList[i]), "utf8");
-    const processed = sliceSourceCode("{" + input.replace(/export\s*{\s*}\s*;/g, ""), true, specifier => {
-      // this one is deprecated
-      if (specifier === "$shared") specifier = "./internal/shared.ts";
-
-      const directMatch = internalRegistry.get(specifier);
-      if (directMatch) return `__intrinsic__requireId(${directMatch}/*${specifier}*/)`;
-
-      if (specifier in nativeModuleIds)
-        return `__intrinsic__requireBuiltin(${nativeModuleIds[specifier]}/* native ${nativeModuleEnums[specifier]}*/)`;
-
-      const relativeMatch =
-        resolveSyncOrNull(specifier, path.join(BASE, path.dirname(moduleList[i]))) ??
-        resolveSyncOrNull(specifier, BASE);
-
-      if (relativeMatch) {
-        const found = moduleList.indexOf(path.relative(BASE, relativeMatch));
-        if (found === -1) {
-          throw new Error(
-            `Builtin Bundler: "${specifier}" cannot be imported here because it doesn't get a module ID. Only files in "src/js" besides "src/js/builtins" can be used here.`,
-          );
-        }
-        return `__intrinsic__requireId(${found}/*${path.relative(BASE, relativeMatch)}*/)`;
-      }
-
-      throw new Error(
-        `Builtin Bundler: Could not resolve "${specifier}" in ${moduleList[i]}. These cannot be relative.`,
-      );
-    });
+    const processed = sliceSourceCode("{" + input.replace(/export\s*{\s*}\s*;/g, ""), true, x =>
+      globalThis.requireTransformer(x, moduleList[i]),
+    );
     let fileToTranspile = `// @ts-nocheck
 // GENERATED TEMP FILE - DO NOT EDIT
 // Sourced from src/js/${moduleList[i]}
@@ -124,21 +134,21 @@ return __intrinsic__exports;
 
 mark("Preprocess modules");
 
-const config = ({ platform, debug }: { platform: typeof process.platform; debug?: boolean }) => ({
+const config = ({ debug }: { debug?: boolean }) => ({
   entrypoints: bundledEntryPoints,
   minify: { syntax: true, whitespace: !debug },
   root: TMP,
   define: {
     IS_BUN_DEVELOPMENT: String(!!debug),
     __intrinsic__debug: debug ? "$debug_log_enabled" : "false",
-    "process.platform": `"${platform}"`,
   },
 });
-const bundled_host = await Bun.build(config({ platform: process.platform, debug: true }));
-const bundled_linux = await Bun.build(config({ platform: "linux" }));
-const bundled_darwin = await Bun.build(config({ platform: "darwin" }));
-const bundled_win32 = await Bun.build(config({ platform: "win32" }));
-for (const bundled of [bundled_host /*, bundled_linux, bundled_darwin, bundled_win32*/]) {
+const bundled_dev = await Bun.build(config({ debug: true }));
+const bundled_prod = await Bun.build(config({}));
+// const bundled_linux = await Bun.build(config({ platform: "linux" }));
+// const bundled_darwin = await Bun.build(config({ platform: "darwin" }));
+// const bundled_win32 = await Bun.build(config({ platform: "win32" }));
+for (const bundled of [bundled_dev, bundled_prod /*, bundled_linux, bundled_darwin, bundled_win32*/]) {
   if (!bundled.success) {
     console.error(bundled.logs);
     process.exit(1);
@@ -149,16 +159,18 @@ mark("Bundle modules");
 
 const bundledOutputs = {
   host: new Map(),
-  linux: new Map(),
-  darwin: new Map(),
-  win32: new Map(),
+  prod: new Map(),
+  // linux: new Map(),
+  // darwin: new Map(),
+  // win32: new Map(),
 };
 
 for (const [name, bundle, outputs] of [
-  ["modules_dev", bundled_host, bundledOutputs.host],
-  ["modules_linux", bundled_linux, bundledOutputs.linux],
-  ["modules_darwin", bundled_darwin, bundledOutputs.darwin],
-  ["modules_win32", bundled_win32, bundledOutputs.win32],
+  ["modules_dev", bundled_dev, bundledOutputs.host],
+  ["bundled_prod", bundled_prod, bundledOutputs.prod],
+  // ["modules_linux", bundled_linux, bundledOutputs.linux],
+  // ["modules_darwin", bundled_darwin, bundledOutputs.darwin],
+  // ["modules_win32", bundled_win32, bundledOutputs.win32],
 ] as const) {
   for (const file of bundle.outputs) {
     const output = await file.text();
@@ -184,8 +196,10 @@ for (const [name, bundle, outputs] of [
         (usesAssert ? createAssertClientJS(idToPublicSpecifierOrEnumName(file.path).replace(/^node:|^bun:/, "")) : ""),
     );
     const outputPath = path.join(BASE, "out", name, file.path);
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    fs.writeFileSync(outputPath, captured);
+    if (name === "modules_dev") {
+      fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+      fs.writeFileSync(outputPath, captured);
+    }
     outputs.set(file.path.replace(".js", ""), captured);
   }
 }
@@ -225,86 +239,95 @@ fs.writeFileSync(
 // actually use this enum but it's probably a good thing to include.
 fs.writeFileSync(
   path.join(BASE, "out/InternalModuleRegistry+enum.h"),
-  moduleList
-    .map((id, n) => {
-      return `${idToEnumName(id)} = ${n},`;
-    })
-    .join("\n") + "\n",
+  `${
+    moduleList
+      .map((id, n) => {
+        return `${idToEnumName(id)} = ${n},`;
+      })
+      .join("\n") + "\n"
+  }
+`,
 );
 
-// This code slice is used in InternalModuleRegistry.cpp. It calls initLater a ton of times with inlined code.
-// It expects a macro defined in InternalModuleRegistry.cpp
+// This code slice is used in InternalModuleRegistry.cpp. It defines the loading function for modules.
 fs.writeFileSync(
-  path.join(BASE, "out/InternalModuleRegistry+create.h"),
-  `${moduleList
-    .map((id, n) => {
-      return `registry->m_internalModule[${n}].initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSCell>::Initializer& init) {
-    INTERNAL_MODULE_REGISTRY_GENERATE(init, "${idToPublicSpecifierOrEnumName(id)}"_s, ${JSON.stringify(
-        path.join(BASE, "out/modules", id.replace(/\.[mc]?[tj]s$/, ".js")),
-      )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code);
-});
-`;
-    })
-    .join("")}
-${moduleList
-  .map((id, n) => {
-    return `registry->m_internalFields[${n}].set(vm, this, jsUndefined())
-`;
-  })
-  .join("")}`,
-);
-
-// This code slice is used in InternalModuleRegistry.cpp and calls .visit for each module.
-fs.writeFileSync(
-  path.join(BASE, "out/InternalModuleRegistry+visitImpl.h"),
-  moduleList
-    .map((id, n) => {
-      return `m_internalModule[${n}].visit(visitor);`;
-    })
-    .join("\n") + "\n",
+  path.join(BASE, "out/InternalModuleRegistry+createInternalModuleById.h"),
+  `JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalObject, VM& vm, Field id)
+{
+  switch (id) {
+    // JS internal modules
+    ${moduleList
+      .map((id, n) => {
+        return `case Field::${idToEnumName(id)}: {
+      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${idToPublicSpecifierOrEnumName(id)}"_s, ${JSON.stringify(
+          id.replace(/\.[mc]?[tj]s$/, ".js"),
+        )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code);
+    }`;
+      })
+      .join("\n    ")}
+  }
+}
+`,
 );
 
 // This header is used by InternalModuleRegistry.cpp, and should only be included in that file.
 // It inlines all the strings for the module IDs.
 fs.writeFileSync(
   path.join(BASE, "out/InternalModuleRegistryConstants.h"),
+  // we dont use process.platform, but if we wanted to make use of it, we could switch to the
+  // commented version that inlines process.platform
   `#pragma once
 
 namespace Bun {
 namespace InternalModuleRegistryConstants {
 
-#if __APPLE__
 ${moduleList
   .map(
     (id, n) =>
       `static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
-        bundledOutputs.darwin.get(id.slice(0, -3)),
+        bundledOutputs.prod.get(id.slice(0, -3)),
       )}_s;`,
   )
   .join("\n")}
-#elif _WIN32
-${moduleList
-  .map(
-    (id, n) =>
-      `static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
-        bundledOutputs.win32.get(id.slice(0, -3)),
-      )}_s;`,
-  )
-  .join("\n")}
-#else
-// Not 100% accurate, but basically inlining linux on non-windows non-mac platforms.
-${moduleList
-  .map(
-    (id, n) =>
-      `static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
-        bundledOutputs.linux.get(id.slice(0, -3)),
-      )}_s;`,
-  )
-  .join("\n")}
-#endif
-
 }
 }`,
+  //   `#pragma once
+
+  // namespace Bun {
+  // namespace InternalModuleRegistryConstants {
+
+  // #if __APPLE__
+  // ${moduleList
+  //   .map(
+  //     (id, n) =>
+  //       `static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
+  //         bundledOutputs.darwin.get(id.slice(0, -3)),
+  //       )}_s;`,
+  //   )
+  //   .join("\n")}
+  // #elif _WIN32
+  // ${moduleList
+  //   .map(
+  //     (id, n) =>
+  //       `static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
+  //         bundledOutputs.win32.get(id.slice(0, -3)),
+  //       )}_s;`,
+  //   )
+  //   .join("\n")}
+  // #else
+  // // Not 100% accurate, but basically inlining linux on non-windows non-mac platforms.
+  // ${moduleList
+  //   .map(
+  //     (id, n) =>
+  //       `static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
+  //         bundledOutputs.linux.get(id.slice(0, -3)),
+  //       )}_s;`,
+  //   )
+  //   .join("\n")}
+  // #endif
+
+  // }
+  // }`,
 );
 
 // This is a generated enum for zig code (exports.zig)
@@ -322,10 +345,9 @@ fs.writeFileSync(
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
 ${moduleList.map((id, n) => `    @"${idToPublicSpecifierOrEnumName(id)}" = ${(1 << 9) | n},`).join("\n")}
-    // Native modules run through the same system, but with different underlying initializers.
-    // They also have bit 10 set to differentiate them from JS builtins.
+    // Native modules run through a different system using ESM registry.
 ${Object.entries(nativeModuleIds)
-  .map(([id, n]) => `    @"${id}" = ${(1 << 10) | (1 << 9) | n},`)
+  .map(([id, n]) => `    @"${id}" = ${(1 << 10) | n},`)
   .join("\n")}
 };
 `,
@@ -349,9 +371,9 @@ ${moduleList.map((id, n) => `    ${idToEnumName(id)} = ${(1 << 9) | n},`).join("
     
     // Native modules run through the same system, but with different underlying initializers.
     // They also have bit 10 set to differentiate them from JS builtins.
-    NativeModuleFlag = 1 << 10,
+    NativeModuleFlag = (1 << 10) | (1 << 9),
 ${Object.entries(nativeModuleEnumToId)
-  .map(([id, n]) => `    ${id} = ${(1 << 10) | (1 << 9) | n},`)
+  .map(([id, n]) => `    ${id} = ${(1 << 10) | n},`)
   .join("\n")}
 };
 
@@ -364,6 +386,15 @@ fs.writeFileSync(
   Object.values(nativeModuleEnums)
     .map(value => `#include "../../bun.js/modules/${value}Module.h"`)
     .join("\n") + "\n",
+);
+
+// This is used for debug builds for the base path for dynamic loading
+fs.writeFileSync(
+  path.join(BASE, "out/DebugPath.h"),
+  `// Using __FILE__ does not give an absolute file path
+// This is a workaround for that.
+#define BUN_DYNAMIC_JS_LOAD_PATH "${path.join(BASE, "out/")}"
+`,
 );
 
 mark("Generate Code");

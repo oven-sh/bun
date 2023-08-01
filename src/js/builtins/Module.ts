@@ -90,15 +90,14 @@ export function require(this: CommonJSModuleRecord, id: string) {
   return mod.exports;
 }
 
-export function requireId(id: number) {
-  let module = $getInternalField($internalModuleRegistry, id);
-  if (!module) {
-    module = $loadInternalModuleById(id);
-    $putInternalField($internalModuleRegistry, id, module);
-  }
-  return module;
-}
-
 export function requireResolve(this: CommonJSModuleRecord, id: string) {
   return $resolveSync(id, this.path, false);
+}
+
+export function requireNativeModule(id: string) {
+  let esm = Loader.registry.$get(id);
+  if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {
+    return Loader.getModuleNamespaceObject(esm.module).default;
+  }
+  return $requireESM(id).default;
 }

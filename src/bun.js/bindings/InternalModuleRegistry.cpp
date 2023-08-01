@@ -6,63 +6,79 @@
 #include "JavaScriptCore/LazyProperty.h"
 #include "JavaScriptCore/LazyPropertyInlines.h"
 #include "JavaScriptCore/VMTrapsInlines.h"
+#include "JavaScriptCore/JSModuleLoader.h"
 
 #include "InternalModuleRegistryConstants.h"
 
 namespace Bun {
 
-#define INTERNAL_MODULE_REGISTRY_GENERATE_(init, SOURCE)    \
-    SourceCode source = JSC::makeSource(SOURCE, {});        \
-                                                            \
-    JSFunction* func                                        \
-        = JSFunction::create(                               \
-            init.vm,                                        \
-            createBuiltinExecutable(                        \
-                init.vm, source,                            \
-                Identifier(),                               \
-                ImplementationVisibility::Public,           \
-                ConstructorKind::None,                      \
-                ConstructAbility::CannotConstruct)          \
-                ->link(init.vm, nullptr, source),           \
-            static_cast<JSC::JSGlobalObject*>(init.owner)); \
-                                                            \
-    JSC::MarkedArgumentBuffer argList;                      \
-                                                            \
-    auto scope = DECLARE_CATCH_SCOPE(init.vm);              \
-                                                            \
-    JSValue result = JSC::call(                             \
-        init.owner,                                         \
-        func,                                               \
-        JSC::getCallData(func),                             \
-        init.owner, JSC::MarkedArgumentBuffer());           \
-                                                            \
-    if (UNLIKELY(scope.exception())) {                      \
-        init.set(scope.exception());                        \
-    } else {                                                \
-        init.set(result.asCell());                          \
-    }
+// The `INTERNAL_MODULE_REGISTRY_GENERATE` macro handles inlining code to compile and run a
+// JS builtin that acts as a module. In debug mode, we use a different implementation that reads
+// from the developer's filesystem. This allows reloading code without recompiling bindings.
+
+#define INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, SOURCE, id)                              \
+    auto throwScope = DECLARE_THROW_SCOPE(vm);                                                        \
+                                                                                                      \
+    SourceCode source = JSC::makeSource(SOURCE, SourceOrigin(WTF::URL("builtin://hi"_s)), "hi.js"_s); \
+                                                                                                      \
+    JSFunction* func                                                                                  \
+        = JSFunction::create(                                                                         \
+            vm,                                                                                       \
+            createBuiltinExecutable(                                                                  \
+                vm, source,                                                                           \
+                Identifier(),                                                                         \
+                ImplementationVisibility::Public,                                                     \
+                ConstructorKind::None,                                                                \
+                ConstructAbility::CannotConstruct)                                                    \
+                ->link(vm, nullptr, source),                                                          \
+            static_cast<JSC::JSGlobalObject*>(globalObject));                                         \
+                                                                                                      \
+    JSC::MarkedArgumentBuffer argList;                                                                \
+                                                                                                      \
+    JSValue result = JSC::call(                                                                       \
+        globalObject,                                                                                 \
+        func,                                                                                         \
+        JSC::getCallData(func),                                                                       \
+        globalObject, JSC::MarkedArgumentBuffer());                                                   \
+                                                                                                      \
+    RETURN_IF_EXCEPTION(throwScope, {});                                                              \
+    ASSERT_INTERNAL_MODULE(result, id);                                                               \
+    return result;
 
 #if BUN_DEBUG
-void initializeInternalModuleFromDisk(
-    const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSCell>::Initializer& init,
-    WTF::String moduleId,
-    WTF::String file,
-    WTF::String source)
+#include "../../src/js/out/DebugPath.h"
+#define ASSERT_INTERNAL_MODULE(result, moduleName)                                                        \
+    if (!result || !result.isCell() || !jsDynamicCast<JSObject*>(result)) {                               \
+        printf("Expected \"%s\" to export a JSObject. Bun is going to crash.", moduleName.utf8().data()); \
+    }
+JSValue initializeInternalModuleFromDisk(
+    JSGlobalObject* globalObject,
+    VM& vm,
+    WTF::String moduleName,
+    WTF::String fileBase,
+    WTF::String fallback)
 {
+    WTF::String file = makeString(BUN_DYNAMIC_JS_LOAD_PATH, "modules_dev/"_s, fileBase);
     if (auto contents = WTF::FileSystemImpl::readEntireFile(file)) {
         auto string = WTF::String::fromUTF8(contents.value());
-        INTERNAL_MODULE_REGISTRY_GENERATE_(init, string);
+        INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, string, moduleName);
     } else {
-        printf("bun-debug failed to load bundled version of \"%s\" (was it deleted?)\n" file.utf8().data(),
-            moduleId.utf8().data());
-        INTERNAL_MODULE_REGISTRY_GENERATE_(init, source);
+        printf("bun-debug failed to load bundled version of \"%s\" at \"%s\" (was it deleted?)\n"
+               "Please run `make js` to rebundle these builtins.\n",
+            moduleName.utf8().data(), file.utf8().data());
+        // Fallback to embedded source
+        INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, fallback, moduleName);
     }
 }
-#define INTERNAL_MODULE_REGISTRY_GENERATE(init, moduleId, filename, SOURCE) \
-    initializeInternalModuleFromDisk(init, moduleId, filename, SOURCE)
+#define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, SOURCE) \
+    return initializeInternalModuleFromDisk(globalObject, vm, moduleId, filename, SOURCE)
 #else
-#define INTERNAL_MODULE_REGISTRY_GENERATE(init, moduleId, filename, SOURCE) \
-    INTERNAL_MODULE_REGISTRY_GENERATE_(init, SOURCE)
+
+#define ASSERT_INTERNAL_MODULE(result, moduleName) \
+    {                                              \
+    }
+#define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, SOURCE) \
+    INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, SOURCE, moduleId)
 #endif
 
 const ClassInfo InternalModuleRegistry::s_info = { "InternalModuleRegistry"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(InternalModuleRegistry) };
@@ -80,44 +96,43 @@ void InternalModuleRegistry::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
 }
 
-DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, InternalFieldTuple);
+DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, InternalModuleRegistry);
 
 InternalModuleRegistry* InternalModuleRegistry::create(VM& vm, Structure* structure)
 {
     InternalModuleRegistry* registry = new (NotNull, allocateCell<InternalModuleRegistry>(vm)) InternalModuleRegistry(vm, structure);
-#include "../../../src/js/out/InternalModuleRegistry+create.h"
+    for (uint8_t i = 0; i < BUN_INTERNAL_MODULE_COUNT; i++) {
+        registry->internalField(static_cast<Field>(i))
+            .set(vm, registry, jsUndefined());
+    }
     return registry;
 }
 
-JSCell* InternalModuleRegistry::get(JSGlobalObject* globalObject, ModuleID id)
+Structure* InternalModuleRegistry::createStructure(VM& vm, JSGlobalObject* globalObject)
 {
-    return m_internalModule[id].get(globalObject);
+    return Structure::create(vm, globalObject, jsNull(), TypeInfo(InternalFieldTupleType, StructureFlags), info(), 0, 48);
 }
 
-JSCell* InternalModuleRegistry::get(JSGlobalObject* globalObject, unsigned id)
+JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, Field id)
 {
-    return m_internalModule[id].get(globalObject);
+    auto value = internalField(id).get();
+    if (!value || value.isUndefined()) {
+        value = createInternalModuleById(globalObject, vm, id);
+    }
+
+    return value;
 }
 
-template<typename Visitor>
-void InternalModuleRegistry::visitImpl(Visitor& visitor)
-{
-#include "../../../src/js/out/InternalModuleRegistry+visitImpl.h"
-}
+#include "../../../src/js/out/InternalModuleRegistry+createInternalModuleById.h"
 
-void InternalModuleRegistry::visit(AbstractSlotVisitor& visitor)
-{
-    this->visitImpl(visitor);
-}
-void InternalModuleRegistry::visit(SlotVisitor& visitor)
-{
-    this->visitImpl(visitor);
-}
-
-JSC_DEFINE_HOST_FUNCTION(InternalModuleRegistry::jsRequireId, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
+// This is called like @getInternalField(@internalModuleRegistry, 1) ?? @createInternalModuleById(1)
+// so we want to write it to the internal field when loaded.
+JSC_DEFINE_HOST_FUNCTION(InternalModuleRegistry::jsCreateInternalModuleById, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
     auto id = callframe->argument(0).toUInt32(lexicalGlobalObject);
-    auto module = static_cast<Zig::GlobalObject*>(lexicalGlobalObject)->internalModuleRegistry.get(lexicalGlobalObject, id);
+    auto registry = static_cast<Zig::GlobalObject*>(lexicalGlobalObject)->internalModuleRegistry();
+    auto module = registry->createInternalModuleById(lexicalGlobalObject, lexicalGlobalObject->vm(), static_cast<Field>(id));
+    registry->internalField(static_cast<Field>(id)).set(lexicalGlobalObject->vm(), registry, module);
     return JSValue::encode(module);
 }
 

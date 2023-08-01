@@ -2,31 +2,17 @@
 // "readable-stream" npm package
 // just transpiled and debug logs added.
 
-const { EventEmitter: EE } = $lazy("events");
+const { callerSourceOrigin } = require("bun:jsc");
+
+const EE = $lazy("events");
 const StringDecoder = require("node:string_decoder").StringDecoder;
 
-var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
 
 var __commonJS = (cb, mod) =>
   function __require2() {
     return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
   };
-var __copyProps = (to, from, except, desc) => {
-  if ((from && typeof from === "object") || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, {
-          get: () => from[key],
-          set: val => (from[key] = val),
-          enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,
-          configurable: true,
-        });
-  }
-  return to;
-};
 
 var runOnNextTick = process.nextTick;
 
@@ -37,6 +23,8 @@ function isReadableStream(value) {
 function validateBoolean(value, name) {
   if (typeof value !== "boolean") throw new ERR_INVALID_ARG_TYPE(name, "boolean", value);
 }
+
+$debug("node:stream loaded");
 
 /**
  * @callback validateObject
@@ -2017,6 +2005,7 @@ var require_legacy = __commonJS({
       if (!(this instanceof Stream)) return new Stream(options);
       EE.call(this, options);
     }
+    Stream.prototype = {};
     ObjectSetPrototypeOf(Stream.prototype, EE.prototype);
     ObjectSetPrototypeOf(Stream, EE);
 
@@ -2295,6 +2284,7 @@ var require_readable = __commonJS({
         }
       });
     }
+    Readable.prototype = {};
     ObjectSetPrototypeOf(Readable.prototype, Stream.prototype);
     ObjectSetPrototypeOf(Readable, Stream);
 
@@ -3456,6 +3446,7 @@ var require_writable = __commonJS({
         finishMaybe(this, state);
       });
     }
+    Writable.prototype = {};
     ObjectSetPrototypeOf(Writable.prototype, Stream.prototype);
     ObjectSetPrototypeOf(Writable, Stream);
     module.exports = Writable;
@@ -3499,6 +3490,7 @@ var require_writable = __commonJS({
       this.closeEmitted = false;
       this[kOnFinished] = [];
     }
+    WritableState.prototype = {};
     function resetBuffer(state) {
       state.buffered = [];
       state.bufferedIndex = 0;
@@ -4418,8 +4410,8 @@ var require_duplex = __commonJS({
         this.allowHalfOpen = true;
       }
     }
+    Duplex.prototype = {};
     module.exports = Duplex;
-
     ObjectSetPrototypeOf(Duplex.prototype, Readable.prototype);
     ObjectSetPrototypeOf(Duplex, Readable);
 
@@ -4496,6 +4488,7 @@ var require_transform = __commonJS({
 
       this.on("prefinish", prefinish.bind(this));
     }
+    Transform.prototype = {};
     ObjectSetPrototypeOf(Transform.prototype, Duplex.prototype);
     ObjectSetPrototypeOf(Transform, Duplex);
 
@@ -4582,6 +4575,7 @@ var require_passthrough = __commonJS({
       if (!(this instanceof PassThrough)) return new PassThrough(options);
       Transform.call(this, options);
     }
+    PassThrough.prototype = {};
 
     ObjectSetPrototypeOf(PassThrough.prototype, Transform.prototype);
     ObjectSetPrototypeOf(PassThrough, Transform);
@@ -5583,7 +5577,6 @@ var NativeWritable = class NativeWritable extends Writable {
 
 const exports = require_stream();
 const promises = require_promises();
-const originalDestroy = exports.Readable.destroy;
 exports._getNativeReadableStreamPrototype = getNativeReadableStreamPrototype;
 exports.NativeWritable = NativeWritable;
 Object.defineProperty(exports, "promises", {
@@ -5596,5 +5589,12 @@ Object.defineProperty(exports, "promises", {
 
 exports[Symbol.for("::bunternal::")] = { _ReadableFromWeb, _ReadableFromWebForUndici };
 exports.eos = require_end_of_stream();
+
+function bruh(params) {
+  console.log(callerSourceOrigin());
+}
+
+console.log(callerSourceOrigin());
+bruh();
 
 export default exports;

@@ -129,6 +129,7 @@ interface LoaderEntry {
   evaluated: boolean;
   then?: any;
   isAsync: boolean;
+  isSatisfied: boolean;
 }
 
 interface LoaderModule {

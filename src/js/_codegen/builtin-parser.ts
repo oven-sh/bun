@@ -20,15 +20,20 @@ export function sliceSourceCode(
   while (contents.length) {
     const match = contents.match(
       endOnComma && bracketCount <= 1
-        ? /([(,=;:{]\s*)\/[^\/\*]|\/\*|\/\/|['"}`\),]|(?<!\$)\brequire\(/
-        : /([(,=;:{]\s*)\/[^\/\*]|\/\*|\/\/|['"}`\)]|(?<!\$)\brequire\(/,
+        ? /((?:[(,=;:{]|return|\=\>)\s*)\/[^\/\*]|\/\*|\/\/|['"}`\),]|(?<!\$)\brequire\(|(\$assert\(|\$debug\()/
+        : /((?:[(,=;:{]|return|\=\>)\s*)\/[^\/\*]|\/\*|\/\/|['"}`\)]|(?<!\$)\brequire\(|(\$assert\(|\$debug\()/,
     );
     i = match?.index ?? contents.length;
+    if (match?.[2]) {
+      i += match[2].length - 1;
+    }
     bracketCount += [...contents.slice(0, i).matchAll(/[({]/g)].length;
-    const chunk = replace ? applyReplacements(contents, i) : [contents.slice(0, i), contents.slice(0, i)];
+    const chunk = replace ? applyReplacements(contents, i) : [contents.slice(0, i), contents.slice(i)];
     result += chunk[0];
     contents = chunk[1] as string;
-    if (chunk[2]) continue;
+    if (chunk[2]) {
+      continue;
+    }
     if (match?.[1]) {
       if (match[1].startsWith("(") || match[1].startsWith(",")) {
         bracketCount++;
@@ -76,6 +81,11 @@ export function sliceSourceCode(
       if (bracketCount <= 1) {
         result += ",";
         contents = contents.slice(1);
+        // if the next non-whitespace character is ), also consume
+        let match = contents.match(/^\s*\)/);
+        if (match) {
+          contents = contents.slice(match[0].length);
+        }
         break;
       }
       i = 1;
@@ -91,9 +101,10 @@ export function sliceSourceCode(
           throw new Error("Require with dynamic specifier not supported here.");
         }
       } else {
-        i = 1;
+        throw new Error("Require is not supported here.");
       }
     } else {
+      console.error(contents.slice(0, 100));
       throw new Error("TODO");
     }
     result += contents.slice(0, i);

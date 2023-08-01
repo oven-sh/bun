@@ -431,6 +431,7 @@ function resolve(hostname, rrtype, callback) {
 function Resolver(options) {
   return new InternalResolver(options);
 }
+Resolver.prototype = {};
 Object.setPrototypeOf(Resolver.prototype, InternalResolver.prototype);
 Object.setPrototypeOf(Resolver, InternalResolver);
 

@@ -244,9 +244,9 @@ using namespace JSC;
     macro(writer) \
     macro(writing) \
     macro(written) \
-    macro(requireBuiltin) \
-    macro(requireId) \
-    macro(createAndLoadBuiltinModule) \
+    macro(createInternalModuleById) \
+    macro(internalModuleRegistry) \
+    macro(requireNativeModule) \
 
 class BunBuiltinNames {
 public:

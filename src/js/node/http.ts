@@ -1,6 +1,7 @@
 // Hardcoded module "node:http"
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
+const { Duplex, Readable, Writable } = require("node:stream");
 
 const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
 /**

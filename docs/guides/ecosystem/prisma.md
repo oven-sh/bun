@@ -2,7 +2,7 @@
 name: Get started using Prisma
 ---
 
-Prisma works our of the box with Bun. First, create a directory and initialize it with `bun init`.
+Prisma works out of the box with Bun. First, create a directory and initialize it with `bun init`.
 
 ```bash
 mkdir prisma-app

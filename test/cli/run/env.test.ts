@@ -338,3 +338,12 @@ test(".env in a folder doesn't throw an error", () => {
   const { stdout } = bunRun(`${dir}/index.ts`);
   expect(stdout).toBe("hey");
 });
+
+test("#3911", () => {
+  const dir = tempDirWithFiles("dotenv", {
+    ".env": 'KEY="a\\nb"',
+    "index.ts": "console.log(process.env.KEY);",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(stdout).toBe("a\nb");
+});

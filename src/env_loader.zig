@@ -647,12 +647,12 @@ const Parser = struct {
                                         'n' => {
                                             value_buffer[ptr] = '\n';
                                             ptr += 1;
-                                            i += 1;
+                                            i += 2;
                                         },
                                         'r' => {
                                             value_buffer[ptr] = '\r';
                                             ptr += 1;
-                                            i += 1;
+                                            i += 2;
                                         },
                                         else => {
                                             value_buffer[ptr] = this.src[i];

@@ -6,7 +6,7 @@ test("postMessage results in correct event", done => {
     expect(e).toBeInstanceOf(MessageEvent);
     expect(e.target).toBe(c2);
     expect(e.type).toBe("message");
-    expect(e.origin).toBe(null);
+    expect(e.origin).toBe("");
     expect(e.data).toBe("hello world");
     expect(e.source).toBe(null);
     done();
@@ -121,4 +121,22 @@ test("Closing a channel in onmessage prevents already queued tasks from firing o
   });
   c1.postMessage("first");
   c1.postMessage("done");
+});
+
+test("broadcast channel used with workers", done => {
+  var bc = new BroadcastChannel("hello test");
+  var count = 0;
+  var workersCount = 100;
+  bc.onmessage = (e: MessageEvent) => {
+    expect(e).toBeInstanceOf(MessageEvent);
+    expect(e.target).toBe(bc);
+    expect(e.data).toBe("hello from worker");
+    if (++count == workersCount) {
+      bc.close();
+      done();
+    }
+  };
+  for (var i = 0; i < workersCount; i++) {
+    new Worker(new URL("./broadcast-channel-worker.ts", import.meta.url).href);
+  }
 });

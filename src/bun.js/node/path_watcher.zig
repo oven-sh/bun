@@ -25,7 +25,7 @@ pub const PathWatcherManager = struct {
     const options = @import("../../options.zig");
     pub const Watcher = GenericWatcher.NewWatcher(*PathWatcherManager);
     const log = Output.scoped(.PathWatcherManager, false);
-    main_watcher: *Watcher,
+    main_watcher: ?*Watcher,
 
     watchers: bun.BabyList(?*PathWatcher) = .{},
     watcher_count: u32 = 0,
@@ -104,22 +104,23 @@ pub const PathWatcherManager = struct {
             return err;
         };
         errdefer watchers.deinitWithAllocator(bun.default_allocator);
+        const main_watcher = try Watcher.init(
+            this,
+            vm.bundler.fs,
+            bun.default_allocator,
+        );
         var manager = PathWatcherManager{
             .file_paths = bun.StringHashMap(PathInfo).init(bun.default_allocator),
             .current_fd_task = bun.FDHashMap(*DirectoryRegisterTask).init(bun.default_allocator),
             .watchers = watchers,
-            .main_watcher = try Watcher.init(
-                this,
-                vm.bundler.fs,
-                bun.default_allocator,
-            ),
+            .main_watcher = main_watcher,
             .vm = vm,
             .watcher_count = 0,
             .mutex = Mutex.init(),
         };
 
         this.* = manager;
-        try this.main_watcher.start();
+        try main_watcher.start();
         return this;
     }
 
@@ -136,7 +137,7 @@ pub const PathWatcherManager = struct {
         const kinds = slice.items(.kind);
         var _on_file_update_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-        var ctx = this.main_watcher;
+        var ctx = this.main_watcher.?;
         defer ctx.flushEvictions();
 
         const timestamp = std.time.milliTimestamp();
@@ -319,9 +320,10 @@ pub const PathWatcherManager = struct {
         default_manager_mutex.lock();
         defer default_manager_mutex.unlock();
         default_manager = null;
-
-        // deinit manager when all watchers are closed
         this.mutex.unlock();
+        // watcher will be in a invalid state
+        this.main_watcher = null;
+        // deinit when no more watchers are registered
         this.deinit();
     }
 
@@ -441,7 +443,12 @@ pub const PathWatcherManager = struct {
 
                 // we need to call this unlocked
                 if (child_path.is_file) {
-                    try manager.main_watcher.addFile(child_path.fd, child_path.path, child_path.hash, options.Loader.file, 0, null, false);
+                    if (manager.main_watcher) |main_watcher| {
+                        try main_watcher.addFile(child_path.fd, child_path.path, child_path.hash, options.Loader.file, 0, null, false);
+                    } else {
+                        // watcher died just stop
+                        break;
+                    }
                 } else {
                     if (watcher.recursive and !watcher.finalized) {
                         // this may trigger another thread with is desired when available to watch long trees
@@ -480,9 +487,13 @@ pub const PathWatcherManager = struct {
     // this should only be called if thread pool is not null
     fn _addDirectory(this: *PathWatcherManager, watcher: *PathWatcher, path: PathInfo) !void {
         const fd = path.fd;
-        try this.main_watcher.addDirectory(fd, path.path, path.hash, false);
+        if (this.main_watcher) |main_watcher| {
+            try main_watcher.addDirectory(fd, path.path, path.hash, false);
 
-        return try DirectoryRegisterTask.schedule(this, watcher, path);
+            return try DirectoryRegisterTask.schedule(this, watcher, path);
+        }
+        watcher.emit("Unable to watch directory", 0, std.time.milliTimestamp(), false, .@"error");
+        watcher.flush();
     }
 
     fn registerWatcher(this: *PathWatcherManager, watcher: *PathWatcher) !void {
@@ -509,15 +520,24 @@ pub const PathWatcherManager = struct {
         this.mutex.unlock();
 
         const path = watcher.path;
-        if (path.is_file) {
-            try this.main_watcher.addFile(path.fd, path.path, path.hash, options.Loader.file, 0, null, false);
-        } else {
-            if (comptime Environment.isMac) {
-                if (watcher.fsevents_watcher != null) {
-                    return;
+        if (this.main_watcher) |main_watcher| {
+            if (path.is_file) {
+                try main_watcher.addFile(path.fd, path.path, path.hash, options.Loader.file, 0, null, false);
+            } else {
+                if (comptime Environment.isMac) {
+                    if (watcher.fsevents_watcher != null) {
+                        return;
+                    }
                 }
+                try this._addDirectory(watcher, path);
             }
-            try this._addDirectory(watcher, path);
+        } else {
+            if (path.is_file) {
+                watcher.emit("Unable to watch file", 0, std.time.milliTimestamp(), false, .@"error");
+            } else {
+                watcher.emit("Unable to watch directory", 0, std.time.milliTimestamp(), false, .@"error");
+            }
+            watcher.flush();
         }
     }
 
@@ -537,7 +557,9 @@ pub const PathWatcherManager = struct {
                 path.refs -= 1;
                 if (path.refs == 0) {
                     const path_ = path.path;
-                    this.main_watcher.remove(path.hash);
+                    if (this.main_watcher) |main_watcher| {
+                        main_watcher.remove(path.hash);
+                    }
                     _ = this.file_paths.remove(path_);
                     bun.default_allocator.free(path_);
                 }
@@ -611,7 +633,9 @@ pub const PathWatcherManager = struct {
             return;
         }
 
-        this.main_watcher.deinit(false);
+        if (this.main_watcher) |main_watcher| {
+            main_watcher.deinit(false);
+        }
 
         if (this.watcher_count > 0) {
             while (this.watchers.popOrNull()) |watcher| {
@@ -739,6 +763,7 @@ pub const PathWatcher = struct {
     }
 
     pub fn emit(this: *PathWatcher, path: string, hash: PathWatcherManager.Watcher.HashType, time_stamp: i64, is_file: bool, event_type: EventType) void {
+        if (this.finalized) return;
         const time_diff = time_stamp - this.last_change_event.time_stamp;
         // skip consecutive duplicates
         if ((this.last_change_event.time_stamp == 0 or time_diff > 1) or this.last_change_event.event_type != event_type and this.last_change_event.hash != hash) {
@@ -752,6 +777,8 @@ pub const PathWatcher = struct {
 
     pub fn flush(this: *PathWatcher) void {
         this.needs_flush = false;
+
+        if (this.finalized) return;
         this.flushCallback(this.ctx);
     }
 

@@ -25,7 +25,7 @@ pub const PathWatcherManager = struct {
     const options = @import("../../options.zig");
     pub const Watcher = GenericWatcher.NewWatcher(*PathWatcherManager);
     const log = Output.scoped(.PathWatcherManager, false);
-    main_watcher: ?*Watcher,
+    main_watcher: *Watcher,
 
     watchers: bun.BabyList(?*PathWatcher) = .{},
     watcher_count: u32 = 0,
@@ -35,6 +35,7 @@ pub const PathWatcherManager = struct {
     deinit_on_last_watcher: bool = false,
     pending_tasks: u32 = 0,
     deinit_on_last_task: bool = false,
+    has_pending_tasks: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
     mutex: Mutex,
     const PathInfo = struct {
         fd: StoredFileDescriptorType = 0,
@@ -45,6 +46,31 @@ pub const PathWatcherManager = struct {
         hash: Watcher.HashType,
     };
 
+    fn refPendingTask(this: *PathWatcherManager) bool {
+        @fence(.Release);
+        this.mutex.lock();
+        defer this.mutex.unlock();
+        if (this.deinit_on_last_task) return false;
+        this.pending_tasks += 1;
+        this.has_pending_tasks.store(true, .Release);
+        return true;
+    }
+
+    fn hasPendingTasks(this: *PathWatcherManager) callconv(.C) bool {
+        @fence(.Acquire);
+        return this.has_pending_tasks.load(.Acquire);
+    }
+
+    fn unrefPendingTask(this: *PathWatcherManager) void {
+        @fence(.Release);
+        this.mutex.lock();
+        defer this.mutex.unlock();
+        this.pending_tasks -= 1;
+        if (this.deinit_on_last_task and this.pending_tasks == 0) {
+            this.has_pending_tasks.store(false, .Release);
+            this.deinit();
+        }
+    }
     // TODO: switch to using JSC.Maybe to avoid using "unreachable" and improve error messages
     fn _fdFromAbsolutePathZ(
         this: *PathWatcherManager,
@@ -104,23 +130,22 @@ pub const PathWatcherManager = struct {
             return err;
         };
         errdefer watchers.deinitWithAllocator(bun.default_allocator);
-        const main_watcher = try Watcher.init(
-            this,
-            vm.bundler.fs,
-            bun.default_allocator,
-        );
         var manager = PathWatcherManager{
             .file_paths = bun.StringHashMap(PathInfo).init(bun.default_allocator),
             .current_fd_task = bun.FDHashMap(*DirectoryRegisterTask).init(bun.default_allocator),
             .watchers = watchers,
-            .main_watcher = main_watcher,
+            .main_watcher = try Watcher.init(
+                this,
+                vm.bundler.fs,
+                bun.default_allocator,
+            ),
             .vm = vm,
             .watcher_count = 0,
             .mutex = Mutex.init(),
         };
 
         this.* = manager;
-        try main_watcher.start();
+        try this.main_watcher.start();
         return this;
     }
 
@@ -137,7 +162,7 @@ pub const PathWatcherManager = struct {
         const kinds = slice.items(.kind);
         var _on_file_update_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-        var ctx = this.main_watcher.?;
+        var ctx = this.main_watcher;
         defer ctx.flushEvictions();
 
         const timestamp = std.time.milliTimestamp();
@@ -303,27 +328,27 @@ pub const PathWatcherManager = struct {
         this: *PathWatcherManager,
         err: anyerror,
     ) void {
-        this.mutex.lock();
-        const watchers = this.watchers.slice();
-        const timestamp = std.time.milliTimestamp();
+        {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+            const watchers = this.watchers.slice();
+            const timestamp = std.time.milliTimestamp();
 
-        // stop all watchers
-        for (watchers) |w| {
-            if (w) |watcher| {
-                log("[watch] error: {s}", .{@errorName(err)});
-                watcher.emit(@errorName(err), 0, timestamp, false, .@"error");
-                watcher.flush();
+            // stop all watchers
+            for (watchers) |w| {
+                if (w) |watcher| {
+                    log("[watch] error: {s}", .{@errorName(err)});
+                    watcher.emit(@errorName(err), 0, timestamp, false, .@"error");
+                    watcher.flush();
+                }
             }
-        }
 
-        // we need a new manager at this point
-        default_manager_mutex.lock();
-        defer default_manager_mutex.unlock();
-        default_manager = null;
-        this.mutex.unlock();
-        // watcher will be in a invalid state
-        this.main_watcher = null;
-        // deinit when no more watchers are registered
+            // we need a new manager at this point
+            default_manager_mutex.lock();
+            defer default_manager_mutex.unlock();
+            default_manager = null;
+        }
+        // deinit manager when all watchers are closed
         this.deinit();
     }
 
@@ -340,46 +365,57 @@ pub const PathWatcherManager = struct {
         }
 
         fn schedule(manager: *PathWatcherManager, watcher: *PathWatcher, path: PathInfo) !void {
-            manager.mutex.lock();
-            defer manager.mutex.unlock();
             // keep the path alive
-            manager._incrementPathRefNoLock(path.path);
+            manager._incrementPathRef(path.path);
             errdefer manager._decrementPathRef(path.path);
+            var routine: *DirectoryRegisterTask = undefined;
+            {
+                manager.mutex.lock();
+                defer manager.mutex.unlock();
 
-            // use the same thread for the same fd to avoid race conditions
-            if (manager.current_fd_task.getEntry(path.fd)) |entry| {
-                var routine = entry.value_ptr.*;
-                watcher.mutex.lock();
-                defer watcher.mutex.unlock();
-                watcher.pending_directories += 1;
-                routine.watcher_list.push(bun.default_allocator, watcher) catch |err| {
-                    watcher.pending_directories -= 1;
+                // use the same thread for the same fd to avoid race conditions
+                if (manager.current_fd_task.getEntry(path.fd)) |entry| {
+                    routine = entry.value_ptr.*;
+
+                    if (watcher.refPendingDirectory()) {
+                        routine.watcher_list.push(bun.default_allocator, watcher) catch |err| {
+                            watcher.unrefPendingDirectory();
+                            return err;
+                        };
+                    } else {
+                        return error.UnexpectedFailure;
+                    }
+                    return;
+                }
+
+                routine = try bun.default_allocator.create(DirectoryRegisterTask);
+                routine.* = DirectoryRegisterTask{
+                    .manager = manager,
+                    .path = path,
+                    .watcher_list = bun.BabyList(*PathWatcher).initCapacity(bun.default_allocator, 1) catch |err| {
+                        bun.default_allocator.destroy(routine);
+                        return err;
+                    },
+                };
+                errdefer routine.deinit();
+                if (watcher.refPendingDirectory()) {
+                    routine.watcher_list.push(bun.default_allocator, watcher) catch |err| {
+                        watcher.unrefPendingDirectory();
+                        return err;
+                    };
+                } else {
+                    return error.UnexpectedFailure;
+                }
+                manager.current_fd_task.put(path.fd, routine) catch |err| {
+                    watcher.unrefPendingDirectory();
                     return err;
                 };
+            }
+            if (manager.refPendingTask()) {
+                JSC.WorkPool.schedule(&routine.task);
                 return;
             }
-            var routine = try bun.default_allocator.create(DirectoryRegisterTask);
-            routine.* = DirectoryRegisterTask{
-                .manager = manager,
-                .path = path,
-                .watcher_list = bun.BabyList(*PathWatcher).initCapacity(bun.default_allocator, 1) catch |err| {
-                    bun.default_allocator.destroy(routine);
-                    return err;
-                },
-            };
-            errdefer routine.deinit();
-            try routine.watcher_list.push(bun.default_allocator, watcher);
-            watcher.mutex.lock();
-            defer watcher.mutex.unlock();
-            watcher.pending_directories += 1;
-
-            manager.current_fd_task.put(path.fd, routine) catch |err| {
-                watcher.pending_directories -= 1;
-                return err;
-            };
-            manager.pending_tasks += 1;
-            JSC.WorkPool.schedule(&routine.task);
-            return;
+            return error.UnexpectedFailure;
         }
 
         fn getNext(this: *DirectoryRegisterTask) ?*PathWatcher {
@@ -407,17 +443,6 @@ pub const PathWatcherManager = struct {
             var iter = (std.fs.IterableDir{ .dir = std.fs.Dir{
                 .fd = fd,
             } }).iterate();
-            defer {
-                watcher.mutex.lock();
-                watcher.pending_directories -= 1;
-
-                if (watcher.pending_directories == 0 and watcher.finalized) {
-                    watcher.mutex.unlock();
-                    watcher.deinit();
-                } else {
-                    watcher.mutex.unlock();
-                }
-            }
 
             // now we iterate over all files and directories
             while (try iter.next()) |entry| {
@@ -433,24 +458,20 @@ pub const PathWatcherManager = struct {
                 var entry_path_z = buf[0..entry_path.len :0];
 
                 var child_path = try manager._fdFromAbsolutePathZ(entry_path_z);
-                watcher.mutex.lock();
-                watcher.file_paths.push(bun.default_allocator, child_path.path) catch |err| {
-                    watcher.mutex.unlock();
-                    manager._decrementPathRef(entry_path_z);
-                    return err;
-                };
-                watcher.mutex.unlock();
+                {
+                    watcher.mutex.lock();
+                    defer watcher.mutex.unlock();
+                    watcher.file_paths.push(bun.default_allocator, child_path.path) catch |err| {
+                        manager._decrementPathRef(entry_path_z);
+                        return err;
+                    };
+                }
 
                 // we need to call this unlocked
                 if (child_path.is_file) {
-                    if (manager.main_watcher) |main_watcher| {
-                        try main_watcher.addFile(child_path.fd, child_path.path, child_path.hash, options.Loader.file, 0, null, false);
-                    } else {
-                        // watcher died just stop
-                        return error.UnexpectedFailure;
-                    }
+                    try manager.main_watcher.addFile(child_path.fd, child_path.path, child_path.hash, options.Loader.file, 0, null, false);
                 } else {
-                    if (watcher.recursive and !watcher.finalized) {
+                    if (watcher.recursive and !watcher.isFinalized()) {
                         // this may trigger another thread with is desired when available to watch long trees
                         try manager._addDirectory(watcher, child_path);
                     }
@@ -462,6 +483,7 @@ pub const PathWatcherManager = struct {
             var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
 
             while (this.getNext()) |watcher| {
+                defer watcher.unrefPendingDirectory();
                 this.processWatcher(watcher, &buf) catch |err| {
                     log("[watch] error registering directory: {s}", .{@errorName(err)});
                     watcher.emit(@errorName(err), 0, std.time.milliTimestamp(), false, .@"error");
@@ -469,14 +491,7 @@ pub const PathWatcherManager = struct {
                 };
             }
 
-            this.manager.mutex.lock();
-            this.manager.pending_tasks -= 1;
-            if (this.manager.deinit_on_last_task and this.manager.pending_tasks == 0) {
-                this.manager.mutex.unlock();
-                this.manager.deinit();
-            } else {
-                this.manager.mutex.unlock();
-            }
+            this.manager.unrefPendingTask();
         }
 
         fn deinit(this: *DirectoryRegisterTask) void {
@@ -487,60 +502,51 @@ pub const PathWatcherManager = struct {
     // this should only be called if thread pool is not null
     fn _addDirectory(this: *PathWatcherManager, watcher: *PathWatcher, path: PathInfo) !void {
         const fd = path.fd;
-        if (this.main_watcher) |main_watcher| {
-            try main_watcher.addDirectory(fd, path.path, path.hash, false);
+        try this.main_watcher.addDirectory(fd, path.path, path.hash, false);
 
-            return try DirectoryRegisterTask.schedule(this, watcher, path);
-        }
-        return error.UnexpectedFailure;
+        return try DirectoryRegisterTask.schedule(this, watcher, path);
     }
 
+    // register is always called form main thread
     fn registerWatcher(this: *PathWatcherManager, watcher: *PathWatcher) !void {
-        this.mutex.lock();
+        {
+            this.mutex.lock();
+            defer this.mutex.unlock();
 
-        if (this.watcher_count == this.watchers.len) {
-            this.watcher_count += 1;
-            this.watchers.push(bun.default_allocator, watcher) catch |err| {
-                this.watcher_count -= 1;
-                this.mutex.unlock();
-                return err;
-            };
-        } else {
-            var watchers = this.watchers.slice();
-            for (watchers, 0..) |w, i| {
-                if (w == null) {
-                    watchers[i] = watcher;
-                    this.watcher_count += 1;
-                    break;
-                }
-            }
-        }
-
-        this.mutex.unlock();
-
-        const path = watcher.path;
-        if (this.main_watcher) |main_watcher| {
-            if (path.is_file) {
-                try main_watcher.addFile(path.fd, path.path, path.hash, options.Loader.file, 0, null, false);
+            if (this.watcher_count == this.watchers.len) {
+                this.watcher_count += 1;
+                this.watchers.push(bun.default_allocator, watcher) catch |err| {
+                    this.watcher_count -= 1;
+                    return err;
+                };
             } else {
-                if (comptime Environment.isMac) {
-                    if (watcher.fsevents_watcher != null) {
-                        return;
+                var watchers = this.watchers.slice();
+                for (watchers, 0..) |w, i| {
+                    if (w == null) {
+                        watchers[i] = watcher;
+                        this.watcher_count += 1;
+                        break;
                     }
                 }
-                try this._addDirectory(watcher, path);
             }
+        }
+
+        const path = watcher.path;
+        if (path.is_file) {
+            try this.main_watcher.addFile(path.fd, path.path, path.hash, options.Loader.file, 0, null, false);
         } else {
-            if (path.is_file) {
-                watcher.emit("Unable to watch file", 0, std.time.milliTimestamp(), false, .@"error");
-            } else {
-                watcher.emit("Unable to watch directory", 0, std.time.milliTimestamp(), false, .@"error");
+            if (comptime Environment.isMac) {
+                if (watcher.fsevents_watcher != null) {
+                    return;
+                }
             }
-            watcher.flush();
+            try this._addDirectory(watcher, path);
         }
     }
 
-    fn _incrementPathRefNoLock(this: *PathWatcherManager, file_path: [:0]const u8) void {
+    fn _incrementPathRef(this: *PathWatcherManager, file_path: [:0]const u8) void {
+        this.mutex.lock();
+        defer this.mutex.unlock();
         if (this.file_paths.getEntry(file_path)) |entry| {
             var path = entry.value_ptr;
             if (path.refs > 0) {
@@ -556,9 +562,7 @@ pub const PathWatcherManager = struct {
                 path.refs -= 1;
                 if (path.refs == 0) {
                     const path_ = path.path;
-                    if (this.main_watcher) |main_watcher| {
-                        main_watcher.remove(path.hash);
-                    }
+                    this.main_watcher.remove(path.hash);
                     _ = this.file_paths.remove(path_);
                     bun.default_allocator.free(path_);
                 }
@@ -572,6 +576,7 @@ pub const PathWatcherManager = struct {
         this._decrementPathRefNoLock(file_path);
     }
 
+    // unregister is always called form main thread
     fn unregisterWatcher(this: *PathWatcherManager, watcher: *PathWatcher) void {
         this.mutex.lock();
         defer this.mutex.unlock();
@@ -600,11 +605,13 @@ pub const PathWatcherManager = struct {
                         }
                     }
 
-                    watcher.mutex.lock();
-                    while (watcher.file_paths.popOrNull()) |file_path| {
-                        this._decrementPathRefNoLock(file_path);
+                    {
+                        watcher.mutex.lock();
+                        defer watcher.mutex.unlock();
+                        while (watcher.file_paths.popOrNull()) |file_path| {
+                            this._decrementPathRefNoLock(file_path);
+                        }
                     }
-                    watcher.mutex.unlock();
                     break;
                 }
             }
@@ -626,15 +633,15 @@ pub const PathWatcherManager = struct {
             return;
         }
 
-        if (this.pending_tasks > 0) {
+        if (this.hasPendingTasks()) {
+            this.mutex.lock();
+            defer this.mutex.unlock();
             // deinit when all tasks are done
             this.deinit_on_last_task = true;
             return;
         }
 
-        if (this.main_watcher) |main_watcher| {
-            main_watcher.deinit(false);
-        }
+        this.main_watcher.deinit(false);
 
         if (this.watcher_count > 0) {
             while (this.watchers.popOrNull()) |watcher| {
@@ -678,9 +685,10 @@ pub const PathWatcher = struct {
     fsevents_watcher: ?*FSEvents.FSEventsWatcher,
     mutex: Mutex,
     pending_directories: u32 = 0,
-    finalized: bool = false,
     // only used on macOS
     resolved_path: ?string = null,
+    has_pending_directories: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
+    finalized: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
     pub const ChangeEvent = struct {
         hash: PathWatcherManager.Watcher.HashType = 0,
         event_type: EventType = .change,
@@ -761,8 +769,45 @@ pub const PathWatcher = struct {
         return this;
     }
 
+    pub fn refPendingDirectory(this: *PathWatcher) bool {
+        @fence(.Release);
+        this.mutex.lock();
+        defer this.mutex.unlock();
+        if (this.isFinalized()) return false;
+        this.pending_directories += 1;
+        this.has_pending_directories.store(true, .Release);
+        return true;
+    }
+
+    pub fn hasPendingDirectories(this: *PathWatcher) callconv(.C) bool {
+        @fence(.Acquire);
+        return this.has_pending_directories.load(.Acquire);
+    }
+
+    pub fn isFinalized(this: *PathWatcher) bool {
+        @fence(.Acquire);
+        return this.finalized.load(.Acquire);
+    }
+
+    pub fn setFinalized(this: *PathWatcher) void {
+        this.mutex.lock();
+        defer this.mutex.unlock();
+        @fence(.Release);
+        this.finalized.store(true, .Release);
+    }
+
+    pub fn unrefPendingDirectory(this: *PathWatcher) void {
+        @fence(.Release);
+        this.mutex.lock();
+        defer this.mutex.unlock();
+        this.pending_directories -= 1;
+        if (this.isFinalized() and this.pending_directories == 0) {
+            this.has_pending_directories.store(false, .Release);
+            this.deinit();
+        }
+    }
+
     pub fn emit(this: *PathWatcher, path: string, hash: PathWatcherManager.Watcher.HashType, time_stamp: i64, is_file: bool, event_type: EventType) void {
-        if (this.finalized) return;
         const time_diff = time_stamp - this.last_change_event.time_stamp;
         // skip consecutive duplicates
         if ((this.last_change_event.time_stamp == 0 or time_diff > 1) or this.last_change_event.event_type != event_type and this.last_change_event.hash != hash) {
@@ -770,26 +815,23 @@ pub const PathWatcher = struct {
             this.last_change_event.event_type = event_type;
             this.last_change_event.hash = hash;
             this.needs_flush = true;
+            if (this.isFinalized()) return;
             this.callback(this.ctx, path, is_file, event_type);
         }
     }
 
     pub fn flush(this: *PathWatcher) void {
         this.needs_flush = false;
-
-        if (this.finalized) return;
+        if (this.isFinalized()) return;
         this.flushCallback(this.ctx);
     }
 
     pub fn deinit(this: *PathWatcher) void {
-        this.mutex.lock();
-        this.finalized = true;
-        if (this.pending_directories > 0) {
+        this.setFinalized();
+        if (this.hasPendingDirectories()) {
             // will be freed on last directory
-            this.mutex.unlock();
             return;
         }
-        this.mutex.unlock();
 
         if (this.manager) |manager| {
             if (comptime Environment.isMac) {

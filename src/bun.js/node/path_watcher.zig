@@ -471,7 +471,7 @@ pub const PathWatcherManager = struct {
                 if (child_path.is_file) {
                     try manager.main_watcher.addFile(child_path.fd, child_path.path, child_path.hash, options.Loader.file, 0, null, false);
                 } else {
-                    if (watcher.recursive and !watcher.isFinalized()) {
+                    if (watcher.recursive and !watcher.isClosed()) {
                         // this may trigger another thread with is desired when available to watch long trees
                         try manager._addDirectory(watcher, child_path);
                     }
@@ -688,7 +688,7 @@ pub const PathWatcher = struct {
     // only used on macOS
     resolved_path: ?string = null,
     has_pending_directories: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
-    finalized: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
+    closed: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
     pub const ChangeEvent = struct {
         hash: PathWatcherManager.Watcher.HashType = 0,
         event_type: EventType = .change,
@@ -773,7 +773,7 @@ pub const PathWatcher = struct {
         @fence(.Release);
         this.mutex.lock();
         defer this.mutex.unlock();
-        if (this.isFinalized()) return false;
+        if (this.isClosed()) return false;
         this.pending_directories += 1;
         this.has_pending_directories.store(true, .Release);
         return true;
@@ -784,16 +784,16 @@ pub const PathWatcher = struct {
         return this.has_pending_directories.load(.Acquire);
     }
 
-    pub fn isFinalized(this: *PathWatcher) bool {
+    pub fn isClosed(this: *PathWatcher) bool {
         @fence(.Acquire);
-        return this.finalized.load(.Acquire);
+        return this.closed.load(.Acquire);
     }
 
-    pub fn setFinalized(this: *PathWatcher) void {
+    pub fn setClosed(this: *PathWatcher) void {
         this.mutex.lock();
         defer this.mutex.unlock();
         @fence(.Release);
-        this.finalized.store(true, .Release);
+        this.closed.store(true, .Release);
     }
 
     pub fn unrefPendingDirectory(this: *PathWatcher) void {
@@ -801,7 +801,7 @@ pub const PathWatcher = struct {
         this.mutex.lock();
         defer this.mutex.unlock();
         this.pending_directories -= 1;
-        if (this.isFinalized() and this.pending_directories == 0) {
+        if (this.isClosed() and this.pending_directories == 0) {
             this.has_pending_directories.store(false, .Release);
             this.deinit();
         }
@@ -815,19 +815,19 @@ pub const PathWatcher = struct {
             this.last_change_event.event_type = event_type;
             this.last_change_event.hash = hash;
             this.needs_flush = true;
-            if (this.isFinalized()) return;
+            if (this.isClosed()) return;
             this.callback(this.ctx, path, is_file, event_type);
         }
     }
 
     pub fn flush(this: *PathWatcher) void {
         this.needs_flush = false;
-        if (this.isFinalized()) return;
+        if (this.isClosed()) return;
         this.flushCallback(this.ctx);
     }
 
     pub fn deinit(this: *PathWatcher) void {
-        this.setFinalized();
+        this.setClosed();
         if (this.hasPendingDirectories()) {
             // will be freed on last directory
             return;

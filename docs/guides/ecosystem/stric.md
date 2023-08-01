@@ -2,7 +2,15 @@
 name: Build an HTTP server using StricJS and Bun
 ---
 
-[StricJS](https://github.com/bunsvr) is a minimalist, fast web framework for Bun. Use `bun init` to create an empty project.
+[StricJS](https://github.com/bunsvr) is a Bun framework for building high-performance web applications and APIs.
+
+- **Fast** — Stric is one of the fastest Bun frameworks. See [benchmark](https://github.com/bunsvr/benchmark) for more details.
+- **Minimal** — The basic components like `@stricjs/router` and `@stricjs/utils` are under 50kB and require no external dependencies.
+- **Extensible** — Stric includes with a plugin system, dependency injection, and optional optimizations for handling requests.
+
+---
+
+Use `bun init` to create an empty project.
 
 ```bash
 $ mkdir myapp

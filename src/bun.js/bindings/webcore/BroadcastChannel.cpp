@@ -26,6 +26,7 @@
 #include "config.h"
 #include "BroadcastChannel.h"
 
+#include "BunClientData.h"
 #include "BroadcastChannelRegistry.h"
 #include "EventNames.h"
 #include "EventTarget.h"
@@ -43,6 +44,8 @@
 #include <wtf/IsoMallocInlines.h>
 #include <wtf/MainThread.h>
 #include <wtf/Scope.h>
+
+extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 
 namespace WebCore {
 
@@ -165,6 +168,7 @@ BroadcastChannel::BroadcastChannel(ScriptExecutionContext& context, const String
         allBroadcastChannels().add(m_mainThreadBridge->identifier(), this);
     }
     m_mainThreadBridge->registerChannel(context);
+    jsRef(context.jsGlobalObject());
 }
 
 BroadcastChannel::~BroadcastChannel()
@@ -305,6 +309,22 @@ bool BroadcastChannel::isEligibleForMessaging() const
 
     return true;
     // return !downcast<GlobalScope>(*context).isClosing();
+}
+
+void BroadcastChannel::jsRef(JSGlobalObject* lexicalGlobalObject)
+{
+    if (!m_isRef) {
+        m_isRef = true;
+        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
+    }
+}
+
+void BroadcastChannel::jsUnref(JSGlobalObject* lexicalGlobalObject)
+{
+    if (m_isRef) {
+        m_isRef = false;
+        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
+    }
 }
 
 } // namespace WebCore

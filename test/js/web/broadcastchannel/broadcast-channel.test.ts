@@ -15,6 +15,17 @@ test("postMessage results in correct event", done => {
   c1.postMessage("hello world");
 });
 
+test("broadcast channel properties", () => {
+  let c1 = new BroadcastChannel("props");
+  expect(c1.name).toBe("props");
+  expect(c1.onmessage).toBe(null);
+  expect(c1.onmessageerror).toBe(null);
+  expect(c1.close).toBeInstanceOf(Function);
+  expect(c1.postMessage).toBeInstanceOf(Function);
+  expect(c1.ref).toBeInstanceOf(Function);
+  expect(c1.unref).toBeInstanceOf(Function);
+});
+
 test("messages are delivered in port creation order", done => {
   let c1 = new BroadcastChannel("order");
   let c2 = new BroadcastChannel("order");

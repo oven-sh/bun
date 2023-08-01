@@ -56,6 +56,8 @@ using namespace JSC;
 
 static JSC_DECLARE_HOST_FUNCTION(jsBroadcastChannelPrototypeFunction_postMessage);
 static JSC_DECLARE_HOST_FUNCTION(jsBroadcastChannelPrototypeFunction_close);
+static JSC_DECLARE_HOST_FUNCTION(jsBroadcastChannelPrototypeFunction_ref);
+static JSC_DECLARE_HOST_FUNCTION(jsBroadcastChannelPrototypeFunction_unref);
 
 // Attributes
 
@@ -152,6 +154,8 @@ static const HashTableValue JSBroadcastChannelPrototypeTableValues[] = {
     { "onmessageerror"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsBroadcastChannel_onmessageerror, setJSBroadcastChannel_onmessageerror } },
     { "postMessage"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBroadcastChannelPrototypeFunction_postMessage, 1 } },
     { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBroadcastChannelPrototypeFunction_close, 0 } },
+    { "ref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBroadcastChannelPrototypeFunction_ref, 0 } },
+    { "unref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBroadcastChannelPrototypeFunction_unref, 0 } },
 };
 
 const ClassInfo JSBroadcastChannelPrototype::s_info = { "BroadcastChannel"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBroadcastChannelPrototype) };
@@ -293,12 +297,43 @@ static inline JSC::EncodedJSValue jsBroadcastChannelPrototypeFunction_closeBody(
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
+    impl.jsUnref(lexicalGlobalObject);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.close(); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototypeFunction_close, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSBroadcastChannel>::call<jsBroadcastChannelPrototypeFunction_closeBody>(*lexicalGlobalObject, *callFrame, "close");
+}
+
+static inline JSC::EncodedJSValue jsBroadcastChannelPrototypeFunction_refBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBroadcastChannel>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->wrapped();
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.jsRef(lexicalGlobalObject); })));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototypeFunction_ref, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSBroadcastChannel>::call<jsBroadcastChannelPrototypeFunction_refBody>(*lexicalGlobalObject, *callFrame, "ref");
+}
+
+static inline JSC::EncodedJSValue jsBroadcastChannelPrototypeFunction_unrefBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBroadcastChannel>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->wrapped();
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.jsUnref(lexicalGlobalObject); })));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototypeFunction_unref, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSBroadcastChannel>::call<jsBroadcastChannelPrototypeFunction_unrefBody>(*lexicalGlobalObject, *callFrame, "unref");
 }
 
 JSC::GCClient::IsoSubspace* JSBroadcastChannel::subspaceForImpl(JSC::VM& vm)

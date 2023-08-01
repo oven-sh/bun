@@ -70,6 +70,9 @@ public:
 
     bool hasPendingActivity() const;
 
+    void jsRef(JSGlobalObject*);
+    void jsUnref(JSGlobalObject*);
+
 private:
     BroadcastChannel(ScriptExecutionContext&, const String& name);
 
@@ -99,6 +102,7 @@ private:
     Ref<MainThreadBridge> m_mainThreadBridge;
     bool m_isClosed { false };
     bool m_hasRelevantEventListener { false };
+    bool m_isRef { false };
     ScriptExecutionContextIdentifier m_contextId;
 };
 

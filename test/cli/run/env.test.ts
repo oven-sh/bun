@@ -380,7 +380,7 @@ describe("boundary tests", () => {
       "index.ts": "console.log(process.env.KEY);",
     });
     const { stdout: stdout2 } = bunRunWithoutTrim(`${dir2}/index.ts`);
-    // should be "a\n\n but console.log adds a newline
+    // should be "a\n but console.log adds a newline
     expect(stdout2).toBe('"a\n\n');
   });
 

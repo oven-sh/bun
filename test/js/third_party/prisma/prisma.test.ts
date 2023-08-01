@@ -108,6 +108,9 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
         expect(user?.testId).toBe(testId);
 
         const usersWithPosts = await prisma.user.findMany({
+          where: {
+            testId,
+          },
           include: {
             posts: true,
           },

@@ -386,13 +386,21 @@ describe("boundary tests", () => {
 
   test("buffer boundary", () => {
     const expected = "a".repeat(4094);
-    const content = expected + "a";
+    let content = expected + "a";
     const dir = tempDirWithFiles("dotenv", {
       ".env": `KEY="${content}"`,
       "index.ts": "console.log(process.env.KEY);",
     });
     const { stdout } = bunRun(`${dir}/index.ts`);
+
+    content = expected + "\\n";
+    const dir2 = tempDirWithFiles("dotenv", {
+      ".env": `KEY="${content}"`,
+      "index.ts": "console.log(process.env.KEY);",
+    });
+    const { stdout: stdout2 } = bunRun(`${dir2}/index.ts`);
     // should be truncated
     expect(stdout).toBe(expected);
+    expect(stdout2).toBe(expected);
   });
 });

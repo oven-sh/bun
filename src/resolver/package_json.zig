@@ -1248,6 +1248,7 @@ pub const ESModule = struct {
     conditions: ConditionsMap,
     allocator: std.mem.Allocator,
     module_type: *options.ModuleType = undefined,
+    prefer_module_field_in_exports: bool,
 
     pub const Resolution = struct {
         status: Status = Status.Undefined,
@@ -1767,6 +1768,8 @@ pub const ESModule = struct {
                 var did_find_map_entry = false;
                 var last_map_entry_i: usize = 0;
 
+                var module_resolution: ?Resolution = null;
+
                 const slice = object.list.slice();
                 const keys = slice.items(.key);
                 for (keys, 0..) |key, i| {
@@ -1792,12 +1795,30 @@ pub const ESModule = struct {
                             r.module_type.* = .cjs;
                         }
 
+                        if (strings.eqlComptime(key, "module")) {
+                            if (r.prefer_module_field_in_exports) {
+                                r.module_type.* = .esm;
+                                return result;
+                            }
+
+                            // Node will not choose the "module" field in "exports". If it's not preferred, bun will
+                            // use the "module" field if no other conditions match. This behavior is similar to
+                            // the top-level "module" field.
+                            module_resolution = result;
+                            continue;
+                        }
+
                         return result;
                     }
 
                     if (r.debug_logs) |log| {
                         log.addNoteFmt("The key \"{s}\" did not match", .{key});
                     }
+                }
+
+                if (module_resolution) |result| {
+                    r.module_type.* = .esm;
+                    return result;
                 }
 
                 if (r.debug_logs) |log| {

@@ -6836,4 +6836,77 @@ describe("bundler", () => {
       stdout: "5 9 2 7",
     },
   });
+  const fooNodeModule = {
+    "/node_modules/foo/package.json": `
+      {
+        "name": "foo",
+        "version": "2.0.0",
+        "exports": {
+          ".": {
+            "module": "./import.js",
+            "require": "./require.js",
+            "import": "./import.js"
+          }
+        }
+      }
+    `,
+    "/node_modules/foo/import.js": `
+      export const foo = 'import';
+    `,
+    "/node_modules/foo/require.js": `
+      export const foo = 'require';
+    `,
+  };
+  itBundled("default/ExportFieldWithModuleRuntimeImport", {
+    files: {
+      "/entry.js": `
+        import { foo } from 'foo';
+        console.log(foo);
+      `,
+      ...fooNodeModule,
+    },
+    bundling: false,
+    run: {
+      stdout: "import",
+    },
+  });
+  itBundled("default/ExportsFieldWithModuleBundleImport", {
+    files: {
+      "/entry.js": `
+        import { foo } from 'foo';
+        console.log(foo);
+      `,
+      ...fooNodeModule,
+    },
+    bundling: true,
+    run: {
+      stdout: "import",
+    },
+  });
+  itBundled("default/ExportsFieldWithModuleRuntimeRequire", {
+    files: {
+      "/entry.js": `
+        const { foo } = require('foo');
+        console.log(foo);
+      `,
+      ...fooNodeModule,
+    },
+    bundling: false,
+    run: {
+      stdout: "require",
+    },
+  });
+  itBundled("default/ExportsFieldWithModuleBundleRequire", {
+    files: {
+      "/entry.js": `
+        const { foo } = require('foo');
+        console.log(foo);
+      `,
+      ...fooNodeModule,
+    },
+    bundling: true,
+    run: {
+      stdout: "import",
+    },
+  });
 });

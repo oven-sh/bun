@@ -1610,6 +1610,7 @@ pub const Resolver = struct {
                                     .allocator = r.allocator,
                                     .debug_logs = if (r.debug_logs) |*debug| debug else null,
                                     .module_type = &module_type,
+                                    .prefer_module_field_in_exports = r.prefer_module_field,
                                 };
 
                                 // Resolve against the path "/", then join it with the absolute
@@ -1875,6 +1876,7 @@ pub const Resolver = struct {
                                         debug
                                     else
                                         null,
+                                    .prefer_module_field_in_exports = r.prefer_module_field,
                                 };
 
                                 // Resolve against the path "/", then join it with the absolute
@@ -2853,6 +2855,7 @@ pub const Resolver = struct {
             .allocator = r.allocator,
             .debug_logs = if (r.debug_logs) |*debug| debug else null,
             .module_type = &module_type,
+            .prefer_module_field_in_exports = r.prefer_module_field,
         };
 
         const esm_resolution = esmodule.resolveImports(import_path, imports_map.root);

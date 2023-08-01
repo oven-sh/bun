@@ -839,15 +839,15 @@ class ClientRequest extends OutgoingMessage {
       this.#body = chunk, callback();
       return;
     }
-    this.#body = body + chunk, callback();
+    this.#body = Buffer.concat([body, chunk]), callback();
   }
   _writev(chunks, callback) {
     var body = this.#body;
     if (!body) {
-      this.#body = chunks.join(), callback();
+      this.#body = Buffer.concat(chunks), callback();
       return;
     }
-    this.#body = body + chunks.join(), callback();
+    this.#body = Buffer.concat([body, ...chunks]), callback();
   }
   _final(callback) {
     if (this.#finished = !0, this[kAbortController] = new AbortController, this[kAbortController].signal.addEventListener("abort", () => {

@@ -1214,7 +1214,7 @@ export class ClientRequest extends OutgoingMessage {
   #path;
   #socketPath;
 
-  #body: string | null = null;
+  #body: Buffer | null = null;
   #fetchRequest;
   #signal: AbortSignal | null = null;
   [kAbortController]: AbortController | null = null;
@@ -1249,18 +1249,18 @@ export class ClientRequest extends OutgoingMessage {
       callback();
       return;
     }
-    this.#body = body + chunk;
+    this.#body = Buffer.concat([body, chunk]);
     callback();
   }
 
   _writev(chunks, callback) {
     var body = this.#body;
     if (!body) {
-      this.#body = chunks.join();
+      this.#body = Buffer.concat(chunks);
       callback();
       return;
     }
-    this.#body = body + chunks.join();
+    this.#body = Buffer.concat([body, ...chunks]);
     callback();
   }
 

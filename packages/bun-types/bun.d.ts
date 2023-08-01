@@ -68,7 +68,7 @@ declare module "bun" {
   export function which(
     command: string,
     options?: { PATH?: string; cwd?: string },
-  ): string;
+  ): string | null;
 
   export type Serve<WebSocketDataType = undefined> =
     | ServeOptions

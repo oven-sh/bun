@@ -447,7 +447,7 @@ pub const PathWatcherManager = struct {
                         try main_watcher.addFile(child_path.fd, child_path.path, child_path.hash, options.Loader.file, 0, null, false);
                     } else {
                         // watcher died just stop
-                        break;
+                        return error.UnexpectedFailure;
                     }
                 } else {
                     if (watcher.recursive and !watcher.finalized) {
@@ -492,8 +492,7 @@ pub const PathWatcherManager = struct {
 
             return try DirectoryRegisterTask.schedule(this, watcher, path);
         }
-        watcher.emit("Unable to watch directory", 0, std.time.milliTimestamp(), false, .@"error");
-        watcher.flush();
+        return error.UnexpectedFailure;
     }
 
     fn registerWatcher(this: *PathWatcherManager, watcher: *PathWatcher) !void {

@@ -36,10 +36,10 @@ class SerializedScriptValue;
 
 class BroadcastChannelRegistry : public RefCounted<BroadcastChannelRegistry> {
 public:
-    virtual ~BroadcastChannelRegistry() { }
-    virtual void registerChannel(const PartitionedSecurityOrigin&, const String& name, BroadcastChannelIdentifier) = 0;
-    virtual void unregisterChannel(const PartitionedSecurityOrigin&, const String& name, BroadcastChannelIdentifier) = 0;
-    virtual void postMessage(const PartitionedSecurityOrigin&, const String& name, BroadcastChannelIdentifier source, Ref<SerializedScriptValue>&&, CompletionHandler<void()>&&) = 0;
+    virtual ~BroadcastChannelRegistry() {}
+    virtual void registerChannel(const String& name, BroadcastChannelIdentifier) = 0;
+    virtual void unregisterChannel(const String& name, BroadcastChannelIdentifier) = 0;
+    virtual void postMessage(const String& name, BroadcastChannelIdentifier source, Ref<SerializedScriptValue>&&) = 0;
 };
 
 } // namespace WebCore

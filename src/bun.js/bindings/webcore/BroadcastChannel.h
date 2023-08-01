@@ -64,7 +64,7 @@ public:
     ExceptionOr<void> postMessage(JSC::JSGlobalObject&, JSC::JSValue message);
     void close();
 
-    WEBCORE_EXPORT static void dispatchMessageTo(BroadcastChannelIdentifier, Ref<SerializedScriptValue>&&, CompletionHandler<void()>&&);
+    WEBCORE_EXPORT static void dispatchMessageTo(BroadcastChannelIdentifier, Ref<SerializedScriptValue>&&);
 
     static ScriptExecutionContextIdentifier contextIdForBroadcastChannelId(BroadcastChannelIdentifier);
 
@@ -99,6 +99,7 @@ private:
     Ref<MainThreadBridge> m_mainThreadBridge;
     bool m_isClosed { false };
     bool m_hasRelevantEventListener { false };
+    ScriptExecutionContextIdentifier m_contextId;
 };
 
 } // namespace WebCore

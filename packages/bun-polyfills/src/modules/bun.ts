@@ -170,7 +170,6 @@ export const write = (async (dest: BunFileBlob | PathLike, input: string | Blob 
     }
 }) satisfies typeof Bun.write;
 
-// @ts-expect-error bun-types mistake (TypedArray should be Uint8Array on SHA512_256.hash)
 export const sha = SHA512_256.hash satisfies typeof Bun.sha;
 
 export const nanoseconds = (() => Math.trunc(performance.now() * 1000000)) satisfies typeof Bun.nanoseconds;
@@ -193,7 +192,6 @@ export const which = ((cmd: string, options) => {
     if (!result || !options?.cwd) return result;
     if (path.normalize(result).includes(path.normalize(options.cwd))) return result;
     else return null;
-    // @ts-expect-error bun-types is missing the null on the return type
 }) satisfies typeof Bun.which;
 
 export const spawn = ((...args) => {

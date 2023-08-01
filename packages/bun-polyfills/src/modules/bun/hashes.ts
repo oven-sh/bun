@@ -1,10 +1,11 @@
-import type { DigestEncoding } from 'bun';
+import type { CryptoHashInterface, DigestEncoding } from 'bun';
 import { NotImplementedError } from '../../utils/errors.js';
 import murmur from 'murmurhash3js-revisited';
-import nodecrypto from 'crypto';
+import nodecrypto from 'node:crypto';
+import os from 'node:os';
 import crc from '@foxglove/crc';
 import adler32 from 'adler-32';
-import md4, { type Md4 } from 'js-md4';
+import md4, { Md4 } from 'js-md4';
 import { Fingerprint32, Fingerprint64 } from '../../../lib/farmhash/index.mjs';
 
 export const bunHash = ((...args: Parameters<typeof Bun['hash']>): ReturnType<typeof Bun['hash']> => {
@@ -48,37 +49,67 @@ export const bunHashProto: typeof bunHash = {
     }
 };
 
-abstract class BaseHash {
-    constructor(algorithm?: string) {
-        if (algorithm) this.#hash = nodecrypto.createHash(algorithm);
-        // If no algorithm is given, expect the subclass to fully implement its own.
-        else this.#hash = null;
+type HashImpl = {
+    digest(): Buffer;
+    digest(encoding: nodecrypto.BinaryToTextEncoding): string;
+    update(data: nodecrypto.BinaryLike): HashImpl;
+    update(data: string, inputEncoding: nodecrypto.Encoding): HashImpl;
+};
+abstract class BaseHash<T> implements CryptoHashInterface<T> {
+    readonly #hash: HashImpl | null;
+    constructor(algorithm: string | HashImpl) {
+        if (typeof algorithm === 'string') this.#hash = nodecrypto.createHash(algorithm);
+        // If no preset algorithm is given, expect the subclass to fully implement its own.
+        else this.#hash = algorithm;
     }
     update(data: StringOrBuffer) {
         if (data instanceof ArrayBuffer || data instanceof SharedArrayBuffer) this.#hash!.update(new Uint8Array(data));
         else this.#hash!.update(data);
-        return this;
+        return this as unknown as T; // is there any good way to do this without asserting?
     }
     digest(encoding: DigestEncoding): string;
     digest(hashInto?: TypedArray): TypedArray;
     digest(encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
-        if (encodingOrHashInto === undefined) return Uint8Array.from(this.#hash!.digest());
-        if (typeof encodingOrHashInto === 'string') return this.#hash!.digest(encodingOrHashInto);
-        if (encodingOrHashInto instanceof BigInt64Array || encodingOrHashInto instanceof BigUint64Array) {
-            throw new TypeError('Cannot digest BigInt-based TypedArray.');
+        if (typeof encodingOrHashInto === 'string') {
+            const encoded = this.#hash!.digest(encodingOrHashInto);
+            // you'd think node would throw an error if the encoding is invalid, but nope!
+            // instead it silently returns as if you passed no encoding and gives a Buffer...
+            if (Buffer.isBuffer(encoded)) throw new TypeError(`Unknown encoding: "${encodingOrHashInto}"`);
+            else return encoded;
         }
-        encodingOrHashInto.set(this.#hash!.digest());
+        const digested = this.#hash!.digest();
+        if (encodingOrHashInto === undefined) return new Uint8Array(digested.buffer, digested.byteOffset, digested.byteLength);
+        if (encodingOrHashInto.byteLength < this.byteLength) throw new TypeError(`TypedArray must be at least ${this.byteLength} bytes`);
+        if (encodingOrHashInto instanceof BigInt64Array || encodingOrHashInto instanceof BigUint64Array) {
+            // avoid checking endianness for every loop iteration
+            const endianAwareInsert = os.endianness() === 'LE'
+                ? (arr: string[], j: number, num: string) => arr[7 - j] = num
+                : (arr: string[], j: number, num: string) => arr[j] = num;
+
+            for (let i = 0; i < digested.byteLength; i += 8) {
+                const bigintStrArr = ['', '', '', '', '', '', '', ''];
+                for (let j = 0; j < 8; j++) {
+                    const byte = digested[i + j];
+                    if (byte === undefined) break;
+                    endianAwareInsert(bigintStrArr, j, byte.toString(16).padStart(2, '0'));
+                }
+                encodingOrHashInto[i / 8] = BigInt(`0x${bigintStrArr.join('')}`);
+            }
+        } else {
+            const HashIntoTypedArray = encodingOrHashInto.constructor as TypedArrayConstructor;
+            // this will work as long as all hash classes have a byteLength that is a multiple of 4 bytes
+            encodingOrHashInto.set(new HashIntoTypedArray(digested.buffer, digested.byteOffset, digested.byteLength / HashIntoTypedArray.BYTES_PER_ELEMENT));
+        }
         return encodingOrHashInto;
     }
     static hash(data: StringOrBuffer, encoding?: DigestEncoding): string;
     static hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
-    static hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray { return ''; }
+    static hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray { return '' };
     static readonly byteLength: number;
     abstract readonly byteLength: number;
-    readonly #hash: nodecrypto.Hash | null;
 }
 
-export class SHA1 extends BaseHash {
+export class SHA1 extends BaseHash<SHA1> {
     constructor() { super('sha1'); }
     static override readonly byteLength = 20;
     override readonly byteLength = 20;
@@ -86,13 +117,29 @@ export class SHA1 extends BaseHash {
     static override hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
     static override hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
         const instance = new this(); instance.update(data);
-        return typeof encodingOrHashInto === 'string' ? instance.digest(encodingOrHashInto) : instance.digest(encodingOrHashInto);
+        return instance.digest(encodingOrHashInto as DigestEncoding & TypedArray);
     }
 }
-export class MD4 extends BaseHash {
-    constructor() {
-        super(); //! Not supported by nodecrypto
-        this.#hash = md4.create();
+export class MD4 extends BaseHash<MD4> {
+    constructor() { //! Not supported by nodecrypto
+        const hash = md4.create() as unknown as Omit<Md4, 'toString'> & { _update: Md4['update'] };
+        function digest(): Buffer;
+        function digest(encoding: nodecrypto.BinaryToTextEncoding): string;
+        function digest(encoding?: nodecrypto.BinaryToTextEncoding) {
+            const buf = Buffer.from(hash.arrayBuffer());
+            if (encoding) return buf.toString(encoding);
+            else return buf;
+        }
+        function update(data: nodecrypto.BinaryLike) {
+            if (typeof data === 'string') hash._update(data);
+            else if (data instanceof ArrayBuffer || data instanceof SharedArrayBuffer) hash._update(new Uint8Array(data));
+            else hash._update(new Uint8Array(data.buffer));
+            return hash as unknown as MD4HashImpl;
+        }
+        type MD4HashImpl = Omit<Md4, 'toString'> & { digest: typeof digest, update: typeof update };
+        // @ts-expect-error patches to reuse the BaseHash methods
+        hash.digest = digest; hash._update = hash.update; hash.update = update;
+        super(hash as unknown as MD4HashImpl);
     } 
     static override readonly byteLength = 16;
     override readonly byteLength = 16;
@@ -100,34 +147,10 @@ export class MD4 extends BaseHash {
     static override hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
     static override hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
         const instance = new this(); instance.update(data);
-        return typeof encodingOrHashInto === 'string' ? instance.digest(encodingOrHashInto) : instance.digest(encodingOrHashInto);
+        return instance.digest(encodingOrHashInto as DigestEncoding & TypedArray);
     }
-    override update(data: StringOrBuffer) {
-        if (typeof data === 'string') this.#hash.update(data);
-        else if (data instanceof ArrayBuffer || data instanceof SharedArrayBuffer) this.#hash.update(new Uint8Array(data));
-        else this.#hash.update(new Uint8Array(data.buffer));
-        return this;
-    }
-    override digest(encoding: DigestEncoding): string;
-    override digest(hashInto?: TypedArray): TypedArray;
-    override digest(encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
-        if (encodingOrHashInto === undefined) return new Uint8Array(this.#hash.arrayBuffer());
-        if (typeof encodingOrHashInto === 'string') {
-            if (encodingOrHashInto === 'hex') return this.#hash.hex();
-            if (encodingOrHashInto === 'base64') return Buffer.from(this.#hash.hex(), 'hex').toString('base64');
-            const err = new Error(`Unsupported encoding: ${encodingOrHashInto as string}`);
-            Error.captureStackTrace(err, this.digest);
-            throw err;
-        }
-        if (encodingOrHashInto instanceof BigInt64Array || encodingOrHashInto instanceof BigUint64Array) {
-            throw new TypeError('Cannot digest BigInt-based TypedArray.');
-        }
-        encodingOrHashInto.set(this.#hash.array());
-        return encodingOrHashInto;
-    }
-    readonly #hash: Md4;
 }
-export class MD5 extends BaseHash {
+export class MD5 extends BaseHash<MD5> {
     constructor() { super('md5'); }
     static override readonly byteLength = 16;
     override readonly byteLength = 16;
@@ -135,10 +158,10 @@ export class MD5 extends BaseHash {
     static override hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
     static override hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
         const instance = new this(); instance.update(data);
-        return typeof encodingOrHashInto === 'string' ? instance.digest(encodingOrHashInto) : instance.digest(encodingOrHashInto);
+        return instance.digest(encodingOrHashInto as DigestEncoding & TypedArray);
     }
 }
-export class SHA224 extends BaseHash {
+export class SHA224 extends BaseHash<SHA224> {
     constructor() { super('sha224'); }
     static override readonly byteLength = 28;
     override readonly byteLength = 28;
@@ -146,10 +169,10 @@ export class SHA224 extends BaseHash {
     static override hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
     static override hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
         const instance = new this(); instance.update(data);
-        return typeof encodingOrHashInto === 'string' ? instance.digest(encodingOrHashInto) : instance.digest(encodingOrHashInto);
+        return instance.digest(encodingOrHashInto as DigestEncoding & TypedArray);
     }
 }
-export class SHA512 extends BaseHash {
+export class SHA512 extends BaseHash<SHA512> {
     constructor() { super('sha512'); }
     static override readonly byteLength = 64;
     override readonly byteLength = 64;
@@ -157,10 +180,10 @@ export class SHA512 extends BaseHash {
     static override hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
     static override hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
         const instance = new this(); instance.update(data);
-        return typeof encodingOrHashInto === 'string' ? instance.digest(encodingOrHashInto) : instance.digest(encodingOrHashInto);
+        return instance.digest(encodingOrHashInto as DigestEncoding & TypedArray);
     }
 }
-export class SHA384 extends BaseHash {
+export class SHA384 extends BaseHash<SHA384> {
     constructor() { super('sha384'); }
     static override readonly byteLength = 48;
     override readonly byteLength = 48;
@@ -168,10 +191,10 @@ export class SHA384 extends BaseHash {
     static override hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
     static override hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
         const instance = new this(); instance.update(data);
-        return typeof encodingOrHashInto === 'string' ? instance.digest(encodingOrHashInto) : instance.digest(encodingOrHashInto);
+        return instance.digest(encodingOrHashInto as DigestEncoding & TypedArray);
     }
 }
-export class SHA256 extends BaseHash {
+export class SHA256 extends BaseHash<SHA256> {
     constructor() { super('sha256'); }
     static override readonly byteLength = 32;
     override readonly byteLength = 32;
@@ -179,10 +202,10 @@ export class SHA256 extends BaseHash {
     static override hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
     static override hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
         const instance = new this(); instance.update(data);
-        return typeof encodingOrHashInto === 'string' ? instance.digest(encodingOrHashInto) : instance.digest(encodingOrHashInto);
+        return instance.digest(encodingOrHashInto as DigestEncoding & TypedArray);
     }
 }
-export class SHA512_256 extends BaseHash {
+export class SHA512_256 extends BaseHash<SHA512_256> {
     constructor() { super('sha512-256'); }
     static override readonly byteLength = 32;
     override readonly byteLength = 32;
@@ -190,6 +213,6 @@ export class SHA512_256 extends BaseHash {
     static override hash(data: StringOrBuffer, hashInto?: TypedArray): TypedArray;
     static override hash(data: StringOrBuffer, encodingOrHashInto?: DigestEncoding | TypedArray): string | TypedArray {
         const instance = new this(); instance.update(data);
-        return typeof encodingOrHashInto === 'string' ? instance.digest(encodingOrHashInto) : instance.digest(encodingOrHashInto);
+        return instance.digest(encodingOrHashInto as DigestEncoding & TypedArray);
     }
 }

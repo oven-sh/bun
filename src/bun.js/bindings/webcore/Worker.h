@@ -96,6 +96,7 @@ public:
     void dispatchError(WTF::String message);
     void dispatchExit();
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
+    ScriptExecutionContextIdentifier clientIdentifier() const { return m_clientIdentifier; }
 
 private:
     Worker(ScriptExecutionContext&, WorkerOptions&&);

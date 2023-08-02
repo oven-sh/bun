@@ -1,4 +1,4 @@
-export const { MessageChannel } = globalThis;
+export const { MessageChannel, BroadcastChannel } = globalThis;
 
 function injectFakeEmitter(Class) {
   function messageEventHandler(event: MessageEvent) {
@@ -163,6 +163,16 @@ export function setEnvironmentData(env: any) {
   process.env = env;
 }
 
+export function markAsUntransferable() {
+  throw new Error("markAsUntransferable is not implemented");
+}
+
+export function moveMessagePortToContext() {
+  throw new Error("moveMessagePortToContext is not implemented");
+}
+
+export const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
+
 const WebWorker = globalThis.Worker;
 export class Worker extends EventEmitter {
   #worker: globalThis.Worker;
@@ -270,12 +280,17 @@ export default {
   resourceLimits,
   isMainThread,
   MessageChannel,
+  BroadcastChannel,
   MessagePort,
   getEnvironmentData,
   setEnvironmentData,
   getHeapSnapshot() {
     return {};
   },
+  markAsUntransferable,
+  moveMessagePortToContext,
+  receiveMessageOnPort,
+  SHARE_ENV,
 
   threadId,
 };

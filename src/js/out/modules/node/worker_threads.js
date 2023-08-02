@@ -101,9 +101,15 @@ function getEnvironmentData() {
 function setEnvironmentData(env) {
   process.env = env;
 }
-var { MessageChannel } = globalThis, _MessagePort = globalThis.MessagePort;
+function markAsUntransferable() {
+  throw new Error("markAsUntransferable is not implemented");
+}
+function moveMessagePortToContext() {
+  throw new Error("moveMessagePortToContext is not implemented");
+}
+var { MessageChannel, BroadcastChannel } = globalThis, _MessagePort = globalThis.MessagePort;
 injectFakeEmitter(_MessagePort);
-var MessagePort = _MessagePort, isMainThread = Bun.isMainThread, [_workerData, _threadId, _receiveMessageOnPort] = globalThis[Symbol.for("Bun.lazy")]("worker_threads"), parentPort = isMainThread ? null : fakeParentPort(), resourceLimits = {}, workerData = _workerData, threadId = _threadId, WebWorker = globalThis.Worker;
+var MessagePort = _MessagePort, isMainThread = Bun.isMainThread, [_workerData, _threadId, _receiveMessageOnPort] = globalThis[Symbol.for("Bun.lazy")]("worker_threads"), parentPort = isMainThread ? null : fakeParentPort(), resourceLimits = {}, workerData = _workerData, threadId = _threadId, SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV"), WebWorker = globalThis.Worker;
 
 class Worker extends EventEmitter {
   #worker;
@@ -174,12 +180,17 @@ var worker_threads_default = {
   resourceLimits,
   isMainThread,
   MessageChannel,
+  BroadcastChannel,
   MessagePort,
   getEnvironmentData,
   setEnvironmentData,
   getHeapSnapshot() {
     return {};
   },
+  markAsUntransferable,
+  moveMessagePortToContext,
+  receiveMessageOnPort,
+  SHARE_ENV,
   threadId
 };
 export {
@@ -189,10 +200,14 @@ export {
   resourceLimits,
   receiveMessageOnPort,
   parentPort,
+  moveMessagePortToContext,
+  markAsUntransferable,
   isMainThread,
   getEnvironmentData,
   worker_threads_default as default,
   Worker,
+  SHARE_ENV,
   MessagePort,
-  MessageChannel
+  MessageChannel,
+  BroadcastChannel
 };

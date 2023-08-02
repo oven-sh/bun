@@ -15,4 +15,12 @@ test("all properties are present", () => {
   expect(wt).toHaveProperty("MessageChannel");
   expect(wt).toHaveProperty("MessagePort");
   expect(wt).toHaveProperty("Worker");
+
+  expect(() => {
+    wt.markAsUntransferable();
+  }).toThrow("not implemented");
+
+  expect(() => {
+    wt.moveMessagePortToContext();
+  }).toThrow("not implemented");
 });

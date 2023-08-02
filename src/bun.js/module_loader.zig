@@ -2244,7 +2244,7 @@ pub const ModuleLoader = struct {
                 .@"node:zlib" => return jsSyntheticModule(.@"node:zlib", specifier),
                 .@"isomorphic-fetch" => return jsSyntheticModule(.@"isomorphic-fetch", specifier),
                 .@"node-fetch" => return jsSyntheticModule(.@"node-fetch", specifier),
-                .@"@vercel/fetch" => return jsSyntheticModule(.@"vercel_fetch", specifier),
+                .@"@vercel/fetch" => return jsSyntheticModule(.vercel_fetch, specifier),
                 .undici => return jsSyntheticModule(.undici, specifier),
                 .ws => return jsSyntheticModule(.ws, specifier),
             }
@@ -2653,9 +2653,9 @@ pub const HardcodedModule = enum {
             .{ "node:sys", .{ .path = "node:util" } },
             .{ "sys", .{ .path = "node:util" } },
 
-            .{ "node-fetch",  .{ .path = "node-fetch" } },
-            .{ "isomorphic-fetch",  .{ .path = "isomorphic-fetch" } },
-            .{ "@vercel/fetch",  .{ .path = "@vercel/fetch" } },
+            .{ "node-fetch", .{ .path = "node-fetch" } },
+            .{ "isomorphic-fetch", .{ .path = "isomorphic-fetch" } },
+            .{ "@vercel/fetch", .{ .path = "@vercel/fetch" } },
         },
     );
 };

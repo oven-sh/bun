@@ -2,7 +2,7 @@ import type {
     BunPlugin, PluginConstraints, PluginBuilder, OnLoadCallback, OnResolveCallback, HeapSnapshot,
     EditorOptions, SpawnOptions, Subprocess, SyncSubprocess, FileBlob as BunFileBlob, ArrayBufferView
 } from 'bun';
-import type { TextDecoderStream } from 'node:stream/web';
+import { TextDecoderStream } from 'node:stream/web';
 import { NotImplementedError, type SystemError } from '../utils/errors.js';
 import { streamToBuffer, isArrayBufferView, isFileBlob, isOptions } from '../utils/misc.js';
 import dnsPolyfill from './bun/dns.js';
@@ -377,10 +377,9 @@ export const readableStreamToArrayBuffer = ((stream: ReadableStream<ArrayBufferV
         return sink.end() as ArrayBuffer;
     })();
 }) satisfies typeof Bun.readableStreamToArrayBuffer;
-export const readableStreamToText = (async (stream: ReadableStream<ArrayBufferView | ArrayBufferLike>) => {
+export const readableStreamToText = (async (stream: ReadableStream<ArrayBufferView | ArrayBuffer>) => {
     let result = '';
-    // @ts-expect-error Typings conflict
-    const reader = stream.pipeThrough(new TextDecoderStream()).getReader();
+    const reader = stream.pipeThrough(new TextDecoderStream()).getReader(); ReadableStreamDefaultReader
     while (true) {
         const { done, value } = await reader.read();
         //! for some reason "done" isnt being set to true so this is just infinitely looping at the moment... sigh

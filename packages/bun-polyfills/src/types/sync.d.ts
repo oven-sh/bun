@@ -3,3 +3,9 @@
 // Annoyingly, even this file can sometimes break, so if your types are inverted, try restarting TSServer.
 
 import '@types/node';
+
+declare module 'stream/web' {
+    interface ReadableStreamDefaultReader {
+        readMany(): Promise<ReadableStreamDefaultReadManyResult<any>>;
+    }
+}

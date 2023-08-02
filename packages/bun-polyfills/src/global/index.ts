@@ -18,3 +18,28 @@ Reflect.set(globalThis, 'navigator', {
     userAgent: `Bun/${version}`,
     hardwareConcurrency: os.cpus().length,
 });
+
+//? method only available in Bun
+// this isn't quite accurate, but it shouldn't break anything and is currently here just for matching bun and node types
+const ReadableStreamDefaultReaderPrototype = Object.getPrototypeOf(new ReadableStream().getReader());
+Reflect.set(
+    ReadableStreamDefaultReaderPrototype, 'readMany',
+    function readMany(this: ReadableStreamDefaultReader): Promise<ReadableStreamDefaultReadManyResult<any>> {
+        return new Promise((resolve, reject) => {
+            const result: ReadableStreamDefaultReadManyResult<any> = {
+                value: [],
+                size: 0,
+                done: true
+            };
+            this.read().then(({ done, value }) => {
+                if (done) resolve(result);
+                else {
+                    result.value.push(value);
+                    result.size = value.length;
+                    result.done = false;
+                    resolve(result);
+                }
+            }, reject);
+        });
+    }
+);

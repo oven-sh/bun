@@ -1,22 +1,13 @@
 // Hardcoded module "node:util"
-import * as types from "node:util/types";
-export { default as types } from "node:util/types";
+const types = require("node:util/types");
 
 var cjs_exports = {};
-
-export default cjs_exports;
-
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __commonJS = (cb, mod) =>
-  function __require() {
-    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-  };
 
 function isBufferInterface({ copy, fill, readUint8 }) {
   return typeof copy === "function" && typeof fill === "function" && typeof readUint8 === "function";
 }
 
-export function isBuffer(value) {
+function isBuffer(value) {
   return (
     Buffer.isBuffer(value) ||
     // incase it ends up as a browserify buffer
@@ -28,22 +19,6 @@ function isFunction(value) {
   return typeof value === "function";
 }
 
-// node_modules/inherits/inherits_browser.js
-var require_inherits_browser = __commonJS({
-  "node_modules/inherits/inherits_browser.js"(exports, module2) {
-    module2.exports = function inherits(ctor, superCtor) {
-      ctor.super_ = superCtor;
-      ctor.prototype = Object.create(superCtor.prototype, {
-        constructor: {
-          value: ctor,
-          enumerable: false,
-          writable: true,
-          configurable: true,
-        },
-      });
-    };
-  },
-});
 const deepEquals = Bun.deepEquals;
 const isDeepStrictEqual = (a, b) => deepEquals(a, b, true);
 var getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
@@ -244,7 +219,7 @@ function formatValue(ctx, value, recurseTimes) {
   var base = "",
     array = false,
     braces = ["{", "}"];
-  if (isArray(value)) {
+  if ($isArray(value)) {
     array = true;
     braces = ["[", "]"];
   }
@@ -393,10 +368,6 @@ function reduceToSingleString(output, base, braces) {
   return braces[0] + base + " " + output.join(", ") + " " + braces[1];
 }
 
-function isArray(ar) {
-  return Array.isArray(ar);
-}
-
 function isBoolean(arg) {
   return typeof arg === "boolean";
 }
@@ -416,6 +387,7 @@ function isNumber(arg) {
 function isString(arg) {
   return typeof arg === "string";
 }
+
 function isSymbol(arg) {
   return typeof arg === "symbol";
 }
@@ -450,7 +422,17 @@ function timestamp() {
 var log = function log() {
   console.log("%s - %s", timestamp(), format.apply(cjs_exports, arguments));
 };
-var inherits = (inherits = require_inherits_browser());
+var inherits = function inherits(ctor, superCtor) {
+  ctor.super_ = superCtor;
+  ctor.prototype = Object.create(superCtor.prototype, {
+    constructor: {
+      value: ctor,
+      enumerable: false,
+      writable: true,
+      configurable: true,
+    },
+  });
+};
 var _extend = function (origin, add) {
   if (!add || !isObject(add)) return origin;
   var keys = Object.keys(add);
@@ -550,20 +532,18 @@ function callbackify(original) {
   Object.defineProperties(callbackified, getOwnPropertyDescriptors(original));
   return callbackified;
 }
-export var TextDecoder = globalThis.TextDecoder;
-export var TextEncoder = globalThis.TextEncoder;
 var toUSVString = input => {
   return (input + "").toWellFormed();
 };
 
-Object.assign(cjs_exports, {
+export default Object.assign(cjs_exports, {
   format,
   deprecate,
   debuglog,
   _extend,
   inspect,
   types,
-  isArray,
+  isArray: $isArray,
   isBoolean,
   isNull,
   isNullOrUndefined,
@@ -586,32 +566,4 @@ Object.assign(cjs_exports, {
   isDeepStrictEqual,
   TextDecoder,
   TextEncoder,
-  [Symbol.for("CommonJS")]: 0,
 });
-
-export {
-  format,
-  deprecate,
-  debuglog,
-  inspect,
-  isArray,
-  isBoolean,
-  isNull,
-  isNullOrUndefined,
-  isNumber,
-  isString,
-  isSymbol,
-  isUndefined,
-  isRegExp,
-  isObject,
-  isDate,
-  isError,
-  isFunction,
-  isPrimitive,
-  log,
-  inherits,
-  promisify,
-  callbackify,
-  isDeepStrictEqual,
-  toUSVString,
-};

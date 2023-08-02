@@ -4,7 +4,7 @@ import Module from "module";
 
 test("builtinModules exists", () => {
   expect(Array.isArray(builtinModules)).toBe(true);
-  expect(builtinModules).toHaveLength(77);
+  expect(builtinModules).toHaveLength(76);
 });
 
 test("isBuiltin() works", () => {

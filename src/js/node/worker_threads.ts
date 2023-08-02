@@ -1,4 +1,4 @@
-export const { MessageChannel, BroadcastChannel } = globalThis;
+const { MessageChannel, BroadcastChannel } = globalThis;
 
 function injectFakeEmitter(Class) {
   function messageEventHandler(event: MessageEvent) {
@@ -74,17 +74,17 @@ function injectFakeEmitter(Class) {
 const _MessagePort = globalThis.MessagePort;
 injectFakeEmitter(_MessagePort);
 
-export const MessagePort = _MessagePort;
+const MessagePort = _MessagePort;
 
-import EventEmitter from "node:events";
-export const isMainThread = Bun.isMainThread;
+const EventEmitter = require("node:events");
+const isMainThread = Bun.isMainThread;
 let [_workerData, _threadId, _receiveMessageOnPort] = $lazy("worker_threads");
-export let parentPort: MessagePort | null = isMainThread ? null : fakeParentPort();
-export let resourceLimits = {};
+let parentPort: MessagePort | null = isMainThread ? null : fakeParentPort();
+let resourceLimits = {};
 
-export let workerData = _workerData;
-export let threadId = _threadId;
-export function receiveMessageOnPort(port: MessagePort) {
+let workerData = _workerData;
+let threadId = _threadId;
+function receiveMessageOnPort(port: MessagePort) {
   let res = _receiveMessageOnPort(port);
   if (!res) return undefined;
   return {
@@ -155,26 +155,26 @@ function fakeParentPort() {
   return fake;
 }
 
-export function getEnvironmentData() {
+function getEnvironmentData() {
   return process.env;
 }
 
-export function setEnvironmentData(env: any) {
+function setEnvironmentData(env: any) {
   process.env = env;
 }
 
-export function markAsUntransferable() {
+function markAsUntransferable() {
   throw new Error("markAsUntransferable is not implemented");
 }
 
-export function moveMessagePortToContext() {
+function moveMessagePortToContext() {
   throw new Error("moveMessagePortToContext is not implemented");
 }
 
-export const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
+const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
 
 const WebWorker = globalThis.Worker;
-export class Worker extends EventEmitter {
+class Worker extends EventEmitter {
   #worker: globalThis.Worker;
   #performance;
   #onExitPromise = undefined;

@@ -1,6 +1,5 @@
 // Hardcoded module "node:assert"
-var { Bun } = $lazy("primordials");
-import util from "node:util";
+const util = require("node:util");
 
 var isDeepEqual = Bun.deepEquals;
 var __commonJS = (cb, mod) =>
@@ -653,7 +652,6 @@ var require_assertion_error = __commonJS({
         .concat(indicator);
     }
     var AssertionError = /* @__PURE__ */ (function (_Error) {
-      _inherits(AssertionError2, _Error);
       function AssertionError2(options) {
         var _this;
         if ((_classCallCheck(this, AssertionError2), _typeof(options) !== "object" || options === null))
@@ -781,6 +779,8 @@ should equal
           _possibleConstructorReturn(_this)
         );
       }
+      AssertionError2.prototype = {};
+      _inherits(AssertionError2, _Error);
       return (
         _createClass(AssertionError2, [
           {
@@ -830,6 +830,7 @@ var require_assert = __commonJS({
     function _classCallCheck(instance, Constructor) {
       if (!(instance instanceof Constructor)) throw new TypeError("Cannot call a class as a function");
     }
+
     var _require = require_errors(),
       _require$codes = _require.codes,
       ERR_AMBIGUOUS_ARGUMENT = _require$codes.ERR_AMBIGUOUS_ARGUMENT,
@@ -1256,26 +1257,6 @@ function CallTracker() {
   throw new Error("CallTracker is not supported yet");
 }
 
-assert_module[Symbol.for("CommonJS")] = 0;
 assert_module["CallTracker"] = CallTracker;
-export var {
-  AssertionError,
-  assert,
-  deepEqual,
-  deepStrictEqual,
-  doesNotReject,
-  doesNotThrow,
-  equal,
-  fail,
-  ifError,
-  notDeepEqual,
-  notDeepStrictEqual,
-  notEqual,
-  notStrictEqual,
-  ok,
-  rejects,
-  strict,
-  strictEqual,
-  throws,
-} = assert_module;
+
 export default assert_module;

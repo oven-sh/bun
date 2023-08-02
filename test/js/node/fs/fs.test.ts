@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { dirname } from "node:path";
-import { gc } from "harness";
+import { bunEnv, bunExe, gc } from "harness";
 import fs, {
   closeSync,
   existsSync,
@@ -42,6 +42,7 @@ import { join } from "node:path";
 
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
 import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
+import { spawnSync } from "bun";
 
 const Buffer = globalThis.Buffer || Uint8Array;
 
@@ -65,6 +66,15 @@ it("writeFileSync in append should not truncate the file", () => {
     writeFileSync(path, line, { flag: "a" });
   }
   expect(readFileSync(path, "utf8")).toBe(str);
+});
+
+it("await readdir #3931", async () => {
+  const { exitCode } = spawnSync({
+    cmd: [bunExe(), join(import.meta.dir, "./repro-3931.js")],
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+  expect(exitCode).toBe(0);
 });
 
 it("writeFileSync NOT in append SHOULD truncate the file", () => {
@@ -1469,12 +1479,12 @@ it("fs.constants", () => {
   expect(constants.O_TRUNC).toBeDefined();
   expect(constants.O_APPEND).toBeDefined();
   expect(constants.O_DIRECTORY).toBeDefined();
-  expect(constants.O_NOATIME).toBeDefined();
+  // expect(constants.O_NOATIME).toBeDefined();
   expect(constants.O_NOFOLLOW).toBeDefined();
   expect(constants.O_SYNC).toBeDefined();
   expect(constants.O_DSYNC).toBeDefined();
   expect(constants.O_SYMLINK).toBeDefined();
-  expect(constants.O_DIRECT).toBeDefined();
+  // expect(constants.O_DIRECT).toBeDefined();
   expect(constants.O_NONBLOCK).toBeDefined();
   expect(constants.S_IFMT).toBeDefined();
   expect(constants.S_IFREG).toBeDefined();

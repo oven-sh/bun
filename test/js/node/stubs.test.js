@@ -88,17 +88,6 @@ for (let specifier of specifiers) {
     const mod = await import(specifier);
     if ("default" in mod) {
       expect(mod).toHaveProperty("default");
-      const cjs = mod.default[Symbol.for("CommonJS")];
-      if (typeof cjs !== "undefined") {
-        if (cjs === 1) {
-          expect(typeof mod.default).toBe("function");
-        } else if (cjs === true) {
-          expect(cjs).toBe(true);
-          if (typeof mod.default !== "undefined") {
-            expect(typeof mod.default).toBe("function");
-          }
-        }
-      }
     } else {
       // TODO: uncomment this after node:module can be default imported
       // throw new Error(`Module ${specifier} has no default export`);

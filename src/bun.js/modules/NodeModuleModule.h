@@ -108,7 +108,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
   // This code is only to support babel.
   JSC::VM &vm = globalObject->vm();
   JSString *idString = JSC::jsString(vm, WTF::String("."_s));
-  JSValue parentValue = jsUndefined();
+
   JSString *dirname = jsEmptyString(vm);
 
   // TODO: handle when JSGlobalObject !== Zig::GlobalObject, such as in node:vm
@@ -117,6 +117,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
 
   // TODO: handle ShadowRealm, node:vm, new.target, subclasses
   JSValue idValue = callFrame->argument(0);
+  JSValue parentValue = callFrame->argument(1);
 
   auto scope = DECLARE_THROW_SCOPE(vm);
   if (idValue.isString()) {

@@ -319,9 +319,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
         }
 
         pub fn init(this: *@This()) !void {
-            var opts: uws.us_socket_context_options_t = undefined;
-            const size = @sizeOf(uws.us_socket_context_options_t);
-            @memset(@as([*]u8, @ptrCast(&opts))[0..size], 0);
+            var opts: uws.us_socket_context_options_t = .{};
             this.us_socket_context = uws.us_create_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts).?;
             if (comptime ssl) {
                 this.sslCtx().setup();

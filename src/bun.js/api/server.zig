@@ -169,8 +169,7 @@ pub const ServerConfig = struct {
         const log = Output.scoped(.SSLConfig, false);
 
         pub fn asUSockets(this_: ?SSLConfig) uws.us_bun_socket_context_options_t {
-            var ctx_opts: uws.us_bun_socket_context_options_t = undefined;
-            @memset(@as([*]u8, @ptrCast(&ctx_opts))[0..@sizeOf(uws.us_bun_socket_context_options_t)], 0);
+            var ctx_opts: uws.us_bun_socket_context_options_t = .{};
 
             if (this_) |ssl_config| {
                 if (ssl_config.key_file_name != null)

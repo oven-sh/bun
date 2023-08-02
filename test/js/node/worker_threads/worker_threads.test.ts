@@ -1,4 +1,21 @@
 import wt from "worker_threads";
+import {
+  getEnvironmentData,
+  isMainThread,
+  markAsUntransferable,
+  moveMessagePortToContext,
+  parentPort,
+  receiveMessageOnPort,
+  resourceLimits,
+  setEnvironmentData,
+  SHARE_ENV,
+  threadId,
+  workerData,
+  BroadcastChannel,
+  MessageChannel,
+  MessagePort,
+  Worker,
+} from "worker_threads";
 test("all properties are present", () => {
   expect(wt).toHaveProperty("getEnvironmentData");
   expect(wt).toHaveProperty("isMainThread");
@@ -15,6 +32,22 @@ test("all properties are present", () => {
   expect(wt).toHaveProperty("MessageChannel");
   expect(wt).toHaveProperty("MessagePort");
   expect(wt).toHaveProperty("Worker");
+
+  expect(getEnvironmentData).toBeDefined();
+  expect(isMainThread).toBeDefined();
+  expect(markAsUntransferable).toBeDefined();
+  expect(moveMessagePortToContext).toBeDefined();
+  expect(parentPort).toBeDefined();
+  expect(receiveMessageOnPort).toBeDefined();
+  expect(resourceLimits).toBeDefined();
+  expect(SHARE_ENV).toBeDefined();
+  expect(setEnvironmentData).toBeDefined();
+  expect(threadId).toBeDefined();
+  expect(workerData).toBeUndefined();
+  expect(BroadcastChannel).toBeDefined();
+  expect(MessageChannel).toBeDefined();
+  expect(MessagePort).toBeDefined();
+  expect(Worker).toBeDefined();
 
   expect(() => {
     wt.markAsUntransferable();

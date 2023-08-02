@@ -447,11 +447,90 @@ interface MessagePort extends EventTarget {
     listener: EventListenerOrEventListenerObject,
     options?: boolean | EventListenerOptions,
   ): void;
+
+  /**
+   * Keep the process alive until the MessagePort is closed or `unref`'d
+   */
+  ref(): void;
+  /**
+   * Undo a previous `ref()`
+   */
+  unref(): void;
+  /**
+   * Returns true if the MessagePort is `ref`'d
+   */
+  hasRef(): boolean;
 }
 
 declare var MessagePort: {
   prototype: MessagePort;
   new (): MessagePort;
+};
+
+interface BroadcastChannelEventMap {
+  message: MessageEvent;
+  messageerror: MessageEvent;
+}
+
+/** [MDN Reference](https://developer.mozilla.org/docs/Web/API/BroadcastChannel) */
+interface BroadcastChannel extends EventTarget {
+  /**
+   * Returns the channel name (as passed to the constructor).
+   *
+   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/BroadcastChannel/name)
+   */
+  readonly name: string;
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/BroadcastChannel/message_event) */
+  onmessage: ((this: BroadcastChannel, ev: MessageEvent) => any) | null;
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/BroadcastChannel/messageerror_event) */
+  onmessageerror: ((this: BroadcastChannel, ev: MessageEvent) => any) | null;
+  /**
+   * Closes the BroadcastChannel object, opening it up to garbage collection.
+   *
+   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/BroadcastChannel/close)
+   */
+  close(): void;
+  /**
+   * Sends the given message to other BroadcastChannel objects set up for this channel. Messages can be structured objects, e.g. nested objects and arrays.
+   *
+   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/BroadcastChannel/postMessage)
+   */
+  postMessage(message: any): void;
+  addEventListener<K extends keyof BroadcastChannelEventMap>(
+    type: K,
+    listener: (this: BroadcastChannel, ev: BroadcastChannelEventMap[K]) => any,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  removeEventListener<K extends keyof BroadcastChannelEventMap>(
+    type: K,
+    listener: (this: BroadcastChannel, ev: BroadcastChannelEventMap[K]) => any,
+    options?: boolean | EventListenerOptions,
+  ): void;
+  removeEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | EventListenerOptions,
+  ): void;
+
+  /**
+   * Keep the process alive until the BroadcastChannel is closed or `unref`'d.
+   * BroadcastChannel is `ref`'d by default.
+   */
+  ref(): void;
+  /**
+   * Undo a previous `ref()`
+   */
+  unref(): void;
+}
+
+declare var BroadcastChannel: {
+  prototype: BroadcastChannel;
+  new (name: string): BroadcastChannel;
 };
 
 interface EncodeIntoResult {

@@ -86,7 +86,9 @@ export class Worker extends EventEmitter {
   constructor(filename: string, options: any = {}) {
     super();
 
-    this.#worker = new WebWorker(filename, options);
+    this.#worker = new WebWorker(filename, {
+      ...options,
+    });
     this.#worker.addEventListener("close", this.#onClose.bind(this));
     this.#worker.addEventListener("error", this.#onError.bind(this));
     this.#worker.addEventListener("message", this.#onMessage.bind(this));

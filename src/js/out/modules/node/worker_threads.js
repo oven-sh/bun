@@ -58,7 +58,10 @@ class Worker extends EventEmitter {
   #onExitPromise = void 0;
   constructor(filename, options = {}) {
     super();
-    this.#worker = new WebWorker(filename, options), this.#worker.addEventListener("close", this.#onClose.bind(this)), this.#worker.addEventListener("error", this.#onError.bind(this)), this.#worker.addEventListener("message", this.#onMessage.bind(this)), this.#worker.addEventListener("messageerror", this.#onMessageError.bind(this)), this.#worker.addEventListener("open", this.#onOpen.bind(this));
+    this.#worker = new WebWorker(filename, {
+      ...options,
+      ref: !0
+    }), this.#worker.addEventListener("close", this.#onClose.bind(this)), this.#worker.addEventListener("error", this.#onError.bind(this)), this.#worker.addEventListener("message", this.#onMessage.bind(this)), this.#worker.addEventListener("messageerror", this.#onMessageError.bind(this)), this.#worker.addEventListener("open", this.#onOpen.bind(this));
   }
   ref() {
     this.#worker.ref();

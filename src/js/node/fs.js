@@ -349,15 +349,11 @@ ReadStream = (function (InternalReadStream) {
     return new InternalReadStream(path, options);
   }
   ReadStream.prototype = {};
-  return Object.defineProperty(
-    ReadStream,
-    Symbol.hasInstance,
-    {
-      value(instance) {
-        return instance instanceof InternalReadStream;
-      },
+  return Object.defineProperty(ReadStream, Symbol.hasInstance, {
+    value(instance) {
+      return instance instanceof InternalReadStream;
     },
-  );
+  });
 })(
   class ReadStream extends Stream._getNativeReadableStreamPrototype(2, Stream.Readable) {
     constructor(pathOrFd, options = defaultReadStreamOptions) {
@@ -698,15 +694,11 @@ WriteStream = (function (InternalWriteStream) {
     return new InternalWriteStream(path, options);
   }
   WriteStream.prototype = {};
-  return Object.defineProperty(
-    WriteStream,
-    Symbol.hasInstance,
-    {
-      value(instance) {
-        return instance instanceof InternalWriteStream;
-      },
+  return Object.defineProperty(WriteStream, Symbol.hasInstance, {
+    value(instance) {
+      return instance instanceof InternalWriteStream;
     },
-  );
+  });
 })(
   class WriteStream extends Stream.NativeWritable {
     constructor(path, options = defaultWriteStreamOptions) {

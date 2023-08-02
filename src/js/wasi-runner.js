@@ -1,7 +1,7 @@
 /** This file is used when a .wasm file is ran.
  *  The transpiled contents of `./node/wasi.js` is pasted into the top of this file.
  */
-import { WASI } from 'node:wasi';
+import { WASI } from "node:wasi";
 
 const filePath = process.argv.at(1);
 if (!filePath) {

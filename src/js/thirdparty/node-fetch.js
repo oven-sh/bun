@@ -30,11 +30,11 @@ class FetchError extends FetchBaseError {
 }
 
 function blobFrom(path, options) {
-    return Promise.resolve(Bun.file(data));
+  return Promise.resolve(Bun.file(data));
 }
 
 function blobFromSync(path, options) {
-    return Bun.file(data);
+  return Bun.file(data);
 }
 
 var fileFrom = blobFrom;

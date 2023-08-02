@@ -26,8 +26,8 @@ function NodeJSReadableStreamToBlob(stream: NodeJSReadStream, iostream: boolean 
 }
 
 export const NodeJSStreamFileBlob = class FileBlob extends Blob {
-    constructor(source: NodeJSStream, slice: [number?, number?] = [undefined, undefined]) {
-        super(undefined, { type: 'application/octet-stream' });
+    constructor(source: NodeJSStream, slice: [number?, number?] = [undefined, undefined], type = 'application/octet-stream') {
+        super(undefined, { type });
         Reflect.deleteProperty(this, 'size');
         if (source === process.stdout || source === process.stdin || source === process.stderr) {
             this.#iostream = true;
@@ -43,9 +43,13 @@ export const NodeJSStreamFileBlob = class FileBlob extends Blob {
     readonly #slice: [number?, number?];
     #size: number;
 
-    // @ts-expect-error Caused by the stream() method's typings error
-    slice(begin?: number, end?: number): NodeJSStreamFileBlob {
-        return new NodeJSStreamFileBlob(this.#source, [begin, end]);
+    slice(begin?: number, end?: number, contentType?: string): Blob;
+    slice(begin?: number, contentType?: string): Blob;
+    slice(contentType?: string): Blob;
+    slice(beginOrType?: number | string, endOrType?: number | string, contentType: string = this.type): Blob {
+        if (typeof beginOrType === 'string') return new FileBlob(this.#source, this.#slice, beginOrType);
+        if (typeof endOrType === 'string') return new FileBlob(this.#source, [beginOrType, undefined], endOrType);
+        return new FileBlob(this.#source, [beginOrType, endOrType], contentType);
     }
 
     override stream(): ReadableStream<Uint8Array> | ReadableStream {

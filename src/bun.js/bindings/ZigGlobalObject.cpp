@@ -4594,10 +4594,10 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     thisObject->m_requireFunctionUnbound.visit(visitor);
     thisObject->m_requireResolveFunctionUnbound.visit(visitor);
-    thisObject->m_importMetaObjectStructure.visit(visitor);
-    thisObject->m_internalModuleRegistry.visit(visitor);
     thisObject->m_processBindingConstants.visit(visitor);
+    thisObject->m_importMetaObjectStructure.visit(visitor);
     thisObject->m_asyncBoundFunctionStructure.visit(visitor);
+    thisObject->m_internalModuleRegistry.visit(visitor);
 
     thisObject->m_dnsObject.visit(visitor);
     thisObject->m_lazyRequireCacheObject.visit(visitor);

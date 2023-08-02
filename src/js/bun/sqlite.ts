@@ -1,6 +1,4 @@
 // Hardcoded module "sqlite"
-const lazy = $lazy;
-
 var defineProperties = Object.defineProperties;
 
 var toStringTag = Symbol.toStringTag;
@@ -212,7 +210,7 @@ class Database {
     }
 
     if (!SQL) {
-      SQL = lazy("sqlite");
+      SQL = $lazy("sqlite");
     }
 
     this.#handle = SQL.open(anonymous ? ":memory:" : filename, flags);
@@ -247,7 +245,7 @@ class Database {
 
   static deserialize(serialized, isReadOnly = false) {
     if (!SQL) {
-      SQL = lazy("sqlite");
+      SQL = $lazy("sqlite");
     }
 
     return SQL.deserialize(serialized, isReadOnly);
@@ -255,7 +253,7 @@ class Database {
 
   static setCustomSQLite(path) {
     if (!SQL) {
-      SQL = lazy("sqlite");
+      SQL = $lazy("sqlite");
     }
 
     return SQL.setCustomSQLite(path);

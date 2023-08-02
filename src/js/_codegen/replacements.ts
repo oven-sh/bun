@@ -100,7 +100,7 @@ export function applyReplacements(src: string, length: number) {
       const innerSlice = sliceSourceCode(rest, true);
       return [
         slice.slice(0, match.index) + "(IS_BUN_DEVELOPMENT?$debug_log" + innerSlice.result + ":void 0)",
-        innerSlice.rest.slice(1),
+        innerSlice.rest,
         true,
       ];
     } else if (name === "assert") {

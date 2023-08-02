@@ -151,25 +151,15 @@ Object.defineProperty(globalThis, "__GlobalBunCString", {
 
 const ffiWrappers = new Array(18);
 
-var char = val => val | 0;
+var char = "val|0";
 ffiWrappers.fill(char);
-ffiWrappers[FFIType.uint8_t] = function uint8(val) {
-  return val < 0 ? 0 : val >= 255 ? 255 : val | 0;
-};
-ffiWrappers[FFIType.int16_t] = function int16(val) {
-  return val <= -32768 ? -32768 : val >= 32768 ? 32768 : val | 0;
-};
-ffiWrappers[FFIType.uint16_t] = function uint16(val) {
-  return val <= 0 ? 0 : val >= 65536 ? 65536 : val | 0;
-};
-ffiWrappers[FFIType.int32_t] = function int32(val) {
-  return val | 0;
-};
+ffiWrappers[FFIType.uint8_t] = "val<0?0:val>=255?255:val|0";
+ffiWrappers[FFIType.int16_t] = "val<=-32768?-32768:val>=32768?32768:val|0";
+ffiWrappers[FFIType.uint16_t] = "val<=0?0:val>=65536?65536:val|0";
+ffiWrappers[FFIType.int32_t] = "val|0";
 // we never want to return NaN
-ffiWrappers[FFIType.uint32_t] = function uint32(val) {
-  return val <= 0 ? 0 : val >= 0xffffffff ? 0xffffffff : +val || 0;
-};
-ffiWrappers[FFIType.i64_fast] = function int64(val) {
+ffiWrappers[FFIType.uint32_t] = "val<=0?0:val>=0xffffffff?0xffffffff:+val||0";
+ffiWrappers[FFIType.i64_fast] = `{
   if (typeof val === "bigint") {
     if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(-Number.MAX_SAFE_INTEGER)) {
       return Number(val).valueOf() || 0;
@@ -179,9 +169,20 @@ ffiWrappers[FFIType.i64_fast] = function int64(val) {
   }
 
   return !val ? 0 : +val || 0;
-};
+}`;
+ffiWrappers[FFIType.i64_fast] = `{
+  if (typeof val === "bigint") {
+    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(-Number.MAX_SAFE_INTEGER)) {
+      return Number(val).valueOf() || 0;
+    }
 
-ffiWrappers[FFIType.u64_fast] = function u64_fast(val) {
+    return val;
+  }
+
+  return !val ? 0 : +val || 0;
+}`;
+
+ffiWrappers[FFIType.u64_fast] = `{
   if (typeof val === "bigint") {
     if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= 0) {
       return Number(val).valueOf() || 0;
@@ -191,9 +192,9 @@ ffiWrappers[FFIType.u64_fast] = function u64_fast(val) {
   }
 
   return !val ? 0 : +val || 0;
-};
+}`;
 
-ffiWrappers[FFIType.int64_t] = function int64(val) {
+ffiWrappers[FFIType.int64_t] = `{
   if (typeof val === "bigint") {
     return val;
   }
@@ -203,9 +204,9 @@ ffiWrappers[FFIType.int64_t] = function int64(val) {
   }
 
   return BigInt(+val || 0);
-};
+}`;
 
-ffiWrappers[FFIType.uint64_t] = function uint64(val) {
+ffiWrappers[FFIType.uint64_t] = `{
   if (typeof val === "bigint") {
     return val;
   }
@@ -215,23 +216,23 @@ ffiWrappers[FFIType.uint64_t] = function uint64(val) {
   }
 
   return BigInt(+val || 0);
-};
+}`;
 
-ffiWrappers[FFIType.u64_fast] = function u64_fast(val) {
+ffiWrappers[FFIType.u64_fast] = `{
   if (typeof val === "bigint") {
     if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(0)) return Number(val);
     return val;
   }
 
   return typeof val === "number" ? (val <= 0 ? 0 : +val || 0) : +val || 0;
-};
+}`;
 
-ffiWrappers[FFIType.uint16_t] = function uint16(val) {
+ffiWrappers[FFIType.uint16_t] = `{
   const ret = (typeof val === "bigint" ? Number(val) : val) | 0;
   return ret <= 0 ? 0 : ret > 0xffff ? 0xffff : ret;
-};
+}`;
 
-ffiWrappers[FFIType.double] = function double(val) {
+ffiWrappers[FFIType.double] = `{
   if (typeof val === "bigint") {
     if (val.valueOf() < BigInt(Number.MAX_VALUE)) {
       return Math.abs(Number(val).valueOf()) + 0.00000000000001 - 0.00000000000001;
@@ -243,14 +244,14 @@ ffiWrappers[FFIType.double] = function double(val) {
   }
 
   return val + 0.00000000000001 - 0.00000000000001;
-};
+}`;
 
-ffiWrappers[FFIType.float] = ffiWrappers[10] = function float(val) {
+ffiWrappers[FFIType.float] = ffiWrappers[10] = `{
   return Math.fround(val);
-};
-ffiWrappers[FFIType.bool] = function bool(val) {
+}`;
+ffiWrappers[FFIType.bool] = `{
   return !!val;
-};
+}`;
 
 // This prevents an extra property getter in potentially hot code
 Object.defineProperty(globalThis, "__GlobalBunFFIPtrFunctionForWrapper", {
@@ -259,7 +260,7 @@ Object.defineProperty(globalThis, "__GlobalBunFFIPtrFunctionForWrapper", {
   configurable: true,
 });
 
-ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = function pointer(val) {
+ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = `{
   if (typeof val === "number") return val;
   if (!val) {
     return null;
@@ -273,14 +274,10 @@ ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = function pointer(v
     throw new TypeError("To convert a string to a pointer, encode it as a buffer");
   }
 
-  throw new TypeError(`Unable to convert ${val} to a pointer`);
-};
+  throw new TypeError(\`Unable to convert \${ val } to a pointer\`);
+}`;
 
-function cstringReturnType(val) {
-  return new __GlobalBunCString(val);
-}
-
-ffiWrappers[FFIType.function] = function functionType(val) {
+ffiWrappers[FFIType.function] = `{
   if (typeof val === "number") {
     return val;
   }
@@ -296,7 +293,7 @@ ffiWrappers[FFIType.function] = function functionType(val) {
   }
 
   return ptr;
-};
+}`;
 
 function FFIBuilder(params, returnType, functionToCall, name) {
   const hasReturnType = typeof FFIType[returnType] === "number" && FFIType[returnType as string] !== FFIType.void;
@@ -307,7 +304,7 @@ function FFIBuilder(params, returnType, functionToCall, name) {
     const wrapper = ffiWrappers[FFIType[params[i]]];
     if (wrapper) {
       // doing this inline benchmarked about 4x faster than referencing
-      args[i] = `(${wrapper.toString()})(p${i})`;
+      args[i] = `(val=>${wrapper})(p${i})`;
     } else {
       throw new TypeError(`Unsupported type ${params[i]}. Must be one of: ${Object.keys(FFIType).sort().join(", ")}`);
     }
@@ -316,7 +313,7 @@ function FFIBuilder(params, returnType, functionToCall, name) {
   var code = `functionToCall(${args.join(", ")})`;
   if (hasReturnType) {
     if (FFIType[returnType as string] === FFIType.cstring) {
-      code = `return (${cstringReturnType.toString()})(${code})`;
+      code = `return new __GlobalBunCString(${code})`;
     } else {
       code = `return ${code}`;
     }

@@ -2,8 +2,6 @@
 // "readable-stream" npm package
 // just transpiled and debug logs added.
 
-const { callerSourceOrigin } = require("bun:jsc");
-
 const EE = $lazy("events");
 const StringDecoder = require("node:string_decoder").StringDecoder;
 
@@ -2305,14 +2303,13 @@ var require_readable = __commonJS({
           state.readableListening = state.needReadable = true;
           state.flowing = false;
           state.emittedReadable = false;
-          __DEBUG__ &&
-            $debug(
-              "on readable - state.length, reading, emittedReadable",
-              state.length,
-              state.reading,
-              state.emittedReadable,
-              this.__id,
-            );
+          $debug(
+            "on readable - state.length, reading, emittedReadable",
+            state.length,
+            state.reading,
+            state.emittedReadable,
+            this.__id,
+          );
           if (state.length) {
             emitReadable(this, state);
           } else if (!state.reading) {
@@ -2626,6 +2623,7 @@ var require_readable = __commonJS({
         $debug("needReadable @ addChunk", state.needReadable, stream.__id);
         if (state.needReadable) emitReadable(stream, state);
       }
+      $debug("about to maybereadmore");
       maybeReadMore(stream, state);
     }
     Readable.prototype.isPaused = function () {
@@ -2707,8 +2705,7 @@ var require_readable = __commonJS({
 
       // If we've ended, and we're now clear, then finish it up.
       if (n === 0 && state.ended) {
-        __DEBUG__ &&
-          $debug("read: calling endReadable if length 0 -- length, state.ended", state.length, state.ended, this.__id);
+        $debug("read: calling endReadable if length 0 -- length, state.ended", state.length, state.ended, this.__id);
         if (state.length === 0) endReadable(this);
         return null;
       }

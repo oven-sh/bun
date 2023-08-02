@@ -2201,32 +2201,6 @@ pub const ModuleLoader = struct {
                 .@"node:constants" => return jsSyntheticModule(.@"node:constants", specifier),
                 .@"bun:jsc" => return jsSyntheticModule(.@"bun:jsc", specifier),
 
-                // TODO:
-                // .@"node:fs/promises" => {
-                //     return ResolvedSource{
-                //         .allocator = null,
-                //         .source_code = bun.String.static(comptime "(()=>{\"use strict\";" ++ JSC.Node.fs.constants_string ++ @embedFile("../js/out/modules/node/fs.promises.js")[19..]),
-                //         .specifier = specifier,
-                //         .source_url = ZigString.init("node:fs/promises"),
-                //         .hash = 0,
-                //     };
-                // },
-                // .@"bun:ffi" => {
-                //     const shared_library_suffix = if (Environment.isMac) "dylib" else if (Environment.isLinux) "so" else if (Environment.isWindows) "dll" else "";
-                //     return ResolvedSource{
-                //         .allocator = null,
-                //         .source_code = bun.String.static(
-                //             comptime ("(()=>{\"use strict\";var FFIType=" ++
-                //                 JSC.FFI.ABIType.map_to_js_object ++
-                //                 ",suffix='" ++ shared_library_suffix ++ "';" ++
-                //                 @embedFile("../js/out/modules/bun/ffi.js")[19..]),
-                //         ),
-                //         .specifier = specifier,
-                //         .source_url = ZigString.init("bun:ffi"),
-                //         .hash = 0,
-                //     };
-                // },
-
                 // These are defined in src/js/*
                 .@"bun:ffi" => return jsSyntheticModule(.@"bun:ffi", specifier),
                 .@"bun:sqlite" => return jsSyntheticModule(.@"bun:sqlite", specifier),

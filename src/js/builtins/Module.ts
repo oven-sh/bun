@@ -95,9 +95,13 @@ export function requireResolve(this: CommonJSModuleRecord, id: string) {
 }
 
 export function requireNativeModule(id: string) {
+  // I think there is a race condition here if an internal module calls this while usercode imports the same one.
   let esm = Loader.registry.$get(id);
   if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {
-    return Loader.getModuleNamespaceObject(esm.module).default;
+    console.log("here");
+    const def = Loader.getModuleNamespaceObject(esm.module).default;
+    console.log("there");
+    return def;
   }
   return $requireESM(id).default;
 }

@@ -766,9 +766,9 @@ const char* const s_moduleRequireResolveCode = "(function (id){\"use strict\";re
 const JSC::ConstructAbility s_moduleRequireNativeModuleCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_moduleRequireNativeModuleCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_moduleRequireNativeModuleCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_moduleRequireNativeModuleCodeLength = 203;
+const int s_moduleRequireNativeModuleCodeLength = 259;
 static const JSC::Intrinsic s_moduleRequireNativeModuleCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_moduleRequireNativeModuleCode = "(function (id){\"use strict\";let esm=@Loader.registry.@get(id);if(esm\?.evaluated&&(esm.state\?\?0)>=@ModuleReady)return @Loader.getModuleNamespaceObject(esm.module).default;return @requireESM(id).default})\n";
+const char* const s_moduleRequireNativeModuleCode = "(function (id){\"use strict\";let esm=@Loader.registry.@get(id);if(esm\?.evaluated&&(esm.state\?\?0)>=@ModuleReady){console.log(\"here\");const def=@Loader.getModuleNamespaceObject(esm.module).default;return console.log(\"there\"),def}return @requireESM(id).default})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \

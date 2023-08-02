@@ -62,9 +62,6 @@ const setTimeout = globalThis.setTimeout;
 const fetch = Bun.fetch;
 const nop = () => {};
 
-const __DEBUG__ = process.env.__DEBUG__;
-const debug = __DEBUG__ ? (...args) => console.log("node:http", ...args) : nop;
-
 const kEmptyObject = Object.freeze(Object.create(null));
 const kOutHeaders = Symbol.for("kOutHeaders");
 const kEndCalled = Symbol.for("kEndCalled");
@@ -268,7 +265,7 @@ class Agent extends EventEmitter {
   }
 
   createConnection() {
-    debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.createConnection is a no-op, returns fake socket");
+    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.createConnection is a no-op, returns fake socket");
     return (this.#fakeSocket ??= new FakeSocket());
   }
 
@@ -285,30 +282,30 @@ class Agent extends EventEmitter {
   }
 
   addRequest() {
-    debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.addRequest is a no-op");
+    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.addRequest is a no-op");
   }
 
   createSocket(req, options, cb) {
-    debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.createSocket returns fake socket");
+    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.createSocket returns fake socket");
     cb(null, (this.#fakeSocket ??= new FakeSocket()));
   }
 
   removeSocket() {
-    debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.removeSocket is a no-op");
+    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.removeSocket is a no-op");
   }
 
   keepSocketAlive() {
-    debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.keepSocketAlive is a no-op");
+    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.keepSocketAlive is a no-op");
 
     return true;
   }
 
   reuseSocket() {
-    debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.reuseSocket is a no-op");
+    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.reuseSocket is a no-op");
   }
 
   destroy() {
-    debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.destroy is a no-op");
+    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.destroy is a no-op");
   }
 }
 function emitListeningNextTick(self, onListen, err, hostname, port) {
@@ -795,7 +792,7 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
   }
 
   if (!msg._hasBody) {
-    debug("This type of response MUST NOT have a body. " + "Ignoring write() calls.");
+    $debug("This type of response MUST NOT have a body. " + "Ignoring write() calls.");
     process.nextTick(callback);
     return true;
   }
@@ -1284,7 +1281,7 @@ class ClientRequest extends OutgoingMessage {
           headers: this.getHeaders(),
           body: body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS" ? body : undefined,
           redirect: "manual",
-          verbose: Boolean(__DEBUG__),
+          verbose: !!$debug,
           signal: this[kAbortController].signal,
 
           // Timeouts are handled via this.setTimeout.
@@ -1299,7 +1296,7 @@ class ClientRequest extends OutgoingMessage {
           this.emit("response", res);
         })
         .catch(err => {
-          if (__DEBUG__) globalReportError(err);
+          if (!!$debug) globalReportError(err);
           this.emit("error", err);
         })
         .finally(() => {
@@ -1307,7 +1304,7 @@ class ClientRequest extends OutgoingMessage {
           this[kClearTimeout]();
         });
     } catch (err) {
-      if (__DEBUG__) globalReportError(err);
+      if (!!$debug) globalReportError(err);
       this.emit("error", err);
     } finally {
       callback();
@@ -1387,7 +1384,7 @@ class ClientRequest extends OutgoingMessage {
     if (options.path) {
       const path = String(options.path);
       if (RegExpPrototypeExec.call(INVALID_PATH_REGEX, path) !== null) {
-        debug('Path contains unescaped characters: "%s"', path);
+        $debug('Path contains unescaped characters: "%s"', path);
         throw new Error("Path contains unescaped characters");
         // throw new ERR_UNESCAPED_CHARACTERS("Request path");
       }
@@ -1466,8 +1463,7 @@ class ClientRequest extends OutgoingMessage {
       this.once("response", cb);
     }
 
-    __DEBUG__ &&
-      debug(`new ClientRequest: ${this.#method} ${this.#protocol}//${this.#host}:${this.#port}${this.#path}`);
+    $debug(`new ClientRequest: ${this.#method} ${this.#protocol}//${this.#host}:${this.#port}${this.#path}`);
 
     // if (
     //   method === "GET" ||
@@ -1555,12 +1551,13 @@ class ClientRequest extends OutgoingMessage {
   }
 
   setSocketKeepAlive(enable = true, initialDelay = 0) {
-    __DEBUG__ && debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setSocketKeepAlive is a no-op");
+    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setSocketKeepAlive is a no-op");
   }
 
   setNoDelay(noDelay = true) {
-    __DEBUG__ && debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setNoDelay is a no-op");
+    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setNoDelay is a no-op");
   }
+
   [kClearTimeout]() {
     if (this.#timeoutTimer) {
       clearTimeout(this.#timeoutTimer);
@@ -1894,7 +1891,7 @@ export default {
   validateHeaderName,
   validateHeaderValue,
   setMaxIdleHTTPParsers(max) {
-    debug(`${NODE_HTTP_WARNING}\n`, "setMaxIdleHTTPParsers() is a no-op");
+    $debug(`${NODE_HTTP_WARNING}\n`, "setMaxIdleHTTPParsers() is a no-op");
   },
   globalAgent,
   ClientRequest,

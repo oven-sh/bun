@@ -457,7 +457,7 @@ pub const HTMLRewriter = struct {
             result.url = original.url.clone();
             result.status_text = original.status_text.clone();
 
-            var input = original.body.value.useAsAnyBlob();
+            var input = original.getBodyValue().useAsAnyBlob();
             sink.input = input;
 
             const is_pending = input.needsToReadFile();
@@ -474,22 +474,24 @@ pub const HTMLRewriter = struct {
         }
 
         pub fn onFinishedLoading(sink: *BufferOutputSink, bytes: JSC.WebCore.Blob.Store.ReadFile.ResultType) void {
+            var body = sink.response.getBodyValue();
+
             switch (bytes) {
                 .err => |err| {
-                    if (sink.response.body.value == .Locked and @intFromPtr(sink.response.body.value.Locked.task) == @intFromPtr(sink) and
-                        sink.response.body.value.Locked.promise == null)
+                    if (body.* == .Locked and @intFromPtr(body.Locked.task) == @intFromPtr(sink) and
+                        body.Locked.promise == null)
                     {
-                        sink.response.body.value = .{ .Empty = {} };
+                        body.* = .{ .Empty = {} };
                         // is there a pending promise?
                         // we will need to reject it
-                    } else if (sink.response.body.value == .Locked and @intFromPtr(sink.response.body.value.Locked.task) == @intFromPtr(sink) and
-                        sink.response.body.value.Locked.promise != null)
+                    } else if (body.* == .Locked and @intFromPtr(body.Locked.task) == @intFromPtr(sink) and
+                        body.Locked.promise != null)
                     {
-                        sink.response.body.value.Locked.onReceiveValue = null;
-                        sink.response.body.value.Locked.task = null;
+                        body.Locked.onReceiveValue = null;
+                        body.Locked.task = null;
                     }
 
-                    sink.response.body.value.toErrorInstance(err.toErrorInstance(sink.global), sink.global);
+                    body.toErrorInstance(err.toErrorInstance(sink.global), sink.global);
                     sink.rewriter.end() catch {};
                     sink.deinit();
                     return;
@@ -518,7 +520,7 @@ pub const HTMLRewriter = struct {
                 bun.default_allocator.destroy(sink);
 
                 if (is_async) {
-                    response.body.value.toErrorInstance(throwLOLHTMLError(global), global);
+                    response.getBodyValue().toErrorInstance(throwLOLHTMLError(global), global);
 
                     return null;
                 } else {
@@ -532,7 +534,7 @@ pub const HTMLRewriter = struct {
                 sink.deinit();
 
                 if (is_async) {
-                    response.body.value.toErrorInstance(throwLOLHTMLError(global), global);
+                    response.getBodyValue().toErrorInstance(throwLOLHTMLError(global), global);
                     return null;
                 } else {
                     return throwLOLHTMLError(global);
@@ -545,16 +547,16 @@ pub const HTMLRewriter = struct {
         pub const Sync = enum { suspended, pending, done };
 
         pub fn done(this: *BufferOutputSink) void {
-            var prev_value = this.response.body.value;
+            var prev_value = this.response.getBodyValue().*;
             var bytes = this.bytes.toOwnedSliceLeaky();
-            this.response.body.value = JSC.WebCore.Body.Value.createBlobValue(
+            this.response.getBodyValue().* = JSC.WebCore.Body.Value.createBlobValue(
                 bytes,
                 bun.default_allocator,
 
                 true,
             );
             prev_value.resolve(
-                &this.response.body.value,
+                this.response.getBodyValue(),
                 this.global,
             );
         }

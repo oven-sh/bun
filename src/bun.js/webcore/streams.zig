@@ -114,20 +114,37 @@ pub const ReadableStream = struct {
 
     pub fn cancel(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
-        this.value.unprotect();
-        ReadableStream__cancel(this.value, globalThis);
+        const value = this.value;
+        value.ensureStillAlive();
+        defer value.unprotect();
+        ReadableStream__cancel(value, globalThis);
     }
 
     pub fn abort(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
-        this.value.unprotect();
-        ReadableStream__cancel(this.value, globalThis);
+        const value = this.value;
+        defer value.unprotect();
+        ReadableStream__cancel(value, globalThis);
     }
 
     pub fn detach(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
-        this.value.unprotect();
-        ReadableStream__detach(this.value, globalThis);
+        const value = this.value;
+        defer value.unprotect();
+        ReadableStream__detach(value, globalThis);
+    }
+
+    pub fn tee(this: *ReadableStream, globalThis: *JSGlobalObject) ?[2]ReadableStream {
+        JSC.markBinding(@src());
+        const value = this.value;
+        var new_value1 = JSC.JSValue.zero;
+        var new_value2 = JSC.JSValue.zero;
+        _ = ReadableStream__tee(value, globalThis, &new_value1, &new_value2);
+
+        return [2]ReadableStream{
+            .{ .ptr = .{ .JavaScript = {} }, .value = new_value1 },
+            .{ .ptr = .{ .JavaScript = {} }, .value = new_value2 },
+        };
     }
 
     pub const Tag = enum(i32) {
@@ -180,6 +197,7 @@ pub const ReadableStream = struct {
     extern fn ReadableStream__cancel(stream: JSValue, *JSGlobalObject) void;
     extern fn ReadableStream__abort(stream: JSValue, *JSGlobalObject) void;
     extern fn ReadableStream__detach(stream: JSValue, *JSGlobalObject) void;
+    extern fn ReadableStream__tee(stream: JSValue, *JSGlobalObject, result1: *JSValue, result2: *JSValue) bool;
     extern fn ReadableStream__fromBlob(
         *JSGlobalObject,
         store: *anyopaque,

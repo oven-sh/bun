@@ -884,7 +884,8 @@ pub const Blob = struct {
         // TODO: implement a writeev() fast path
         var source_blob: Blob = brk: {
             if (data.as(Response)) |response| {
-                switch (response.body.value) {
+                var body = response.getBodyValue();
+                switch (body.*) {
                     .WTFStringImpl,
                     .InternalBlob,
                     .Used,
@@ -892,13 +893,13 @@ pub const Blob = struct {
                     .Blob,
                     .Null,
                     => {
-                        break :brk response.body.use();
+                        break :brk body.use();
                     },
                     .Error => {
                         destination_blob.detach();
-                        const err = response.body.value.Error;
+                        const err = body.Error;
                         JSC.C.JSValueUnprotect(ctx, err.asObjectRef());
-                        _ = response.body.value.use();
+                        _ = body.use();
                         return JSC.JSPromise.rejectedPromiseValue(ctx.ptr(), err).asObjectRef();
                     },
                     .Locked => {
@@ -910,8 +911,8 @@ pub const Blob = struct {
                             .promise = promise,
                         };
 
-                        response.body.value.Locked.task = task;
-                        response.body.value.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
+                        body.Locked.task = task;
+                        body.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
 
                         return promise.asValue(ctx.ptr()).asObjectRef();
                     },
@@ -919,7 +920,8 @@ pub const Blob = struct {
             }
 
             if (data.as(Request)) |request| {
-                switch (request.body.value) {
+                var body = request.getBodyValue();
+                switch (body.*) {
                     .WTFStringImpl,
                     .InternalBlob,
                     .Used,
@@ -927,13 +929,13 @@ pub const Blob = struct {
                     .Blob,
                     .Null,
                     => {
-                        break :brk request.body.value.use();
+                        break :brk body.use();
                     },
                     .Error => {
                         destination_blob.detach();
-                        const err = request.body.value.Error;
+                        const err = body.Error;
                         JSC.C.JSValueUnprotect(ctx, err.asObjectRef());
-                        _ = request.body.value.use();
+                        _ = body.use();
                         return JSC.JSPromise.rejectedPromiseValue(ctx.ptr(), err).asObjectRef();
                     },
                     .Locked => {
@@ -945,8 +947,8 @@ pub const Blob = struct {
                             .promise = promise,
                         };
 
-                        request.body.value.Locked.task = task;
-                        request.body.value.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
+                        body.Locked.task = task;
+                        body.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
 
                         return promise.asValue(ctx.ptr()).asObjectRef();
                     },

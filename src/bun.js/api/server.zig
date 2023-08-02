@@ -1465,9 +1465,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
 
                 if (this.response_ptr) |response| {
-                    if (response.body.value == .Locked) {
-                        if (response.body.value.Locked.readable) |*readable| {
-                            response.body.value.Locked.readable = null;
+                    if (response.getBodyValue().* == .Locked) {
+                        if (response.getBodyValue().Locked.readable) |*readable| {
+                            response.getBodyValue().Locked.readable = null;
                             readable.abort(this.server.globalThis);
                         }
                     }
@@ -2048,7 +2048,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             streamLog("promise still Pending", .{});
                             // TODO: should this timeout?
                             this.setAbortHandler();
-                            this.response_ptr.?.body.value = .{
+                            this.response_ptr.?.getBodyValue().* = .{
                                 .Locked = .{
                                     .readable = stream,
                                     .global = this.server.globalThis,
@@ -2153,9 +2153,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 ctx.response_jsvalue = response_value;
                 ctx.response_jsvalue.ensureStillAlive();
                 ctx.flags.response_protected = false;
-                response.body.value.toBlobIfPossible();
+                response.getBodyValue().toBlobIfPossible();
 
-                switch (response.body.value) {
+                switch (response.getBodyValue().*) {
                     .Blob => |*blob| {
                         if (blob.needsToReadFile()) {
                             response_value.protect();
@@ -2204,8 +2204,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         ctx.response_jsvalue.ensureStillAlive();
                         ctx.flags.response_protected = false;
                         ctx.response_ptr = response;
-                        response.body.value.toBlobIfPossible();
-                        switch (response.body.value) {
+                        response.getBodyValue().toBlobIfPossible();
+                        switch (response.getBodyValue().*) {
                             .Blob => |*blob| {
                                 if (blob.needsToReadFile()) {
                                     fulfilled_value.protect();
@@ -2277,9 +2277,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (req.response_ptr) |resp| {
-                if (resp.body.value == .Locked) {
-                    resp.body.value.Locked.readable.?.done();
-                    resp.body.value = .{ .Used = {} };
+                if (resp.getBodyValue().* == .Locked) {
+                    resp.getBodyValue().Locked.readable.?.done();
+                    resp.getBodyValue().* = .{ .Used = {} };
                 }
             }
 
@@ -2338,9 +2338,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (req.response_ptr) |resp| {
-                if (resp.body.value == .Locked) {
-                    resp.body.value.Locked.readable.?.done();
-                    resp.body.value = .{ .Used = {} };
+                if (resp.getBodyValue().* == .Locked) {
+                    resp.getBodyValue().Locked.readable.?.done();
+                    resp.getBodyValue().* = .{ .Used = {} };
                 }
             }
 
@@ -2560,7 +2560,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             }
             var response = this.response_ptr.?;
-            this.doRenderWithBody(&response.body.value);
+            this.doRenderWithBody(response.getBodyValue());
         }
 
         pub fn renderProductionError(this: *RequestContext, status: u16) void {
@@ -4913,7 +4913,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 existing_request = Request{
                     .url = bun.String.create(url.href),
                     .headers = headers,
-                    .body = JSC.WebCore.InitRequestBodyValue(body) catch unreachable,
+                    .body = JSC.WebCore.createBodyValueRef(body) catch unreachable,
                     .method = method,
                 };
             } else if (first_arg.as(Request)) |request_| {
@@ -5295,7 +5295,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             var ctx = this.request_pool_allocator.tryGet() catch @panic("ran out of memory");
             ctx.create(this, req, resp);
             var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
-            var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
+            var body = JSC.WebCore.createBodyValueRef(.{ .Null = {} }) catch unreachable;
 
             ctx.request_body = body;
             const js_signal = JSC.WebCore.AbortSignal.create(this.globalThis);
@@ -5397,7 +5397,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             var ctx = this.request_pool_allocator.tryGet() catch @panic("ran out of memory");
             ctx.create(this, req, resp);
             var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
-            var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
+            var body = JSC.WebCore.createBodyValueRef(.{ .Null = {} }) catch unreachable;
 
             ctx.request_body = body;
             const js_signal = JSC.WebCore.AbortSignal.create(this.globalThis);

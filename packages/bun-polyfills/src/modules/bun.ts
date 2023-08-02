@@ -253,12 +253,14 @@ export const spawn = ((...args) => {
         });
         (<Mutable<Subprocess>>subp).stderr = rstream;
     }
+    let internalStdinStream: streams.Writable;
     if (subpAsNode.stdin) {
         const wstream = subpAsNode.stdin;
         Reflect.set(wstream, 'destroy', function (this: NodeJS.WritableStream, err?: Error) {
             void this.end(); /* if it fails its already closed */
             return this;
         });
+        internalStdinStream = wstream;
         (<Mutable<Subprocess>>subp).stdin = new FileSink(wstream);
 
     }
@@ -278,12 +280,11 @@ export const spawn = ((...args) => {
         })
     });
     if (stdinSrc) subpAsNode.once('spawn', () => {
-        const stdin = subp.stdin as unknown as WritableStream;
+        const stdinWeb = streams.Writable.toWeb(internalStdinStream);
         if (isArrayBufferView(stdinSrc)) stdinSrc = new Blob([stdinSrc]);
-        if (stdinSrc instanceof Blob) void stdinSrc.stream().pipeTo(stdin as WritableStream<Uint8Array>);
-        else if (stdinSrc instanceof Response || stdinSrc instanceof Request) void stdinSrc.body!.pipeTo(stdin);
-        // @ts-expect-error missing method types
-        else if (typeof stdinSrc === 'number') void fs.createReadStream('', { fd: stdinSrc }).pipeTo(stdin);
+        if (stdinSrc instanceof Blob) void stdinSrc.stream().pipeTo(stdinWeb);
+        else if (stdinSrc instanceof Response || stdinSrc instanceof Request) void stdinSrc.body!.pipeTo(stdinWeb);
+        else if (typeof stdinSrc === 'number') void fs.createReadStream('', { fd: stdinSrc }).pipe(internalStdinStream);
         else void stdinSrc;
     });
     // change the error stack to point to the spawn() call instead of internal Node.js callback stuff

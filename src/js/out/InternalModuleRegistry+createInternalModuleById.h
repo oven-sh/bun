@@ -26,6 +26,9 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
     case Field::NodeCluster: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "node:cluster"_s, "node/cluster.js"_s, InternalModuleRegistryConstants::NodeClusterCode);
     }
+    case Field::NodeConsole: {
+      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "node:console"_s, "node/console.js"_s, InternalModuleRegistryConstants::NodeConsoleCode);
+    }
     case Field::NodeCrypto: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "node:crypto"_s, "node/crypto.js"_s, InternalModuleRegistryConstants::NodeCryptoCode);
     }
@@ -40,6 +43,9 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
     }
     case Field::NodeDNSPromises: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "node:dns/promises"_s, "node/dns.promises.js"_s, InternalModuleRegistryConstants::NodeDNSPromisesCode);
+    }
+    case Field::NodeDomain: {
+      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "node:domain"_s, "node/domain.js"_s, InternalModuleRegistryConstants::NodeDomainCode);
     }
     case Field::NodeEvents: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "node:events"_s, "node/events.js"_s, InternalModuleRegistryConstants::NodeEventsCode);
@@ -79,6 +85,12 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
     }
     case Field::NodePerfHooks: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "node:perf_hooks"_s, "node/perf_hooks.js"_s, InternalModuleRegistryConstants::NodePerfHooksCode);
+    }
+    case Field::NodePunycode: {
+      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "node:punycode"_s, "node/punycode.js"_s, InternalModuleRegistryConstants::NodePunycodeCode);
+    }
+    case Field::NodeQuerystring: {
+      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "node:querystring"_s, "node/querystring.js"_s, InternalModuleRegistryConstants::NodeQuerystringCode);
     }
     case Field::NodeReadline: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "node:readline"_s, "node/readline.js"_s, InternalModuleRegistryConstants::NodeReadlineCode);
@@ -143,8 +155,17 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
     case Field::ThirdpartyDetectLibcLinux: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "detect-libc/linux"_s, "thirdparty/detect-libc.linux.js"_s, InternalModuleRegistryConstants::ThirdpartyDetectLibcLinuxCode);
     }
+    case Field::ThirdpartyIsomorphicFetch: {
+      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "isomorphic-fetch"_s, "thirdparty/isomorphic-fetch.js"_s, InternalModuleRegistryConstants::ThirdpartyIsomorphicFetchCode);
+    }
+    case Field::ThirdpartyNodeFetch: {
+      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "node-fetch"_s, "thirdparty/node-fetch.js"_s, InternalModuleRegistryConstants::ThirdpartyNodeFetchCode);
+    }
     case Field::ThirdpartyUndici: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "undici"_s, "thirdparty/undici.js"_s, InternalModuleRegistryConstants::ThirdpartyUndiciCode);
+    }
+    case Field::ThirdpartyVercelFetch: {
+      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "vercel_fetch"_s, "thirdparty/vercel_fetch.js"_s, InternalModuleRegistryConstants::ThirdpartyVercelFetchCode);
     }
     case Field::ThirdpartyWS: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "ws"_s, "thirdparty/ws.js"_s, InternalModuleRegistryConstants::ThirdpartyWSCode);

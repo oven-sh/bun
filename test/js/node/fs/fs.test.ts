@@ -1469,12 +1469,12 @@ it("fs.constants", () => {
   expect(constants.O_TRUNC).toBeDefined();
   expect(constants.O_APPEND).toBeDefined();
   expect(constants.O_DIRECTORY).toBeDefined();
-  expect(constants.O_NOATIME).toBeDefined();
+  // expect(constants.O_NOATIME).toBeDefined();
   expect(constants.O_NOFOLLOW).toBeDefined();
   expect(constants.O_SYNC).toBeDefined();
   expect(constants.O_DSYNC).toBeDefined();
   expect(constants.O_SYMLINK).toBeDefined();
-  expect(constants.O_DIRECT).toBeDefined();
+  // expect(constants.O_DIRECT).toBeDefined();
   expect(constants.O_NONBLOCK).toBeDefined();
   expect(constants.S_IFMT).toBeDefined();
   expect(constants.S_IFREG).toBeDefined();

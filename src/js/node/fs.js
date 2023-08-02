@@ -345,11 +345,12 @@ ReadStream = (function (InternalReadStream) {
     value: "ReadStream",
     enumerable: false,
   });
-
+  function ReadStream(path, options) {
+    return new InternalReadStream(path, options);
+  }
+  ReadStream.prototype = {};
   return Object.defineProperty(
-    function ReadStream(path, options) {
-      return new InternalReadStream(path, options);
-    },
+    ReadStream,
     Symbol.hasInstance,
     {
       value(instance) {
@@ -693,10 +694,12 @@ WriteStream = (function (InternalWriteStream) {
     enumerable: false,
   });
 
+  function WriteStream(path, options) {
+    return new InternalWriteStream(path, options);
+  }
+  WriteStream.prototype = {};
   return Object.defineProperty(
-    function WriteStream(path, options) {
-      return new InternalWriteStream(path, options);
-    },
+    WriteStream,
     Symbol.hasInstance,
     {
       value(instance) {

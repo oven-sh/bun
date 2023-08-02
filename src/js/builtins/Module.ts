@@ -43,15 +43,6 @@ export function require(this: CommonJSModuleRecord, id: string) {
     return $internalRequire(id);
   }
 
-  let esm = Loader.registry.$get(id);
-  if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {
-    const mod = esm.module;
-    const namespace = Loader.getModuleNamespaceObject(mod);
-    const exports = namespace.__esModule ? namespace : Object.create(namespace, { __esModule: { value: true } });
-    $requireMap.$set(id, $createCommonJSModule(id, exports, true));
-    return exports;
-  }
-
   // To handle import/export cycles, we need to create a module object and put
   // it into the map before we import it.
   const mod = $createCommonJSModule(id, {}, false);
@@ -75,7 +66,7 @@ export function require(this: CommonJSModuleRecord, id: string) {
       throw exception;
     }
 
-    esm = Loader.registry.$get(id);
+    const esm = Loader.registry.$get(id);
 
     // If we can pull out a ModuleNamespaceObject, let's do it.
     if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {

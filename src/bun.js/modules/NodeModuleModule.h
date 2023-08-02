@@ -100,6 +100,20 @@ static bool isBuiltinModule(const String &namePossiblyWithNodePrefix) {
   return false;
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
+                         (JSC::JSGlobalObject * globalObject,
+                          JSC::CallFrame *callFrame)) {
+  // In node, this is supposed to be the actual CommonJSModule constructor.
+  // We are cutting a huge corner by not doing all that work.
+  // This code is only to support babel.
+  JSString* empty = JSC::jsEmptyString(globalObject->vm());
+  auto* out = Bun::JSCommonJSModule::create(
+        globalObject->vm(),
+        static_cast<Zig::GlobalObject*>(globalObject)->CommonJSModuleObjectStructure(),
+        empty, empty, empty, nullptr);
+  return JSValue::encode(out);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsBuiltinModule,
                          (JSC::JSGlobalObject * globalObject,
                           JSC::CallFrame *callFrame)) {
@@ -209,7 +223,31 @@ template <std::size_t N, class T> consteval std::size_t countof(T (&)[N]) {
 namespace Zig {
 
 DEFINE_NATIVE_MODULE(NodeModule) {
-  INIT_NATIVE_MODULE(10);
+  // the default object here is a function, so we cant use the INIT_NATIVE_MODULE helper
+
+  Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject *>(lexicalGlobalObject);              
+  JSC::VM &vm = globalObject->vm();                                            
+  JSC::JSObject *defaultObject = JSC::JSFunction::create(                      
+      vm, globalObject, 0, "Module"_s, jsFunctionNodeModuleModuleConstructor, 
+      JSC::ImplementationVisibility::Public, JSC::NoIntrinsic,                 
+      jsFunctionNodeModuleModuleConstructor);
+  auto put = [&](JSC::Identifier name, JSC::JSValue value) {                   
+    defaultObject->putDirect(vm, name, value);                                 
+    exportNames.append(name);                                                  
+    exportValues.append(value);                                                
+  };                                                                           
+  auto putNativeFn = [&](JSC::Identifier name, JSC::NativeFunction ptr) {      
+    JSC::JSFunction *value = JSC::JSFunction::create(                          
+        vm, globalObject, 1, name.string(), ptr,                               
+        JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, ptr);         
+    defaultObject->putDirect(vm, name, value);                                 
+    exportNames.append(name);                                                  
+    exportValues.append(value);                                                
+  };                                                                           
+  exportNames.reserveCapacity(13);                        
+  exportValues.ensureCapacity(13);                        
+  exportNames.append(vm.propertyNames->defaultKeyword);                        
+  exportValues.append(defaultObject);                                          
 
   putNativeFn(Identifier::fromString(vm, "createRequire"_s),
               jsFunctionNodeModuleCreateRequire);

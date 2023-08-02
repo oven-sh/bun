@@ -1645,18 +1645,20 @@ static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
         }
 
         if (string == "worker_threads"_s) {
-            auto* worker = WebWorker__getParentWorker(globalObject->bunVM());
+
             JSValue workerData = jsUndefined();
-            auto options = worker->options();
-            if (worker && options.bun.data) {
-                RefPtr<WebCore::SerializedScriptValue> serialized = WTFMove(options.bun.data);
-                Vector<RefPtr<WebCore::MessagePort>> ports = WTFMove(options.bun.dataMessagePorts);
-                JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTFMove(ports));
-                RETURN_IF_EXCEPTION(scope, {});
-                workerData = deserialized;
-            }
             JSValue threadId = jsNumber(0);
-            if (worker) {
+
+            if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM())) {
+                auto& options = worker->options();
+                if (worker && options.bun.data) {
+                    RefPtr<WebCore::SerializedScriptValue> serialized = WTFMove(options.bun.data);
+                    Vector<RefPtr<WebCore::MessagePort>> ports = WTFMove(options.bun.dataMessagePorts);
+                    JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTFMove(ports));
+                    RETURN_IF_EXCEPTION(scope, {});
+                    workerData = deserialized;
+                }
+
                 threadId = jsNumber(worker->clientIdentifier());
             }
 

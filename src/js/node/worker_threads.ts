@@ -1,3 +1,5 @@
+export const { MessageChannel, MessagePort } = globalThis;
+
 import EventEmitter from "node:events";
 export const isMainThread = Bun.isMainThread;
 export let [workerData, threadId] = $lazy("worker_threads");
@@ -173,13 +175,14 @@ export class Worker extends EventEmitter {
     return {};
   }
 }
-
 export default {
   Worker,
   workerData,
   parentPort,
   resourceLimits,
   isMainThread,
+  MessageChannel,
+  MessagePort,
   getEnvironmentData,
   setEnvironmentData,
   getHeapSnapshot() {

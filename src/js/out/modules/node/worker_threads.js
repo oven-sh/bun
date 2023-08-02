@@ -50,7 +50,7 @@ function getEnvironmentData() {
 function setEnvironmentData(env) {
   process.env = env;
 }
-var isMainThread = Bun.isMainThread, [workerData, threadId] = globalThis[Symbol.for("Bun.lazy")]("worker_threads"), parentPort = isMainThread ? null : fakeParentPort(), resourceLimits = {}, WebWorker = globalThis.Worker;
+var { MessageChannel, MessagePort } = globalThis, isMainThread = Bun.isMainThread, [workerData, threadId] = globalThis[Symbol.for("Bun.lazy")]("worker_threads"), parentPort = isMainThread ? null : fakeParentPort(), resourceLimits = {}, WebWorker = globalThis.Worker;
 
 class Worker extends EventEmitter {
   #worker;
@@ -118,6 +118,8 @@ var worker_threads_default = {
   parentPort,
   resourceLimits,
   isMainThread,
+  MessageChannel,
+  MessagePort,
   getEnvironmentData,
   setEnvironmentData,
   getHeapSnapshot() {
@@ -134,5 +136,7 @@ export {
   isMainThread,
   getEnvironmentData,
   worker_threads_default as default,
-  Worker
+  Worker,
+  MessagePort,
+  MessageChannel
 };

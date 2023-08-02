@@ -8,7 +8,7 @@
 
 /** **/
 // constants is injected into the top of this file
-const nodeFsConstants = constants;
+const nodeFsConstants = $processBindingConstants.fs;
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
 
@@ -1936,4 +1936,4 @@ var require_wasi = __commonJS({
     exports.default = WASI;
   },
 });
-export default require_wasi();
+export default { WASI: require_wasi().default };

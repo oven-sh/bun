@@ -1776,15 +1776,7 @@ pub const ModuleLoader = struct {
                     }
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = bun.String.static(
-                            strings.append3(
-                                bun.default_allocator,
-                                JSC.Node.fs.constants_string,
-                                // @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "node/wasi.js")),
-                                "TODO:",
-                                @embedFile("../js/wasi-runner.js"),
-                            ) catch unreachable,
-                        ),
+                        .source_code = bun.String.static(@embedFile("../js/wasi-runner.js")),
                         .specifier = input_specifier,
                         .source_url = ZigString.init(path.text),
                         .tag = .esm,

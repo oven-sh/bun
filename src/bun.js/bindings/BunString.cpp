@@ -267,47 +267,19 @@ extern "C" EncodedJSValue BunString__createArray(
     auto& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    if (length < 64) {
-        // We must do this or Bun.gc(true) in a loop creating large arrays of strings will crash due to GC'ing.
-        MarkedArgumentBuffer arguments;
-
-        arguments.fill(length, [&](JSC::JSValue* value) {
-            const BunString* end = ptr + length;
-            while (ptr != end) {
-                *value++ = Bun::toJS(globalObject, *ptr++);
-            }
-        });
-
-        JSC::ObjectInitializationScope scope(vm);
-        GCDeferralContext context(vm);
-
-        JSC::JSArray* array = JSC::JSArray::tryCreateUninitializedRestricted(
-            scope,
-            globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
-            length);
-
-        if (array) {
-            for (size_t i = 0; i < length; ++i) {
-                array->initializeIndex(scope, i, arguments.at(i));
-            }
-            return JSValue::encode(array);
-        }
-
+    // Using tryCreateUninitialized here breaks stuff..
+    // https://github.com/oven-sh/bun/issues/3931
+    JSC::JSArray* array = constructEmptyArray(globalObject, nullptr, length);
+    if (!array) {
         JSC::throwOutOfMemoryError(globalObject, throwScope);
         RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSValue()));
-    } else {
-        JSC::JSArray* array = constructEmptyArray(globalObject, nullptr, length);
-        if (!array) {
-            JSC::throwOutOfMemoryError(globalObject, throwScope);
-            RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSValue()));
-        }
-
-        for (size_t i = 0; i < length; ++i) {
-            array->putDirectIndex(globalObject, i, Bun::toJS(globalObject, *ptr++));
-        }
-
-        return JSValue::encode(array);
     }
+
+    for (size_t i = 0; i < length; ++i) {
+        array->putDirectIndex(globalObject, i, Bun::toJS(globalObject, *ptr++));
+    }
+
+    return JSValue::encode(array);
 }
 
 extern "C" void BunString__toWTFString(BunString* bunString)

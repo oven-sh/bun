@@ -1,5 +1,22 @@
 import { describe, expect, test } from "bun:test";
-import { bunRun, bunTest, tempDirWithFiles } from "harness";
+import { bunRun, bunTest, tempDirWithFiles, bunExe, bunEnv } from "harness";
+import path from "path";
+
+function bunRunWithoutTrim(file: string, env?: Record<string, string>) {
+  const result = Bun.spawnSync([bunExe(), file], {
+    cwd: path.dirname(file),
+    env: {
+      ...bunEnv,
+      NODE_ENV: undefined,
+      ...env,
+    },
+  });
+  if (!result.success) throw new Error(result.stderr.toString("utf8"));
+  return {
+    stdout: result.stdout.toString("utf8"),
+    stderr: result.stderr.toString("utf8").trim(),
+  };
+}
 
 describe(".env file is loaded", () => {
   test(".env", () => {
@@ -337,4 +354,53 @@ test(".env in a folder doesn't throw an error", () => {
   });
   const { stdout } = bunRun(`${dir}/index.ts`);
   expect(stdout).toBe("hey");
+});
+
+test("#3911", () => {
+  const dir = tempDirWithFiles("dotenv", {
+    ".env": 'KEY="a\\nb"',
+    "index.ts": "console.log(process.env.KEY);",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(stdout).toBe("a\nb");
+});
+
+describe("boundary tests", () => {
+  test("src boundary", () => {
+    const dir = tempDirWithFiles("dotenv", {
+      ".env": 'KEY="a\\n"',
+      "index.ts": "console.log(process.env.KEY);",
+    });
+    const { stdout } = bunRunWithoutTrim(`${dir}/index.ts`);
+    // should be "a\n" but console.log adds a newline
+    expect(stdout).toBe("a\n\n");
+
+    const dir2 = tempDirWithFiles("dotenv", {
+      ".env": 'KEY="a\\n',
+      "index.ts": "console.log(process.env.KEY);",
+    });
+    const { stdout: stdout2 } = bunRunWithoutTrim(`${dir2}/index.ts`);
+    // should be "a\n but console.log adds a newline
+    expect(stdout2).toBe('"a\n\n');
+  });
+
+  test("buffer boundary", () => {
+    const expected = "a".repeat(4094);
+    let content = expected + "a";
+    const dir = tempDirWithFiles("dotenv", {
+      ".env": `KEY="${content}"`,
+      "index.ts": "console.log(process.env.KEY);",
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`);
+
+    content = expected + "\\n";
+    const dir2 = tempDirWithFiles("dotenv", {
+      ".env": `KEY="${content}"`,
+      "index.ts": "console.log(process.env.KEY);",
+    });
+    const { stdout: stdout2 } = bunRun(`${dir2}/index.ts`);
+    // should be truncated
+    expect(stdout).toBe(expected);
+    expect(stdout2).toBe(expected);
+  });
 });

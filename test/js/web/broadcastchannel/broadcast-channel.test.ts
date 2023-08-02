@@ -9,6 +9,8 @@ test("postMessage results in correct event", done => {
     expect(e.origin).toBe("");
     expect(e.data).toBe("hello world");
     expect(e.source).toBe(null);
+    c1.close();
+    c2.close();
     done();
   };
 
@@ -24,6 +26,21 @@ test("broadcast channel properties", () => {
   expect(c1.postMessage).toBeInstanceOf(Function);
   expect(c1.ref).toBeInstanceOf(Function);
   expect(c1.unref).toBeInstanceOf(Function);
+  c1.close();
+});
+
+test("broadcast channel worker wait", done => {
+  var worker = new Worker(new URL("broadcast-channel-worker-simple.ts", import.meta.url).href);
+  worker.ref();
+  Bun.sleepSync(500);
+  var bc = new BroadcastChannel("sleep");
+  bc.onmessage = (e: MessageEvent) => {
+    expect(e.data).toBe("done!");
+    bc.close();
+    worker.unref();
+    done();
+  };
+  bc.postMessage("rise and shine!");
 });
 
 test("messages are delivered in port creation order", done => {
@@ -51,6 +68,9 @@ test("messages are delivered in port creation order", done => {
         expect(events[4].data).toBe("done");
         expect(events[5].target).toBe(c3);
         expect(events[5].data).toBe("done");
+        c1.close();
+        c2.close();
+        c3.close();
         done();
       }
     }
@@ -75,9 +95,25 @@ test("messages aren't deliverd to a closed port.", done => {
   };
   c2.close();
   c3.onmessage = () => {
+    c1.close();
+    c3.close();
     done();
   };
   c1.postMessage("test");
+});
+
+test("close broadcast channel and create another with the same name", done => {
+  let c1 = new BroadcastChannel("close-and-create");
+  c1.close();
+  let c2 = new BroadcastChannel("close-and-create");
+  let c3 = new BroadcastChannel("close-and-create");
+  c2.onmessage = (e: MessageEvent) => {
+    expect(e.data).toBe("done");
+    c2.close();
+    c3.close();
+    done();
+  };
+  c3.postMessage("done");
 });
 
 test("messages aren't delivered to a port closed after calling postMessage.", done => {
@@ -86,7 +122,11 @@ test("messages aren't delivered to a port closed after calling postMessage.", do
   let c3 = new BroadcastChannel("closed");
 
   c2.onmessage = () => expect().fail();
-  c3.onmessage = () => done();
+  c3.onmessage = () => {
+    c1.close();
+    c3.close();
+    done();
+  };
   c1.postMessage("test");
   c2.close();
 });
@@ -101,6 +141,8 @@ test("closing and creating channels during message delivery works correctly.", d
     let c3 = new BroadcastChannel("create-in-onmessage");
     c3.onmessage = (event: MessageEvent) => {
       expect(event.data).toBe("done");
+      c1.close();
+      c3.close();
       done();
     };
     c1.postMessage("done");
@@ -127,6 +169,8 @@ test("Closing a channel in onmessage prevents already queued tasks from firing o
   c3.addEventListener("message", (e: MessageEvent) => {
     if (e.data == "done") {
       expect(events).toEqual(["c2: first", "c3: first", "c3: done"]);
+      c1.close();
+      c3.close();
       done();
     }
   });

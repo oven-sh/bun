@@ -492,12 +492,6 @@ pub const RuntimeTranspilerStore = struct {
                     continue;
                 }
 
-                if (JSC.DisabledModule.has(import_record.path.text)) {
-                    import_record.path.is_disabled = true;
-                    import_record.do_commonjs_transform_in_printer = true;
-                    continue;
-                }
-
                 if (bundler.options.rewrite_jest_for_tests) {
                     if (strings.eqlComptime(
                         import_record.path.text,
@@ -2259,7 +2253,7 @@ pub const ModuleLoader = struct {
                 .@"node:vm" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:vm", "node/vm.js", specifier),
                 .@"node:wasi" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:wasi", "node/wasi.js", specifier),
                 .@"node:zlib" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:zlib", "node/zlib.js", specifier),
-
+                .@"node:worker_threads" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:zlib", "node/worker_threads.js", specifier),
                 .@"detect-libc" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"detect-libc", if (Environment.isLinux) "thirdparty/detect-libc.linux.js" else "thirdparty/detect-libc.js", specifier),
                 .undici => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .undici, "thirdparty/undici.js", specifier),
                 .ws => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .ws, "thirdparty/ws.js", specifier),
@@ -2285,20 +2279,6 @@ pub const ModuleLoader = struct {
                     .hash = 0,
                 };
             }
-        } else if (DisabledModule.getWithEql(specifier, bun.String.eqlComptime) != null) {
-            return ResolvedSource{
-                .allocator = null,
-                .source_code = bun.String.static(
-                    \\var masqueradesAsUndefined=globalThis[Symbol.for("Bun.lazy")]("masqueradesAsUndefined");
-                    \\masqueradesAsUndefined[Symbol.for("CommonJS")]=0;
-                    \\masqueradesAsUndefined.default=masqueradesAsUndefined;
-                    \\export default masqueradesAsUndefined;
-                    \\
-                ),
-                .specifier = specifier,
-                .source_url = specifier.toZigString(),
-                .hash = 0,
-            };
         } else if (jsc_vm.standalone_module_graph) |graph| {
             const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
             defer specifier_utf8.deinit();
@@ -2446,6 +2426,7 @@ pub const HardcodedModule = enum {
     @"node:vm",
     @"node:wasi",
     @"node:zlib",
+    @"node:worker_threads",
     undici,
     ws,
     // These are all not implemented yet, but are stubbed
@@ -2670,15 +2651,6 @@ pub const HardcodedModule = enum {
         },
     );
 };
-
-pub const DisabledModule = bun.ComptimeStringMap(
-    void,
-    .{
-        // Stubbing out worker_threads will break esbuild.
-        .{"worker_threads"},
-        .{"node:worker_threads"},
-    },
-);
 
 fn jsResolvedSource(vm: *JSC.VirtualMachine, builtins: []const u8, comptime module: HardcodedModule, comptime input: []const u8, specifier: bun.String) ResolvedSource {
     // We use RefCountedResolvedSource because we want a stable StringImpl*

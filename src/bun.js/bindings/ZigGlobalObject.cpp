@@ -236,7 +236,7 @@ public:
 };
 
 }
-
+extern "C" WebCore::Worker* WebWorker__getParentWorker(void*);
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length))
 {
     if (has_loaded_jsc)
@@ -1589,13 +1589,13 @@ JSC_DEFINE_HOST_FUNCTION(functionCallNotImplemented,
 static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-JSC:
+
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     VM& vm = globalObject->vm();
 
     switch (callFrame->argumentCount()) {
     case 0: {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         JSC::throwTypeError(globalObject, scope, "lazyLoad needs 1 argument (a string)"_s);
         scope.release();
         return JSC::JSValue::encode(JSC::JSValue {});
@@ -1605,7 +1605,6 @@ JSC:
         if (moduleName.isNumber()) {
             switch (moduleName.toInt32(globalObject)) {
             case 0: {
-                auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
                 JSC::throwTypeError(globalObject, scope, "lazyLoad expects a string"_s);
                 scope.release();
                 return JSC::JSValue::encode(JSC::JSValue {});
@@ -1632,7 +1631,6 @@ JSC:
 
         auto string = moduleName.toWTFString(globalObject);
         if (string.isNull()) {
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
             JSC::throwTypeError(globalObject, scope, "lazyLoad expects a string"_s);
             scope.release();
             return JSC::JSValue::encode(JSC::JSValue {});
@@ -1644,6 +1642,29 @@ JSC:
 
         if (string == "bun:jsc"_s) {
             return JSC::JSValue::encode(createJSCModule(globalObject));
+        }
+
+        if (string == "worker_threads"_s) {
+            auto* worker = WebWorker__getParentWorker(globalObject->bunVM());
+            JSValue workerData = jsUndefined();
+            auto options = worker->options();
+            if (worker && options.bun.data) {
+                RefPtr<WebCore::SerializedScriptValue> serialized = WTFMove(options.bun.data);
+                Vector<RefPtr<WebCore::MessagePort>> ports = WTFMove(options.bun.dataMessagePorts);
+                JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTFMove(ports));
+                RETURN_IF_EXCEPTION(scope, {});
+                workerData = deserialized;
+            }
+            JSValue threadId = jsNumber(0);
+            if (worker) {
+                threadId = jsNumber(worker->clientIdentifier());
+            }
+
+            JSArray* array = constructEmptyArray(globalObject, nullptr);
+            array->push(globalObject, workerData);
+            array->push(globalObject, threadId);
+
+            return JSC::JSValue::encode(array);
         }
 
         if (string == "pathToFileURL"_s) {
@@ -3643,7 +3664,6 @@ void GlobalObject::finishCreation(VM& vm)
     consoleObject->putDirectBuiltinFunction(vm, this, clientData->builtinNames().writePublicName(), consoleObjectWriteCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
 }
 
-extern "C" WebCore::Worker* WebWorker__getParentWorker(void*);
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     (JSC::JSGlobalObject * leixcalGlobalObject, JSC::CallFrame* callFrame))
 {

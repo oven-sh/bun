@@ -55,6 +55,7 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
+#include "SerializedScriptValue.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -146,6 +147,40 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::const
             if (auto ref = bunObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "ref"_s))) {
                 options.bun.unref = !ref.toBoolean(lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+            }
+
+            auto workerData = bunObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "workerData"_s));
+            if (!workerData) {
+                workerData = bunObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "data"_s));
+            }
+
+            if (workerData) {
+                Vector<RefPtr<MessagePort>> ports;
+                Vector<JSC::Strong<JSC::JSObject>> transferList;
+
+                if (JSValue transferListValue = bunObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "transferList"_s))) {
+                    if (transferListValue.isObject()) {
+                        JSC::JSObject* transferListObject = transferListValue.getObject();
+                        if (auto* transferListArray = jsDynamicCast<JSC::JSArray*>(transferListObject)) {
+                            for (unsigned i = 0; i < transferListArray->length(); i++) {
+                                JSC::JSValue transferListValue = transferListArray->get(lexicalGlobalObject, i);
+                                if (transferListValue.isObject()) {
+                                    JSC::JSObject* transferListObject = transferListValue.getObject();
+                                    transferList.append(JSC::Strong<JSC::JSObject>(vm, transferListObject));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*lexicalGlobalObject, workerData, WTFMove(transferList), ports);
+                if (serialized.hasException()) {
+                    WebCore::propagateException(*lexicalGlobalObject, throwScope, serialized.releaseException());
+                    return encodedJSValue();
+                }
+
+                options.bun.data = WTFMove(serialized.releaseReturnValue());
+                options.bun.dataMessagePorts = WTFMove(ports);
             }
         }
     }

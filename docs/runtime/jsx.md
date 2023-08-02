@@ -77,7 +77,7 @@ How JSX constructs are transformed into vanilla JavaScript internally. The table
   );
   ```
 
-  The `jsxDEV` variable name is a convention used by React. The `DEV` suffix is a visible way to indicate that the code is intended for use in development. The development version of React is slowers and includes additional validity checks & debugging tools.
+  The `jsxDEV` variable name is a convention used by React. The `DEV` suffix is a visible way to indicate that the code is intended for use in development. The development version of React is slower and includes additional validity checks & debugging tools.
 
 ---
 

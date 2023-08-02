@@ -533,9 +533,9 @@ pub const RuntimeTranspilerStore = struct {
             var printer = source_code_printer.?.*;
             printer.ctx.reset();
 
-            const written = brk: {
+            {
                 defer source_code_printer.?.* = printer;
-                break :brk bundler.printWithSourceMap(
+                _ = bundler.printWithSourceMap(
                     parse_result,
                     @TypeOf(&printer),
                     &printer,
@@ -545,11 +545,6 @@ pub const RuntimeTranspilerStore = struct {
                     this.parse_error = err;
                     return;
                 };
-            };
-
-            if (written == 0) {
-                this.parse_error = error.PrintingErrorWriteFailed;
-                return;
             }
 
             if (comptime Environment.dump_source) {
@@ -1225,19 +1220,15 @@ pub const ModuleLoader = struct {
             var printer = VirtualMachine.source_code_printer.?.*;
             printer.ctx.reset();
 
-            const written = brk: {
+            {
                 defer VirtualMachine.source_code_printer.?.* = printer;
-                break :brk try jsc_vm.bundler.printWithSourceMap(
+                _ = try jsc_vm.bundler.printWithSourceMap(
                     parse_result,
                     @TypeOf(&printer),
                     &printer,
                     .esm_ascii,
                     SavedSourceMap.SourceMapHandler.init(&jsc_vm.source_mappings),
                 );
-            };
-
-            if (written == 0) {
-                return error.PrintingErrorWriteFailed;
             }
 
             if (comptime Environment.dump_source) {
@@ -1653,7 +1644,6 @@ pub const ModuleLoader = struct {
                             .hash = 0,
                         };
                     }
-                    return error.PrintingErrorWriteFailed;
                 }
 
                 if (comptime Environment.dump_source) {
@@ -1663,6 +1653,12 @@ pub const ModuleLoader = struct {
                 var commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
                 for (parse_result.ast.commonjs_export_names, commonjs_exports) |name, *out| {
                     out.* = ZigString.fromUTF8(name);
+                }
+
+                defer {
+                    if (is_main) {
+                        jsc_vm.has_loaded = true;
+                    }
                 }
 
                 if (jsc_vm.isWatcherEnabled()) {
@@ -2019,7 +2015,11 @@ pub const ModuleLoader = struct {
         JSC.markBinding(@src());
         var log = logger.Log.init(jsc_vm.bundler.allocator);
         defer log.deinit();
-        if (ModuleLoader.fetchBuiltinModule(jsc_vm, specifier.*, &log, false) catch |err| {
+
+        if (ModuleLoader.fetchBuiltinModule(
+            jsc_vm,
+            specifier.*,
+        ) catch |err| {
             if (err == error.AsyncModule) {
                 unreachable;
             }
@@ -2058,7 +2058,10 @@ pub const ModuleLoader = struct {
             &display_specifier,
         );
         const path = Fs.Path.init(specifier);
-        const loader: options.Loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse options.Loader.js;
+
+        // Deliberately optional.
+        // The concurrent one only handles javascript-like loaders right now.
+        const loader: ?options.Loader = jsc_vm.bundler.options.loaders.get(path.name.ext);
 
         // We only run the transpiler concurrently when we can.
         // Today, that's:
@@ -2067,7 +2070,8 @@ pub const ModuleLoader = struct {
         //   Import Expressions (import('foo'))
         //
         if (comptime bun.FeatureFlags.concurrent_transpiler) {
-            if (allow_promise and loader.isJavaScriptLike() and
+            const concurrent_loader = loader orelse .file;
+            if (allow_promise and (jsc_vm.has_loaded or jsc_vm.is_in_preload) and concurrent_loader.isJavaScriptLike() and
                 // Plugins make this complicated,
                 // TODO: allow running concurrently when no onLoad handlers match a plugin.
                 jsc_vm.plugin_runner == null and jsc_vm.transpiler_store.enabled)
@@ -2083,6 +2087,15 @@ pub const ModuleLoader = struct {
             }
         }
 
+        const synchronous_loader = loader orelse
+            // Unknown extensions are to be treated as file loader
+            if (jsc_vm.has_loaded or jsc_vm.is_in_preload)
+            options.Loader.file
+        else
+            // Unless it's potentially the main module
+            // This is important so that "bun run ./foo-i-have-no-extension" works
+            options.Loader.js;
+
         var promise: ?*JSC.JSInternalPromise = null;
         ret.* = ErrorableResolvedSource.ok(
             ModuleLoader.transpileSourceCode(
@@ -2092,7 +2105,7 @@ pub const ModuleLoader = struct {
                 referrer_slice.slice(),
                 specifier_ptr.*,
                 path,
-                loader,
+                synchronous_loader,
                 &log,
                 null,
                 ret,
@@ -2137,7 +2150,7 @@ pub const ModuleLoader = struct {
         return globalObject.runOnLoadPlugins(bun.String.init(namespace), bun.String.init(after_namespace), .bun) orelse return JSValue.zero;
     }
 
-    pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String, log: *logger.Log, comptime disable_transpilying: bool) !?ResolvedSource {
+    pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?ResolvedSource {
         if (jsc_vm.node_modules != null and specifier.eqlComptime(JSC.bun_file_import_path)) {
             // We kind of need an abstraction around this.
             // Basically we should subclass JSC::SourceCode with:
@@ -2164,9 +2177,6 @@ pub const ModuleLoader = struct {
             };
         } else if (HardcodedModule.Map.getWithEql(specifier, bun.String.eqlComptime)) |hardcoded| {
             switch (hardcoded) {
-                // This is all complicated because the imports have to be linked and we want to run the printer on it
-                // so it consistently handles bundled imports
-                // we can't take the shortcut of just directly importing the file, sadly.
                 .@"bun:main" => {
                     defer {
                         if (jsc_vm.worker) |worker| {
@@ -2174,104 +2184,9 @@ pub const ModuleLoader = struct {
                         }
                     }
 
-                    if (comptime disable_transpilying) {
-                        return ResolvedSource{
-                            .allocator = null,
-                            .source_code = bun.String.init(jsc_vm.entry_point.source.contents),
-                            .specifier = bun.String.init(bun.asByteSlice(JSC.VirtualMachine.main_file_name)),
-                            .source_url = ZigString.init(bun.asByteSlice(JSC.VirtualMachine.main_file_name)),
-                            .hash = 0,
-                        };
-                    }
-                    defer jsc_vm.transpiled_count += 1;
-                    var arena: bun.ArenaAllocator = undefined;
-
-                    // Attempt to reuse the Arena from the parser when we can
-                    // This code is potentially re-entrant, so only one Arena can be reused at a time
-                    // That's why we have to check if the Arena is null
-                    //
-                    // Using an Arena here is a significant memory optimization when loading many files
-                    if (jsc_vm.parser_arena) |shared| {
-                        arena = shared;
-                        jsc_vm.parser_arena = null;
-                        _ = arena.reset(.retain_capacity);
-                    } else {
-                        arena = bun.ArenaAllocator.init(jsc_vm.allocator);
-                    }
-
-                    defer {
-                        if (jsc_vm.parser_arena == null) {
-                            jsc_vm.parser_arena = arena;
-                        } else {
-                            arena.deinit();
-                        }
-                    }
-
-                    var bundler = &jsc_vm.bundler;
-                    var old = jsc_vm.bundler.log;
-                    jsc_vm.bundler.log = log;
-                    jsc_vm.bundler.linker.log = log;
-                    jsc_vm.bundler.resolver.log = log;
-                    defer {
-                        jsc_vm.bundler.log = old;
-                        jsc_vm.bundler.linker.log = old;
-                        jsc_vm.bundler.resolver.log = old;
-                    }
-
-                    var jsx = bundler.options.jsx;
-                    jsx.parse = false;
-                    var opts = js_parser.Parser.Options.init(jsx, .js);
-                    opts.enable_legacy_bundling = false;
-                    opts.legacy_transform_require_to_import = false;
-                    opts.features.dynamic_require = true;
-                    opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
-                    opts.features.hot_module_reloading = false;
-                    opts.features.top_level_await = true;
-                    opts.features.react_fast_refresh = false;
-                    opts.features.minify_identifiers = bundler.options.minify_identifiers;
-                    opts.features.minify_syntax = bundler.options.minify_syntax;
-                    opts.filepath_hash_for_hmr = 0;
-                    opts.warn_about_unbundled_modules = false;
-                    opts.macro_context = &jsc_vm.bundler.macro_context.?;
-                    const main_ast = ((bundler.resolver.caches.js.parse(arena.allocator(), opts, bundler.options.define, bundler.log, &jsc_vm.entry_point.source) catch null) orelse {
-                        return error.ParseError;
-                    }).ast;
-                    var parse_result = ParseResult{ .source = jsc_vm.entry_point.source, .ast = main_ast, .loader = .js, .input_fd = null };
-                    var file_path = Fs.Path.init(bundler.fs.top_level_dir);
-                    file_path.name.dir = bundler.fs.top_level_dir;
-                    file_path.name.base = "bun:main";
-                    try bundler.linker.link(
-                        file_path,
-                        &parse_result,
-                        jsc_vm.origin,
-                        .absolute_path,
-                        false,
-                        true,
-                    );
-                    var printer = JSC.VirtualMachine.source_code_printer.?.*;
-                    var written: usize = undefined;
-                    printer.ctx.reset();
-                    {
-                        defer JSC.VirtualMachine.source_code_printer.?.* = printer;
-                        written = try jsc_vm.bundler.printWithSourceMap(
-                            parse_result,
-                            @TypeOf(&printer),
-                            &printer,
-                            .esm_ascii,
-                            SavedSourceMap.SourceMapHandler.init(&jsc_vm.source_mappings),
-                        );
-                    }
-
-                    if (comptime Environment.dump_source)
-                        try dumpSource(JSC.VirtualMachine.main_file_name, &printer);
-
-                    if (written == 0) {
-                        return error.PrintingErrorWriteFailed;
-                    }
-
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = bun.String.createLatin1(printer.ctx.written),
+                        .source_code = bun.String.create(jsc_vm.entry_point.source.contents),
                         .specifier = specifier,
                         .source_url = ZigString.init(bun.asByteSlice(JSC.VirtualMachine.main_file_name)),
                         .hash = 0,

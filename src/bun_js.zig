@@ -129,8 +129,7 @@ pub const Run = struct {
         vm.global.vm().holdAPILock(&run, callback);
     }
 
-    pub fn boot(ctx_: Command.Context, file: std.fs.File, entry_path: string) !void {
-        _ = file;
+    pub fn boot(ctx_: Command.Context, entry_path: string) !void {
         var ctx = ctx_;
         JSC.markBinding(@src());
         bun.JSC.initialize();
@@ -241,6 +240,11 @@ pub const Run = struct {
         if (this.ctx.debug.hot_reload != .none) {
             JSC.HotReloader.enableHotModuleReloading(vm);
         }
+
+        if (strings.eqlComptime(this.entry_path, ".") and vm.bundler.fs.top_level_dir.len > 0) {
+            this.entry_path = vm.bundler.fs.top_level_dir;
+        }
+
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
             if (promise.status(vm.global.vm()) == .Rejected) {
                 vm.runErrorHandler(promise.result(vm.global.vm()), null);

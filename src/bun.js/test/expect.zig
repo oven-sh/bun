@@ -28,6 +28,17 @@ pub const Counter = struct {
     actual: u32 = 0,
 };
 
+const JSTypeOfMap = bun.ComptimeStringMap([]const u8, .{
+    .{ "function", "function" },
+    .{ "object", "object" },
+    .{ "bigint", "bigint" },
+    .{ "boolean", "boolean" },
+    .{ "number", "number" },
+    .{ "string", "string" },
+    .{ "symbol", "symbol" },
+    .{ "undefined", "undefined" },
+});
+
 pub var active_test_expectation_counter: Counter = .{};
 
 /// https://jestjs.io/docs/expect
@@ -316,7 +327,7 @@ pub const Expect = struct {
         } else {
             _msg = ZigString.fromBytes("passes by .pass() assertion");
         }
-            
+
         active_test_expectation_counter.actual += 1;
 
         const not = this.flags.not;
@@ -364,12 +375,12 @@ pub const Expect = struct {
                 globalObject.throwInvalidArgumentType("fail", "message", "string");
                 return .zero;
             }
-   
+
             value.toZigString(&_msg, globalObject);
         } else {
             _msg = ZigString.fromBytes("fails by .fail() assertion");
         }
-            
+
         active_test_expectation_counter.actual += 1;
 
         const not = this.flags.not;
@@ -2317,15 +2328,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        if (!std.mem.eql(u8, expectedAsStr, "function") and
-            !std.mem.eql(u8, expectedAsStr, "object") and
-            !std.mem.eql(u8, expectedAsStr, "bigint") and
-            !std.mem.eql(u8, expectedAsStr, "boolean") and
-            !std.mem.eql(u8, expectedAsStr, "number") and
-            !std.mem.eql(u8, expectedAsStr, "string") and
-            !std.mem.eql(u8, expectedAsStr, "symbol") and
-            !std.mem.eql(u8, expectedAsStr, "undefined"))
-        {
+        if (!JSTypeOfMap.has(expectedAsStr)) {
             globalThis.throwInvalidArguments("toBeTypeOf() requires a valid type string argument ('function', 'object', 'bigint', 'boolean', 'number', 'string', 'symbol', 'undefined')", .{});
             return .zero;
         }
@@ -2356,7 +2359,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        pass = std.mem.eql(u8, expectedAsStr, whatIsTheType);
+        pass = strings.eql(expectedAsStr, whatIsTheType);
 
         if (not) pass = !pass;
         if (pass) return thisValue;

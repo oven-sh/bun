@@ -1,7 +1,6 @@
 // @ts-nocheck
-import { file, gc, serve, ServeOptions } from "bun";
-import { afterAll, afterEach, describe, expect, it, test } from "bun:test";
-import { readFileSync } from "fs";
+import { gc, ServeOptions } from "bun";
+import { afterAll, describe, expect, it, test } from "bun:test";
 
 var port = 0;
 

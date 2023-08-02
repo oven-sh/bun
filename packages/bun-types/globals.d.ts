@@ -3698,6 +3698,11 @@ interface Worker extends EventTarget {
    * Undo a previous `ref()`
    */
   unref(): void;
+
+  /**
+   * Unique per-process thread ID. Main thread ID is always `0`.
+   */
+  readonly threadId: number;
 }
 
 /**

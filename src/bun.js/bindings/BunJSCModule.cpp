@@ -28,6 +28,8 @@
 #include "ExceptionOr.h"
 #include "MessagePort.h"
 
+#include "Process.h"
+
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
@@ -146,73 +148,20 @@ JSC_DEFINE_HOST_FUNCTION(functionHeapSize, (JSGlobalObject * globalObject, CallF
     return JSValue::encode(jsNumber(vm.heap.size()));
 }
 
-class JSCMemoryFootprint : public JSDestructibleObject {
-    using Base = JSDestructibleObject;
+JSC::Structure* createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
 
-public:
-    template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* subspaceFor(VM& vm)
-    {
-        return &vm.destructibleObjectSpace();
-    }
+    JSC::Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), 5);
+    JSC::PropertyOffset offset;
 
-    JSCMemoryFootprint(VM& vm, Structure* structure)
-        : Base(vm, structure)
-    {
-    }
+    structure = structure->addPropertyTransition(vm, structure, Identifier::fromString(vm, "current"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, Identifier::fromString(vm, "peak"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, Identifier::fromString(vm, "currentCommit"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, Identifier::fromString(vm, "peakCommit"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, Identifier::fromString(vm, "pageFaults"_s), 0, offset);
 
-    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
-    {
-        return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
-    }
-
-    static JSCMemoryFootprint* create(VM& vm, JSGlobalObject* globalObject)
-    {
-        Structure* structure = createStructure(vm, globalObject, jsNull());
-        JSCMemoryFootprint* footprint = new (NotNull, allocateCell<JSCMemoryFootprint>(vm)) JSCMemoryFootprint(vm, structure);
-        footprint->finishCreation(vm);
-        return footprint;
-    }
-
-    void finishCreation(VM& vm)
-    {
-        Base::finishCreation(vm);
-
-        auto addProperty = [&](VM& vm, ASCIILiteral name, JSValue value) {
-            JSCMemoryFootprint::addProperty(vm, name, value);
-        };
-
-        size_t elapsed_msecs = 0;
-        size_t user_msecs = 0;
-        size_t system_msecs = 0;
-        size_t current_rss = 0;
-        size_t peak_rss = 0;
-        size_t current_commit = 0;
-        size_t peak_commit = 0;
-        size_t page_faults = 0;
-
-        mi_process_info(&elapsed_msecs, &user_msecs, &system_msecs,
-            &current_rss, &peak_rss,
-            &current_commit, &peak_commit, &page_faults);
-
-        addProperty(vm, "current"_s, jsNumber(current_rss));
-        addProperty(vm, "peak"_s, jsNumber(peak_rss));
-        addProperty(vm, "currentCommit"_s, jsNumber(current_commit));
-        addProperty(vm, "peakCommit"_s, jsNumber(peak_commit));
-        addProperty(vm, "pageFaults"_s, jsNumber(page_faults));
-    }
-
-    DECLARE_INFO;
-
-private:
-    void addProperty(VM& vm, ASCIILiteral name, JSValue value)
-    {
-        Identifier identifier = Identifier::fromString(vm, name);
-        putDirect(vm, identifier, value);
-    }
-};
-
-const ClassInfo JSCMemoryFootprint::s_info = { "MemoryFootprint"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCMemoryFootprint) };
+    return structure;
+}
 
 JSC_DECLARE_HOST_FUNCTION(functionMemoryUsageStatistics);
 JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics, (JSGlobalObject * globalObject, CallFrame*))
@@ -245,9 +194,33 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics, (JSGlobalObject * global
 JSC_DECLARE_HOST_FUNCTION(functionCreateMemoryFootprint);
 JSC_DEFINE_HOST_FUNCTION(functionCreateMemoryFootprint, (JSGlobalObject * globalObject, CallFrame*))
 {
+
+    size_t elapsed_msecs = 0;
+    size_t user_msecs = 0;
+    size_t system_msecs = 0;
+    size_t current_rss = 0;
+    size_t peak_rss = 0;
+    size_t current_commit = 0;
+    size_t peak_commit = 0;
+    size_t page_faults = 0;
+
+    mi_process_info(&elapsed_msecs, &user_msecs, &system_msecs,
+        &current_rss, &peak_rss,
+        &current_commit, &peak_commit, &page_faults);
+
+    // mi_process_info produces incorrect rss size on linux.
+    Zig::getRSS(&current_rss);
+
     VM& vm = globalObject->vm();
-    JSLockHolder lock(vm);
-    return JSValue::encode(JSCMemoryFootprint::create(vm, globalObject));
+    JSC::JSObject* object = JSC::constructEmptyObject(vm, JSC::jsCast<Zig::GlobalObject*>(globalObject)->memoryFootprintStructure());
+
+    object->putDirectOffset(vm, 0, jsNumber(current_rss));
+    object->putDirectOffset(vm, 1, jsNumber(peak_rss));
+    object->putDirectOffset(vm, 2, jsNumber(current_commit));
+    object->putDirectOffset(vm, 3, jsNumber(peak_commit));
+    object->putDirectOffset(vm, 4, jsNumber(page_faults));
+
+    return JSValue::encode(object);
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionNeverInlineFunction);

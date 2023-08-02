@@ -1,5 +1,5 @@
 ---
-name: Convert an ArrayBuffer to a Uint8Array
+name: Convert an ArrayBuffer to a Buffer
 ---
 
 The Node.js [`Buffer`](https://nodejs.org/api/buffer.html) API predates the introduction of `ArrayBuffer` into the JavaScript language. Bun implements both.

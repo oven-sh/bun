@@ -402,10 +402,11 @@ pub noinline fn print(comptime fmt: string, args: anytype) void {
         if (comptime Environment.allow_assert)
             std.debug.assert(source_set);
 
+        // There's not much we can do if this errors. Especially if it's something like BrokenPipe.
         if (enable_buffering) {
-            std.fmt.format(source.buffered_stream.writer(), fmt, args) catch unreachable;
+            std.fmt.format(source.buffered_stream.writer(), fmt, args) catch {};
         } else {
-            std.fmt.format(writer(), fmt, args) catch unreachable;
+            std.fmt.format(writer(), fmt, args) catch {};
         }
     }
 }
@@ -664,6 +665,7 @@ pub noinline fn printError(comptime fmt: string, args: anytype) void {
         source.error_stream.writer().print(fmt, args) catch unreachable;
         root.console_error(root.Uint8Array.fromSlice(source.err_buffer[0..source.error_stream.pos]));
     } else {
+        // There's not much we can do if this errors. Especially if it's something like BrokenPipe
         if (enable_buffering)
             std.fmt.format(source.buffered_error_stream.writer(), fmt, args) catch {}
         else

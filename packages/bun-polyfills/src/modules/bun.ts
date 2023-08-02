@@ -106,7 +106,7 @@ export const generateHeapSnapshot = (async (): Promise<HeapSnapshot> => {
     const raw = (await streamToBuffer(v8.getHeapSnapshot())).toString('utf8');
     const json = JSON.parse(raw) as V8HeapSnapshot;
     return {
-        version: 2 as unknown as string,
+        version: 2,
         type: 'Inspector',
         nodes: json.nodes,
         edges: json.edges,

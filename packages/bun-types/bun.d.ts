@@ -2428,8 +2428,8 @@ declare module "bun" {
    * If you have any ideas, please file an issue https://github.com/oven-sh/bun
    */
   interface HeapSnapshot {
-    /** "2" */
-    version: string;
+    /** 2 */
+    version: number;
 
     /** "Inspector" */
     type: string;

@@ -336,7 +336,6 @@ class Server extends EventEmitter {
 
   constructor(options, callback) {
     super();
-    console.log("agsdfdsa", new Error().stack);
 
     if (typeof options === "function") {
       callback = options;

@@ -96,6 +96,8 @@ public:
 
     void dispatchEvent(Event&) final;
 
+    JSValue tryTakeMessage(JSGlobalObject*);
+
     TransferredMessagePort disentangle();
     static Ref<MessagePort> entangle(ScriptExecutionContext&, TransferredMessagePort&&);
 

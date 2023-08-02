@@ -186,7 +186,7 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
         return Exception { InvalidStateError, "Worker has been terminated"_s };
 
     Vector<RefPtr<MessagePort>> ports;
-    auto serialized = SerializedScriptValue::create(state, messageValue, WTFMove(options.transfer), ports);
+    auto serialized = SerializedScriptValue::create(state, messageValue, WTFMove(options.transfer), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (serialized.hasException())
         return serialized.releaseException();
 

@@ -41,8 +41,6 @@ Ref<MessagePortChannel> MessagePortChannel::create(MessagePortChannelRegistry& r
 MessagePortChannel::MessagePortChannel(MessagePortChannelRegistry& registry, const MessagePortIdentifier& port1, const MessagePortIdentifier& port2)
     : m_registry(registry)
 {
-    ASSERT(isMainThread());
-
     relaxAdoptionRequirement();
 
     m_ports[0] = port1;
@@ -62,7 +60,6 @@ MessagePortChannel::~MessagePortChannel()
 
 std::optional<ProcessIdentifier> MessagePortChannel::processForPort(const MessagePortIdentifier& port)
 {
-    ASSERT(isMainThread());
     ASSERT(port == m_ports[0] || port == m_ports[1]);
     size_t i = port == m_ports[0] ? 0 : 1;
     return m_processes[i];
@@ -70,15 +67,11 @@ std::optional<ProcessIdentifier> MessagePortChannel::processForPort(const Messag
 
 bool MessagePortChannel::includesPort(const MessagePortIdentifier& port)
 {
-    ASSERT(isMainThread());
-
     return m_ports[0] == port || m_ports[1] == port;
 }
 
 void MessagePortChannel::entanglePortWithProcess(const MessagePortIdentifier& port, ProcessIdentifier process)
 {
-    ASSERT(isMainThread());
-
     ASSERT(port == m_ports[0] || port == m_ports[1]);
     size_t i = port == m_ports[0] ? 0 : 1;
 
@@ -92,8 +85,6 @@ void MessagePortChannel::entanglePortWithProcess(const MessagePortIdentifier& po
 
 void MessagePortChannel::disentanglePort(const MessagePortIdentifier& port)
 {
-    ASSERT(isMainThread());
-
     LOG(MessagePorts, "MessagePortChannel %s (%p) disentangling port %s", logString().utf8().data(), this, port.logString().utf8().data());
 
     ASSERT(port == m_ports[0] || port == m_ports[1]);
@@ -110,8 +101,6 @@ void MessagePortChannel::disentanglePort(const MessagePortIdentifier& port)
 
 void MessagePortChannel::closePort(const MessagePortIdentifier& port)
 {
-    ASSERT(isMainThread());
-
     ASSERT(port == m_ports[0] || port == m_ports[1]);
     size_t i = port == m_ports[0] ? 0 : 1;
 
@@ -130,8 +119,6 @@ void MessagePortChannel::closePort(const MessagePortIdentifier& port)
 
 bool MessagePortChannel::postMessageToRemote(MessageWithMessagePorts&& message, const MessagePortIdentifier& remoteTarget)
 {
-    ASSERT(isMainThread());
-
     ASSERT(remoteTarget == m_ports[0] || remoteTarget == m_ports[1]);
     size_t i = remoteTarget == m_ports[0] ? 0 : 1;
 
@@ -149,8 +136,6 @@ bool MessagePortChannel::postMessageToRemote(MessageWithMessagePorts&& message, 
 
 void MessagePortChannel::takeAllMessagesForPort(const MessagePortIdentifier& port, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&& callback)
 {
-    ASSERT(isMainThread());
-
     LOG(MessagePorts, "MessagePortChannel %p taking all messages for port %s", this, port.logString().utf8().data());
 
     ASSERT(port == m_ports[0] || port == m_ports[1]);
@@ -181,10 +166,17 @@ void MessagePortChannel::takeAllMessagesForPort(const MessagePortIdentifier& por
     });
 }
 
-bool MessagePortChannel::hasAnyMessagesPendingOrInFlight() const
+std::optional<MessageWithMessagePorts> MessagePortChannel::tryTakeMessageForPort(const MessagePortIdentifier port)
 {
-    ASSERT(isMainThread());
-    return m_messageBatchesInFlight || !m_pendingMessages[0].isEmpty() || !m_pendingMessages[1].isEmpty();
+    ASSERT(port == m_ports[0] || port == m_ports[1]);
+    size_t i = port == m_ports[0] ? 0 : 1;
+
+    if (m_pendingMessages[i].isEmpty())
+        return std::nullopt;
+
+    auto message = m_pendingMessages[i].first();
+    m_pendingMessages[i].remove(0);
+    return WTFMove(message);
 }
 
 } // namespace WebCore

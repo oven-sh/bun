@@ -1,10 +1,96 @@
-export const { MessageChannel, MessagePort } = globalThis;
+export const { MessageChannel } = globalThis;
+
+function injectFakeEmitter(Class) {
+  function messageEventHandler(event: MessageEvent) {
+    return event.data;
+  }
+
+  function errorEventHandler(event: ErrorEvent) {
+    return event.error;
+  }
+
+  const wrappedListener = Symbol("wrappedListener");
+
+  function wrapped(run, listener) {
+    const callback = function (event) {
+      return listener(run(event));
+    };
+    listener[wrappedListener] = callback;
+    return callback;
+  }
+
+  function functionForEventType(event, listener) {
+    switch (event) {
+      case "error":
+      case "messageerror": {
+        return wrapped(errorEventHandler, listener);
+      }
+
+      default: {
+        return wrapped(messageEventHandler, listener);
+      }
+    }
+  }
+
+  Class.prototype.on = function (event, listener) {
+    this.addEventListener(event, functionForEventType(event, listener));
+
+    return this;
+  };
+
+  Class.prototype.off = function (event, listener) {
+    if (listener) {
+      this.removeEventListener(event, listener[wrappedListener] || listener);
+    } else {
+      this.removeEventListener(event);
+    }
+
+    return this;
+  };
+
+  Class.prototype.once = function (event, listener) {
+    this.addEventListener(event, functionForEventType(event, listener), { once: true });
+
+    return this;
+  };
+
+  function EventClass(eventName) {
+    if (eventName === "error" || eventName === "messageerror") {
+      return ErrorEvent;
+    }
+
+    return MessageEvent;
+  }
+
+  Class.prototype.emit = function (event, ...args) {
+    this.dispatchEvent(new (EventClass(event))(event, ...args));
+    return this;
+  };
+
+  Class.prototype.prependListener = Class.prototype.on;
+  Class.prototype.prependOnceListener = Class.prototype.once;
+}
+
+const _MessagePort = globalThis.MessagePort;
+injectFakeEmitter(_MessagePort);
+
+export const MessagePort = _MessagePort;
 
 import EventEmitter from "node:events";
 export const isMainThread = Bun.isMainThread;
-export let [workerData, threadId] = $lazy("worker_threads");
+let [_workerData, _threadId, _receiveMessageOnPort] = $lazy("worker_threads");
 export let parentPort: MessagePort | null = isMainThread ? null : fakeParentPort();
 export let resourceLimits = {};
+
+export let workerData = _workerData;
+export let threadId = _threadId;
+export function receiveMessageOnPort(port: MessagePort) {
+  let res = _receiveMessageOnPort(port);
+  if (!res) return undefined;
+  return {
+    message: res,
+  };
+}
 
 function fakeParentPort() {
   const fake = Object.create(MessagePort.prototype);

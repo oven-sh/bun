@@ -2,6 +2,7 @@
 
 #include "root.h"
 #include "SerializedScriptValue.h"
+#include "TransferredMessagePort.h"
 #include "MessagePort.h"
 
 namespace WebCore {
@@ -10,7 +11,7 @@ struct BunOptions {
     bool mini { false };
     bool unref { false };
     RefPtr<SerializedScriptValue> data;
-    Vector<RefPtr<MessagePort>> dataMessagePorts;
+    Vector<TransferredMessagePort> dataMessagePorts;
 };
 
 struct WorkerOptions {

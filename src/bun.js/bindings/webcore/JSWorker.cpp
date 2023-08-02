@@ -173,14 +173,25 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::const
                     }
                 }
 
-                ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*lexicalGlobalObject, workerData, WTFMove(transferList), ports);
+                ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*lexicalGlobalObject, workerData, WTFMove(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
                 if (serialized.hasException()) {
                     WebCore::propagateException(*lexicalGlobalObject, throwScope, serialized.releaseException());
                     return encodedJSValue();
                 }
 
+                Vector<TransferredMessagePort> transferredPorts;
+
+                if (!ports.isEmpty()) {
+                    auto disentangleResult = MessagePort::disentanglePorts(WTFMove(ports));
+                    if (disentangleResult.hasException()) {
+                        WebCore::propagateException(*lexicalGlobalObject, throwScope, disentangleResult.releaseException());
+                        return encodedJSValue();
+                    }
+                    transferredPorts = disentangleResult.releaseReturnValue();
+                }
+
                 options.bun.data = WTFMove(serialized.releaseReturnValue());
-                options.bun.dataMessagePorts = WTFMove(ports);
+                options.bun.dataMessagePorts = WTFMove(transferredPorts);
             }
         }
     }

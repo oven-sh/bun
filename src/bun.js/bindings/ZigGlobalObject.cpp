@@ -1585,6 +1585,33 @@ JSC_DEFINE_HOST_FUNCTION(functionCallNotImplemented,
     return JSC::JSValue::encode(JSC::JSValue {});
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 1) {
+        throwTypeError(lexicalGlobalObject, scope, "receiveMessageOnPort needs 1 argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    auto port = callFrame->argument(0);
+
+    if (!port.isObject()) {
+        throwTypeError(lexicalGlobalObject, scope, "the \"port\" argument must be a MessagePort instance"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    if (auto* messagePort = jsDynamicCast<JSMessagePort*>(port)) {
+        return JSC::JSValue::encode(messagePort->wrapped().tryTakeMessage(lexicalGlobalObject));
+    } else {
+        // TODO: support broadcast channels
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    return JSC::JSValue::encode(jsUndefined());
+}
+
 // we're trying out a new way to do this lazy loading
 static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -1652,8 +1679,8 @@ static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
             if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM())) {
                 auto& options = worker->options();
                 if (worker && options.bun.data) {
+                    auto ports = MessagePort::entanglePorts(*ScriptExecutionContext::getScriptExecutionContext(worker->clientIdentifier()), WTFMove(options.bun.dataMessagePorts));
                     RefPtr<WebCore::SerializedScriptValue> serialized = WTFMove(options.bun.data);
-                    Vector<RefPtr<WebCore::MessagePort>> ports = WTFMove(options.bun.dataMessagePorts);
                     JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTFMove(ports));
                     RETURN_IF_EXCEPTION(scope, {});
                     workerData = deserialized;
@@ -1665,6 +1692,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
             JSArray* array = constructEmptyArray(globalObject, nullptr);
             array->push(globalObject, workerData);
             array->push(globalObject, threadId);
+            array->push(globalObject, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic));
 
             return JSC::JSValue::encode(array);
         }
@@ -3710,7 +3738,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     }
 
     Vector<RefPtr<MessagePort>> ports;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), ports);
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
         return JSValue::encode(jsUndefined());

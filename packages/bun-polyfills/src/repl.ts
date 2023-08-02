@@ -26,7 +26,6 @@ globalThis.Bun = bun as typeof bun & {
 
     //? Polyfilled but with broken types (See each one in ./src/modules/bun.ts for details)
     generateHeapSnapshot: typeof import('bun').generateHeapSnapshot;
-    env: typeof import('bun').env;
     stdout: typeof import('bun').stdout;
     stderr: typeof import('bun').stderr;
     stdin: typeof import('bun').stdin;

@@ -40,7 +40,7 @@ export const stdout = new NodeJSStreamFileBlob(process.stdout) satisfies typeof 
 // @ts-expect-error ---
 export const stderr = new NodeJSStreamFileBlob(process.stderr) satisfies typeof Bun.stderr;
 export const argv = [process.argv0, ...process.execArgv, ...process.argv.slice(1)] satisfies typeof Bun.argv;
-export const env = process.env satisfies Omit<typeof Bun.env, 'NODE_ENV'>;
+export const env = process.env satisfies typeof Bun.env;
 Object.setPrototypeOf(env, {
     toJSON(this: typeof env) { return { ...this }; }
 });

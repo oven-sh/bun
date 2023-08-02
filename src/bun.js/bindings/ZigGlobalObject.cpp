@@ -1680,12 +1680,12 @@ JSC:
 
             auto sourceOrigin = callFrame->callerSourceOrigin(vm).url();
 // expose for tests in debug mode only
-#ifndef BUN_DEBUG
-            bool isBuiltin = sourceOrigin.protocolIs("builtin"_s);
-            if (!isBuiltin) {
-                return JSC::JSValue::encode(JSC::jsUndefined());
-            }
-#endif
+// #ifndef BUN_DEBUG
+//             bool isBuiltin = sourceOrigin.protocolIs("builtin"_s);
+//             if (!isBuiltin) {
+//                 return JSC::JSValue::encode(JSC::jsUndefined());
+//             }
+// #endif
             struct us_cert_string_t* out;
             auto size = us_raw_root_certs(&out);
             if (size < 0) {

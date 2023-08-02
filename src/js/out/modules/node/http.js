@@ -811,7 +811,7 @@ class ClientRequest extends OutgoingMessage {
   #agent = globalAgent;
   #path;
   #socketPath;
-  #body = null;
+  #bodyChunks = null;
   #fetchRequest;
   #signal = null;
   [kAbortController] = null;
@@ -834,27 +834,25 @@ class ClientRequest extends OutgoingMessage {
     return this.#protocol;
   }
   _write(chunk, encoding, callback) {
-    var body = this.#body;
-    if (!body) {
-      this.#body = chunk, callback();
+    if (!this.#bodyChunks) {
+      this.#bodyChunks = [chunk], callback();
       return;
     }
-    this.#body = Buffer.concat([body, chunk]), callback();
+    this.#bodyChunks.push(chunk), callback();
   }
   _writev(chunks, callback) {
-    var body = this.#body;
-    if (!body) {
-      this.#body = Buffer.concat(chunks), callback();
+    if (!this.#bodyChunks) {
+      this.#bodyChunks = chunks, callback();
       return;
     }
-    this.#body = Buffer.concat([body, ...chunks]), callback();
+    this.#bodyChunks.push(...chunks), callback();
   }
   _final(callback) {
     if (this.#finished = !0, this[kAbortController] = new AbortController, this[kAbortController].signal.addEventListener("abort", () => {
       this[kClearTimeout]();
     }), this.#signal?.aborted)
       this[kAbortController].abort();
-    var method = this.#method, body = this.#body;
+    var method = this.#method, body = Buffer.concat(this.#bodyChunks || []);
     try {
       this.#fetchRequest = fetch(`${this.#protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${this.#path}`, {
         method,

@@ -1214,7 +1214,7 @@ export class ClientRequest extends OutgoingMessage {
   #path;
   #socketPath;
 
-  #body: Buffer | null = null;
+  #bodyChunks: Buffer[] | null = null;
   #fetchRequest;
   #signal: AbortSignal | null = null;
   [kAbortController]: AbortController | null = null;
@@ -1243,24 +1243,22 @@ export class ClientRequest extends OutgoingMessage {
   }
 
   _write(chunk, encoding, callback) {
-    var body = this.#body;
-    if (!body) {
-      this.#body = chunk;
+    if (!this.#bodyChunks) {
+      this.#bodyChunks = [chunk];
       callback();
       return;
     }
-    this.#body = Buffer.concat([body, chunk]);
+    this.#bodyChunks.push(chunk);
     callback();
   }
 
   _writev(chunks, callback) {
-    var body = this.#body;
-    if (!body) {
-      this.#body = Buffer.concat(chunks);
+    if (!this.#bodyChunks) {
+      this.#bodyChunks = chunks;
       callback();
       return;
     }
-    this.#body = Buffer.concat([body, ...chunks]);
+    this.#bodyChunks.push(...chunks);
     callback();
   }
 
@@ -1275,7 +1273,7 @@ export class ClientRequest extends OutgoingMessage {
     }
 
     var method = this.#method,
-      body = this.#body;
+      body = Buffer.concat(this.#bodyChunks || []);
 
     try {
       this.#fetchRequest = fetch(

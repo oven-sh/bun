@@ -24,7 +24,7 @@ declare module "bun" {
   import { Encoding as CryptoEncoding } from "crypto";
 
   export interface Env extends Dict<string>, NodeJS.ProcessEnv {
-    NODE_ENV: string;
+    NODE_ENV?: string;
 
     /**
      * The timezone used by Intl, Date, etc.

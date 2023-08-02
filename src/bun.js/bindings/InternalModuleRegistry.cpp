@@ -16,10 +16,10 @@ namespace Bun {
 // JS builtin that acts as a module. In debug mode, we use a different implementation that reads
 // from the developer's filesystem. This allows reloading code without recompiling bindings.
 
-#define INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, SOURCE, id)                              \
+#define INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, SOURCE, moduleName)                      \
     auto throwScope = DECLARE_THROW_SCOPE(vm);                                                        \
                                                                                                       \
-    SourceCode source = JSC::makeSource(SOURCE, SourceOrigin(WTF::URL("builtin://hi"_s)), "hi.js"_s); \
+    SourceCode source = JSC::makeSource(SOURCE, SourceOrigin(WTF::URL("builtin://"#moduleName".js"_s)), #moduleName".js"_s); \
                                                                                                       \
     JSFunction* func                                                                                  \
         = JSFunction::create(                                                                         \
@@ -42,7 +42,7 @@ namespace Bun {
         globalObject, JSC::MarkedArgumentBuffer());                                                   \
                                                                                                       \
     RETURN_IF_EXCEPTION(throwScope, {});                                                              \
-    ASSERT_INTERNAL_MODULE(result, id);                                                               \
+    ASSERT_INTERNAL_MODULE(result, moduleName);                                                       \
     return result;
 
 #if BUN_DEBUG

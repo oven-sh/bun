@@ -64,9 +64,6 @@ export function getStdioWriteStream(fd_, getWindowSize) {
       #isTTY;
 
       get isTTY() {
-        console.log("HIII");
-        console.log(require("node:tty"));
-
         return (this.#isTTY ??= require("node:tty").isatty(fd_));
       }
 
@@ -509,9 +506,6 @@ export function getStdinStream(fd_) {
     #onDrain;
 
     get isTTY() {
-      console.log("HIII");
-      console.log(require("node:tty"));
-
       return require("node:tty").isatty(fd_);
     }
 

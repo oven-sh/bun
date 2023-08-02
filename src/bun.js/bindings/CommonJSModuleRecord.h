@@ -16,7 +16,6 @@ namespace Bun {
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionLoadModule);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateAndLoadBuiltinModule);
 
 class JSCommonJSModule final : public JSC::JSDestructibleObject {
 public:

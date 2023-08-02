@@ -487,10 +487,10 @@ bool JSCommonJSModule::evaluate(
     JSC::MarkedArgumentBuffer arguments;
     auto& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    // TODO: remove second arg, we do not use it ???
-    // was it object loader?
     generator(globalObject, JSC::Identifier::fromString(vm, key), propertyNames, arguments);
     RETURN_IF_EXCEPTION(throwScope, false);
+    // This goes off of the assumption that you only call this `evaluate` using a generator that explicity
+    // assigns the `default` export first.
     JSValue defaultValue = arguments.at(0);
     this->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), defaultValue, 0);
     this->hasEvaluated = true;
@@ -747,33 +747,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
     JSValue fetchResult = Bun::fetchCommonJSModule(
         globalObject,
         jsDynamicCast<JSCommonJSModule*>(callframe->argument(1)),
-        specifierValue,
-        &specifierStr,
-        &referrerStr);
-
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(fetchResult));
-}
-
-// Used by $requireBuiltin(...) (Module.ts)
-JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateAndLoadBuiltinModule, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
-{
-    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto& vm = globalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    JSValue specifierValue = callframe->argument(0);
-    WTF::String specifier = specifierValue.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    BunString specifierStr = Bun::toString(specifier);
-    BunString referrerStr = Bun::toString(""_s);
-
-    JSValue fetchResult = Bun::fetchCommonJSModule(
-        globalObject,
-        JSCommonJSModule::create(
-            jsCast<Zig::GlobalObject*>(globalObject),
-            specifier,
-            constructEmptyObject(globalObject), false),
         specifierValue,
         &specifierStr,
         &referrerStr);

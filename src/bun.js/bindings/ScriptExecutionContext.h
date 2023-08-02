@@ -3,6 +3,7 @@
 #include "root.h"
 #include "ActiveDOMObject.h"
 #include "ContextDestructionObserver.h"
+#include "BunBroadcastChannelRegistry.h"
 #include <wtf/CrossThreadTask.h>
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
@@ -81,6 +82,7 @@ public:
         : m_vm(vm)
         , m_globalObject(globalObject)
         , m_identifier(0)
+        , m_broadcastChannelRegistry(BunBroadcastChannelRegistry::create())
     {
         regenerateIdentifier();
     }
@@ -89,6 +91,7 @@ public:
         : m_vm(vm)
         , m_globalObject(globalObject)
         , m_identifier(identifier)
+        , m_broadcastChannelRegistry(BunBroadcastChannelRegistry::create())
     {
         addToContextsMap();
     }
@@ -210,6 +213,8 @@ public:
         m_vm = &globalObject->vm();
     }
 
+    BunBroadcastChannelRegistry& broadcastChannelRegistry() { return m_broadcastChannelRegistry; }
+
 private:
     JSC::VM* m_vm = nullptr;
     JSC::JSGlobalObject* m_globalObject = nullptr;
@@ -219,6 +224,7 @@ private:
     HashSet<MessagePort*> m_messagePorts;
     HashSet<ContextDestructionObserver*> m_destructionObservers;
     Vector<CompletionHandler<void()>> m_processMessageWithMessagePortsSoonHandlers;
+    Ref<BunBroadcastChannelRegistry> m_broadcastChannelRegistry;
 
     bool m_willProcessMessageWithMessagePortsSoon { false };
 

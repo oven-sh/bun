@@ -625,10 +625,6 @@ function getCiphers() {
   return DEFAULT_CIPHERS.split(":");
 }
 
-function getCurves() {
-  return;
-}
-
 // Convert protocols array into valid OpenSSL protocols list
 // ("\x06spdy/2\x08http/1.1\x08http/1.0")
 function convertProtocols(protocols) {
@@ -692,7 +688,6 @@ export default {
   DEFAULT_MAX_VERSION,
   DEFAULT_MIN_VERSION,
   getCiphers,
-  getCurves,
   parseCertString,
   SecureContext,
   Server,

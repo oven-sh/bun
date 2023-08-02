@@ -118,8 +118,8 @@ JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, 
     auto value = internalField(id).get();
     if (!value || value.isUndefined()) {
         value = createInternalModuleById(globalObject, vm, id);
+        internalField(id).set(vm, this, value);
     }
-
     return value;
 }
 

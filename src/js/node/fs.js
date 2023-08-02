@@ -348,7 +348,7 @@ ReadStream = (function (InternalReadStream) {
   function ReadStream(path, options) {
     return new InternalReadStream(path, options);
   }
-  ReadStream.prototype = {};
+  ReadStream.prototype = InternalReadStream.prototype;
   return Object.defineProperty(ReadStream, Symbol.hasInstance, {
     value(instance) {
       return instance instanceof InternalReadStream;
@@ -693,7 +693,7 @@ WriteStream = (function (InternalWriteStream) {
   function WriteStream(path, options) {
     return new InternalWriteStream(path, options);
   }
-  WriteStream.prototype = {};
+  WriteStream.prototype = InternalWriteStream.prototype;
   return Object.defineProperty(WriteStream, Symbol.hasInstance, {
     value(instance) {
       return instance instanceof InternalWriteStream;

@@ -103,11 +103,6 @@ export function requireESM(this: ImportMetaObject, resolved) {
     throw new TypeError(`require() failed to evaluate module "${resolved}". This is an internal consistentency error.`);
   }
   var exports = Loader.getModuleNamespaceObject(entry.module);
-  if (exports[$commonJSSymbol] === 0) {
-    // CommonJS module created via `Bun::CommonJSModuleRecord`
-    // We will refer to the requireMap to get the exports
-    return;
-  }
 
   return exports;
 }
@@ -141,10 +136,6 @@ export function internalRequire(this: ImportMetaObject, id) {
     if (cachedModule) {
       return cachedModule.exports;
     }
-    var defaultExport = exports?.default;
-    if (defaultExport?.[$commonJSSymbol] === 0) {
-      exports = defaultExport;
-    }
     $requireMap.$set(id, $createCommonJSModule(id, exports, true));
     return exports;
   }
@@ -161,9 +152,7 @@ export function createRequireCache() {
       const esm = Loader.registry.$get(key);
       if (esm?.evaluated) {
         const namespace = Loader.getModuleNamespaceObject(esm.module);
-        const exports =
-          namespace[$commonJSSymbol] === 0 || namespace.default?.[$commonJSSymbol] ? namespace.default : namespace;
-        const mod = $createCommonJSModule(key, exports, true);
+        const mod = $createCommonJSModule(key, namespace, true);
         $requireMap.$set(key, mod);
         return mod;
       }

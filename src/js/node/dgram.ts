@@ -1,6 +1,6 @@
 // Hardcoded module "node:dgram"
 // This is a stub! None of this is actually implemented yet.
-import { hideFromStack, throwNotImplemented } from "../shared";
+const { hideFromStack, throwNotImplemented } = require("$shared");
 
 function createSocket() {
   throwNotImplemented("node:dgram createSocket", 1630);
@@ -14,13 +14,10 @@ function _createSocketHandle() {
   throwNotImplemented("node:dgram _createSocketHandle", 1630);
 }
 
-const defaultObject = {
+export default {
   createSocket,
   Socket,
   _createSocketHandle,
-  [Symbol.for("CommonJS")]: 0,
 };
-
-export { defaultObject as default, Socket, createSocket, _createSocketHandle };
 
 hideFromStack(createSocket, Socket, _createSocketHandle);

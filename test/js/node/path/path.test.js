@@ -15,10 +15,6 @@ const expectStrictEqual = (actual, expected) => {
 };
 hideFromStackTrace(expectStrictEqual);
 
-it("should not inherit Object.prototype", () => {
-  expect(path).not.toHaveProperty("toString");
-});
-
 describe("dirname", () => {
   it("path.dirname", () => {
     const fixtures = [

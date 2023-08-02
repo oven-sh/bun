@@ -1,0 +1,8 @@
+#include "../../bun.js/modules/BunJSCModule.h"
+#include "../../bun.js/modules/NodeBufferModule.h"
+#include "../../bun.js/modules/NodeConstantsModule.h"
+#include "../../bun.js/modules/NodeModuleModule.h"
+#include "../../bun.js/modules/NodeProcessModule.h"
+#include "../../bun.js/modules/NodeStringDecoderModule.h"
+#include "../../bun.js/modules/NodeTTYModule.h"
+#include "../../bun.js/modules/NodeUtilTypesModule.h"

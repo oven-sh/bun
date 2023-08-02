@@ -1,17 +1,11 @@
-export var ReadStream;
-export var WriteStream;
-
-import { EventEmitter } from "node:events";
-
 // Hardcoded module "node:fs"
-var { direct, isPromise, isCallable } = $lazy("primordials");
-import promises from "node:fs/promises";
-export { default as promises } from "node:fs/promises";
-import * as Stream from "node:stream";
+var ReadStream;
+var WriteStream;
+const EventEmitter = require("node:events");
+const promises = require("node:fs/promises");
+const Stream = require("node:stream");
 
 var fs = Bun.fs();
-var debug = process.env.DEBUG ? console.log : () => {};
-
 class FSWatcher extends EventEmitter {
   #watcher;
   #listener;
@@ -68,7 +62,8 @@ class FSWatcher extends EventEmitter {
     this.#watcher?.unref();
   }
 }
-export var access = function access(...args) {
+
+var access = function access(...args) {
     callbackify(fs.accessSync, args);
   },
   appendFile = function appendFile(...args) {
@@ -350,18 +345,15 @@ ReadStream = (function (InternalReadStream) {
     value: "ReadStream",
     enumerable: false,
   });
-
-  return Object.defineProperty(
-    function ReadStream(path, options) {
-      return new InternalReadStream(path, options);
+  function ReadStream(path, options) {
+    return new InternalReadStream(path, options);
+  }
+  ReadStream.prototype = InternalReadStream.prototype;
+  return Object.defineProperty(ReadStream, Symbol.hasInstance, {
+    value(instance) {
+      return instance instanceof InternalReadStream;
     },
-    Symbol.hasInstance,
-    {
-      value(instance) {
-        return instance instanceof InternalReadStream;
-      },
-    },
-  );
+  });
 })(
   class ReadStream extends Stream._getNativeReadableStreamPrototype(2, Stream.Readable) {
     constructor(pathOrFd, options = defaultReadStreamOptions) {
@@ -419,9 +411,9 @@ ReadStream = (function (InternalReadStream) {
       // Get the stream controller
       // We need the pointer to the underlying stream controller for the NativeReadable
       var stream = fileRef.stream();
-      var native = direct(stream);
+      var native = $direct(stream);
       if (!native) {
-        debug("no native readable stream");
+        $debug("no native readable stream");
         throw new Error("no native readable stream");
       }
       var { stream: ptr } = native;
@@ -573,7 +565,7 @@ ReadStream = (function (InternalReadStream) {
           ? Math.min(end - pos + 1, n) // takes smaller of length of the rest of the file to read minus the cursor position, or the highwatermark
           : Math.min(end - bytesRead + 1, n); // takes the smaller of the length of the rest of the file from the bytes that we have marked read, or the highwatermark
 
-      debug("n @ fs.ReadStream.#internalRead, after clamp", n);
+      $debug("n @ fs.ReadStream.#internalRead, after clamp", n);
 
       // If n is 0 or less, then we read all the file, push null to stream, ending it
       if (n <= 0) {
@@ -593,16 +585,16 @@ ReadStream = (function (InternalReadStream) {
         if (this.#fileSize > 0 && n > this.#fileSize) {
           n = this.#fileSize + 1;
         }
-        debug("fileSize", this.#fileSize);
+        $debug("fileSize", this.#fileSize);
       }
 
       // At this point, we know the file size and how much we want to read of the file
       this[kIoDone] = false;
       var res = super._read(n);
-      debug("res -- undefined? why?", res);
-      if (isPromise(res)) {
+      $debug("res -- undefined? why?", res);
+      if ($isPromise(res)) {
         var then = res?.then;
-        if (then && isCallable(then)) {
+        if (then && $isCallable(then)) {
           then(
             () => {
               this[kIoDone] = true;
@@ -671,7 +663,7 @@ ReadStream = (function (InternalReadStream) {
   },
 );
 
-export function createReadStream(path, options) {
+function createReadStream(path, options) {
   return new ReadStream(path, options);
 }
 
@@ -698,17 +690,15 @@ WriteStream = (function (InternalWriteStream) {
     enumerable: false,
   });
 
-  return Object.defineProperty(
-    function WriteStream(path, options) {
-      return new InternalWriteStream(path, options);
+  function WriteStream(path, options) {
+    return new InternalWriteStream(path, options);
+  }
+  WriteStream.prototype = InternalWriteStream.prototype;
+  return Object.defineProperty(WriteStream, Symbol.hasInstance, {
+    value(instance) {
+      return instance instanceof InternalWriteStream;
     },
-    Symbol.hasInstance,
-    {
-      value(instance) {
-        return instance instanceof InternalWriteStream;
-      },
-    },
-  );
+  });
 })(
   class WriteStream extends Stream.NativeWritable {
     constructor(path, options = defaultWriteStreamOptions) {
@@ -993,7 +983,7 @@ WriteStream = (function (InternalWriteStream) {
   },
 );
 
-export function createWriteStream(path, options) {
+function createWriteStream(path, options) {
   // const WriteStream = getLazyWriteStream();
   return new WriteStream(path, options);
 }
@@ -1043,7 +1033,6 @@ realpath.native = realpath;
 realpathSync.native = realpathSync;
 
 export default {
-  [Symbol.for("CommonJS")]: 0,
   access,
   accessSync,
   appendFile,
@@ -1141,5 +1130,3 @@ export default {
   //   return getLazyReadStream();
   // },
 };
-
-export { constants } from "node:fs/promises";

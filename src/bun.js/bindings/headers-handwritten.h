@@ -70,9 +70,9 @@ typedef struct ResolvedSource {
     uint32_t commonJSExportsLen;
     uint32_t hash;
     void* allocator;
-    uint64_t tag;
+    uint32_t tag;
 } ResolvedSource;
-static const uint64_t ResolvedSourceTagPackageJSONTypeModule = 1;
+static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
     ZigErrorType err;
@@ -264,18 +264,7 @@ typedef struct {
     bool shared;
 } Bun__ArrayBuffer;
 
-enum SyntheticModuleType : uint64_t {
-    ObjectModule = 2,
-
-    Buffer = 1024,
-    Process = 1025,
-    Events = 1026,
-    StringDecoder = 1027,
-    Module = 1028,
-    TTY = 1029,
-    NodeUtilTypes = 1030,
-    Constants = 1031,
-};
+#include "../../../js/out/SyntheticModuleType.h"
 
 extern "C" const char* Bun__userAgent;
 

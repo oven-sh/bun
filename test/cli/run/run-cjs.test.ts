@@ -15,6 +15,7 @@ test.todo("running a commonjs module works", async () => {
   });
   expect(stdout.toString("utf8")).toEqual("hello world\n");
 });
+<<<<<<< HEAD
 
 test("not running with export default class", async () => {
   const dir = join(realpathSync(tmpdir()), "bun-run-test2");
@@ -112,3 +113,5 @@ test("npm_package_config", () => {
   expect(deepJsStd.npm_package_config_foo_buzz_dave).toEqual("🕶️");
   expect(deepJsStd.npm_package_config_foo_buzz_something).toEqual("1");
 });
+=======
+>>>>>>> c2a77cf7 (Rewrite built-in modules to use CommonJS over ESM (#3814))

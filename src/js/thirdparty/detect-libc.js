@@ -1,27 +1,38 @@
 // Hardcoded module "detect-libc" for darwin
-export function family() {
+function family() {
   return Promise.resolve(familySync());
 }
 
-export function familySync() {
+function familySync() {
   return null;
 }
 
-export const GLIBC = "glibc";
-export const MUSL = "musl";
+const GLIBC = "glibc";
+const MUSL = "musl";
 
-export function versionAsync() {
+function versionAsync() {
   return Promise.resolve(version());
 }
 
-export function version() {
+function version() {
   return null;
 }
 
-export function isNonGlibcLinuxSync() {
+function isNonGlibcLinuxSync() {
   return false;
 }
 
-export function isNonGlibcLinux() {
+function isNonGlibcLinux() {
   return Promise.resolve(isNonGlibcLinuxSync());
 }
+
+export default {
+  GLIBC,
+  MUSL,
+  family,
+  familySync,
+  isNonGlibcLinux,
+  isNonGlibcLinuxSync,
+  version,
+  versionAsync,
+};

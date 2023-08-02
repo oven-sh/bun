@@ -492,12 +492,6 @@ pub const RuntimeTranspilerStore = struct {
                     continue;
                 }
 
-                if (JSC.DisabledModule.has(import_record.path.text)) {
-                    import_record.path.is_disabled = true;
-                    import_record.do_commonjs_transform_in_printer = true;
-                    continue;
-                }
-
                 if (bundler.options.rewrite_jest_for_tests) {
                     if (strings.eqlComptime(
                         import_record.path.text,
@@ -1376,7 +1370,8 @@ pub const ModuleLoader = struct {
                     }
                 }
 
-                var allocator = arena.allocator();
+                // var allocator = arena.allocator();
+                var allocator = bun.default_allocator;
 
                 var fd: ?StoredFileDescriptorType = null;
                 var package_json: ?*PackageJSON = null;
@@ -1634,7 +1629,7 @@ pub const ModuleLoader = struct {
                     if (has_bun_plugin) {
                         return ResolvedSource{
                             .allocator = null,
-                            .source_code = String.static("// auto-generated plugin stub\nexport default undefined\n"),
+                            .source_code = String.static("module.exports=undefined"),
                             .specifier = input_specifier,
                             .source_url = ZigString.init(path.text),
                             // // TODO: change hash to a bitfield
@@ -1781,16 +1776,10 @@ pub const ModuleLoader = struct {
                     }
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = bun.String.static(
-                            strings.append3(
-                                bun.default_allocator,
-                                JSC.Node.fs.constants_string,
-                                @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "node/wasi.js")),
-                                @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "bun/wasi-runner.js")),
-                            ) catch unreachable,
-                        ),
+                        .source_code = bun.String.static(@embedFile("../js/wasi-runner.js")),
                         .specifier = input_specifier,
                         .source_url = ZigString.init(path.text),
+                        .tag = .esm,
                         .hash = 0,
                     };
                 }
@@ -2190,88 +2179,74 @@ pub const ModuleLoader = struct {
                         .specifier = specifier,
                         .source_url = ZigString.init(bun.asByteSlice(JSC.VirtualMachine.main_file_name)),
                         .hash = 0,
+                        .tag = .esm,
                     };
                 },
+
+                // Native modules
                 .@"node:buffer" => return jsSyntheticModule(.@"node:buffer", specifier),
                 .@"node:string_decoder" => return jsSyntheticModule(.@"node:string_decoder", specifier),
                 .@"node:module" => return jsSyntheticModule(.@"node:module", specifier),
                 .@"node:process" => return jsSyntheticModule(.@"node:process", specifier),
                 .@"node:tty" => return jsSyntheticModule(.@"node:tty", specifier),
                 .@"node:util/types" => return jsSyntheticModule(.@"node:util/types", specifier),
-                .@"bun:events_native" => return jsSyntheticModule(.@"bun:events_native", specifier),
                 .@"node:constants" => return jsSyntheticModule(.@"node:constants", specifier),
-                .@"node:fs/promises" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = bun.String.static(comptime JSC.Node.fs.constants_string ++ @embedFile("../js/out/modules/node/fs.promises.js")),
-                        .specifier = specifier,
-                        .source_url = ZigString.init("node:fs/promises"),
-                        .hash = 0,
-                    };
-                },
-                .@"bun:ffi" => {
-                    const shared_library_suffix = if (Environment.isMac) "dylib" else if (Environment.isLinux) "so" else if (Environment.isWindows) "dll" else "";
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = bun.String.static(
-                            comptime "export const FFIType=" ++
-                                JSC.FFI.ABIType.map_to_js_object ++
-                                ";export const suffix='" ++ shared_library_suffix ++ "';" ++
-                                @embedFile("../js/out/modules/bun/ffi.js"),
-                        ),
-                        .specifier = specifier,
-                        .source_url = ZigString.init("bun:ffi"),
-                        .hash = 0,
-                    };
-                },
+                .@"bun:jsc" => return jsSyntheticModule(.@"bun:jsc", specifier),
 
-                .@"bun:jsc" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"bun:jsc", "bun/jsc.js", specifier),
-                .@"bun:sqlite" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"bun:sqlite", "bun/sqlite.js", specifier),
-
-                .@"node:assert" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:assert", "node/assert.js", specifier),
-                .@"node:assert/strict" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:assert/strict", "node/assert.strict.js", specifier),
-                .@"node:async_hooks" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:async_hooks", "node/async_hooks.js", specifier),
-                .@"node:child_process" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:child_process", "node/child_process.js", specifier),
-                .@"node:crypto" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:crypto", "node/crypto.js", specifier),
-                .@"node:dns" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:dns", "node/dns.js", specifier),
-                .@"node:dns/promises" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:dns/promises", "node/dns.promises.js", specifier),
-                .@"node:events" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:child_process", "node/events.js", specifier),
-                .@"node:fs" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:fs", "node/fs.js", specifier),
-                .@"node:http" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:http", "node/http.js", specifier),
-                .@"node:https" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:https", "node/https.js", specifier),
-                .@"node:net" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:net", "node/net.js", specifier),
-                .@"node:os" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:os", "node/os.js", specifier),
-                .@"node:path" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:path", "node/path.js", specifier),
-                .@"node:path/posix" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:path/posix", "node/path.posix.js", specifier),
-                .@"node:path/win32" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:path/win32", "node/path.win32.js", specifier),
-                .@"node:perf_hooks" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:perf_hooks", "node/perf_hooks.js", specifier),
-                .@"node:readline" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:readline", "node/readline.js", specifier),
-                .@"node:readline/promises" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:readline/promises", "node/readline.promises.js", specifier),
-                .@"node:stream" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:stream", "node/stream.js", specifier),
-                .@"node:stream/consumers" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:stream/consumers", "node/stream.consumers.js", specifier),
-                .@"node:stream/promises" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:stream/promises", "node/stream.promises.js", specifier),
-                .@"node:stream/web" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:stream/web", "node/stream.web.js", specifier),
-                .@"node:timers" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:timers", "node/timers.js", specifier),
-                .@"node:timers/promises" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:timers/promises", "node/timers.promises.js", specifier),
-                .@"node:tls" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:tls", "node/tls.js", specifier),
-                .@"node:url" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:url", "node/url.js", specifier),
-                .@"node:util" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:util", "node/util.js", specifier),
-                .@"node:vm" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:vm", "node/vm.js", specifier),
-                .@"node:wasi" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:wasi", "node/wasi.js", specifier),
-                .@"node:zlib" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:zlib", "node/zlib.js", specifier),
-
-                .@"detect-libc" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"detect-libc", if (Environment.isLinux) "thirdparty/detect-libc.linux.js" else "thirdparty/detect-libc.js", specifier),
-                .undici => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .undici, "thirdparty/undici.js", specifier),
-                .ws => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .ws, "thirdparty/ws.js", specifier),
-
-                .@"node:cluster" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:cluster", "node/cluster.js", specifier),
-                .@"node:dgram" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:dgram", "node/dgram.js", specifier),
-                .@"node:diagnostics_channel" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:diagnostics_channel", "node/diagnostics_channel.js", specifier),
-                .@"node:http2" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:http2", "node/http2.js", specifier),
-                .@"node:inspector" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:inspector", "node/inspector.js", specifier),
-                .@"node:repl" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:repl", "node/repl.js", specifier),
-                .@"node:trace_events" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:trace_events", "node/trace_events.js", specifier),
-                .@"node:v8" => return jsResolvedSource(jsc_vm, jsc_vm.load_builtins_from_path, .@"node:v8", "node/v8.js", specifier),
+                // These are defined in src/js/*
+                .@"bun:ffi" => return jsSyntheticModule(.@"bun:ffi", specifier),
+                .@"bun:sqlite" => return jsSyntheticModule(.@"bun:sqlite", specifier),
+                .@"detect-libc" => return jsSyntheticModule(if (Environment.isLinux) .@"detect-libc/linux" else .@"detect-libc", specifier),
+                .@"node:assert" => return jsSyntheticModule(.@"node:assert", specifier),
+                .@"node:assert/strict" => return jsSyntheticModule(.@"node:assert/strict", specifier),
+                .@"node:async_hooks" => return jsSyntheticModule(.@"node:async_hooks", specifier),
+                .@"node:child_process" => return jsSyntheticModule(.@"node:child_process", specifier),
+                .@"node:cluster" => return jsSyntheticModule(.@"node:cluster", specifier),
+                .@"node:console" => return jsSyntheticModule(.@"node:console", specifier),
+                .@"node:crypto" => return jsSyntheticModule(.@"node:crypto", specifier),
+                .@"node:dgram" => return jsSyntheticModule(.@"node:dgram", specifier),
+                .@"node:diagnostics_channel" => return jsSyntheticModule(.@"node:diagnostics_channel", specifier),
+                .@"node:dns" => return jsSyntheticModule(.@"node:dns", specifier),
+                .@"node:dns/promises" => return jsSyntheticModule(.@"node:dns/promises", specifier),
+                .@"node:domain" => return jsSyntheticModule(.@"node:domain", specifier),
+                .@"node:events" => return jsSyntheticModule(.@"node:events", specifier),
+                .@"node:fs" => return jsSyntheticModule(.@"node:fs", specifier),
+                .@"node:fs/promises" => return jsSyntheticModule(.@"node:fs/promises", specifier),
+                .@"node:http" => return jsSyntheticModule(.@"node:http", specifier),
+                .@"node:http2" => return jsSyntheticModule(.@"node:http2", specifier),
+                .@"node:https" => return jsSyntheticModule(.@"node:https", specifier),
+                .@"node:inspector" => return jsSyntheticModule(.@"node:inspector", specifier),
+                .@"node:net" => return jsSyntheticModule(.@"node:net", specifier),
+                .@"node:os" => return jsSyntheticModule(.@"node:os", specifier),
+                .@"node:path" => return jsSyntheticModule(.@"node:path", specifier),
+                .@"node:path/posix" => return jsSyntheticModule(.@"node:path/posix", specifier),
+                .@"node:path/win32" => return jsSyntheticModule(.@"node:path/win32", specifier),
+                .@"node:punycode" => return jsSyntheticModule(.@"node:punycode", specifier),
+                .@"node:perf_hooks" => return jsSyntheticModule(.@"node:perf_hooks", specifier),
+                .@"node:querystring" => return jsSyntheticModule(.@"node:querystring", specifier),
+                .@"node:readline" => return jsSyntheticModule(.@"node:readline", specifier),
+                .@"node:readline/promises" => return jsSyntheticModule(.@"node:readline/promises", specifier),
+                .@"node:repl" => return jsSyntheticModule(.@"node:repl", specifier),
+                .@"node:stream" => return jsSyntheticModule(.@"node:stream", specifier),
+                .@"node:stream/consumers" => return jsSyntheticModule(.@"node:stream/consumers", specifier),
+                .@"node:stream/promises" => return jsSyntheticModule(.@"node:stream/promises", specifier),
+                .@"node:stream/web" => return jsSyntheticModule(.@"node:stream/web", specifier),
+                .@"node:timers" => return jsSyntheticModule(.@"node:timers", specifier),
+                .@"node:timers/promises" => return jsSyntheticModule(.@"node:timers/promises", specifier),
+                .@"node:tls" => return jsSyntheticModule(.@"node:tls", specifier),
+                .@"node:trace_events" => return jsSyntheticModule(.@"node:trace_events", specifier),
+                .@"node:url" => return jsSyntheticModule(.@"node:url", specifier),
+                .@"node:util" => return jsSyntheticModule(.@"node:util", specifier),
+                .@"node:v8" => return jsSyntheticModule(.@"node:v8", specifier),
+                .@"node:vm" => return jsSyntheticModule(.@"node:vm", specifier),
+                .@"node:wasi" => return jsSyntheticModule(.@"node:wasi", specifier),
+                .@"node:worker_threads" => return jsSyntheticModule(.@"node:worker_threads", specifier),
+                .@"node:zlib" => return jsSyntheticModule(.@"node:zlib", specifier),
+                .@"isomorphic-fetch" => return jsSyntheticModule(.@"isomorphic-fetch", specifier),
+                .@"node-fetch" => return jsSyntheticModule(.@"node-fetch", specifier),
+                .@"@vercel/fetch" => return jsSyntheticModule(.vercel_fetch, specifier),
+                .undici => return jsSyntheticModule(.undici, specifier),
+                .ws => return jsSyntheticModule(.ws, specifier),
             }
         } else if (specifier.hasPrefixComptime(js_ast.Macro.namespaceWithColon)) {
             const spec = specifier.toUTF8(bun.default_allocator);
@@ -2285,20 +2260,6 @@ pub const ModuleLoader = struct {
                     .hash = 0,
                 };
             }
-        } else if (DisabledModule.getWithEql(specifier, bun.String.eqlComptime) != null) {
-            return ResolvedSource{
-                .allocator = null,
-                .source_code = bun.String.static(
-                    \\var masqueradesAsUndefined=globalThis[Symbol.for("Bun.lazy")]("masqueradesAsUndefined");
-                    \\masqueradesAsUndefined[Symbol.for("CommonJS")]=0;
-                    \\masqueradesAsUndefined.default=masqueradesAsUndefined;
-                    \\export default masqueradesAsUndefined;
-                    \\
-                ),
-                .specifier = specifier,
-                .source_url = specifier.toZigString(),
-                .hash = 0,
-            };
         } else if (jsc_vm.standalone_module_graph) |graph| {
             const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
             defer specifier_utf8.deinit();
@@ -2405,17 +2366,18 @@ pub const HardcodedModule = enum {
     @"bun:jsc",
     @"bun:main",
     @"bun:sqlite",
-    @"bun:events_native",
     @"detect-libc",
     @"node:assert",
     @"node:assert/strict",
     @"node:async_hooks",
     @"node:buffer",
     @"node:child_process",
-    @"node:crypto",
+    @"node:console",
     @"node:constants",
+    @"node:crypto",
     @"node:dns",
     @"node:dns/promises",
+    @"node:domain",
     @"node:events",
     @"node:fs",
     @"node:fs/promises",
@@ -2429,6 +2391,7 @@ pub const HardcodedModule = enum {
     @"node:path/win32",
     @"node:perf_hooks",
     @"node:process",
+    @"node:querystring",
     @"node:readline",
     @"node:readline/promises",
     @"node:stream",
@@ -2445,9 +2408,14 @@ pub const HardcodedModule = enum {
     @"node:util/types",
     @"node:vm",
     @"node:wasi",
+    @"node:worker_threads",
     @"node:zlib",
+    @"node:punycode",
     undici,
     ws,
+    @"isomorphic-fetch",
+    @"node-fetch",
+    @"@vercel/fetch",
     // These are all not implemented yet, but are stubbed
     @"node:v8",
     @"node:trace_events",
@@ -2470,7 +2438,6 @@ pub const HardcodedModule = enum {
             .{ "bun:jsc", HardcodedModule.@"bun:jsc" },
             .{ "bun:main", HardcodedModule.@"bun:main" },
             .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
-            .{ "bun:events_native", HardcodedModule.@"bun:events_native" },
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "node:assert", HardcodedModule.@"node:assert" },
             .{ "node:assert/strict", HardcodedModule.@"node:assert/strict" },
@@ -2478,12 +2445,14 @@ pub const HardcodedModule = enum {
             .{ "node:buffer", HardcodedModule.@"node:buffer" },
             .{ "node:child_process", HardcodedModule.@"node:child_process" },
             .{ "node:cluster", HardcodedModule.@"node:cluster" },
-            .{ "node:crypto", HardcodedModule.@"node:crypto" },
+            .{ "node:console", HardcodedModule.@"node:console" },
             .{ "node:constants", HardcodedModule.@"node:constants" },
+            .{ "node:crypto", HardcodedModule.@"node:crypto" },
             .{ "node:dgram", HardcodedModule.@"node:dgram" },
             .{ "node:diagnostics_channel", HardcodedModule.@"node:diagnostics_channel" },
             .{ "node:dns", HardcodedModule.@"node:dns" },
             .{ "node:dns/promises", HardcodedModule.@"node:dns/promises" },
+            .{ "node:domain", HardcodedModule.@"node:domain" },
             .{ "node:events", HardcodedModule.@"node:events" },
             .{ "node:fs", HardcodedModule.@"node:fs" },
             .{ "node:fs/promises", HardcodedModule.@"node:fs/promises" },
@@ -2497,8 +2466,12 @@ pub const HardcodedModule = enum {
             .{ "node:path", HardcodedModule.@"node:path" },
             .{ "node:path/posix", HardcodedModule.@"node:path/posix" },
             .{ "node:path/win32", HardcodedModule.@"node:path/win32" },
+            .{ "node:punycode", HardcodedModule.@"node:punycode" },
             .{ "node:perf_hooks", HardcodedModule.@"node:perf_hooks" },
             .{ "node:process", HardcodedModule.@"node:process" },
+            .{ "node:querystring", HardcodedModule.@"node:querystring" },
+            .{ "node-fetch", HardcodedModule.@"node-fetch" },
+            .{ "isomorphic-fetch", HardcodedModule.@"isomorphic-fetch" },
             .{ "node:readline", HardcodedModule.@"node:readline" },
             .{ "node:readline/promises", HardcodedModule.@"node:readline/promises" },
             .{ "node:repl", HardcodedModule.@"node:repl" },
@@ -2518,9 +2491,11 @@ pub const HardcodedModule = enum {
             .{ "node:v8", HardcodedModule.@"node:v8" },
             .{ "node:vm", HardcodedModule.@"node:vm" },
             .{ "node:wasi", HardcodedModule.@"node:wasi" },
+            .{ "node:worker_threads", HardcodedModule.@"node:worker_threads" },
             .{ "node:zlib", HardcodedModule.@"node:zlib" },
             .{ "undici", HardcodedModule.undici },
             .{ "ws", HardcodedModule.ws },
+            .{ "@vercel/fetch", HardcodedModule.@"@vercel/fetch" },
         },
     );
     pub const Alias = struct {
@@ -2535,7 +2510,6 @@ pub const HardcodedModule = enum {
             .{ "async_hooks", .{ .path = "node:async_hooks" } },
             .{ "buffer", .{ .path = "node:buffer" } },
             .{ "bun", .{ .path = "bun", .tag = .bun } },
-            .{ "bun:events_native", .{ .path = "bun:events_native" } },
             .{ "bun:ffi", .{ .path = "bun:ffi" } },
             .{ "bun:jsc", .{ .path = "bun:jsc" } },
             .{ "bun:sqlite", .{ .path = "bun:sqlite" } },
@@ -2561,6 +2535,14 @@ pub const HardcodedModule = enum {
             .{ "node:buffer", .{ .path = "node:buffer" } },
             .{ "node:child_process", .{ .path = "node:child_process" } },
             .{ "node:constants", .{ .path = "node:constants" } },
+            .{ "node:console", .{ .path = "node:console" } },
+            .{ "node:querystring", .{ .path = "node:querystring" } },
+            .{ "querystring", .{ .path = "node:querystring" } },
+            .{ "node:domain", .{ .path = "node:domain" } },
+            .{ "domain", .{ .path = "node:domain" } },
+            .{ "@vercel/fetch", .{ .path = "@vercel/fetch" } },
+            .{ "node:punycode", .{ .path = "node:punycode" } },
+            .{ "punycode", .{ .path = "node:punycode" } },
             .{ "node:crypto", .{ .path = "node:crypto" } },
             .{ "node:dns", .{ .path = "node:dns" } },
             .{ "node:dns/promises", .{ .path = "node:dns/promises" } },
@@ -2667,29 +2649,13 @@ pub const HardcodedModule = enum {
             .{ "node:trace_events", .{ .path = "node:trace_events" } },
             .{ "node:v8", .{ .path = "node:v8" } },
             .{ "node:vm", .{ .path = "node:vm" } },
+
+            .{ "node:sys", .{ .path = "node:util" } },
+            .{ "sys", .{ .path = "node:util" } },
+
+            .{ "node-fetch", .{ .path = "node-fetch" } },
+            .{ "isomorphic-fetch", .{ .path = "isomorphic-fetch" } },
+            .{ "@vercel/fetch", .{ .path = "@vercel/fetch" } },
         },
     );
 };
-
-pub const DisabledModule = bun.ComptimeStringMap(
-    void,
-    .{
-        // Stubbing out worker_threads will break esbuild.
-        .{"worker_threads"},
-        .{"node:worker_threads"},
-    },
-);
-
-fn jsResolvedSource(vm: *JSC.VirtualMachine, builtins: []const u8, comptime module: HardcodedModule, comptime input: []const u8, specifier: bun.String) ResolvedSource {
-    // We use RefCountedResolvedSource because we want a stable StringImpl*
-    // pointer so that the SourceProviderCache has the maximum hit rate
-    return vm.refCountedResolvedSource(
-        jsModuleFromFile(builtins, input),
-        specifier,
-        @tagName(module),
-        null,
-
-        // we never want to free these
-        true,
-    );
-}

@@ -1,14 +1,26 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": true
+    "lib": ["ESNext"],
+    "module": "ESNext",
+    "isolatedModules": true,
+    "noEmit": true,
+    "paths": {
+      "$shared": ["./internal/shared.ts"], //deprecated
+      "internal/*": ["./internal/*"] //deprecated
+    }
   },
   "include": [
+    //
     "node",
     "bun",
+    "builtins",
+    "functions",
+    "internal",
     "thirdparty",
-    "build-*",
-    "shared.ts",
+    "_codegen"
+
+    "builtins.d.ts",
     "private.d.ts",
     "../../packages/bun-types/index.d.ts"
   ]

@@ -25,9 +25,7 @@ globalThis.Bun = bun as typeof bun & {
     FileSystemRouter: typeof import('bun').FileSystemRouter;
 
     //? Polyfilled but with broken types (See each one in ./src/modules/bun.ts for details)
-    which: typeof import('bun').which;
     generateHeapSnapshot: typeof import('bun').generateHeapSnapshot;
-    sha: typeof import('bun').sha;
     env: typeof import('bun').env;
     stdout: typeof import('bun').stdout;
     stderr: typeof import('bun').stderr;

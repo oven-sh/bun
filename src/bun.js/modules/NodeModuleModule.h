@@ -106,11 +106,37 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
   // In node, this is supposed to be the actual CommonJSModule constructor.
   // We are cutting a huge corner by not doing all that work.
   // This code is only to support babel.
-  JSString* empty = JSC::jsEmptyString(globalObject->vm());
-  auto* out = Bun::JSCommonJSModule::create(
-        globalObject->vm(),
-        static_cast<Zig::GlobalObject*>(globalObject)->CommonJSModuleObjectStructure(),
-        empty, empty, empty, nullptr);
+  JSC::VM &vm = globalObject->vm();
+  JSString *idString = JSC::jsString(vm, WTF::String("."_s));
+  JSValue parentValue = jsUndefined();
+  JSString *dirname = jsEmptyString(vm);
+
+  // TODO: handle when JSGlobalObject !== Zig::GlobalObject, such as in node:vm
+  Structure *structure = static_cast<Zig::GlobalObject *>(globalObject)
+                             ->CommonJSModuleObjectStructure();
+
+  // TODO: handle ShadowRealm, node:vm, new.target, subclasses
+  JSValue idValue = callFrame->argument(0);
+
+  auto scope = DECLARE_THROW_SCOPE(vm);
+  if (idValue.isString()) {
+    idString = idValue.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+
+    auto index = idString->tryGetValue().reverseFind('/', idString->length());
+
+    if (index != WTF::notFound) {
+      dirname = JSC::jsSubstring(globalObject, idString, 0, index);
+    }
+  }
+
+  auto *out = Bun::JSCommonJSModule::create(vm, structure, idString, jsNull(),
+                                            dirname, nullptr);
+
+  if (!parentValue.isUndefined())
+    out->putDirect(vm, JSC::Identifier::fromString(vm, "parent"_s), parentValue,
+                   0);
+
   return JSValue::encode(out);
 }
 

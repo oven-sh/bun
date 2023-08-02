@@ -23,7 +23,7 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut;
 
     mutable JSC::WriteBarrier<JSC::JSString> m_id;
-    mutable JSC::WriteBarrier<JSC::JSString> m_filename;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_filename;
     mutable JSC::WriteBarrier<JSC::JSString> m_dirname;
     mutable JSC::WriteBarrier<Unknown> m_paths;
     mutable JSC::WriteBarrier<JSC::JSSourceCode> sourceCode;
@@ -33,7 +33,7 @@ public:
     ~JSCommonJSModule();
 
     void finishCreation(JSC::VM& vm,
-        JSC::JSString* id, JSC::JSString* filename,
+        JSC::JSString* id, JSValue filename,
         JSC::JSString* dirname, JSC::JSSourceCode* sourceCode);
 
     static JSC::Structure* createStructure(JSC::JSGlobalObject* globalObject);
@@ -48,7 +48,7 @@ public:
 
     static JSCommonJSModule* create(JSC::VM& vm, JSC::Structure* structure,
         JSC::JSString* id,
-        JSC::JSString* filename,
+        JSValue filename,
         JSC::JSString* dirname, JSC::JSSourceCode* sourceCode);
 
     static JSCommonJSModule* create(

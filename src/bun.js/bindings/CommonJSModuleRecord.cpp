@@ -93,7 +93,7 @@ static bool canPerformFastEnumeration(Structure* s)
     return true;
 }
 
-static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSString* filename, WTF::NakedPtr<Exception>& exception)
+static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename, WTF::NakedPtr<Exception>& exception)
 {
     JSC::Structure* thisObjectStructure = globalObject->commonJSFunctionArgumentsStructure();
     JSC::JSObject* thisObject = JSC::constructEmptyObject(
@@ -395,7 +395,7 @@ public:
 
 const JSC::ClassInfo JSCommonJSModulePrototype::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSModulePrototype) };
 
-void JSCommonJSModule::finishCreation(JSC::VM& vm, JSC::JSString* id, JSC::JSString* filename, JSC::JSString* dirname, JSC::JSSourceCode* sourceCode)
+void JSCommonJSModule::finishCreation(JSC::VM& vm, JSC::JSString* id, JSValue filename, JSC::JSString* dirname, JSC::JSSourceCode* sourceCode)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(vm, info()));
@@ -421,7 +421,7 @@ JSCommonJSModule* JSCommonJSModule::create(
     JSC::VM& vm,
     JSC::Structure* structure,
     JSC::JSString* id,
-    JSC::JSString* filename,
+    JSValue filename,
     JSC::JSString* dirname,
     JSC::JSSourceCode* sourceCode)
 {

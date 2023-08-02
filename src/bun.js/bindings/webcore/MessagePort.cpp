@@ -27,6 +27,7 @@
 #include "config.h"
 #include "MessagePort.h"
 
+#include "BunClientData.h"
 // #include "Document.h"
 #include "EventNames.h"
 // #include "Logging.h"
@@ -43,6 +44,8 @@
 #include <wtf/IsoMallocInlines.h>
 #include <wtf/Lock.h>
 #include <wtf/Scope.h>
+
+extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 
 namespace WebCore {
 
@@ -425,6 +428,22 @@ bool MessagePort::removeEventListener(const AtomString& eventType, EventListener
 WebCoreOpaqueRoot root(MessagePort* port)
 {
     return WebCoreOpaqueRoot { port };
+}
+
+void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
+{
+    if (!m_hasRef) {
+        m_hasRef = true;
+        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
+    }
+}
+
+void MessagePort::jsUnref(JSGlobalObject* lexicalGlobalObject)
+{
+    if (m_hasRef) {
+        m_hasRef = false;
+        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
+    }
 }
 
 } // namespace WebCore

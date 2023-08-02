@@ -121,7 +121,7 @@
 #include "JSWorker.h"
 #include "JSMessageChannel.h"
 #include "JSMessagePort.h"
-// #include "JSBroadcastChannel.h"
+#include "JSBroadcastChannel.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
@@ -942,8 +942,8 @@ WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSMessageChannel);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSMessagePort);
 WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSMessagePort);
 
-// WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSBroadcastChannel);
-// WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSBroadcastChannel);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSBroadcastChannel);
+WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSBroadcastChannel);
 
 JSC_DECLARE_CUSTOM_GETTER(JSEvent_getter);
 
@@ -4303,7 +4303,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("Worker"_s, JSWorker);
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("MessageChannel"_s, JSMessageChannel);
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("MessagePort"_s, JSMessagePort);
-    // PUT_WEBCORE_GENERATED_CONSTRUCTOR("BroadcastChannel"_s, JSBroadcastChannel);
+    PUT_WEBCORE_GENERATED_CONSTRUCTOR("BroadcastChannel"_s, JSBroadcastChannel);
 
     putDirectCustomAccessor(vm, builtinNames.TransformStreamPublicName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_TransformStreamConstructor, nullptr), attributesForStructure(static_cast<unsigned>(JSC::PropertyAttribute::DontEnum)));
     putDirectCustomAccessor(vm, builtinNames.TransformStreamPrivateName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_TransformStreamConstructor, nullptr), attributesForStructure(static_cast<unsigned>(JSC::PropertyAttribute::DontEnum)));

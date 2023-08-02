@@ -102,7 +102,7 @@ private:
     Ref<MainThreadBridge> m_mainThreadBridge;
     bool m_isClosed { false };
     bool m_hasRelevantEventListener { false };
-    bool m_isRef { false };
+    bool m_hasRef { false };
     ScriptExecutionContextIdentifier m_contextId;
 };
 

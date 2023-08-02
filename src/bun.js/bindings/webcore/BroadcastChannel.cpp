@@ -313,16 +313,16 @@ bool BroadcastChannel::isEligibleForMessaging() const
 
 void BroadcastChannel::jsRef(JSGlobalObject* lexicalGlobalObject)
 {
-    if (!m_isRef) {
-        m_isRef = true;
+    if (!m_hasRef) {
+        m_hasRef = true;
         Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
     }
 }
 
 void BroadcastChannel::jsUnref(JSGlobalObject* lexicalGlobalObject)
 {
-    if (m_isRef) {
-        m_isRef = false;
+    if (m_hasRef) {
+        m_hasRef = false;
         Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
     }
 }

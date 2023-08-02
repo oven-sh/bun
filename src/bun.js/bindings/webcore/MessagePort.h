@@ -103,6 +103,10 @@ public:
 
     static ScriptExecutionContextIdentifier contextIdForMessagePortId(MessagePortIdentifier);
 
+    void jsRef(JSGlobalObject*);
+    void jsUnref(JSGlobalObject*);
+    bool jsHasRef() { return m_hasRef; }
+
 private:
     explicit MessagePort(ScriptExecutionContext&, const MessagePortIdentifier& local, const MessagePortIdentifier& remote);
 
@@ -133,6 +137,8 @@ private:
     MessagePortIdentifier m_remoteIdentifier;
 
     mutable std::atomic<unsigned> m_refCount { 1 };
+
+    bool m_hasRef { false };
 };
 
 WebCoreOpaqueRoot root(MessagePort*);

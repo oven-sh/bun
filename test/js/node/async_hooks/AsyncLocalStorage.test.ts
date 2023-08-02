@@ -1,5 +1,5 @@
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
-import { beforeEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 describe("AsyncLocalStorage", () => {
   test("throw inside of AsyncLocalStorage.run() will be passed out", () => {
@@ -27,12 +27,6 @@ test("AsyncResource", () => {
 });
 
 describe("async context passes through", () => {
-  beforeEach(() => {
-    /* @ts-ignore */
-    const { set } = globalThis[Symbol.for("Bun.lazy")]("async_hooks");
-    // just in case
-    set(undefined);
-  });
   test("syncronously", () => {
     const s = new AsyncLocalStorage();
     s.run("value", () => {

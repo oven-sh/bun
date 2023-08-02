@@ -221,22 +221,7 @@ pub const ResolvedSource = extern struct {
 
     tag: Tag = Tag.javascript,
 
-    pub const Tag = enum(u64) {
-        javascript = 0,
-        package_json_type_module = 1,
-        wasm = 2,
-        object = 3,
-        file = 4,
-
-        @"node:buffer" = 1024,
-        @"node:process" = 1025,
-        @"bun:events_native" = 1026, // native version of EventEmitter used for streams
-        @"node:string_decoder" = 1027,
-        @"node:module" = 1028,
-        @"node:tty" = 1029,
-        @"node:util/types" = 1030,
-        @"node:constants" = 1031,
-    };
+    pub const Tag = @import("../../js/out/ResolvedSourceTag.zig").ResolvedSourceTag;
 };
 
 const Mimalloc = @import("../../allocators/mimalloc.zig");

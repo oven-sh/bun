@@ -39,6 +39,7 @@ function Url() {
   this.path = null;
   this.href = null;
 }
+Url.prototype = {};
 
 // Reference: RFC 3986, RFC 1808, RFC 2396
 
@@ -820,29 +821,14 @@ function urlToHttpOptions(url) {
   return options;
 }
 
-const lazy = $lazy;
-const pathToFileURL = lazy("pathToFileURL");
-const fileURLToPath = lazy("fileURLToPath");
-const defaultObject = {
+const pathToFileURL = $lazy("pathToFileURL");
+const fileURLToPath = $lazy("fileURLToPath");
+
+export default {
   parse: urlParse,
   resolve: urlResolve,
   resolveObject: urlResolveObject,
   format: urlFormat,
-  Url,
-  URLSearchParams,
-  URL,
-  pathToFileURL,
-  fileURLToPath,
-  urlToHttpOptions,
-  [Symbol.for("CommonJS")]: 0,
-};
-
-export {
-  defaultObject as default,
-  urlParse as parse,
-  urlResolve as resolve,
-  urlResolveObject as resolveObject,
-  urlFormat as format,
   Url,
   URLSearchParams,
   URL,

@@ -9,7 +9,6 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const heap_allocator = bun.default_allocator;
-const constants = @import("./os/constants.zig");
 
 pub const Os = struct {
     pub const name = "Bun__Os";
@@ -41,7 +40,7 @@ pub const Os = struct {
         module.put(globalObject, JSC.ZigString.static("devNull"), JSC.ZigString.init(devNull).withEncoding().toValue(globalObject));
         module.put(globalObject, JSC.ZigString.static("EOL"), JSC.ZigString.init(EOL).withEncoding().toValue(globalObject));
 
-        module.put(globalObject, JSC.ZigString.static("constants"), constants.create(globalObject));
+        // module.put(globalObject, JSC.ZigString.static("constants"), constants.create(globalObject));
 
         return module;
     }

@@ -1,9 +1,13 @@
-interface Module {
-  id: string;
-  path: string;
-
+interface CommonJSModuleRecord {
   $require(id: string, mod: any): any;
-  children: Module[];
+  children: CommonJSModuleRecord[];
+  exports: any;
+  id: string;
+  loaded: boolean;
+  parent: undefined;
+  path: string;
+  paths: string[];
+  require: typeof require;
 }
 
 $getter;
@@ -11,7 +15,7 @@ export function main() {
   return $requireMap.$get(Bun.main);
 }
 
-export function require(this: Module, id: string) {
+export function require(this: CommonJSModuleRecord, id: string) {
   const existing = $requireMap.$get(id) || $requireMap.$get((id = $resolveSync(id, this.path, false)));
   if (existing) {
     // Scenario where this is necessary:
@@ -39,20 +43,6 @@ export function require(this: Module, id: string) {
     return $internalRequire(id);
   }
 
-  let esm = Loader.registry.$get(id);
-  if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {
-    const mod = esm.module;
-    const namespace = Loader.getModuleNamespaceObject(mod);
-    const exports =
-      namespace?.[$commonJSSymbol] === 0 || namespace?.default?.[$commonJSSymbol] === 0
-        ? namespace.default
-        : namespace.__esModule
-        ? namespace
-        : Object.create(namespace, { __esModule: { value: true } });
-    $requireMap.$set(id, $createCommonJSModule(id, exports, true));
-    return exports;
-  }
-
   // To handle import/export cycles, we need to create a module object and put
   // it into the map before we import it.
   const mod = $createCommonJSModule(id, {}, false);
@@ -76,18 +66,14 @@ export function require(this: Module, id: string) {
       throw exception;
     }
 
-    esm = Loader.registry.$get(id);
+    const esm = Loader.registry.$get(id);
 
     // If we can pull out a ModuleNamespaceObject, let's do it.
     if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {
       const namespace = Loader.getModuleNamespaceObject(esm!.module);
       return (mod.exports =
         // if they choose a module
-        namespace?.[$commonJSSymbol] === 0 || namespace?.default?.[$commonJSSymbol] === 0
-          ? namespace.default
-          : namespace.__esModule
-          ? namespace
-          : Object.create(namespace, { __esModule: { value: true } }));
+        namespace.__esModule ? namespace : Object.create(namespace, { __esModule: { value: true } }));
     }
   }
 
@@ -95,6 +81,16 @@ export function require(this: Module, id: string) {
   return mod.exports;
 }
 
-export function requireResolve(this: Module, id: string) {
+export function requireResolve(this: CommonJSModuleRecord, id: string) {
   return $resolveSync(id, this.path, false);
+}
+
+export function requireNativeModule(id: string) {
+  // There might be a race condition here?
+  let esm = Loader.registry.$get(id);
+  if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {
+    const exports = Loader.getModuleNamespaceObject(esm.module);
+    return exports.default;
+  }
+  return $requireESM(id).default;
 }

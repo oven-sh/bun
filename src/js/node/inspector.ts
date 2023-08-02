@@ -1,7 +1,7 @@
 // Hardcoded module "node:inspector" and "node:inspector/promises"
 // This is a stub! None of this is actually implemented yet.
-import { hideFromStack, throwNotImplemented } from "../shared";
-import EventEmitter from "node:events";
+const { hideFromStack, throwNotImplemented } = require("$shared");
+const EventEmitter = require("node:events");
 
 function open() {
   throwNotImplemented("node:inspector open", 2445);
@@ -33,15 +33,13 @@ const console = {
   },
 };
 
-var defaultObject = {
+export default {
   console,
   open,
   close,
   url,
   waitForDebugger,
   Session,
-  [Symbol.for("CommonJS")]: 0,
 };
 
-export { console, open, close, url, waitForDebugger, Session, defaultObject as default };
 hideFromStack(open, close, url, waitForDebugger, Session.prototype.constructor);

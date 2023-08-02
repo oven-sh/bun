@@ -1,11 +1,8 @@
 // Hardcoded module "node:tls"
-import { isArrayBufferView, isTypedArray } from "util/types";
-import net, { Server as NetServer } from "node:net";
-const InternalTCPSocket = net[Symbol.for("::bunternal::")];
+const { isArrayBufferView, isTypedArray } = require("node:util/types");
+const net = require("node:net");
+const { Server: NetServer, [Symbol.for("::bunternal::")]: InternalTCPSocket } = net;
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
-
-const { RegExp, Array, String } = $lazy("primordials");
-
 const { rootCertificates, canonicalizeIP } = $lazy("internal/tls");
 
 const SymbolReplace = Symbol.replace;
@@ -628,10 +625,6 @@ function getCiphers() {
   return DEFAULT_CIPHERS.split(":");
 }
 
-function getCurves() {
-  return;
-}
-
 // Convert protocols array into valid OpenSSL protocols list
 // ("\x06spdy/2\x08http/1.1\x08http/1.0")
 function convertProtocols(protocols) {
@@ -682,8 +675,7 @@ function convertALPNProtocols(protocols, out) {
   }
 }
 
-var exports = {
-  [Symbol.for("CommonJS")]: 0,
+export default {
   CLIENT_RENEG_LIMIT,
   CLIENT_RENEG_WINDOW,
   connect,
@@ -696,34 +688,10 @@ var exports = {
   DEFAULT_MAX_VERSION,
   DEFAULT_MIN_VERSION,
   getCiphers,
-  getCurves,
   parseCertString,
   SecureContext,
   Server,
   TLSSocket,
   checkServerIdentity,
   rootCertificates,
-};
-
-export {
-  CLIENT_RENEG_LIMIT,
-  CLIENT_RENEG_WINDOW,
-  connect,
-  convertALPNProtocols,
-  createConnection,
-  createSecureContext,
-  createServer,
-  DEFAULT_CIPHERS,
-  DEFAULT_ECDH_CURVE,
-  DEFAULT_MAX_VERSION,
-  DEFAULT_MIN_VERSION,
-  getCiphers,
-  getCurves,
-  parseCertString,
-  SecureContext,
-  checkServerIdentity,
-  Server,
-  TLSSocket,
-  rootCertificates,
-  exports as default,
 };

@@ -23,38 +23,29 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// TODO: move this to native code?
 export function binding(bindingName) {
-  if (bindingName !== "constants")
-    throw new TypeError(
-      "process.binding() is not supported in Bun. If that breaks something, please file an issue and include a reproducible code sample.",
-    );
-
-  var cache = globalThis.Symbol.for("process.bindings.constants");
-  var constants = globalThis[cache];
-  if (!constants) {
-    // TODO: make this less hacky.
-    // This calls require("node:fs").constants
-    // except, outside an ESM module.
-    const { constants: fs } = $lazy("createImportMeta", "node:process").require("node:fs");
-    constants = {
-      fs,
-      zlib: {},
-      crypto: {},
-      os: Bun._Os().constants,
-    };
-    globalThis[cache] = constants;
+  if (bindingName === "constants") {
+    return $processBindingConstants;
   }
-  return constants;
+  const issue = {
+    fs: 3546,
+    buffer: 2020,
+    natives: 2254,
+    uv: 2891,
+  }[bindingName];
+  if (issue) {
+    throw new Error(
+      `process.binding("${bindingName}") is not implemented in Bun. Track the status & thumbs up the issue: https://github.com/oven-sh/bun/issues/${issue}`,
+    );
+  }
+  throw new TypeError(
+    `process.binding("${bindingName}") is not implemented in Bun. If that breaks something, please file an issue and include a reproducible code sample.`,
+  );
 }
 
 export function getStdioWriteStream(fd_, getWindowSize) {
-  var require = path => {
-    var existing = $requireMap.get(path);
-    if (existing) return existing.exports;
-
-    return $internalRequire(path);
-  };
-  var module = { path: "node:process", require };
+  var EventEmitter = require("node:events");
 
   function createStdioWriteStream(fd_) {
     var { Duplex, eos, destroy } = require("node:stream");
@@ -212,8 +203,6 @@ export function getStdioWriteStream(fd_, getWindowSize) {
     };
     return new StdioWriteStream(fd_);
   }
-
-  var { EventEmitter } = require("node:events");
 
   function isFastEncoding(encoding) {
     if (!encoding) return true;
@@ -499,14 +488,6 @@ export function getStdioWriteStream(fd_, getWindowSize) {
 }
 
 export function getStdinStream(fd_) {
-  var require = path => {
-    var existing = $requireMap.get(path);
-    if (existing) return existing.exports;
-
-    return $internalRequire(path);
-  };
-
-  var module = { path: "node:process", require: require };
   var { Duplex, eos, destroy } = require("node:stream");
 
   var StdinStream = class StdinStream extends Duplex {

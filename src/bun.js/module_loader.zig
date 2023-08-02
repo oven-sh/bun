@@ -2434,7 +2434,6 @@ pub const HardcodedModule = enum {
         HardcodedModule,
         .{
             .{ "buffer", HardcodedModule.@"node:buffer" },
-            .{ "bun:events_native", HardcodedModule.@"bun:events_native" },
             .{ "bun:ffi", HardcodedModule.@"bun:ffi" },
             .{ "bun:jsc", HardcodedModule.@"bun:jsc" },
             .{ "bun:main", HardcodedModule.@"bun:main" },

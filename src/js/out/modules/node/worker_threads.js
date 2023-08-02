@@ -1,11 +1,56 @@
 import EventEmitter from "node:events";
+var fakeParentPort = function() {
+  const fake = Object.create(MessagePort.prototype);
+  return Object.defineProperty(fake, "onmessage", {
+    get() {
+      return self.onmessage;
+    },
+    set(value) {
+      self.onmessage = value;
+    }
+  }), Object.defineProperty(fake, "onmessageerror", {
+    get() {
+      return self.onmessageerror;
+    },
+    set(value) {
+    }
+  }), Object.defineProperty(fake, "postMessage", {
+    value(...args) {
+      return self.postMessage(...args);
+    }
+  }), Object.defineProperty(fake, "close", {
+    value() {
+      return process.exit(0);
+    }
+  }), Object.defineProperty(fake, "start", {
+    value() {
+    }
+  }), Object.defineProperty(fake, "unref", {
+    value() {
+    }
+  }), Object.defineProperty(fake, "ref", {
+    value() {
+    }
+  }), Object.defineProperty(fake, "hasRef", {
+    value() {
+      return !1;
+    }
+  }), Object.defineProperty(fake, "setEncoding", {
+    value() {
+    }
+  }), Object.defineProperty(fake, "addEventListener", {
+    value: self.addEventListener.bind(self)
+  }), Object.defineProperty(fake, "removeEventListener", {
+    value: self.removeEventListener.bind(self)
+  }), fake;
+};
 function getEnvironmentData() {
   return process.env;
 }
 function setEnvironmentData(env) {
   process.env = env;
 }
-var [workerData, threadId] = globalThis[Symbol.for("Bun.lazy")]("worker_threads"), parentPort = null, resourceLimits = {}, isMainThread = Bun.isMainThread, WebWorker = globalThis.Worker;
+var isMainThread = Bun.isMainThread, [workerData, threadId] = globalThis[Symbol.for("Bun.lazy")]("worker_threads"), parentPort = isMainThread ? null : fakeParentPort(), resourceLimits = {}, WebWorker = globalThis.Worker;
 
 class Worker extends EventEmitter {
   #worker;

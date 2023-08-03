@@ -9,3 +9,7 @@ declare module 'stream/web' {
         readMany(): Promise<ReadableStreamDefaultReadManyResult<any>>;
     }
 }
+
+declare global {
+    var performance: typeof import('perf_hooks').performance;
+}

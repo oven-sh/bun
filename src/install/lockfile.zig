@@ -2385,25 +2385,35 @@ pub const Package = extern struct {
         };
 
         pub fn generate(
-            _: Allocator,
+            allocator: Allocator,
+            log: *logger.Log,
             from_lockfile: *Lockfile,
             to_lockfile: *Lockfile,
             from: *Lockfile.Package,
             to: *Lockfile.Package,
-            mapping: []PackageID,
+            id_mapping: ?[]PackageID,
         ) !Summary {
             var summary = Summary{};
             const to_deps = to.dependencies.get(to_lockfile.buffers.dependencies.items);
             const from_deps = from.dependencies.get(from_lockfile.buffers.dependencies.items);
+            const from_resolutions = from.resolutions.get(from_lockfile.buffers.resolutions.items);
+            var to_i: usize = 0;
 
             for (from_deps, 0..) |*from_dep, i| {
-                // common case: dependency is present in both versions and in the same position
-                const to_i = if (to_deps.len > i and to_deps[i].name_hash == from_dep.name_hash)
-                    i
-                else brk: {
+                found: {
+                    const prev_i = to_i;
+
+                    // common case, dependency is present in both versions:
+                    // - in the same position
+                    // - shifted by a constant offset
+                    while (to_i < to_deps.len) : (to_i += 1) {
+                        if (from_dep.name_hash == to_deps[to_i].name_hash) break :found;
+                    }
+
                     // less common, o(n^2) case
-                    for (to_deps, 0..) |to_dep, j| {
-                        if (from_dep.name_hash == to_dep.name_hash) break :brk j;
+                    to_i = 0;
+                    while (to_i < prev_i) : (to_i += 1) {
+                        if (from_dep.name_hash == to_deps[to_i].name_hash) break :found;
                     }
 
                     // We found a removed dependency!
@@ -2411,11 +2421,47 @@ pub const Package = extern struct {
                     // It will be cleaned up later
                     summary.remove += 1;
                     continue;
-                };
+                }
 
                 if (to_deps[to_i].eql(from_dep, to_lockfile.buffers.string_bytes.items, from_lockfile.buffers.string_bytes.items)) {
-                    mapping[to_i] = @as(PackageID, @truncate(i));
-                    continue;
+                    if (id_mapping) |mapping| {
+                        const version = to_deps[to_i].version;
+                        if (switch (version.tag) {
+                            .workspace => if (to_lockfile.workspace_paths.getPtr(@truncate(from_dep.name_hash))) |path_ptr| brk: {
+                                const path = to_lockfile.str(path_ptr);
+                                var file = std.fs.cwd().openFile(Path.join(
+                                    &[_]string{ path, "package.json" },
+                                    .auto,
+                                ), .{ .mode = .read_only }) catch break :brk false;
+                                defer file.close();
+                                const bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+                                defer allocator.free(bytes);
+                                const source = logger.Source.initPathString(path, bytes);
+
+                                var workspace = Package{};
+                                try workspace.parseMain(to_lockfile, allocator, log, source, Features.workspace);
+
+                                var from_pkg = from_lockfile.packages.get(from_resolutions[i]);
+                                const diff = try generate(
+                                    allocator,
+                                    log,
+                                    from_lockfile,
+                                    to_lockfile,
+                                    &from_pkg,
+                                    &workspace,
+                                    null,
+                                );
+
+                                break :brk diff.add == 0 and diff.remove == 0 and diff.update == 0;
+                            } else false,
+                            else => true,
+                        }) {
+                            mapping[to_i] = @as(PackageID, @truncate(i));
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
                 }
 
                 // We found a changed dependency!
@@ -2654,7 +2700,7 @@ pub const Package = extern struct {
         }
 
         const this_dep = Dependency{
-            .behavior = group.behavior.setWorkspace(in_workspace),
+            .behavior = if (in_workspace) group.behavior.setWorkspace(in_workspace) else group.behavior,
             .name = external_alias.value,
             .name_hash = external_alias.hash,
             .version = dependency_version,

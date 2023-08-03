@@ -237,7 +237,7 @@ public:
 };
 
 }
-
+extern "C" WebCore::Worker* WebWorker__getParentWorker(void*);
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length))
 {
     if (has_loaded_jsc)
@@ -1586,18 +1586,46 @@ JSC_DEFINE_HOST_FUNCTION(functionCallNotImplemented,
     return JSC::JSValue::encode(JSC::JSValue {});
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 1) {
+        throwTypeError(lexicalGlobalObject, scope, "receiveMessageOnPort needs 1 argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    auto port = callFrame->argument(0);
+
+    if (!port.isObject()) {
+        throwTypeError(lexicalGlobalObject, scope, "the \"port\" argument must be a MessagePort instance"_s);
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    if (auto* messagePort = jsDynamicCast<JSMessagePort*>(port)) {
+        return JSC::JSValue::encode(messagePort->wrapped().tryTakeMessage(lexicalGlobalObject));
+    } else if (auto* broadcastChannel = jsDynamicCast<JSBroadcastChannel*>(port)) {
+        // TODO: support broadcast channels
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    throwTypeError(lexicalGlobalObject, scope, "the \"port\" argument must be a MessagePort instance"_s);
+    return JSC::JSValue::encode(jsUndefined());
+}
+
 // we're trying out a new way to do this lazy loading
 // this is $lazy() in js code
 static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-JSC:
+
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     VM& vm = globalObject->vm();
 
     switch (callFrame->argumentCount()) {
     case 0: {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         JSC::throwTypeError(globalObject, scope, "lazyLoad needs 1 argument (a string)"_s);
         scope.release();
         return JSC::JSValue::encode(JSC::JSValue {});
@@ -1607,7 +1635,6 @@ JSC:
         if (moduleName.isNumber()) {
             switch (moduleName.toInt32(globalObject)) {
             case 0: {
-                auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
                 JSC::throwTypeError(globalObject, scope, "lazyLoad expects a string"_s);
                 scope.release();
                 return JSC::JSValue::encode(JSC::JSValue {});
@@ -1634,7 +1661,6 @@ JSC:
 
         auto string = moduleName.toWTFString(globalObject);
         if (string.isNull()) {
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
             JSC::throwTypeError(globalObject, scope, "lazyLoad expects a string"_s);
             scope.release();
             return JSC::JSValue::encode(JSC::JSValue {});
@@ -1642,6 +1668,32 @@ JSC:
 
         if (string == "sqlite"_s) {
             return JSC::JSValue::encode(JSSQLStatementConstructor::create(vm, globalObject, JSSQLStatementConstructor::createStructure(vm, globalObject, globalObject->m_functionPrototype.get())));
+        }
+
+        if (string == "worker_threads"_s) {
+
+            JSValue workerData = jsUndefined();
+            JSValue threadId = jsNumber(0);
+
+            if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM())) {
+                auto& options = worker->options();
+                if (worker && options.bun.data) {
+                    auto ports = MessagePort::entanglePorts(*ScriptExecutionContext::getScriptExecutionContext(worker->clientIdentifier()), WTFMove(options.bun.dataMessagePorts));
+                    RefPtr<WebCore::SerializedScriptValue> serialized = WTFMove(options.bun.data);
+                    JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTFMove(ports));
+                    RETURN_IF_EXCEPTION(scope, {});
+                    workerData = deserialized;
+                }
+
+                threadId = jsNumber(worker->clientIdentifier());
+            }
+
+            JSArray* array = constructEmptyArray(globalObject, nullptr);
+            array->push(globalObject, workerData);
+            array->push(globalObject, threadId);
+            array->push(globalObject, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic));
+
+            return JSC::JSValue::encode(array);
         }
 
         if (string == "pathToFileURL"_s) {
@@ -3551,7 +3603,6 @@ void GlobalObject::finishCreation(VM& vm)
     consoleObject->putDirectBuiltinFunction(vm, this, clientData->builtinNames().writePublicName(), consoleObjectWriteCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
 }
 
-extern "C" WebCore::Worker* WebWorker__getParentWorker(void*);
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     (JSC::JSGlobalObject * leixcalGlobalObject, JSC::CallFrame* callFrame))
 {
@@ -3596,7 +3647,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     }
 
     Vector<RefPtr<MessagePort>> ports;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), ports);
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
         return JSValue::encode(jsUndefined());

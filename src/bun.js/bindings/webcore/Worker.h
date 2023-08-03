@@ -97,6 +97,7 @@ public:
     void dispatchExit();
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
     ScriptExecutionContextIdentifier clientIdentifier() const { return m_clientIdentifier; }
+    WorkerOptions& options() { return m_options; }
 
 private:
     Worker(ScriptExecutionContext&, WorkerOptions&&);
@@ -119,7 +120,7 @@ private:
     static void networkStateChanged(bool isOnLine);
 
     // RefPtr<WorkerScriptLoader> m_scriptLoader;
-    const WorkerOptions m_options;
+    WorkerOptions m_options;
     String m_identifier;
     // WorkerGlobalScopeProxy& m_contextProxy; // The proxy outlives the worker to perform thread shutdown.
     // std::optional<ContentSecurityPolicyResponseHeaders> m_contentSecurityPolicyResponseHeaders;

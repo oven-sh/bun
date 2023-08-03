@@ -1,4 +1,4 @@
-import type { CryptoHashInterface, DigestEncoding } from 'bun';
+import type { CryptoHashInterface, DigestEncoding, Hash } from 'bun';
 import { NotImplementedError } from '../../utils/errors.js';
 import murmur from 'murmurhash3js-revisited';
 import nodecrypto from 'node:crypto';
@@ -7,15 +7,12 @@ import crc from '@foxglove/crc';
 import adler32 from 'adler-32';
 import md4, { Md4 } from 'js-md4';
 import { Fingerprint32, Fingerprint64 } from '../../../lib/farmhash/index.mjs';
+import { wyhash } from '../../../lib/zighash/index.mjs';
 
-export const bunHash = ((...args: Parameters<typeof Bun['hash']>): ReturnType<typeof Bun['hash']> => {
-    throw new NotImplementedError('Bun.hash()', bunHash);
-}) as typeof Bun['hash'];
-export const bunHashProto: typeof bunHash = {
-    // @ts-expect-error Force remove this property
-    call: undefined,
-    wyhash(data, seed?) {
-        throw new NotImplementedError('Bun.hash.wyhash', this.wyhash);
+export const bunHash = ((data, seed = 0): bigint => wyhash(data, BigInt(seed))) as typeof Bun.hash;
+export const bunHashProto: Hash = {
+    wyhash(data, seed = 0) {
+        return wyhash(data, BigInt(seed));
     },
     adler32(data, seed?) {
         if (typeof data === 'string') return adler32.str(data, seed);

@@ -1,6 +1,6 @@
 import type {
     BunPlugin, PluginConstraints, PluginBuilder, OnLoadCallback, OnResolveCallback, HeapSnapshot,
-    EditorOptions, SpawnOptions, Subprocess, SyncSubprocess, FileBlob as BunFileBlob, ArrayBufferView
+    EditorOptions, SpawnOptions, Subprocess, SyncSubprocess, FileBlob as BunFileBlob, ArrayBufferView, Hash
 } from 'bun';
 import { TextDecoderStream } from 'node:stream/web';
 import { NotImplementedError, type SystemError } from '../utils/errors.js';
@@ -46,8 +46,10 @@ Object.setPrototypeOf(env, {
 });
 // @ts-expect-error supports-color types are unbelievably bad
 export const enableANSIColors = (await import('supports-color')).createSupportsColor().hasBasic satisfies typeof Bun.enableANSIColors;
+
 export const hash = bunHash satisfies typeof Bun.hash;
-Object.setPrototypeOf(hash, bunHashProto satisfies typeof Bun.hash);
+Object.setPrototypeOf(hash, bunHashProto satisfies Hash);
+
 export const unsafe = {
     gcAggressionLevel: () => 0, //! no-op
     arrayBufferToString: (buf) => new TextDecoder().decode(buf),

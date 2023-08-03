@@ -1826,7 +1826,7 @@ pub const Path = struct {
 
         const base_slice = path.slice();
 
-        return JSC.ZigString.init(std.fs.path.extension(base_slice)).toValueGC(globalThis);
+        return JSC.ZigString.init(std.fs.path.extension(base_slice)).withEncoding().toValueGC(globalThis);
     }
     pub fn format(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();

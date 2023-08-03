@@ -469,6 +469,14 @@ it("path.relative", () => {
         ["/baz", "/baz-quux", "../baz-quux"],
         ["/page1/page2/foo", "/", "../../.."],
         [process.cwd(), "foo", "foo"],
+        ["/webpack", "/webpack", ""],
+        ["/webpack/", "/webpack", ""],
+        ["/webpack", "/webpack/", ""],
+        ["/webpack/", "/webpack/", ""],
+        ["/webpack-hot-middleware", "/webpack/buildin/module.js", "../webpack/buildin/module.js"],
+        ["/webp4ck-hot-middleware", "/webpack/buildin/module.js", "../webpack/buildin/module.js"],
+        ["/webpack-hot-middleware", "/webp4ck/buildin/module.js", "../webp4ck/buildin/module.js"],
+        ["/var/webpack-hot-middleware", "/var/webpack/buildin/module.js", "../webpack/buildin/module.js"],
       ],
     ],
   ];
@@ -691,4 +699,9 @@ it("path.parse", () => {
 
 test("path.format works for vite's example", () => {
   expect(path.format({ root: "", dir: "", name: "index", base: undefined, ext: ".css" })).toBe("index.css");
+});
+
+it("path.extname", () => {
+  expect(path.extname("index.js")).toBe(".js");
+  expect(path.extname("make_plot.🔥")).toBe(".🔥");
 });

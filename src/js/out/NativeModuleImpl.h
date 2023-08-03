@@ -6,3 +6,4 @@
 #include "../../bun.js/modules/NodeStringDecoderModule.h"
 #include "../../bun.js/modules/NodeTTYModule.h"
 #include "../../bun.js/modules/NodeUtilTypesModule.h"
+#include "../../bun.js/modules/UTF8ValidateModule.h"

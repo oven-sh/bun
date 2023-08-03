@@ -4320,6 +4320,7 @@ pub const PackageManager = struct {
         },
         local_package_features: Features = .{
             .dev_dependencies = true,
+            .workspaces = true,
         },
         // The idea here is:
         // 1. package has a platform-specific binary to install
@@ -7502,6 +7503,7 @@ pub const PackageManager = struct {
 
                     manager.summary = try Package.Diff.generate(
                         ctx.allocator,
+                        ctx.log,
                         manager.lockfile,
                         &lockfile,
                         &root,
@@ -7519,13 +7521,12 @@ pub const PackageManager = struct {
                         Global.crash();
                     }
 
-                    // If you changed packages, we will copy over the new package from the new lockfile
-                    const new_dependencies = maybe_root.dependencies.get(lockfile.buffers.dependencies.items);
-
                     if (had_any_diffs) {
                         var builder_ = manager.lockfile.stringBuilder();
                         // ensure we use one pointer to reference it instead of creating new ones and potentially aliasing
                         var builder = &builder_;
+                        // If you changed packages, we will copy over the new package from the new lockfile
+                        const new_dependencies = maybe_root.dependencies.get(lockfile.buffers.dependencies.items);
 
                         for (new_dependencies) |new_dep| {
                             new_dep.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);

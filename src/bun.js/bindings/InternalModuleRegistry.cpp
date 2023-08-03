@@ -16,33 +16,34 @@ namespace Bun {
 // JS builtin that acts as a module. In debug mode, we use a different implementation that reads
 // from the developer's filesystem. This allows reloading code without recompiling bindings.
 
-#define INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, SOURCE, moduleName)                                                \
-    auto throwScope = DECLARE_THROW_SCOPE(vm);                                                                                  \
-                                                                                                                                \
-    SourceCode source = JSC::makeSource(SOURCE, SourceOrigin(WTF::URL("builtin://" #moduleName ".js"_s)), #moduleName ".js"_s); \
-                                                                                                                                \
-    JSFunction* func                                                                                                            \
-        = JSFunction::create(                                                                                                   \
-            vm,                                                                                                                 \
-            createBuiltinExecutable(                                                                                            \
-                vm, source,                                                                                                     \
-                Identifier(),                                                                                                   \
-                ImplementationVisibility::Public,                                                                               \
-                ConstructorKind::None,                                                                                          \
-                ConstructAbility::CannotConstruct)                                                                              \
-                ->link(vm, nullptr, source),                                                                                    \
-            static_cast<JSC::JSGlobalObject*>(globalObject));                                                                   \
-                                                                                                                                \
-    JSC::MarkedArgumentBuffer argList;                                                                                          \
-                                                                                                                                \
-    JSValue result = JSC::call(                                                                                                 \
-        globalObject,                                                                                                           \
-        func,                                                                                                                   \
-        JSC::getCallData(func),                                                                                                 \
-        globalObject, JSC::MarkedArgumentBuffer());                                                                             \
-                                                                                                                                \
-    RETURN_IF_EXCEPTION(throwScope, {});                                                                                        \
-    ASSERT_INTERNAL_MODULE(result, moduleName);                                                                                 \
+#define INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, SOURCE, moduleName)    \
+    auto throwScope = DECLARE_THROW_SCOPE(vm);                                      \
+    auto&& origin = SourceOrigin(WTF::URL(makeString("builtin://"_s, moduleName))); \
+    SourceCode source = JSC::makeSource(SOURCE, origin, moduleName);                \
+                                                                                    \
+    JSFunction* func                                                                \
+        = JSFunction::create(                                                       \
+            vm,                                                                     \
+            createBuiltinExecutable(                                                \
+                vm, source,                                                         \
+                Identifier(),                                                       \
+                ImplementationVisibility::Public,                                   \
+                ConstructorKind::None,                                              \
+                ConstructAbility::CannotConstruct)                                  \
+                ->link(vm, nullptr, source),                                        \
+            static_cast<JSC::JSGlobalObject*>(globalObject));                       \
+                                                                                    \
+    RETURN_IF_EXCEPTION(throwScope, {});                                            \
+                                                                                    \
+    JSC::MarkedArgumentBuffer argList;                                              \
+    JSValue result = JSC::call(                                                     \
+        globalObject,                                                               \
+        func,                                                                       \
+        JSC::getCallData(func),                                                     \
+        globalObject, JSC::MarkedArgumentBuffer());                                 \
+                                                                                    \
+    RETURN_IF_EXCEPTION(throwScope, {});                                            \
+    ASSERT_INTERNAL_MODULE(result, moduleName);                                     \
     return result;
 
 #if BUN_DEBUG
@@ -129,11 +130,15 @@ JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, 
 // so we want to write it to the internal field when loaded.
 JSC_DEFINE_HOST_FUNCTION(InternalModuleRegistry::jsCreateInternalModuleById, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
+    auto& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto id = callframe->argument(0).toUInt32(lexicalGlobalObject);
+
     auto registry = static_cast<Zig::GlobalObject*>(lexicalGlobalObject)->internalModuleRegistry();
-    auto module = registry->createInternalModuleById(lexicalGlobalObject, lexicalGlobalObject->vm(), static_cast<Field>(id));
-    registry->internalField(static_cast<Field>(id)).set(lexicalGlobalObject->vm(), registry, module);
-    return JSValue::encode(module);
+    auto mod = registry->createInternalModuleById(lexicalGlobalObject, vm, static_cast<Field>(id));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    registry->internalField(static_cast<Field>(id)).set(vm, registry, mod);
+    return JSValue::encode(mod);
 }
 
 } // namespace Bun

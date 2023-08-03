@@ -77,5 +77,6 @@ enum SyntheticModuleType : uint32_t {
     NodeStringDecoder = 1029,
     NodeTTY = 1030,
     NodeUtilTypes = 1031,
+    UTF8Validate = 1032,
 };
 

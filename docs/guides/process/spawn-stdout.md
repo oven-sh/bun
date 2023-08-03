@@ -23,4 +23,4 @@ const proc = Bun.spawn(["echo", "hello"], {
 
 ---
 
-See [Docs > API > Child processes](/docs/api/spawn) for complete documentation..
+See [Docs > API > Child processes](/docs/api/spawn) for complete documentation.

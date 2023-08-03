@@ -3,7 +3,7 @@ name: Build an app with Next.js and Bun
 ---
 
 {% callout %}
-Next.js currently relies on Node.js APIs that Bun does not yet implement. The guide below uses Bun to initialize a project and install dependencies, but it uses Node.js to run the Next.js dev server.
+Next.js currently relies on Node.js APIs that Bun does not yet implement. The guide below uses Bun to initialize a project and install dependencies, but it uses Node.js to run the dev server.
 {% /callout %}
 
 ---
@@ -29,9 +29,3 @@ To start the dev server, run `bun run dev` from the project root.
 $ cd my-app
 $ bun run dev
 ```
-
----
-
-By default, `bun run dev` starts the Next.js development server using Node.js _🚧 Experimental_
-
-Refer to [Runtime > JSX](/docs/runtime/jsx) for complete documentation on configuring JSX.

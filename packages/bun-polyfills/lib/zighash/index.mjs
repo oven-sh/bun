@@ -1,6 +1,8 @@
 // @ts-check
 /// <reference types="node" />
-import fs from 'fs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const { instance } = /**
 * @type {{ instance: { exports: {
@@ -8,7 +10,9 @@ const { instance } = /**
 *    alloc(size: number): number,
 *    wyhash(input_ptr: number, input_size: number, seed: bigint): bigint,
 * } } }}
-*/(/** @type {unknown} */(await WebAssembly.instantiate(fs.readFileSync('zighash.wasm'), {
+*/(/** @type {unknown} */(await WebAssembly.instantiate(
+    fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'zighash.wasm')
+), {
     env: {
         /** @param {any} x */
         print(x) { console.log(x); },

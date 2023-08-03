@@ -18,8 +18,7 @@
     "functions",
     "internal",
     "thirdparty",
-    "_codegen"
-
+    "_codegen",
     "builtins.d.ts",
     "private.d.ts",
     "../../packages/bun-types/index.d.ts"

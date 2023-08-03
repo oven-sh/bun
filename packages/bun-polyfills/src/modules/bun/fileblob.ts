@@ -6,10 +6,9 @@ import { FileSink } from './filesink.js';
 import { SystemError } from '../../utils/errors.js';
 import type { FileBlob as BunFileBlob, FileSink as BunFileSink } from 'bun';
 
-type NodeJSReadStream = NodeJS.ReadableStream | NodeJS.ReadWriteStream;
-type NodeJSStream = NodeJSReadStream | NodeJS.WritableStream;
+type NodeJSStream = streams.Readable | streams.Writable;
 
-function NodeJSReadableStreamToBlob(stream: NodeJSReadStream, iostream: boolean = false, type?: string): Promise<Blob> {
+function NodeJSReadableStreamToBlob(stream: NodeJS.ReadableStream | NodeJS.ReadWriteStream, iostream: boolean = false, type?: string): Promise<Blob> {
     if (stream.isPaused()) stream.resume();
     return new Promise((resolve, reject) => {
         const chunks: any[] = [];
@@ -35,7 +34,7 @@ export const NodeJSStreamFileBlob = class FileBlob extends Blob {
         this.#readable = source instanceof streams.Readable && !(source instanceof tty.WriteStream);
         this.#source = source;
         this.#slice = slice;
-        this.#size = 0;
+        this.#size = Infinity;
     }
     readonly #iostream: boolean = false;
     readonly #readable: boolean;
@@ -52,11 +51,10 @@ export const NodeJSStreamFileBlob = class FileBlob extends Blob {
         return new FileBlob(this.#source, [beginOrType, endOrType], contentType);
     }
 
-    override stream(): ReadableStream<Uint8Array> | ReadableStream {
+    override stream(): ReadableStream<Uint8Array> {
         // This makes no sense but Bun does it so we will too
         if (!this.#readable) return new ReadableStream();
-        // @ts-expect-error Caused by the stream's types conflicts
-        return streams.Readable.toWeb(this.#source) as ReadableStream;
+        return streams.Readable.toWeb(this.#source as streams.Readable);
     }
 
     #blobStackFn: AnyFunction = this.#getBlob;
@@ -67,7 +65,7 @@ export const NodeJSStreamFileBlob = class FileBlob extends Blob {
             Error.captureStackTrace(err, this.#blobStackFn);
             throw err;
         }
-        const blob = (await NodeJSReadableStreamToBlob(this.#source as NodeJSReadStream, this.#iostream)).slice(...this.#slice);
+        const blob = (await NodeJSReadableStreamToBlob(this.#source as streams.Readable, this.#iostream)).slice(...this.#slice);
         this.#size = blob.size;
         return blob;
     }

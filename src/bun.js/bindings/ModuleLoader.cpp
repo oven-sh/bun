@@ -108,7 +108,8 @@ static OnLoadResult handleOnLoadObjectResult(Zig::GlobalObject* globalObject, JS
     OnLoadResult result {};
     result.type = OnLoadResultTypeObject;
     JSC::VM& vm = globalObject->vm();
-    if (JSC::JSValue exportsValue = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "exports"_s))) {
+    auto& builtinNames = WebCore::builtinNames(vm);
+    if (JSC::JSValue exportsValue = object->getIfPropertyExists(globalObject, builtinNames.exportsPublicName())) {
         if (exportsValue.isObject()) {
             result.value.object = exportsValue;
             return result;

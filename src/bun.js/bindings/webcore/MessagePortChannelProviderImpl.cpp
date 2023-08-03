@@ -43,38 +43,28 @@ MessagePortChannelProviderImpl::~MessagePortChannelProviderImpl()
 
 void MessagePortChannelProviderImpl::createNewMessagePortChannel(const MessagePortIdentifier& local, const MessagePortIdentifier& remote)
 {
-    ScriptExecutionContext::ensureOnMainThread([registry = &m_registry, local, remote](ScriptExecutionContext& context) mutable {
-        registry->didCreateMessagePortChannel(local, remote);
-    });
+    m_registry.didCreateMessagePortChannel(local, remote);
 }
 
 void MessagePortChannelProviderImpl::entangleLocalPortInThisProcessToRemote(const MessagePortIdentifier& local, const MessagePortIdentifier& remote)
 {
-    ScriptExecutionContext::ensureOnMainThread([registry = &m_registry, local, remote](ScriptExecutionContext& context) mutable {
-        registry->didEntangleLocalToRemote(local, remote, ProcessIdent::identifier());
-    });
+    m_registry.didEntangleLocalToRemote(local, remote, ProcessIdent::identifier());
 }
 
 void MessagePortChannelProviderImpl::messagePortDisentangled(const MessagePortIdentifier& local)
 {
-    ScriptExecutionContext::ensureOnMainThread([registry = &m_registry, local](ScriptExecutionContext& context) mutable {
-        registry->didDisentangleMessagePort(local);
-    });
+    m_registry.didDisentangleMessagePort(local);
 }
 
 void MessagePortChannelProviderImpl::messagePortClosed(const MessagePortIdentifier& local)
 {
-    ScriptExecutionContext::ensureOnMainThread([registry = &m_registry, local](ScriptExecutionContext& context) mutable {
-        registry->didCloseMessagePort(local);
-    });
+    m_registry.didCloseMessagePort(local);
 }
 
 void MessagePortChannelProviderImpl::postMessageToRemote(MessageWithMessagePorts&& message, const MessagePortIdentifier& remoteTarget)
 {
-    ScriptExecutionContext::ensureOnMainThread([message = WTFMove(message), registry = &m_registry, remoteTarget](ScriptExecutionContext& context) mutable {
-        if (registry->didPostMessageToRemote(WTFMove(message), remoteTarget))
-            MessagePort::notifyMessageAvailable(remoteTarget);
-    });
+    if (m_registry.didPostMessageToRemote(WTFMove(message), remoteTarget))
+        MessagePort::notifyMessageAvailable(remoteTarget);
 }
 
 void MessagePortChannelProviderImpl::takeAllMessagesForPort(const MessagePortIdentifier& port, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&& outerCallback)
@@ -85,9 +75,12 @@ void MessagePortChannelProviderImpl::takeAllMessagesForPort(const MessagePortIde
         outerCallback(WTFMove(messages), WTFMove(messageDeliveryCallback));
     };
 
-    ScriptExecutionContext::ensureOnMainThread([registry = &m_registry, port, callback = WTFMove(callback)](ScriptExecutionContext& context) mutable {
-        registry->takeAllMessagesForPort(port, WTFMove(callback));
-    });
+    m_registry.takeAllMessagesForPort(port, WTFMove(callback));
+}
+
+std::optional<MessageWithMessagePorts> MessagePortChannelProviderImpl::tryTakeMessageForPort(const MessagePortIdentifier& port)
+{
+    return m_registry.tryTakeMessageForPort(port);
 }
 
 } // namespace WebCore

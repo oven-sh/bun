@@ -27,6 +27,7 @@
 
 #include "MessagePortChannelProvider.h"
 #include "MessagePortChannelRegistry.h"
+#include "MessageWithMessagePorts.h"
 
 namespace WebCore {
 
@@ -42,6 +43,7 @@ private:
     void messagePortClosed(const MessagePortIdentifier& local) final;
     void postMessageToRemote(MessageWithMessagePorts&&, const MessagePortIdentifier& remoteTarget) final;
     void takeAllMessagesForPort(const MessagePortIdentifier&, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&&) final;
+    std::optional<MessageWithMessagePorts> tryTakeMessageForPort(const MessagePortIdentifier&) final;
 
     MessagePortChannelRegistry m_registry;
 };

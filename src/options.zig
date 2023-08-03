@@ -595,7 +595,7 @@ pub const Target = enum {
         array.set(Target.node, &[_]string{
             "node",
         });
-        array.set(Target.browser, [_]string{
+        array.set(Target.browser, &[_]string{
             "browser",
             "module",
         });

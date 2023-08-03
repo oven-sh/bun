@@ -12,4 +12,4 @@ const decoded = atob(encoded); // => "hello world"
 
 ---
 
-See [Docs > API > Hashing](/docs/api/hashing#bun-password) for complete documentation.
+See [Docs > Web APIs](/docs/runtime/web-apis) for a complete breakdown of the Web APIs implemented in Bun.

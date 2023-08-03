@@ -436,12 +436,14 @@ JSValue fetchCommonJSModule(
         default: {
             if (tag & SyntheticModuleType::InternalModuleRegistryFlag) {
                 constexpr auto mask = (SyntheticModuleType::InternalModuleRegistryFlag - 1);
+                auto result = globalObject->internalModuleRegistry()->requireId(globalObject, vm, static_cast<InternalModuleRegistry::Field>(tag & mask));
+                RETURN_IF_EXCEPTION(scope, {});
+
                 target->putDirect(
                     vm,
                     builtinNames.exportsPublicName(),
-                    globalObject->internalModuleRegistry()->requireId(globalObject, vm, static_cast<InternalModuleRegistry::Field>(tag & mask)),
+                    result,
                     JSC::PropertyAttribute::ReadOnly | 0);
-                RETURN_IF_EXCEPTION(scope, {});
                 RELEASE_AND_RETURN(scope, target);
             } else {
                 RELEASE_AND_RETURN(scope, jsNumber(-1));
@@ -592,8 +594,7 @@ static JSValue fetchESMSourceCode(
         default: {
             if (tag & SyntheticModuleType::InternalModuleRegistryFlag) {
                 constexpr auto mask = (SyntheticModuleType::InternalModuleRegistryFlag - 1);
-                auto* internalModule = jsCast<JSObject*>(globalObject->internalModuleRegistry()->requireId(globalObject, vm, static_cast<InternalModuleRegistry::Field>(tag & mask)));
-                auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateInternalModuleSourceCode(globalObject, internalModule), JSC::SourceOrigin(), WTFMove(moduleKey)));
+                auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateInternalModuleSourceCode(globalObject, static_cast<InternalModuleRegistry::Field>(tag & mask)), JSC::SourceOrigin(URL(makeString("builtins://", moduleKey))), moduleKey));
                 return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));
             } else {
                 auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);

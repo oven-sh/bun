@@ -1600,16 +1600,17 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
 
     if (!port.isObject()) {
         throwTypeError(lexicalGlobalObject, scope, "the \"port\" argument must be a MessagePort instance"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        return JSC::JSValue::encode(jsUndefined());
     }
 
     if (auto* messagePort = jsDynamicCast<JSMessagePort*>(port)) {
         return JSC::JSValue::encode(messagePort->wrapped().tryTakeMessage(lexicalGlobalObject));
-    } else {
+    } else if (auto* broadcastChannel = jsDynamicCast<JSBroadcastChannel*>(port)) {
         // TODO: support broadcast channels
         return JSC::JSValue::encode(jsUndefined());
     }
 
+    throwTypeError(lexicalGlobalObject, scope, "the \"port\" argument must be a MessagePort instance"_s);
     return JSC::JSValue::encode(jsUndefined());
 }
 

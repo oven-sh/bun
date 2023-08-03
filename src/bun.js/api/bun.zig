@@ -1156,8 +1156,10 @@ pub const Class = NewClass(
         .main = .{
             .get = getMain,
         },
+        // TODO: decide what we want to do
         .cwd = .{
             .get = getCWD,
+            .enumerable = false,
         },
         .origin = .{
             .get = getOrigin,

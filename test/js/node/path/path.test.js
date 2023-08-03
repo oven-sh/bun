@@ -692,3 +692,8 @@ it("path.parse", () => {
 test("path.format works for vite's example", () => {
   expect(path.format({ root: "", dir: "", name: "index", base: undefined, ext: ".css" })).toBe("index.css");
 });
+
+it("path.extname", () => {
+  expect(path.extname("index.js")).toBe(".js");
+  expect(path.extname("make_plot.🔥")).toBe(".🔥");
+});

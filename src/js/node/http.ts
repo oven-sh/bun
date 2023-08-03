@@ -1268,7 +1268,7 @@ class ClientRequest extends OutgoingMessage {
     }
 
     var method = this.#method,
-      body = Buffer.concat(this.#bodyChunks || []);
+      body = this.#bodyChunks?.length === 1 ? this.#bodyChunks[0] : Buffer.concat(this.#bodyChunks || []);
 
     try {
       this.#fetchRequest = fetch(

@@ -18,7 +18,7 @@ CPU_TARGET ?= native
 MARCH_NATIVE = -mtune=$(CPU_TARGET)
 NATIVE_OR_OLD_MARCH =
 
-MMD_IF_LOCAL = 
+MMD_IF_LOCAL =
 DEFAULT_MIN_MACOS_VERSION=
 ARCH_NAME :=
 DOCKER_BUILDARCH =
@@ -1911,7 +1911,7 @@ regenerate-bindings: ## compile src/js/builtins + all c++ code, does not link
 	@make bindings -j$(CPU_COUNT)
 
 .PHONY: setup
-setup: vendor-dev identifier-cache clean-bindings
+setup: vendor-dev identifier-cache clean-bindings js
 	make jsc-check
 	make bindings -j$(CPU_COUNT)
 	@echo ""

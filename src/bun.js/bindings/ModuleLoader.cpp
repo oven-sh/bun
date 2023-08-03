@@ -65,18 +65,24 @@ static JSC::JSInternalPromise* resolvedInternalPromise(JSC::JSGlobalObject* glob
 }
 
 // Converts an object from InternalModuleRegistry into { ...obj, default: obj }
-JSC::SyntheticSourceProvider::SyntheticSourceGenerator
-generateInternalModuleSourceCode(JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
+static JSC::SyntheticSourceProvider::SyntheticSourceGenerator
+generateInternalModuleSourceCode(JSC::JSGlobalObject* globalObject, InternalModuleRegistry::Field moduleId)
 {
-    return [object](JSC::JSGlobalObject* lexicalGlobalObject,
+    return [moduleId](JSC::JSGlobalObject* lexicalGlobalObject,
                JSC::Identifier moduleKey,
                Vector<JSC::Identifier, 4>& exportNames,
                JSC::MarkedArgumentBuffer& exportValues) -> void {
         JSC::VM& vm = lexicalGlobalObject->vm();
-        GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
-        JSC::EnsureStillAliveScope stillAlive(object);
-
+        GlobalObject* globalObject = jsCast<GlobalObject*>(lexicalGlobalObject);
         auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+        auto* object = jsCast<JSObject*>(globalObject->internalModuleRegistry()->requireId(globalObject, vm, moduleId));
+        if (!object) {
+            return;
+        }
+        RETURN_IF_EXCEPTION(throwScope, {});
+
+        JSC::EnsureStillAliveScope stillAlive(object);
 
         PropertyNameArray properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
         object->getPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);

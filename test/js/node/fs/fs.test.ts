@@ -1483,7 +1483,7 @@ it("fs.constants", () => {
   expect(constants.O_NOFOLLOW).toBeDefined();
   expect(constants.O_SYNC).toBeDefined();
   expect(constants.O_DSYNC).toBeDefined();
-  expect(constants.O_SYMLINK).toBeDefined();
+  if (process.platform === "darwin") expect(constants.O_SYMLINK).toBeDefined();
   // expect(constants.O_DIRECT).toBeDefined();
   expect(constants.O_NONBLOCK).toBeDefined();
   expect(constants.S_IFMT).toBeDefined();

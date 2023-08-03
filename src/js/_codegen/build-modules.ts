@@ -282,9 +282,7 @@ fs.writeFileSync(
     .map(
       (id, n) =>
         `//
-static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
-          bundledOutputs.darwin.get(id.slice(0, -3)),
-        )}_s;
+static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(bundledOutputs.darwin.get(id.slice(0, -3)))}_s;
 //
 `,
     )
@@ -294,9 +292,7 @@ static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
     .map(
       (id, n) =>
         `//
-static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
-          bundledOutputs.win32.get(id.slice(0, -3)),
-        )}_s;
+static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(bundledOutputs.win32.get(id.slice(0, -3)))}_s;
 //
 `,
     )
@@ -307,9 +303,7 @@ static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
     .map(
       (id, n) =>
         `//
-static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
-          bundledOutputs.linux.get(id.slice(0, -3)),
-        )}_s;
+static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(bundledOutputs.linux.get(id.slice(0, -3)))}_s;
 //
 `,
     )

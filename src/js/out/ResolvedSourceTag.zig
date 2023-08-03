@@ -63,9 +63,8 @@ pub const ResolvedSourceTag = enum(u32) {
     @"isomorphic-fetch" = 563,
     @"node-fetch" = 564,
     @"undici" = 565,
-    @"utf-8-validate" = 566,
-    @"vercel_fetch" = 567,
-    @"ws" = 568,
+    @"vercel_fetch" = 566,
+    @"ws" = 567,
     // Native modules run through a different system using ESM registry.
     @"bun:jsc" = 1024,
     @"node:buffer" = 1025,
@@ -75,4 +74,5 @@ pub const ResolvedSourceTag = enum(u32) {
     @"node:string_decoder" = 1029,
     @"node:tty" = 1030,
     @"node:util/types" = 1031,
+    @"utf-8-validate" = 1032,
 };

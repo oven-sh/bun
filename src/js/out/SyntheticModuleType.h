@@ -63,9 +63,8 @@ enum SyntheticModuleType : uint32_t {
     ThirdpartyIsomorphicFetch = 563,
     ThirdpartyNodeFetch = 564,
     ThirdpartyUndici = 565,
-    ThirdpartyUtf8Validate = 566,
-    ThirdpartyVercelFetch = 567,
-    ThirdpartyWS = 568,
+    ThirdpartyVercelFetch = 566,
+    ThirdpartyWS = 567,
     
     // Native modules run through the same system, but with different underlying initializers.
     // They also have bit 10 set to differentiate them from JS builtins.
@@ -78,5 +77,6 @@ enum SyntheticModuleType : uint32_t {
     NodeStringDecoder = 1029,
     NodeTTY = 1030,
     NodeUtilTypes = 1031,
+    UTF8Validate = 1032,
 };
 

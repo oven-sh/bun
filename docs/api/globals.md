@@ -172,7 +172,7 @@ Bun implements the following globals.
 
 - [`global`](https://nodejs.org/api/globals.html#global)
 - Node.js
-- See [Node.js > `global`](/docs/runtime/nodejs-apis#node-global).
+- See [Node.js > `global`](/docs/runtime/nodejs-apis#global).
 
 ---
 

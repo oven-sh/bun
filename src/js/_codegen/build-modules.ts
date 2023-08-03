@@ -281,18 +281,24 @@ fs.writeFileSync(
   ${moduleList
     .map(
       (id, n) =>
-        `static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
+        `//
+static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
           bundledOutputs.darwin.get(id.slice(0, -3)),
-        )}_s;`,
+        )}_s;
+//
+`,
     )
     .join("\n")}
   #elif _WIN32
   ${moduleList
     .map(
       (id, n) =>
-        `static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
+        `//
+static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
           bundledOutputs.win32.get(id.slice(0, -3)),
-        )}_s;`,
+        )}_s;
+//
+`,
     )
     .join("\n")}
   #else
@@ -300,9 +306,12 @@ fs.writeFileSync(
   ${moduleList
     .map(
       (id, n) =>
-        `static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
+        `//
+static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(
           bundledOutputs.linux.get(id.slice(0, -3)),
-        )}_s;`,
+        )}_s;
+//
+`,
     )
     .join("\n")}
   #endif

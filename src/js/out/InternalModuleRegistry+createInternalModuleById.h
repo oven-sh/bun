@@ -164,6 +164,9 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
     case Field::ThirdpartyUndici: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "undici"_s, "thirdparty/undici.js"_s, InternalModuleRegistryConstants::ThirdpartyUndiciCode);
     }
+    case Field::ThirdpartyUtf8Validate: {
+      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "utf-8-validate"_s, "thirdparty/utf-8-validate.js"_s, InternalModuleRegistryConstants::ThirdpartyUtf8ValidateCode);
+    }
     case Field::ThirdpartyVercelFetch: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "vercel_fetch"_s, "thirdparty/vercel_fetch.js"_s, InternalModuleRegistryConstants::ThirdpartyVercelFetchCode);
     }

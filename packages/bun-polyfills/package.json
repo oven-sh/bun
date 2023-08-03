@@ -17,8 +17,9 @@
     "repl": "node --import ./dist/src/repl.js",
     "clean": "rm -rf dist",
     "build": "bun run clean && bunx tsc && bunx copyfiles \"./**/*.wasm\" dist",
-    "build/wasm": "bun run build/farmhash",
-    "build/farmhash": "cd lib/farmhash && bun run build && cd ../.."
+    "build/wasm": "bun run build/farmhash && bun run build/zighash",
+    "build/farmhash": "cd lib/farmhash && bun run build && cd ../..",
+    "build/zighash": "cd lib/zighash && bun run build && cd ../.."
   },
   "dependencies": {
     "@foxglove/crc": "^0.0.3",

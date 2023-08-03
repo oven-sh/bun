@@ -543,7 +543,7 @@ XSSProtectionDisposition parseXSSProtectionHeader(const String& header, String& 
 ContentTypeOptionsDisposition parseContentTypeOptionsHeader(StringView header)
 {
     StringView leftToken = header.left(header.find(','));
-    if (equalLettersIgnoringASCIICase(leftToken.trim(isJSONOrHTTPWhitespace<UChar>), "nosniff"_s))
+    if (equalLettersIgnoringASCIICase(leftToken.trim(isASCIIWhitespaceWithoutFF<UChar>), "nosniff"_s))
         return ContentTypeOptionsDisposition::Nosniff;
     return ContentTypeOptionsDisposition::None;
 }
@@ -602,7 +602,7 @@ XFrameOptionsDisposition parseXFrameOptionsHeader(StringView header)
 //         return result;
 
 //     for (auto value : StringView(headerValue).split(',')) {
-//         auto trimmedValue = value.trim(isJSONOrHTTPWhitespace<UChar>);
+//         auto trimmedValue = value.trim(isASCIIWhitespaceWithoutFF<UChar>);
 //         if (trimmedValue == "\"cache\""_s)
 //             result.add(ClearSiteDataValue::Cache);
 //         else if (trimmedValue == "\"cookies\""_s)
@@ -632,7 +632,7 @@ bool parseRange(StringView range, RangeAllowWhitespace allowWhitespace, long lon
     if (!startsWithLettersIgnoringASCIICase(range, "bytes"_s))
         return false;
 
-    auto byteRange = range.substring(bytesLength).trim(isJSONOrHTTPWhitespace<UChar>);
+    auto byteRange = range.substring(bytesLength).trim(isASCIIWhitespaceWithoutFF<UChar>);
 
     if (!byteRange.startsWith('='))
         return false;
@@ -962,7 +962,7 @@ bool isSafeMethod(const String& method)
 
 CrossOriginResourcePolicy parseCrossOriginResourcePolicyHeader(StringView header)
 {
-    auto trimmedHeader = header.trim(isJSONOrHTTPWhitespace<UChar>);
+    auto trimmedHeader = header.trim(isASCIIWhitespaceWithoutFF<UChar>);
 
     if (trimmedHeader.isEmpty())
         return CrossOriginResourcePolicy::None;

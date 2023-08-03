@@ -2245,6 +2245,7 @@ pub const ModuleLoader = struct {
                 .@"isomorphic-fetch" => return jsSyntheticModule(.@"isomorphic-fetch", specifier),
                 .@"node-fetch" => return jsSyntheticModule(.@"node-fetch", specifier),
                 .@"@vercel/fetch" => return jsSyntheticModule(.vercel_fetch, specifier),
+                .@"utf-8-validate" => return jsSyntheticModule(.@"utf-8-validate", specifier),
                 .undici => return jsSyntheticModule(.undici, specifier),
                 .ws => return jsSyntheticModule(.ws, specifier),
             }
@@ -2416,6 +2417,7 @@ pub const HardcodedModule = enum {
     @"isomorphic-fetch",
     @"node-fetch",
     @"@vercel/fetch",
+    @"utf-8-validate",
     // These are all not implemented yet, but are stubbed
     @"node:v8",
     @"node:trace_events",
@@ -2496,6 +2498,7 @@ pub const HardcodedModule = enum {
             .{ "undici", HardcodedModule.undici },
             .{ "ws", HardcodedModule.ws },
             .{ "@vercel/fetch", HardcodedModule.@"@vercel/fetch" },
+            .{ "utf-8-validate", HardcodedModule.@"utf-8-validate" },
         },
     );
     pub const Alias = struct {
@@ -2601,6 +2604,7 @@ pub const HardcodedModule = enum {
             .{ "worker_threads", .{ .path = "node:worker_threads" } },
             .{ "ws", .{ .path = "ws" } },
             .{ "ws/lib/websocket", .{ .path = "ws" } },
+            .{ "utf-8-validate", .{ .path = "utf-8-validate" } },
             .{ "zlib", .{ .path = "node:zlib" } },
             // .{ "readable-stream", .{ .path = "node:stream" } },
             // .{ "readable-stream/consumer", .{ .path = "node:stream/consumers" } },

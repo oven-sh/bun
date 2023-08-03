@@ -47,6 +47,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
 #if ENABLE(REMOTE_INSPECTOR)
   static const char *defaultHost = "127.0.0.1\0";
   static uint16_t defaultPort = 9230; // node + 1
+
   auto &vm = globalObject->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -311,7 +312,8 @@ JSC_DEFINE_HOST_FUNCTION(functionSamplingProfilerStackTraces,
         globalObject, scope,
         createError(globalObject, "Sampling profiler was never started"_s)));
 
-  WTF::String jsonString = vm.samplingProfiler()->stackTracesAsJSON()->toJSONString();
+  WTF::String jsonString =
+      vm.samplingProfiler()->stackTracesAsJSON()->toJSONString();
   JSC::EncodedJSValue result =
       JSC::JSValue::encode(JSONParse(globalObject, jsonString));
   scope.releaseAssertNoException();
@@ -519,8 +521,8 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject,
   StringPrintStream byteCodes;
   samplingProfiler.reportTopBytecodes(byteCodes);
 
-  JSValue stackTraces =
-      JSONParse(globalObject, samplingProfiler.stackTracesAsJSON()->toJSONString());
+  JSValue stackTraces = JSONParse(
+      globalObject, samplingProfiler.stackTracesAsJSON()->toJSONString());
 
   samplingProfiler.shutdown();
   samplingProfiler.clearData();

@@ -1088,7 +1088,7 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
         // This rowBuffer is a stack allocation.
         MarkedVector<JSValue, 64> rowBuffer;
 
-        rowBuffer.fill(count, [&](JSValue* value) -> void {
+        rowBuffer.fill(vm, count, [&](JSValue* value) -> void {
             // Loop 1. Fill the rowBuffer with values from SQLite
             for (int i = 0; i < count; i++, value++) {
                 switch (sqlite3_column_type(stmt, i)) {
@@ -1139,7 +1139,7 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
         result = JSC::constructEmptyObject(vm, structure);
 
         // TODO: Add .forEach to MarkedVector<>. When JSC assertions are enabled, this function will fail.
-        rowBuffer.fill(count, [&](JSValue* value) -> void {
+        rowBuffer.fill(vm, count, [&](JSValue* value) -> void {
             // Loop 2. fill the rowBuffer with values from SQLite
             for (unsigned int i = 0; i < count; i++, value++) {
                 result->putDirectOffset(vm, i, *value);

@@ -311,7 +311,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSamplingProfilerStackTraces,
         globalObject, scope,
         createError(globalObject, "Sampling profiler was never started"_s)));
 
-  WTF::String jsonString = vm.samplingProfiler()->stackTracesAsJSON();
+  WTF::String jsonString = vm.samplingProfiler()->stackTracesAsJSON()->toJSONString();
   JSC::EncodedJSValue result =
       JSC::JSValue::encode(JSONParse(globalObject, jsonString));
   scope.releaseAssertNoException();
@@ -520,7 +520,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject,
   samplingProfiler.reportTopBytecodes(byteCodes);
 
   JSValue stackTraces =
-      JSONParse(globalObject, samplingProfiler.stackTracesAsJSON());
+      JSONParse(globalObject, samplingProfiler.stackTracesAsJSON()->toJSONString());
 
   samplingProfiler.shutdown();
   samplingProfiler.clearData();

@@ -294,12 +294,19 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime separator: u
     // /app/public/
     // To detect /app/public is actually a folder, we do one more loop through the strings
     // and say, "do one of you have a path separator after what we thought was the end?"
-    for (input) |str| {
+    var idx = input.len; // Use this value as an invalid value.
+    for (input, 0..) |str, i| {
         if (str.len > index) {
             if (@call(.always_inline, isPathSeparator, .{str[index]})) {
-                return str[0 .. index + 1];
+                idx = i;
+            } else {
+                idx = input.len;
+                break;
             }
         }
+    }
+    if (idx != input.len) {
+        return input[idx][0 .. index + 1];
     }
 
     return input[0][0 .. last_common_separator + 1];
@@ -340,7 +347,7 @@ pub fn relativeToCommonPath(
 
     const shortest = @min(normalized_from.len, normalized_to.len);
 
-    var last_common_separator = strings.lastIndexOfChar(_common_path, separator) orelse 0;
+    const last_common_separator = strings.lastIndexOfChar(_common_path, separator) orelse 0;
 
     if (shortest == common_path.len) {
         if (normalized_to.len > normalized_from.len) {

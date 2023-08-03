@@ -882,7 +882,10 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
     auto* release = JSC::constructEmptyObject(globalObject);
-    release->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, WTF::String("bun"_s)), 0);
+
+    // SvelteKit compatibility hack
+    release->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, WTF::String("node"_s)), 0);
+
     release->putDirect(vm, Identifier::fromString(vm, "lts"_s), jsBoolean(false), 0);
     release->putDirect(vm, Identifier::fromString(vm, "sourceUrl"_s), jsString(vm, WTF::String(Bun__githubURL, strlen(Bun__githubURL))), 0);
     release->putDirect(vm, Identifier::fromString(vm, "headersUrl"_s), jsEmptyString(vm), 0);

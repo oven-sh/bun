@@ -175,6 +175,8 @@ public:
     }
     DECLARE_VISIT_CHILDREN;
     DECLARE_EXPORT_INFO;
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
 
     // static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
@@ -263,6 +265,8 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
 
         if (LIKELY(!anyHoles)) {
             Structure* structure = globalObject.structureCache().emptyObjectStructureForPrototype(&globalObject, globalObject.objectPrototype(), columnNames->size());
+            vm.writeBarrier(castedThis, structure);
+
             for (const auto& propertyName : *columnNames) {
                 structure = Structure::addPropertyTransition(vm, structure, propertyName, 0, offset);
             }
@@ -423,8 +427,10 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, JSC::JSValue
         JSValue value;
         if (LIKELY(!slot.isTaintedByOpaqueObject()))
             value = slot.getValue(globalObject, propertyName);
-        else
+        else {
             value = target->get(globalObject, propertyName);
+            RETURN_IF_EXCEPTION(scope, JSValue());
+        }
 
         // Ensure this gets freed on scope clear
         auto utf8 = WTF::String(propertyName.string()).utf8();
@@ -1075,76 +1081,57 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
     auto* stmt = castedThis->stmt;
 
     if (auto* structure = castedThis->_structure.get()) {
-        RELEASE_ASSERT(count <= 64);
-        // It looks a little silly doing these two loops right?
-        //
-        // The code that does putDirectOffset has to be very careful about time between GC allocations
-        // while the object is not fully initialized.
-        //
-        // So we do two loops
-        // 1. The first loop to fill all the values from SQLite into a MarkedVector.
-        // 2. The second loop to actually put them into the object.
-
-        // This rowBuffer is a stack allocation.
-        MarkedVector<JSValue, 64> rowBuffer;
-
-        rowBuffer.fill(vm, count, [&](JSValue* value) -> void {
-            // Loop 1. Fill the rowBuffer with values from SQLite
-            for (int i = 0; i < count; i++, value++) {
-                switch (sqlite3_column_type(stmt, i)) {
-                case SQLITE_INTEGER: {
-                    // https://github.com/oven-sh/bun/issues/1536
-                    *value = jsNumber(sqlite3_column_int64(stmt, i));
-                    break;
-                }
-                case SQLITE_FLOAT: {
-                    *value = jsNumber(sqlite3_column_double(stmt, i));
-                    break;
-                }
-                // > Note that the SQLITE_TEXT constant was also used in SQLite version
-                // > 2 for a completely different meaning. Software that links against
-                // > both SQLite version 2 and SQLite version 3 should use SQLITE3_TEXT,
-                // > not SQLITE_TEXT.
-                case SQLITE3_TEXT: {
-                    size_t len = sqlite3_column_bytes(stmt, i);
-                    const unsigned char* text = len > 0 ? sqlite3_column_text(stmt, i) : nullptr;
-
-                    if (len > 64) {
-                        *value = JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject));
-                        continue;
-                    }
-
-                    *value = jsString(vm, WTF::String::fromUTF8(text, len));
-                    break;
-                }
-                case SQLITE_BLOB: {
-                    size_t len = sqlite3_column_bytes(stmt, i);
-                    const void* blob = len > 0 ? sqlite3_column_blob(stmt, i) : nullptr;
-                    JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), len);
-
-                    if (LIKELY(blob && len))
-                        memcpy(array->vector(), blob, len);
-
-                    *value = array;
-                    break;
-                }
-                default: {
-                    *value = jsNull();
-                    break;
-                }
-                }
-            }
-        });
-
         result = JSC::constructEmptyObject(vm, structure);
 
-        // TODO: Add .forEach to MarkedVector<>. When JSC assertions are enabled, this function will fail.
-        rowBuffer.fill(vm, count, [&](JSValue* value) -> void {
-            // Loop 2. fill the rowBuffer with values from SQLite
-            for (unsigned int i = 0; i < count; i++, value++) {
-                result->putDirectOffset(vm, i, *value);
+        for (unsigned int i = 0; i < count; i++) {
+            JSValue value;
+
+            // Loop 1. Fill the rowBuffer with values from SQLite
+            switch (sqlite3_column_type(stmt, i)) {
+            case SQLITE_INTEGER: {
+                // https://github.com/oven-sh/bun/issues/1536
+                value = jsNumber(sqlite3_column_int64(stmt, i));
+                break;
             }
-        });
+            case SQLITE_FLOAT: {
+                value = jsNumber(sqlite3_column_double(stmt, i));
+                break;
+            }
+            // > Note that the SQLITE_TEXT constant was also used in SQLite version
+            // > 2 for a completely different meaning. Software that links against
+            // > both SQLite version 2 and SQLite version 3 should use SQLITE3_TEXT,
+            // > not SQLITE_TEXT.
+            case SQLITE3_TEXT: {
+                size_t len = sqlite3_column_bytes(stmt, i);
+                const unsigned char* text = len > 0 ? sqlite3_column_text(stmt, i) : nullptr;
+
+                if (len > 64) {
+                    value = JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject));
+                    continue;
+                }
+
+                value = jsString(vm, WTF::String::fromUTF8(text, len));
+                break;
+            }
+            case SQLITE_BLOB: {
+                size_t len = sqlite3_column_bytes(stmt, i);
+                const void* blob = len > 0 ? sqlite3_column_blob(stmt, i) : nullptr;
+                JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), len);
+
+                if (LIKELY(blob && len))
+                    memcpy(array->vector(), blob, len);
+
+                value = array;
+                break;
+            }
+            default: {
+                value = jsNull();
+                break;
+            }
+            }
+
+            result->putDirectOffset(vm, i, value);
+        }
 
     } else {
         if (count <= 64) {
@@ -1697,4 +1684,26 @@ void JSSQLStatement::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(JSSQLStatement);
+
+template<typename Visitor>
+void JSSQLStatement::visitAdditionalChildren(Visitor& visitor)
+{
+    JSSQLStatement* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->_structure);
+    visitor.append(thisObject->_prototype);
+}
+
+template<typename Visitor>
+void JSSQLStatement::visitOutputConstraints(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = jsCast<JSSQLStatement*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitOutputConstraints(thisObject, visitor);
+    thisObject->visitAdditionalChildren(visitor);
+}
+
+template void JSSQLStatement::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
+template void JSSQLStatement::visitOutputConstraints(JSCell*, SlotVisitor&);
 }

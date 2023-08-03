@@ -594,37 +594,22 @@ pub const Target = enum {
 
         array.set(Target.node, &[_]string{
             "node",
-            "module",
         });
-
-        var listc = [_]string{
+        array.set(Target.browser, &[_]string{
             "browser",
             "module",
-        };
-        array.set(Target.browser, &listc);
-        array.set(
-            Target.bun,
-            &[_]string{
-                "bun",
-                "worker",
-                "module",
-                "node",
-                "default",
-                "browser",
-            },
-        );
-        array.set(
-            Target.bun_macro,
-            &[_]string{
-                "macro",
-                "bun",
-                "worker",
-                "module",
-                "node",
-                "default",
-                "browser",
-            },
-        );
+        });
+        array.set(Target.bun, &[_]string{
+            "bun",
+            "worker",
+            "node",
+        });
+        array.set(Target.bun_macro, &[_]string{
+            "macro",
+            "bun",
+            "worker",
+            "node",
+        });
 
         break :brk array;
     };

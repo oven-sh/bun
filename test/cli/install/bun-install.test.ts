@@ -724,6 +724,7 @@ it("should handle life-cycle scripts during re-installation", async () => {
   });
   expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
+  expect(err2).not.toContain("error:");
   expect(err2).not.toContain("Saved lockfile");
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
@@ -735,6 +736,38 @@ it("should handle life-cycle scripts during re-installation", async () => {
     " 1 packages installed",
   ]);
   expect(await exited2).toBe(0);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual(["Bar"]);
+  expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(join("..", "bar"));
+  await access(join(package_dir, "bun.lockb"));
+  // Perform `bun install --production` with lockfile from before
+  await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
+  const {
+    stdout: stdout3,
+    stderr: stderr3,
+    exited: exited3,
+  } = spawn({
+    cmd: [bunExe(), "install", "--production"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr3).toBeDefined();
+  const err3 = await new Response(stderr3).text();
+  expect(err3).not.toContain("error:");
+  expect(err3).not.toContain("Saved lockfile");
+  expect(stdout3).toBeDefined();
+  const out3 = await new Response(stdout3).text();
+  expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "[scripts:run] Bar",
+    " + Bar@workspace:bar",
+    "[scripts:run] Foo",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited3).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual(["Bar"]);
   expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(join("..", "bar"));

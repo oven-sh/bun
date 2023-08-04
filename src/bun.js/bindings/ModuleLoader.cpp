@@ -65,18 +65,24 @@ static JSC::JSInternalPromise* resolvedInternalPromise(JSC::JSGlobalObject* glob
 }
 
 // Converts an object from InternalModuleRegistry into { ...obj, default: obj }
-JSC::SyntheticSourceProvider::SyntheticSourceGenerator
-generateInternalModuleSourceCode(JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
+static JSC::SyntheticSourceProvider::SyntheticSourceGenerator
+generateInternalModuleSourceCode(JSC::JSGlobalObject* globalObject, InternalModuleRegistry::Field moduleId)
 {
-    return [object](JSC::JSGlobalObject* lexicalGlobalObject,
+    return [moduleId](JSC::JSGlobalObject* lexicalGlobalObject,
                JSC::Identifier moduleKey,
                Vector<JSC::Identifier, 4>& exportNames,
                JSC::MarkedArgumentBuffer& exportValues) -> void {
         JSC::VM& vm = lexicalGlobalObject->vm();
-        GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
-        JSC::EnsureStillAliveScope stillAlive(object);
-
+        GlobalObject* globalObject = jsCast<GlobalObject*>(lexicalGlobalObject);
         auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+        auto* object = jsCast<JSObject*>(globalObject->internalModuleRegistry()->requireId(globalObject, vm, moduleId));
+        if (!object) {
+            return;
+        }
+        RETURN_IF_EXCEPTION(throwScope, {});
+
+        JSC::EnsureStillAliveScope stillAlive(object);
 
         PropertyNameArray properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
         object->getPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);
@@ -102,7 +108,8 @@ static OnLoadResult handleOnLoadObjectResult(Zig::GlobalObject* globalObject, JS
     OnLoadResult result {};
     result.type = OnLoadResultTypeObject;
     JSC::VM& vm = globalObject->vm();
-    if (JSC::JSValue exportsValue = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "exports"_s))) {
+    auto& builtinNames = WebCore::builtinNames(vm);
+    if (JSC::JSValue exportsValue = object->getIfPropertyExists(globalObject, builtinNames.exportsPublicName())) {
         if (exportsValue.isObject()) {
             result.value.object = exportsValue;
             return result;
@@ -436,12 +443,14 @@ JSValue fetchCommonJSModule(
         default: {
             if (tag & SyntheticModuleType::InternalModuleRegistryFlag) {
                 constexpr auto mask = (SyntheticModuleType::InternalModuleRegistryFlag - 1);
+                auto result = globalObject->internalModuleRegistry()->requireId(globalObject, vm, static_cast<InternalModuleRegistry::Field>(tag & mask));
+                RETURN_IF_EXCEPTION(scope, {});
+
                 target->putDirect(
                     vm,
                     builtinNames.exportsPublicName(),
-                    globalObject->internalModuleRegistry()->requireId(globalObject, vm, static_cast<InternalModuleRegistry::Field>(tag & mask)),
+                    result,
                     JSC::PropertyAttribute::ReadOnly | 0);
-                RETURN_IF_EXCEPTION(scope, {});
                 RELEASE_AND_RETURN(scope, target);
             } else {
                 RELEASE_AND_RETURN(scope, jsNumber(-1));
@@ -592,8 +601,7 @@ static JSValue fetchESMSourceCode(
         default: {
             if (tag & SyntheticModuleType::InternalModuleRegistryFlag) {
                 constexpr auto mask = (SyntheticModuleType::InternalModuleRegistryFlag - 1);
-                auto* internalModule = jsCast<JSObject*>(globalObject->internalModuleRegistry()->requireId(globalObject, vm, static_cast<InternalModuleRegistry::Field>(tag & mask)));
-                auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateInternalModuleSourceCode(globalObject, internalModule), JSC::SourceOrigin(), WTFMove(moduleKey)));
+                auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateInternalModuleSourceCode(globalObject, static_cast<InternalModuleRegistry::Field>(tag & mask)), JSC::SourceOrigin(URL(makeString("builtins://", moduleKey))), moduleKey));
                 return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));
             } else {
                 auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);

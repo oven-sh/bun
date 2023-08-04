@@ -1209,7 +1209,7 @@ class ClientRequest extends OutgoingMessage {
   #path;
   #socketPath;
 
-  #body: string | null = null;
+  #bodyChunks: Buffer[] | null = null;
   #fetchRequest;
   #signal: AbortSignal | null = null;
   [kAbortController]: AbortController | null = null;
@@ -1238,24 +1238,22 @@ class ClientRequest extends OutgoingMessage {
   }
 
   _write(chunk, encoding, callback) {
-    var body = this.#body;
-    if (!body) {
-      this.#body = chunk;
+    if (!this.#bodyChunks) {
+      this.#bodyChunks = [chunk];
       callback();
       return;
     }
-    this.#body = body + chunk;
+    this.#bodyChunks.push(chunk);
     callback();
   }
 
   _writev(chunks, callback) {
-    var body = this.#body;
-    if (!body) {
-      this.#body = chunks.join();
+    if (!this.#bodyChunks) {
+      this.#bodyChunks = chunks;
       callback();
       return;
     }
-    this.#body = body + chunks.join();
+    this.#bodyChunks.push(...chunks);
     callback();
   }
 
@@ -1270,7 +1268,7 @@ class ClientRequest extends OutgoingMessage {
     }
 
     var method = this.#method,
-      body = this.#body;
+      body = this.#bodyChunks?.length === 1 ? this.#bodyChunks[0] : Buffer.concat(this.#bodyChunks || []);
 
     try {
       this.#fetchRequest = fetch(

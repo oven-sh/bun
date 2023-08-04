@@ -283,4 +283,40 @@ describe("bundler", () => {
       );
     },
   });
+
+  itBundled("browser/ImportNonExistentNodeBuiltinShouldError", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": `
+        import net1 from "node:net1";
+      `,
+    },
+    bundleErrors: {
+      "/entry.js": [`Could not resolve: "node:net1". Maybe you need to "bun install"?`],
+    },
+  });
+  itBundled("browser/ImportNonExistentWithoutNodePrefix", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": `
+        import net1 from "net1";
+      `,
+    },
+    bundleErrors: {
+      "/entry.js": [`Could not resolve: "net1". Maybe you need to "bun install"?`],
+    },
+  });
+  itBundled("browser/TargetNodeNonExistentBuiltinShouldBeExternal", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": `
+        import net1 from "node:net1";
+      `,
+    },
+    target: "node",
+    onAfterBundle(api) {
+      const contents = api.readFile("out.js");
+      expect(contents).toContain('from "node:net1"');
+    },
+  });
 });

@@ -74,4 +74,5 @@ pub const ResolvedSourceTag = enum(u32) {
     @"node:string_decoder" = 1029,
     @"node:tty" = 1030,
     @"node:util/types" = 1031,
+    @"utf-8-validate" = 1032,
 };

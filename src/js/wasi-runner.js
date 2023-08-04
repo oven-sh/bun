@@ -35,7 +35,7 @@ const wasi = new WASI({
 
 let source = globalThis.wasmSourceBytes;
 if (!source) {
-  const fs = Bun.fs();
+  const fs = import.meta.require("fs");
   const file = import.meta.path;
   source = fs.readFileSync(file);
 }

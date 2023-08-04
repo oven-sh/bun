@@ -108,8 +108,7 @@ Once it finds the `foo` package, Bun reads the `package.json` to determine how t
     "worker": "./index.js",
     "module": "./index.js",
     "node": "./index.js",
-    "default": "./index.js",
-    "browser": "./index.js"     // lowest priority
+    "default": "./index.js",    // lowest priority
   }
 }
 ```

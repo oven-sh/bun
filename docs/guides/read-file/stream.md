@@ -13,10 +13,10 @@ const stream = await file.stream();
 
 ---
 
-The chunks of the stream can be consumed with `for await`.
+The chunks of the stream can be consumed as an [async iterable](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Iteration_protocols#the_async_iterator_and_async_iterable_protocols) using `for await`.
 
 ```ts
-for await (const chunk of stream.values()) {
+for await (const chunk of stream) {
   chunk; // => Uint8Array
 }
 ```

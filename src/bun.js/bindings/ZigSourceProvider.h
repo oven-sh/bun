@@ -24,6 +24,8 @@ class GlobalObject;
 
 void forEachSourceProvider(WTF::Function<void(JSC::SourceID)>);
 JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL);
+int findLine(void* mapping, const WTF::String& sourceURL, int byteOffset);
+void* sourceMappingForSourceURL(const WTF::String& sourceURL);
 
 class SourceProvider final : public JSC::SourceProvider {
     WTF_MAKE_FAST_ALLOCATED;

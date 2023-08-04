@@ -679,7 +679,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
 
   JSC::Structure *structure =
       globalObject->structureCache().emptyObjectStructureForPrototype(
-          globalObject, globalObject->objectPrototype(), 3);
+          globalObject, globalObject->objectPrototype(), 4);
   JSC::PropertyOffset offset;
 
   structure = structure->addPropertyTransition(
@@ -694,11 +694,16 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
       vm, structure, JSC::Identifier::fromString(vm, "minimumExecutionCount"_s),
       0, offset);
 
+  structure = structure->addPropertyTransition(
+      vm, structure, JSC::Identifier::fromString(vm, "line"_s), 0, offset);
+
   RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
   JSC::JSArray *array =
       JSC::constructEmptyArray(globalObject, nullptr, basicBlocks.size());
   unsigned int i = 0;
+
+  void *mapping = Zig::sourceMappingForSourceURL(fileName);
 
   for (const auto block : basicBlocks) {
     JSC::JSObject *object = JSC::constructEmptyObject(vm, structure);
@@ -707,6 +712,12 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
     object->putDirectOffset(
         vm, 2, JSC::jsNumber(block.m_executionCount || block.m_hasExecuted));
     array->putDirectIndex(globalObject, i++, object);
+    if (mapping) {
+      auto line = Zig::findLine(mapping, fileName, block.m_startOffset);
+      object->putDirectOffset(vm, 3, JSC::jsNumber(line));
+    } else {
+      object->putDirectOffset(vm, 3, JSC::jsNumber(-1));
+    }
   }
 
   return JSValue::encode(array);

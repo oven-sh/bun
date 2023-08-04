@@ -113,6 +113,81 @@ pub fn parse(
     };
 }
 
+pub const ByteRangeMapping = struct {
+    line_offset_table: LineOffsetTable.List = .{},
+    source_id: i32,
+
+    pub const HashMap = std.HashMap(u64, ByteRangeMapping, bun.IdentityContext(u64), std.hash_map.default_max_load_percentage);
+
+    pub fn deinit(this: *ByteRangeMapping) void {
+        this.line_offset_table.deinit(bun.default_allocator);
+    }
+
+    threadlocal var map: ?*HashMap = null;
+    pub fn generate(str: bun.String, source_contents_str: bun.String, source_id: i32) callconv(.C) void {
+        var _map = map orelse brk: {
+            map = bun.JSC.VirtualMachine.get().allocator.create(HashMap) catch @panic("OOM");
+            map.?.* = HashMap.init(bun.JSC.VirtualMachine.get().allocator);
+            break :brk map.?;
+        };
+        var slice = str.toUTF8(bun.default_allocator);
+        defer slice.deinit();
+        const hash = bun.hash(slice.slice());
+        var entry = _map.getOrPut(hash) catch @panic("Out of memory");
+        if (entry.found_existing) {
+            entry.value_ptr.deinit();
+        }
+
+        var source_contents = source_contents_str.toUTF8(bun.default_allocator);
+        defer source_contents.deinit();
+
+        entry.value_ptr.* = compute(source_contents.slice(), source_id);
+    }
+
+    pub fn getSourceID(this: *ByteRangeMapping) callconv(.C) i32 {
+        return this.source_id;
+    }
+
+    pub fn find(path: bun.String) callconv(.C) ?*ByteRangeMapping {
+        var slice = path.toUTF8(bun.default_allocator);
+        defer slice.deinit();
+
+        var map_ = map orelse return null;
+        const hash = bun.hash(slice.slice());
+        var entry = map_.getPtr(hash) orelse return null;
+        return entry;
+    }
+
+    pub fn findLine(this: *ByteRangeMapping, source_url: bun.String, byte_offset: i32) callconv(.C) i32 {
+        const input_line = LineOffsetTable.findLine(this.line_offset_table.items(.byte_offset_to_start_of_line), .{ .start = byte_offset });
+        var url = source_url.toUTF8(bun.default_allocator);
+        defer url.deinit();
+        if (bun.JSC.VirtualMachine.get().source_mappings.resolveMapping(
+            url.slice(),
+            @max(input_line, 0),
+            0,
+        )) |mapping| {
+            return mapping.original.lines;
+        }
+
+        return -1;
+    }
+
+    pub fn compute(source_contents: []const u8, source_id: i32) ByteRangeMapping {
+        return ByteRangeMapping{
+            .line_offset_table = LineOffsetTable.generate(bun.JSC.VirtualMachine.get().allocator, source_contents, 0),
+            .source_id = source_id,
+        };
+    }
+};
+
+comptime {
+    @export(ByteRangeMapping.generate, .{ .name = "ByteRangeMapping__generate" });
+    @export(ByteRangeMapping.findLine, .{ .name = "ByteRangeMapping__findLine" });
+    @export(ByteRangeMapping.find, .{ .name = "ByteRangeMapping__find" });
+    @export(ByteRangeMapping.getSourceID, .{ .name = "ByteRangeMapping__getSourceID" });
+}
+
 pub const Mapping = struct {
     generated: LineColumnOffset,
     original: LineColumnOffset,

@@ -58,34 +58,42 @@ static SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
     return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
 }
 
-static thread_local HashMap<String, JSC::SourceID>* sourceProviderMap = nullptr;
-
 void forEachSourceProvider(const WTF::Function<void(JSC::SourceID)>& func)
 {
-    if (sourceProviderMap == nullptr) {
-        return;
-    }
+    // if (sourceProviderMap == nullptr) {
+    //     return;
+    // }
 
-    for (auto& pair : *sourceProviderMap) {
-        auto sourceProvider = pair.value;
-        if (sourceProvider) {
-            func(sourceProvider);
-        }
-    }
+    // for (auto& pair : *sourceProviderMap) {
+    //     auto sourceProvider = pair.value;
+    //     if (sourceProvider) {
+    //         func(sourceProvider);
+    //     }
+    // }
 }
+extern "C" int ByteRangeMapping__getSourceID(void* mappings, BunString sourceURL);
+extern "C" void* ByteRangeMapping__find(BunString sourceURL);
+extern "C" void ByteRangeMapping__generate(BunString sourceURL, BunString code, int sourceID);
+extern "C" int ByteRangeMapping__findLine(void* mapping, BunString str, int byteOffset);
 
 JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL)
 {
-    if (sourceProviderMap == nullptr) {
+    void* mappings = ByteRangeMapping__find(Bun::toString(sourceURL));
+    if (!mappings) {
         return 0;
     }
 
-    auto it = sourceProviderMap->find(sourceURL);
-    if (it == sourceProviderMap->end()) {
-        return 0;
-    }
+    return ByteRangeMapping__getSourceID(mappings, Bun::toString(sourceURL));
+}
 
-    return it->value;
+int findLine(void* mapping, const WTF::String& str, int byteOffset)
+{
+    return ByteRangeMapping__findLine(mapping, Bun::toString(str), byteOffset);
+}
+
+void* sourceMappingForSourceURL(const WTF::String& sourceURL)
+{
+    return ByteRangeMapping__find(Bun::toString(sourceURL));
 }
 
 Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, ResolvedSource resolvedSource, JSC::SourceProviderSourceType sourceType, bool isBuiltin)
@@ -103,11 +111,7 @@ Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, Reso
         sourceType));
 
     if (!isBuiltin && isCodeCoverageEnabled) {
-        if (sourceProviderMap == nullptr) {
-            sourceProviderMap = new HashMap<String, JSC::SourceID>();
-        }
-
-        sourceProviderMap->set(provider->sourceURL(), provider->asID());
+        ByteRangeMapping__generate(Bun::toString(provider->sourceURL()), Bun::toString(provider->source().toStringWithoutCopying()), provider->asID());
     }
 
     return provider;
@@ -124,9 +128,6 @@ unsigned SourceProvider::hash() const
 
 void SourceProvider::freeSourceCode()
 {
-    if (sourceProviderMap != nullptr) {
-        sourceProviderMap->remove(sourceURL());
-    }
 }
 
 void SourceProvider::updateCache(const UnlinkedFunctionExecutable* executable, const SourceCode&,

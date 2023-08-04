@@ -10,6 +10,7 @@ import {
   toArrayBuffer,
   toBuffer,
   viewSource,
+  suffix,
 } from "bun:ffi";
 
 const dlopen = (...args) => {
@@ -20,7 +21,7 @@ const dlopen = (...args) => {
     throw err;
   }
 };
-const ok = existsSync("/tmp/bun-ffi-test.dylib");
+const ok = existsSync("/tmp/bun-ffi-test." + suffix);
 
 it("ffi print", async () => {
   await Bun.write(
@@ -625,4 +626,8 @@ it("dlopen throws an error instead of returning it", () => {
     err = error;
   }
   expect(err).toBeTruthy();
+});
+
+it('suffix does not start with a "."', () => {
+  expect(suffix).not.toMatch(/^\./);
 });

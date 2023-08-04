@@ -26,7 +26,6 @@ const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const JSPrinter = @import("./js_printer.zig");
 const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
-const js_printer = @import("./js_printer.zig");
 
 /// This is the index to the automatically-generated part containing code that
 /// calls "__export(exports, { ... getters ... })". This is used to generate

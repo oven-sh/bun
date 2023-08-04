@@ -315,7 +315,6 @@ declare function $isPaused(): TODO;
 declare function $isWindows(): TODO;
 declare function $join(): TODO;
 declare function $kind(): TODO;
-declare function $lazy(): TODO;
 declare function $lazyLoad(): TODO;
 declare function $lazyStreamPrototypeMap(): TODO;
 declare function $loadModule(): TODO;

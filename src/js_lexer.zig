@@ -75,6 +75,19 @@ pub const JSONOptions = struct {
     was_originally_macro: bool = false,
 };
 
+pub fn decodeUTF8(bytes: string, allocator: std.mem.Allocator) ![]const u16 {
+    var log = logger.Log.init(allocator);
+    defer log.deinit();
+    var source = logger.Source.initEmptyFile("");
+    var lexer = try NewLexer(.{}).init(&log, source, allocator);
+    defer lexer.deinit();
+
+    var buf = std.ArrayList(u16).init(allocator);
+    try lexer.decodeEscapeSequences(0, bytes, @TypeOf(buf), &buf);
+
+    return buf.items;
+}
+
 pub fn NewLexer(
     comptime json_options: JSONOptions,
 ) type {

@@ -25,6 +25,7 @@ const JSONParser = bun.JSON;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const JSPrinter = @import("./js_printer.zig");
+const js_lexer = @import("./js_lexer.zig");
 const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
 
 /// This is the index to the automatically-generated part containing code that
@@ -2372,10 +2373,14 @@ pub const E = struct {
 
             {
                 s.resolveRopeIfNeeded(allocator);
-                var bytes = strings.unescape(@constCast(s.slice(allocator)));
-                var out = bun.String.create(bytes);
 
+                const decoded = js_lexer.decodeUTF8(s.slice(allocator), allocator) catch unreachable;
+                defer allocator.free(decoded);
+
+                var out = bun.String.createUninitializedUTF16(decoded.len);
                 defer out.deref();
+                @memcpy(@constCast(out.utf16()), decoded);
+
                 return out.toJS(globalObject);
             }
         }

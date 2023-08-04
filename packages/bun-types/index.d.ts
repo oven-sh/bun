@@ -46,4 +46,5 @@
 /// <reference path="./util.d.ts" />
 /// <reference path="./vm.d.ts" />
 /// <reference path="./worker_threads.d.ts" />
+/// <reference path="./ws.d.ts" />
 /// <reference path="./zlib.d.ts" />

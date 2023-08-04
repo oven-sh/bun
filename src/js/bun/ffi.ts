@@ -57,7 +57,7 @@ const FFIType = {
   fn: 17,
 };
 
-const suffix = process.platform === "win32" ? ".dll" : process.platform === "darwin" ? ".dylib" : ".so";
+const suffix = process.platform === "win32" ? "dll" : process.platform === "darwin" ? "dylib" : "so";
 
 declare const __GlobalBunFFIPtrFunctionForWrapper: typeof ptr;
 declare const __GlobalBunCString: typeof CString;

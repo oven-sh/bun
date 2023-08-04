@@ -46,6 +46,7 @@ test("_nodeModulePaths() works", () => {
 
 test("Module.wrap", () => {
   var mod = { exports: {} };
-  expect(eval(wrap("exports.foo = 1; return 42"))(mod, mod.exports)).toBe(42);
+  expect(eval(wrap("exports.foo = 1; return 42"))(mod.exports, mod)).toBe(42);
+  expect(mod.exports.foo).toBe(1);
   expect(wrap()).toBe("(function (exports, require, module, __filename, __dirname) { undefined\n});");
 });

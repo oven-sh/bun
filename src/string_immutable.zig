@@ -2026,6 +2026,55 @@ pub fn elementLengthLatin1IntoUTF16(comptime Type: type, latin1_: Type) usize {
     return count;
 }
 
+pub fn unescape(_bytes: []u8) []const u8 {
+    var new_bytes = _bytes;
+    var new_i: usize = 0;
+    var remain = new_bytes;
+    while (indexOfChar(remain, '\\')) |i| {
+        bun.copy(u8, new_bytes[new_i..], remain[0..i]);
+        new_i += i;
+        if (i + 1 < remain.len) {
+            switch (remain[i + 1]) {
+                'b' => {
+                    new_bytes[new_i] = '\x08';
+                },
+                'f' => {
+                    new_bytes[new_i] = '\x0c';
+                },
+                'n' => {
+                    new_bytes[new_i] = '\n';
+                },
+                'r' => {
+                    new_bytes[new_i] = '\r';
+                },
+                't' => {
+                    new_bytes[new_i] = '\t';
+                },
+                'v' => {
+                    new_bytes[new_i] = '\x0b';
+                },
+                else => {
+                    new_bytes[new_i] = remain[i + 1];
+                },
+            }
+            new_i += 1;
+            remain = remain[i + 2 ..];
+        } else {
+            new_bytes[new_i] = '\\';
+            new_i += 1;
+            remain = remain[i + 1 ..];
+        }
+    }
+
+    if (remain.len > 0) {
+        bun.copy(u8, new_bytes[new_i..], remain);
+        new_i += remain.len;
+    }
+
+    new_bytes.len = new_i;
+    return new_bytes;
+}
+
 pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8) !Escaped(u8) {
     const Scalar = struct {
         pub const lengths: [std.math.maxInt(u8)]u4 = brk: {

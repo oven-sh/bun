@@ -26,6 +26,7 @@ const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const JSPrinter = @import("./js_printer.zig");
 const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
+const js_printer = @import("./js_printer.zig");
 
 /// This is the index to the automatically-generated part containing code that
 /// calls "__export(exports, { ... getters ... })". This is used to generate
@@ -2359,7 +2360,6 @@ pub const E = struct {
         }
 
         pub fn toJS(s: *String, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-            s.resolveRopeIfNeeded(allocator);
             if (!s.isPresent()) {
                 var emp = bun.String.empty;
                 return emp.toJS(globalObject);
@@ -2372,7 +2372,10 @@ pub const E = struct {
             }
 
             {
-                var out = bun.String.create(s.slice(allocator));
+                s.resolveRopeIfNeeded(allocator);
+                var bytes = strings.unescape(@constCast(s.slice(allocator)));
+                var out = bun.String.create(bytes);
+
                 defer out.deref();
                 return out.toJS(globalObject);
             }
@@ -9951,12 +9954,8 @@ pub const Macro = struct {
                         },
                         .String => {
                             var bun_str = value.toBunString(this.global);
-                            if (bun_str.is8Bit()) {
-                                if (strings.isAllASCII(bun_str.latin1())) {
-                                    return Expr.init(E.String, E.String.init(this.allocator.dupe(u8, bun_str.latin1()) catch unreachable), this.caller.loc);
-                                }
-                            }
 
+                            // encode into utf16 so the printer escapes the string correctly
                             var utf16_bytes = this.allocator.alloc(u16, bun_str.length()) catch unreachable;
                             var out_slice = utf16_bytes[0 .. (bun_str.encodeInto(std.mem.sliceAsBytes(utf16_bytes), .utf16le) catch 0) / 2];
                             return Expr.init(E.String, E.String.init(out_slice), this.caller.loc);

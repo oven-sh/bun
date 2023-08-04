@@ -64,6 +64,7 @@ const { instance } = /**
 *    cityhash64: seededhash64func,
 *    murmur32v3: seededhash32func,
 *    murmur64v2: seededhash64func,
+*    murmur32v2: seededhash32func,
 * } } }}
 */(/** @type {unknown} */(await WebAssembly.instantiate(
     fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'zighash.wasm')
@@ -141,4 +142,10 @@ export function murmur32v3(input, seed = 0) {
 export function murmur64v2(input, seed = 0n) {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
     return BigInt.asUintN(64, exports.murmur64v2(ptr, size, seed));
+}
+// undocumented
+/** @type {JSseededhash32func} */
+export function murmur32v2(input, seed = 0) {
+    const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
+    return exports.murmur32v2(ptr, size, seed); //! Bun doesn't unsigned-cast this one, likely unintended but for now we'll do the same
 }

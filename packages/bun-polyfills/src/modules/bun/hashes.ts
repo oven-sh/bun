@@ -6,8 +6,7 @@ import os from 'node:os';
 import crc from '@foxglove/crc';
 import adler32 from 'adler-32';
 import md4, { Md4 } from 'js-md4';
-import { Fingerprint32, Fingerprint64 } from '../../../lib/farmhash/index.mjs';
-import { wyhash } from '../../../lib/zighash/index.mjs';
+import { cityhash32, cityhash64, wyhash } from '../../../lib/zighash/index.mjs';
 
 export const bunHash = ((data, seed = 0): bigint => wyhash(data, BigInt(seed))) as typeof Bun.hash;
 export const bunHashProto: Hash = {
@@ -30,10 +29,10 @@ export const bunHashProto: Hash = {
         //return crc.crc32Final(seed);
     },
     cityHash32(data) {
-        return Fingerprint32(data);
+        return cityhash32(data);
     },
     cityHash64(data) {
-        return Fingerprint64(data);
+        return cityhash64(data);
     },
     // murmur32v2 (?)
     murmur32v3(data, seed = 0) {

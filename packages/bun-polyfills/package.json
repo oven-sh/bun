@@ -3,7 +3,6 @@
   "name": "bun-polyfills",
   "module": "src/index.ts",
   "devDependencies": {
-    "@types/emscripten": "^1.39.7",
     "@types/murmurhash3js-revisited": "^3.0.1",
     "@types/node": "^20.4.5",
     "@types/which": "^3.0.0",
@@ -17,8 +16,7 @@
     "repl": "node --import ./dist/src/repl.js",
     "clean": "rm -rf dist",
     "build": "bun run clean && bunx tsc && bunx copyfiles \"./**/*.wasm\" dist",
-    "build/wasm": "bun run build/farmhash && bun run build/zighash",
-    "build/farmhash": "cd lib/farmhash && bun run build && cd ../..",
+    "build/wasm": "bun run build/zighash",
     "build/zighash": "cd lib/zighash && bun run build && cd ../.."
   },
   "dependencies": {

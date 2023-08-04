@@ -16,3 +16,15 @@ export fn wyhash(input_ptr: [*]const u8, input_size: u32, seed: u64) u64 {
     defer std.heap.wasm_allocator.free(input);
     return std.hash.Wyhash.hash(seed, input);
 }
+
+export fn cityhash32(input_ptr: [*]const u8, input_size: u32) u32 {
+    const input: []const u8 = input_ptr[0..input_size];
+    defer std.heap.wasm_allocator.free(input);
+    return std.hash.CityHash32.hash(input);
+}
+
+export fn cityhash64(input_ptr: [*]const u8, input_size: u32) u64 {
+    const input: []const u8 = input_ptr[0..input_size];
+    defer std.heap.wasm_allocator.free(input);
+    return std.hash.CityHash64.hash(input);
+}

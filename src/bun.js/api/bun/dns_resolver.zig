@@ -16,6 +16,8 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const c_ares = bun.c_ares;
 
 const GetAddrInfoAsyncCallback = fn (i32, ?*std.c.addrinfo, ?*anyopaque) callconv(.C) void;
+const INET6_ADDRSTRLEN = if (bun.Environment.isWindows) 65 else 46;
+const IANA_DNS_PORT = 53;
 
 const LibInfo = struct {
     // static int32_t (*getaddrinfo_async_start)(mach_port_t*,
@@ -2015,6 +2017,83 @@ pub const DNSResolver = struct {
         return promise;
     }
 
+    pub fn getServers(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        _ = callframe;
+
+        var vm = globalThis.bunVM();
+        var resolver = vm.rareData().globalDNSResolver(vm);
+        var channel: *c_ares.Channel = switch (resolver.getChannel()) {
+            .result => |res| res,
+            .err => |err| {
+                const system_error = JSC.SystemError{
+                    .errno = -1,
+                    .code = bun.String.static(err.code()),
+                    .message = bun.String.static(err.label()),
+                };
+
+                globalThis.throwValue(system_error.toErrorInstance(globalThis));
+                return .zero;
+            },
+        };
+
+        var servers: [*c]c_ares.struct_ares_addr_port_node = undefined;
+        const r = c_ares.ares_get_servers_ports(channel, &servers);
+        if (r != c_ares.ARES_SUCCESS) {
+            const err = c_ares.Error.get(r).?;
+            globalThis.throwValue(globalThis.createErrorInstance("ares_get_servers_ports error: {s}", .{err.label()}));
+            return .zero;
+        }
+        defer c_ares.ares_free_data(servers);
+
+        const values = JSC.JSValue.createEmptyArray(globalThis, 0);
+
+        var i: u32 = 0;
+        var cur = servers;
+        while (cur != null) : ({
+            i += 1;
+            cur = cur.*.next;
+        }) {
+            // Formatting reference: https://nodejs.org/api/dns.html#dnsgetservers
+            // Brackets '[' and ']' consume 2 bytes, used for IPv6 format (e.g., '[2001:4860:4860::8888]:1053').
+            // Port range is 6 bytes (e.g., ':65535').
+            // Null terminator '\0' uses 1 byte.
+            var buf: [INET6_ADDRSTRLEN + 2 + 6 + 1]u8 = undefined;
+            const family = cur.*.family;
+
+            const ip = if (family == std.os.AF.INET6) blk: {
+                break :blk c_ares.ares_inet_ntop(family, &cur.*.addr.addr6, buf[1..], @sizeOf(@TypeOf(buf)) - 1);
+            } else blk: {
+                break :blk c_ares.ares_inet_ntop(family, &cur.*.addr.addr4, buf[1..], @sizeOf(@TypeOf(buf)) - 1);
+            };
+            _ = ip;
+
+            var port = cur.*.tcp_port;
+            if (port == 0) {
+                port = cur.*.udp_port;
+            }
+            if (port == 0) {
+                port = IANA_DNS_PORT;
+            }
+
+            const size = bun.len(bun.cast([*:0]u8, &buf));
+            if (port == IANA_DNS_PORT) {
+                values.putIndex(globalThis, i, JSC.ZigString.init(buf[1..size]).withEncoding().toValueGC(globalThis));
+            } else {
+                if (family == std.os.AF.INET6) {
+                    buf[0] = '[';
+                    buf[size] = ']';
+                    const port_slice = std.fmt.bufPrint(buf[size + 1 ..], ":{d}", .{port}) catch unreachable;
+                    values.putIndex(globalThis, i, JSC.ZigString.init(buf[0 .. size + 1 + port_slice.len]).withEncoding().toValueGC(globalThis));
+                } else {
+                    const port_slice = std.fmt.bufPrint(buf[size..], ":{d}", .{port}) catch unreachable;
+                    values.putIndex(globalThis, i, JSC.ZigString.init(buf[1 .. size + port_slice.len]).withEncoding().toValueGC(globalThis));
+                }
+            }
+        }
+
+        return values;
+    }
+
     comptime {
         @export(
             resolve,
@@ -2080,6 +2159,12 @@ pub const DNSResolver = struct {
             resolveCname,
             .{
                 .name = "Bun__DNSResolver__resolveCname",
+            },
+        );
+        @export(
+            getServers,
+            .{
+                .name = "Bun__DNSResolver__getServers",
             },
         );
     }

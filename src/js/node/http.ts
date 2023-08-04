@@ -32,6 +32,8 @@ const validateHeaderValue = (name, value) => {
   }
 };
 
+$debug("http loaded OwO");
+
 // Cheaper to duplicate this than to import it from node:net
 function isIPv6(input) {
   const v4Seg = "(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])";
@@ -649,10 +651,11 @@ class IncomingMessage extends Readable {
   async #consumeStream(reader: ReadableStreamDefaultReader) {
     while (true) {
       var { done, value } = await reader.readMany();
+      $debug("#consumeStream", { done, value });
       if (this.#aborted) return;
       if (done) {
         this.push(null);
-        this.destroy();
+        process.nextTick(destroyBodyStreamNT, this);
         break;
       }
       for (var v of value) {
@@ -678,17 +681,6 @@ class IncomingMessage extends Readable {
 
   get aborted() {
     return this.#aborted;
-  }
-
-  #abort() {
-    if (this.#aborted) return;
-    this.#aborted = true;
-    var bodyStream = this.#bodyStream;
-    if (!bodyStream) return;
-    bodyStream.cancel();
-    this.complete = true;
-    this.#bodyStream = undefined;
-    this.push(null);
   }
 
   get connection() {

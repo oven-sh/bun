@@ -1,4 +1,3 @@
-type AsyncLocalStorage<T> = import("async_hooks").AsyncLocalStorage<T>;
 /**
  * The `node:diagnostics_channel` module provides an API to create named channels
  * to report arbitrary message data for diagnostics purposes.
@@ -24,6 +23,8 @@ type AsyncLocalStorage<T> = import("async_hooks").AsyncLocalStorage<T>;
  * @see [source](https://github.com/nodejs/node/blob/v20.2.0/lib/diagnostics_channel.js)
  */
 declare module "diagnostics_channel" {
+  import { AsyncLocalStorage } from "async_hooks";
+  // type AsyncLocalStorage<T> = import("async_hooks").AsyncLocalStorage<T>;
   type ChannelListener = (message: unknown, name: string | symbol) => void;
   /**
    * Check if there are active subscribers to the named channel. This is helpful if

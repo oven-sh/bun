@@ -38,10 +38,11 @@ export default {
     page("templates", "Templates", {
       description: "Hit the ground running with one of Bun's official templates, or download a template from GitHub.",
     }),
-    page("templates", "Guides", {
+    page("guides", "Guides", {
       description: "A set of walkthrough guides and code snippets for performing common tasks with Bun",
       href: "/guides",
     }),
+
     // page("typescript", "TypeScript"),
 
     // divider("CLI"),

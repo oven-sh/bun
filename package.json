@@ -22,7 +22,6 @@
   },
   "devDependencies": {
     "@types/react": "^18.0.25",
-    "@types/ws": "^8.5.5",
     "@typescript-eslint/eslint-plugin": "^5.31.0",
     "@typescript-eslint/parser": "^5.31.0",
     "bun-webkit": "0.0.1-9d9172d3242b40f16fa980ead750dc9ab248065f"

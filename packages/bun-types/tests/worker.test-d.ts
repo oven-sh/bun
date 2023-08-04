@@ -1,3 +1,7 @@
+import { Worker } from "node:worker_threads";
+
+const workerthread = new Worker("./worker.js");
+
 const worker = new Worker("./worker.ts");
 worker.addEventListener("message", (event: MessageEvent) => {
   console.log("Message from worker:", event.data);

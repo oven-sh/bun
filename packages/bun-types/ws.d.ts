@@ -49,7 +49,7 @@ declare module "ws" {
     ) => void,
   ) => void;
 
-  interface ServerOptions<
+  interface WebSocketServerOptions<
     U extends typeof WebSocket = typeof WebSocket,
     V extends typeof IncomingMessage = typeof IncomingMessage,
   > {
@@ -81,15 +81,15 @@ declare module "ws" {
   }
 
   // WebSocket Server
-  class Server<
+  class WebSocketServer<
     T extends typeof WebSocket = typeof WebSocket,
     U extends typeof IncomingMessage = typeof IncomingMessage,
   > extends EventEmitter {
-    options: ServerOptions<T, U>;
+    options: WebSocketServerOptions<T, U>;
     path: string;
     clients: Set<InstanceType<T>>;
 
-    constructor(options?: ServerOptions<T, U>, callback?: () => void);
+    constructor(options?: WebSocketServerOptions<T, U>, callback?: () => void);
 
     address(): AddressInfo | string;
     close(cb?: (err?: Error) => void): void;
@@ -105,70 +105,88 @@ declare module "ws" {
     on(
       event: "connection",
       cb: (
-        this: Server<T>,
+        this: WebSocketServer<T>,
         socket: InstanceType<T>,
         request: InstanceType<U>,
       ) => void,
     ): this;
-    on(event: "error", cb: (this: Server<T>, error: Error) => void): this;
+    on(
+      event: "error",
+      cb: (this: WebSocketServer<T>, error: Error) => void,
+    ): this;
     on(
       event: "headers",
       cb: (
-        this: Server<T>,
+        this: WebSocketServer<T>,
         headers: string[],
         request: InstanceType<U>,
       ) => void,
     ): this;
-    on(event: "close" | "listening", cb: (this: Server<T>) => void): this;
+    on(
+      event: "close" | "listening",
+      cb: (this: WebSocketServer<T>) => void,
+    ): this;
     on(
       event: string | symbol,
-      listener: (this: Server<T>, ...args: any[]) => void,
+      listener: (this: WebSocketServer<T>, ...args: any[]) => void,
     ): this;
 
     once(
       event: "connection",
       cb: (
-        this: Server<T>,
+        this: WebSocketServer<T>,
         socket: InstanceType<T>,
         request: InstanceType<U>,
       ) => void,
     ): this;
-    once(event: "error", cb: (this: Server<T>, error: Error) => void): this;
+    once(
+      event: "error",
+      cb: (this: WebSocketServer<T>, error: Error) => void,
+    ): this;
     once(
       event: "headers",
       cb: (
-        this: Server<T>,
+        this: WebSocketServer<T>,
         headers: string[],
         request: InstanceType<U>,
       ) => void,
     ): this;
-    once(event: "close" | "listening", cb: (this: Server<T>) => void): this;
+    once(
+      event: "close" | "listening",
+      cb: (this: WebSocketServer<T>) => void,
+    ): this;
     once(
       event: string | symbol,
-      listener: (this: Server<T>, ...args: any[]) => void,
+      listener: (this: WebSocketServer<T>, ...args: any[]) => void,
     ): this;
 
     off(
       event: "connection",
       cb: (
-        this: Server<T>,
+        this: WebSocketServer<T>,
         socket: InstanceType<T>,
         request: InstanceType<U>,
       ) => void,
     ): this;
-    off(event: "error", cb: (this: Server<T>, error: Error) => void): this;
+    off(
+      event: "error",
+      cb: (this: WebSocketServer<T>, error: Error) => void,
+    ): this;
     off(
       event: "headers",
       cb: (
-        this: Server<T>,
+        this: WebSocketServer<T>,
         headers: string[],
         request: InstanceType<U>,
       ) => void,
     ): this;
-    off(event: "close" | "listening", cb: (this: Server<T>) => void): this;
+    off(
+      event: "close" | "listening",
+      cb: (this: WebSocketServer<T>) => void,
+    ): this;
     off(
       event: string | symbol,
-      listener: (this: Server<T>, ...args: any[]) => void,
+      listener: (this: WebSocketServer<T>, ...args: any[]) => void,
     ): this;
 
     addListener(
@@ -201,7 +219,4 @@ declare module "ws" {
       listener: (...args: any[]) => void,
     ): this;
   }
-
-  const WebSocketServer: typeof Server;
-  interface WebSocketServer extends Server {} // tslint:disable-line no-empty-interface
 }

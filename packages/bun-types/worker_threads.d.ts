@@ -499,94 +499,7 @@ declare module "worker_threads" {
     prototype: BroadcastChannel;
     new (name: string): BroadcastChannel;
   };
-  // interface BroadcastChannel {}
-  /**
-   * Instances of `BroadcastChannel` allow asynchronous one-to-many communication
-   * with all other `BroadcastChannel` instances bound to the same channel name.
-   *
-   * ```js
-   * 'use strict';
-   *
-   * const {
-   *   isMainThread,
-   *   BroadcastChannel,
-   *   Worker
-   * } = require('worker_threads');
-   *
-   * const bc = new BroadcastChannel('hello');
-   *
-   * if (isMainThread) {
-   *   let c = 0;
-   *   bc.onmessage = (event) => {
-   *     console.log(event.data);
-   *     if (++c === 10) bc.close();
-   *   };
-   *   for (let n = 0; n < 10; n++)
-   *     new Worker(__filename);
-   * } else {
-   *   bc.postMessage('hello from every worker');
-   *   bc.close();
-   * }
-   * ```
-   * @since v15.4.0
-   */
-  // class BroadcastChannel {
-  //   readonly name: string;
-  //   /**
-  //    * Invoked with a single \`MessageEvent\` argument when a message is received.
-  //    * @since v15.4.0
-  //    */
-  //   onmessage: (message: unknown) => void;
-  //   /**
-  //    * Invoked with a received message cannot be deserialized.
-  //    * @since v15.4.0
-  //    */
-  //   onmessageerror: (message: unknown) => void;
-  //   constructor(name: string);
-  //   /**
-  //    * Closes the `BroadcastChannel` connection.
-  //    * @since v15.4.0
-  //    */
-  //   close(): void;
-  //   /**
-  //    * @since v15.4.0
-  //    * @param message Any cloneable JavaScript value.
-  //    */
-  //   postMessage(message: unknown): void;
-  // }
-  /**
-   * Mark an object as not transferable. If `object` occurs in the transfer list of
-   * a `port.postMessage()` call, it is ignored.
-   *
-   * In particular, this makes sense for objects that can be cloned, rather than
-   * transferred, and which are used by other objects on the sending side.
-   * For example, Node.js marks the `ArrayBuffer`s it uses for its `Buffer pool` with this.
-   *
-   * This operation cannot be undone.
-   *
-   * ```js
-   * const { MessageChannel, markAsUntransferable } = require('worker_threads');
-   *
-   * const pooledBuffer = new ArrayBuffer(8);
-   * const typedArray1 = new Uint8Array(pooledBuffer);
-   * const typedArray2 = new Float64Array(pooledBuffer);
-   *
-   * markAsUntransferable(pooledBuffer);
-   *
-   * const { port1 } = new MessageChannel();
-   * port1.postMessage(typedArray1, [ typedArray1.buffer ]);
-   *
-   * // The following line prints the contents of typedArray1 -- it still owns
-   * // its memory and has been cloned, not transferred. Without
-   * // `markAsUntransferable()`, this would print an empty Uint8Array.
-   * // typedArray2 is intact as well.
-   * console.log(typedArray1);
-   * console.log(typedArray2);
-   * ```
-   *
-   * There is no equivalent to this API in browsers.
-   * @since v14.5.0, v12.19.0
-   */
+
   function markAsUntransferable(object: object): void;
   /**
    * Transfer a `MessagePort` to a different `vm` Context. The original `port`object is rendered unusable, and the returned `MessagePort` instance
@@ -695,49 +608,6 @@ declare module "worker_threads" {
     message: MessageEvent;
     messageerror: MessageEvent;
   }
-  // import {
-  //   BroadcastChannel as _BroadcastChannel,
-  //   MessageChannel as _MessageChannel,
-  //   MessagePort as _MessagePort,
-  // } from "worker_threads";
-
-  // global {
-  /**
-   * `BroadcastChannel` class is a global reference for `require('worker_threads').BroadcastChannel`
-   * https://nodejs.org/api/globals.html#broadcastchannel
-   * @since v18.0.0
-   */
-  // var BroadcastChannel: typeof globalThis extends {
-  //   onmessage: any;
-  //   BroadcastChannel: infer T;
-  // }
-  //   ? T
-  //   : typeof _BroadcastChannel;
-
-  /**
-   * `MessageChannel` class is a global reference for `require('worker_threads').MessageChannel`
-   * https://nodejs.org/api/globals.html#messagechannel
-   * @since v15.0.0
-   */
-  // var MessageChannel: typeof globalThis extends {
-  //   onmessage: any;
-  //   MessageChannel: infer T;
-  // }
-  //   ? T
-  //   : typeof _MessageChannel;
-
-  /**
-   * `MessagePort` class is a global reference for `require('worker_threads').MessagePort`
-   * https://nodejs.org/api/globals.html#messageport
-   * @since v15.0.0
-   */
-  // var MessagePort: typeof globalThis extends {
-  //   onmessage: any;
-  //   MessagePort: infer T;
-  // }
-  //   ? T
-  //   : typeof _MessagePort;
-  // }
 }
 declare module "node:worker_threads" {
   export * from "worker_threads";

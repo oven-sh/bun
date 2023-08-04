@@ -157,6 +157,25 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsBuiltinModule,
   return JSValue::encode(jsBoolean(isBuiltinModule(moduleStr)));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionWrap, (JSC::JSGlobalObject * globalObject,
+                                          JSC::CallFrame *callFrame)) {
+  auto &vm = globalObject->vm();
+  auto scope = DECLARE_THROW_SCOPE(vm);
+  JSString *code = callFrame->argument(0).toStringOrNull(globalObject);
+  RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+  if (!code) {
+    return JSC::JSValue::encode(JSC::jsUndefined());
+  }
+
+  JSString *prefix = jsString(
+      vm,
+      String(
+          "(function (exports, require, module, __filename, __dirname) { "_s));
+  JSString *suffix = jsString(vm, String("\n});"_s));
+
+  return JSValue::encode(jsString(globalObject, prefix, code, suffix));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
                          (JSC::JSGlobalObject * globalObject,
                           JSC::CallFrame *callFrame)) {
@@ -250,31 +269,33 @@ template <std::size_t N, class T> consteval std::size_t countof(T (&)[N]) {
 namespace Zig {
 
 DEFINE_NATIVE_MODULE(NodeModule) {
-  // the default object here is a function, so we cant use the INIT_NATIVE_MODULE helper
+  // the default object here is a function, so we cant use the
+  // INIT_NATIVE_MODULE helper
 
-  Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject *>(lexicalGlobalObject);              
-  JSC::VM &vm = globalObject->vm();                                            
-  JSC::JSObject *defaultObject = JSC::JSFunction::create(                      
-      vm, globalObject, 0, "Module"_s, jsFunctionNodeModuleModuleConstructor, 
-      JSC::ImplementationVisibility::Public, JSC::NoIntrinsic,                 
+  Zig::GlobalObject *globalObject =
+      reinterpret_cast<Zig::GlobalObject *>(lexicalGlobalObject);
+  JSC::VM &vm = globalObject->vm();
+  JSC::JSObject *defaultObject = JSC::JSFunction::create(
+      vm, globalObject, 0, "Module"_s, jsFunctionNodeModuleModuleConstructor,
+      JSC::ImplementationVisibility::Public, JSC::NoIntrinsic,
       jsFunctionNodeModuleModuleConstructor);
-  auto put = [&](JSC::Identifier name, JSC::JSValue value) {                   
-    defaultObject->putDirect(vm, name, value);                                 
-    exportNames.append(name);                                                  
-    exportValues.append(value);                                                
-  };                                                                           
-  auto putNativeFn = [&](JSC::Identifier name, JSC::NativeFunction ptr) {      
-    JSC::JSFunction *value = JSC::JSFunction::create(                          
-        vm, globalObject, 1, name.string(), ptr,                               
-        JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, ptr);         
-    defaultObject->putDirect(vm, name, value);                                 
-    exportNames.append(name);                                                  
-    exportValues.append(value);                                                
-  };                                                                           
-  exportNames.reserveCapacity(13);                        
-  exportValues.ensureCapacity(13);                        
-  exportNames.append(vm.propertyNames->defaultKeyword);                        
-  exportValues.append(defaultObject);                                          
+  auto put = [&](JSC::Identifier name, JSC::JSValue value) {
+    defaultObject->putDirect(vm, name, value);
+    exportNames.append(name);
+    exportValues.append(value);
+  };
+  auto putNativeFn = [&](JSC::Identifier name, JSC::NativeFunction ptr) {
+    JSC::JSFunction *value = JSC::JSFunction::create(
+        vm, globalObject, 1, name.string(), ptr,
+        JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, ptr);
+    defaultObject->putDirect(vm, name, value);
+    exportNames.append(name);
+    exportValues.append(value);
+  };
+  exportNames.reserveCapacity(14);
+  exportValues.ensureCapacity(14);
+  exportNames.append(vm.propertyNames->defaultKeyword);
+  exportValues.append(defaultObject);
 
   putNativeFn(Identifier::fromString(vm, "createRequire"_s),
               jsFunctionNodeModuleCreateRequire);
@@ -291,6 +312,7 @@ DEFINE_NATIVE_MODULE(NodeModule) {
               jsFunctionResolveFileName);
   putNativeFn(Identifier::fromString(vm, "_nodeModulePaths"_s),
               Resolver__nodeModulePathsForJS);
+  putNativeFn(Identifier::fromString(vm, "wrap"_s), jsFunctionWrap);
 
   put(Identifier::fromString(vm, "_cache"_s),
       jsCast<Zig::GlobalObject *>(globalObject)->lazyRequireCacheObject());

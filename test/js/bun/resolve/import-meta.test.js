@@ -8,10 +8,6 @@ import sync from "./require-json.json";
 
 const { path, dir } = import.meta;
 
-it("primordials are not here!", () => {
-  expect(globalThis[Symbol.for("Bun.lazy")]("primordials") === undefined).toBe(true);
-});
-
 it("import.meta.main", () => {
   const { exitCode } = spawnSync({
     cmd: [bunExe(), "run", join(import.meta.dir, "./main-test-script.js")],

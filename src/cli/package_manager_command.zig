@@ -51,7 +51,7 @@ pub const PackageManagerCommand = struct {
         @memcpy(lockfile_buffer[0..lockfile_.len], lockfile_);
         lockfile_buffer[lockfile_.len] = 0;
         var lockfile = lockfile_buffer[0..lockfile_.len :0];
-        var pm = try PackageManager.init(ctx, null, PackageManager.Subcommand.pm);
+        var pm = try PackageManager.init(ctx, PackageManager.Subcommand.pm);
 
         const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, lockfile);
         handleLoadLockfileErrors(load_lockfile, pm);
@@ -87,7 +87,7 @@ pub const PackageManagerCommand = struct {
         var args = try std.process.argsAlloc(ctx.allocator);
         args = args[1..];
 
-        var pm = PackageManager.init(ctx, null, PackageManager.Subcommand.pm) catch |err| {
+        var pm = PackageManager.init(ctx, PackageManager.Subcommand.pm) catch |err| {
             // TODO: error messages here
             // if (err == error.MissingPackageJSON) {
             //     // TODO: error messages

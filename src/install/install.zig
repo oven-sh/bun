@@ -5088,15 +5088,13 @@ pub const PackageManager = struct {
 
     pub fn init(
         ctx: Command.Context,
-        package_json_file_: ?std.fs.File,
         comptime subcommand: Subcommand,
     ) !*PackageManager {
-        return initMaybeInstall(ctx, package_json_file_, subcommand);
+        return initMaybeInstall(ctx, subcommand);
     }
 
     fn initMaybeInstall(
         ctx: Command.Context,
-        package_json_file_: ?std.fs.File,
         comptime subcommand: Subcommand,
     ) !*PackageManager {
         const cli = try CommandLineArguments.parse(ctx.allocator, subcommand);
@@ -5108,12 +5106,11 @@ pub const PackageManager = struct {
         }
 
         var _ctx = ctx;
-        return initWithCLI(&_ctx, package_json_file_, cli, subcommand);
+        return initWithCLI(&_ctx, cli, subcommand);
     }
 
     fn initWithCLI(
         ctx: *Command.Context,
-        package_json_file_: ?std.fs.File,
         cli: CommandLineArguments,
         comptime subcommand: Subcommand,
     ) !*PackageManager {
@@ -5138,7 +5135,7 @@ pub const PackageManager = struct {
         //
         // We will walk up from the cwd, calling chdir on each directory until we find a package.json
         // If we fail to find one, we will report an error saying no packages to install
-        const package_json_file = package_json_file_ orelse brk: {
+        const package_json_file = brk: {
             var this_cwd = original_cwd;
             const child_json = child: {
                 while (true) {
@@ -5437,13 +5434,13 @@ pub const PackageManager = struct {
         return manager;
     }
 
-    fn attemptToCreatePackageJSON() !std.fs.File {
-        var package_json_file = std.fs.cwd().createFileZ("package.json", .{ .read = true }) catch |err| {
+    fn attemptToCreatePackageJSON() !void {
+        const package_json_file = std.fs.cwd().createFileZ("package.json", .{ .read = true }) catch |err| {
             Output.prettyErrorln("<r><red>error:<r> {s} create package.json", .{@errorName(err)});
             Global.crash();
         };
+        defer package_json_file.close();
         try package_json_file.pwriteAll("{\"dependencies\": {}}", 0);
-        return package_json_file;
     }
 
     pub inline fn add(
@@ -5461,16 +5458,13 @@ pub const PackageManager = struct {
     pub inline fn link(
         ctx: Command.Context,
     ) !void {
-        var manager = PackageManager.init(ctx, null, .link) catch |err| brk: {
-            switch (err) {
-                error.MissingPackageJSON => {
-                    var package_json_file = try attemptToCreatePackageJSON();
-                    break :brk try PackageManager.init(ctx, package_json_file, .link);
-                },
-                else => return err,
+        var manager = PackageManager.init(ctx, .link) catch |err| brk: {
+            if (err == error.MissingPackageJSON) {
+                try attemptToCreatePackageJSON();
+                break :brk try PackageManager.init(ctx, .link);
             }
 
-            unreachable;
+            return err;
         };
 
         if (manager.options.shouldPrintCommandName()) {
@@ -5616,16 +5610,13 @@ pub const PackageManager = struct {
     pub inline fn unlink(
         ctx: Command.Context,
     ) !void {
-        var manager = PackageManager.init(ctx, null, .unlink) catch |err| brk: {
-            switch (err) {
-                error.MissingPackageJSON => {
-                    var package_json_file = try attemptToCreatePackageJSON();
-                    break :brk try PackageManager.init(ctx, package_json_file, .unlink);
-                },
-                else => return err,
+        var manager = PackageManager.init(ctx, .unlink) catch |err| brk: {
+            if (err == error.MissingPackageJSON) {
+                try attemptToCreatePackageJSON();
+                break :brk try PackageManager.init(ctx, .unlink);
             }
 
-            unreachable;
+            return err;
         };
 
         if (manager.options.shouldPrintCommandName()) {
@@ -6091,21 +6082,18 @@ pub const PackageManager = struct {
         comptime op: Lockfile.Package.Diff.Op,
         comptime subcommand: Subcommand,
     ) !void {
-        var manager = PackageManager.init(ctx, null, subcommand) catch |err| brk: {
-            switch (err) {
-                error.MissingPackageJSON => {
-                    if (op == .add or op == .update) {
-                        var package_json_file = try attemptToCreatePackageJSON();
-                        break :brk try PackageManager.init(ctx, package_json_file, subcommand);
-                    }
-
+        var manager = PackageManager.init(ctx, subcommand) catch |err| brk: {
+            if (err == error.MissingPackageJSON) {
+                if (op == .remove) {
                     Output.prettyErrorln("<r>No package.json, so nothing to remove\n", .{});
                     Global.crash();
-                },
-                else => return err,
+                }
+
+                try attemptToCreatePackageJSON();
+                break :brk try PackageManager.init(ctx, subcommand);
             }
 
-            unreachable;
+            return err;
         };
 
         if (manager.options.shouldPrintCommandName()) {
@@ -6515,7 +6503,7 @@ pub const PackageManager = struct {
     var package_json_cwd: string = "";
 
     pub inline fn install(ctx: Command.Context) !void {
-        var manager = initMaybeInstall(ctx, null, .install) catch |err| {
+        var manager = initMaybeInstall(ctx, .install) catch |err| {
             if (err == error.SwitchToBunAdd) {
                 return add(ctx);
             }
@@ -7511,8 +7499,7 @@ pub const PackageManager = struct {
                         mapping,
                     );
 
-                    const sum = manager.summary.add + manager.summary.remove + manager.summary.update;
-                    had_any_diffs = had_any_diffs or sum > 0;
+                    had_any_diffs = had_any_diffs or manager.summary.hasDiffs();
 
                     if (manager.options.enable.frozen_lockfile and had_any_diffs) {
                         if (comptime log_level != .silent) {

@@ -829,6 +829,13 @@ pub const String = extern struct {
         return bun.strings.eqlLong(this.byteSlice(), value, true);
     }
 
+    extern fn BunString__toThreadSafe(this: *String) void;
+    pub fn toThreadSafe(this: *String) void {
+        if (this.tag == .WTFStringImpl) {
+            BunString__toThreadSafe(this);
+        }
+    }
+
     pub fn eql(this: String, other: String) bool {
         return this.toZigString().eql(other.toZigString());
     }
@@ -837,6 +844,23 @@ pub const String = extern struct {
 pub const SliceWithUnderlyingString = struct {
     utf8: ZigString.Slice,
     underlying: String,
+
+    pub fn toThreadSafe(this: *SliceWithUnderlyingString) void {
+        std.debug.assert(this.underlying.tag == .WTFStringImpl);
+
+        var orig = this.underlying.value.WTFStringImpl;
+        this.underlying.toThreadSafe();
+        if (this.underlying.value.WTFStringImpl != orig) {
+            orig.deref();
+
+            if (this.utf8.allocator.get()) |allocator| {
+                if (String.isWTFAllocator(allocator)) {
+                    this.utf8.deinit();
+                    this.utf8 = this.underlying.toUTF8(bun.default_allocator);
+                }
+            }
+        }
+    }
 
     pub fn deinit(this: SliceWithUnderlyingString) void {
         this.utf8.deinit();

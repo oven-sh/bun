@@ -4,17 +4,66 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+/**
+ * @callback hash32func
+ * @param {number} input_ptr
+ * @param {number} input_size
+ * @returns {number}
+ */
+/**
+ * @callback hash64func
+ * @param {number} input_ptr
+ * @param {number} input_size
+ * @returns {bigint}
+ */
+/**
+ * @callback seededhash32func
+ * @param {number} input_ptr
+ * @param {number} input_size
+ * @param {number} seed
+ * @returns {number}
+ */
+/**
+ * @callback seededhash64func
+ * @param {number} input_ptr
+ * @param {number} input_size
+ * @param {bigint} seed
+ * @returns {bigint}
+ */
+/**
+ * @callback JShash32func
+ * @param {string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer} input
+ * @returns {number}
+ */
+/**
+ * @callback JShash64func
+ * @param {string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer} input
+ * @returns {bigint}
+ */
+/**
+ * @callback JSseededhash32func
+ * @param {string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer} input
+ * @param {number=} seed
+ * @returns {number}
+ */
+/**
+ * @callback JSseededhash64func
+ * @param {string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer} input
+ * @param {bigint=} seed
+ * @returns {bigint}
+ */
+
 const { instance } = /**
 * @type {{ instance: { exports: {
 *    memory: WebAssembly.Memory,
 *    alloc(size: number): number,
-*    wyhash(input_ptr: number, input_size: number, seed: bigint): bigint,
-*    adler32(input_ptr: number, input_size: number): number,
-*    crc32(input_ptr: number, input_size: number): number,
-*    cityhash32(input_ptr: number, input_size: number): number,
-*    cityhash64(input_ptr: number, input_size: number): bigint,
-*    murmur32v3(input_ptr: number, input_size: number): number,
-*    murmur64v2(input_ptr: number, input_size: number): bigint,
+*    wyhash: seededhash64func,
+*    adler32: hash32func,
+*    crc32: hash32func,
+*    cityhash32: hash32func,
+*    cityhash64: seededhash64func,
+*    murmur32v3: seededhash32func,
+*    murmur64v2: seededhash64func,
 * } } }}
 */(/** @type {unknown} */(await WebAssembly.instantiate(
     fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'zighash.wasm')
@@ -58,41 +107,38 @@ const allocString = (
     return allocBuffer(strbuf, nullTerminate);
 };
 
-/**
- * @param {string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer} input
- * @param {bigint=} seed
- */
+/** @type {JSseededhash64func} */
 export function wyhash(input, seed = 0n) {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
     return BigInt.asUintN(64, exports.wyhash(ptr, size, seed));
 }
-/** @param {string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer} input */
+/** @type {JShash32func} */
 export function adler32(input) {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
-    return exports.adler32(ptr, size);
+    return exports.adler32(ptr, size) >>> 0;
 }
-/** @param {string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer} input */
+/** @type {JShash32func} */
 export function crc32(input) {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
-    return exports.crc32(ptr, size);
+    return exports.crc32(ptr, size) >>> 0;
 }
-/** @param {string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer} input */
+/** @type {JShash32func} */
 export function cityhash32(input) {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
-    return exports.cityhash32(ptr, size);
+    return exports.cityhash32(ptr, size) >>> 0;
 }
-/** @param {string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer} input */
-export function cityhash64(input) {
+/** @type {JSseededhash64func} */
+export function cityhash64(input, seed = 0n) {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
-    return BigInt.asUintN(64, exports.cityhash64(ptr, size));
+    return BigInt.asUintN(64, exports.cityhash64(ptr, size, seed));
 }
-/** @param {string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer} input */
-export function murmur32v3(input) {
+/** @type {JSseededhash32func} */
+export function murmur32v3(input, seed = 0) {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
-    return exports.murmur32v3(ptr, size);
+    return exports.murmur32v3(ptr, size, seed); //! Bun doesn't unsigned-cast this one, likely unintended but for now we'll do the same
 }
-/** @param {string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer} input */
-export function murmur64v2(input) {
+/** @type {JSseededhash64func} */
+export function murmur64v2(input, seed = 0n) {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
-    return BigInt.asUintN(64, exports.murmur64v2(ptr, size));
+    return BigInt.asUintN(64, exports.murmur64v2(ptr, size, seed));
 }

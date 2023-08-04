@@ -36,18 +36,18 @@ export fn cityhash32(input_ptr: [*]const u8, input_size: u32) u32 {
     defer std.heap.wasm_allocator.free(input);
     return std.hash.CityHash32.hash(input);
 }
-export fn cityhash64(input_ptr: [*]const u8, input_size: u32) u64 {
+export fn cityhash64(input_ptr: [*]const u8, input_size: u32, seed: u64) u64 {
     const input: []const u8 = input_ptr[0..input_size];
     defer std.heap.wasm_allocator.free(input);
-    return std.hash.CityHash64.hash(input);
+    return std.hash.CityHash64.hashWithSeed(input, seed);
 }
-export fn murmur32v3(input_ptr: [*]const u8, input_size: u32) u32 {
+export fn murmur32v3(input_ptr: [*]const u8, input_size: u32, seed: u32) u32 {
     const input: []const u8 = input_ptr[0..input_size];
     defer std.heap.wasm_allocator.free(input);
-    return std.hash.Murmur3_32.hashWithSeed(input, 0);
+    return std.hash.Murmur3_32.hashWithSeed(input, seed);
 }
-export fn murmur64v2(input_ptr: [*]const u8, input_size: u32) u64 {
+export fn murmur64v2(input_ptr: [*]const u8, input_size: u32, seed: u64) u64 {
     const input: []const u8 = input_ptr[0..input_size];
     defer std.heap.wasm_allocator.free(input);
-    return std.hash.Murmur2_64.hashWithSeed(input, 0);
+    return std.hash.Murmur2_64.hashWithSeed(input, seed);
 }

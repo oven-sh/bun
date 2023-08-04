@@ -10,10 +10,10 @@ export const bunHashProto: Hash = {
     adler32(data) { return adler32(data); },
     crc32(data) { return crc32(data); },
     cityHash32(data) { return cityhash32(data); },
-    cityHash64(data) { return cityhash64(data); },
+    cityHash64(data, seed = 0) { return cityhash64(data, BigInt(seed)); },
     // murmur32v2 (?)
-    murmur32v3(data, seed = 0) { return murmur32v3(data); },
-    murmur64v2(data, seed?) { return murmur64v2(data); }
+    murmur32v3(data, seed) { return murmur32v3(data, seed); },
+    murmur64v2(data, seed = 0) { return murmur64v2(data, BigInt(seed)); }
 };
 
 type HashImpl = {

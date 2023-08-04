@@ -1793,6 +1793,13 @@ pub const VirtualMachine = struct {
         );
         this.eventLoop().ensureWaker();
 
+        // Clear the terminal
+        if (!strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true")) {
+            Output.flush();
+            Output.disableBuffering();
+            Output.resetTerminalAll();
+        }
+
         var promise: *JSInternalPromise = undefined;
 
         if (!this.bundler.options.disable_transpilation) {

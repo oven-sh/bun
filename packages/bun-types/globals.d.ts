@@ -711,13 +711,6 @@ declare var FormData: {
 
 declare interface Blob {
   /**
-   * Create a new [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
-   *
-   * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
-   * @param `options` - An object containing properties to be added to the [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
-   */
-  // constructor(parts?: BlobPart[], options?: BlobPropertyBag);
-  /**
    * Create a new view **without 🚫 copying** the underlying data.
    *
    * Similar to [`BufferSource.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BufferSource/subarray)
@@ -794,7 +787,13 @@ declare interface Blob {
 }
 declare var Blob: {
   prototype: Blob;
-  new (blobParts?: BlobPart[], options?: BlobPropertyBag): Blob;
+  /**
+   * Create a new [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
+   *
+   * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
+   * @param `options` - An object containing properties to be added to the [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
+   */
+  new (parts?: BlobPart[], options?: BlobPropertyBag): Blob;
 };
 
 interface ResponseInit {

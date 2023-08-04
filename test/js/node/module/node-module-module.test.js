@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { _nodeModulePaths, builtinModules, isBuiltin } from "module";
+import { _nodeModulePaths, builtinModules, isBuiltin, wrap } from "module";
 import Module from "module";
 
 test("builtinModules exists", () => {
@@ -42,4 +42,10 @@ test("_nodeModulePaths() works", () => {
     "/node_modules",
   ]);
   expect(_nodeModulePaths("/a/b/../d")).toEqual(["/a/d/node_modules", "/a/node_modules", "/node_modules"]);
+});
+
+test("Module.wrap", () => {
+  var mod = { exports: {} };
+  expect(eval(wrap("exports.foo = 1; return 42"))(mod, mod.exports)).toBe(42);
+  expect(wrap()).toBe("(function (exports, require, module, __filename, __dirname) { undefined\n});");
 });

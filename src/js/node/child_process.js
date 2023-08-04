@@ -5,6 +5,27 @@ const {
   constants: { signals },
 } = require("node:os");
 const { promisify } = require("node:util");
+const {
+  validateArgumentNullCheck,
+  validateArgumentsNullCheck,
+  validateMaxBuffer,
+  validateTimeout,
+  validateObject,
+  validateAbortSignal,
+  validateFunction,
+  validateOneOf,
+  validateString,
+  getValidatedPath,
+} = require("./internal/validators");
+const {
+  ERR_CHILD_PROCESS_STDIO_MAXBUFFER,
+  ERR_CHILD_PROCESS_IPC_REQUIRED,
+  ERR_INVALID_ARG_TYPE,
+  ERR_INVALID_ARG_VALUE,
+  ERR_INVALID_OPT_VALUE,
+  ERR_OUT_OF_RANGE,
+  ERR_UNKNOWN_SIGNAL,
+} = require("./internal/errors");
 
 var ObjectCreate = Object.create;
 var ObjectAssign = Object.assign;
@@ -1398,185 +1419,7 @@ class ShimmedStdioOutStream extends EventEmitter {
 }
 
 //------------------------------------------------------------------------------
-// Section 5. Validators
-//------------------------------------------------------------------------------
-
-function validateMaxBuffer(maxBuffer) {
-  if (maxBuffer != null && !(typeof maxBuffer === "number" && maxBuffer >= 0)) {
-    throw new ERR_OUT_OF_RANGE("options.maxBuffer", "a positive number", maxBuffer);
-  }
-}
-
-function validateArgumentNullCheck(arg, propName) {
-  if (typeof arg === "string" && StringPrototypeIncludes.call(arg, "\u0000")) {
-    throw new ERR_INVALID_ARG_VALUE(propName, arg, "must be a string without null bytes");
-  }
-}
-
-function validateArgumentsNullCheck(args, propName) {
-  for (let i = 0; i < args.length; ++i) {
-    validateArgumentNullCheck(args[i], `${propName}[${i}]`);
-  }
-}
-
-function validateTimeout(timeout) {
-  if (timeout != null && !(NumberIsInteger(timeout) && timeout >= 0)) {
-    throw new ERR_OUT_OF_RANGE("timeout", "an unsigned integer", timeout);
-  }
-}
-
-function validateBoolean(value, name) {
-  if (typeof value !== "boolean") throw new ERR_INVALID_ARG_TYPE(name, "boolean", value);
-}
-
-/**
- * @callback validateFunction
- * @param {*} value
- * @param {string} name
- * @returns {asserts value is Function}
- */
-
-/** @type {validateFunction} */
-function validateFunction(value, name) {
-  if (typeof value !== "function") throw new ERR_INVALID_ARG_TYPE(name, "Function", value);
-}
-
-/**
- * @callback validateAbortSignal
- * @param {*} signal
- * @param {string} name
- */
-
-/** @type {validateAbortSignal} */
-const validateAbortSignal = (signal, name) => {
-  if (signal !== undefined && (signal === null || typeof signal !== "object" || !("aborted" in signal))) {
-    throw new ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
-  }
-};
-
-/**
- * @callback validateOneOf
- * @template T
- * @param {T} value
- * @param {string} name
- * @param {T[]} oneOf
- */
-
-/** @type {validateOneOf} */
-const validateOneOf = (value, name, oneOf) => {
-  // const validateOneOf = hideStackFrames((value, name, oneOf) => {
-  if (!ArrayPrototypeIncludes.call(oneOf, value)) {
-    const allowed = ArrayPrototypeJoin.call(
-      ArrayPrototypeMap.call(oneOf, v => (typeof v === "string" ? `'${v}'` : String(v))),
-      ", ",
-    );
-    const reason = "must be one of: " + allowed;
-    throw new ERR_INVALID_ARG_VALUE(name, value, reason);
-  }
-};
-
-/**
- * @callback validateObject
- * @param {*} value
- * @param {string} name
- * @param {{
- *   allowArray?: boolean,
- *   allowFunction?: boolean,
- *   nullable?: boolean
- * }} [options]
- */
-
-/** @type {validateObject} */
-const validateObject = (value, name, options = null) => {
-  // const validateObject = hideStackFrames((value, name, options = null) => {
-  const allowArray = options?.allowArray ?? false;
-  const allowFunction = options?.allowFunction ?? false;
-  const nullable = options?.nullable ?? false;
-  if (
-    (!nullable && value === null) ||
-    (!allowArray && ArrayIsArray.call(value)) ||
-    (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
-  ) {
-    throw new ERR_INVALID_ARG_TYPE(name, "object", value);
-  }
-};
-
-/**
- * @callback validateArray
- * @param {*} value
- * @param {string} name
- * @param {number} [minLength]
- * @returns {asserts value is any[]}
- */
-
-/** @type {validateArray} */
-const validateArray = (value, name, minLength = 0) => {
-  // const validateArray = hideStackFrames((value, name, minLength = 0) => {
-  if (!ArrayIsArray(value)) {
-    throw new ERR_INVALID_ARG_TYPE(name, "Array", value);
-  }
-  if (value.length < minLength) {
-    const reason = `must be longer than ${minLength}`;
-    throw new ERR_INVALID_ARG_VALUE(name, value, reason);
-  }
-};
-
-/**
- * @callback validateString
- * @param {*} value
- * @param {string} name
- * @returns {asserts value is string}
- */
-
-/** @type {validateString} */
-function validateString(value, name) {
-  if (typeof value !== "string") throw new ERR_INVALID_ARG_TYPE(name, "string", value);
-}
-
-function nullCheck(path, propName, throwError = true) {
-  const pathIsString = typeof path === "string";
-  const pathIsUint8Array = isUint8Array(path);
-
-  // We can only perform meaningful checks on strings and Uint8Arrays.
-  if (
-    (!pathIsString && !pathIsUint8Array) ||
-    (pathIsString && !StringPrototypeIncludes.call(path, "\u0000")) ||
-    (pathIsUint8Array && !Uint8ArrayPrototypeIncludes.call(path, 0))
-  ) {
-    return;
-  }
-
-  const err = new ERR_INVALID_ARG_VALUE(propName, path, "must be a string or Uint8Array without null bytes");
-  if (throwError) {
-    throw err;
-  }
-  return err;
-}
-
-function validatePath(path, propName = "path") {
-  if (typeof path !== "string" && !isUint8Array(path)) {
-    throw new ERR_INVALID_ARG_TYPE(propName, ["string", "Buffer", "URL"], path);
-  }
-
-  const err = nullCheck(path, propName, false);
-
-  if (err !== undefined) {
-    throw err;
-  }
-}
-
-function getValidatedPath(fileURLOrPath, propName = "path") {
-  const path = toPathIfFileURL(fileURLOrPath);
-  validatePath(path, propName);
-  return path;
-}
-
-function isUint8Array(value) {
-  return typeof value === "object" && value !== null && value instanceof Uint8Array;
-}
-
-//------------------------------------------------------------------------------
-// Section 6. Random utilities
+// Section 5. Random utilities
 //------------------------------------------------------------------------------
 
 function isURLInstance(fileURLOrPath) {
@@ -1589,7 +1432,7 @@ function toPathIfFileURL(fileURLOrPath) {
 }
 
 //------------------------------------------------------------------------------
-// Section 7. Node errors / error polyfills
+// Section 6. Node errors / error polyfills
 //------------------------------------------------------------------------------
 var Error = globalThis.Error;
 var TypeError = globalThis.TypeError;
@@ -1745,59 +1588,6 @@ function genericNodeError(message, options) {
 //   },
 //   TypeError
 // );
-
-function ERR_OUT_OF_RANGE(str, range, input, replaceDefaultBoolean = false) {
-  // Node implementation:
-  // assert(range, 'Missing "range" argument');
-  // let msg = replaceDefaultBoolean
-  //   ? str
-  //   : `The value of "${str}" is out of range.`;
-  // let received;
-  // if (NumberIsInteger(input) && MathAbs(input) > 2 ** 32) {
-  //   received = addNumericalSeparator(String(input));
-  // } else if (typeof input === "bigint") {
-  //   received = String(input);
-  //   if (input > 2n ** 32n || input < -(2n ** 32n)) {
-  //     received = addNumericalSeparator(received);
-  //   }
-  //   received += "n";
-  // } else {
-  //   received = lazyInternalUtilInspect().inspect(input);
-  // }
-  // msg += ` It must be ${range}. Received ${received}`;
-  // return new RangeError(msg);
-  return new RangeError(`The value of ${str} is out of range. It must be ${range}. Received ${input}`);
-}
-
-function ERR_CHILD_PROCESS_STDIO_MAXBUFFER(stdio) {
-  return Error(`${stdio} maxBuffer length exceeded`);
-}
-
-function ERR_UNKNOWN_SIGNAL(name) {
-  const err = new TypeError(`Unknown signal: ${name}`);
-  err.code = "ERR_UNKNOWN_SIGNAL";
-  return err;
-}
-
-function ERR_INVALID_ARG_TYPE(name, type, value) {
-  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value?.toString()}`);
-  err.code = "ERR_INVALID_ARG_TYPE";
-  return err;
-}
-
-function ERR_INVALID_OPT_VALUE(name, value) {
-  return new TypeError(`The value "${value}" is invalid for option "${name}"`);
-}
-
-function ERR_INVALID_ARG_VALUE(name, value, reason) {
-  return new Error(`The value "${value}" is invalid for argument '${name}'. Reason: ${reason}`);
-}
-
-function ERR_CHILD_PROCESS_IPC_REQUIRED(name) {
-  const err = new TypeError(`Forked processes must have an IPC channel, missing value 'ipc' in ${name}`);
-  err.code = "ERR_CHILD_PROCESS_IPC_REQUIRED";
-  return err;
-}
 
 class SystemError extends Error {
   path;

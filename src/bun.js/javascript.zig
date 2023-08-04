@@ -630,6 +630,7 @@ pub const VirtualMachine = struct {
             Output.flush();
             Output.disableBuffering();
             Output.resetTerminalAll();
+            Output.enableBuffering();
         }
 
         this.global.reload();

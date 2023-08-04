@@ -74,6 +74,7 @@ pub const AsyncReaddirTask = struct {
             .arena = arena,
         };
         task.ref.ref(vm);
+        task.args.path.toThreadSafe();
 
         JSC.WorkPool.schedule(&task.task);
 
@@ -157,6 +158,7 @@ pub const AsyncStatTask = struct {
             .arena = arena,
         };
         task.ref.ref(vm);
+        task.args.path.toThreadSafe();
 
         JSC.WorkPool.schedule(&task.task);
 
@@ -240,6 +242,7 @@ pub const AsyncReadFileTask = struct {
             .arena = arena,
         };
         task.ref.ref(vm);
+        task.args.path.toThreadSafe();
 
         JSC.WorkPool.schedule(&task.task);
 
@@ -904,7 +907,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Stat {
-            const path = PathLike.fromJS(ctx, arguments, exception) orelse {
+            const path = PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "path must be a string or TypedArray",
@@ -1405,7 +1408,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Readdir {
-            const path = PathLike.fromJS(ctx, arguments, exception) orelse {
+            const path = PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "path must be a string or TypedArray",
@@ -1972,7 +1975,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?ReadFile {
-            const path = PathOrFileDescriptor.fromJS(ctx, arguments, arguments.arena.allocator(), exception) orelse {
+            const path = PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "path must be a string or a file descriptor",

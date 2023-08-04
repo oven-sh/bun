@@ -96,6 +96,17 @@ BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString.impl() } };
 }
 
+extern "C" void BunString__toThreadSafe(BunString* str)
+{
+    if (str->tag == BunStringTag::WTFStringImpl) {
+        auto impl = str->impl.wtf->isolatedCopy();
+        if (impl.ptr() != str->impl.wtf) {
+            impl->ref();
+            str->impl.wtf = &impl.leakRef();
+        }
+    }
+}
+
 BunString toString(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     return fromJS(globalObject, value);

@@ -229,6 +229,39 @@ it("promises.readFile", async () => {
   }
 });
 
+it("promises.readFile - UTF16 file path", async () => {
+  const dest = `/tmp/superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${
+    (Math.random() * 1024000) | 0
+  }.txt`;
+  await fs.promises.copyFile(import.meta.path, dest);
+  const expected = readFileSync(import.meta.path, "utf-8");
+  Bun.gc(true);
+  for (let i = 0; i < 100; i++) {
+    expect(await fs.promises.readFile(dest, "utf-8")).toEqual(expected);
+  }
+  Bun.gc(true);
+});
+
+it("promises.readFile - atomized file path", async () => {
+  const destInput = `/tmp/superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${
+    (Math.random() * 1024000) | 0
+  }.txt`;
+  // Force it to become an atomized string by making it a property access
+  const dest: string = (
+    {
+      [destInput]: destInput,
+      boop: 123,
+    } as const
+  )[destInput] as string;
+  await fs.promises.copyFile(import.meta.path, dest);
+  const expected = readFileSync(import.meta.path, "utf-8");
+  Bun.gc(true);
+  for (let i = 0; i < 100; i++) {
+    expect(await fs.promises.readFile(dest, "utf-8")).toEqual(expected);
+  }
+  Bun.gc(true);
+});
+
 it("promises.readFile with buffer as file path", async () => {
   for (let i = 0; i < 10; i++)
     expect(await fs.promises.readFile(Buffer.from(import.meta.path), "utf-8")).toEqual(

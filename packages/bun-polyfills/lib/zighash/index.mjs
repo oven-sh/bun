@@ -9,8 +9,12 @@ const { instance } = /**
 *    memory: WebAssembly.Memory,
 *    alloc(size: number): number,
 *    wyhash(input_ptr: number, input_size: number, seed: bigint): bigint,
+*    adler32(input_ptr: number, input_size: number): number,
+*    crc32(input_ptr: number, input_size: number): number,
 *    cityhash32(input_ptr: number, input_size: number): number,
 *    cityhash64(input_ptr: number, input_size: number): bigint,
+*    murmur32v3(input_ptr: number, input_size: number): number,
+*    murmur64v2(input_ptr: number, input_size: number): bigint,
 * } } }}
 */(/** @type {unknown} */(await WebAssembly.instantiate(
     fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'zighash.wasm')
@@ -62,19 +66,33 @@ export function wyhash(input, seed = 0n) {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
     return BigInt.asUintN(64, exports.wyhash(ptr, size, seed));
 }
-
-/**
- * @param {string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer} input
- */
+/** @param {string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer} input */
+export function adler32(input) {
+    const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
+    return exports.adler32(ptr, size);
+}
+/** @param {string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer} input */
+export function crc32(input) {
+    const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
+    return exports.crc32(ptr, size);
+}
+/** @param {string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer} input */
 export function cityhash32(input) {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
     return exports.cityhash32(ptr, size);
 }
-
-/**
- * @param {string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer} input
- */
+/** @param {string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer} input */
 export function cityhash64(input) {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
     return BigInt.asUintN(64, exports.cityhash64(ptr, size));
+}
+/** @param {string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer} input */
+export function murmur32v3(input) {
+    const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
+    return exports.murmur32v3(ptr, size);
+}
+/** @param {string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer} input */
+export function murmur64v2(input) {
+    const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
+    return BigInt.asUintN(64, exports.murmur64v2(ptr, size));
 }

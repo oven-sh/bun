@@ -1,48 +1,19 @@
 import type { CryptoHashInterface, DigestEncoding, Hash } from 'bun';
-import { NotImplementedError } from '../../utils/errors.js';
-import murmur from 'murmurhash3js-revisited';
 import nodecrypto from 'node:crypto';
 import os from 'node:os';
-import crc from '@foxglove/crc';
-import adler32 from 'adler-32';
 import md4, { Md4 } from 'js-md4';
-import { cityhash32, cityhash64, wyhash } from '../../../lib/zighash/index.mjs';
+import { wyhash, adler32, crc32, cityhash32, cityhash64, murmur32v3, murmur64v2 } from '../../../lib/zighash/index.mjs';
 
 export const bunHash = ((data, seed = 0): bigint => wyhash(data, BigInt(seed))) as typeof Bun.hash;
 export const bunHashProto: Hash = {
-    wyhash(data, seed = 0) {
-        return wyhash(data, BigInt(seed));
-    },
-    adler32(data, seed?) {
-        if (typeof data === 'string') return adler32.str(data, seed);
-        else if (data instanceof ArrayBuffer || data instanceof SharedArrayBuffer) return adler32.buf(new Uint8Array(data), seed);
-        else return adler32.buf(new Uint8Array(data.buffer), seed);
-    },
-    crc32(data, seed?) {
-        if (data instanceof Uint8Array) return crc.crc32(data);
-        if (data instanceof ArrayBuffer) return crc.crc32(new Uint8Array(data));
-        if (typeof data === 'string') return crc.crc32(new TextEncoder().encode(data));
-        throw new Error('unimplemented');
-        // Apparently, the seed is ignored by Bun currently
-        //if (!seed) return crc.crc32(data as Uint8Array);
-        //crc.crc32Update(seed, data as Uint8Array);
-        //return crc.crc32Final(seed);
-    },
-    cityHash32(data) {
-        return cityhash32(data);
-    },
-    cityHash64(data) {
-        return cityhash64(data);
-    },
+    wyhash(data, seed = 0) { return wyhash(data, BigInt(seed)); },
+    adler32(data) { return adler32(data); },
+    crc32(data) { return crc32(data); },
+    cityHash32(data) { return cityhash32(data); },
+    cityHash64(data) { return cityhash64(data); },
     // murmur32v2 (?)
-    murmur32v3(data, seed = 0) {
-        if (typeof data === 'string') data = new TextEncoder().encode(data);
-        if (data instanceof ArrayBuffer || data instanceof SharedArrayBuffer) return murmur.x86.hash32(new Uint8Array(data), seed);
-        return murmur.x86.hash32(new Uint8Array(data.buffer), seed);
-    },
-    murmur64v2(data, seed?) {
-        throw new NotImplementedError('Bun.hash.murmur64v2', this.murmur64v2);
-    }
+    murmur32v3(data, seed = 0) { return murmur32v3(data); },
+    murmur64v2(data, seed?) { return murmur64v2(data); }
 };
 
 type HashImpl = {

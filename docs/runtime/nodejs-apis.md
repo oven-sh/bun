@@ -38,7 +38,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:diagnostics_channel`](https://nodejs.org/api/diagnostics_channel.html)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`node:dns`](https://nodejs.org/api/dns.html)
 
@@ -162,7 +162,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:worker_threads`](https://nodejs.org/api/worker_threads.html)
 
-🔴 Not implemented, but coming soon.
+🟢 Fully implemented.
 
 ### [`node:zlib`](https://nodejs.org/api/zlib.html)
 
@@ -461,7 +461,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`BroadcastChannel`](https://developer.mozilla.org/en-US/docs/Web/API/BroadcastChannel)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`btoa()`](https://developer.mozilla.org/en-US/docs/Web/API/btoa)
 

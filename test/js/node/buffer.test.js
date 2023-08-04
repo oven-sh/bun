@@ -1201,20 +1201,22 @@ it("Buffer.compare", () => {
   }
 });
 
-it("Buffer.copy", () => {
-  var array1 = new Uint8Array(128);
-  array1.fill(100);
-  array1 = new Buffer(array1.buffer);
-  var array2 = new Uint8Array(128);
-  array2.fill(200);
-  array2 = new Buffer(array2.buffer);
-  var array3 = new Uint8Array(128);
-  array3 = new Buffer(array3.buffer);
-  gc();
-  expect(array1.copy(array2)).toBe(128);
-  expect(array1.join("")).toBe(array2.join(""));
+describe("Buffer.copy", () => {
+  it("should work", () => {
+    var array1 = new Uint8Array(128);
+    array1.fill(100);
+    array1 = new Buffer(array1.buffer);
+    var array2 = new Uint8Array(128);
+    array2.fill(200);
+    array2 = new Buffer(array2.buffer);
+    var array3 = new Uint8Array(128);
+    array3 = new Buffer(array3.buffer);
+    gc();
+    expect(array1.copy(array2)).toBe(128);
+    expect(array1.join("")).toBe(array2.join(""));
+  });
 
-  {
+  it("should work with offset", () => {
     // Create two `Buffer` instances.
     const buf1 = Buffer.allocUnsafe(26);
     const buf2 = Buffer.allocUnsafe(26).fill("!");
@@ -1227,9 +1229,23 @@ it("Buffer.copy", () => {
     // Copy `buf1` bytes 16 through 19 into `buf2` starting at byte 8 of `buf2`.
     buf1.copy(buf2, 8, 16, 20);
     expect(buf2.toString("ascii", 0, 25)).toBe("!!!!!!!!qrst!!!!!!!!!!!!!");
-  }
+  });
 
-  {
+  it("should ignore sourceEnd if it's out of range", () => {
+    const buf1 = Buffer.allocUnsafe(26);
+    const buf2 = Buffer.allocUnsafe(10).fill("!");
+
+    for (let i = 0; i < 26; i++) {
+      // 97 is the decimal ASCII value for 'a'.
+      buf1[i] = i + 97;
+    }
+
+    // Copy `buf1` bytes "xyz" into `buf2` starting at byte 1 of `buf2`.
+    expect(buf1.copy(buf2, 1, 23, 100)).toBe(3);
+    expect(buf2.toString()).toBe("!xyz!!!!!!");
+  });
+
+  it("copy to the same buffer", () => {
     const buf = Buffer.allocUnsafe(26);
 
     for (let i = 0; i < 26; i++) {
@@ -1239,7 +1255,7 @@ it("Buffer.copy", () => {
 
     buf.copy(buf, 0, 4, 10);
     expect(buf.toString()).toBe("efghijghijklmnopqrstuvwxyz");
-  }
+  });
 });
 
 export function fillRepeating(dstBuffer, start, end) {

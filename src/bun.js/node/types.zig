@@ -629,6 +629,12 @@ pub const PathLike = union(Tag) {
         }
     }
 
+    pub fn toThreadSafe(this: *PathLike) void {
+        if (this.* == .slice_with_underlying_string) {
+            this.slice_with_underlying_string.toThreadSafe();
+        }
+    }
+
     pub fn deinitAndUnprotect(this: *const PathLike) void {
         switch (this.*) {
             .slice_with_underlying_string => |val| {
@@ -1047,6 +1053,12 @@ pub const PathOrFileDescriptor = union(Tag) {
     pub fn deinit(this: PathOrFileDescriptor) void {
         if (this == .path) {
             this.path.deinit();
+        }
+    }
+
+    pub fn toThreadSafe(this: *PathOrFileDescriptor) void {
+        if (this.* == .path) {
+            this.path.toThreadSafe();
         }
     }
 

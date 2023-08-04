@@ -2374,13 +2374,15 @@ pub const Package = extern struct {
             add: u32 = 0,
             remove: u32 = 0,
             update: u32 = 0,
-            deduped: u32 = 0,
 
             pub inline fn sum(this: *Summary, that: Summary) void {
                 this.add += that.add;
                 this.remove += that.remove;
                 this.update += that.update;
-                this.deduped += that.deduped;
+            }
+
+            pub inline fn hasDiffs(this: Summary) bool {
+                return this.add > 0 or this.remove > 0 or this.update > 0;
             }
         };
 
@@ -2422,6 +2424,7 @@ pub const Package = extern struct {
                     summary.remove += 1;
                     continue;
                 }
+                defer to_i += 1;
 
                 if (to_deps[to_i].eql(from_dep, to_lockfile.buffers.string_bytes.items, from_lockfile.buffers.string_bytes.items)) {
                     if (id_mapping) |mapping| {
@@ -2452,11 +2455,11 @@ pub const Package = extern struct {
                                     null,
                                 );
 
-                                break :brk diff.add == 0 and diff.remove == 0 and diff.update == 0;
+                                break :brk !diff.hasDiffs();
                             } else false,
                             else => true,
                         }) {
-                            mapping[to_i] = @as(PackageID, @truncate(i));
+                            mapping[to_i] = @truncate(i);
                             continue;
                         }
                     } else {
@@ -2468,15 +2471,7 @@ pub const Package = extern struct {
                 summary.update += 1;
             }
 
-            outer: for (to_deps, 0..) |to_dep, i| {
-                if (from_deps.len > i and from_deps[i].name_hash == to_dep.name_hash) continue;
-
-                for (from_deps) |from_dep| {
-                    if (from_dep.name_hash == to_dep.name_hash) continue :outer;
-                }
-
-                summary.add += 1;
-            }
+            summary.add = @truncate(to_deps.len - (from_deps.len - summary.remove));
 
             return summary;
         }
@@ -2628,16 +2623,18 @@ pub const Package = extern struct {
                 if (workspace_range) |range| {
                     if (workspace_version) |ver| {
                         if (range.satisfies(ver)) {
+                            dependency_version.literal = path;
                             dependency_version.value.workspace = path;
                         }
                     }
                 } else {
+                    dependency_version.literal = path;
                     dependency_version.value.workspace = path;
                 }
             } else {
                 {
                     const workspace = dependency_version.value.workspace.slice(buf);
-                    var path = string_builder.append(
+                    const path = string_builder.append(
                         String,
                         if (strings.eqlComptime(workspace, "*")) "*" else Path.relative(
                             FileSystem.instance.top_level_dir,
@@ -2651,20 +2648,25 @@ pub const Package = extern struct {
                             ),
                         ),
                     );
-                    defer dependency_version.value.workspace = path;
+                    if (comptime Environment.allow_assert) {
+                        std.debug.assert(path.len() > 0);
+                        std.debug.assert(!std.fs.path.isAbsolute(path.slice(buf)));
+                    }
+                    dependency_version.literal = path;
+                    dependency_version.value.workspace = path;
+
                     var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, @truncate(name_hash));
                     if (workspace_entry.found_existing) {
                         const old_path = workspace_entry.value_ptr.*;
 
                         if (strings.eqlComptime(workspace, "*")) {
-                            path = old_path;
                             return null;
                         } else if (strings.eqlComptime(old_path.slice(buf), "*")) brk: {
                             workspace_entry.value_ptr.* = path;
                             for (package_dependencies[0..dependencies_count]) |*package_dep| {
                                 if (String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash) {
                                     if (package_dep.version.tag != .workspace) break :brk;
-                                    package_dep.version.value.workspace = path;
+                                    package_dep.version = dependency_version;
                                     return null;
                                 }
                             }

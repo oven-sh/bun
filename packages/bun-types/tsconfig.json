@@ -1,8 +1,6 @@
 {
   "compilerOptions": {
-    "lib": [
-      "ESNext"
-    ],
+    "lib": ["ESNext"],
     "skipLibCheck": false,
     "strict": true,
     "target": "esnext",
@@ -10,7 +8,8 @@
     "moduleResolution": "node",
     "allowSyntheticDefaultImports": true,
     "disableSolutionSearching": true,
-    "noUnusedLocals": true
+    "noUnusedLocals": true,
+    "outDir": "build"
   },
   "exclude": [
     "dist",

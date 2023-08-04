@@ -626,6 +626,13 @@ pub const VirtualMachine = struct {
             bun.reloadProcess(bun.default_allocator, !strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true"));
         }
 
+        if (!strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true")) {
+            Output.flush();
+            Output.disableBuffering();
+            Output.resetTerminalAll();
+            Output.enableBuffering();
+        }
+
         this.global.reload();
         this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
     }

@@ -1001,6 +1001,7 @@ pub fn zero(comptime Type: type) Type {
     return @as(Type, @bitCast(out));
 }
 pub const c_ares = @import("./deps/c_ares.zig");
+pub const crypto = @import("./deps/crypto.zig");
 pub const URL = @import("./url.zig").URL;
 pub const FormData = @import("./url.zig").FormData;
 

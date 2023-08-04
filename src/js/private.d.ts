@@ -1,6 +1,8 @@
 // The types in this file are not publicly defined, but do exist.
 // Stuff like `Bun.fs()` and so on.
 
+import { Interface } from "node:readline";
+
 /**
  * Works like the zig `@compileError` built-in, but only supports plain strings.
  */
@@ -147,7 +149,76 @@ declare interface Error {
  */
 function $lazy<T extends keyof BunLazyModules>(id: T): BunLazyModules[T];
 
-interface BunLazyModules {
+interface KeyObjectHandle {
+
+}
+type KeyType = string | ArrayBufferView | JsonWebKey | KeyObjectHandle;
+type KeyPairType = [publicKey: KeyType, privateKey: KeyType];
+interface GeneratorKeyPair {
+  ondone(error, result): void;
+  run(): null | [Error, undefined] | [null, KeyPairType];
+}
+class RsaKeyPairGenJob implements GeneratorKeyPair {
+  constructor(
+    mode: number,
+    kKeyVariant: symbol,
+    modulusLength: number,
+    publicExponent: number,
+    publicFormat: PKFormatType,
+    publicType: PKEncodingType,
+    privateFormat: PKFormatType,
+    privateType: PKEncodingType,
+    cipher: string,
+    passphrase: string,
+  );
+  constructor(
+    mode: number,
+    kKeyVariant: symbol,
+    modulusLength: number,
+    publicExponent: number,
+    hashAlgorithm: string,
+    mgf1HashAlgorithm: string,
+    saltLength: number,
+    publicFormat: PKFormatType,
+    publicType: PKEncodingType,
+    privateFormat: PKFormatType,
+    privateType: PKEncodingType,
+    cipher: string,
+    passphrase: string,
+  );
+}
+
+enum PKFormatType {
+  pem,
+  der,
+  jwk,
+}
+
+enum PKEncodingType {
+  pkcs1,
+  spki,
+  pkcs8,
+  sec1,
+}
+
+enum kKeyVariantRSA {
+  SSA_PKCS1_v1_5,
+  PSS,
+}
+
+enum EVP_PKEY {
+  ED25519,
+  ED448,
+  X25519,
+  X448,
+}
+
+enum OPENSSL_EC {
+  NAMED_CURVE,
+  EXPLICIT_CURVE,
+}
+
+export interface BunLazyModules {
   /**
    * Primordials is a dynamic object that contains builtin functions and values.
    *
@@ -192,6 +263,21 @@ interface BunLazyModules {
     get: typeof import("./builtins/AsyncContext").getAsyncContext;
     set: typeof import("./builtins/AsyncContext").setAsyncContext;
     cleanupLater: () => void;
+  };
+  "generateKeyPair": {
+    GeneratorKeyPair: typeof GeneratorKeyPair;
+    KeyObjectHandle: typeof KeyObjectHandle;
+    RsaKeyPairGenJob: typeof RsaKeyPairGenJob;
+    DhKeyPairGenJob: typeof BunLazyModules['generateKeyPair']['GeneratorKeyPair'];
+    NidKeyPairGenJob: typeof BunLazyModules['generateKeyPair']['GeneratorKeyPair'];
+    DsaKeyPairGenJob: typeof BunLazyModules['generateKeyPair']['GeneratorKeyPair'];
+    EcKeyPairGenJob: typeof BunLazyModules['generateKeyPair']['GeneratorKeyPair'];
+    PKFormatType: typeof PKFormatType;
+    kKeyVariant: {
+      RSA: typeof kKeyVariantRSA;
+    };
+    EVP_PKEY: typeof EVP_PKEY;
+    OPENSSL_EC: typeof OPENSSL_EC;
   };
 
   // ReadableStream related

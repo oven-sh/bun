@@ -1,9 +1,54 @@
 // Hardcoded module "node:crypto"
+const {
+  validateArgumentNullCheck,
+  validateArgumentsNullCheck,
+  validateMaxBuffer,
+  validateTimeout,
+  validateAbortSignal,
+  validateFunction,
+  validateString,
+  validateObject,
+  validateUint32,
+  validateInt32,
+  validateBuffer,
+} = require("./internal/validators");
+const {
+  ERR_CHILD_PROCESS_STDIO_MAXBUFFER,
+  ERR_CHILD_PROCESS_IPC_REQUIRED,
+  ERR_INVALID_ARG_TYPE,
+  ERR_INVALID_ARG_VALUE,
+  ERR_INVALID_OPT_VALUE,
+  ERR_OUT_OF_RANGE,
+  ERR_UNKNOWN_SIGNAL,
+  ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS,
+  ERR_INCOMPATIBLE_OPTION_PAIR,
+  ERR_MISSING_OPTION,
+} = require("./internal/errors");
+var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 const StreamModule = require("node:stream");
 const BufferModule = require("node:buffer");
 const StringDecoder = require("node:string_decoder").StringDecoder;
+/** @type {import('../private.d.ts').BunLazyModules['generateKeyPair']} */
+const {
+  KeyObjectHandle,
+  RsaKeyPairGenJob,
+  DhKeyPairGenJob,
+  NidKeyPairGenJob,
+  DsaKeyPairGenJob,
+  EcKeyPairGenJob,
+  PKEncodingType,
+  PKFormatType,
+  kKeyVariant,
+  EVP_PKEY,
+  OPENSSL_EC,
+} = $lazy('generateKeyPair');
+
+const constantsCrypto = {
+  kCryptoJobAsync: 0,
+  kCryptoJobSync: 1,
+};
 
 const MAX_STRING_LENGTH = 536870888;
 var Buffer = globalThis.Buffer;
@@ -1780,6 +1825,557 @@ var require_browser4 = __commonJS({
     exports.pbkdf2Sync = require_sync_browser();
   },
 });
+
+const kCustomPromisifyArgsSymbol = Symbol("customPromisifyArgs");
+const customPromisifyArgs = kCustomPromisifyArgsSymbol;
+
+/**
+ * Creates a class that can be safely iterated over.
+ *
+ * Because these functions are used by `makeSafe`, which is exposed on the
+ * `primordials` object, it's important to use const references to the
+ * primordials that they use.
+ * @template {Iterable} T
+ * @template {*} TReturn
+ * @template {*} TNext
+ * @param {(self: T) => IterableIterator<T>} factory
+ * @param {(...args: [] | [TNext]) => IteratorResult<T, TReturn>} next
+ * @returns {Iterator<T, TReturn, TNext>}
+ */
+const createSafeIterator = (factory, next) => {
+  class SafeIterator {
+    constructor(iterable) {
+      this._iterator = factory.call(iterable);
+      console.log(iterable);
+    }
+    next() {
+      return next(this._iterator);
+    }
+    [Symbol.iterator]() {
+      return this;
+    }
+  }
+  Object.setPrototypeOf(SafeIterator.prototype, null);
+  Object.freeze(SafeIterator.prototype);
+  Object.freeze(SafeIterator);
+  return SafeIterator;
+};
+
+const SafeArrayIterator = createSafeIterator(
+  Array.prototype[Symbol.iterator],
+  Object.getPrototypeOf([][Symbol.iterator]()).next,
+);
+
+function parseKeyFormat(formatStr, defaultFormat, optionName) {
+  if (formatStr === undefined && defaultFormat !== undefined) return defaultFormat;
+  else if (formatStr === "pem") return PKFormatType.pem;
+  else if (formatStr === "der") return PKFormatType.der;
+  else if (formatStr === "jwk") return PKFormatType.jwk;
+  throw new ERR_INVALID_ARG_VALUE(optionName, formatStr);
+}
+
+function parseKeyType(typeStr, required, keyType, isPublic, optionName) {
+  if (typeStr === undefined && !required) {
+    return undefined;
+  } else if (typeStr === "pkcs1") {
+    if (keyType !== undefined && keyType !== "rsa") {
+      throw new ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS(typeStr, "can only be used for RSA keys");
+    }
+    return PKEncodingType.pkcs1;
+  } else if (typeStr === "spki" && isPublic !== false) {
+    return PKEncodingType.spki;
+  } else if (typeStr === "pkcs8" && isPublic !== true) {
+    return PKEncodingType.pkcs8;
+  } else if (typeStr === "sec1" && isPublic !== true) {
+    if (keyType !== undefined && keyType !== "ec") {
+      throw new ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS(typeStr, "can only be used for EC keys");
+    }
+    return PKEncodingType.sec1;
+  }
+
+  throw new ERR_INVALID_ARG_VALUE(optionName, typeStr);
+}
+
+function option(name, objName) {
+  return objName === undefined ? `options.${name}` : `options.${objName}.${name}`;
+}
+
+function parseKeyFormatAndType(enc, keyType, isPublic, objName) {
+  const { format: formatStr, type: typeStr } = enc;
+
+  const isInput = keyType === undefined;
+  const format = parseKeyFormat(formatStr, isInput ? PKFormatType.pem : undefined, option("format", objName));
+
+  const isRequired = (!isInput || format === kKeyFormat.der) && format !== PKFormatType.jwk;
+  const type = parseKeyType(typeStr, isRequired, keyType, isPublic, option("type", objName));
+  return { format, type };
+}
+
+const encodingNames = [];
+for (const m of [
+  [PKEncodingType.pkcs1, "pkcs1"],
+  [PKEncodingType.pkcs8, "pkcs8"],
+  [PKEncodingType.spki, "spki"],
+  [PKEncodingType.sec1, "sec1"],
+])
+  encodingNames[m[0]] = m[1];
+
+function isStringOrBuffer(val) {
+  return typeof val === "string" || isArrayBufferView(val) || isAnyArrayBuffer(val);
+}
+
+function parseKeyEncodingInner(enc, keyType, isPublic, objName) {
+  validateObject(enc, "options");
+
+  const isInput = keyType === undefined;
+
+  const { format, type } = parseKeyFormatAndType(enc, keyType, isPublic, objName);
+
+  let cipher, passphrase, encoding;
+  if (isPublic !== true) {
+    ({ cipher, passphrase, encoding } = enc);
+
+    if (!isInput) {
+      if (cipher != null) {
+        if (typeof cipher !== "string") throw new ERR_INVALID_ARG_VALUE(option("cipher", objName), cipher);
+        if (format === kKeyFormat.der && (type === pkcs1 || type === sec1)) {
+          throw new ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS(encodingNames[type], "does not support encryption");
+        }
+      } else if (passphrase !== undefined) {
+        throw new ERR_INVALID_ARG_VALUE(option("cipher", objName), cipher);
+      }
+    }
+
+    if (
+      (isInput && passphrase !== undefined && !isStringOrBuffer(passphrase)) ||
+      (!isInput && cipher != null && !isStringOrBuffer(passphrase))
+    ) {
+      throw new ERR_INVALID_ARG_VALUE(option("passphrase", objName), passphrase);
+    }
+  }
+
+  if (passphrase !== undefined) passphrase = getArrayBufferOrView(passphrase, "key.passphrase", encoding);
+
+  return { format, type, cipher, passphrase };
+}
+
+function parsePublicKeyEncoding(enc, keyType, objName) {
+  return parseKeyEncodingInner(enc, keyType, keyType ? true : undefined, objName);
+}
+
+function parsePrivateKeyEncoding(enc, keyType, objName) {
+  return parseKeyEncodingInner(enc, keyType, false, objName);
+}
+
+function parseKeyEncoding(keyType, options = kEmptyObject) {
+  const { publicKeyEncoding, privateKeyEncoding } = options;
+
+  let publicFormat, publicType;
+  if (publicKeyEncoding == null) {
+    publicFormat = publicType = undefined;
+  } else if (typeof publicKeyEncoding === "object") {
+    ({ format: publicFormat, type: publicType } = parsePublicKeyEncoding(
+      publicKeyEncoding,
+      keyType,
+      "publicKeyEncoding",
+    ));
+  } else {
+    throw new ERR_INVALID_ARG_VALUE("options.publicKeyEncoding", publicKeyEncoding);
+  }
+
+  let privateFormat, privateType, cipher, passphrase;
+  if (privateKeyEncoding == null) {
+    privateFormat = privateType = undefined;
+  } else if (typeof privateKeyEncoding === "object") {
+    ({
+      format: privateFormat,
+      type: privateType,
+      cipher,
+      passphrase,
+    } = parsePrivateKeyEncoding(privateKeyEncoding, keyType, "privateKeyEncoding"));
+  } else {
+    throw new ERR_INVALID_ARG_VALUE("options.privateKeyEncoding", privateKeyEncoding);
+  }
+
+  return [publicFormat, publicType, privateFormat, privateType, cipher, passphrase];
+}
+
+const {
+  0: KeyObject,
+  1: SecretKeyObject,
+  2: PublicKeyObject,
+  3: PrivateKeyObject,
+} = ((NativeKeyObject) => {
+  // Publicly visible KeyObject class.
+  class KeyObject extends NativeKeyObject {
+    constructor(type, handle) {
+      if (type !== 'secret' && type !== 'public' && type !== 'private')
+        throw new ERR_INVALID_ARG_VALUE('type', type);
+      if (typeof handle !== 'object' || !(handle instanceof KeyObjectHandle))
+        throw new ERR_INVALID_ARG_TYPE('handle', 'object', handle);
+
+      super(handle);
+
+      this[kKeyType] = type;
+
+      ObjectDefineProperty(this, kHandle, {
+        __proto__: null,
+        value: handle,
+        enumerable: false,
+        configurable: false,
+        writable: false,
+      });
+    }
+
+    get type() {
+      return this[kKeyType];
+    }
+
+    static from(key) {
+      if (!isCryptoKey(key))
+        throw new ERR_INVALID_ARG_TYPE('key', 'CryptoKey', key);
+      return key[kKeyObject];
+    }
+
+    equals(otherKeyObject) {
+      if (!isKeyObject(otherKeyObject)) {
+        throw new ERR_INVALID_ARG_TYPE(
+          'otherKeyObject', 'KeyObject', otherKeyObject);
+      }
+
+      return otherKeyObject.type === this.type &&
+        this[kHandle].equals(otherKeyObject[kHandle]);
+    }
+  }
+
+  ObjectDefineProperties(KeyObject.prototype, {
+    [SymbolToStringTag]: {
+      __proto__: null,
+      configurable: true,
+      value: 'KeyObject',
+    },
+  });
+
+  class SecretKeyObject extends KeyObject {
+    constructor(handle) {
+      super('secret', handle);
+    }
+
+    get symmetricKeySize() {
+      return this[kHandle].getSymmetricKeySize();
+    }
+
+    export(options) {
+      if (options !== undefined) {
+        validateObject(options, 'options');
+        validateOneOf(
+          options.format, 'options.format', [undefined, 'buffer', 'jwk']);
+        if (options.format === 'jwk') {
+          return this[kHandle].exportJwk({}, false);
+        }
+      }
+      return this[kHandle].export();
+    }
+  }
+
+  const kAsymmetricKeyType = Symbol('kAsymmetricKeyType');
+  const kAsymmetricKeyDetails = Symbol('kAsymmetricKeyDetails');
+
+  function normalizeKeyDetails(details = {}) {
+    if (details.publicExponent !== undefined) {
+      return {
+        ...details,
+        publicExponent:
+          bigIntArrayToUnsignedBigInt(new Uint8Array(details.publicExponent)),
+      };
+    }
+    return details;
+  }
+
+  class AsymmetricKeyObject extends KeyObject {
+    // eslint-disable-next-line no-useless-constructor
+    constructor(type, handle) {
+      super(type, handle);
+    }
+
+    get asymmetricKeyType() {
+      return this[kAsymmetricKeyType] ||
+             (this[kAsymmetricKeyType] = this[kHandle].getAsymmetricKeyType());
+    }
+
+    get asymmetricKeyDetails() {
+      switch (this.asymmetricKeyType) {
+        case 'rsa':
+        case 'rsa-pss':
+        case 'dsa':
+        case 'ec':
+          return this[kAsymmetricKeyDetails] ||
+             (this[kAsymmetricKeyDetails] = normalizeKeyDetails(
+               this[kHandle].keyDetail({}),
+             ));
+        default:
+          return {};
+      }
+    }
+  }
+
+  class PublicKeyObject extends AsymmetricKeyObject {
+    constructor(handle) {
+      super('public', handle);
+    }
+
+    export(options) {
+      if (options && options.format === 'jwk') {
+        return this[kHandle].exportJwk({}, false);
+      }
+      const {
+        format,
+        type,
+      } = parsePublicKeyEncoding(options, this.asymmetricKeyType);
+      return this[kHandle].export(format, type);
+    }
+  }
+
+  class PrivateKeyObject extends AsymmetricKeyObject {
+    constructor(handle) {
+      super('private', handle);
+    }
+
+    export(options) {
+      if (options && options.format === 'jwk') {
+        if (options.passphrase !== undefined) {
+          throw new ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS(
+            'jwk', 'does not support encryption');
+        }
+        return this[kHandle].exportJwk({}, false);
+      }
+      const {
+        format,
+        type,
+        cipher,
+        passphrase,
+      } = parsePrivateKeyEncoding(options, this.asymmetricKeyType);
+      return this[kHandle].export(format, type, cipher, passphrase);
+    }
+  }
+
+  return [KeyObject, SecretKeyObject, PublicKeyObject, PrivateKeyObject];
+})(class Native {});
+
+function createJob(mode, type, options) {
+  validateString(type, "type");
+
+  console.log(123);
+  const encoding = new SafeArrayIterator(parseKeyEncoding(type, options));
+  console.log(123);
+
+  if (options !== undefined) validateObject(options, "options");
+
+  switch (type) {
+    case "rsa":
+    case "rsa-pss": {
+      validateObject(options, "options");
+      const { modulusLength } = options;
+      validateUint32(modulusLength, "options.modulusLength");
+
+      let { publicExponent } = options;
+      if (publicExponent == null) {
+        publicExponent = 0x10001;
+      } else {
+        validateUint32(publicExponent, "options.publicExponent");
+      }
+
+      if (type === "rsa") {
+        return new RsaKeyPairGenJob(
+          mode,
+          kKeyVariant.RSA.SSA_PKCS1_v1_5,  // Used also for RSA-OAEP
+          modulusLength,
+          publicExponent,
+          ...encoding);
+      }
+
+      const { hash, mgf1Hash, hashAlgorithm, mgf1HashAlgorithm, saltLength } = options;
+
+      if (saltLength !== undefined) validateInt32(saltLength, "options.saltLength", 0);
+      if (hashAlgorithm !== undefined) validateString(hashAlgorithm, "options.hashAlgorithm");
+      if (mgf1HashAlgorithm !== undefined) validateString(mgf1HashAlgorithm, "options.mgf1HashAlgorithm");
+      if (hash !== undefined) {
+        process.emitWarning(
+          '"options.hash" is deprecated, ' + 'use "options.hashAlgorithm" instead.',
+          "DeprecationWarning",
+          "DEP0154",
+        );
+        validateString(hash, "options.hash");
+        if (hashAlgorithm && hash !== hashAlgorithm) {
+          throw new ERR_INVALID_ARG_VALUE("options.hash", hash);
+        }
+      }
+      if (mgf1Hash !== undefined) {
+        process.emitWarning(
+          '"options.mgf1Hash" is deprecated, ' + 'use "options.mgf1HashAlgorithm" instead.',
+          "DeprecationWarning",
+          "DEP0154",
+        );
+        validateString(mgf1Hash, "options.mgf1Hash");
+        if (mgf1HashAlgorithm && mgf1Hash !== mgf1HashAlgorithm) {
+          throw new ERR_INVALID_ARG_VALUE("options.mgf1Hash", mgf1Hash);
+        }
+      }
+
+      return new RsaKeyPairGenJob(
+        mode,
+        kKeyVariant.RSA.PSS,
+        modulusLength,
+        publicExponent,
+        hashAlgorithm || hash,
+        mgf1HashAlgorithm || mgf1Hash,
+        saltLength,
+        ...encoding);
+    }
+    case "dsa": {
+      validateObject(options, "options");
+      const { modulusLength } = options;
+      validateUint32(modulusLength, "options.modulusLength");
+
+      let { divisorLength } = options;
+      if (divisorLength == null) {
+        divisorLength = -1;
+      } else validateInt32(divisorLength, "options.divisorLength", 0);
+
+      return new DsaKeyPairGenJob(
+        mode,
+        modulusLength,
+        divisorLength,
+        ...encoding);
+    }
+    case "ec": {
+      validateObject(options, "options");
+      const { namedCurve } = options;
+      validateString(namedCurve, "options.namedCurve");
+      let { paramEncoding } = options;
+      if (paramEncoding == null || paramEncoding === "named") paramEncoding = OPENSSL_EC.NAMED_CURVE;
+      else if (paramEncoding === "explicit") paramEncoding = OPENSSL_EC.EXPLICIT_CURVE;
+      else throw new ERR_INVALID_ARG_VALUE("options.paramEncoding", paramEncoding);
+
+      return new EcKeyPairGenJob(
+        mode,
+        namedCurve,
+        paramEncoding,
+        ...encoding);
+    }
+    case "ed25519":
+    case "ed448":
+    case "x25519":
+    case "x448": {
+      let id;
+      switch (type) {
+        case "ed25519":
+          id = EVP_PKEY.ED25519;
+          break;
+        case "ed448":
+          id = EVP_PKEY.ED448;
+          break;
+        case "x25519":
+          id = EVP_PKEY.X25519;
+          break;
+        case "x448":
+          id = EVP_PKEY.X448;
+          break;
+      }
+      return new NidKeyPairGenJob(mode, id, ...encoding);
+    }
+    case "dh": {
+      validateObject(options, "options");
+      const { group, primeLength, prime, generator } = options;
+      if (group != null) {
+        if (prime != null) throw new ERR_INCOMPATIBLE_OPTION_PAIR("group", "prime");
+        if (primeLength != null) throw new ERR_INCOMPATIBLE_OPTION_PAIR("group", "primeLength");
+        if (generator != null) throw new ERR_INCOMPATIBLE_OPTION_PAIR("group", "generator");
+
+        validateString(group, "options.group");
+
+        return new DhKeyPairGenJob(mode, group, ...encoding);
+      }
+
+      if (prime != null) {
+        if (primeLength != null) throw new ERR_INCOMPATIBLE_OPTION_PAIR("prime", "primeLength");
+
+        validateBuffer(prime, "options.prime");
+      } else if (primeLength != null) {
+        validateInt32(primeLength, "options.primeLength", 0);
+      } else {
+        throw new ERR_MISSING_OPTION("At least one of the group, prime, or primeLength options");
+      }
+
+      if (generator != null) {
+        validateInt32(generator, "options.generator", 0);
+      }
+      return new DhKeyPairGenJob(
+        mode,
+        prime != null ? prime : primeLength,
+        generator == null ? 2 : generator,
+        ...encoding);
+    }
+    default:
+    // Fall through
+  }
+  throw new ERR_INVALID_ARG_VALUE("type", type, "must be a supported key type");
+}
+
+function isJwk(obj) {
+  return obj != null && obj.kty !== undefined;
+}
+
+function wrapKey(key, ctor) {
+  if (typeof key === "string" || isArrayBufferView(key) || isJwk(key)) return key;
+  return new ctor(key);
+}
+
+function generateKeyPair(type, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
+  validateFunction(callback, "callback");
+
+  const job = createJob(constantsCrypto.kCryptoJobAsync, type, options);
+
+  job.ondone = (error, result) => {
+    if (error) return Function.prototype.call(callback, job, error);
+    // If no encoding was chosen, return key objects instead.
+    let { 0: pubkey, 1: privkey } = result;
+    pubkey = wrapKey(pubkey, PublicKeyObject);
+    privkey = wrapKey(privkey, PrivateKeyObject);
+    Function.prototype.call(callback, job, null, pubkey, privkey);
+  };
+
+  job.run();
+}
+
+Object.defineProperty(generateKeyPair, customPromisifyArgs, {
+  __proto__: null,
+  value: ["publicKey", "privateKey"],
+  enumerable: false,
+});
+
+function handleError(ret) {
+  if (ret == null) return; // async
+
+  const { 0: err, 1: keys } = ret;
+  if (err !== undefined) throw err;
+
+  const { 0: publicKey, 1: privateKey } = keys;
+
+  // If no encoding was chosen, return key objects instead.
+  return {
+    publicKey: wrapKey(publicKey, PublicKeyObject),
+    privateKey: wrapKey(privateKey, PrivateKeyObject),
+  };
+}
+
+function generateKeyPairSync(type, options) {
+  return handleError(createJob(constantsCrypto.kCryptoJobSync, type, options).run());
+}
 
 // node_modules/des.js/lib/des/utils.js
 var require_utils = __commonJS({
@@ -11774,6 +12370,10 @@ var require_crypto_browserify2 = __commonJS({
     exports.Decipheriv = aes.Decipheriv;
     exports.createDecipheriv = aes.createDecipheriv;
     exports.getCiphers = aes.getCiphers;
+
+    exports.generateKeyPair = generateKeyPair;
+    exports.generateKeyPairSync = generateKeyPairSync;
+    exports.customPromisifyArgs = customPromisifyArgs;
     exports.listCiphers = aes.listCiphers;
     var dh = require_browser7();
     exports.DiffieHellmanGroup = dh.DiffieHellmanGroup;

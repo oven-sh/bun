@@ -130,6 +130,7 @@ using namespace Bun;
 
 extern "C" JSC::EncodedJSValue Bun__fetch(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 extern "C" JSC::EncodedJSValue Bun__canonicalizeIP(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+extern "C" JSC::EncodedJSValue Bun__RsaKeyPairGenJob(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 
 using JSGlobalObject
     = JSC::JSGlobalObject;
@@ -1798,6 +1799,177 @@ static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
             obj->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "functionRegular"_s), 1, functionNoop, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
             obj->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "callback"_s), 1, functionCallback, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
             return JSC::JSValue::encode(obj);
+        }
+
+        if (string == "generateKeyPair"_s) {
+            auto* PKFormatType = constructEmptyObject(globalObject);
+            PKFormatType->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "pem"_s)),
+                JSC::jsString(vm, String("pem"_s)),
+                0
+            );
+            PKFormatType->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "der"_s)),
+                JSC::jsString(vm, String("der"_s)),
+                0
+            );
+            PKFormatType->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "jwk"_s)),
+                JSC::jsString(vm, String("jwk"_s)),
+                0
+            );
+            auto* PKEncodingType = constructEmptyObject(globalObject);
+            PKEncodingType->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "pkcs1"_s)),
+                JSC::jsString(vm, String("pkcs1"_s)),
+                0
+            );
+            PKEncodingType->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "spki"_s)),
+                JSC::jsString(vm, String("spki"_s)),
+                0
+            );
+            PKEncodingType->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "pkcs8"_s)),
+                JSC::jsString(vm, String("pkcs8"_s)),
+                0
+            );
+            PKEncodingType->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "sec1"_s)),
+                JSC::jsString(vm, String("sec1"_s)),
+                0
+            );
+            auto* kKeyVariant = constructEmptyObject(globalObject);
+            auto* kKeyVariantRSA = constructEmptyObject(globalObject);
+            kKeyVariantRSA->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "SSA_PKCS1_v1_5"_s)),
+                JSC::jsString(vm, String("SSA_PKCS1_v1_5"_s)),
+                0
+            );
+            kKeyVariantRSA->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "PSS"_s)),
+                JSC::jsString(vm, String("PSS"_s)),
+                0
+            );
+            kKeyVariant->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "RSA"_s)),
+                kKeyVariantRSA,
+                0
+            );
+            auto* EVP_PKEY = constructEmptyObject(globalObject);
+            EVP_PKEY->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "ED25519"_s)),
+                JSC::jsString(vm, String("ED25519"_s)),
+                0
+            );
+            EVP_PKEY->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "ED448"_s)),
+                JSC::jsString(vm, String("ED448"_s)),
+                0
+            );
+            EVP_PKEY->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "X25519"_s)),
+                JSC::jsString(vm, String("X25519"_s)),
+                0
+            );
+            EVP_PKEY->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "X448"_s)),
+                JSC::jsString(vm, String("X448"_s)),
+                0
+            );
+            auto* OPENSSL_EC = constructEmptyObject(globalObject);
+            OPENSSL_EC->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "NAMED_CURVE"_s)),
+                JSC::jsString(vm, String("NAMED_CURVE"_s)),
+                0
+            );
+            OPENSSL_EC->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "EXPLICIT_CURVE"_s)),
+                JSC::jsString(vm, String("EXPLICIT_CURVE"_s)),
+                0
+            );
+
+            auto* obj = constructEmptyObject(globalObject);
+            Zig::JSFFIFunction* function = Zig::JSFFIFunction::create(vm, reinterpret_cast<Zig::GlobalObject*>(globalObject), 0, String(), functionCallNotImplemented, JSC::NoIntrinsic);
+
+            obj->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "PKFormatType"_s)),
+                PKFormatType,
+                0
+            );
+            obj->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "PKEncodingType"_s)),
+                PKEncodingType,
+                0
+            );
+            obj->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "kKeyVariant"_s)),
+                kKeyVariant,
+                0
+            );
+            obj->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "EVP_PKEY"_s)),
+                EVP_PKEY,
+                0
+            );
+            obj->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "OPENSSL_EC"_s)),
+                OPENSSL_EC,
+                0
+            );
+
+            obj->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "RsaKeyPairGenJob"_s)),
+                JSC::JSFunction::create(vm, globalObject, 1, "RsaKeyPairGenJob"_s, Bun__RsaKeyPairGenJob, ImplementationVisibility::Public, NoIntrinsic),
+                0
+            );
+            obj->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "DsaKeyPairGenJob"_s)),
+                function,
+                JSC::PropertyAttribute::Function | 0
+            );
+            obj->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "EcKeyPairGenJob"_s)),
+                function,
+                JSC::PropertyAttribute::Function | 0
+            );
+            obj->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "NidKeyPairGenJob"_s)),
+                function,
+                JSC::PropertyAttribute::Function | 0
+            );
+            obj->putDirect(
+                vm,
+                JSC::PropertyName(JSC::Identifier::fromString(vm, "DhKeyPairGenJob"_s)),
+                function,
+                JSC::PropertyAttribute::Function | 0
+            );
+            return JSValue::encode(obj);
         }
 
         return JSC::JSValue::encode(JSC::jsUndefined());

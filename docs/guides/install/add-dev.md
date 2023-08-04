@@ -5,7 +5,7 @@ name: Add a development dependency
 To add an npm package as a development dependency, use `bun add --development`.
 
 ```sh
-$ bun add zod --development
+$ bun add zod --dev
 $ bun add zod -d # shorthand
 ```
 

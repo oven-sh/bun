@@ -28,13 +28,16 @@
 #include "wtf/text/WTFString.h"
 
 #include "Process.h"
-
+#include <JavaScriptCore/SourceProviderCache.h>
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
 
 #include "JSDOMConvertBase.h"
+#include "ZigSourceProvider.h"
 #include "mimalloc.h"
+
+#include "JavaScriptCore/ControlFlowProfiler.h"
 
 using namespace JSC;
 using namespace WTF;
@@ -650,6 +653,65 @@ JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject,
   RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
+                         (JSGlobalObject * globalObject,
+                          CallFrame *callFrame)) {
+  VM &vm = globalObject->vm();
+  auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+  String fileName = callFrame->argument(0).toWTFString(globalObject);
+  RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+
+  auto sourceID = Zig::sourceIDForSourceURL(fileName);
+  if (!sourceID) {
+    throwException(globalObject, throwScope,
+                   createError(globalObject, "No source for file"_s));
+    return JSValue::encode(jsUndefined());
+  }
+
+  auto basicBlocks =
+      vm.controlFlowProfiler()->getBasicBlocksForSourceID(sourceID, vm);
+
+  if (basicBlocks.isEmpty()) {
+    return JSC::JSValue::encode(
+        JSC::constructEmptyArray(globalObject, nullptr, 0));
+  }
+
+  JSC::Structure *structure =
+      globalObject->structureCache().emptyObjectStructureForPrototype(
+          globalObject, globalObject->objectPrototype(), 3);
+  JSC::PropertyOffset offset;
+
+  structure = structure->addPropertyTransition(
+      vm, structure, JSC::Identifier::fromString(vm, "transpiledStartOffset"_s),
+      0, offset);
+
+  structure = structure->addPropertyTransition(
+      vm, structure, JSC::Identifier::fromString(vm, "transpiledEndOffset"_s),
+      0, offset);
+
+  structure = structure->addPropertyTransition(
+      vm, structure, JSC::Identifier::fromString(vm, "minimumExecutionCount"_s),
+      0, offset);
+
+  RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+
+  JSC::JSArray *array =
+      JSC::constructEmptyArray(globalObject, nullptr, basicBlocks.size());
+  unsigned int i = 0;
+
+  for (const auto block : basicBlocks) {
+    JSC::JSObject *object = JSC::constructEmptyObject(vm, structure);
+    object->putDirectOffset(vm, 0, JSC::jsNumber(block.m_startOffset));
+    object->putDirectOffset(vm, 1, JSC::jsNumber(block.m_endOffset));
+    object->putDirectOffset(
+        vm, 2, JSC::jsNumber(block.m_executionCount || block.m_hasExecuted));
+    array->putDirectIndex(globalObject, i++, object);
+  }
+
+  return JSValue::encode(array);
+}
+
 // clang-format off
 /* Source for BunJSCModuleTable.lut.h
 @begin BunJSCModuleTable
@@ -718,6 +780,7 @@ DEFINE_NATIVE_MODULE(BunJSC)
     putNativeFn(Identifier::fromString(vm, "getProtectedObjects"_s), functionGetProtectedObjects);
     putNativeFn(Identifier::fromString(vm, "generateHeapSnapshotForDebugging"_s), functionGenerateHeapSnapshotForDebugging);
     putNativeFn(Identifier::fromString(vm, "profile"_s), functionRunProfiler);
+    putNativeFn(Identifier::fromString(vm, "codeCoverageForFile"_s), functionCodeCoverageForFile);
     putNativeFn(Identifier::fromString(vm, "setTimeZone"_s), functionSetTimeZone);
     putNativeFn(Identifier::fromString(vm, "serialize"_s), functionSerialize);
     putNativeFn(Identifier::fromString(vm, "deserialize"_s), functionDeserialize);

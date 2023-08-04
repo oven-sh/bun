@@ -58,11 +58,42 @@ static SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
     return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
 }
 
+static thread_local HashMap<String, JSC::SourceID>* sourceProviderMap = nullptr;
+
+void forEachSourceProvider(const WTF::Function<void(JSC::SourceID)>& func)
+{
+    if (sourceProviderMap == nullptr) {
+        return;
+    }
+
+    for (auto& pair : *sourceProviderMap) {
+        auto sourceProvider = pair.value;
+        if (sourceProvider) {
+            func(sourceProvider);
+        }
+    }
+}
+
+JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL)
+{
+    if (sourceProviderMap == nullptr) {
+        return 0;
+    }
+
+    auto it = sourceProviderMap->find(sourceURL);
+    if (it == sourceProviderMap->end()) {
+        return 0;
+    }
+
+    return it->value;
+}
+
 Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, ResolvedSource resolvedSource, JSC::SourceProviderSourceType sourceType, bool isBuiltin)
 {
 
     auto stringImpl = Bun::toWTFString(resolvedSource.source_code);
     auto sourceURLString = toStringCopy(resolvedSource.source_url);
+    bool isCodeCoverageEnabled = !!globalObject->vm().controlFlowProfiler();
 
     auto provider = adoptRef(*new SourceProvider(
         globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
@@ -70,6 +101,14 @@ Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, Reso
         toSourceOrigin(sourceURLString, isBuiltin),
         sourceURLString.impl(), TextPosition(),
         sourceType));
+
+    if (!isBuiltin && isCodeCoverageEnabled) {
+        if (sourceProviderMap == nullptr) {
+            sourceProviderMap = new HashMap<String, JSC::SourceID>();
+        }
+
+        sourceProviderMap->set(provider->sourceURL(), provider->asID());
+    }
 
     return provider;
 }
@@ -85,6 +124,9 @@ unsigned SourceProvider::hash() const
 
 void SourceProvider::freeSourceCode()
 {
+    if (sourceProviderMap != nullptr) {
+        sourceProviderMap->remove(sourceURL());
+    }
 }
 
 void SourceProvider::updateCache(const UnlinkedFunctionExecutable* executable, const SourceCode&,

@@ -505,6 +505,11 @@ pub const TestCommand = struct {
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 
+        if (ctx.test_options.code_coverage) {
+            vm.bundler.options.code_coverage = true;
+            vm.global.vm().setControlFlowProfiler(true);
+        }
+
         // For tests, we default to UTC time zone
         // unless the user inputs TZ="", in which case we use local time zone
         var TZ_NAME: string =

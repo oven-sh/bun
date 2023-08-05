@@ -1107,11 +1107,11 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
 
                 if (len > 64) {
                     value = JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject));
-                    continue;
+                    break;
+                } else {
+                    value = jsString(vm, WTF::String::fromUTF8(text, len));
+                    break;
                 }
-
-                value = jsString(vm, WTF::String::fromUTF8(text, len));
-                break;
             }
             case SQLITE_BLOB: {
                 size_t len = sqlite3_column_bytes(stmt, i);

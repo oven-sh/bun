@@ -1074,10 +1074,15 @@ pub const Fetch = struct {
                 return JSPromise.rejectedPromiseValue(globalThis, err);
             }
 
-            if (DataURL.parse(request.url.byteSlice()) catch {
-                const err = JSC.createError(globalThis, "failed to fetch the data URL", .{});
-                return JSPromise.rejectedPromiseValue(globalThis, err);
-            }) |data_url| {
+            if (request.url.hasPrefixComptime("data:")) {
+                var url_slice = request.url.toUTF8WithoutRef(bun.default_allocator);
+                defer url_slice.deinit();
+
+                const data_url = DataURL.parseWithoutCheck(url_slice.slice()) catch {
+                    const err = JSC.createError(globalThis, "failed to fetch the data URL", .{});
+                    return JSPromise.rejectedPromiseValue(globalThis, err);
+                };
+
                 return dataURLResponse(data_url, globalThis, bun.default_allocator);
             }
 
@@ -1230,10 +1235,15 @@ pub const Fetch = struct {
                 return JSPromise.rejectedPromiseValue(globalThis, err);
             }
 
-            if (DataURL.parse(str.byteSlice()) catch {
-                const err = JSC.createError(globalThis, "failed to fetch the data URL", .{});
-                return JSPromise.rejectedPromiseValue(globalThis, err);
-            }) |data_url| {
+            if (str.hasPrefixComptime("data:")) {
+                var url_slice = str.toUTF8WithoutRef(bun.default_allocator);
+                defer url_slice.deinit();
+
+                const data_url = DataURL.parseWithoutCheck(url_slice.slice()) catch {
+                    const err = JSC.createError(globalThis, "failed to fetch the data URL", .{});
+                    return JSPromise.rejectedPromiseValue(globalThis, err);
+                };
+
                 return dataURLResponse(data_url, globalThis, bun.default_allocator);
             }
 

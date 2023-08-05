@@ -87,6 +87,11 @@ pub const DataURL = struct {
             return null;
         }
 
+        var result = try parseWithoutCheck(url);
+        return result;
+    }
+
+    pub fn parseWithoutCheck(url: string) !DataURL {
         const comma = strings.indexOfChar(url, ',') orelse return error.InvalidDataURL;
 
         var parsed = DataURL{
@@ -108,7 +113,7 @@ pub const DataURL = struct {
     }
 
     pub fn decodeData(url: DataURL, allocator: std.mem.Allocator) ![]u8 {
-        const percent_decoded = try PercentEncoding.decode(allocator, url.data) orelse url.data;
+        const percent_decoded = PercentEncoding.decode(allocator, url.data) catch url.data orelse url.data;
         if (url.is_base64) {
             const len = bun.base64.decodeLen(percent_decoded);
             var buf = try allocator.alloc(u8, len);

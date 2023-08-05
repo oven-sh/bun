@@ -99,6 +99,52 @@ describe("fetch data urls", () => {
       await fetch(url);
     }).toThrow("failed to fetch the data URL");
   });
+  it("emoji", async () => {
+    var url = "data:,😀";
+
+    var res = await fetch(url);
+    expect(res.status).toBe(200);
+    expect(res.statusText).toBe("OK");
+    expect(res.ok).toBe(true);
+
+    var blob = await res.blob();
+    expect(blob.size).toBe(4);
+    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.text()).resolves.toBe("😀");
+  });
+  it("should work with Request", async () => {
+    var req = new Request("data:,Hello%2C%20World!");
+    var res = await fetch(req);
+    expect(res.status).toBe(200);
+    expect(res.statusText).toBe("OK");
+    expect(res.ok).toBe(true);
+
+    var blob = await res.blob();
+    expect(blob.size).toBe(13);
+    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.text()).resolves.toBe("Hello, World!");
+
+    req = new Request("data:,😀");
+    res = await fetch(req);
+    expect(res.status).toBe(200);
+    expect(res.statusText).toBe("OK");
+    expect(res.ok).toBe(true);
+
+    blob = await res.blob();
+    expect(blob.size).toBe(4);
+    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.text()).resolves.toBe("😀");
+  });
+  it("should work with Request (invalid)", async () => {
+    var req = new Request("data:Hello%2C%20World!");
+    expect(async () => {
+      await fetch(req);
+    }).toThrow("failed to fetch the data URL");
+    req = new Request("data:Hello%345632");
+    expect(async () => {
+      await fetch(req);
+    }).toThrow("failed to fetch the data URL");
+  });
 });
 
 describe("AbortSignal", () => {

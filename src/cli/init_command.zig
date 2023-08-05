@@ -337,7 +337,14 @@ pub const InitCommand = struct {
         }
 
         if (fields.entry_point.len > 0 and !exists(fields.entry_point)) {
-            var entry = try std.fs.cwd().createFile(fields.entry_point, .{ .truncate = true });
+            const cwd = std.fs.cwd();
+            if (std.fs.path.dirname(fields.entry_point)) |dirname| {
+                if (!(dirname.len == 0 and dirname[0] == '.')) {
+                    cwd.makePath(dirname) catch {};
+                }
+            }
+
+            var entry = try cwd.createFile(fields.entry_point, .{ .truncate = true });
             entry.writeAll("console.log(\"Hello via Bun!\");") catch {};
             entry.close();
             Output.prettyln(" + <r><d>{s}<r>", .{fields.entry_point});

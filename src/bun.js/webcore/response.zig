@@ -37,6 +37,7 @@ const JSValue = JSC.JSValue;
 const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
 const NullableAllocator = @import("../../nullable_allocator.zig").NullableAllocator;
+const DataURL = @import("../../resolver/data_url.zig").DataURL;
 
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
@@ -971,6 +972,41 @@ pub const Fetch = struct {
         }
     };
 
+    fn dataURLResponse(
+        _data_url: DataURL,
+        globalThis: *JSGlobalObject,
+        allocator: std.mem.Allocator,
+    ) JSValue {
+        var data_url = _data_url;
+
+        const data = data_url.decodeData(allocator) catch {
+            const err = JSC.createError(globalThis, "failed to fetch the data URL", .{});
+            return JSPromise.rejectedPromiseValue(globalThis, err);
+        };
+        var blob = Blob.init(data, allocator, globalThis);
+
+        const mime_type = data_url.decodeMimeType();
+        blob.content_type = mime_type.value;
+
+        var response = allocator.create(Response) catch @panic("out of memory");
+
+        response.* = Response{
+            .body = Body{
+                .init = Body.Init{
+                    .status_code = 200,
+                },
+                .value = .{
+                    .Blob = blob,
+                },
+            },
+            .allocator = allocator,
+            .status_text = bun.String.fromBytes("OK"),
+            .url = bun.String.fromBytes(data_url.url),
+        };
+
+        return JSPromise.resolvedPromiseValue(globalThis, response.toJS(globalThis));
+    }
+
     pub export fn Bun__fetch(
         ctx: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
@@ -1036,6 +1072,13 @@ pub const Fetch = struct {
                     bun.default_allocator.free(host);
                 }
                 return JSPromise.rejectedPromiseValue(globalThis, err);
+            }
+
+            if (DataURL.parse(request.url.toSlice(bun.default_allocator).slice()) catch {
+                const err = JSC.createError(globalThis, "failed to fetch the data URL", .{});
+                return JSPromise.rejectedPromiseValue(globalThis, err);
+            }) |data_url| {
+                return dataURLResponse(data_url, globalThis, bun.default_allocator);
             }
 
             url = ZigURL.fromString(bun.default_allocator, request.url) catch {
@@ -1185,6 +1228,13 @@ pub const Fetch = struct {
                     bun.default_allocator.free(host);
                 }
                 return JSPromise.rejectedPromiseValue(globalThis, err);
+            }
+
+            if (DataURL.parse(str.toSlice(bun.default_allocator).slice()) catch {
+                const err = JSC.createError(globalThis, "failed to fetch the data URL", .{});
+                return JSPromise.rejectedPromiseValue(globalThis, err);
+            }) |data_url| {
+                return dataURLResponse(data_url, globalThis, bun.default_allocator);
             }
 
             url = ZigURL.fromString(bun.default_allocator, str) catch {

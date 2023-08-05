@@ -842,7 +842,9 @@ pub const Resolver = struct {
             }
         }
 
-        if (DataURL.parse(import_path)) |_data_url| {
+        if (DataURL.parse(import_path) catch {
+            return .{ .failure = error.InvalidDataURL };
+        }) |_data_url| {
             const data_url: DataURL = _data_url;
             // "import 'data:text/javascript,console.log(123)';"
             // "@import 'data:text/css,body{background:white}';"

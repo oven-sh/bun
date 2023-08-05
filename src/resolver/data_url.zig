@@ -34,7 +34,7 @@ pub const PercentEncoding = struct {
         if (comptime Environment.allow_assert) std.debug.assert(str.len > 0);
         return switch (str[0]) {
             'a'...'z', 'A'...'Z', '0'...'9', '-', '.', '_', '~', '!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=', ':', '@' => true,
-            '%' => str.len > 3 and isHex(str[1]) and isHex(str[2]),
+            '%' => str.len >= 3 and isHex(str[1]) and isHex(str[2]),
             else => false,
         };
     }
@@ -53,7 +53,7 @@ pub const PercentEncoding = struct {
                 }
                 if (ret == null) {
                     ret = try allocator.alloc(u8, path.len);
-                    bun.copy(u8, ret, path[0..i]);
+                    bun.copy(u8, ret.?, path[0..i]);
                     ret_index = i;
                 }
 
@@ -71,24 +71,26 @@ pub const PercentEncoding = struct {
             }
         }
 
-        if (ret) |some| return allocator.shrink(some, ret_index);
+        if (ret) |some| return allocator.realloc(some, ret_index) catch unreachable;
         return null;
     }
 };
 
 pub const DataURL = struct {
+    url: string,
     mime_type: string,
     data: string,
     is_base64: bool = false,
 
-    pub fn parse(url: string) ?DataURL {
+    pub fn parse(url: string) !?DataURL {
         if (!strings.startsWith(url, "data:")) {
             return null;
         }
 
-        const comma = strings.indexOfChar(url, ',') orelse return null;
+        const comma = strings.indexOfChar(url, ',') orelse return error.InvalidDataURL;
 
         var parsed = DataURL{
+            .url = url,
             .mime_type = url["data:".len..comma],
             .data = url[comma + 1 .. url.len],
         };
@@ -103,5 +105,20 @@ pub const DataURL = struct {
 
     pub fn decodeMimeType(d: DataURL) bun.HTTP.MimeType {
         return bun.HTTP.MimeType.init(d.mime_type);
+    }
+
+    pub fn decodeData(url: DataURL, allocator: std.mem.Allocator) ![]u8 {
+        const percent_decoded = try PercentEncoding.decode(allocator, url.data) orelse url.data;
+        if (url.is_base64) {
+            const len = bun.base64.decodeLen(percent_decoded);
+            var buf = try allocator.alloc(u8, len);
+            const result = bun.base64.decode(buf, percent_decoded);
+            if (result.fail) {
+                return error.Base64DecodeError;
+            }
+            return buf;
+        }
+
+        return allocator.dupe(u8, percent_decoded);
     }
 };

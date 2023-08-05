@@ -5763,6 +5763,10 @@ pub const PackageManager = struct {
     };
 
     const install_params = install_params_ ++ [_]ParamType{
+        clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
+        clap.parseParam("-D, --development") catch unreachable,
+        clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
+        clap.parseParam("--exact                      Add the exact version instead of the ^range") catch unreachable,
         clap.parseParam("<POS> ...                         ") catch unreachable,
     };
 
@@ -5771,7 +5775,8 @@ pub const PackageManager = struct {
     };
 
     const add_params = install_params_ ++ [_]ParamType{
-        clap.parseParam("-d, --development                 Add dependency to \"devDependencies\"") catch unreachable,
+        clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
+        clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
         clap.parseParam("--exact                      Add the exact version instead of the ^range") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of packages to install") catch unreachable,
@@ -5901,8 +5906,8 @@ pub const PackageManager = struct {
 
             cli.link_native_bins = args.options("--link-native-bins");
 
-            if (comptime subcommand == .add) {
-                cli.development = args.flag("--development");
+            if (comptime subcommand == .add or subcommand == .install) {
+                cli.development = args.flag("--development") or args.flag("--dev");
                 cli.optional = args.flag("--optional");
                 cli.exact = args.flag("--exact");
             }

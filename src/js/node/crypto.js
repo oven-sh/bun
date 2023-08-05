@@ -43,7 +43,7 @@ const {
   kKeyVariant,
   EVP_PKEY,
   OPENSSL_EC,
-} = $lazy('generateKeyPair');
+} = $lazy("generateKeyPair");
 
 const constantsCrypto = {
   kCryptoJobAsync: 0,
@@ -53,6 +53,7 @@ const constantsCrypto = {
 const MAX_STRING_LENGTH = 536870888;
 var Buffer = globalThis.Buffer;
 const EMPTY_BUFFER = Buffer.alloc(0);
+const SymbolToStringTag = Symbol("Symbol.toStringTag");
 const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 
 function getArrayBufferOrView(buffer, name, encoding) {
@@ -1846,10 +1847,9 @@ const createSafeIterator = (factory, next) => {
   class SafeIterator {
     constructor(iterable) {
       this._iterator = factory.call(iterable);
-      console.log(iterable);
     }
     next() {
-      return next(this._iterator);
+      return next.call(this._iterator);
     }
     [Symbol.iterator]() {
       return this;
@@ -1967,7 +1967,7 @@ function parsePrivateKeyEncoding(enc, keyType, objName) {
   return parseKeyEncodingInner(enc, keyType, false, objName);
 }
 
-function parseKeyEncoding(keyType, options = kEmptyObject) {
+function parseKeyEncoding(keyType, options = {}) {
   const { publicKeyEncoding, privateKeyEncoding } = options;
 
   let publicFormat, publicType;
@@ -2005,14 +2005,13 @@ const {
   1: SecretKeyObject,
   2: PublicKeyObject,
   3: PrivateKeyObject,
-} = ((NativeKeyObject) => {
+} = (NativeKeyObject => {
   // Publicly visible KeyObject class.
   class KeyObject extends NativeKeyObject {
     constructor(type, handle) {
-      if (type !== 'secret' && type !== 'public' && type !== 'private')
-        throw new ERR_INVALID_ARG_VALUE('type', type);
-      if (typeof handle !== 'object' || !(handle instanceof KeyObjectHandle))
-        throw new ERR_INVALID_ARG_TYPE('handle', 'object', handle);
+      if (type !== "secret" && type !== "public" && type !== "private") throw new ERR_INVALID_ARG_VALUE("type", type);
+      if (typeof handle !== "object" || !(handle instanceof KeyObjectHandle))
+        throw new ERR_INVALID_ARG_TYPE("handle", "object", handle);
 
       super(handle);
 
@@ -2032,33 +2031,30 @@ const {
     }
 
     static from(key) {
-      if (!isCryptoKey(key))
-        throw new ERR_INVALID_ARG_TYPE('key', 'CryptoKey', key);
+      if (!isCryptoKey(key)) throw new ERR_INVALID_ARG_TYPE("key", "CryptoKey", key);
       return key[kKeyObject];
     }
 
     equals(otherKeyObject) {
       if (!isKeyObject(otherKeyObject)) {
-        throw new ERR_INVALID_ARG_TYPE(
-          'otherKeyObject', 'KeyObject', otherKeyObject);
+        throw new ERR_INVALID_ARG_TYPE("otherKeyObject", "KeyObject", otherKeyObject);
       }
 
-      return otherKeyObject.type === this.type &&
-        this[kHandle].equals(otherKeyObject[kHandle]);
+      return otherKeyObject.type === this.type && this[kHandle].equals(otherKeyObject[kHandle]);
     }
   }
 
-  ObjectDefineProperties(KeyObject.prototype, {
+  Object.defineProperties(KeyObject.prototype, {
     [SymbolToStringTag]: {
       __proto__: null,
       configurable: true,
-      value: 'KeyObject',
+      value: "KeyObject",
     },
   });
 
   class SecretKeyObject extends KeyObject {
     constructor(handle) {
-      super('secret', handle);
+      super("secret", handle);
     }
 
     get symmetricKeySize() {
@@ -2067,10 +2063,9 @@ const {
 
     export(options) {
       if (options !== undefined) {
-        validateObject(options, 'options');
-        validateOneOf(
-          options.format, 'options.format', [undefined, 'buffer', 'jwk']);
-        if (options.format === 'jwk') {
+        validateObject(options, "options");
+        validateOneOf(options.format, "options.format", [undefined, "buffer", "jwk"]);
+        if (options.format === "jwk") {
           return this[kHandle].exportJwk({}, false);
         }
       }
@@ -2078,15 +2073,14 @@ const {
     }
   }
 
-  const kAsymmetricKeyType = Symbol('kAsymmetricKeyType');
-  const kAsymmetricKeyDetails = Symbol('kAsymmetricKeyDetails');
+  const kAsymmetricKeyType = Symbol("kAsymmetricKeyType");
+  const kAsymmetricKeyDetails = Symbol("kAsymmetricKeyDetails");
 
   function normalizeKeyDetails(details = {}) {
     if (details.publicExponent !== undefined) {
       return {
         ...details,
-        publicExponent:
-          bigIntArrayToUnsignedBigInt(new Uint8Array(details.publicExponent)),
+        publicExponent: bigIntArrayToUnsignedBigInt(new Uint8Array(details.publicExponent)),
       };
     }
     return details;
@@ -2099,20 +2093,19 @@ const {
     }
 
     get asymmetricKeyType() {
-      return this[kAsymmetricKeyType] ||
-             (this[kAsymmetricKeyType] = this[kHandle].getAsymmetricKeyType());
+      return this[kAsymmetricKeyType] || (this[kAsymmetricKeyType] = this[kHandle].getAsymmetricKeyType());
     }
 
     get asymmetricKeyDetails() {
       switch (this.asymmetricKeyType) {
-        case 'rsa':
-        case 'rsa-pss':
-        case 'dsa':
-        case 'ec':
-          return this[kAsymmetricKeyDetails] ||
-             (this[kAsymmetricKeyDetails] = normalizeKeyDetails(
-               this[kHandle].keyDetail({}),
-             ));
+        case "rsa":
+        case "rsa-pss":
+        case "dsa":
+        case "ec":
+          return (
+            this[kAsymmetricKeyDetails] ||
+            (this[kAsymmetricKeyDetails] = normalizeKeyDetails(this[kHandle].keyDetail({})))
+          );
         default:
           return {};
       }
@@ -2121,40 +2114,31 @@ const {
 
   class PublicKeyObject extends AsymmetricKeyObject {
     constructor(handle) {
-      super('public', handle);
+      super("public", handle);
     }
 
     export(options) {
-      if (options && options.format === 'jwk') {
+      if (options && options.format === "jwk") {
         return this[kHandle].exportJwk({}, false);
       }
-      const {
-        format,
-        type,
-      } = parsePublicKeyEncoding(options, this.asymmetricKeyType);
+      const { format, type } = parsePublicKeyEncoding(options, this.asymmetricKeyType);
       return this[kHandle].export(format, type);
     }
   }
 
   class PrivateKeyObject extends AsymmetricKeyObject {
     constructor(handle) {
-      super('private', handle);
+      super("private", handle);
     }
 
     export(options) {
-      if (options && options.format === 'jwk') {
+      if (options && options.format === "jwk") {
         if (options.passphrase !== undefined) {
-          throw new ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS(
-            'jwk', 'does not support encryption');
+          throw new ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS("jwk", "does not support encryption");
         }
         return this[kHandle].exportJwk({}, false);
       }
-      const {
-        format,
-        type,
-        cipher,
-        passphrase,
-      } = parsePrivateKeyEncoding(options, this.asymmetricKeyType);
+      const { format, type, cipher, passphrase } = parsePrivateKeyEncoding(options, this.asymmetricKeyType);
       return this[kHandle].export(format, type, cipher, passphrase);
     }
   }
@@ -2165,9 +2149,7 @@ const {
 function createJob(mode, type, options) {
   validateString(type, "type");
 
-  console.log(123);
   const encoding = new SafeArrayIterator(parseKeyEncoding(type, options));
-  console.log(123);
 
   if (options !== undefined) validateObject(options, "options");
 
@@ -2188,10 +2170,11 @@ function createJob(mode, type, options) {
       if (type === "rsa") {
         return new RsaKeyPairGenJob(
           mode,
-          kKeyVariant.RSA.SSA_PKCS1_v1_5,  // Used also for RSA-OAEP
+          kKeyVariant.RSA.SSA_PKCS1_v1_5, // Used also for RSA-OAEP
           modulusLength,
           publicExponent,
-          ...encoding);
+          ...encoding,
+        );
       }
 
       const { hash, mgf1Hash, hashAlgorithm, mgf1HashAlgorithm, saltLength } = options;
@@ -2230,7 +2213,8 @@ function createJob(mode, type, options) {
         hashAlgorithm || hash,
         mgf1HashAlgorithm || mgf1Hash,
         saltLength,
-        ...encoding);
+        ...encoding,
+      );
     }
     case "dsa": {
       validateObject(options, "options");
@@ -2242,11 +2226,7 @@ function createJob(mode, type, options) {
         divisorLength = -1;
       } else validateInt32(divisorLength, "options.divisorLength", 0);
 
-      return new DsaKeyPairGenJob(
-        mode,
-        modulusLength,
-        divisorLength,
-        ...encoding);
+      return new DsaKeyPairGenJob(mode, modulusLength, divisorLength, ...encoding);
     }
     case "ec": {
       validateObject(options, "options");
@@ -2257,11 +2237,7 @@ function createJob(mode, type, options) {
       else if (paramEncoding === "explicit") paramEncoding = OPENSSL_EC.EXPLICIT_CURVE;
       else throw new ERR_INVALID_ARG_VALUE("options.paramEncoding", paramEncoding);
 
-      return new EcKeyPairGenJob(
-        mode,
-        namedCurve,
-        paramEncoding,
-        ...encoding);
+      return new EcKeyPairGenJob(mode, namedCurve, paramEncoding, ...encoding);
     }
     case "ed25519":
     case "ed448":
@@ -2314,7 +2290,8 @@ function createJob(mode, type, options) {
         mode,
         prime != null ? prime : primeLength,
         generator == null ? 2 : generator,
-        ...encoding);
+        ...encoding,
+      );
     }
     default:
     // Fall through

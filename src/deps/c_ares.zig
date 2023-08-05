@@ -1422,5 +1422,6 @@ pub export fn Bun__canonicalizeIP(
 comptime {
     if (!JSC.is_bindgen) {
         _ = Bun__canonicalizeIP;
+        _ = bun.crypto.Bun__initKeyPairGenJob;
     }
 }

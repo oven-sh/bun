@@ -101,25 +101,25 @@ const validateBuffer = (buffer, name = "buffer") => {
  * @param {*} value
  * @param {string} name
  * @param {{
-*   allowArray?: boolean,
-*   allowFunction?: boolean,
-*   nullable?: boolean
-* }} [options]
-*/
+ *   allowArray?: boolean,
+ *   allowFunction?: boolean,
+ *   nullable?: boolean
+ * }} [options]
+ */
 
 /** @type {validateObject} */
 const validateObject = (value, name, options = null) => {
- // const validateObject = hideStackFrames((value, name, options = null) => {
- const allowArray = options?.allowArray ?? false;
- const allowFunction = options?.allowFunction ?? false;
- const nullable = options?.nullable ?? false;
- if (
-   (!nullable && value === null) ||
-   (!allowArray && ArrayIsArray.call(value)) ||
-   (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
- ) {
-   throw new ERR_INVALID_ARG_TYPE(name, "object", value);
- }
+  // const validateObject = hideStackFrames((value, name, options = null) => {
+  const allowArray = options?.allowArray ?? false;
+  const allowFunction = options?.allowFunction ?? false;
+  const nullable = options?.nullable ?? false;
+  if (
+    (!nullable && value === null) ||
+    (!allowArray && Array.isArray.call(value)) ||
+    (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
+  ) {
+    throw new ERR_INVALID_ARG_TYPE(name, "object", value);
+  }
 };
 
 /**
@@ -179,7 +179,7 @@ const validateAbortSignal = (signal, name) => {
 /** @type {validateArray} */
 const validateArray = (value, name, minLength = 0) => {
   // const validateArray = hideStackFrames((value, name, minLength = 0) => {
-  if (!ArrayIsArray(value)) {
+  if (!Array.isArray(value)) {
     throw new ERR_INVALID_ARG_TYPE(name, "Array", value);
   }
   if (value.length < minLength) {
@@ -187,8 +187,6 @@ const validateArray = (value, name, minLength = 0) => {
     throw new ERR_INVALID_ARG_VALUE(name, value, reason);
   }
 };
-
-
 
 /**
  * @callback validateUint32
@@ -272,4 +270,4 @@ export default {
   validateOneOf,
   validateArray,
   getValidatedPath,
-}
+};

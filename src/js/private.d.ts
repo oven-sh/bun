@@ -149,9 +149,7 @@ declare interface Error {
  */
 function $lazy<T extends keyof BunLazyModules>(id: T): BunLazyModules[T];
 
-interface KeyObjectHandle {
-
-}
+interface KeyObjectHandle {}
 type KeyType = string | ArrayBufferView | JsonWebKey | KeyObjectHandle;
 type KeyPairType = [publicKey: KeyType, privateKey: KeyType];
 interface GeneratorKeyPair {
@@ -268,10 +266,10 @@ export interface BunLazyModules {
     GeneratorKeyPair: typeof GeneratorKeyPair;
     KeyObjectHandle: typeof KeyObjectHandle;
     RsaKeyPairGenJob: typeof RsaKeyPairGenJob;
-    DhKeyPairGenJob: typeof BunLazyModules['generateKeyPair']['GeneratorKeyPair'];
-    NidKeyPairGenJob: typeof BunLazyModules['generateKeyPair']['GeneratorKeyPair'];
-    DsaKeyPairGenJob: typeof BunLazyModules['generateKeyPair']['GeneratorKeyPair'];
-    EcKeyPairGenJob: typeof BunLazyModules['generateKeyPair']['GeneratorKeyPair'];
+    DhKeyPairGenJob: (typeof BunLazyModules)["generateKeyPair"]["GeneratorKeyPair"];
+    NidKeyPairGenJob: (typeof BunLazyModules)["generateKeyPair"]["GeneratorKeyPair"];
+    DsaKeyPairGenJob: (typeof BunLazyModules)["generateKeyPair"]["GeneratorKeyPair"];
+    EcKeyPairGenJob: (typeof BunLazyModules)["generateKeyPair"]["GeneratorKeyPair"];
     PKFormatType: typeof PKFormatType;
     kKeyVariant: {
       RSA: typeof kKeyVariantRSA;

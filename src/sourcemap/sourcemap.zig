@@ -117,6 +117,13 @@ pub const ByteRangeMapping = struct {
     line_offset_table: LineOffsetTable.List = .{},
     source_id: i32,
 
+    pub const BasicBlockRange = extern struct {
+        startOffset: c_int = 0,
+        endOffset: c_int = 0,
+        hasExecuted: bool = false,
+        executionCount: usize = 0,
+    };
+
     pub const HashMap = std.HashMap(u64, ByteRangeMapping, bun.IdentityContext(u64), std.hash_map.default_max_load_percentage);
 
     pub fn deinit(this: *ByteRangeMapping) void {
@@ -158,32 +165,64 @@ pub const ByteRangeMapping = struct {
         return entry;
     }
 
-    pub fn findLine(this: *ByteRangeMapping, source_url: bun.String, start_byte_offset: i32, end_byte_offset: i32) callconv(.C) i32 {
-        var start = LineOffsetTable.findLine(this.line_offset_table.items(.byte_offset_to_start_of_line), .{ .start = start_byte_offset });
-        var end = LineOffsetTable.findLine(this.line_offset_table.items(.byte_offset_to_start_of_line), .{ .start = end_byte_offset });
+    pub fn findExecutedLines(
+        globalThis: *bun.JSC.JSGlobalObject,
+        source_url: bun.String,
+        blocks_ptr: [*]const BasicBlockRange,
+        blocks_len: usize,
+        ignore_sourcemap: bool,
+    ) callconv(.C) bun.JSC.JSValue {
+        var this = ByteRangeMapping.find(source_url) orelse return bun.JSC.JSValue.null;
 
-        if (start > -1 and end > -1) {
-            const end_ = @max(start, end);
-            const start_ = @min(start, end);
-            start = start_;
-            end = end_;
-        }
+        const blocks: []const BasicBlockRange = blocks_ptr[0..blocks_len];
+
+        var lines = std.ArrayList(i32).init(bun.default_allocator);
 
         var url = source_url.toUTF8(bun.default_allocator);
         defer url.deinit();
+        var line_starts = this.line_offset_table.items(.byte_offset_to_start_of_line);
 
         if (bun.JSC.VirtualMachine.get().source_mappings.get(
             url.slice(),
         )) |mapping| {
-            const originals: []const LineColumnOffset = mapping.items(.original);
-            for (start..end) |line| {
-                if (SourceMap.Mapping.findIndex(mapping, line, 0)) |point| {
-                    return originals[point].lines;
+            var prev_line_mapping: i32 = -1;
+            for (blocks) |block| {
+                const min: usize = @intCast(@min(block.startOffset, block.endOffset));
+                const max: usize = @intCast(@max(block.startOffset, block.endOffset));
+                if (block.executionCount == 0 or !block.hasExecuted) {
+                    continue;
+                }
+
+                if (ignore_sourcemap) {
+                    lines.append(@intCast(block.startOffset)) catch break;
+                    lines.append(@intCast(block.endOffset)) catch break;
+                    continue;
+                }
+
+                for (min..max) |byte_offset| {
+                    const new_line_index = LineOffsetTable.findIndex(line_starts, .{ .start = @intCast(byte_offset) }) orelse continue;
+                    const line_start_byte_offset = line_starts[new_line_index];
+                    if (line_start_byte_offset >= byte_offset) {
+                        continue;
+                    }
+
+                    const column_position = byte_offset -| line_start_byte_offset;
+
+                    if (SourceMap.Mapping.find(mapping, @intCast(new_line_index), @intCast(column_position))) |point| {
+                        if (point.original.lines != prev_line_mapping) {
+                            prev_line_mapping = point.original.lines;
+                            lines.append(point.original.lines) catch break;
+                        }
+                    }
                 }
             }
         }
 
-        return -1;
+        if (lines.items.len == 0) {
+            return bun.JSC.JSValue.null;
+        }
+
+        return bun.JSC.ArrayBuffer.fromBytes(std.mem.sliceAsBytes(lines.items), .Int32Array).toJS(globalThis, null);
     }
 
     pub fn compute(source_contents: []const u8, source_id: i32) ByteRangeMapping {
@@ -196,7 +235,7 @@ pub const ByteRangeMapping = struct {
 
 comptime {
     @export(ByteRangeMapping.generate, .{ .name = "ByteRangeMapping__generate" });
-    @export(ByteRangeMapping.findLine, .{ .name = "ByteRangeMapping__findLine" });
+    @export(ByteRangeMapping.findExecutedLines, .{ .name = "ByteRangeMapping__findExecutedLines" });
     @export(ByteRangeMapping.find, .{ .name = "ByteRangeMapping__find" });
     @export(ByteRangeMapping.getSourceID, .{ .name = "ByteRangeMapping__getSourceID" });
 }
@@ -931,6 +970,38 @@ pub const LineOffsetTable = struct {
         }
 
         return @as(i32, @intCast(original_line)) - 1;
+    }
+
+    pub fn findIndex(byte_offsets_to_start_of_line: []const u32, loc: Logger.Loc) ?usize {
+        std.debug.assert(loc.start > -1); // checked by caller
+        var original_line: usize = 0;
+        const loc_start = @as(usize, @intCast(loc.start));
+
+        var count = @as(usize, @truncate(byte_offsets_to_start_of_line.len));
+        var i: usize = 0;
+        while (count > 0) {
+            const step = count / 2;
+            i = original_line + step;
+            const byte_offset = byte_offsets_to_start_of_line[i];
+            if (byte_offset == loc_start) {
+                return i;
+            }
+            if (i + 1 < byte_offsets_to_start_of_line.len) {
+                const next_byte_offset = byte_offsets_to_start_of_line[i + 1];
+                if (byte_offset < loc_start and loc_start < next_byte_offset) {
+                    return i;
+                }
+            }
+
+            if (byte_offset < loc_start) {
+                original_line = i + 1;
+                count = count - step - 1;
+            } else {
+                count = step;
+            }
+        }
+
+        return null;
     }
 
     pub fn generate(allocator: std.mem.Allocator, contents: []const u8, approximate_line_count: i32) List {

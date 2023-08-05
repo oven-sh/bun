@@ -73,8 +73,12 @@ void forEachSourceProvider(const WTF::Function<void(JSC::SourceID)>& func)
 }
 extern "C" int ByteRangeMapping__getSourceID(void* mappings, BunString sourceURL);
 extern "C" void* ByteRangeMapping__find(BunString sourceURL);
+void* sourceMappingForSourceURL(const WTF::String& sourceURL)
+{
+    return ByteRangeMapping__find(Bun::toString(sourceURL));
+}
+
 extern "C" void ByteRangeMapping__generate(BunString sourceURL, BunString code, int sourceID);
-extern "C" int ByteRangeMapping__findLine(void* mapping, BunString str, int start, int end);
 
 JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL)
 {
@@ -86,22 +90,18 @@ JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL)
     return ByteRangeMapping__getSourceID(mappings, Bun::toString(sourceURL));
 }
 
-int findLine(void* mapping, const WTF::String& str, int start, int end)
-{
-    return ByteRangeMapping__findLine(mapping, Bun::toString(str), start, end);
-}
-
-void* sourceMappingForSourceURL(const WTF::String& sourceURL)
-{
-    return ByteRangeMapping__find(Bun::toString(sourceURL));
-}
-
 Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, ResolvedSource resolvedSource, JSC::SourceProviderSourceType sourceType, bool isBuiltin)
 {
 
     auto stringImpl = Bun::toWTFString(resolvedSource.source_code);
     auto sourceURLString = toStringCopy(resolvedSource.source_url);
     bool isCodeCoverageEnabled = !!globalObject->vm().controlFlowProfiler();
+
+#ifdef BUN_DEBUG
+    bool shouldGenerateCodeCoverage = isCodeCoverageEnabled && !isBuiltin && !sourceURLString.contains("/node_modules/"_s);
+#else
+    bool shouldGenerateCodeCoverage = isCodeCoverageEnabled && !sourceURLString.contains("/node_modules/"_s);
+#endif
 
     auto provider = adoptRef(*new SourceProvider(
         globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
@@ -110,7 +110,7 @@ Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, Reso
         sourceURLString.impl(), TextPosition(),
         sourceType));
 
-    if (!isBuiltin && isCodeCoverageEnabled) {
+    if (shouldGenerateCodeCoverage) {
         ByteRangeMapping__generate(Bun::toString(provider->sourceURL()), Bun::toString(provider->source().toStringWithoutCopying()), provider->asID());
     }
 

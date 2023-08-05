@@ -507,6 +507,9 @@ pub const TestCommand = struct {
 
         if (ctx.test_options.code_coverage) {
             vm.bundler.options.code_coverage = true;
+            vm.bundler.options.minify_syntax = false;
+            vm.bundler.options.minify_identifiers = false;
+            vm.bundler.options.minify_whitespace = false;
             vm.global.vm().setControlFlowProfiler(true);
         }
 

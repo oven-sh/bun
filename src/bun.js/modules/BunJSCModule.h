@@ -653,6 +653,11 @@ JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject,
   RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 
+extern "C" EncodedJSValue
+ByteRangeMapping__findExecutedLines(JSC::JSGlobalObject *, BunString sourceURL,
+                                    BasicBlockRange *ranges, size_t len,
+                                    bool ignoreSourceMap);
+
 JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
                          (JSGlobalObject * globalObject,
                           CallFrame *callFrame)) {
@@ -661,6 +666,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
 
   String fileName = callFrame->argument(0).toWTFString(globalObject);
   RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+  bool ignoreSourceMap = callFrame->argument(1).toBoolean(globalObject);
 
   auto sourceID = Zig::sourceIDForSourceURL(fileName);
   if (!sourceID) {
@@ -670,58 +676,16 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
   }
 
   auto basicBlocks =
-      vm.controlFlowProfiler()->getBasicBlocksForSourceID(sourceID, vm);
+      vm.controlFlowProfiler()->getExecutedBasicBlocksForSourceID(sourceID, vm);
 
   if (basicBlocks.isEmpty()) {
     return JSC::JSValue::encode(
         JSC::constructEmptyArray(globalObject, nullptr, 0));
   }
 
-  JSC::Structure *structure =
-      globalObject->structureCache().emptyObjectStructureForPrototype(
-          globalObject, globalObject->objectPrototype(), 4);
-  JSC::PropertyOffset offset;
-
-  structure = structure->addPropertyTransition(
-      vm, structure, JSC::Identifier::fromString(vm, "transpiledStartOffset"_s),
-      0, offset);
-
-  structure = structure->addPropertyTransition(
-      vm, structure, JSC::Identifier::fromString(vm, "transpiledEndOffset"_s),
-      0, offset);
-
-  structure = structure->addPropertyTransition(
-      vm, structure, JSC::Identifier::fromString(vm, "minimumExecutionCount"_s),
-      0, offset);
-
-  structure = structure->addPropertyTransition(
-      vm, structure, JSC::Identifier::fromString(vm, "line"_s), 0, offset);
-
-  RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-
-  JSC::JSArray *array =
-      JSC::constructEmptyArray(globalObject, nullptr, basicBlocks.size());
-  unsigned int i = 0;
-
-  void *mapping = Zig::sourceMappingForSourceURL(fileName);
-
-  for (const auto block : basicBlocks) {
-    JSC::JSObject *object = JSC::constructEmptyObject(vm, structure);
-    object->putDirectOffset(vm, 0, JSC::jsNumber(block.m_startOffset));
-    object->putDirectOffset(vm, 1, JSC::jsNumber(block.m_endOffset));
-    object->putDirectOffset(
-        vm, 2, JSC::jsNumber(block.m_executionCount || block.m_hasExecuted));
-    array->putDirectIndex(globalObject, i++, object);
-    if (mapping) {
-      auto line = Zig::findLine(mapping, fileName, block.m_startOffset,
-                                block.m_endOffset);
-      object->putDirectOffset(vm, 3, JSC::jsNumber(line));
-    } else {
-      object->putDirectOffset(vm, 3, JSC::jsNumber(-1));
-    }
-  }
-
-  return JSValue::encode(array);
+  return ByteRangeMapping__findExecutedLines(
+      globalObject, Bun::toString(fileName), basicBlocks.data(),
+      basicBlocks.size(), ignoreSourceMap);
 }
 
 // clang-format off

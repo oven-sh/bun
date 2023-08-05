@@ -570,7 +570,7 @@ declare module "node:process" {
 interface BlobInterface {
   text(): Promise<string>;
   arrayBuffer(): Promise<ArrayBuffer>;
-  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
+  json<TJSONReturnType = any>(): Promise<TJSONReturnType>;
   formData(): Promise<FormData>;
 }
 
@@ -766,7 +766,7 @@ declare interface Blob {
    * This first decodes the data from UTF-8, then parses it as JSON.
    *
    */
-  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
+  json<TJSONReturnType = any>(): Promise<TJSONReturnType>;
 
   /**
    * Read the data from the blob as a {@link FormData} object.
@@ -933,7 +933,7 @@ declare class Response implements BlobInterface {
    * This first decodes the data from UTF-8, then parses it as JSON.
    *
    */
-  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
+  json<TJSONReturnType = any>(): Promise<TJSONReturnType>;
 
   /**
    * Read the data from the Response as a Blob.
@@ -1194,7 +1194,7 @@ declare class Request implements BlobInterface {
    * This first decodes the data from UTF-8, then parses it as JSON.
    *
    */
-  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
+  json<TJSONReturnType = any>(): Promise<TJSONReturnType>;
 
   /**
    * Consume the [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) body as a `Blob`.

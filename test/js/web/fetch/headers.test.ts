@@ -411,6 +411,16 @@ describe("Headers", () => {
         ["user-agent", "bun"],
       ]);
     });
+    test("can iterate over header object with set-cookie", () => {
+      const headers = new Headers();
+      headers.append("Content-Type", "application/json");
+      headers.append("Set-Cookie", "cookies");
+      const entries = Array.from(headers);
+      expect(entries).toEqual([
+        ["content-type", "application/json"],
+        ["set-cookie", "cookies"],
+      ]);
+    });
   });
   describe("Bun.inspect()", () => {
     const it = "toJSON" in new Headers() ? test : test.skip;

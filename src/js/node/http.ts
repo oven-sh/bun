@@ -32,8 +32,6 @@ const validateHeaderValue = (name, value) => {
   }
 };
 
-$debug("http loaded OwO");
-
 // Cheaper to duplicate this than to import it from node:net
 function isIPv6(input) {
   const v4Seg = "(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])";
@@ -538,8 +536,17 @@ class Server extends EventEmitter {
           }
 
           return new Promise((resolve, reject) => {
-            resolveFunction = resolve;
-            rejectFunction = reject;
+            // In dev mode, we'll debug log the response before sending it
+            if (!!$debug) {
+              resolveFunction = value => {
+                $debug("response before sending", value);
+                resolve(value);
+              };
+              rejectFunction = reject;
+            } else {
+              resolveFunction = resolve;
+              rejectFunction = reject;
+            }
           });
         },
       });
@@ -655,7 +662,7 @@ class IncomingMessage extends Readable {
       if (this.#aborted) return;
       if (done) {
         this.push(null);
-        process.nextTick(destroyBodyStreamNT, this);
+        // process.nextTick(destroyBodyStreamNT, this);
         break;
       }
       for (var v of value) {
@@ -736,7 +743,7 @@ function emitErrorNt(msg, err, callback) {
 }
 
 function onError(self, err, cb) {
-  process.nextTick(() => emitErrorNt(self, err, cb));
+  process.nextTick(emitErrorNt, self, err, cb);
 }
 
 function write_(msg, chunk, encoding, callback, fromEnd) {
@@ -1163,6 +1170,7 @@ class ServerResponse extends Writable {
   }
 
   setHeader(name, value) {
+    $debug(`ServerResponse.setHeader(${name}, ${value})`);
     var headers = (this.#headers ??= new Headers());
     headers.set(name, value);
     return this;

@@ -1074,7 +1074,7 @@ pub const Fetch = struct {
                 return JSPromise.rejectedPromiseValue(globalThis, err);
             }
 
-            if (DataURL.parse(request.url.toSlice(bun.default_allocator).slice()) catch {
+            if (DataURL.parse(request.url.byteSlice()) catch {
                 const err = JSC.createError(globalThis, "failed to fetch the data URL", .{});
                 return JSPromise.rejectedPromiseValue(globalThis, err);
             }) |data_url| {
@@ -1230,7 +1230,7 @@ pub const Fetch = struct {
                 return JSPromise.rejectedPromiseValue(globalThis, err);
             }
 
-            if (DataURL.parse(str.toSlice(bun.default_allocator).slice()) catch {
+            if (DataURL.parse(str.byteSlice()) catch {
                 const err = JSC.createError(globalThis, "failed to fetch the data URL", .{});
                 return JSPromise.rejectedPromiseValue(globalThis, err);
             }) |data_url| {

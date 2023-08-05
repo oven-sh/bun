@@ -81,6 +81,17 @@ describe("fetch data urls", () => {
     expect(blob.size).toBe(13);
     expect(blob.type).toBe("text/plain;charset=utf-8");
     expect(blob.text()).resolves.toBe("Hello, World!");
+
+    url = "data:,helloworld!";
+    res = await fetch(url);
+    expect(res.status).toBe(200);
+    expect(res.statusText).toBe("OK");
+    expect(res.ok).toBe(true);
+
+    blob = await res.blob();
+    expect(blob.size).toBe(11);
+    expect(blob.type).toBe("text/plain;charset=utf-8");
+    expect(blob.text()).resolves.toBe("helloworld!");
   });
   it("data url (invalid)", async () => {
     var url = "data:Hello%2C%20World!";

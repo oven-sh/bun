@@ -29,8 +29,7 @@ import.meta.resolveSync("zod")
 ---
 
 - `import.meta.path`
-- Absolute path to the current file, e.g. `/path/to/project/index.tx`.
-- Equivalent to `__filename` in CommonJS modules (and Node.js)
+- Absolute path to the current file, e.g. `/path/to/project/index.tx`. Equivalent to `__filename` in CommonJS modules (and Node.js)
 
 ---
 

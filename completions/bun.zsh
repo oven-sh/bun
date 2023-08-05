@@ -49,7 +49,7 @@ _bun() {
                 '--production[Don'"'"'t install devDependencies]' \
                 '--frozen-lockfile[Disallow changes to lockfile]' \
                 '--optional[Add dependency to optionalDependencies]' \
-                '--development[Add dependency to devDependencies]' \
+                '--dev[Add dependency to devDependencies]' \
                 '-d[Add dependency to devDependencies]' \
                 '-p[Don'"'"'t install devDependencies]' \
                 '--no-save[]' \
@@ -91,7 +91,7 @@ _bun() {
                 '--production[Don'"'"'t install devDependencies]' \
                 '--frozen-lockfile[Disallow changes to lockfile]' \
                 '--optional[Add dependency to optionalDependencies]' \
-                '--development[Add dependency to devDependencies]' \
+                '--dev[Add dependency to devDependencies]' \
                 '-d[Add dependency to devDependencies]' \
                 '-p[Don'"'"'t install devDependencies]' \
                 '--no-save[]' \
@@ -127,7 +127,7 @@ _bun() {
                 '--production[Don'"'"'t install devDependencies]' \
                 '--frozen-lockfile[Disallow changes to lockfile]' \
                 '--optional[Add dependency to optionalDependencies]' \
-                '--development[Add dependency to devDependencies]' \
+                '--dev[Add dependency to devDependencies]' \
                 '-d[Add dependency to devDependencies]' \
                 '-p[Don'"'"'t install devDependencies]' \
                 '--no-save[]' \

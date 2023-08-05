@@ -339,7 +339,7 @@ pub const InitCommand = struct {
         if (fields.entry_point.len > 0 and !exists(fields.entry_point)) {
             const cwd = std.fs.cwd();
             if (std.fs.path.dirname(fields.entry_point)) |dirname| {
-                if (!(dirname.len == 0 and dirname[0] == '.')) {
+                if (!strings.eqlComptime(dirname, ".")) {
                     cwd.makePath(dirname) catch {};
                 }
             }

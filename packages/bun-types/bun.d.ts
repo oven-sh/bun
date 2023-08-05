@@ -752,38 +752,39 @@ declare module "bun" {
    */
   export const hash: ((
     data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-    seed?: number,
+    seed?: number | bigint,
   ) => number | bigint) &
     Hash;
 
   interface Hash {
     wyhash: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-      seed?: number,
-    ) => number | bigint;
-    crc32: (
-      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-      seed?: number,
+      seed?: number | bigint,
     ) => number | bigint;
     adler32: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-      seed?: number,
-    ) => number | bigint;
+    ) => number;
+    crc32: (
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
+    ) => number;
     cityHash32: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-      seed?: number,
-    ) => number | bigint;
+    ) => number;
     cityHash64: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-      seed?: number,
+      seed?: number | bigint,
     ) => number | bigint;
     murmur32v3: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
       seed?: number,
-    ) => number | bigint;
-    murmur64v2: (
+    ) => number;
+    murmur32v2: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
       seed?: number,
+    ) => number;
+    murmur64v2: (
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
+      seed?: number | bigint,
     ) => number | bigint;
   }
 

@@ -158,16 +158,29 @@ pub const ByteRangeMapping = struct {
         return entry;
     }
 
-    pub fn findLine(this: *ByteRangeMapping, source_url: bun.String, byte_offset: i32) callconv(.C) i32 {
-        const input_line = LineOffsetTable.findLine(this.line_offset_table.items(.byte_offset_to_start_of_line), .{ .start = byte_offset });
+    pub fn findLine(this: *ByteRangeMapping, source_url: bun.String, start_byte_offset: i32, end_byte_offset: i32) callconv(.C) i32 {
+        var start = LineOffsetTable.findLine(this.line_offset_table.items(.byte_offset_to_start_of_line), .{ .start = start_byte_offset });
+        var end = LineOffsetTable.findLine(this.line_offset_table.items(.byte_offset_to_start_of_line), .{ .start = end_byte_offset });
+
+        if (start > -1 and end > -1) {
+            const end_ = @max(start, end);
+            const start_ = @min(start, end);
+            start = start_;
+            end = end_;
+        }
+
         var url = source_url.toUTF8(bun.default_allocator);
         defer url.deinit();
-        if (bun.JSC.VirtualMachine.get().source_mappings.resolveMapping(
+
+        if (bun.JSC.VirtualMachine.get().source_mappings.get(
             url.slice(),
-            @max(input_line, 0),
-            0,
         )) |mapping| {
-            return mapping.original.lines;
+            const originals: []const LineColumnOffset = mapping.items(.original);
+            for (start..end) |line| {
+                if (SourceMap.Mapping.findIndex(mapping, line, 0)) |point| {
+                    return originals[point].lines;
+                }
+            }
         }
 
         return -1;

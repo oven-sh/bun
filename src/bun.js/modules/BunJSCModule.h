@@ -713,7 +713,8 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
         vm, 2, JSC::jsNumber(block.m_executionCount || block.m_hasExecuted));
     array->putDirectIndex(globalObject, i++, object);
     if (mapping) {
-      auto line = Zig::findLine(mapping, fileName, block.m_startOffset);
+      auto line = Zig::findLine(mapping, fileName, block.m_startOffset,
+                                block.m_endOffset);
       object->putDirectOffset(vm, 3, JSC::jsNumber(line));
     } else {
       object->putDirectOffset(vm, 3, JSC::jsNumber(-1));

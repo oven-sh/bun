@@ -74,7 +74,7 @@ void forEachSourceProvider(const WTF::Function<void(JSC::SourceID)>& func)
 extern "C" int ByteRangeMapping__getSourceID(void* mappings, BunString sourceURL);
 extern "C" void* ByteRangeMapping__find(BunString sourceURL);
 extern "C" void ByteRangeMapping__generate(BunString sourceURL, BunString code, int sourceID);
-extern "C" int ByteRangeMapping__findLine(void* mapping, BunString str, int byteOffset);
+extern "C" int ByteRangeMapping__findLine(void* mapping, BunString str, int start, int end);
 
 JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL)
 {
@@ -86,9 +86,9 @@ JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL)
     return ByteRangeMapping__getSourceID(mappings, Bun::toString(sourceURL));
 }
 
-int findLine(void* mapping, const WTF::String& str, int byteOffset)
+int findLine(void* mapping, const WTF::String& str, int start, int end)
 {
-    return ByteRangeMapping__findLine(mapping, Bun::toString(str), byteOffset);
+    return ByteRangeMapping__findLine(mapping, Bun::toString(str), start, end);
 }
 
 void* sourceMappingForSourceURL(const WTF::String& sourceURL)

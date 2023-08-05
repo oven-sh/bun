@@ -5955,8 +5955,6 @@ pub const Ast = struct {
     wrapper_ref: Ref = Ref.None,
     require_ref: Ref = Ref.None,
 
-    bun_plugin: BunPlugin = .{},
-
     prepend_part: ?Part = null,
 
     // These are used when bundling. They are filled in during the parser pass
@@ -6428,7 +6426,6 @@ pub const Part = struct {
         cjs_imports,
         react_fast_refresh,
         dirname_filename,
-        bun_plugin,
         bun_test,
         dead_due_to_inlining,
         commonjs_named_export,
@@ -6695,11 +6692,6 @@ pub fn printmem(comptime format: string, args: anytype) void {
     Output.initTest();
     Output.print(format, args);
 }
-
-pub const BunPlugin = struct {
-    ref: Ref = Ref.None,
-    hoisted_stmts: std.ArrayListUnmanaged(Stmt) = .{},
-};
 
 pub const Macro = struct {
     const JavaScript = @import("root").bun.JSC;

@@ -2065,7 +2065,13 @@ pub const DNSResolver = struct {
             } else blk: {
                 break :blk c_ares.ares_inet_ntop(family, &cur.*.addr.addr4, buf[1..], @sizeOf(@TypeOf(buf)) - 1);
             };
-            _ = ip;
+            if (ip == null) {
+                globalThis.throwValue(globalThis.createErrorInstance(
+                    "ares_inet_ntop error: no more space to convert a network format address",
+                    .{},
+                ));
+                return .zero;
+            }
 
             var port = cur.*.tcp_port;
             if (port == 0) {

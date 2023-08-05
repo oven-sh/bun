@@ -78,14 +78,13 @@ export function murmur32v3(input, seed = 0) {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
     return exports.murmur32v3(ptr, size, seed); //! Bun doesn't unsigned-cast this one, likely unintended but for now we'll do the same
 }
-/** @type {JSSeededHash64Function} */
-export function murmur64v2(input, seed = 0n) {
-    const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
-    return BigInt.asUintN(64, exports.murmur64v2(ptr, size, seed));
-}
-// undocumented
 /** @type {JSSeededHash32Function} */
 export function murmur32v2(input, seed = 0) {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
     return exports.murmur32v2(ptr, size, seed); //! Bun doesn't unsigned-cast this one, likely unintended but for now we'll do the same
+}
+/** @type {JSSeededHash64Function} */
+export function murmur64v2(input, seed = 0n) {
+    const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
+    return BigInt.asUintN(64, exports.murmur64v2(ptr, size, seed));
 }

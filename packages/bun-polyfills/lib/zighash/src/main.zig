@@ -46,14 +46,13 @@ export fn murmur32v3(input_ptr: [*]const u8, input_size: u32, seed: u32) u32 {
     defer std.heap.wasm_allocator.free(input);
     return std.hash.Murmur3_32.hashWithSeed(input, seed);
 }
-export fn murmur64v2(input_ptr: [*]const u8, input_size: u32, seed: u64) u64 {
-    const input: []const u8 = input_ptr[0..input_size];
-    defer std.heap.wasm_allocator.free(input);
-    return std.hash.Murmur2_64.hashWithSeed(input, seed);
-}
-// undocumented
 export fn murmur32v2(input_ptr: [*]const u8, input_size: u32, seed: u32) u32 {
     const input: []const u8 = input_ptr[0..input_size];
     defer std.heap.wasm_allocator.free(input);
     return std.hash.Murmur2_32.hashWithSeed(input, seed);
+}
+export fn murmur64v2(input_ptr: [*]const u8, input_size: u32, seed: u64) u64 {
+    const input: []const u8 = input_ptr[0..input_size];
+    defer std.heap.wasm_allocator.free(input);
+    return std.hash.Murmur2_64.hashWithSeed(input, seed);
 }

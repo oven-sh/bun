@@ -18,8 +18,8 @@ type ZighashInstance = WebAssembly.WebAssemblyInstantiatedSource & {
             cityhash32: WasmHash32Function,
             cityhash64: WasmSeededHash64Function,
             murmur32v3: WasmSeededHash32Function,
-            murmur64v2: WasmSeededHash64Function,
             murmur32v2: WasmSeededHash32Function,
+            murmur64v2: WasmSeededHash64Function,
         };
     };
 }

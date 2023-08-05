@@ -11,10 +11,9 @@ export const bunHashProto: Hash = {
     crc32(data) { return crc32(data); },
     cityHash32(data) { return cityhash32(data); },
     cityHash64(data, seed = 0) { return cityhash64(data, BigInt(seed)); },
-    murmur32v3(data, seed) { return murmur32v3(data, seed); },
+    murmur32v3(data, seed = 0) { return murmur32v3(data, seed); },
+    murmur32v2(data, seed = 0) { return murmur32v2(data, seed); },
     murmur64v2(data, seed = 0) { return murmur64v2(data, BigInt(seed)); },
-    // @ts-expect-error undocumented
-    murmur32v2(data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed = 0) { return murmur32v2(data, seed); },
 };
 
 type HashImpl = {

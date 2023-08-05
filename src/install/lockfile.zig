@@ -2564,14 +2564,15 @@ pub const Package = extern struct {
             .npm => String.Builder.stringHash(dependency_version.value.npm.name.slice(buf)),
             .workspace => if (strings.hasPrefixComptime(sliced.slice, "workspace:")) brk: {
                 const input = sliced.slice["workspace:".len..];
-                const at = strings.lastIndexOfChar(input, '@') orelse 0;
-                if (at > 0) {
-                    workspace_range = Semver.Query.parse(allocator, input[at + 1 ..], sliced) catch return error.InstallFailed;
-                    break :brk String.Builder.stringHash(input[0..at]);
-                } else {
+                if (!strings.eqlComptime(input, "*")) {
+                    const at = strings.lastIndexOfChar(input, '@') orelse 0;
+                    if (at > 0) {
+                        workspace_range = Semver.Query.parse(allocator, input[at + 1 ..], sliced) catch return error.InstallFailed;
+                        break :brk String.Builder.stringHash(input[0..at]);
+                    }
                     workspace_range = Semver.Query.parse(allocator, input, sliced) catch null;
-                    break :brk external_alias.hash;
                 }
+                break :brk external_alias.hash;
             } else external_alias.hash,
             else => external_alias.hash,
         };
@@ -2632,70 +2633,71 @@ pub const Package = extern struct {
                     dependency_version.value.workspace = path;
                 }
             } else {
-                {
-                    const workspace = dependency_version.value.workspace.slice(buf);
-                    const path = string_builder.append(
-                        String,
-                        if (strings.eqlComptime(workspace, "*")) "*" else Path.relative(
+                const workspace = dependency_version.value.workspace.slice(buf);
+                const path = string_builder.append(
+                    String,
+                    if (strings.eqlComptime(workspace, "*")) "*" else Path.relative(
+                        FileSystem.instance.top_level_dir,
+                        Path.joinAbsString(
                             FileSystem.instance.top_level_dir,
-                            Path.joinAbsString(
-                                FileSystem.instance.top_level_dir,
-                                &[_]string{
-                                    source.path.name.dir,
-                                    workspace,
-                                },
-                                .posix,
-                            ),
+                            &[_]string{
+                                source.path.name.dir,
+                                workspace,
+                            },
+                            .posix,
                         ),
-                    );
-                    if (comptime Environment.allow_assert) {
-                        std.debug.assert(path.len() > 0);
-                        std.debug.assert(!std.fs.path.isAbsolute(path.slice(buf)));
-                    }
-                    dependency_version.literal = path;
-                    dependency_version.value.workspace = path;
-
-                    var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, @truncate(name_hash));
-                    if (workspace_entry.found_existing) {
-                        const old_path = workspace_entry.value_ptr.*;
-
-                        if (strings.eqlComptime(workspace, "*")) {
-                            return null;
-                        } else if (strings.eqlComptime(old_path.slice(buf), "*")) brk: {
-                            workspace_entry.value_ptr.* = path;
-                            for (package_dependencies[0..dependencies_count]) |*package_dep| {
-                                if (String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash) {
-                                    if (package_dep.version.tag != .workspace) break :brk;
-                                    package_dep.version = dependency_version;
-                                    return null;
-                                }
-                            }
-                            return error.InstallFailed;
-                        } else if (strings.eql(old_path.slice(buf), path.slice(buf))) {
-                            return null;
-                        } else {
-                            log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Workspace name \"{s}\" already exists", .{
-                                external_alias.slice(buf),
-                            }) catch {};
-                            return error.InstallFailed;
-                        }
-                    }
-                    workspace_entry.value_ptr.* = path;
+                    ),
+                );
+                if (comptime Environment.allow_assert) {
+                    std.debug.assert(path.len() > 0);
+                    std.debug.assert(!std.fs.path.isAbsolute(path.slice(buf)));
                 }
+                dependency_version.literal = path;
+                dependency_version.value.workspace = path;
+
+                var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, @truncate(name_hash));
+                if (workspace_entry.found_existing) {
+                    if (strings.eqlComptime(workspace, "*")) return null;
+
+                    const old_path = workspace_entry.value_ptr.*.slice(buf);
+                    if (!strings.eqlComptime(old_path, "*")) {
+                        if (strings.eql(old_path, path.slice(buf))) return null;
+
+                        log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Workspace name \"{s}\" already exists", .{
+                            external_alias.slice(buf),
+                        }) catch {};
+                        return error.InstallFailed;
+                    }
+                }
+                workspace_entry.value_ptr.* = path;
 
                 if (workspace_version) |ver| {
                     try lockfile.workspace_versions.put(allocator, @truncate(name_hash), ver);
 
                     for (package_dependencies[0..dependencies_count]) |*package_dep| {
-                        // `dependencies` & `workspaces` defined within the same `package.json`
-                        if (package_dep.version.tag == .npm and
-                            String.Builder.stringHash(package_dep.version.value.npm.name.slice(buf)) == name_hash and
-                            package_dep.version.value.npm.version.satisfies(ver))
+                        if (switch (package_dep.version.tag) {
+                            // `dependencies` & `workspaces` defined within the same `package.json`
+                            .npm => String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash and
+                                package_dep.version.value.npm.version.satisfies(ver),
+                            // `workspace:*`
+                            .workspace => workspace_entry.found_existing and
+                                String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash,
+                            else => false,
+                        }) {
+                            package_dep.version = dependency_version;
+                            return null;
+                        }
+                    }
+                } else if (workspace_entry.found_existing) {
+                    for (package_dependencies[0..dependencies_count]) |*package_dep| {
+                        if (package_dep.version.tag == .workspace and
+                            String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash)
                         {
                             package_dep.version = dependency_version;
                             return null;
                         }
                     }
+                    return error.InstallFailed;
                 }
             },
             else => {},

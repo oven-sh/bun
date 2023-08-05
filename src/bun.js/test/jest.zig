@@ -373,6 +373,11 @@ pub const Jest = struct {
             ZigString.static("skipIf"),
             JSC.NewFunction(globalObject, ZigString.static("skipIf"), 2, TestScope.skipIf, false),
         );
+        // test_fn.put(
+        //     globalObject,
+        //     ZigString.static("each"),
+        //     JSC.NewFunction(globalObject, ZigString.static("each"), 2, TestScope.each, false),
+        // );
 
         module.put(
             globalObject,
@@ -546,7 +551,11 @@ pub const Jest = struct {
 pub const TestScope = struct {
     label: string = "",
     parent: *DescribeScope,
-    callback: JSC.JSValue,
+
+    func: JSC.JSValue,
+    func_arg: JSC.JSValue,
+    func_has_args: bool = false,
+
     id: TestRunner.Test.ID = 0,
     promise: ?*JSInternalPromise = null,
     ran: bool = false,
@@ -585,6 +594,10 @@ pub const TestScope = struct {
     pub fn skipIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
         return createIfScope(globalThis, callframe, "test.skipIf()", "skipIf", TestScope, true);
     }
+
+    // pub fn each(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+    //     // return createEach(globalThis, callframe, "test.each()", "each", TestScope);
+    // }
 
     pub fn onReject(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         const arguments = callframe.arguments(2);
@@ -637,16 +650,16 @@ pub const TestScope = struct {
     ) Result {
         if (comptime is_bindgen) return undefined;
         var vm = VirtualMachine.get();
-        const callback = this.callback;
+        const func = this.func;
         Jest.runner.?.did_pending_test_fail = false;
         defer {
-            callback.unprotect();
-            this.callback = .zero;
+            func.unprotect();
+            this.func = .zero;
             vm.autoGarbageCollect();
         }
         JSC.markBinding(@src());
 
-        const callback_length = callback.getLength(vm.global);
+        const func_params_length = func.getLength(vm.global);
 
         var initial_value = JSValue.zero;
         if (test_elapsed_timer) |timer| {
@@ -659,7 +672,7 @@ pub const TestScope = struct {
             task.test_id,
         );
 
-        if (callback_length > 0) {
+        if (func_params_length > 0) {
             const callback_func = JSC.NewFunctionWithData(
                 vm.global,
                 ZigString.static("done"),
@@ -669,9 +682,9 @@ pub const TestScope = struct {
                 task,
             );
             task.done_callback_state = .pending;
-            initial_value = callback.call(vm.global, &.{callback_func});
+            initial_value = func.call(vm.global, &.{callback_func});
         } else {
-            initial_value = callback.call(vm.global, &.{});
+            initial_value = func.call(vm.global, &.{});
         }
 
         if (initial_value.isAnyError()) {
@@ -730,7 +743,7 @@ pub const TestScope = struct {
             }
         }
 
-        if (callback_length > 0) {
+        if (func_params_length > 0) {
             return .{ .pending = {} };
         }
 
@@ -1248,7 +1261,7 @@ pub const TestRunnerTask = struct {
         var test_: TestScope = this.describe.tests.items[test_id];
         describe.current_test_id = test_id;
 
-        if (test_.callback == .zero or (describe.is_skip and test_.tag != .only)) {
+        if (test_.func == .zero or (describe.is_skip and test_.tag != .only)) {
             var tag = if (describe.is_skip) describe.tag else test_.tag;
             switch (tag) {
                 .todo => {
@@ -1564,7 +1577,9 @@ inline fn createScope(
             .label = label,
             .parent = parent,
             .tag = tag_to_use,
-            .callback = if (is_skip) .zero else function,
+            .func = if (is_skip) .zero else function,
+            .func_arg = .zero,
+            .func_has_args = false,
             .timeout_millis = timeout_ms,
         }) catch unreachable;
 

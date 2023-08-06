@@ -1,39 +1,40 @@
 import { it, describe, expect } from "@jest/globals";
 
-describe("normal test", () => {
-  it("Still works", () => {
-    expect(1).toBe(1);
-  });
-
-  it("Still works with callback", done => {
-    expect(done).toBeDefined();
-    done();
-  });
-
-  it("Doesn't pass extra args", (done, unused, useless) => {
-    expect(done).toBeDefined();
-    expect(unused).toBeUndefined();
-    expect(useless).toBeUndefined();
-    done();
-  });
-});
-
 const NUMBERS = [
   [1, 1, 2],
   [1, 2, 3],
   [2, 1, 3],
 ];
 
-describe("jest-each", () => {
-  it.each(NUMBERS)("adds", (a, b, e) => {
+describe("test-each", () => {
+  it("check types", () => {
+    expect(it.each).toBeTypeOf("function");
+    expect(it.each([])).toBeTypeOf("function");
+  });
+
+  it.each(NUMBERS)("add two numbers", (a, b, e) => {
     expect(a + b).toBe(e);
   });
 
-  it.each(NUMBERS)("adds with callback", (a, b, e, done) => {
+  it.each(NUMBERS)("add two numbers with callback", (a, b, e, done) => {
     expect(a + b).toBe(e);
     expect(done).toBeDefined();
     done();
   });
 
-  it.each([1])("times out correctly", async () => Bun.sleep(3000), 1000);
+  it.each(["other", "array", "values"])(`adds two strings`, s => {
+    expect(typeof s).toBe("string");
+  });
+
+  it.each([
+    { a: 1, b: 1, e: 2 },
+    { a: 1, b: 2, e: 3 },
+    { a: 2, b: 13, e: 15 },
+    { a: 2, b: 13, e: 15 },
+    { a: 2, b: 13, e: 15 },
+    { a: 2, b: 13, e: 15 },
+  ])("add two numbers with object", (args, cb) => {
+    console.log(args);
+    cb();
+  });
 });

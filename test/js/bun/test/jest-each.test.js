@@ -1,4 +1,3 @@
-// const { test, it, expect, describe } = require("@jest/globals");
 import { it, describe, expect } from "@jest/globals";
 
 describe("normal test", () => {
@@ -19,17 +18,22 @@ describe("normal test", () => {
   });
 });
 
-describe("jest-each", () => {
-  const foo = it.each([
-    [1, 1, 2],
-    [1, 2, 3],
-    [2, 1, 3],
-  ]);
+const NUMBERS = [
+  [1, 1, 2],
+  [1, 2, 3],
+  [2, 1, 3],
+];
 
-  foo("adds %i + %i to equal %i", (a, b, expected) => {
-    console.log("a", a);
-    console.log("b", b);
-    console.log("expected", expected);
-    expect(a + b).toBe(expected);
+describe("jest-each", () => {
+  it.each(NUMBERS)("adds", (a, b, e) => {
+    expect(a + b).toBe(e);
   });
+
+  it.each(NUMBERS)("adds with callback", (a, b, e, done) => {
+    expect(a + b).toBe(e);
+    expect(done).toBeDefined();
+    done();
+  });
+
+  it.each([1])("times out correctly", async () => Bun.sleep(3000), 1000);
 });

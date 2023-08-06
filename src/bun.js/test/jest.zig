@@ -588,7 +588,7 @@ pub const TestScope = struct {
     }
 
     pub fn each(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createEach(globalThis, callframe, "test.each()", TestScope);
+        return createEach(globalThis, callframe, "test.each()", "each", TestScope);
     }
 
     pub fn callIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
@@ -1806,134 +1806,88 @@ fn eachBind(
     globalThis: *JSGlobalObject,
     callframe: *CallFrame,
 ) callconv(.C) JSValue {
+    comptime var signature = "eachBind";
     const callee = callframe.callee();
     const arguments = callframe.arguments(3);
     const args = arguments.ptr[0..arguments.len];
-
     const parent = DescribeScope.active.?;
 
-    const stdout = std.io.getStdOut().writer();
-
-    if (args.len == 0) {
-        globalThis.throwPretty("eachBind expects a description and callback function", .{});
+    if (args.len < 2) {
+        globalThis.throwPretty("{s} a description and callback function", .{signature});
         return .zero;
     }
 
     var description = args[0];
-    var function = if (args.len > 1) args[1] else .zero;
-    // var options = if (args.len > 2) args[2] else .zero;
-    // _ = options;
+    var function = args[1];
+    var options = if (args.len > 2) args[2] else .zero;
 
-    // if (description.isEmptyOrUndefinedOrNull() or !description.isString()) {
-    //     function = description;
-    //     description = .zero;
-    // }
-
-    // if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(globalThis.vm())) {
-    //     if (parent.tag != .todo) {
-    //         globalThis.throwPretty("eachBind expects a function", .{});
-    //         return .zero;
-    //     }
-    // }
+    var timeout_ms: u32 = Jest.runner.?.default_timeout_ms;
+    if (options.isNumber()) {
+        timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
+    } else if (options.isObject()) {
+        if (options.get(globalThis, "timeout")) |timeout| {
+            if (!timeout.isNumber()) {
+                globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
+                return .zero;
+            }
+            timeout_ms = @as(u32, @intCast(@max(timeout.coerce(i32, globalThis), 0)));
+        }
+        if (options.get(globalThis, "retry")) |retries| {
+            if (!retries.isNumber()) {
+                globalThis.throwPretty("{s} expects retry to be a number", .{signature});
+                return .zero;
+            }
+            // TODO: retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
+        }
+        if (options.get(globalThis, "repeats")) |repeats| {
+            if (!repeats.isNumber()) {
+                globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
+                return .zero;
+            }
+            // TODO: repeat_count = @intCast(u32, @max(repeats.coerce(i32, globalThis), 0));
+        }
+    } else if (!options.isEmptyOrUndefinedOrNull()) {
+        globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
+        return .zero;
+    }
 
     if (JSC.getFunctionData(callee)) |data| {
-        const fnData = bun.cast(*JSValue, data);
-        const array = fnData.*;
-
-        // if (!array.jsType().isArray()) {
-        //     @panic("Function data should be an array");
-        // }
-
-        stdout.print("function has data\n", .{}) catch unreachable;
-
-        // var value = bun.cast(*Each, data);
-        // var iter = array.arrayIterator(globalThis);
-        var iter = JSC.JSArrayIterator.init(array, globalThis);
-        // defer iter.deinit();
-        // const parent = DescribeScope.active.?;
         const allocator = getAllocator(globalThis);
 
-        var arrlength = array.getLength(globalThis);
-        stdout.print("array length is {d}\n", .{arrlength}) catch unreachable;
+        const fnData = bun.cast(*JSValue, data);
 
-        var idx: u32 = 0;
+        const array = fnData.*;
+        var iter = JSC.JSArrayIterator.init(array, globalThis);
+
+        const length = array.getLength(globalThis);
+        std.debug.print("length: {d}\n", .{length});
+
         while (iter.next()) |item| {
-            stdout.print("iter.next()\n", .{}) catch unreachable;
-            // const foo = createScopeForEach(globalThis, callframe, "test()", function, item, true, .pass);
-            // _ = foo;
-
-            // const parent = DescribeScope.active.?;
-            // const allocator = getAllocator(globalThis);
-
-            var descriptionSlice = description.getZigString(globalThis).toOwnedSlice(allocator) catch unreachable;
+            // TODO: node:util.format() the label
+            const label = if (description == .zero)
+                ""
+            else
+                (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
 
             parent.tests.append(allocator, TestScope{
-                .label = descriptionSlice,
+                .label = label,
                 .parent = parent,
                 .tag = parent.tag,
                 .func = function,
                 .func_arg = item,
                 .func_has_args = true,
-                .timeout_millis = 10000,
+                .timeout_millis = timeout_ms,
             }) catch unreachable;
-
-            idx += 1;
-
-            // const allocator = getAllocator(globalThis);
-            // var test_scope = allocator.create(TestScope) catch unreachable;
-            // // _ = test_scope;
-            // test_scope.* = .{
-            //     .label = "label of my test",
-            //     .parent = parent,
-            //     .tag = .pass,
-            //     .callback = function,
-            //     .timeout_millis = 10000,
-            // };
-
-            // var task = allocator.create(TestRunnerTask) catch unreachable;
-
-            // function.protect();
-            // // scope.* = .{
-            // //     .label = "label",
-            // //     .parent = parent,
-            // //     // .file_id = parent.file_id,
-            // //     .tag = .pass,
-            // //     // .is_skip = false,
-            // //    .callback = function,
-            // // };
-
-            // parent.tests.append(allocator, TestScope{
-            //     .label = "label of my test",
-            //     .parent = parent,
-            //     .tag = .pass,
-            //     .callback = function,
-            //     .timeout_millis = 10000,
-            // }) catch unreachable;
-
-            // var result = test_scope.run(globalThis, function);
-            // _ = result;
         }
-
-        // var result = parent.run(globalThis, function);
-        // _ = result;
     }
-    // if (args.len == 0) {
-    //     globalThis.throwPretty("{s} expects an array");
-    //     return .zero;
-    // }
 
     return .zero;
-
-    // _ = globalThis;
-    // _ = callframe;
-    // const stdout = std.io.getStdOut().writer();
-    // stdout.print("each bind 2", .{}) catch unreachable;
-    // return .zero;
 }
 
 inline fn createEach(
     globalThis: *JSGlobalObject,
     callframe: *CallFrame,
+    comptime property: string,
     comptime signature: string,
     comptime Scope: type,
 ) JSValue {
@@ -1953,178 +1907,17 @@ inline fn createEach(
         return .zero;
     }
 
-    var idx: u32 = 0;
-    var length = array.getLength(globalThis);
+    const name = ZigString.static(property);
+
     const allocator = getAllocator(globalThis);
-    var func_data = allocator.alloc(JSC.JSValue, length) catch unreachable;
 
-    // var iter = JSC.JSArrayIterator.init(array, globalThis);
-    const stdout = std.io.getStdOut().writer();
-
-    while (idx < length) {
-        func_data[idx] = array.getIndex(globalThis, idx);
-        stdout.print("item: {d}\n", .{idx}) catch unreachable;
-        idx += 1;
+    // workaround to keep array in scope. how to make a copy of it ? or protect it from gc?
+    const arrayLength = array.getLength(globalThis);
+    var arrayList = std.ArrayListUnmanaged(JSValue).initCapacity(allocator, arrayLength) catch unreachable;
+    var iterator = array.arrayIterator(globalThis);
+    while (iterator.next()) |item| {
+        arrayList.append(allocator, item) catch unreachable;
     }
 
-    array.protect();
-    // const eachFn = JSC.NewFunctionWithData(globalThis, ZigString.static("eachBind"), 3, eachBind, false, @as(*anyopaque, @ptrCast(func_data)));
-    const eachFn = JSC.NewFunctionWithData(globalThis, ZigString.static("eachBind"), 3, eachBind, false, &array);
-
-    return eachFn;
-
-    // return .zero;
-
-    // const Expr = struct { value: JSValue };
-    // var zigArray = getAllocator(globalThis).alloc(Expr, iter.len) catch unreachable;
-    // _ = zigArray;
-
-    // add zigArray to eachBind
-
-    // returns a js version of eachBind
-
-    // const eachBind2 = createEachBind(array);
-
-    // eachBind2();
-    // eachBind2(globalThis, callframe);
-
-    // return JSC.NewFunction(globalThis, ZigString.static("eachBind"), 3, eachBind2, false);
-    // return JSC.NewFunction(globalThis, name, 2, skip, false);
-
-    // var t: bun.string = "hello";
-    // return
-
-    // return array;
-    // return .zero;
-    //
-
-    // pub fn run(globalThis: *JSGlobalObject, callframe: *CallFrame) JSValue {
-    //     return .zero;
-    // }
-
-    // fn loop(){for (zigArray) |elem| {
-    //     _ = elem;
-    //     stdout.print("by val: {}\n", .{}) catch unreachable;
-    // }};
-
-    // const FFI = JSC.FFI;
-
-    // var buf = FFI.Class.toArrayBuffer(globalThis, array) catch |err| {
-    //     _ = err;
-    //     globalThis.throwPretty("{s} expects an array", .{signature});
-    //     return .zero;
-    // };
-    // if (array.asArrayBuffer(globalThis)) |array_buffer| {
-    //     // stdout.print("buffer: {p}\n", .{array_buffer}) catch unreachable;
-    //     // for (array_buffer) |elem| {
-    //     //     stdout.print("by val: {}\n", .{elem});
-    //     // }
-    //     // const b = array_buffer.byteSlice();
-    //     _ = array_buffer;
-    //     stdout.print("buffer", .{}) catch unreachable;
-    // }
-
-    // var ArrayBuffer = toArrayBuffer
-
-    // var len = array.get(globalThis, "length");
-    // stdout.print("array got {?} args!\n", .{len}) catch unreachable;
-
-    // var description = args[0];
-    // var function = if (args.len > 1) args[1] else .zero;
-    // var options = if (args.len > 2) args[2] else .zero;
-
-    // if (description.isEmptyOrUndefinedOrNull() or !description.isString()) {
-    //     function = description;
-    //     description = .zero;
-    // }
-
-    // if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(globalThis.vm())) {
-    //     if (tag != .todo) {
-    //         globalThis.throwPretty("{s} expects a function", .{signature});
-    //         return .zero;
-    //     }
-    // }
-
-    // var timeout_ms: u32 = Jest.runner.?.default_timeout_ms;
-    // if (options.isNumber()) {
-    //     timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
-    // } else if (options.isObject()) {
-    //     if (options.get(globalThis, "timeout")) |timeout| {
-    //         if (!timeout.isNumber()) {
-    //             globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
-    //             return .zero;
-    //         }
-    //         timeout_ms = @as(u32, @intCast(@max(timeout.coerce(i32, globalThis), 0)));
-    //     }
-    //     if (options.get(globalThis, "retry")) |retries| {
-    //         if (!retries.isNumber()) {
-    //             globalThis.throwPretty("{s} expects retry to be a number", .{signature});
-    //             return .zero;
-    //         }
-    //         // TODO: retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
-    //     }
-    //     if (options.get(globalThis, "repeats")) |repeats| {
-    //         if (!repeats.isNumber()) {
-    //             globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
-    //             return .zero;
-    //         }
-    //         // TODO: repeat_count = @intCast(u32, @max(repeats.coerce(i32, globalThis), 0));
-    //     }
-    // } else if (!options.isEmptyOrUndefinedOrNull()) {
-    //     globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
-    //     return .zero;
-    // }
-
-    // const parent = DescribeScope.active.?;
-    // const allocator = getAllocator(globalThis);
-    // const label = if (description == .zero)
-    //     ""
-    // else
-    //     (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
-
-    // if (tag == .only) {
-    //     Jest.runner.?.setOnly();
-    // } else if (is_test and Jest.runner.?.only and parent.tag != .only) {
-    //     return .zero;
-    // }
-
-    // const is_skip = tag == .skip or
-    //     (tag == .todo and (function == .zero or !Jest.runner.?.run_todo)) or
-    //     (tag != .only and Jest.runner.?.only and parent.tag != .only);
-
-    // if (is_test) {
-    //     if (is_skip) {
-    //         parent.skip_count += 1;
-    //         function.unprotect();
-    //     } else {
-    //         function.protect();
-    //     }
-
-    //     parent.tests.append(allocator, TestScope{
-    //         .label = label,
-    //         .parent = parent,
-    //         .tag = tag,
-    //         .callback = if (is_skip) .zero else function,
-    //         .timeout_millis = timeout_ms,
-    //     }) catch unreachable;
-
-    //     if (test_elapsed_timer == null) create_timer: {
-    //         var timer = allocator.create(std.time.Timer) catch unreachable;
-    //         timer.* = std.time.Timer.start() catch break :create_timer;
-    //         test_elapsed_timer = timer;
-    //     }
-    // } else {
-    //     var scope = allocator.create(DescribeScope) catch unreachable;
-    //     scope.* = .{
-    //         .label = label,
-    //         .parent = parent,
-    //         .file_id = parent.file_id,
-    //         .tag = if (parent.is_skip) parent.tag else tag,
-    //         .is_skip = is_skip or parent.is_skip,
-    //     };
-
-    //     return scope.run(globalThis, function);
-    // }
-
-    // return this;
+    return JSC.NewFunctionWithData(globalThis, name, 3, eachBind, true, &array);
 }

@@ -340,6 +340,7 @@ pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer,
             } else break :brk strings.latin1ToCodepointAssumeNotASCII(char, i32);
         };
         if (canPrintWithoutEscape(i32, c, false)) {
+            const remain = text[@as(usize, width)..];
             if (encoding != .utf8 and width > 0) {
                 var codepoint_bytes: [4]u8 = undefined;
                 std.mem.writeIntNative(i32, &codepoint_bytes, c);
@@ -348,12 +349,12 @@ pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer,
                 );
             }
 
-            if (strings.indexOfNeedsEscape(text)) |j| {
-                try writer.writeAll(text[0..j]);
-                text = text[j..];
+            if (strings.indexOfNeedsEscape(remain)) |j| {
+                try writer.writeAll(remain[0..j]);
+                text = remain[j..];
                 continue;
             } else {
-                try writer.writeAll(text);
+                try writer.writeAll(remain);
                 break;
             }
         }

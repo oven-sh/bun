@@ -102,8 +102,9 @@ pub const ZigString = extern struct {
     };
 
     pub fn fromBytes(slice_: []const u8) ZigString {
-        if (!strings.isAllASCII(slice_))
-            return fromUTF8(slice_);
+        if (!strings.isAllASCII(slice_)) {
+            return initUTF8(slice_);
+        }
 
         return init(slice_);
     }

@@ -54,4 +54,4 @@ coverageSkipTestFiles = true
 
 `coverageThreshold` can be either a number or an object with `line` and `function` keys. When a number, it is treated as both the line and function threshold.
 
-Coverage support was added in Bun v0.7.2.
+Coverage support was added in Bun v0.7.3.

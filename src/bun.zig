@@ -1574,3 +1574,5 @@ pub const WTF = struct {
 pub const ArenaAllocator = @import("./ArenaAllocator.zig").ArenaAllocator;
 
 pub const Wyhash = @import("./wyhash.zig").Wyhash;
+
+pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;

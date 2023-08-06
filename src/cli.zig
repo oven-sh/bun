@@ -147,6 +147,7 @@ pub const Arguments = struct {
         clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
         clap.parseParam("--no-summary                      Don't print a summary (when generating .bun)") catch unreachable,
         clap.parseParam("-v, --version                     Print version and exit") catch unreachable,
+        clap.parseParam("--revision                        Print version with revision and exit") catch unreachable,
         clap.parseParam("--tsconfig-override <STR>         Load tsconfig from path instead of cwd/tsconfig.json") catch unreachable,
         clap.parseParam("-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
         clap.parseParam("-e, --external <STR>...           Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
@@ -228,6 +229,12 @@ pub const Arguments = struct {
     fn printVersionAndExit() noreturn {
         @setCold(true);
         Output.writer().writeAll(Global.package_json_version ++ "\n") catch {};
+        Global.exit(0);
+    }
+
+    fn printRevisionAndExit() noreturn {
+        @setCold(true);
+        Output.writer().writeAll(Global.package_json_version_with_sha ++ "\n") catch {};
         Global.exit(0);
     }
 
@@ -360,6 +367,10 @@ pub const Arguments = struct {
 
         if (args.flag("--version")) {
             printVersionAndExit();
+        }
+
+        if (args.flag("--revision")) {
+            printRevisionAndExit();
         }
 
         var cwd: []u8 = undefined;

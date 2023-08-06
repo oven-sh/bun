@@ -418,7 +418,7 @@ pub extern fn sysinfo(__info: [*c]struct_sysinfo) c_int;
 
 pub fn get_free_memory() u64 {
     var info: struct_sysinfo = undefined;
-    if (sysinfo(&info) == @as(c_int, 0)) return @as(u64, @bitCast(info.freeram)) *% @as(c_ulong, @bitCast(@as(c_ulong, info.mem_unit)));
+    if (sysinfo(&info) == @as(c_int, 0)) return @as(u64, @bitCast(info.freeram +% info.bufferram)) *% @as(c_ulong, @bitCast(@as(c_ulong, info.mem_unit)));
     return 0;
 }
 

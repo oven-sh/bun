@@ -102,8 +102,9 @@ pub const ZigString = extern struct {
     };
 
     pub fn fromBytes(slice_: []const u8) ZigString {
-        if (!strings.isAllASCII(slice_))
-            return fromUTF8(slice_);
+        if (!strings.isAllASCII(slice_)) {
+            return initUTF8(slice_);
+        }
 
         return init(slice_);
     }
@@ -4978,12 +4979,17 @@ pub const VM = extern struct {
         SmallHeap = 0,
         LargeHeap = 1,
     };
+
     pub fn create(heap_type: HeapType) *VM {
         return cppFn("create", .{@intFromEnum(heap_type)});
     }
 
     pub fn deinit(vm: *VM, global_object: *JSGlobalObject) void {
         return cppFn("deinit", .{ vm, global_object });
+    }
+
+    pub fn setControlFlowProfiler(vm: *VM, enabled: bool) void {
+        return cppFn("setControlFlowProfiler", .{ vm, enabled });
     }
 
     pub fn isJITEnabled() bool {
@@ -5093,7 +5099,7 @@ pub const VM = extern struct {
         return cppFn("blockBytesAllocated", .{vm});
     }
 
-    pub const Extern = [_][]const u8{ "collectAsync", "externalMemorySize", "blockBytesAllocated", "heapSize", "releaseWeakRefs", "throwError", "deferGC", "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
+    pub const Extern = [_][]const u8{ "setControlFlowProfiler", "collectAsync", "externalMemorySize", "blockBytesAllocated", "heapSize", "releaseWeakRefs", "throwError", "deferGC", "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
 };
 
 pub const ThrowScope = extern struct {

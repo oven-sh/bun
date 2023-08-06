@@ -28,13 +28,16 @@
 #include "wtf/text/WTFString.h"
 
 #include "Process.h"
-
+#include <JavaScriptCore/SourceProviderCache.h>
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
 
 #include "JSDOMConvertBase.h"
+#include "ZigSourceProvider.h"
 #include "mimalloc.h"
+
+#include "JavaScriptCore/ControlFlowProfiler.h"
 
 using namespace JSC;
 using namespace WTF;
@@ -650,6 +653,60 @@ JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject,
   RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 
+extern "C" EncodedJSValue ByteRangeMapping__findExecutedLines(
+    JSC::JSGlobalObject *, BunString sourceURL, BasicBlockRange *ranges,
+    size_t len, size_t functionOffset, bool ignoreSourceMap);
+
+JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
+                         (JSGlobalObject * globalObject,
+                          CallFrame *callFrame)) {
+  VM &vm = globalObject->vm();
+  auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+  String fileName = callFrame->argument(0).toWTFString(globalObject);
+  RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+  bool ignoreSourceMap = callFrame->argument(1).toBoolean(globalObject);
+
+  auto sourceID = Zig::sourceIDForSourceURL(fileName);
+  if (!sourceID) {
+    throwException(globalObject, throwScope,
+                   createError(globalObject, "No source for file"_s));
+    return JSValue::encode(jsUndefined());
+  }
+
+  auto basicBlocks =
+      vm.controlFlowProfiler()->getBasicBlocksForSourceIDWithoutFunctionRange(
+          sourceID, vm);
+
+  if (basicBlocks.isEmpty()) {
+    return JSC::JSValue::encode(
+        JSC::constructEmptyArray(globalObject, nullptr, 0));
+  }
+
+  size_t functionStartOffset = basicBlocks.size();
+
+  const Vector<std::tuple<bool, unsigned, unsigned>> &functionRanges =
+      vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
+
+  basicBlocks.reserveCapacity(functionRanges.size() + basicBlocks.size());
+
+  for (const auto &functionRange : functionRanges) {
+    BasicBlockRange range;
+    range.m_hasExecuted = std::get<0>(functionRange);
+    range.m_startOffset = static_cast<int>(std::get<1>(functionRange));
+    range.m_endOffset = static_cast<int>(std::get<2>(functionRange));
+    range.m_executionCount =
+        range.m_hasExecuted
+            ? 1
+            : 0; // This is a hack. We don't actually count this.
+    basicBlocks.append(range);
+  }
+
+  return ByteRangeMapping__findExecutedLines(
+      globalObject, Bun::toString(fileName), basicBlocks.data(),
+      basicBlocks.size(), functionStartOffset, ignoreSourceMap);
+}
+
 // clang-format off
 /* Source for BunJSCModuleTable.lut.h
 @begin BunJSCModuleTable
@@ -718,6 +775,7 @@ DEFINE_NATIVE_MODULE(BunJSC)
     putNativeFn(Identifier::fromString(vm, "getProtectedObjects"_s), functionGetProtectedObjects);
     putNativeFn(Identifier::fromString(vm, "generateHeapSnapshotForDebugging"_s), functionGenerateHeapSnapshotForDebugging);
     putNativeFn(Identifier::fromString(vm, "profile"_s), functionRunProfiler);
+    putNativeFn(Identifier::fromString(vm, "codeCoverageForFile"_s), functionCodeCoverageForFile);
     putNativeFn(Identifier::fromString(vm, "setTimeZone"_s), functionSetTimeZone);
     putNativeFn(Identifier::fromString(vm, "serialize"_s), functionSerialize);
     putNativeFn(Identifier::fromString(vm, "deserialize"_s), functionDeserialize);

@@ -207,6 +207,9 @@ export default {
     page("test/dom", "DOM testing", {
       description: "Write headless tests for UI and React/Vue/Svelte/Lit components with happy-dom",
     }),
+    page("test/coverage", "Code coverage", {
+      description: "Generate code coverage reports with `bun test --coverage`",
+    }),
 
     divider("Package runner"),
     page("cli/bunx", "`bunx`", {

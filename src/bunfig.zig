@@ -242,6 +242,47 @@ pub const Bunfig = struct {
                         try this.expect(expr, .e_boolean);
                         this.ctx.runtime_options.smol = expr.data.e_boolean.value;
                     }
+
+                    if (test_.get("coverage")) |expr| {
+                        try this.expect(expr, .e_boolean);
+                        this.ctx.test_options.coverage.enabled = expr.data.e_boolean.value;
+                    }
+
+                    if (test_.get("coverageThreshold")) |expr| outer: {
+                        if (expr.data == .e_number) {
+                            this.ctx.test_options.coverage.fractions.functions = expr.data.e_number.value;
+                            this.ctx.test_options.coverage.fractions.lines = expr.data.e_number.value;
+                            this.ctx.test_options.coverage.fractions.stmts = expr.data.e_number.value;
+                            break :outer;
+                        }
+
+                        try this.expect(expr, .e_object);
+                        if (expr.get("functions")) |functions| {
+                            try this.expect(functions, .e_number);
+                            this.ctx.test_options.coverage.fractions.functions = functions.data.e_number.value;
+                        }
+
+                        if (expr.get("lines")) |lines| {
+                            try this.expect(lines, .e_number);
+                            this.ctx.test_options.coverage.fractions.lines = lines.data.e_number.value;
+                        }
+
+                        if (expr.get("statements")) |stmts| {
+                            try this.expect(stmts, .e_number);
+                            this.ctx.test_options.coverage.fractions.stmts = stmts.data.e_number.value;
+                        }
+                    }
+
+                    // This mostly exists for debugging.
+                    if (test_.get("coverageIgnoreSourcemaps")) |expr| {
+                        try this.expect(expr, .e_boolean);
+                        this.ctx.test_options.coverage.ignore_sourcemap = expr.data.e_boolean.value;
+                    }
+
+                    if (test_.get("coverageSkipTestFiles")) |expr| {
+                        try this.expect(expr, .e_boolean);
+                        this.ctx.test_options.coverage.skip_test_files = expr.data.e_boolean.value;
+                    }
                 }
             }
 

@@ -90,6 +90,8 @@ JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL)
     return ByteRangeMapping__getSourceID(mappings, Bun::toString(sourceURL));
 }
 
+extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);
+
 Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, ResolvedSource resolvedSource, JSC::SourceProviderSourceType sourceType, bool isBuiltin)
 {
 
@@ -97,11 +99,7 @@ Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, Reso
     auto sourceURLString = toStringCopy(resolvedSource.source_url);
     bool isCodeCoverageEnabled = !!globalObject->vm().controlFlowProfiler();
 
-#ifdef BUN_DEBUG
-    bool shouldGenerateCodeCoverage = isCodeCoverageEnabled && !isBuiltin && !sourceURLString.contains("/node_modules/"_s);
-#else
-    bool shouldGenerateCodeCoverage = isCodeCoverageEnabled && !sourceURLString.contains("/node_modules/"_s);
-#endif
+    bool shouldGenerateCodeCoverage = isCodeCoverageEnabled && !isBuiltin && BunTest__shouldGenerateCodeCoverage(Bun::toString(sourceURLString));
 
     auto provider = adoptRef(*new SourceProvider(
         globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,

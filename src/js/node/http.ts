@@ -536,17 +536,8 @@ class Server extends EventEmitter {
           }
 
           return new Promise((resolve, reject) => {
-            // In dev mode, we'll debug log the response before sending it
-            if (!!$debug) {
-              resolveFunction = value => {
-                $debug("response before sending", value);
-                resolve(value);
-              };
-              rejectFunction = reject;
-            } else {
-              resolveFunction = resolve;
-              rejectFunction = reject;
-            }
+            resolveFunction = resolve;
+            rejectFunction = reject;
           });
         },
       });
@@ -658,11 +649,10 @@ class IncomingMessage extends Readable {
   async #consumeStream(reader: ReadableStreamDefaultReader) {
     while (true) {
       var { done, value } = await reader.readMany();
-      $debug("#consumeStream", { done, value });
       if (this.#aborted) return;
       if (done) {
         this.push(null);
-        // process.nextTick(destroyBodyStreamNT, this);
+        this.destroy();
         break;
       }
       for (var v of value) {
@@ -688,6 +678,17 @@ class IncomingMessage extends Readable {
 
   get aborted() {
     return this.#aborted;
+  }
+
+  #abort() {
+    if (this.#aborted) return;
+    this.#aborted = true;
+    var bodyStream = this.#bodyStream;
+    if (!bodyStream) return;
+    bodyStream.cancel();
+    this.complete = true;
+    this.#bodyStream = undefined;
+    this.push(null);
   }
 
   get connection() {
@@ -743,7 +744,7 @@ function emitErrorNt(msg, err, callback) {
 }
 
 function onError(self, err, cb) {
-  process.nextTick(emitErrorNt, self, err, cb);
+  process.nextTick(() => emitErrorNt(self, err, cb));
 }
 
 function write_(msg, chunk, encoding, callback, fromEnd) {
@@ -1170,7 +1171,6 @@ class ServerResponse extends Writable {
   }
 
   setHeader(name, value) {
-    $debug(`ServerResponse.setHeader(${name}, ${value})`);
     var headers = (this.#headers ??= new Headers());
     headers.set(name, value);
     return this;

@@ -113,133 +113,6 @@ pub fn parse(
     };
 }
 
-pub const ByteRangeMapping = struct {
-    line_offset_table: LineOffsetTable.List = .{},
-    source_id: i32,
-
-    pub const BasicBlockRange = extern struct {
-        startOffset: c_int = 0,
-        endOffset: c_int = 0,
-        hasExecuted: bool = false,
-        executionCount: usize = 0,
-    };
-
-    pub const HashMap = std.HashMap(u64, ByteRangeMapping, bun.IdentityContext(u64), std.hash_map.default_max_load_percentage);
-
-    pub fn deinit(this: *ByteRangeMapping) void {
-        this.line_offset_table.deinit(bun.default_allocator);
-    }
-
-    threadlocal var map: ?*HashMap = null;
-    pub fn generate(str: bun.String, source_contents_str: bun.String, source_id: i32) callconv(.C) void {
-        var _map = map orelse brk: {
-            map = bun.JSC.VirtualMachine.get().allocator.create(HashMap) catch @panic("OOM");
-            map.?.* = HashMap.init(bun.JSC.VirtualMachine.get().allocator);
-            break :brk map.?;
-        };
-        var slice = str.toUTF8(bun.default_allocator);
-        defer slice.deinit();
-        const hash = bun.hash(slice.slice());
-        var entry = _map.getOrPut(hash) catch @panic("Out of memory");
-        if (entry.found_existing) {
-            entry.value_ptr.deinit();
-        }
-
-        var source_contents = source_contents_str.toUTF8(bun.default_allocator);
-        defer source_contents.deinit();
-
-        entry.value_ptr.* = compute(source_contents.slice(), source_id);
-    }
-
-    pub fn getSourceID(this: *ByteRangeMapping) callconv(.C) i32 {
-        return this.source_id;
-    }
-
-    pub fn find(path: bun.String) callconv(.C) ?*ByteRangeMapping {
-        var slice = path.toUTF8(bun.default_allocator);
-        defer slice.deinit();
-
-        var map_ = map orelse return null;
-        const hash = bun.hash(slice.slice());
-        var entry = map_.getPtr(hash) orelse return null;
-        return entry;
-    }
-
-    pub fn findExecutedLines(
-        globalThis: *bun.JSC.JSGlobalObject,
-        source_url: bun.String,
-        blocks_ptr: [*]const BasicBlockRange,
-        blocks_len: usize,
-        ignore_sourcemap: bool,
-    ) callconv(.C) bun.JSC.JSValue {
-        var this = ByteRangeMapping.find(source_url) orelse return bun.JSC.JSValue.null;
-
-        const blocks: []const BasicBlockRange = blocks_ptr[0..blocks_len];
-
-        var lines = std.ArrayList(i32).init(bun.default_allocator);
-
-        var url = source_url.toUTF8(bun.default_allocator);
-        defer url.deinit();
-        var line_starts = this.line_offset_table.items(.byte_offset_to_start_of_line);
-
-        if (bun.JSC.VirtualMachine.get().source_mappings.get(
-            url.slice(),
-        )) |mapping| {
-            var prev_line_mapping: i32 = -1;
-            for (blocks) |block| {
-                const min: usize = @intCast(@min(block.startOffset, block.endOffset));
-                const max: usize = @intCast(@max(block.startOffset, block.endOffset));
-                if (block.executionCount == 0 or !block.hasExecuted) {
-                    continue;
-                }
-
-                if (ignore_sourcemap) {
-                    lines.append(@intCast(block.startOffset)) catch break;
-                    lines.append(@intCast(block.endOffset)) catch break;
-                    continue;
-                }
-
-                for (min..max) |byte_offset| {
-                    const new_line_index = LineOffsetTable.findIndex(line_starts, .{ .start = @intCast(byte_offset) }) orelse continue;
-                    const line_start_byte_offset = line_starts[new_line_index];
-                    if (line_start_byte_offset >= byte_offset) {
-                        continue;
-                    }
-
-                    const column_position = byte_offset -| line_start_byte_offset;
-
-                    if (SourceMap.Mapping.find(mapping, @intCast(new_line_index), @intCast(column_position))) |point| {
-                        if (point.original.lines != prev_line_mapping) {
-                            prev_line_mapping = point.original.lines;
-                            lines.append(point.original.lines) catch break;
-                        }
-                    }
-                }
-            }
-        }
-
-        if (lines.items.len == 0) {
-            return bun.JSC.JSValue.null;
-        }
-
-        return bun.JSC.ArrayBuffer.fromBytes(std.mem.sliceAsBytes(lines.items), .Int32Array).toJS(globalThis, null);
-    }
-
-    pub fn compute(source_contents: []const u8, source_id: i32) ByteRangeMapping {
-        return ByteRangeMapping{
-            .line_offset_table = LineOffsetTable.generate(bun.JSC.VirtualMachine.get().allocator, source_contents, 0),
-            .source_id = source_id,
-        };
-    }
-};
-
-comptime {
-    @export(ByteRangeMapping.generate, .{ .name = "ByteRangeMapping__generate" });
-    @export(ByteRangeMapping.findExecutedLines, .{ .name = "ByteRangeMapping__findExecutedLines" });
-    @export(ByteRangeMapping.find, .{ .name = "ByteRangeMapping__find" });
-    @export(ByteRangeMapping.getSourceID, .{ .name = "ByteRangeMapping__getSourceID" });
-}
-
 pub const Mapping = struct {
     generated: LineColumnOffset,
     original: LineColumnOffset,
@@ -306,6 +179,7 @@ pub const Mapping = struct {
         bytes: []const u8,
         estimated_mapping_count: ?usize,
         sources_count: i32,
+        input_line_count: usize,
     ) ParseResult {
         var mapping = Mapping.List{};
         if (estimated_mapping_count) |count| {
@@ -493,7 +367,12 @@ pub const Mapping = struct {
             }) catch unreachable;
         }
 
-        return ParseResult{ .success = mapping };
+        return ParseResult{
+            .success = .{
+                .mappings = mapping,
+                .input_line_count = input_line_count,
+            },
+        };
     }
 
     pub const ParseResult = union(enum) {
@@ -513,7 +392,17 @@ pub const Mapping = struct {
                 };
             }
         },
-        success: Mapping.List,
+        success: ParsedSourceMap,
+    };
+
+    pub const ParsedSourceMap = struct {
+        input_line_count: usize = 0,
+        mappings: Mapping.List = .{},
+
+        pub fn deinit(this: *ParsedSourceMap, allocator: std.mem.Allocator) void {
+            this.mappings.deinit(allocator);
+            allocator.destroy(this);
+        }
     };
 };
 
@@ -1301,6 +1190,7 @@ pub const Chunk = struct {
         data: MutableString,
         count: usize = 0,
         offset: usize = 0,
+        approximate_input_line_count: usize = 0,
 
         pub const Format = SourceMapFormat(VLQSourceMap);
 
@@ -1311,8 +1201,8 @@ pub const Chunk = struct {
 
             // For bun.js, we store the number of mappings and how many bytes the final list is at the beginning of the array
             if (prepend_count) {
-                map.offset = 16;
-                map.data.append(&[16]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }) catch unreachable;
+                map.offset = 24;
+                map.data.append(&([_]u8{0} ** 24)) catch unreachable;
             }
 
             return map;
@@ -1370,6 +1260,8 @@ pub const Chunk = struct {
             line_starts_with_mapping: bool = false,
             cover_lines_without_mappings: bool = false,
 
+            approximate_input_line_count: usize = 0,
+
             /// When generating sourcemappings for bun, we store a count of how many mappings there were
             prepend_count: bool = false,
 
@@ -1380,6 +1272,7 @@ pub const Chunk = struct {
                 if (b.prepend_count) {
                     b.source_map.getBuffer().list.items[0..8].* = @as([8]u8, @bitCast(b.source_map.getBuffer().list.items.len));
                     b.source_map.getBuffer().list.items[8..16].* = @as([8]u8, @bitCast(b.source_map.getCount()));
+                    b.source_map.getBuffer().list.items[16..24].* = @as([8]u8, @bitCast(b.approximate_input_line_count));
                 }
                 return Chunk{
                     .buffer = b.source_map.getBuffer(),

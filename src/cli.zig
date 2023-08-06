@@ -386,7 +386,11 @@ pub const Arguments = struct {
                     };
                 }
             }
-            ctx.test_options.code_coverage = args.flag("--coverage");
+
+            if (!ctx.test_options.coverage.enabled) {
+                ctx.test_options.coverage.enabled = args.flag("--coverage");
+            }
+
             if (args.option("--bail")) |bail| {
                 if (bail.len > 0) {
                     ctx.test_options.bail = std.fmt.parseInt(u32, bail, 10) catch |e| {
@@ -951,7 +955,7 @@ pub const Command = struct {
         run_todo: bool = false,
         only: bool = false,
         bail: u32 = 0,
-        code_coverage: bool = false,
+        coverage: TestCommand.CodeCoverageOptions = .{},
     };
 
     pub const Context = struct {

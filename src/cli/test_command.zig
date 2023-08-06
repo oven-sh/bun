@@ -261,6 +261,100 @@ pub const CommandLineReporter = struct {
         Output.prettyError("Ran {d} tests across {d} files. ", .{ tests, files });
         Output.printStartEnd(bun.start_time, std.time.nanoTimestamp());
     }
+
+    pub fn printCodeCoverage(this: *CommandLineReporter, vm: *JSC.VirtualMachine, opts: *TestCommand.CodeCoverageOptions, comptime enable_ansi_colors: bool) !void {
+        const trace = bun.tracy.traceNamed(@src(), "TestCommand.printCodeCoverage");
+        defer trace.end();
+
+        _ = this;
+        var map = bun.sourcemap.ByteRangeMapping.map orelse return;
+        var iter = map.valueIterator();
+        var max_filepath_length: usize = "All files".len;
+        const relative_dir = vm.bundler.fs.top_level_dir;
+        var any = false;
+        while (iter.next()) |entry| {
+            const value: bun.sourcemap.ByteRangeMapping = entry.*;
+            var utf8 = value.source_url.toUTF8(bun.default_allocator);
+            defer utf8.deinit();
+
+            max_filepath_length = @max(bun.path.relative(relative_dir, utf8.slice()).len, max_filepath_length);
+            any = true;
+        }
+
+        if (!any) {
+            return;
+        }
+
+        iter = map.valueIterator();
+        var writer = Output.errorWriter();
+        var base_fraction = opts.fractions;
+        var failing = false;
+
+        writer.writeAll(Output.prettyFmt("<r><d>", enable_ansi_colors)) catch return;
+        writer.writeByteNTimes('-', max_filepath_length + 2) catch return;
+        writer.writeAll(Output.prettyFmt("|---------|---------|---------|------------------<r>\n", enable_ansi_colors)) catch return;
+        writer.writeAll("File") catch return;
+        writer.writeByteNTimes(' ', max_filepath_length - "File".len + 1) catch return;
+        writer.writeAll(Output.prettyFmt(" <d>|<r> % Stmts <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
+        writer.writeAll(Output.prettyFmt("<d>", enable_ansi_colors)) catch return;
+        writer.writeByteNTimes('-', max_filepath_length + 2) catch return;
+        writer.writeAll(Output.prettyFmt("|---------|---------|---------|------------------<r>\n", enable_ansi_colors)) catch return;
+
+        var coverage_buffer = bun.MutableString.initEmpty(bun.default_allocator);
+        var coverage_buffer_buffer = coverage_buffer.bufferedWriter();
+        var coverage_writer = coverage_buffer_buffer.writer();
+
+        var avg = bun.sourcemap.CoverageFraction{
+            .functions = 0.0,
+            .lines = 0.0,
+            .stmts = 0.0,
+        };
+        var avg_count: f64 = 0;
+
+        while (iter.next()) |entry| {
+            var report = bun.sourcemap.CodeCoverageReport.generate(vm.global, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
+            defer report.deinit(bun.default_allocator);
+            var fraction = base_fraction;
+            report.writeFormat(max_filepath_length, &fraction, relative_dir, coverage_writer, enable_ansi_colors) catch continue;
+            avg.functions += fraction.functions;
+            avg.lines += fraction.lines;
+            avg.stmts += fraction.stmts;
+            avg_count += 1.0;
+            if (fraction.failing) {
+                failing = true;
+            }
+
+            coverage_writer.writeAll("\n") catch continue;
+        }
+
+        {
+            avg.functions /= avg_count;
+            avg.lines /= avg_count;
+            avg.stmts /= avg_count;
+
+            try bun.sourcemap.CodeCoverageReport.writeFormatWithValues(
+                "All files",
+                max_filepath_length,
+                avg,
+                base_fraction,
+                failing,
+                writer,
+                false,
+                enable_ansi_colors,
+            );
+
+            try writer.writeAll(Output.prettyFmt("<r><d> |<r>\n", enable_ansi_colors));
+        }
+
+        coverage_buffer_buffer.flush() catch return;
+        try writer.writeAll(coverage_buffer.list.items);
+        try writer.writeAll(Output.prettyFmt("<r><d>", enable_ansi_colors));
+        writer.writeByteNTimes('-', max_filepath_length + 2) catch return;
+        writer.writeAll(Output.prettyFmt("|---------|---------|---------|------------------<r>\n", enable_ansi_colors)) catch return;
+
+        opts.fractions.failing = failing;
+        Output.flush();
+    }
 };
 
 const Scanner = struct {
@@ -419,6 +513,13 @@ pub const TestCommand = struct {
     pub const name = "test";
     pub const old_name = "wiptest";
 
+    pub const CodeCoverageOptions = struct {
+        skip_test_files: bool = !Environment.allow_assert,
+        fractions: bun.sourcemap.CoverageFraction = .{},
+        ignore_sourcemap: bool = false,
+        enabled: bool = false,
+    };
+
     pub fn exec(ctx: Command.Context) !void {
         if (comptime is_bindgen) unreachable;
 
@@ -505,7 +606,7 @@ pub const TestCommand = struct {
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 
-        if (ctx.test_options.code_coverage) {
+        if (ctx.test_options.coverage.enabled) {
             vm.bundler.options.code_coverage = true;
             vm.bundler.options.minify_syntax = false;
             vm.bundler.options.minify_identifiers = false;
@@ -544,7 +645,6 @@ pub const TestCommand = struct {
 
         scanner.scan(dir_to_scan);
         scanner.dirs_to_scan.deinit();
-
         const test_files = try scanner.results.toOwnedSlice();
         if (test_files.len > 0) {
             vm.hot_reload = ctx.debug.hot_reload;
@@ -555,6 +655,7 @@ pub const TestCommand = struct {
         }
 
         try jest.Jest.runner.?.snapshots.writeSnapshotFile();
+        var coverage = ctx.test_options.coverage;
 
         if (reporter.summary.pass > 20) {
             if (reporter.summary.skip > 0) {
@@ -609,6 +710,12 @@ pub const TestCommand = struct {
                 });
         } else {
             Output.prettyError("\n", .{});
+
+            if (coverage.enabled) {
+                switch (Output.enable_ansi_colors_stderr) {
+                    inline else => |colors| reporter.printCodeCoverage(vm, &coverage, colors) catch {},
+                }
+            }
 
             if (reporter.summary.pass > 0) {
                 Output.prettyError("<r><green>", .{});
@@ -694,7 +801,7 @@ pub const TestCommand = struct {
             }
         }
 
-        if (reporter.summary.fail > 0) {
+        if (reporter.summary.fail > 0 or (coverage.enabled and coverage.fractions.failing)) {
             Global.exit(1);
         }
     }

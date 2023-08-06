@@ -659,8 +659,6 @@ pub const TestScope = struct {
         }
         JSC.markBinding(@src());
 
-        const func_params_length = func.getLength(vm.global);
-
         var initial_value = JSValue.zero;
         if (test_elapsed_timer) |timer| {
             timer.reset();
@@ -672,17 +670,68 @@ pub const TestScope = struct {
             task.test_id,
         );
 
+        const func_params_length = func.getLength(vm.global);
+        var has_callback_function = false;
+
         if (func_params_length > 0) {
-            const callback_func = JSC.NewFunctionWithData(
-                vm.global,
-                ZigString.static("done"),
-                0,
-                TestScope.onDone,
-                false,
-                task,
-            );
-            task.done_callback_state = .pending;
-            initial_value = func.call(vm.global, &.{callback_func});
+            std.debug.print("func has {d} params\n", .{func_params_length});
+            var func_args_length: usize = 0;
+            std.debug.print("func has {d} args\n", .{func_args_length});
+
+            if (this.func_has_args) {
+                // If the func arg is an array, we will spread it as the arguments, so assume its length
+                if (!this.func_arg.isEmptyOrUndefinedOrNull() and this.func_arg.jsType().isArray()) {
+                    std.debug.print("changing size\n", .{});
+                    func_args_length = this.func_arg.getLength(vm.global);
+                } else {
+                    func_args_length = 1;
+                }
+            }
+
+            std.debug.print("func has {d} args\n", .{func_args_length});
+
+            const allocator = getAllocator(vm.global);
+            const should_add_callback_function: bool = !this.func_has_args or (func_params_length > func_args_length);
+
+            var argSize: usize = func_args_length;
+            if (should_add_callback_function) {
+                argSize += 1;
+            }
+
+            std.debug.print("argSize is {d}\n", .{argSize});
+
+            const function_args = allocator.alloc(JSC.JSValue, argSize) catch unreachable;
+            var idx: u32 = 0;
+
+            // Spread the array as arguments
+            if (this.func_has_args) {
+                if (!this.func_arg.isEmptyOrUndefinedOrNull() and this.func_arg.jsType().isArray()) {
+                    const length = this.func_arg.getLength(vm.global);
+                    while (idx < length) : (idx += 1) {
+                        function_args[idx] = this.func_arg.getIndex(vm.global, idx);
+                    }
+                } else {
+                    function_args[idx] = this.func_arg;
+                    idx += 1;
+                }
+            }
+
+            if (should_add_callback_function) {
+                has_callback_function = true;
+                const callback_func = JSC.NewFunctionWithData(
+                    vm.global,
+                    ZigString.static("done"),
+                    0,
+                    TestScope.onDone,
+                    false,
+                    task,
+                );
+                task.done_callback_state = .pending;
+                function_args[idx] = callback_func;
+            }
+
+            std.debug.print("idx is {d}\n", .{idx});
+            initial_value = func.call(vm.global, function_args);
         } else {
             initial_value = func.call(vm.global, &.{});
         }
@@ -743,7 +792,7 @@ pub const TestScope = struct {
             }
         }
 
-        if (func_params_length > 0) {
+        if (has_callback_function) {
             return .{ .pending = {} };
         }
 

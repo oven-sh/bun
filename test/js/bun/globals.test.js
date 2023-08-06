@@ -1,8 +1,7 @@
-import { it, describe, expect } from "bun:test";
+import { expect, it } from "bun:test";
 
 it("extendable", () => {
   const classes = [Blob, TextDecoder, TextEncoder, Request, Response, Headers, HTMLRewriter, Bun.Transpiler, Buffer];
-  // None of these should error
   for (let Class of classes) {
     var Foo = class extends Class {};
     var bar = Class === Request ? new Request({ url: "https://example.com" }) : new Foo();
@@ -15,15 +14,16 @@ it("extendable", () => {
 
 it("writable", () => {
   const classes = [
-    // ["Blob", Blob],
     ["TextDecoder", TextDecoder],
-    // ["TextEncoder", TextEncoder],
     ["Request", Request],
     ["Response", Response],
     ["Headers", Headers],
     ["Buffer", Buffer],
-    // ["HTMLRewriter", HTMLRewriter],
-    // ["Transpiler", Bun.Transpiler],
+    ["Event", Event],
+    ["DOMException", DOMException],
+    ["EventTarget", EventTarget],
+    ["ErrorEvent", ErrorEvent],
+    ["CustomEvent", CustomEvent],
   ];
   for (let [name, Class] of classes) {
     globalThis[name] = 123;

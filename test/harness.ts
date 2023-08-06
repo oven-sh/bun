@@ -1,8 +1,4 @@
 import { gc as bunGC, unsafe, which } from "bun";
-import { heapStats } from "bun:jsc";
-import path from "path";
-import fs from "fs";
-import os from "os";
 
 export const bunEnv: any = {
   ...process.env,
@@ -43,6 +39,8 @@ export async function expectMaxObjectTypeCount(
   count: number,
   maxWait = 1000,
 ) {
+  var { heapStats } = require("bun:jsc");
+
   gc();
   if (heapStats().objectTypeCounts[type] <= count) return;
   gc(true);
@@ -85,7 +83,11 @@ export function hideFromStackTrace(block: CallableFunction) {
 }
 
 export function tempDirWithFiles(basename: string, files: Record<string, string | Record<string, string>>) {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), basename + "_"));
+  var fs = require("fs");
+  var path = require("path");
+  var { tmpdir } = require("os");
+
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync(tmpdir()), basename + "_"));
   for (const [name, contents] of Object.entries(files)) {
     if (typeof contents === "object") {
       fs.mkdirSync(path.join(dir, name));
@@ -100,6 +102,7 @@ export function tempDirWithFiles(basename: string, files: Record<string, string 
 }
 
 export function bunRun(file: string, env?: Record<string, string>) {
+  var path = require("path");
   const result = Bun.spawnSync([bunExe(), file], {
     cwd: path.dirname(file),
     env: {
@@ -116,6 +119,7 @@ export function bunRun(file: string, env?: Record<string, string>) {
 }
 
 export function bunTest(file: string, env?: Record<string, string>) {
+  var path = require("path");
   const result = Bun.spawnSync([bunExe(), "test", path.basename(file)], {
     cwd: path.dirname(file),
     env: {

@@ -547,7 +547,6 @@ it("path.normalize", () => {
   //   "..\\..\\..\\..\\baz"
   // );
   // strictEqual(path.win32.normalize("foo/bar\\baz"), "foo\\bar\\baz");
-
   strictEqual(path.posix.normalize("./fixtures///b/../b/c.js"), "fixtures/b/c.js");
   strictEqual(path.posix.normalize("/foo/../../../bar"), "/bar");
   strictEqual(path.posix.normalize("a//b//../b"), "a/b");

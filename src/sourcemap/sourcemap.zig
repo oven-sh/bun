@@ -179,6 +179,7 @@ pub const Mapping = struct {
         bytes: []const u8,
         estimated_mapping_count: ?usize,
         sources_count: i32,
+        input_line_count: usize,
     ) ParseResult {
         var mapping = Mapping.List{};
         if (estimated_mapping_count) |count| {
@@ -366,7 +367,12 @@ pub const Mapping = struct {
             }) catch unreachable;
         }
 
-        return ParseResult{ .success = mapping };
+        return ParseResult{
+            .success = .{
+                .mappings = mapping,
+                .input_line_count = input_line_count,
+            },
+        };
     }
 
     pub const ParseResult = union(enum) {
@@ -386,7 +392,17 @@ pub const Mapping = struct {
                 };
             }
         },
-        success: Mapping.List,
+        success: ParsedSourceMap,
+    };
+
+    pub const ParsedSourceMap = struct {
+        input_line_count: usize = 0,
+        mappings: Mapping.List = .{},
+
+        pub fn deinit(this: *ParsedSourceMap, allocator: std.mem.Allocator) void {
+            this.mappings.deinit(allocator);
+            allocator.destroy(this);
+        }
     };
 };
 
@@ -845,6 +861,38 @@ pub const LineOffsetTable = struct {
         return @as(i32, @intCast(original_line)) - 1;
     }
 
+    pub fn findIndex(byte_offsets_to_start_of_line: []const u32, loc: Logger.Loc) ?usize {
+        std.debug.assert(loc.start > -1); // checked by caller
+        var original_line: usize = 0;
+        const loc_start = @as(usize, @intCast(loc.start));
+
+        var count = @as(usize, @truncate(byte_offsets_to_start_of_line.len));
+        var i: usize = 0;
+        while (count > 0) {
+            const step = count / 2;
+            i = original_line + step;
+            const byte_offset = byte_offsets_to_start_of_line[i];
+            if (byte_offset == loc_start) {
+                return i;
+            }
+            if (i + 1 < byte_offsets_to_start_of_line.len) {
+                const next_byte_offset = byte_offsets_to_start_of_line[i + 1];
+                if (byte_offset < loc_start and loc_start < next_byte_offset) {
+                    return i;
+                }
+            }
+
+            if (byte_offset < loc_start) {
+                original_line = i + 1;
+                count = count - step - 1;
+            } else {
+                count = step;
+            }
+        }
+
+        return null;
+    }
+
     pub fn generate(allocator: std.mem.Allocator, contents: []const u8, approximate_line_count: i32) List {
         var list = List{};
         // Preallocate the top-level table using the approximate line count from the lexer
@@ -1142,6 +1190,7 @@ pub const Chunk = struct {
         data: MutableString,
         count: usize = 0,
         offset: usize = 0,
+        approximate_input_line_count: usize = 0,
 
         pub const Format = SourceMapFormat(VLQSourceMap);
 
@@ -1152,8 +1201,8 @@ pub const Chunk = struct {
 
             // For bun.js, we store the number of mappings and how many bytes the final list is at the beginning of the array
             if (prepend_count) {
-                map.offset = 16;
-                map.data.append(&[16]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }) catch unreachable;
+                map.offset = 24;
+                map.data.append(&([_]u8{0} ** 24)) catch unreachable;
             }
 
             return map;
@@ -1211,6 +1260,8 @@ pub const Chunk = struct {
             line_starts_with_mapping: bool = false,
             cover_lines_without_mappings: bool = false,
 
+            approximate_input_line_count: usize = 0,
+
             /// When generating sourcemappings for bun, we store a count of how many mappings there were
             prepend_count: bool = false,
 
@@ -1221,6 +1272,7 @@ pub const Chunk = struct {
                 if (b.prepend_count) {
                     b.source_map.getBuffer().list.items[0..8].* = @as([8]u8, @bitCast(b.source_map.getBuffer().list.items.len));
                     b.source_map.getBuffer().list.items[8..16].* = @as([8]u8, @bitCast(b.source_map.getCount()));
+                    b.source_map.getBuffer().list.items[16..24].* = @as([8]u8, @bitCast(b.approximate_input_line_count));
                 }
                 return Chunk{
                     .buffer = b.source_map.getBuffer(),

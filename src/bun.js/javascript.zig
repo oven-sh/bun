@@ -128,6 +128,7 @@ pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context)
 pub const bun_file_import_path = "/node_modules.server.bun";
 
 const SourceMap = @import("../sourcemap/sourcemap.zig");
+const ParsedSourceMap = SourceMap.Mapping.ParsedSourceMap;
 const MappingList = SourceMap.Mapping.List;
 
 pub const SavedSourceMap = struct {
@@ -138,7 +139,7 @@ pub const SavedSourceMap = struct {
         data: [*]u8,
 
         pub fn vlq(this: SavedMappings) []u8 {
-            return this.data[16..this.len()];
+            return this.data[24..this.len()];
         }
 
         pub inline fn len(this: SavedMappings) usize {
@@ -149,12 +150,13 @@ pub const SavedSourceMap = struct {
             default_allocator.free(this.data[0..this.len()]);
         }
 
-        pub fn toMapping(this: SavedMappings, allocator: Allocator, path: string) anyerror!MappingList {
+        pub fn toMapping(this: SavedMappings, allocator: Allocator, path: string) anyerror!ParsedSourceMap {
             const result = SourceMap.Mapping.parse(
                 allocator,
-                this.data[16..this.len()],
+                this.data[24..this.len()],
                 @as(usize, @bitCast(this.data[8..16].*)),
                 1,
+                @as(usize, @bitCast(this.data[16..24].*)),
             );
             switch (result) {
                 .fail => |fail| {
@@ -183,7 +185,7 @@ pub const SavedSourceMap = struct {
         }
     };
 
-    pub const Value = TaggedPointerUnion(.{ MappingList, SavedMappings });
+    pub const Value = TaggedPointerUnion(.{ ParsedSourceMap, SavedMappings });
     pub const HashTable = std.HashMap(u64, *anyopaque, IdentityContext(u64), 80);
 
     /// This is a pointer to the map located on the VirtualMachine struct
@@ -203,8 +205,8 @@ pub const SavedSourceMap = struct {
         var entry = try this.map.getOrPut(bun.hash(source.path.text));
         if (entry.found_existing) {
             var value = Value.from(entry.value_ptr.*);
-            if (value.get(MappingList)) |source_map_| {
-                var source_map: *MappingList = source_map_;
+            if (value.get(ParsedSourceMap)) |source_map_| {
+                var source_map: *ParsedSourceMap = source_map_;
                 source_map.deinit(default_allocator);
             } else if (value.get(SavedMappings)) |saved_mappings| {
                 var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
@@ -216,16 +218,16 @@ pub const SavedSourceMap = struct {
         entry.value_ptr.* = Value.init(bun.cast(*SavedMappings, mappings.list.items.ptr)).ptr();
     }
 
-    pub fn get(this: *SavedSourceMap, path: string) ?MappingList {
+    pub fn get(this: *SavedSourceMap, path: string) ?ParsedSourceMap {
         var mapping = this.map.getEntry(bun.hash(path)) orelse return null;
         switch (Value.from(mapping.value_ptr.*).tag()) {
-            (@field(Value.Tag, @typeName(MappingList))) => {
-                return Value.from(mapping.value_ptr.*).as(MappingList).*;
+            Value.Tag.ParsedSourceMap => {
+                return Value.from(mapping.value_ptr.*).as(ParsedSourceMap).*;
             },
             Value.Tag.SavedMappings => {
-                var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(MappingList))) };
+                var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(ParsedSourceMap))) };
                 defer saved.deinit();
-                var result = default_allocator.create(MappingList) catch unreachable;
+                var result = default_allocator.create(ParsedSourceMap) catch unreachable;
                 result.* = saved.toMapping(default_allocator, path) catch {
                     _ = this.map.remove(mapping.key_ptr.*);
                     return null;
@@ -246,8 +248,8 @@ pub const SavedSourceMap = struct {
         this.mutex.lock();
         defer this.mutex.unlock();
 
-        var mappings = this.get(path) orelse return null;
-        return SourceMap.Mapping.find(mappings, line, column);
+        const parsed_mappings = this.get(path) orelse return null;
+        return SourceMap.Mapping.find(parsed_mappings.mappings, line, column);
     }
 };
 const uws = @import("root").bun.uws;

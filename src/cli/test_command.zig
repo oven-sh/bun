@@ -294,13 +294,14 @@ pub const CommandLineReporter = struct {
 
         writer.writeAll(Output.prettyFmt("<r><d>", enable_ansi_colors)) catch return;
         writer.writeByteNTimes('-', max_filepath_length + 2) catch return;
-        writer.writeAll(Output.prettyFmt("|---------|----------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+        writer.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
         writer.writeAll("File") catch return;
         writer.writeByteNTimes(' ', max_filepath_length - "File".len + 1) catch return;
-        writer.writeAll(Output.prettyFmt(" <d>|<r> % Funcs <d>|<r> % Blocks <d>|<r> % Lines <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
+        // writer.writeAll(Output.prettyFmt(" <d>|<r> % Funcs <d>|<r> % Blocks <d>|<r> % Lines <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
+        writer.writeAll(Output.prettyFmt(" <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
         writer.writeAll(Output.prettyFmt("<d>", enable_ansi_colors)) catch return;
         writer.writeByteNTimes('-', max_filepath_length + 2) catch return;
-        writer.writeAll(Output.prettyFmt("|---------|----------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+        writer.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
 
         var coverage_buffer = bun.MutableString.initEmpty(bun.default_allocator);
         var coverage_buffer_buffer = coverage_buffer.bufferedWriter();
@@ -352,7 +353,7 @@ pub const CommandLineReporter = struct {
         try writer.writeAll(coverage_buffer.list.items);
         try writer.writeAll(Output.prettyFmt("<r><d>", enable_ansi_colors));
         writer.writeByteNTimes('-', max_filepath_length + 2) catch return;
-        writer.writeAll(Output.prettyFmt("|---------|----------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+        writer.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
 
         opts.fractions.failing = failing;
         Output.flush();

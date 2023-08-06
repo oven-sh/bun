@@ -1,6 +1,7 @@
 const { file } = import.meta;
 
 import { describe, it, expect, test } from "bun:test";
+import path from "node:path";
 import assert from "assert";
 import { hideFromStackTrace } from "harness";
 

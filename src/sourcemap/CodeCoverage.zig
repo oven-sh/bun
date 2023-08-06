@@ -77,9 +77,9 @@ pub const CodeCoverageReport = struct {
     ) !void {
         if (comptime enable_colors) {
             if (failed) {
-                try writer.writeAll(comptime prettyFmt("<r><red>", true));
+                try writer.writeAll(comptime prettyFmt("<r><b><red>", true));
             } else {
-                try writer.writeAll(comptime prettyFmt("<r><green>", true));
+                try writer.writeAll(comptime prettyFmt("<r><b><green>", true));
             }
         }
 
@@ -93,29 +93,29 @@ pub const CodeCoverageReport = struct {
 
         if (comptime enable_colors) {
             if (vals.functions < failing.functions) {
-                try writer.writeAll(comptime prettyFmt("<red>", true));
+                try writer.writeAll(comptime prettyFmt("<b><red>", true));
             } else {
-                try writer.writeAll(comptime prettyFmt("<green>", true));
+                try writer.writeAll(comptime prettyFmt("<b><green>", true));
             }
         }
 
         try writer.print("{d: >7.2}", .{vals.functions * 100.0});
-        try writer.writeAll(comptime prettyFmt("<r><d> | <r>", enable_colors));
-        if (comptime enable_colors) {
-            // if (vals.stmts < failing.stmts) {
-            try writer.writeAll(comptime prettyFmt("<d>", true));
-            // } else {
-            //     try writer.writeAll(comptime prettyFmt("<d>", true));
-            // }
-        }
-        try writer.print("{d: >8.2}", .{vals.stmts * 100.0});
+        // try writer.writeAll(comptime prettyFmt("<r><d> | <r>", enable_colors));
+        // if (comptime enable_colors) {
+        //     // if (vals.stmts < failing.stmts) {
+        //     try writer.writeAll(comptime prettyFmt("<d>", true));
+        //     // } else {
+        //     //     try writer.writeAll(comptime prettyFmt("<d>", true));
+        //     // }
+        // }
+        // try writer.print("{d: >8.2}", .{vals.stmts * 100.0});
         try writer.writeAll(comptime prettyFmt("<r><d> | <r>", enable_colors));
 
         if (comptime enable_colors) {
             if (vals.lines < failing.lines) {
-                try writer.writeAll(comptime prettyFmt("<red>", true));
+                try writer.writeAll(comptime prettyFmt("<b><red>", true));
             } else {
-                try writer.writeAll(comptime prettyFmt("<green>", true));
+                try writer.writeAll(comptime prettyFmt("<b><green>", true));
             }
         }
 

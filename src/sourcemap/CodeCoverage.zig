@@ -62,6 +62,9 @@ pub const CodeCoverageReport = struct {
 
     pub fn functionCoverageFraction(this: *const CodeCoverageReport) f64 {
         const total_count: f64 = @floatFromInt(this.functions.items.len);
+        if (total_count == 0) {
+            return 1.0;
+        }
         return (@as(f64, @floatFromInt(this.functions_which_have_executed.count())) / total_count);
     }
 

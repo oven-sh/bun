@@ -378,18 +378,25 @@ public:
     mutable WriteBarrier<JSFunction> m_readableStreamToJSON;
     mutable WriteBarrier<JSFunction> m_readableStreamToText;
     mutable WriteBarrier<JSFunction> m_readableStreamToFormData;
+
+    mutable WriteBarrier<Unknown> m_BunCommonJSModuleValue;
+    mutable WriteBarrier<Unknown> m_JSBroadcastChannelSetterValue;
     mutable WriteBarrier<Unknown> m_JSBufferSetterValue;
+    mutable WriteBarrier<Unknown> m_JSCloseEventSetterValue;
+    mutable WriteBarrier<Unknown> m_JSCustomEventSetterValue;
+    mutable WriteBarrier<Unknown> m_JSDOMExceptionSetterValue;
+    mutable WriteBarrier<Unknown> m_JSDOMFormDataSetterValue;
+    mutable WriteBarrier<Unknown> m_JSErrorEventSetterValue;
+    mutable WriteBarrier<Unknown> m_JSEventSetterValue;
+    mutable WriteBarrier<Unknown> m_JSEventTargetSetterValue;
     mutable WriteBarrier<Unknown> m_JSFetchHeadersSetterValue;
+    mutable WriteBarrier<Unknown> m_JSMessageChannelSetterValue;
     mutable WriteBarrier<Unknown> m_JSMessageEventSetterValue;
+    mutable WriteBarrier<Unknown> m_JSMessagePortSetterValue;
     mutable WriteBarrier<Unknown> m_JSTextEncoderSetterValue;
     mutable WriteBarrier<Unknown> m_JSURLSearchParamsSetterValue;
     mutable WriteBarrier<Unknown> m_JSWebSocketSetterValue;
-    mutable WriteBarrier<Unknown> m_JSDOMFormDataSetterValue;
     mutable WriteBarrier<Unknown> m_JSWorkerSetterValue;
-    mutable WriteBarrier<Unknown> m_JSMessageChannelSetterValue;
-    mutable WriteBarrier<Unknown> m_JSMessagePortSetterValue;
-    mutable WriteBarrier<Unknown> m_JSBroadcastChannelSetterValue;
-    mutable WriteBarrier<Unknown> m_BunCommonJSModuleValue;
 
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
 

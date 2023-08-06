@@ -24,6 +24,7 @@ it("writable", () => {
     ["EventTarget", EventTarget],
     ["ErrorEvent", ErrorEvent],
     ["CustomEvent", CustomEvent],
+    ["CloseEvent", CloseEvent],
   ];
   for (let [name, Class] of classes) {
     globalThis[name] = 123;

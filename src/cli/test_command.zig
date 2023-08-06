@@ -271,19 +271,21 @@ pub const CommandLineReporter = struct {
         var iter = map.valueIterator();
         var max_filepath_length: usize = "All files".len;
         const relative_dir = vm.bundler.fs.top_level_dir;
-        var any = false;
+
+        var byte_ranges = try std.ArrayList(bun.sourcemap.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
+
         while (iter.next()) |entry| {
             const value: bun.sourcemap.ByteRangeMapping = entry.*;
-            var utf8 = value.source_url.toUTF8(bun.default_allocator);
-            defer utf8.deinit();
-
-            max_filepath_length = @max(bun.path.relative(relative_dir, utf8.slice()).len, max_filepath_length);
-            any = true;
+            var utf8 = value.source_url.slice();
+            byte_ranges.appendAssumeCapacity(value);
+            max_filepath_length = @max(bun.path.relative(relative_dir, utf8).len, max_filepath_length);
         }
 
-        if (!any) {
+        if (byte_ranges.items.len == 0) {
             return;
         }
+
+        std.sort.block(bun.sourcemap.ByteRangeMapping, byte_ranges.items, void{}, bun.sourcemap.ByteRangeMapping.isLessThan);
 
         iter = map.valueIterator();
         var writer = Output.errorWriter();
@@ -292,13 +294,13 @@ pub const CommandLineReporter = struct {
 
         writer.writeAll(Output.prettyFmt("<r><d>", enable_ansi_colors)) catch return;
         writer.writeByteNTimes('-', max_filepath_length + 2) catch return;
-        writer.writeAll(Output.prettyFmt("|---------|---------|---------|------------------<r>\n", enable_ansi_colors)) catch return;
+        writer.writeAll(Output.prettyFmt("|---------|----------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
         writer.writeAll("File") catch return;
         writer.writeByteNTimes(' ', max_filepath_length - "File".len + 1) catch return;
-        writer.writeAll(Output.prettyFmt(" <d>|<r> % Stmts <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
+        writer.writeAll(Output.prettyFmt(" <d>|<r> % Funcs <d>|<r> % Blocks <d>|<r> % Lines <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
         writer.writeAll(Output.prettyFmt("<d>", enable_ansi_colors)) catch return;
         writer.writeByteNTimes('-', max_filepath_length + 2) catch return;
-        writer.writeAll(Output.prettyFmt("|---------|---------|---------|------------------<r>\n", enable_ansi_colors)) catch return;
+        writer.writeAll(Output.prettyFmt("|---------|----------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
 
         var coverage_buffer = bun.MutableString.initEmpty(bun.default_allocator);
         var coverage_buffer_buffer = coverage_buffer.bufferedWriter();
@@ -311,7 +313,7 @@ pub const CommandLineReporter = struct {
         };
         var avg_count: f64 = 0;
 
-        while (iter.next()) |entry| {
+        for (byte_ranges.items) |*entry| {
             var report = bun.sourcemap.CodeCoverageReport.generate(vm.global, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
             defer report.deinit(bun.default_allocator);
             var fraction = base_fraction;
@@ -350,7 +352,7 @@ pub const CommandLineReporter = struct {
         try writer.writeAll(coverage_buffer.list.items);
         try writer.writeAll(Output.prettyFmt("<r><d>", enable_ansi_colors));
         writer.writeByteNTimes('-', max_filepath_length + 2) catch return;
-        writer.writeAll(Output.prettyFmt("|---------|---------|---------|------------------<r>\n", enable_ansi_colors)) catch return;
+        writer.writeAll(Output.prettyFmt("|---------|----------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
 
         opts.fractions.failing = failing;
         Output.flush();
@@ -427,6 +429,42 @@ const Scanner = struct {
         ".spec",
         "_spec",
     };
+
+    export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callconv(.C) bool {
+        var zig_slice: bun.JSC.ZigString.Slice = .{};
+        defer zig_slice.deinit();
+
+        // In this particular case, we don't actually care about non-ascii latin1 characters.
+        // so we skip the ascii check
+        const slice = if (test_name_str.is8Bit()) test_name_str.latin1() else brk: {
+            zig_slice = test_name_str.toUTF8(bun.default_allocator);
+            break :brk zig_slice.slice();
+        };
+
+        // always ignore node_modules.
+        if (strings.contains(slice, "/" ++ "node_modules" ++ "/")) {
+            return false;
+        }
+
+        const ext = std.fs.path.extension(slice);
+        const loader_by_ext = JSC.VirtualMachine.get().bundler.options.loader(ext);
+
+        // allow file loader just incase they use a custom loader with a non-standard extension
+        if (!(loader_by_ext.isJavaScriptLike() or loader_by_ext == .file)) {
+            return false;
+        }
+
+        if (jest.Jest.runner.?.test_options.coverage.skip_test_files) {
+            const name_without_extension = slice[0 .. slice.len - ext.len];
+            inline for (test_name_suffixes) |suffix| {
+                if (strings.endsWithComptime(name_without_extension, suffix)) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
 
     pub fn couldBeTestFile(this: *Scanner, name: string) bool {
         const extname = std.fs.path.extension(name);
@@ -579,7 +617,7 @@ pub const TestCommand = struct {
         reporter.repeat_count = @max(ctx.test_options.repeat_count, 1);
         reporter.jest.callback = &reporter.callback;
         jest.Jest.runner = &reporter.jest;
-
+        reporter.jest.test_options = &ctx.test_options;
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);
         var vm = try JSC.VirtualMachine.init(

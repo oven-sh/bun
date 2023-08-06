@@ -276,7 +276,12 @@ pub const Bunfig = struct {
                     // This mostly exists for debugging.
                     if (test_.get("coverageIgnoreSourcemaps")) |expr| {
                         try this.expect(expr, .e_boolean);
-                        this.ctx.test_options.coverage.ignore_sourcemap = !expr.data.e_boolean.value;
+                        this.ctx.test_options.coverage.ignore_sourcemap = expr.data.e_boolean.value;
+                    }
+
+                    if (test_.get("coverageSkipTestFiles")) |expr| {
+                        try this.expect(expr, .e_boolean);
+                        this.ctx.test_options.coverage.skip_test_files = expr.data.e_boolean.value;
                     }
                 }
             }

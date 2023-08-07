@@ -3943,7 +3943,8 @@ pub const AnyBlob = union(enum) {
     pub fn isDetached(this: *const AnyBlob) bool {
         return switch (this.*) {
             .Blob => |blob| blob.isDetached(),
-            else => this.slice().len == 0,
+            .InternalBlob => this.InternalBlob.bytes.items.len == 0,
+            .WTFStringImpl => this.WTFStringImpl.length() == 0,
         };
     }
 

@@ -183,7 +183,7 @@ var error_stream_buf: [16384]u8 = undefined;
 var error_stream = std.io.fixedBufferStream(&error_stream_buf);
 var output_source: global.Output.Source = undefined;
 var init_counter: usize = 0;
-export fn init() void {
+export fn init(heapsize: u32) void {
     const Mimalloc = @import("./allocators/mimalloc.zig");
     defer init_counter +%= 1;
     if (init_counter == 0) {
@@ -191,7 +191,7 @@ export fn init() void {
         // reserve 256 MB upfront
         Mimalloc.mi_option_set(.allow_decommit, 0);
         Mimalloc.mi_option_set(.limit_os_alloc, 1);
-        _ = Mimalloc.mi_reserve_os_memory(2.56e+8, false, true);
+        _ = Mimalloc.mi_reserve_os_memory(heapsize, false, true);
 
         JSAst.Stmt.Data.Store.create(default_allocator);
         JSAst.Expr.Data.Store.create(default_allocator);

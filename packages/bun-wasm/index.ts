@@ -185,7 +185,7 @@ export class Bun {
     return Bun._decoder.decode(region);
   }
 
-  static async init(url, fetch = globalThis.fetch) {
+  static async init(url, heapSize = 64_000_000, fetch = globalThis.fetch) {
     // globalThis.sucraseTransform = sucraseTransform;
     scratch = new Uint8Array(8096);
 
@@ -216,7 +216,7 @@ export class Bun {
       });
     }
 
-    const res = Bun.wasm_exports.init();
+    const res = Bun.wasm_exports.init(heapSize);
 
     if (res < 0) {
       throw new Error(`[Bun] Failed to initialize WASM module: code ${res}`);
@@ -271,11 +271,6 @@ export class Bun {
   }
 
   static transformSync(content: Uint8Array | string, file_name: string, loader?: Loader): TransformResponse {
-    const res = Bun.wasm_exports.init();
-    if (res < 0) {
-      throw `[Bun] Failed to initialize WASM module: code ${res}`;
-    }
-
     // if (process.env.NODE_ENV === "development") {
     //   console.time("[Bun] Transform " + file_name);
     // }

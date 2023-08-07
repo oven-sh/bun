@@ -2810,6 +2810,58 @@ pub const Parser = struct {
         }
     }
 
+    pub fn analyze(self: *Parser, context: *anyopaque, callback: *const fn (*anyopaque, *TSXParser, []js_ast.Part) anyerror!void) anyerror!void {
+        var p: TSXParser = undefined;
+        try TSXParser.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
+        p.should_fold_typescript_constant_expressions = false;
+
+        defer p.lexer.deinit();
+
+        // Consume a leading hashbang comment
+        var hashbang: string = "";
+        if (p.lexer.token == .t_hashbang) {
+            hashbang = p.lexer.identifier;
+            try p.lexer.next();
+        }
+
+        // Parse the file in the first pass, but do not bind symbols
+        var opts = ParseStatementOptions{ .is_module_scope = true };
+        const parse_tracer = bun.tracy.traceNamed(@src(), "JSParser.parse");
+
+        const stmts = p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts) catch |err| {
+            if (comptime Environment.isWasm) {
+                Output.print("JSParser.parse: caught error {s} at location: {d}\n", .{ @errorName(err), p.lexer.loc().start });
+                p.log.printForLogLevel(Output.writer()) catch {};
+            }
+            return err;
+        };
+
+        parse_tracer.end();
+
+        if (self.log.errors > 0) {
+            if (comptime Environment.isWasm) {
+                for (self.log.msgs.items) |msg| {
+                    var m: logger.Msg = msg;
+                    Output.print("{s}\n", .{m.data.text});
+                }
+            }
+            return error.SyntaxError;
+        }
+
+        const visit_tracer = bun.tracy.traceNamed(@src(), "JSParser.visit");
+        try p.prepareForVisitPass();
+
+        var parts = ListManaged(js_ast.Part).init(p.allocator);
+        defer parts.deinit();
+
+        try p.appendPart(&parts, stmts);
+        visit_tracer.end();
+
+        const analyze_tracer = bun.tracy.traceNamed(@src(), "JSParser.analyze");
+        try callback(context, &p, parts.items);
+        analyze_tracer.end();
+    }
+
     fn _parse(self: *Parser, comptime ParserType: type) !js_ast.Result {
         var p: ParserType = undefined;
         const orig_error_count = self.log.errors;
@@ -15739,7 +15791,7 @@ fn NewParser_(
                                     return p.newExpr(
                                         // Use libc fmod here to be consistent with what JavaScriptCore does
                                         // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
-                                        E.Number{ .value = bun.C.fmod(vals[0], vals[1]) },
+                                        E.Number{ .value = if (comptime Environment.isNative) bun.C.fmod(vals[0], vals[1]) else std.math.mod(f64, vals[0], vals[1]) catch 0 },
                                         expr.loc,
                                     );
                                 }
@@ -21997,7 +22049,7 @@ const JSXParser = if (bun.fast_debug_build_mode)
     TSXParser
 else
     NewParser(.{ .jsx = .react });
-const TSXParser = NewParser(.{ .jsx = .react, .typescript = true });
+pub const TSXParser = NewParser(.{ .jsx = .react, .typescript = true });
 const TypeScriptParser = NewParser(.{ .typescript = true });
 const JSParserMacro = if (bun.fast_debug_build_mode)
     TSParserMacro

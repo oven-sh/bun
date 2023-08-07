@@ -4552,3 +4552,12 @@ CPP_DECL void JSC__JSMap__set(JSC__JSMap* map, JSC__JSGlobalObject* arg1, JSC__J
 {
     map->set(arg1, JSC::JSValue::decode(JSValue2), JSC::JSValue::decode(JSValue3));
 }
+
+CPP_DECL void JSC__VM__setControlFlowProfiler(JSC__VM* vm, bool isEnabled)
+{
+    if (isEnabled) {
+        vm->enableControlFlowProfiler();
+    } else {
+        vm->disableControlFlowProfiler();
+    }
+}

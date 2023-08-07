@@ -322,6 +322,7 @@ pub extern fn JSC__VM__isEntered(arg0: *bindings.VM) bool;
 pub extern fn JSC__VM__isJITEnabled(...) bool;
 pub extern fn JSC__VM__releaseWeakRefs(arg0: *bindings.VM) void;
 pub extern fn JSC__VM__runGC(arg0: *bindings.VM, arg1: bool) JSC__JSValue;
+pub extern fn JSC__VM__setControlFlowProfiler(arg0: *bindings.VM, arg1: bool) void;
 pub extern fn JSC__VM__setExecutionForbidden(arg0: *bindings.VM, arg1: bool) void;
 pub extern fn JSC__VM__setExecutionTimeLimit(arg0: *bindings.VM, arg1: f64) void;
 pub extern fn JSC__VM__shrinkFootprint(arg0: *bindings.VM) void;

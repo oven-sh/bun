@@ -12,6 +12,20 @@
 
 namespace Bun {
 
+extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);
+extern "C" void ByteRangeMapping__generate(BunString sourceURL, BunString code, int sourceID);
+
+static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
+{
+#ifdef BUN_DEBUG
+    bool isCodeCoverageEnabled = !!vm.controlFlowProfiler();
+    bool shouldGenerateCodeCoverage = isCodeCoverageEnabled && BunTest__shouldGenerateCodeCoverage(Bun::toString(code.provider()->sourceURL()));
+    if (shouldGenerateCodeCoverage) {
+        ByteRangeMapping__generate(Bun::toString(code.provider()->sourceURL()), Bun::toString(code.provider()->source().toStringWithoutCopying()), code.provider()->asID());
+    }
+#endif
+}
+
 // The `INTERNAL_MODULE_REGISTRY_GENERATE` macro handles inlining code to compile and run a
 // JS builtin that acts as a module. In debug mode, we use a different implementation that reads
 // from the developer's filesystem. This allows reloading code without recompiling bindings.
@@ -20,7 +34,7 @@ namespace Bun {
     auto throwScope = DECLARE_THROW_SCOPE(vm);                                      \
     auto&& origin = SourceOrigin(WTF::URL(makeString("builtin://"_s, moduleName))); \
     SourceCode source = JSC::makeSource(SOURCE, origin, moduleName);                \
-                                                                                    \
+    maybeAddCodeCoverage(vm, source);                                               \
     JSFunction* func                                                                \
         = JSFunction::create(                                                       \
             vm,                                                                     \

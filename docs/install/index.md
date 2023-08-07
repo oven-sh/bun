@@ -114,7 +114,7 @@ $ bun add zod@latest
 To add a package as a dev dependency (`"devDependencies"`):
 
 ```bash
-$ bun add --development @types/react
+$ bun add --dev @types/react
 $ bun add -d @types/react
 ```
 

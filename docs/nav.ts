@@ -110,6 +110,9 @@ export default {
     page("runtime/nodejs-apis", "Node.js compatibility", {
       description: `Bun aims for full Node.js compatibility. This page tracks the current compatibility status.`,
     }),
+    page("runtime/plugins", "Plugins", {
+      description: `Implement custom loaders and module resolution logic with Bun's plugin system.`,
+    }),
 
     // page("runtime/nodejs", "Node.js compatibility", {
     //   description: `Track the status of Bun's API compatibility with Node.js.`,
@@ -206,6 +209,9 @@ export default {
     }),
     page("test/dom", "DOM testing", {
       description: "Write headless tests for UI and React/Vue/Svelte/Lit components with happy-dom",
+    }),
+    page("test/coverage", "Code coverage", {
+      description: "Generate code coverage reports with `bun test --coverage`",
     }),
 
     divider("Package runner"),

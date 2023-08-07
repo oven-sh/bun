@@ -228,7 +228,7 @@ pub const MutableString = struct {
     }
 
     pub fn toOwnedSlice(self: *MutableString) string {
-        return self.list.toOwnedSlice(self.allocator) catch @panic("TODO");
+        return self.list.toOwnedSlice(self.allocator) catch @panic("Allocation Error"); // TODO
     }
 
     pub fn toOwnedSliceLeaky(self: *MutableString) []u8 {
@@ -255,7 +255,7 @@ pub const MutableString = struct {
 
     pub fn toOwnedSliceLength(self: *MutableString, length: usize) string {
         self.list.shrinkAndFree(self.allocator, length);
-        return self.list.toOwnedSlice(self.allocator) catch @panic("TODO");
+        return self.list.toOwnedSlice(self.allocator) catch @panic("Allocation Error"); // TODO
     }
 
     // pub fn deleteAt(self: *MutableString, i: usize)  {

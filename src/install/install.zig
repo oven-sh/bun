@@ -4881,7 +4881,7 @@ pub const PackageManager = struct {
             ast_modifier: {
                 // Try to use the existing spot in the dependencies list if possible
                 for (updates) |*update| {
-                    for (dependency_lists_to_check) |list| {
+                    inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies" }) |list| {
                         if (current_package_json.asProperty(list)) |query| {
                             if (query.expr.data == .e_object) {
                                 if (query.expr.asProperty(
@@ -5763,6 +5763,10 @@ pub const PackageManager = struct {
     };
 
     const install_params = install_params_ ++ [_]ParamType{
+        clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
+        clap.parseParam("-D, --development") catch unreachable,
+        clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
+        clap.parseParam("--exact                      Add the exact version instead of the ^range") catch unreachable,
         clap.parseParam("<POS> ...                         ") catch unreachable,
     };
 
@@ -5771,7 +5775,8 @@ pub const PackageManager = struct {
     };
 
     const add_params = install_params_ ++ [_]ParamType{
-        clap.parseParam("-d, --development                 Add dependency to \"devDependencies\"") catch unreachable,
+        clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
+        clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
         clap.parseParam("--exact                      Add the exact version instead of the ^range") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of packages to install") catch unreachable,
@@ -5901,8 +5906,8 @@ pub const PackageManager = struct {
 
             cli.link_native_bins = args.options("--link-native-bins");
 
-            if (comptime subcommand == .add) {
-                cli.development = args.flag("--development");
+            if (comptime subcommand == .add or subcommand == .install) {
+                cli.development = args.flag("--development") or args.flag("--dev");
                 cli.optional = args.flag("--optional");
                 cli.exact = args.flag("--exact");
             }
@@ -6106,13 +6111,6 @@ pub const PackageManager = struct {
         }
     }
 
-    const dependency_lists_to_check = [_]string{
-        "dependencies",
-        "devDependencies",
-        "optionalDependencies",
-        "peerDependencies",
-    };
-
     fn updatePackageJSONAndInstallWithManager(
         ctx: Command.Context,
         manager: *PackageManager,
@@ -6294,21 +6292,20 @@ pub const PackageManager = struct {
             }
         }
 
+        const dependency_list = if (manager.options.update.development)
+            "devDependencies"
+        else if (manager.options.update.optional)
+            "optionalDependencies"
+        else
+            "dependencies";
         var any_changes = false;
-
-        var dependency_list: string = "dependencies";
-        if (manager.options.update.development) {
-            dependency_list = "devDependencies";
-        } else if (manager.options.update.optional) {
-            dependency_list = "optionalDependencies";
-        }
 
         switch (op) {
             .remove => {
                 // if we're removing, they don't have to specify where it is installed in the dependencies list
                 // they can even put it multiple times and we will just remove all of them
                 for (updates) |update| {
-                    inline for (dependency_lists_to_check) |list| {
+                    inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" }) |list| {
                         if (current_package_json.asProperty(list)) |query| {
                             if (query.expr.data == .e_object) {
                                 var dependencies = query.expr.data.e_object.properties.slice();

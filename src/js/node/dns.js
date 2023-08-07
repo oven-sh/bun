@@ -2,6 +2,10 @@
 // only resolve4, resolve, lookup, resolve6 and resolveSrv are implemented.
 const dns = Bun.dns;
 
+function getServers() {
+  return dns.getServers();
+}
+
 function lookup(domain, options, callback) {
   if (typeof options == "function") {
     callback = options;
@@ -685,4 +689,5 @@ export default {
   resolveTxt,
   resolveNaptr,
   promises,
+  getServers,
 };

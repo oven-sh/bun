@@ -398,7 +398,6 @@ pub const RuntimeTranspilerStore = struct {
                 .macro_remappings = macro_remappings,
                 .jsx = bundler.options.jsx,
                 .virtual_source = null,
-                .hoist_bun_plugin = false,
                 .dont_bundle_twice = true,
                 .allow_commonjs = true,
                 .inject_jest_globals = bundler.options.rewrite_jest_for_tests and
@@ -1436,7 +1435,6 @@ pub const ModuleLoader = struct {
                     .macro_remappings = macro_remappings,
                     .jsx = jsc_vm.bundler.options.jsx,
                     .virtual_source = virtual_source,
-                    .hoist_bun_plugin = true,
                     .dont_bundle_twice = true,
                     .allow_commonjs = true,
                     .inject_jest_globals = jsc_vm.bundler.options.rewrite_jest_for_tests and is_main,
@@ -1553,12 +1551,6 @@ pub const ModuleLoader = struct {
                     };
                 }
 
-                const has_bun_plugin = parse_result.ast.bun_plugin.hoisted_stmts.items.len > 0;
-
-                if (has_bun_plugin) {
-                    try ModuleLoader.runBunPlugin(jsc_vm, JSC.VirtualMachine.source_code_printer.?, &parse_result, ret);
-                }
-
                 const start_count = jsc_vm.bundler.linker.import_counter;
 
                 // We _must_ link because:
@@ -1611,7 +1603,7 @@ pub const ModuleLoader = struct {
                 var printer = source_code_printer.*;
                 printer.ctx.reset();
 
-                const written = brk: {
+                _ = brk: {
                     defer source_code_printer.* = printer;
                     break :brk try jsc_vm.bundler.printWithSourceMap(
                         parse_result,
@@ -1621,25 +1613,6 @@ pub const ModuleLoader = struct {
                         SavedSourceMap.SourceMapHandler.init(&jsc_vm.source_mappings),
                     );
                 };
-
-                if (written == 0) {
-
-                    // if it's an empty file but there were plugins
-                    // we don't want it to break if you try to import from it
-                    if (has_bun_plugin) {
-                        return ResolvedSource{
-                            .allocator = null,
-                            .source_code = String.static("module.exports=undefined"),
-                            .specifier = input_specifier,
-                            .source_url = ZigString.init(path.text),
-                            // // TODO: change hash to a bitfield
-                            // .hash = 1,
-
-                            // having JSC own the memory causes crashes
-                            .hash = 0,
-                        };
-                    }
-                }
 
                 if (comptime Environment.dump_source) {
                     try dumpSource(specifier, &printer);
@@ -1832,125 +1805,6 @@ pub const ModuleLoader = struct {
         }
     }
 
-    pub fn runBunPlugin(
-        jsc_vm: *VirtualMachine,
-        source_code_printer: *js_printer.BufferPrinter,
-        parse_result: *ParseResult,
-        ret: *ErrorableResolvedSource,
-    ) !void {
-        var printer = source_code_printer.*;
-        printer.ctx.reset();
-
-        defer printer.ctx.reset();
-        // If we start transpiling in the middle of an existing transpilation session
-        // we will hit undefined memory bugs
-        // unless we disable resetting the store until we are done transpiling
-        const prev_disable_reset = js_ast.Stmt.Data.Store.disable_reset;
-        js_ast.Stmt.Data.Store.disable_reset = true;
-        js_ast.Expr.Data.Store.disable_reset = true;
-
-        // flip the source code we use
-        // unless we're already transpiling a plugin
-        // that case could happen when
-        const was_printing_plugin = jsc_vm.is_printing_plugin;
-        const prev = jsc_vm.bundler.resolver.caches.fs.use_alternate_source_cache;
-        jsc_vm.is_printing_plugin = true;
-        defer {
-            js_ast.Stmt.Data.Store.disable_reset = prev_disable_reset;
-            js_ast.Expr.Data.Store.disable_reset = prev_disable_reset;
-            if (!was_printing_plugin) jsc_vm.bundler.resolver.caches.fs.use_alternate_source_cache = prev;
-            jsc_vm.is_printing_plugin = was_printing_plugin;
-        }
-        // we flip use_alternate_source_cache
-        if (!was_printing_plugin) jsc_vm.bundler.resolver.caches.fs.use_alternate_source_cache = !prev;
-
-        // this is a bad idea, but it should work for now.
-        const original_name = parse_result.ast.symbols.mut(parse_result.ast.bun_plugin.ref.innerIndex()).original_name;
-        parse_result.ast.symbols.mut(parse_result.ast.bun_plugin.ref.innerIndex()).original_name = "globalThis.Bun.plugin";
-        defer {
-            parse_result.ast.symbols.mut(parse_result.ast.bun_plugin.ref.innerIndex()).original_name = original_name;
-        }
-        const hoisted_stmts = parse_result.ast.bun_plugin.hoisted_stmts.items;
-
-        var parts = [1]js_ast.Part{
-            js_ast.Part{
-                .stmts = hoisted_stmts,
-            },
-        };
-        var ast_copy = parse_result.ast;
-        ast_copy.import_records.set(try jsc_vm.allocator.dupe(ImportRecord, ast_copy.import_records.slice()));
-        defer ast_copy.import_records.deinitWithAllocator(jsc_vm.allocator);
-        ast_copy.parts.set(&parts);
-        ast_copy.prepend_part = null;
-        var temporary_source = parse_result.source;
-        var source_name = try std.fmt.allocPrint(jsc_vm.allocator, "{s}.plugin.{s}", .{ temporary_source.path.text, temporary_source.path.name.ext[1..] });
-        temporary_source.path = Fs.Path.init(source_name);
-
-        var temp_parse_result = parse_result.*;
-        temp_parse_result.ast = ast_copy;
-
-        try jsc_vm.bundler.linker.link(
-            temporary_source.path,
-            &temp_parse_result,
-            jsc_vm.origin,
-            .absolute_path,
-            false,
-            true,
-        );
-
-        _ = brk: {
-            defer source_code_printer.* = printer;
-            break :brk try jsc_vm.bundler.printWithSourceMapMaybe(
-                temp_parse_result.ast,
-                &temporary_source,
-                @TypeOf(&printer),
-                &printer,
-                .esm_ascii,
-                true,
-                SavedSourceMap.SourceMapHandler.init(&jsc_vm.source_mappings),
-            );
-        };
-        const wrote = printer.ctx.getWritten();
-
-        if (wrote.len > 0) {
-            if (comptime Environment.dump_source)
-                try dumpSource(temporary_source.path.text, &printer);
-
-            var exception = [1]JSC.JSValue{JSC.JSValue.zero};
-            const promise = JSC.JSModuleLoader.evaluate(
-                jsc_vm.global,
-                wrote.ptr,
-                wrote.len,
-                temporary_source.path.text.ptr,
-                temporary_source.path.text.len,
-                parse_result.source.path.text.ptr,
-                parse_result.source.path.text.len,
-                JSC.JSValue.jsUndefined(),
-                &exception,
-            );
-            if (!exception[0].isEmpty()) {
-                ret.* = JSC.ErrorableResolvedSource.err(
-                    error.JSErrorObject,
-                    exception[0].asVoid(),
-                );
-                return error.PluginError;
-            }
-
-            if (!promise.isEmptyOrUndefinedOrNull()) {
-                if (promise.asAnyPromise()) |promise_value| {
-                    jsc_vm.waitForPromise(promise_value);
-
-                    if (promise_value.status(jsc_vm.global.vm()) == .Rejected) {
-                        ret.* = JSC.ErrorableResolvedSource.err(
-                            error.JSErrorObject,
-                            promise_value.result(jsc_vm.global.vm()).asVoid(),
-                        );
-                        return error.PluginError;
-                    }
-                }
-            }
-        }
-    }
     pub fn normalizeSpecifier(jsc_vm: *VirtualMachine, slice_: string, string_to_use_for_source: *[]const u8) string {
         var slice = slice_;
         if (slice.len == 0) return slice;

@@ -5650,6 +5650,7 @@ pub fn getSourceMapBuilder(
             is_bun_platform,
         ),
         .cover_lines_without_mappings = true,
+        .approximate_input_line_count = tree.approximate_newline_count,
         .prepend_count = is_bun_platform and generate_source_map == .lazy,
         .line_offset_tables = opts.line_offset_tables orelse brk: {
             if (generate_source_map == .lazy) break :brk SourceMap.LineOffsetTable.generate(

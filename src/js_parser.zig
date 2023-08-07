@@ -4803,7 +4803,6 @@ fn NewParser_(
         filename_ref: Ref = Ref.None,
         dirname_ref: Ref = Ref.None,
         import_meta_ref: Ref = Ref.None,
-        bun_plugin: js_ast.BunPlugin = .{},
         scopes_in_order_visitor_index: usize = 0,
         has_classic_runtime_warned: bool = false,
         macro_call_count: MacroCallCountType = 0,
@@ -8144,38 +8143,6 @@ fn NewParser_(
                 }
 
                 return p.s(S.Empty{}, loc);
-            }
-
-            if (p.options.features.hoist_bun_plugin and strings.eqlComptime(path.text, "bun")) {
-                var plugin_i: usize = std.math.maxInt(usize);
-                const items = stmt.items;
-                for (items, 0..) |item, i| {
-                    // Mark Bun.plugin()
-                    // TODO: remove if they have multiple imports of the same name?
-                    if (strings.eqlComptime(item.alias, "plugin")) {
-                        const name = p.loadNameFromRef(item.name.ref.?);
-                        const ref = try p.declareSymbol(.other, item.name.loc, name);
-                        try p.is_import_item.put(p.allocator, ref, {});
-                        p.bun_plugin.ref = ref;
-                        plugin_i = i;
-                        break;
-                    }
-                }
-
-                if (plugin_i != std.math.maxInt(usize)) {
-                    var list = std.ArrayListUnmanaged(@TypeOf(stmt.items[0])){
-                        .items = stmt.items,
-                        .capacity = stmt.items.len,
-                    };
-                    // remove it from the list
-                    _ = list.swapRemove(plugin_i);
-                    stmt.items = list.items;
-                }
-
-                // if the import statement is now empty, remove it completely
-                if (stmt.items.len == 0 and stmt.default_name == null and stmt.star_name_loc == null) {
-                    return p.s(S.Empty{}, loc);
-                }
             }
 
             const macro_remap = if ((comptime allow_macros) and !is_macro)
@@ -14563,10 +14530,6 @@ fn NewParser_(
             var partStmts = ListManaged(Stmt).fromOwnedSlice(allocator, stmts);
 
             //
-            const bun_plugin_usage_count_before: usize = if (p.options.features.hoist_bun_plugin and !p.bun_plugin.ref.isNull())
-                p.symbols.items[p.bun_plugin.ref.innerIndex()].use_count_estimate
-            else
-                0;
 
             try p.visitStmtsAndPrependTempRefs(&partStmts, &opts);
 
@@ -14601,52 +14564,6 @@ fn NewParser_(
 
             if (partStmts.items.len > 0) {
                 const _stmts = partStmts.items;
-
-                // -- hoist_bun_plugin --
-                if (_stmts.len == 1 and p.options.features.hoist_bun_plugin and !p.bun_plugin.ref.isNull()) {
-                    const bun_plugin_usage_count_after: usize = p.symbols.items[p.bun_plugin.ref.innerIndex()].use_count_estimate;
-                    if (bun_plugin_usage_count_after > bun_plugin_usage_count_before) {
-                        var previous_parts: []js_ast.Part = parts.items;
-
-                        for (previous_parts, 0..) |*previous_part, j| {
-                            if (previous_part.stmts.len == 0) continue;
-
-                            var refs = previous_part.declared_symbols.refs();
-
-                            for (refs) |ref| {
-                                if (p.symbol_uses.contains(ref)) {
-                                    // we move this part to our other file
-                                    for (previous_parts[0..j]) |*this_part| {
-                                        if (this_part.stmts.len == 0) continue;
-                                        const other_refs = this_part.declared_symbols.refs();
-
-                                        for (other_refs) |other_ref| {
-                                            if (previous_part.symbol_uses.contains(other_ref)) {
-                                                try p.bun_plugin.hoisted_stmts.appendSlice(p.allocator, this_part.stmts);
-                                                this_part.stmts = &.{};
-                                                break;
-                                            }
-                                        }
-                                    }
-
-                                    try p.bun_plugin.hoisted_stmts.appendSlice(p.allocator, previous_part.stmts);
-                                    break;
-                                }
-                            }
-                        }
-                        p.bun_plugin.hoisted_stmts.append(p.allocator, _stmts[0]) catch unreachable;
-
-                        // Single-statement part which uses Bun.plugin()
-                        // It's effectively an unrelated file
-                        if (p.declared_symbols.len() > 0 or p.symbol_uses.count() > 0) {
-                            p.clearSymbolUsagesFromDeadPart(.{ .stmts = undefined, .declared_symbols = p.declared_symbols, .symbol_uses = p.symbol_uses });
-                            p.declared_symbols.clearRetainingCapacity();
-                            p.import_records_for_current_part.items.len = 0;
-                        }
-                        return;
-                    }
-                }
-                // -- hoist_bun_plugin --
 
                 try parts.append(js_ast.Part{
                     .stmts = _stmts,
@@ -21269,7 +21186,7 @@ fn NewParser_(
                         logger.Loc.Empty,
                     );
                     const cjsGlobal = p.newSymbol(.unbound, "$_BunCommonJSModule_$") catch unreachable;
-                    var all_call_args = allocator.alloc(Expr, 7) catch unreachable;
+                    var all_call_args = allocator.alloc(Expr, 8) catch unreachable;
                     const this_module = p.newExpr(
                         E.Dot{
                             .name = "module",
@@ -21278,9 +21195,19 @@ fn NewParser_(
                         },
                         logger.Loc.Empty,
                     );
-                    var call_args = all_call_args[1..];
+
                     var bind_args = all_call_args[0..1];
                     bind_args[0] = this_module;
+                    var bind_resolve_args = all_call_args[1..2];
+                    var call_args = all_call_args[2..];
+
+                    const module_id = p.newExpr(E.Dot{
+                        .name = "id",
+                        .target = this_module,
+                        .name_loc = logger.Loc.Empty,
+                    }, logger.Loc.Empty);
+
+                    bind_resolve_args[0] = module_id;
                     const get_require = p.newExpr(
                         E.Dot{
                             .name = "require",
@@ -21302,11 +21229,23 @@ fn NewParser_(
                         logger.Loc.Empty,
                     );
 
-                    const module_id = p.newExpr(E.Dot{
-                        .name = "id",
-                        .target = this_module,
+                    const get_resolve = p.newExpr(E.Dot{
+                        .name = "resolve",
                         .name_loc = logger.Loc.Empty,
+                        .target = get_require,
                     }, logger.Loc.Empty);
+
+                    const create_resolve_binding = p.newExpr(
+                        E.Call{
+                            .target = p.newExpr(E.Dot{
+                                .name = "bind",
+                                .name_loc = logger.Loc.Empty,
+                                .target = get_resolve,
+                            }, logger.Loc.Empty),
+                            .args = bun.BabyList(Expr).init(bind_resolve_args),
+                        },
+                        logger.Loc.Empty,
+                    );
 
                     const require_path = p.newExpr(
                         E.Dot{
@@ -21325,15 +21264,25 @@ fn NewParser_(
                         logger.Loc.Empty,
                     );
 
+                    const assign_resolve_binding = p.newExpr(
+                        E.Binary{
+                            .left = get_resolve,
+                            .right = create_resolve_binding,
+                            .op = .bin_assign,
+                        },
+                        logger.Loc.Empty,
+                    );
+
                     const assign_id = p.newExpr(E.Binary{
                         .left = require_path,
                         .right = module_id,
                         .op = .bin_assign,
                     }, logger.Loc.Empty);
 
-                    var create_require = [3]Expr{
+                    var create_require = [4]Expr{
                         assign_binding,
                         assign_id,
+                        assign_resolve_binding,
                         get_require,
                     };
 
@@ -21922,7 +21871,6 @@ fn NewParser_(
                 else
                     false,
                 // .top_Level_await_keyword = p.top_level_await_keyword,
-                .bun_plugin = p.bun_plugin,
                 .commonjs_named_exports = p.commonjs_named_exports,
                 .commonjs_export_names = p.commonjs_export_names.keys(),
 

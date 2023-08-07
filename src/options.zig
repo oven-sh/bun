@@ -1435,6 +1435,8 @@ pub const BundleOptions = struct {
     minify_syntax: bool = false,
     minify_identifiers: bool = false,
 
+    code_coverage: bool = false,
+
     compile: bool = false,
 
     /// This is a list of packages which even when require() is used, we will

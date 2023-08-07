@@ -110,6 +110,9 @@ export default {
     page("runtime/nodejs-apis", "Node.js compatibility", {
       description: `Bun aims for full Node.js compatibility. This page tracks the current compatibility status.`,
     }),
+    page("runtime/plugins", "Plugins", {
+      description: `Implement custom loaders and module resolution logic with Bun's plugin system.`,
+    }),
 
     // page("runtime/nodejs", "Node.js compatibility", {
     //   description: `Track the status of Bun's API compatibility with Node.js.`,

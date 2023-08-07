@@ -209,7 +209,7 @@ static constexpr ASCIILiteral ThirdpartyDetectLibcLinuxCode = "(function (){\"us
 //
 
 //
-static constexpr ASCIILiteral ThirdpartyIsomorphicFetchCode = "(function (){\"use strict\";const bunFetch=Bun.fetch,fetch=(...args)=>bunFetch(...args);return fetch.default=wrapper,fetch.fetch=wrapper,fetch})\n"_s;
+static constexpr ASCIILiteral ThirdpartyIsomorphicFetchCode = "(function (){\"use strict\";const bunFetch=Bun.fetch,fetch=(...args)=>bunFetch(...args);return fetch.default=fetch,fetch.fetch=fetch,fetch})\n"_s;
 //
 
 //
@@ -434,7 +434,7 @@ static constexpr ASCIILiteral ThirdpartyDetectLibcLinuxCode = "(function (){\"us
 //
 
 //
-static constexpr ASCIILiteral ThirdpartyIsomorphicFetchCode = "(function (){\"use strict\";const bunFetch=Bun.fetch,fetch=(...args)=>bunFetch(...args);return fetch.default=wrapper,fetch.fetch=wrapper,fetch})\n"_s;
+static constexpr ASCIILiteral ThirdpartyIsomorphicFetchCode = "(function (){\"use strict\";const bunFetch=Bun.fetch,fetch=(...args)=>bunFetch(...args);return fetch.default=fetch,fetch.fetch=fetch,fetch})\n"_s;
 //
 
 //
@@ -660,7 +660,7 @@ static constexpr ASCIILiteral ThirdpartyDetectLibcLinuxCode = "(function (){\"us
 //
 
 //
-static constexpr ASCIILiteral ThirdpartyIsomorphicFetchCode = "(function (){\"use strict\";const bunFetch=Bun.fetch,fetch=(...args)=>bunFetch(...args);return fetch.default=wrapper,fetch.fetch=wrapper,fetch})\n"_s;
+static constexpr ASCIILiteral ThirdpartyIsomorphicFetchCode = "(function (){\"use strict\";const bunFetch=Bun.fetch,fetch=(...args)=>bunFetch(...args);return fetch.default=fetch,fetch.fetch=fetch,fetch})\n"_s;
 //
 
 //

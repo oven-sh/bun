@@ -110,7 +110,7 @@ fn initComptime(comptime str: string, t: Category) MimeType {
     };
 }
 
-pub fn init(str_: string, allocator: ?std.mem.Allocator) MimeType {
+pub fn init(str_: string, allocator: ?std.mem.Allocator, allocated: ?*bool) MimeType {
     var str = str_;
     if (std.mem.indexOfScalar(u8, str, '/')) |slash| {
         const category_ = str[0..slash];
@@ -141,6 +141,7 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator) MimeType {
                     return wasm;
                 }
 
+                if (allocated != null and allocator != null) allocated.?.* = true;
                 return MimeType{
                     .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
                     .category = .application,
@@ -148,6 +149,7 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator) MimeType {
             },
             "font".len => {
                 if (strings.eqlComptimeIgnoreLen(category_, "font")) {
+                    if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
                         .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
                         .category = .font,
@@ -171,6 +173,7 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator) MimeType {
                         return all.@"text/plain";
                     }
 
+                    if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
                         .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
                         .category = .text,
@@ -179,6 +182,7 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator) MimeType {
             },
             "image".len => {
                 if (strings.eqlComptimeIgnoreLen(category_, "image")) {
+                    if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
                         .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str,
                         .category = .image,
@@ -186,6 +190,7 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator) MimeType {
                 }
 
                 if (strings.eqlComptimeIgnoreLen(category_, "audio")) {
+                    if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
                         .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str,
                         .category = .audio,
@@ -193,6 +198,7 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator) MimeType {
                 }
 
                 if (strings.eqlComptimeIgnoreLen(category_, "video")) {
+                    if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
                         .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str,
                         .category = .video,
@@ -203,6 +209,7 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator) MimeType {
         }
     }
 
+    if (allocated != null and allocator != null) allocated.?.* = true;
     return MimeType{
         .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str,
         .category = .other,
@@ -2525,7 +2532,7 @@ pub const all = struct {
 // TODO: do a comptime static hash map for this
 // its too many branches to use ComptimeStringMap
 pub fn byName(name: []const u8) MimeType {
-    return MimeType.init(name, null);
+    return MimeType.init(name, null, null);
 }
 
 pub const extensions = ComptimeStringMap(MimeType, .{

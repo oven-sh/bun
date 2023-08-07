@@ -3069,7 +3069,7 @@ pub const Expr = struct {
     ) !Expr {
         var bytes = blob.sharedView();
 
-        const mime_type = mime_type_ orelse HTTP.MimeType.init(blob.content_type, null);
+        const mime_type = mime_type_ orelse HTTP.MimeType.init(blob.content_type, null, null);
 
         if (mime_type.category == .json) {
             var source = logger.Source.initPathString("fetch.json", bytes);
@@ -9779,10 +9779,10 @@ pub const Macro = struct {
 
                             if (value.jsType() == .DOMWrapper) {
                                 if (value.as(JSC.WebCore.Response)) |resp| {
-                                    mime_type = HTTP.MimeType.init(resp.mimeType(null), null);
+                                    mime_type = HTTP.MimeType.init(resp.mimeType(null), null, null);
                                     blob_ = resp.body.use();
                                 } else if (value.as(JSC.WebCore.Request)) |resp| {
-                                    mime_type = HTTP.MimeType.init(resp.mimeType(), null);
+                                    mime_type = HTTP.MimeType.init(resp.mimeType(), null, null);
                                     blob_ = resp.body.value.use();
                                 } else if (value.as(JSC.WebCore.Blob)) |resp| {
                                     blob_ = resp.*;

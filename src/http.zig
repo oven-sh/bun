@@ -2223,7 +2223,7 @@ pub const RequestContext = struct {
 
         const accept: MimeType = brk: {
             if (ctx.header("Accept")) |accept|
-                break :brk MimeType.init(accept, null);
+                break :brk MimeType.init(accept, null, null);
 
             break :brk ctx.mime_type;
         };

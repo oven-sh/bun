@@ -985,8 +985,12 @@ pub const Fetch = struct {
         };
         var blob = Blob.init(data, allocator, globalThis);
 
-        const mime_type = bun.HTTP.MimeType.init(data_url.mime_type, allocator);
+        var allocated = false;
+        const mime_type = bun.HTTP.MimeType.init(data_url.mime_type, allocator, &allocated);
         blob.content_type = mime_type.value;
+        if (allocated) {
+            blob.content_type_allocated = true;
+        }
 
         var response = allocator.create(Response) catch @panic("out of memory");
 

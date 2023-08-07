@@ -557,6 +557,7 @@ pub const TestCommand = struct {
         fractions: bun.sourcemap.CoverageFraction = .{},
         ignore_sourcemap: bool = false,
         enabled: bool = false,
+        fail_on_low_coverage: bool = false,
     };
 
     pub fn exec(ctx: Command.Context) !void {
@@ -842,7 +843,7 @@ pub const TestCommand = struct {
             }
         }
 
-        if (reporter.summary.fail > 0 or (coverage.enabled and coverage.fractions.failing)) {
+        if (reporter.summary.fail > 0 or (coverage.enabled and coverage.fractions.failing and coverage.fail_on_low_coverage)) {
             Global.exit(1);
         }
     }

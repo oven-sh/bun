@@ -253,6 +253,7 @@ pub const Bunfig = struct {
                             this.ctx.test_options.coverage.fractions.functions = expr.data.e_number.value;
                             this.ctx.test_options.coverage.fractions.lines = expr.data.e_number.value;
                             this.ctx.test_options.coverage.fractions.stmts = expr.data.e_number.value;
+                            this.ctx.test_options.coverage.fail_on_low_coverage = true;
                             break :outer;
                         }
 
@@ -260,16 +261,19 @@ pub const Bunfig = struct {
                         if (expr.get("functions")) |functions| {
                             try this.expect(functions, .e_number);
                             this.ctx.test_options.coverage.fractions.functions = functions.data.e_number.value;
+                            this.ctx.test_options.coverage.fail_on_low_coverage = true;
                         }
 
                         if (expr.get("lines")) |lines| {
                             try this.expect(lines, .e_number);
                             this.ctx.test_options.coverage.fractions.lines = lines.data.e_number.value;
+                            this.ctx.test_options.coverage.fail_on_low_coverage = true;
                         }
 
                         if (expr.get("statements")) |stmts| {
                             try this.expect(stmts, .e_number);
                             this.ctx.test_options.coverage.fractions.stmts = stmts.data.e_number.value;
+                            this.ctx.test_options.coverage.fail_on_low_coverage = true;
                         }
                     }
 

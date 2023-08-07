@@ -81,8 +81,8 @@ export function require(this: CommonJSModuleRecord, id: string) {
   return mod.exports;
 }
 
-export function requireResolve(this: CommonJSModuleRecord, id: string) {
-  return $resolveSync(id, this.path, false);
+export function requireResolve(this: string | { path: string }, id: string) {
+  return $resolveSync(id, typeof this === "string" ? this : this?.path, false);
 }
 
 export function requireNativeModule(id: string) {

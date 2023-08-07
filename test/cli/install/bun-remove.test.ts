@@ -287,3 +287,33 @@ it("should retain a new line in the end of package.json", async () => {
     ) + "\n",
   );
 });
+
+it("should remove peerDependencies", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      peerDependencies: {
+        bar: "~0.0.1",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "remove", "bar"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]/, "").split(/\r?\n/)).toEqual([" done", ""]);
+  expect(await exited).toBe(0);
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+  });
+});

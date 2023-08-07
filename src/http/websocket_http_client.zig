@@ -360,7 +360,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 }
             }
 
-            const wrote = socket.write(this.input_body_buf, true);
+            // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
+            const wrote = socket.write(this.input_body_buf, false);
             if (wrote < 0) {
                 this.terminate(ErrorCode.failed_to_write);
                 return;
@@ -542,7 +543,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             if (this.to_send.len == 0)
                 return;
 
-            const wrote = socket.write(this.to_send, true);
+            // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
+            const wrote = socket.write(this.to_send, false);
             if (wrote < 0) {
                 this.terminate(ErrorCode.failed_to_write);
                 return;
@@ -1304,15 +1306,15 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.sendCloseWithBody(this.tcp, 1001, null, 0);
         }
 
-        fn enqueueEncodedBytesMaybeFinal(
+        fn enqueueEncodedBytes(
             this: *WebSocket,
             socket: Socket,
             bytes: []const u8,
-            is_closing: bool,
         ) bool {
             // fast path: no backpressure, no queue, just send the bytes.
             if (!this.hasBackpressure()) {
-                const wrote = socket.write(bytes, !is_closing);
+                // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
+                const wrote = socket.write(bytes, false);
                 const expected = @as(c_int, @intCast(bytes.len));
                 if (wrote == expected) {
                     return true;
@@ -1323,18 +1325,18 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     return false;
                 }
 
-                _ = this.copyToSendBuffer(bytes[@as(usize, @intCast(wrote))..], false, is_closing);
+                _ = this.copyToSendBuffer(bytes[@as(usize, @intCast(wrote))..], false);
                 return true;
             }
 
-            return this.copyToSendBuffer(bytes, true, is_closing);
+            return this.copyToSendBuffer(bytes, true);
         }
 
-        fn copyToSendBuffer(this: *WebSocket, bytes: []const u8, do_write: bool, is_closing: bool) bool {
-            return this.sendData(.{ .raw = bytes }, do_write, is_closing, .Binary);
+        fn copyToSendBuffer(this: *WebSocket, bytes: []const u8, do_write: bool) bool {
+            return this.sendData(.{ .raw = bytes }, do_write, .Binary);
         }
 
-        fn sendData(this: *WebSocket, bytes: Copy, do_write: bool, is_closing: bool, opcode: Opcode) bool {
+        fn sendData(this: *WebSocket, bytes: Copy, do_write: bool, opcode: Opcode) bool {
             var content_byte_len: usize = 0;
             const write_len = bytes.len(&content_byte_len);
             std.debug.assert(write_len > 0);
@@ -1349,7 +1351,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     std.debug.assert(!this.tcp.isClosed());
                     std.debug.assert(this.tcp.isEstablished());
                 }
-                return this.sendBuffer(this.send_buffer.readableSlice(0), is_closing, !is_closing);
+                return this.sendBuffer(this.send_buffer.readableSlice(0));
             }
 
             return true;
@@ -1358,13 +1360,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         fn sendBuffer(
             this: *WebSocket,
             out_buf: []const u8,
-            is_closing: bool,
-            _: bool,
         ) bool {
             std.debug.assert(out_buf.len > 0);
-            _ = is_closing;
-            // set msg_more to false
-            // it seems to improve perf by ~20%
+            // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
             const wrote = this.tcp.write(out_buf, false);
             if (wrote < 0) {
                 this.terminate(ErrorCode.failed_to_write);
@@ -1377,10 +1375,6 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             }
 
             return true;
-        }
-
-        fn enqueueEncodedBytes(this: *WebSocket, socket: Socket, bytes: []const u8) bool {
-            return this.enqueueEncodedBytesMaybeFinal(socket, bytes, false);
         }
 
         fn sendPong(this: *WebSocket, socket: Socket) bool {
@@ -1444,7 +1438,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             var slice = final_body_bytes[0..(8 + body_len)];
             Mask.fill(this.globalThis, mask_buf, slice[6..], slice[6..]);
 
-            if (this.enqueueEncodedBytesMaybeFinal(socket, slice, true)) {
+            if (this.enqueueEncodedBytes(socket, slice)) {
                 this.dispatchClose(code, &reason);
                 this.clearData();
             }
@@ -1463,7 +1457,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             const send_buf = this.send_buffer.readableSlice(0);
             if (send_buf.len == 0)
                 return;
-            _ = this.sendBuffer(send_buf, false, true);
+            _ = this.sendBuffer(send_buf);
         }
         pub fn handleTimeout(
             this: *WebSocket,

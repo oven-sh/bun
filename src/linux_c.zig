@@ -416,9 +416,32 @@ pub const struct_sysinfo = extern struct {
 };
 pub extern fn sysinfo(__info: [*c]struct_sysinfo) c_int;
 
+fn read_proc_meminfo_available() usize {
+    var file = try std.fs.openFileAbsoluteZ("/proc/meminfo", .{}) orelse return 0;
+    defer file.close();
+
+    var buf: [4096]u8 = undefined;
+    const amt = try file.read(&buf) orelse return 0;
+    
+    var it = std.mem.tokenizeAny(u8, buf, " \n");
+    while (lines_iter.next()) |line| {
+        if (std.mem.eql(u8, line, "MemAvailable:")) {
+            const int_text = it.next();
+            const kilobytes = try std.fmt.parseInt(usize, int_text, 10) orelse return 0;
+
+            return kilobytes * 1024;
+        }
+    }
+
+    return 0;
+}
+
 pub fn get_free_memory() u64 {
+    var rc : u64 = read_proc_meminfo_available();
+    if (rc != 0) return rc;
+
     var info: struct_sysinfo = undefined;
-    if (sysinfo(&info) == @as(c_int, 0)) return @as(u64, @bitCast(info.freeram +% info.bufferram)) *% @as(c_ulong, @bitCast(@as(c_ulong, info.mem_unit)));
+    if (sysinfo(&info) == @as(c_int, 0)) return @as(u64, @bitCast(info.freeram)) *% @as(c_ulong, @bitCast(@as(c_ulong, info.mem_unit)));
     return 0;
 }
 

@@ -1,18 +1,16 @@
 // @ts-nocheck
 import { ByteBuffer } from "peechy/bb";
 import {
+  Loader as BunLoader,
+  TestKind,
+  decodeGetTestsResponse,
   decodeScanResult,
   decodeTransformResponse,
+  encodeGetTestsRequest,
   encodeScan,
   encodeTransform,
-  Loader as BunLoader,
   type ScanResult,
   type TransformResponse,
-  type GetTestsRequest,
-  type GetTestsResponse,
-  encodeGetTestsRequest,
-  decodeGetTestsResponse,
-  TestKind,
 } from "./schema";
 export enum Loader {
   jsx = BunLoader.jsx,
@@ -24,6 +22,8 @@ const testKindMap = {
   [TestKind.describe_fn]: "describe",
   [TestKind.test_fn]: "test",
 };
+const capturedErrors = [];
+let captureErrors = false;
 export type { ScanResult, TransformResponse };
 function normalizeLoader(file_name: string, loader?: Loader): BunLoader {
   return (
@@ -89,12 +89,22 @@ var scratch2: Uint8Array;
 
 const env = {
   console_log(slice: number) {
+    const text = Bun._wasmPtrLenToString(slice);
+    if (captureErrors) {
+      capturedErrors.push(text);
+      return;
+    }
     //@ts-ignore
-    console.log(Bun._wasmPtrLenToString(slice));
+    console.log(text);
   },
   console_error(slice: number) {
     //@ts-ignore
-    console.error(Bun._wasmPtrLenToString(slice));
+    const text = Bun._wasmPtrLenToString(slice);
+    if (captureErrors) {
+      capturedErrors.push(text);
+      return;
+    }
+    console.error(text);
   },
   console_warn(slice: number) {
     //@ts-ignore
@@ -186,7 +196,6 @@ export class Bun {
   }
 
   static async init(url, heapSize = 64_000_000, fetch = globalThis.fetch) {
-    // globalThis.sucraseTransform = sucraseTransform;
     scratch = new Uint8Array(8096);
 
     if (Bun.has_initialized) {
@@ -225,7 +234,7 @@ export class Bun {
     Bun.has_initialized = true;
   }
 
-  static getTests(content: Uint8Array | string) {
+  static getTests(content: Uint8Array | string, filename = "my.test.tsx") {
     const bb = new ByteBuffer(scratch);
     bb.length = 0;
     bb.index = 0;
@@ -234,6 +243,7 @@ export class Bun {
     encodeGetTestsRequest(
       {
         contents: contents_buffer,
+        path: filename,
       },
       bb,
     );
@@ -243,9 +253,32 @@ export class Bun {
     const input_ptr = Bun.wasm_exports.bun_malloc(data.length);
     var buffer = Bun._wasmPtrToSlice(input_ptr);
     buffer.set(data);
+    captureErrors = true;
+    try {
+      var resp_ptr = Bun.wasm_exports.getTests(input_ptr);
+    } catch (e) {
+      throw e;
+    } finally {
+      captureErrors = false;
+      Bun.wasm_exports.bun_free(input_ptr);
+    }
 
-    const resp_ptr = Bun.wasm_exports.getTests(input_ptr);
-    Bun.wasm_exports.bun_free(input_ptr);
+    if (Number(resp_ptr) === 0) {
+      if (capturedErrors.length) {
+        const err = capturedErrors.slice();
+        capturedErrors.length = 0;
+        throw new Error(err.join("\n").trim());
+      }
+
+      throw new Error("Failed to parse");
+    }
+
+    if (capturedErrors.length) {
+      Bun.wasm_exports.bun_free(resp_ptr);
+      const err = capturedErrors.slice();
+      capturedErrors.length = 0;
+      throw new Error(err.join("\n").trim());
+    }
 
     var _bb = new ByteBuffer(Bun._wasmPtrToSlice(resp_ptr));
 
@@ -271,10 +304,6 @@ export class Bun {
   }
 
   static transformSync(content: Uint8Array | string, file_name: string, loader?: Loader): TransformResponse {
-    // if (process.env.NODE_ENV === "development") {
-    //   console.time("[Bun] Transform " + file_name);
-    // }
-
     const bb = new ByteBuffer(scratch);
     bb.length = 0;
     bb.index = 0;
@@ -321,10 +350,6 @@ export class Bun {
   }
 
   static scan(content: Uint8Array | string, file_name: string, loader?: Loader): ScanResult {
-    // if (process.env.NODE_ENV === "development") {
-    //   console.time("[Bun] Transform " + file_name);
-    // }
-    scratch.fill(0);
     const bb = new ByteBuffer(scratch);
     bb.length = 0;
     bb.index = 0;

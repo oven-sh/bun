@@ -3318,11 +3318,19 @@ function encodeClientServerModuleManifest(message, bb) {
 function decodeGetTestsRequest(bb) {
   var result = {};
 
+  result["path"] = bb.readString();
   result["contents"] = bb.readByteArray();
   return result;
 }
 
 function encodeGetTestsRequest(message, bb) {
+  var value = message["path"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error('Missing required field "path"');
+  }
+
   var value = message["contents"];
   if (value != null) {
     bb.writeByteArray(value);

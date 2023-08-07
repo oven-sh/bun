@@ -453,8 +453,8 @@ export fn getTests(opts_array: u64) u64 {
     defer arena.deinit();
     var log_ = Logger.Log.init(allocator);
     var reader = ApiReader.init(Uint8Array.fromJS(opts_array), allocator);
-    var opts = Api.GetTestsRequest.decode(&reader) catch @panic("ok");
-    var code = Logger.Source.initPathString("my-test-file.test.tsx", opts.contents);
+    var opts = Api.GetTestsRequest.decode(&reader) catch @panic("out of memory");
+    var code = Logger.Source.initPathString(if (opts.path.len > 0) opts.path else "my-test-file.test.tsx", opts.contents);
     code.contents_is_recycled = true;
     defer {
         JSAst.Stmt.Data.Store.reset();
@@ -464,7 +464,7 @@ export fn getTests(opts_array: u64) u64 {
     var parser = JSParser.Parser.init(.{
         .jsx = .{},
         .ts = true,
-    }, &log_, &code, define, allocator) catch @panic("ok");
+    }, &log_, &code, define, allocator) catch @panic("out of memory");
 
     var anaylzer = TestAnalyzer{
         .items = std.ArrayList(
@@ -480,7 +480,6 @@ export fn getTests(opts_array: u64) u64 {
 
     parser.analyze(&anaylzer, @ptrCast(&TestAnalyzer.visitParts)) catch |err| {
         Output.print("Error: {s}\n", .{@errorName(err)});
-        Output.print("Code {d}: {s}\n", .{ parser.source.contents.len, parser.source.contents });
 
         if (@errorReturnTrace()) |trace| {
             Output.print("{}\n", .{trace});

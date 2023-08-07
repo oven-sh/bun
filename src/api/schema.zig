@@ -3142,17 +3142,22 @@ pub const Api = struct {
     };
 
     pub const GetTestsRequest = struct {
+        /// path
+        path: []const u8,
+
         /// contents
         contents: []const u8,
 
         pub fn decode(reader: anytype) anyerror!GetTestsRequest {
             var this = std.mem.zeroes(GetTestsRequest);
 
+            this.path = try reader.readValue([]const u8);
             this.contents = try reader.readArray(u8);
             return this;
         }
 
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeValue(@TypeOf(this.path), this.path);
             try writer.writeArray(u8, this.contents);
         }
     };

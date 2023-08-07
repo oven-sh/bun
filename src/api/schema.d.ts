@@ -740,6 +740,7 @@ export interface ClientServerModuleManifest {
 }
 
 export interface GetTestsRequest {
+  path: string;
   contents: Uint8Array;
 }
 

@@ -612,6 +612,7 @@ struct ClientServerModuleManifest {
 
 
 struct GetTestsRequest {
+  string path;
   byte[] contents;
 }
 

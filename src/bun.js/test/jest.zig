@@ -699,30 +699,21 @@ pub const TestScope = struct {
             const function_args = allocator.alloc(JSC.JSValue, argSize) catch @panic("can't create function_args");
             var idx: u32 = 0;
 
-            std.debug.print("creating an array of size for the args = {d}\n", .{argSize});
             // Spread the array as arguments
             if (this.func_has_args) {
                 if (!this.func_arg.isEmptyOrUndefinedOrNull() and this.func_arg.jsType().isArray()) {
                     const length = this.func_arg.getLength(vm.global);
-                    std.debug.print("this.func_arg length {d}\n", .{length});
 
                     while (idx < length) : (idx += 1) {
-                        std.debug.print("idx {d}\n", .{idx});
                         function_args[idx] = this.func_arg.getIndex(vm.global, idx);
                     }
                 } else {
-                    std.debug.print("func arg is not an array\n", .{});
-                    std.debug.print("{}\n", .{@TypeOf(this.func_arg)});
-                    std.debug.print("assigning at idx {d}\n", .{idx});
                     function_args[idx] = this.func_arg;
-                    std.debug.print("assigned at idx {d}\n", .{idx});
                     idx += 1;
-                    std.debug.print("idx  is now {d}\n", .{idx});
                 }
             }
 
             if (should_add_callback_function) {
-                std.debug.print("adding callback function\n", .{});
                 has_callback_function = true;
                 const callback_func = JSC.NewFunctionWithData(
                     vm.global,
@@ -734,13 +725,9 @@ pub const TestScope = struct {
                 );
                 task.done_callback_state = .pending;
                 function_args[idx] = callback_func;
-                std.debug.print("added callback function\n", .{});
             }
 
-            std.debug.print("calling function\n", .{});
             initial_value = func.call(vm.global, function_args);
-            std.debug.print("called function\n", .{});
-            std.debug.print("initial_value {}\n", .{initial_value});
 
             allocator.free(function_args);
         } else {
@@ -1865,9 +1852,18 @@ fn eachBind(
 
     if (JSC.getFunctionData(callee)) |data| {
         const allocator = getAllocator(globalThis);
-        const fnData = bun.cast(*JSValue, data);
-        JSC.setFunctionData(function, null);
-        const array = fnData.*;
+        const strong_ptr = bun.cast(*JSC.Strong, data);
+        JSC.setFunctionData(callee, null);
+        const array = strong_ptr.*.get() orelse return .zero;
+        defer {
+            strong_ptr.*.deinit();
+            allocator.destroy(strong_ptr);
+        }
+
+        if (array.isUndefinedOrNull() or !array.jsType().isArray()) {
+            return .zero;
+        }
+
         var iter = JSC.JSArrayIterator.init(array, globalThis);
 
         while (iter.next()) |item| {
@@ -1917,17 +1913,11 @@ inline fn createEach(
         return .zero;
     }
 
-    const name = ZigString.static(property);
-
-    // workaround to keep array in scope. how to make a copy of it ? or protect it from gc?
     const allocator = getAllocator(globalThis);
-    const arrayLength = array.getLength(globalThis);
-    var arrayList = std.ArrayListUnmanaged(JSValue).initCapacity(allocator, arrayLength) catch @panic("can't create arraylist");
-    var iterator = array.arrayIterator(globalThis);
-    while (iterator.next()) |item| {
-        arrayList.append(allocator, item) catch @panic("can't append to arraylist");
-    }
+    const name = ZigString.static(property);
+    var strong = JSC.Strong.create(array, globalThis);
+    var strong_ptr = allocator.create(JSC.Strong) catch @panic("can't create fnDataPtr");
+    strong_ptr.* = strong;
 
-    array.protect();
-    return JSC.NewFunctionWithData(globalThis, name, 3, eachBind, true, &array);
+    return JSC.NewFunctionWithData(globalThis, name, 3, eachBind, true, strong_ptr);
 }

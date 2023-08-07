@@ -278,6 +278,17 @@ describe("Headers", () => {
     const actual = [...headers];
     expect(actual).toEqual([["set-cookie", "bar=qat"]]);
   });
+
+  it("should include set-cookie headers in array", () => {
+    const headers = new Headers();
+    headers.append("Set-Cookie", "foo=bar");
+    headers.append("Content-Type", "text/plain");
+    const actual = [...headers];
+    expect(actual).toEqual([
+      ["content-type", "text/plain"],
+      ["set-cookie", "foo=bar"],
+    ]);
+  });
 });
 
 describe("fetch", () => {

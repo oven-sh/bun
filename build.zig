@@ -218,7 +218,6 @@ pub fn build(b: *Build) !void {
                     .argv = &.{
                         "git",
                         "rev-parse",
-                        "--short",
                         "HEAD",
                     },
                     .cwd = b.pathFromRoot("."),

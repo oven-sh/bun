@@ -25,11 +25,11 @@ else
 pub const package_json_version_with_revision = if (Environment.git_sha.len == 0)
     package_json_version
 else if (Environment.isDebug)
-    std.fmt.comptimePrint(BASE_VERSION ++ ".{d}_debug+{s}", .{ build_id, Environment.git_sha })
+    std.fmt.comptimePrint(BASE_VERSION ++ ".{d}-debug+{s}", .{ build_id, Environment.git_sha })
 else if (Environment.is_canary)
-    std.fmt.comptimePrint(BASE_VERSION ++ ".{d}_canary+{s}", .{ build_id, Environment.git_sha })
+    std.fmt.comptimePrint(BASE_VERSION ++ ".{d}-canary+{s}", .{ build_id, Environment.git_sha })
 else if (Environment.isTest)
-    std.fmt.comptimePrint(BASE_VERSION ++ ".{d}_test+{s}", .{ build_id, Environment.git_sha })
+    std.fmt.comptimePrint(BASE_VERSION ++ ".{d}-test+{s}", .{ build_id, Environment.git_sha })
 else
     std.fmt.comptimePrint(BASE_VERSION ++ ".{d}+{s}", .{ build_id, Environment.git_sha });
 

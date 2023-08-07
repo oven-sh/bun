@@ -60,4 +60,5 @@ export default Object.assign(fetch, {
   fileFromSync,
   isRedirect,
   fetch,
+  default: fetch,
 });

@@ -1883,7 +1883,7 @@ fn eachBind(
                 .func_arg = item,
                 .func_has_args = true,
                 .timeout_millis = timeout_ms,
-            }) catch @panic("can't append testscope to parent");
+            }) catch unreachable;
         }
     }
 
@@ -1916,7 +1916,7 @@ inline fn createEach(
     const allocator = getAllocator(globalThis);
     const name = ZigString.static(property);
     var strong = JSC.Strong.create(array, globalThis);
-    var strong_ptr = allocator.create(JSC.Strong) catch @panic("can't create fnDataPtr");
+    var strong_ptr = allocator.create(JSC.Strong) catch unreachable;
     strong_ptr.* = strong;
 
     return JSC.NewFunctionWithData(globalThis, name, 3, eachBind, true, strong_ptr);

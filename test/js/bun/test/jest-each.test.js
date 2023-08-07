@@ -20,8 +20,15 @@ describe("jest-each", () => {
     expect(done).toBeDefined();
     done();
   });
-  it.each(["other", "array", "values"])(`adds two strings`, s => {
-    expect(typeof s).toBe("string");
+  it.each([
+    ["a", "b", "ab"],
+    ["c", "d", "cd"],
+    ["e", "f", "ef"],
+  ])(`adds two strings`, (a, b, res) => {
+    expect(typeof a).toBe("string");
+    expect(typeof b).toBe("string");
+    expect(typeof res).toBe("string");
+    expect(a.concat(b)).toBe(res);
   });
   it.each([
     { a: 1, b: 1, e: 2 },

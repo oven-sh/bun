@@ -395,6 +395,25 @@ declare module "bun:test" {
         | ((done: (err?: unknown) => void) => void),
       options?: number | TestOptions,
     ) => void;
+    /**
+     * Returns a function that runs for each item in `table`.
+     *
+     * @param table table: Array of Arrays with the arguments that are passed into the test fn for each row.
+     */
+    each<T extends ReadonlyArray<unknown>>(
+      table: ReadonlyArray<T>,
+    ): (
+      label: string,
+      fn: (...args: T) => void | Promise<unknown>,
+      options?: number | TestOptions,
+    ) => void;
+    each<T>(
+      table: ReadonlyArray<T>,
+    ): (
+      label: string,
+      fn: (arg: T, done: (err?: unknown) => void) => void | Promise<unknown>,
+      options?: number | TestOptions,
+    ) => void;
   };
   /**
    * Runs a test.

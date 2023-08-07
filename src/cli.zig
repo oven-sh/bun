@@ -234,7 +234,7 @@ pub const Arguments = struct {
 
     fn printRevisionAndExit() noreturn {
         @setCold(true);
-        Output.writer().writeAll(Global.package_json_version_with_sha ++ "\n") catch {};
+        Output.writer().writeAll(Global.package_json_version_with_revision ++ "\n") catch {};
         Global.exit(0);
     }
 

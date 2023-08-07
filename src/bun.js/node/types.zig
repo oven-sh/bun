@@ -2008,7 +2008,7 @@ pub const Path = struct {
         if (args_len == 0) return JSC.ZigString.init("").toValue(globalThis);
 
         var zig_str: JSC.ZigString = args_ptr[0].getZigString(globalThis);
-        if (zig_str.len == 0) return JSC.ZigString.init("").toValue(globalThis);
+        if (zig_str.len == 0) return JSC.ZigString.init(".").toValue(globalThis);
 
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var str_slice = zig_str.toSlice(heap_allocator);

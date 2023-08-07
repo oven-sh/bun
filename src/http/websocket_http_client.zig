@@ -1496,7 +1496,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 return;
             }
 
-            _ = this.sendData(bytes, !this.hasBackpressure(), false, opcode);
+            _ = this.sendData(bytes, !this.hasBackpressure(), opcode);
         }
         pub fn writeString(
             this: *WebSocket,
@@ -1543,7 +1543,6 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 else
                     Copy{ .latin1 = str.slice() },
                 !this.hasBackpressure(),
-                false,
                 opcode,
             );
         }

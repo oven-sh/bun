@@ -985,7 +985,7 @@ pub const Fetch = struct {
         };
         var blob = Blob.init(data, allocator, globalThis);
 
-        const mime_type = data_url.decodeMimeType();
+        const mime_type = bun.HTTP.MimeType.init(data_url.mime_type, allocator);
         blob.content_type = mime_type.value;
 
         var response = allocator.create(Response) catch @panic("out of memory");
@@ -1000,8 +1000,8 @@ pub const Fetch = struct {
                 },
             },
             .allocator = allocator,
-            .status_text = bun.String.fromBytes("OK"),
-            .url = bun.String.fromBytes(data_url.url),
+            .status_text = bun.String.create("OK"),
+            .url = data_url.url.dupeRef(),
         };
 
         return JSPromise.resolvedPromiseValue(globalThis, response.toJS(globalThis));
@@ -1078,11 +1078,12 @@ pub const Fetch = struct {
                 var url_slice = request.url.toUTF8WithoutRef(bun.default_allocator);
                 defer url_slice.deinit();
 
-                const data_url = DataURL.parseWithoutCheck(url_slice.slice()) catch {
+                var data_url = DataURL.parseWithoutCheck(url_slice.slice()) catch {
                     const err = JSC.createError(globalThis, "failed to fetch the data URL", .{});
                     return JSPromise.rejectedPromiseValue(globalThis, err);
                 };
 
+                data_url.url = request.url;
                 return dataURLResponse(data_url, globalThis, bun.default_allocator);
             }
 
@@ -1239,10 +1240,11 @@ pub const Fetch = struct {
                 var url_slice = str.toUTF8WithoutRef(bun.default_allocator);
                 defer url_slice.deinit();
 
-                const data_url = DataURL.parseWithoutCheck(url_slice.slice()) catch {
+                var data_url = DataURL.parseWithoutCheck(url_slice.slice()) catch {
                     const err = JSC.createError(globalThis, "failed to fetch the data URL", .{});
                     return JSPromise.rejectedPromiseValue(globalThis, err);
                 };
+                data_url.url = str;
 
                 return dataURLResponse(data_url, globalThis, bun.default_allocator);
             }

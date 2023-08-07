@@ -110,7 +110,7 @@ fn initComptime(comptime str: string, t: Category) MimeType {
     };
 }
 
-pub fn init(str_: string) MimeType {
+pub fn init(str_: string, allocator: ?std.mem.Allocator) MimeType {
     var str = str_;
     if (std.mem.indexOfScalar(u8, str, '/')) |slash| {
         const category_ = str[0..slash];
@@ -141,12 +141,15 @@ pub fn init(str_: string) MimeType {
                     return wasm;
                 }
 
-                return MimeType{ .value = str_, .category = .application };
+                return MimeType{
+                    .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
+                    .category = .application,
+                };
             },
             "font".len => {
                 if (strings.eqlComptimeIgnoreLen(category_, "font")) {
                     return MimeType{
-                        .value = str_,
+                        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
                         .category = .font,
                     };
                 }
@@ -168,27 +171,30 @@ pub fn init(str_: string) MimeType {
                         return all.@"text/plain";
                     }
 
-                    return MimeType{ .value = str_, .category = .text };
+                    return MimeType{
+                        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
+                        .category = .text,
+                    };
                 }
             },
             "image".len => {
                 if (strings.eqlComptimeIgnoreLen(category_, "image")) {
                     return MimeType{
-                        .value = str_,
+                        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str,
                         .category = .image,
                     };
                 }
 
                 if (strings.eqlComptimeIgnoreLen(category_, "audio")) {
                     return MimeType{
-                        .value = str_,
+                        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str,
                         .category = .audio,
                     };
                 }
 
                 if (strings.eqlComptimeIgnoreLen(category_, "video")) {
                     return MimeType{
-                        .value = str_,
+                        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str,
                         .category = .video,
                     };
                 }
@@ -197,7 +203,10 @@ pub fn init(str_: string) MimeType {
         }
     }
 
-    return MimeType{ .value = str_, .category = .other };
+    return MimeType{
+        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str,
+        .category = .other,
+    };
 }
 
 // TODO: improve this
@@ -2516,7 +2525,7 @@ pub const all = struct {
 // TODO: do a comptime static hash map for this
 // its too many branches to use ComptimeStringMap
 pub fn byName(name: []const u8) MimeType {
-    return MimeType.init(name);
+    return MimeType.init(name, null);
 }
 
 pub const extensions = ComptimeStringMap(MimeType, .{

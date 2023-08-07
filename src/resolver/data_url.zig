@@ -77,7 +77,7 @@ pub const PercentEncoding = struct {
 };
 
 pub const DataURL = struct {
-    url: string,
+    url: bun.String = bun.String.empty,
     mime_type: string,
     data: string,
     is_base64: bool = false,
@@ -95,7 +95,6 @@ pub const DataURL = struct {
         const comma = strings.indexOfChar(url, ',') orelse return error.InvalidDataURL;
 
         var parsed = DataURL{
-            .url = url,
             .mime_type = url["data:".len..comma],
             .data = url[comma + 1 .. url.len],
         };
@@ -109,7 +108,7 @@ pub const DataURL = struct {
     }
 
     pub fn decodeMimeType(d: DataURL) bun.HTTP.MimeType {
-        return bun.HTTP.MimeType.init(d.mime_type);
+        return bun.HTTP.MimeType.init(d.mime_type, null);
     }
 
     pub fn decodeData(url: DataURL, allocator: std.mem.Allocator) ![]u8 {

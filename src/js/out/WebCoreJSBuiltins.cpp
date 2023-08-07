@@ -722,9 +722,9 @@ const char* const s_moduleRequireCode = "(function (id){\"use strict\";const exi
 const JSC::ConstructAbility s_moduleRequireResolveCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_moduleRequireResolveCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_moduleRequireResolveCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_moduleRequireResolveCodeLength = 67;
+const int s_moduleRequireResolveCodeLength = 96;
 static const JSC::Intrinsic s_moduleRequireResolveCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_moduleRequireResolveCode = "(function (id){\"use strict\";return @resolveSync(id,this.path,!1)})\n";
+const char* const s_moduleRequireResolveCode = "(function (id){\"use strict\";return @resolveSync(id,typeof this===\"string\"\?this:this\?.path,!1)})\n";
 
 // requireNativeModule
 const JSC::ConstructAbility s_moduleRequireNativeModuleCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;

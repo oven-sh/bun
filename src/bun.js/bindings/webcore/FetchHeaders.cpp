@@ -227,6 +227,8 @@ ExceptionOr<bool> FetchHeaders::has(const String& name) const
     return m_headers.contains(name);
 }
 
+static NeverDestroyed<const String> setCookieLowercaseString(MAKE_STATIC_STRING_IMPL("set-cookie"));
+
 ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
 {
     String normalizedValue = value.trim(isHTTPSpace);
@@ -237,7 +239,12 @@ ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
         return {};
 
     ++m_updateCounter;
-    m_headers.set(name, normalizedValue);
+    if (equalIgnoringASCIICase(name, setCookieLowercaseString)) {
+        m_headers.getSetCookieHeaders().clear();
+        m_headers.getSetCookieHeaders().append(normalizedValue);
+    } else {
+        m_headers.set(name, normalizedValue);
+    }
 
     if (m_guard == FetchHeaders::Guard::RequestNoCors)
         removePrivilegedNoCORSRequestHeaders(m_headers);
@@ -261,30 +268,56 @@ void FetchHeaders::filterAndFill(const HTTPHeaderMap& headers, Guard guard)
     }
 }
 
-static NeverDestroyed<const String> setCookieLowercaseString(MAKE_STATIC_STRING_IMPL("set-cookie"));
+static bool compareIteratorKeys(const String& a, const String& b)
+{
+    // null in the iterator's m_keys represents Set-Cookie.
+    return WTF::codePointCompareLessThan(
+        a.isNull() ? "set-cookie"_s : a,
+        b.isNull() ? "set-cookie"_s : b);
+}
 
 std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
 {
     if (m_keys.isEmpty() || m_updateCounter != m_headers->m_updateCounter) {
+        bool hasSetCookie = !m_headers->getSetCookieHeaders().isEmpty();
         m_keys.resize(0);
-        m_keys.reserveCapacity(m_headers->m_headers.size());
+        m_keys.reserveCapacity(m_headers->m_headers.size() + (hasSetCookie ? 1 : 0));
         for (auto& header : m_headers->m_headers)
             m_keys.uncheckedAppend(header.asciiLowerCaseName());
-        std::sort(m_keys.begin(), m_keys.end(), WTF::codePointCompareLessThan);
+        if (hasSetCookie)
+            m_keys.uncheckedAppend(String());
+        std::sort(m_keys.begin(), m_keys.end(), compareIteratorKeys);
+
+        m_currentIndex += m_cookieIndex;
+        if (hasSetCookie) {
+            size_t setCookieKeyIndex = std::lower_bound(m_keys.begin(), m_keys.end(), String(), compareIteratorKeys) - m_keys.begin();
+            if (m_currentIndex < setCookieKeyIndex)
+                m_cookieIndex = 0;
+            else {
+                m_cookieIndex = std::min(m_currentIndex - setCookieKeyIndex, m_headers->getSetCookieHeaders().size());
+                m_currentIndex -= m_cookieIndex;
+            }
+        } else
+            m_cookieIndex = 0;
+
         m_updateCounter = m_headers->m_updateCounter;
-        m_cookieIndex = 0;
     }
 
     auto& setCookieHeaders = m_headers->m_headers.getSetCookieHeaders();
 
     while (m_currentIndex < m_keys.size()) {
-        auto key = m_keys[m_currentIndex++];
+        auto key = m_keys[m_currentIndex];
 
-        if (!setCookieHeaders.isEmpty() && key == setCookieLowercaseString) {
-            auto cookie = setCookieHeaders[m_cookieIndex++];
-            return KeyValuePair<String, String> { WTFMove(key), WTFMove(cookie) };
+        if (key.isNull()) {
+            if (m_cookieIndex < setCookieHeaders.size()) {
+                String value = setCookieHeaders[m_cookieIndex++];
+                return KeyValuePair<String, String> { setCookieLowercaseString, WTFMove(value) };
+            }
+            m_currentIndex++;
+            continue;
         }
 
+        m_currentIndex++;
         auto value = m_headers->m_headers.get(key);
         if (!value.isNull())
             return KeyValuePair<String, String> { WTFMove(key), WTFMove(value) };

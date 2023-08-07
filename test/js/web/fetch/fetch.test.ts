@@ -276,10 +276,7 @@ describe("Headers", () => {
     headers.set("set-Cookie", "foo=baz");
     headers.set("set-cookie", "bar=qat");
     const actual = [...headers];
-    expect(actual).toEqual([
-      ["set-cookie", "foo=baz"],
-      ["set-cookie", "bar=qat"],
-    ]);
+    expect(actual).toEqual([["set-cookie", "bar=qat"]]);
   });
 });
 

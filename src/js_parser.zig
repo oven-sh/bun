@@ -21186,7 +21186,7 @@ fn NewParser_(
                         logger.Loc.Empty,
                     );
                     const cjsGlobal = p.newSymbol(.unbound, "$_BunCommonJSModule_$") catch unreachable;
-                    var all_call_args = allocator.alloc(Expr, 7) catch unreachable;
+                    var all_call_args = allocator.alloc(Expr, 8) catch unreachable;
                     const this_module = p.newExpr(
                         E.Dot{
                             .name = "module",
@@ -21195,9 +21195,19 @@ fn NewParser_(
                         },
                         logger.Loc.Empty,
                     );
-                    var call_args = all_call_args[1..];
+
                     var bind_args = all_call_args[0..1];
                     bind_args[0] = this_module;
+                    var bind_resolve_args = all_call_args[1..2];
+                    var call_args = all_call_args[2..];
+
+                    const module_id = p.newExpr(E.Dot{
+                        .name = "id",
+                        .target = this_module,
+                        .name_loc = logger.Loc.Empty,
+                    }, logger.Loc.Empty);
+
+                    bind_resolve_args[0] = module_id;
                     const get_require = p.newExpr(
                         E.Dot{
                             .name = "require",
@@ -21219,11 +21229,23 @@ fn NewParser_(
                         logger.Loc.Empty,
                     );
 
-                    const module_id = p.newExpr(E.Dot{
-                        .name = "id",
-                        .target = this_module,
+                    const get_resolve = p.newExpr(E.Dot{
+                        .name = "resolve",
                         .name_loc = logger.Loc.Empty,
+                        .target = get_require,
                     }, logger.Loc.Empty);
+
+                    const create_resolve_binding = p.newExpr(
+                        E.Call{
+                            .target = p.newExpr(E.Dot{
+                                .name = "bind",
+                                .name_loc = logger.Loc.Empty,
+                                .target = get_resolve,
+                            }, logger.Loc.Empty),
+                            .args = bun.BabyList(Expr).init(bind_resolve_args),
+                        },
+                        logger.Loc.Empty,
+                    );
 
                     const require_path = p.newExpr(
                         E.Dot{
@@ -21242,15 +21264,25 @@ fn NewParser_(
                         logger.Loc.Empty,
                     );
 
+                    const assign_resolve_binding = p.newExpr(
+                        E.Binary{
+                            .left = get_resolve,
+                            .right = create_resolve_binding,
+                            .op = .bin_assign,
+                        },
+                        logger.Loc.Empty,
+                    );
+
                     const assign_id = p.newExpr(E.Binary{
                         .left = require_path,
                         .right = module_id,
                         .op = .bin_assign,
                     }, logger.Loc.Empty);
 
-                    var create_require = [3]Expr{
+                    var create_require = [4]Expr{
                         assign_binding,
                         assign_id,
+                        assign_resolve_binding,
                         get_require,
                     };
 

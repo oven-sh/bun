@@ -1,6 +1,60 @@
 import { describe, expect, test } from "bun:test";
 
 describe("Server", () => {
+  test.only("normlizes incoming request URLs", async () => {
+    const server = Bun.serve({
+      fetch(request) {
+        return new Response(request.url, {
+          headers: {
+            "Connection": "close",
+          },
+        });
+      },
+      port: 0,
+    });
+    const received: string[] = [];
+    const expected: string[] = [];
+    for (let [path] of [
+      ["/"],
+      ["/../"],
+      ["/./"],
+      ["/foo"],
+      ["/foo/"],
+      ["/foo/bar"],
+      ["/foo/bar/"],
+      ["/foo/bar/.."],
+      ["/foo/bar/../"],
+      ["/foo/bar/../?123"],
+      ["/foo/bar/../?123=456"],
+      ["/foo/bar/../#123=456"],
+    ]) {
+      expected.push(new URL(path, "http://localhost:" + server.port).href);
+
+      const { promise, resolve } = Promise.withResolvers();
+      Bun.connect({
+        hostname: server.hostname,
+        port: server.port,
+
+        socket: {
+          async open(socket) {
+            socket.write(`GET ${path} HTTP/1.1\r\nHost: localhost:${server.port}\r\n\r\n`);
+            await socket.flush();
+          },
+          async data(socket, data) {
+            const lines = Buffer.from(data).toString("utf8");
+            received.push(lines.split("\r\n\r\n").at(-1)!);
+            await socket.end();
+            resolve();
+          },
+        },
+      });
+      await promise;
+    }
+
+    server.stop(true);
+    expect(received).toEqual(expected);
+  });
+
   test("should not allow Bun.serve without first argument being a object", () => {
     expect(() => {
       //@ts-ignore

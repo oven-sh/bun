@@ -398,7 +398,7 @@ declare module "bun:test" {
     /**
      * Returns a function that runs for each item in `table`.
      *
-     * @param table table: Array of Arrays with the arguments that are passed into the test fn for each row.
+     * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
      */
     each<T extends ReadonlyArray<unknown>>(
       table: ReadonlyArray<T>,

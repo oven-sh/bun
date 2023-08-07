@@ -1,5 +1,5 @@
 // Hardcoded module "node:vm"
-import { throwNotImplemented } from "../shared";
+const { throwNotImplemented } = require("$shared");
 
 const vm = $lazy("vm");
 
@@ -10,26 +10,31 @@ function runInContext(code, context, options) {
 }
 
 function compileFunction() {
-  throwNotImplemented("node:vm compileFunction", 401);
+  throwNotImplemented("node:vm compileFunction");
 }
 function measureMemory() {
-  throwNotImplemented("node:vm measureMemory", 401);
+  throwNotImplemented("node:vm measureMemory");
 }
 
-const defaultObject = {
-  createContext,
-  runInContext,
-  runInNewContext,
-  runInThisContext,
-  isContext,
-  compileFunction,
-  measureMemory,
-  Script,
-  [Symbol.for("CommonJS")]: 0,
-};
+class Module {
+  constructor() {
+    throwNotImplemented("node:vm Module");
+  }
+}
 
-export {
-  defaultObject as default,
+class SourceTextModule {
+  constructor() {
+    throwNotImplemented("node:vm Module");
+  }
+}
+
+class SyntheticModule {
+  constructor() {
+    throwNotImplemented("node:vm Module");
+  }
+}
+
+export default {
   createContext,
   runInContext,
   runInNewContext,
@@ -38,4 +43,7 @@ export {
   compileFunction,
   measureMemory,
   Script,
+  Module,
+  SourceTextModule,
+  SyntheticModule,
 };

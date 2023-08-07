@@ -146,8 +146,7 @@ pub const Constants = struct {
 // Due to zig's format support max 32 arguments, we need to split
 // here.
 const constants_string_format1 =
-    \\
-    \\export var constants = {{
+    \\var constants = {{
     \\  F_OK: {d},
     \\  R_OK: {d},
     \\  W_OK: {d},

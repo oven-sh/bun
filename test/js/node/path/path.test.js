@@ -15,10 +15,6 @@ const expectStrictEqual = (actual, expected) => {
 };
 hideFromStackTrace(expectStrictEqual);
 
-it("should not inherit Object.prototype", () => {
-  expect(path).not.toHaveProperty("toString");
-});
-
 describe("dirname", () => {
   it("path.dirname", () => {
     const fixtures = [
@@ -473,6 +469,14 @@ it("path.relative", () => {
         ["/baz", "/baz-quux", "../baz-quux"],
         ["/page1/page2/foo", "/", "../../.."],
         [process.cwd(), "foo", "foo"],
+        ["/webpack", "/webpack", ""],
+        ["/webpack/", "/webpack", ""],
+        ["/webpack", "/webpack/", ""],
+        ["/webpack/", "/webpack/", ""],
+        ["/webpack-hot-middleware", "/webpack/buildin/module.js", "../webpack/buildin/module.js"],
+        ["/webp4ck-hot-middleware", "/webpack/buildin/module.js", "../webpack/buildin/module.js"],
+        ["/webpack-hot-middleware", "/webp4ck/buildin/module.js", "../webp4ck/buildin/module.js"],
+        ["/var/webpack-hot-middleware", "/var/webpack/buildin/module.js", "../webpack/buildin/module.js"],
       ],
     ],
   ];
@@ -543,7 +547,6 @@ it("path.normalize", () => {
   //   "..\\..\\..\\..\\baz"
   // );
   // strictEqual(path.win32.normalize("foo/bar\\baz"), "foo\\bar\\baz");
-
   strictEqual(path.posix.normalize("./fixtures///b/../b/c.js"), "fixtures/b/c.js");
   strictEqual(path.posix.normalize("/foo/../../../bar"), "/bar");
   strictEqual(path.posix.normalize("a//b//../b"), "a/b");
@@ -563,6 +566,7 @@ it("path.normalize", () => {
   strictEqual(path.posix.normalize("../foobar/barfoo/foo/../../../bar/../../"), "../../");
   strictEqual(path.posix.normalize("../.../../foobar/../../../bar/../../baz"), "../../../../baz");
   strictEqual(path.posix.normalize("foo/bar\\baz"), "foo/bar\\baz");
+  strictEqual(path.posix.normalize(""), ".");
 });
 
 it("path.resolve", () => {
@@ -695,4 +699,9 @@ it("path.parse", () => {
 
 test("path.format works for vite's example", () => {
   expect(path.format({ root: "", dir: "", name: "index", base: undefined, ext: ".css" })).toBe("index.css");
+});
+
+it("path.extname", () => {
+  expect(path.extname("index.js")).toBe(".js");
+  expect(path.extname("make_plot.🔥")).toBe(".🔥");
 });

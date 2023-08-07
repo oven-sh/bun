@@ -629,6 +629,12 @@ pub const PathLike = union(Tag) {
         }
     }
 
+    pub fn toThreadSafe(this: *PathLike) void {
+        if (this.* == .slice_with_underlying_string) {
+            this.slice_with_underlying_string.toThreadSafe();
+        }
+    }
+
     pub fn deinitAndUnprotect(this: *const PathLike) void {
         switch (this.*) {
             .slice_with_underlying_string => |val| {
@@ -1047,6 +1053,12 @@ pub const PathOrFileDescriptor = union(Tag) {
     pub fn deinit(this: PathOrFileDescriptor) void {
         if (this == .path) {
             this.path.deinit();
+        }
+    }
+
+    pub fn toThreadSafe(this: *PathOrFileDescriptor) void {
+        if (this.* == .path) {
+            this.path.toThreadSafe();
         }
     }
 
@@ -1826,7 +1838,7 @@ pub const Path = struct {
 
         const base_slice = path.slice();
 
-        return JSC.ZigString.init(std.fs.path.extension(base_slice)).toValueGC(globalThis);
+        return JSC.ZigString.init(std.fs.path.extension(base_slice)).withEncoding().toValueGC(globalThis);
     }
     pub fn format(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
@@ -1996,7 +2008,7 @@ pub const Path = struct {
         if (args_len == 0) return JSC.ZigString.init("").toValue(globalThis);
 
         var zig_str: JSC.ZigString = args_ptr[0].getZigString(globalThis);
-        if (zig_str.len == 0) return JSC.ZigString.init("").toValue(globalThis);
+        if (zig_str.len == 0) return JSC.ZigString.init(".").toValue(globalThis);
 
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var str_slice = zig_str.toSlice(heap_allocator);

@@ -20,5 +20,5 @@
     "src/api/demo",
     "node_modules"
   ],
-  "files": ["src/js/builtins/builtins.d.ts"]
+  "files": ["src/js/builtins.d.ts"]
 }

@@ -38,10 +38,11 @@ export default {
     page("templates", "Templates", {
       description: "Hit the ground running with one of Bun's official templates, or download a template from GitHub.",
     }),
-    page("templates", "Guides", {
+    page("guides", "Guides", {
       description: "A set of walkthrough guides and code snippets for performing common tasks with Bun",
       href: "/guides",
     }),
+
     // page("typescript", "TypeScript"),
 
     // divider("CLI"),
@@ -206,6 +207,9 @@ export default {
     page("test/dom", "DOM testing", {
       description: "Write headless tests for UI and React/Vue/Svelte/Lit components with happy-dom",
     }),
+    page("test/coverage", "Code coverage", {
+      description: "Generate code coverage reports with `bun test --coverage`",
+    }),
 
     divider("Package runner"),
     page("cli/bunx", "`bunx`", {
@@ -214,30 +218,29 @@ export default {
 
     // page("runtime/nodejs", "Node.js APIs"),
 
-    divider("Ecosystem"),
+    // divider("Ecosystem"),
     // page("ecosystem/react", "React", {
     //   description: `The Bun runtime supports JSX syntax out of the box and optimizes server-side rendering.`,
     // }),
-    page("ecosystem/express", "Express", {
-      description: `Servers built with Express and other major Node.js HTTP libraries work out of the box.`,
-    }),
-    page("ecosystem/elysia", "Elysia", {
-      description: `Get started with Elysia, a Bun-native framework designed for the edge.`,
-    }),
-    page("ecosystem/hono", "Hono", {
-      description: `Hono is an ultra-fast, Bun-friendly web framework designed for edge environments.`,
-    }),
+    // page("ecosystem/express", "Express", {
+    //   description: `Servers built with Express and other major Node.js HTTP libraries work out of the box.`,
+    // }),
+    // page("ecosystem/elysia", "Elysia", {
+    //   description: `Get started with Elysia, a Bun-native framework designed for the edge.`,
+    // }),
+    // page("ecosystem/hono", "Hono", {
+    //   description: `Hono is an ultra-fast, Bun-friendly web framework designed for edge environments.`,
+    // }),
     // page("ecosystem/buchta", "Buchta", {
     //   description: `Buchta is a Bun-native fullstack framework for Svelte and Preact apps.`,
     // }),
-    page("ecosystem/stric", "Stric", {
-      description: `Stric is a minimalist, fast web framework for Bun.`,
-    }),
-
-    page("ecosystem/awesome", "Awesome", {
-      href: "https://github.com/apvarun/awesome-bun",
-      description: ``,
-    }),
+    // page("ecosystem/stric", "Stric", {
+    //   description: `Stric is a minimalist, fast web framework for Bun.`,
+    // }),
+    // page("ecosystem/awesome", "Awesome", {
+    //   href: "https://github.com/apvarun/awesome-bun",
+    //   description: ``,
+    // }),
 
     divider("API"),
     page("api/http", "HTTP server", {

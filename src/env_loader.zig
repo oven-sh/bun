@@ -624,6 +624,7 @@ const Parser = struct {
     fn parseQuoted(this: *Parser, comptime quote: u8) ?string {
         if (comptime Environment.allow_assert) std.debug.assert(this.src[this.pos] == quote);
         const start = this.pos;
+        const max_len = value_buffer.len;
         var end = start + 1;
         while (end < this.src.len) : (end += 1) {
             switch (this.src[end]) {
@@ -639,7 +640,7 @@ const Parser = struct {
                     {
                         var ptr: usize = 0;
                         var i = start;
-                        while (i < end) {
+                        while (i < end and ptr < max_len) {
                             switch (this.src[i]) {
                                 '\\' => if (comptime quote == '"') {
                                     if (comptime Environment.allow_assert) std.debug.assert(i + 1 < end);
@@ -647,16 +648,18 @@ const Parser = struct {
                                         'n' => {
                                             value_buffer[ptr] = '\n';
                                             ptr += 1;
-                                            i += 1;
+                                            i += 2;
                                         },
                                         'r' => {
                                             value_buffer[ptr] = '\r';
                                             ptr += 1;
-                                            i += 1;
+                                            i += 2;
                                         },
                                         else => {
-                                            value_buffer[ptr] = this.src[i];
-                                            value_buffer[ptr + 1] = this.src[i + 1];
+                                            if (ptr + 1 < max_len) {
+                                                value_buffer[ptr] = this.src[i];
+                                                value_buffer[ptr + 1] = this.src[i + 1];
+                                            }
                                             ptr += 2;
                                             i += 2;
                                         },

@@ -169,6 +169,18 @@ describe("node:http", () => {
             res.end("Hello World");
             return;
           }
+          if (reqUrl.pathname === "/uploadFile") {
+            let requestData = Buffer.alloc(0);
+            req.on("data", chunk => {
+              requestData = Buffer.concat([requestData, chunk]);
+            });
+            req.on("end", () => {
+              res.writeHead(200, { "Content-Type": "text/plain" });
+              res.write(requestData);
+              res.end();
+            });
+            return;
+          }
         }
 
         res.writeHead(200, { "Content-Type": "text/plain" });
@@ -537,6 +549,49 @@ describe("node:http", () => {
           expect(res.headers["x-powered-by"]).toBe("Bun");
           done();
         });
+        req.end();
+      });
+    });
+    it("uploading file by 'formdata/multipart', issue#3116", done => {
+      runTest(done, (server, serverPort, done) => {
+        const boundary = "----FormBoundary" + Date.now();
+
+        const formDataBegin = `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="myfile.txt"\r\nContent-Type: application/octet-stream\r\n\r\n`;
+        const fileData = Buffer.from("80818283", "hex");
+        const formDataEnd = `\r\n--${boundary}--`;
+
+        const requestOptions = {
+          hostname: "localhost",
+          port: serverPort,
+          path: "/uploadFile",
+          method: "POST",
+          headers: {
+            "Content-Type": `multipart/form-data; boundary=${boundary}`,
+          },
+        };
+
+        const req = request(requestOptions, res => {
+          let responseData = Buffer.alloc(0);
+          res.on("data", chunk => {
+            responseData = Buffer.concat([responseData, chunk]);
+          });
+          res.on("end", () => {
+            try {
+              expect(responseData).toEqual(
+                Buffer.concat([Buffer.from(formDataBegin), fileData, Buffer.from(formDataEnd)]),
+              );
+            } catch (e) {
+              return done(e);
+            }
+            done();
+          });
+        });
+        req.on("error", err => {
+          done(err);
+        });
+        req.write(formDataBegin); // string
+        req.write(fileData); // Buffer
+        req.write(formDataEnd); // string
         req.end();
       });
     });

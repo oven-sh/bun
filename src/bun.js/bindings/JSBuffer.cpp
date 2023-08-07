@@ -949,7 +949,8 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlob
     }
 
     targetStart = std::min(targetStart, targetEnd);
-    sourceStart = std::min(sourceStart, std::min(sourceEnd, sourceEndInit));
+    sourceEnd = std::min(sourceEnd, sourceEndInit);
+    sourceStart = std::min(sourceStart, sourceEnd);
 
     auto sourceLength = sourceEnd - sourceStart;
     auto targetLength = targetEnd - targetStart;

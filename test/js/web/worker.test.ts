@@ -4,6 +4,7 @@ test("worker", done => {
   const worker = new Worker(new URL("worker-fixture.js", import.meta.url).href, {
     smol: true,
   });
+  expect(worker.threadId).toBe(1);
   worker.postMessage("hello");
   worker.onerror = e => {
     done(e.error);

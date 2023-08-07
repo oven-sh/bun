@@ -93,7 +93,7 @@ static bool canPerformFastEnumeration(Structure* s)
     return true;
 }
 
-static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSString* filename, WTF::NakedPtr<Exception>& exception)
+static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename, WTF::NakedPtr<Exception>& exception)
 {
     JSC::Structure* thisObjectStructure = globalObject->commonJSFunctionArgumentsStructure();
     JSC::JSObject* thisObject = JSC::constructEmptyObject(
@@ -395,7 +395,7 @@ public:
 
 const JSC::ClassInfo JSCommonJSModulePrototype::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSModulePrototype) };
 
-void JSCommonJSModule::finishCreation(JSC::VM& vm, JSC::JSString* id, JSC::JSString* filename, JSC::JSString* dirname, JSC::JSSourceCode* sourceCode)
+void JSCommonJSModule::finishCreation(JSC::VM& vm, JSC::JSString* id, JSValue filename, JSC::JSString* dirname, JSC::JSSourceCode* sourceCode)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(vm, info()));
@@ -421,7 +421,7 @@ JSCommonJSModule* JSCommonJSModule::create(
     JSC::VM& vm,
     JSC::Structure* structure,
     JSC::JSString* id,
-    JSC::JSString* filename,
+    JSValue filename,
     JSC::JSString* dirname,
     JSC::JSSourceCode* sourceCode)
 {
@@ -489,60 +489,10 @@ bool JSCommonJSModule::evaluate(
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     generator(globalObject, JSC::Identifier::fromString(vm, key), propertyNames, arguments);
     RETURN_IF_EXCEPTION(throwScope, false);
-
-    bool needsPut = false;
-    auto getDefaultValue = [&]() -> JSValue {
-        size_t defaultValueIndex = propertyNames.find(vm.propertyNames->defaultKeyword);
-        auto cjsSymbol = Identifier::fromUid(vm.symbolRegistry().symbolForKey("CommonJS"_s));
-
-        if (defaultValueIndex != notFound && propertyNames.contains(cjsSymbol)) {
-            JSValue current = arguments.at(defaultValueIndex);
-            needsPut = true;
-            return current;
-        }
-
-        size_t count = propertyNames.size();
-        JSValue existingDefaultObject = this->getIfPropertyExists(globalObject, WebCore::clientData(vm)->builtinNames().exportsPublicName());
-        JSObject* defaultObject;
-
-        if (existingDefaultObject && existingDefaultObject.isObject()) {
-            defaultObject = jsCast<JSObject*>(existingDefaultObject);
-        } else {
-            defaultObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
-            needsPut = true;
-        }
-
-        for (size_t i = 0; i < count; ++i) {
-            auto prop = propertyNames[i];
-            unsigned attributes = 0;
-
-            JSValue value = arguments.at(i);
-
-            if (prop.isSymbol()) {
-                attributes |= JSC::PropertyAttribute::DontEnum;
-            }
-
-            if (value.isCell() && value.isCallable()) {
-                attributes |= JSC::PropertyAttribute::Function;
-            }
-
-            defaultObject->putDirect(vm, prop, value, attributes);
-        }
-
-        return defaultObject;
-    };
-
-    JSValue defaultValue = getDefaultValue();
-    if (needsPut) {
-        unsigned attributes = 0;
-
-        if (defaultValue.isCell() && defaultValue.isCallable()) {
-            attributes |= JSC::PropertyAttribute::Function;
-        }
-
-        this->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), defaultValue, attributes);
-    }
-
+    // This goes off of the assumption that you only call this `evaluate` using a generator that explicity
+    // assigns the `default` export first.
+    JSValue defaultValue = arguments.at(0);
+    this->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), defaultValue, 0);
     this->hasEvaluated = true;
     RELEASE_AND_RETURN(throwScope, true);
 }
@@ -555,10 +505,6 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
     auto result = this->exportsObject();
 
     auto& vm = globalObject->vm();
-
-    // This exists to tell ImportMetaObject.ts that this is a CommonJS module.
-    exportNames.append(Identifier::fromUid(vm.symbolRegistry().symbolForKey("CommonJS"_s)));
-    exportValues.append(jsNumber(0));
 
     // Bun's intepretation of the "__esModule" annotation:
     //
@@ -820,10 +766,11 @@ void RequireResolveFunctionPrototype::finishCreation(JSC::VM& vm)
 bool JSCommonJSModule::evaluate(
     Zig::GlobalObject* globalObject,
     const WTF::String& key,
-    ResolvedSource source)
+    ResolvedSource source,
+    bool isBuiltIn)
 {
     auto& vm = globalObject->vm();
-    auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program);
+    auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program, isBuiltIn);
     this->ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
     JSC::SourceCode rawInputSource(
         WTFMove(sourceProvider));
@@ -854,7 +801,8 @@ bool JSCommonJSModule::evaluate(
 
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
-    ResolvedSource source)
+    ResolvedSource source,
+    bool isBuiltIn)
 {
     JSCommonJSModule* moduleObject;
     WTF::String sourceURL = toStringCopy(source.source_url);
@@ -862,7 +810,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     JSValue specifierValue = Bun::toJS(globalObject, source.specifier);
     JSValue entry = globalObject->requireMap()->get(globalObject, specifierValue);
 
-    auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program);
+    auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program, isBuiltIn);
     bool ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
     SourceOrigin sourceOrigin = sourceProvider->sourceOrigin();
 

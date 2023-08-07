@@ -42,6 +42,8 @@ class DOMWrapperWorld;
 #include "DOMConstructors.h"
 #include "BunPlugin.h"
 #include "JSMockFunction.h"
+#include "InternalModuleRegistry.h"
+#include "ProcessBindingConstants.h"
 
 namespace WebCore {
 class GlobalScope;
@@ -252,7 +254,6 @@ public:
     JSC::Structure* callSiteStructure() const { return m_callSiteStructure.getInitializedOnMainThread(this); }
 
     JSC::JSObject* performanceObject() { return m_performanceObject.getInitializedOnMainThread(this); }
-    JSC::JSObject* primordialsObject() { return m_primordialsObject.getInitializedOnMainThread(this); }
 
     JSC::JSFunction* performMicrotaskFunction() { return m_performMicrotaskFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* performMicrotaskVariadicFunction() { return m_performMicrotaskVariadicFunction.getInitializedOnMainThread(this); }
@@ -261,6 +262,8 @@ public:
 
     JSObject* requireFunctionUnbound() { return m_requireFunctionUnbound.getInitializedOnMainThread(this); }
     JSObject* requireResolveFunctionUnbound() { return m_requireResolveFunctionUnbound.getInitializedOnMainThread(this); }
+    Bun::InternalModuleRegistry* internalModuleRegistry() { return m_internalModuleRegistry.getInitializedOnMainThread(this); }
+    Bun::ProcessBindingConstants* processBindingConstants() { return m_processBindingConstants.getInitializedOnMainThread(this); }
 
     JSObject* lazyRequireCacheObject() { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
 
@@ -375,18 +378,25 @@ public:
     mutable WriteBarrier<JSFunction> m_readableStreamToJSON;
     mutable WriteBarrier<JSFunction> m_readableStreamToText;
     mutable WriteBarrier<JSFunction> m_readableStreamToFormData;
+
+    mutable WriteBarrier<Unknown> m_BunCommonJSModuleValue;
+    mutable WriteBarrier<Unknown> m_JSBroadcastChannelSetterValue;
     mutable WriteBarrier<Unknown> m_JSBufferSetterValue;
+    mutable WriteBarrier<Unknown> m_JSCloseEventSetterValue;
+    mutable WriteBarrier<Unknown> m_JSCustomEventSetterValue;
+    mutable WriteBarrier<Unknown> m_JSDOMExceptionSetterValue;
+    mutable WriteBarrier<Unknown> m_JSDOMFormDataSetterValue;
+    mutable WriteBarrier<Unknown> m_JSErrorEventSetterValue;
+    mutable WriteBarrier<Unknown> m_JSEventSetterValue;
+    mutable WriteBarrier<Unknown> m_JSEventTargetSetterValue;
     mutable WriteBarrier<Unknown> m_JSFetchHeadersSetterValue;
+    mutable WriteBarrier<Unknown> m_JSMessageChannelSetterValue;
     mutable WriteBarrier<Unknown> m_JSMessageEventSetterValue;
+    mutable WriteBarrier<Unknown> m_JSMessagePortSetterValue;
     mutable WriteBarrier<Unknown> m_JSTextEncoderSetterValue;
     mutable WriteBarrier<Unknown> m_JSURLSearchParamsSetterValue;
     mutable WriteBarrier<Unknown> m_JSWebSocketSetterValue;
-    mutable WriteBarrier<Unknown> m_JSDOMFormDataSetterValue;
     mutable WriteBarrier<Unknown> m_JSWorkerSetterValue;
-    mutable WriteBarrier<Unknown> m_JSMessageChannelSetterValue;
-    mutable WriteBarrier<Unknown> m_JSMessagePortSetterValue;
-    mutable WriteBarrier<Unknown> m_JSBroadcastChannelSetterValue;
-    mutable WriteBarrier<Unknown> m_BunCommonJSModuleValue;
 
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
 
@@ -509,7 +519,6 @@ private:
     LazyProperty<JSGlobalObject, JSObject> m_JSHTTPSResponseControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
-    LazyProperty<JSGlobalObject, JSObject> m_primordialsObject;
     LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
     LazyProperty<JSGlobalObject, JSObject> m_subtleCryptoObject;
@@ -531,6 +540,8 @@ private:
 
     LazyProperty<JSGlobalObject, JSC::JSObject> m_requireFunctionUnbound;
     LazyProperty<JSGlobalObject, JSC::JSObject> m_requireResolveFunctionUnbound;
+    LazyProperty<JSGlobalObject, Bun::InternalModuleRegistry> m_internalModuleRegistry;
+    LazyProperty<JSGlobalObject, Bun::ProcessBindingConstants> m_processBindingConstants;
     LazyProperty<JSGlobalObject, JSC::Structure> m_importMetaObjectStructure;
     LazyProperty<JSGlobalObject, JSC::Structure> m_asyncBoundFunctionStructure;
 

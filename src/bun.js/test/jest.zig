@@ -34,6 +34,7 @@ const FeatureFlags = @import("root").bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 const getAllocator = @import("../base.zig").getAllocator;
+const RegularExpression = bun.RegularExpression;
 
 const ZigString = JSC.ZigString;
 const JSInternalPromise = JSC.JSInternalPromise;
@@ -88,6 +89,7 @@ pub const TestRunner = struct {
     test_timeout_timer: ?*bun.uws.Timer = null,
     last_test_timeout_timer_duration: u32 = 0,
     active_test_for_timeout: ?TestRunner.Test.ID = null,
+    test_options: *const bun.CLI.Command.TestOptions = undefined,
 
     global_callbacks: struct {
         beforeAll: std.ArrayListUnmanaged(JSC.JSValue) = .{},
@@ -95,6 +97,10 @@ pub const TestRunner = struct {
         afterEach: std.ArrayListUnmanaged(JSC.JSValue) = .{},
         afterAll: std.ArrayListUnmanaged(JSC.JSValue) = .{},
     } = .{},
+
+    // Used for --test-name-pattern to reduce allocations
+    filter_regex: ?*RegularExpression,
+    filter_buffer: MutableString,
 
     pub const Drainer = JSC.AnyTask.New(TestRunner, drain);
 
@@ -1441,6 +1447,17 @@ pub const Result = union(TestRunner.Test.Status) {
     }
 };
 
+fn appendParentLabel(
+    buffer: *bun.MutableString,
+    parent: *DescribeScope,
+) !void {
+    if (parent.parent) |par| {
+        try appendParentLabel(buffer, par);
+    }
+    try buffer.append(parent.label);
+    try buffer.append(" ");
+}
+
 inline fn createScope(
     globalThis: *JSGlobalObject,
     callframe: *CallFrame,
@@ -1516,11 +1533,26 @@ inline fn createScope(
         return .zero;
     }
 
-    const is_skip = tag == .skip or
+    var is_skip = tag == .skip or
         (tag == .todo and (function == .zero or !Jest.runner.?.run_todo)) or
         (tag != .only and Jest.runner.?.only and parent.tag != .only);
 
+    var tag_to_use = tag;
     if (is_test) {
+        if (!is_skip) {
+            if (Jest.runner.?.filter_regex) |regex| {
+                var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
+                buffer.reset();
+                appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
+                buffer.append(label) catch unreachable;
+                var str = bun.String.fromBytes(buffer.toOwnedSliceLeaky());
+                is_skip = !regex.matches(str);
+                if (is_skip) {
+                    tag_to_use = .skip;
+                }
+            }
+        }
+
         if (is_skip) {
             parent.skip_count += 1;
             function.unprotect();
@@ -1531,7 +1563,7 @@ inline fn createScope(
         parent.tests.append(allocator, TestScope{
             .label = label,
             .parent = parent,
-            .tag = tag,
+            .tag = tag_to_use,
             .callback = if (is_skip) .zero else function,
             .timeout_millis = timeout_ms,
         }) catch unreachable;

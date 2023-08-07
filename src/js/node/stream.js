@@ -1,68 +1,16 @@
 // Hardcoded module "node:stream" / "readable-stream"
 // "readable-stream" npm package
-// just transpiled
+// just transpiled and debug logs added.
 
-// This must go at the top of the file, before any side effects.
-// IS_BUN_DEVELOPMENT is a bundle-only global variable that is set to true when
-// building a development bundle.
-const __TRACK_EE__ = IS_BUN_DEVELOPMENT && !!process.env.DEBUG_TRACK_EE;
-const __DEBUG__ = IS_BUN_DEVELOPMENT && !!(process.env.DEBUG || process.env.DEBUG_STREAMS || __TRACK_EE__);
+const EE = $lazy("events");
+const StringDecoder = require("node:string_decoder").StringDecoder;
 
-if (__DEBUG__) {
-  globalThis.__IDS_TO_TRACK = process.env.DEBUG_TRACK_EE?.length
-    ? process.env.DEBUG_TRACK_EE.split(",")
-    : process.env.DEBUG_STREAMS?.length
-    ? process.env.DEBUG_STREAMS.split(",")
-    : null;
-}
-
-// Separating DEBUG, DEBUG_STREAMS and DEBUG_TRACK_EE env vars makes it easier to focus on the
-// events in this file rather than all debug output across all files
-
-// You can include comma-delimited IDs as the value to either DEBUG_STREAMS or DEBUG_TRACK_EE and it will track
-// The events and/or all of the outputs for the given stream IDs assigned at stream construction
-// By default, child_process gives
-
-var debug = __DEBUG__
-  ? globalThis.__IDS_TO_TRACK
-    ? // If we are tracking IDs for debug event emitters, we should prefix the debug output with the ID
-      (...args) => {
-        const lastItem = args[args.length - 1];
-        if (!globalThis.__IDS_TO_TRACK.includes(lastItem)) return;
-        console.log(`ID: ${lastItem}`, ...args.slice(0, -1));
-      }
-    : (...args) => console.log(...args.slice(0, -1))
-  : () => {};
-
-var { isPromise, isCallable, direct, Object } = $lazy("primordials");
-import { EventEmitter as EE } from "bun:events_native";
-import { StringDecoder } from "node:string_decoder";
-
-var __create = Object.create;
-var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
-var __getProtoOf = Object.getPrototypeOf;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __ObjectSetPrototypeOf = Object.setPrototypeOf;
 
 var __commonJS = (cb, mod) =>
   function __require2() {
     return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
   };
-var __copyProps = (to, from, except, desc) => {
-  if ((from && typeof from === "object") || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, {
-          get: () => from[key],
-          set: val => (from[key] = val),
-          enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,
-          configurable: true,
-        });
-  }
-  return to;
-};
 
 var runOnNextTick = process.nextTick;
 
@@ -73,6 +21,8 @@ function isReadableStream(value) {
 function validateBoolean(value, name) {
   if (typeof value !== "boolean") throw new ERR_INVALID_ARG_TYPE(name, "boolean", value);
 }
+
+$debug("node:stream loaded");
 
 /**
  * @callback validateObject
@@ -2053,6 +2003,7 @@ var require_legacy = __commonJS({
       if (!(this instanceof Stream)) return new Stream(options);
       EE.call(this, options);
     }
+    Stream.prototype = {};
     ObjectSetPrototypeOf(Stream.prototype, EE.prototype);
     ObjectSetPrototypeOf(Stream, EE);
 
@@ -2331,6 +2282,7 @@ var require_readable = __commonJS({
         }
       });
     }
+    Readable.prototype = {};
     ObjectSetPrototypeOf(Readable.prototype, Stream.prototype);
     ObjectSetPrototypeOf(Readable, Stream);
 
@@ -2340,32 +2292,31 @@ var require_readable = __commonJS({
       if (ev === "data") {
         state.readableListening = this.listenerCount("readable") > 0;
         if (state.flowing !== false) {
-          __DEBUG__ && debug("in flowing mode!", this.__id);
+          $debug("in flowing mode!", this.__id);
           this.resume();
         } else {
-          __DEBUG__ && debug("in readable mode!", this.__id);
+          $debug("in readable mode!", this.__id);
         }
       } else if (ev === "readable") {
-        __DEBUG__ && debug("readable listener added!", this.__id);
+        $debug("readable listener added!", this.__id);
         if (!state.endEmitted && !state.readableListening) {
           state.readableListening = state.needReadable = true;
           state.flowing = false;
           state.emittedReadable = false;
-          __DEBUG__ &&
-            debug(
-              "on readable - state.length, reading, emittedReadable",
-              state.length,
-              state.reading,
-              state.emittedReadable,
-              this.__id,
-            );
+          $debug(
+            "on readable - state.length, reading, emittedReadable",
+            state.length,
+            state.reading,
+            state.emittedReadable,
+            this.__id,
+          );
           if (state.length) {
             emitReadable(this, state);
           } else if (!state.reading) {
             runOnNextTick(nReadingNextTick, this);
           }
         } else if (state.endEmitted) {
-          __DEBUG__ && debug("end already emitted...", this.__id);
+          $debug("end already emitted...", this.__id);
         }
       }
       return res;
@@ -2421,7 +2372,7 @@ var require_readable = __commonJS({
       }
 
       async _read() {
-        __DEBUG__ && debug("ReadableFromWeb _read()", this.__id);
+        $debug("ReadableFromWeb _read()", this.__id);
         var stream = this.#stream,
           reader = this.#reader;
         if (stream) {
@@ -2438,7 +2389,7 @@ var require_readable = __commonJS({
               value;
             const firstResult = reader.readMany();
 
-            if (isPromise(firstResult)) {
+            if ($isPromise(firstResult)) {
               ({ done, value } = await firstResult);
 
               if (this.#closed) {
@@ -2565,7 +2516,7 @@ var require_readable = __commonJS({
     }
     // REVERT ME
     function emitReadable(stream, state) {
-      __DEBUG__ && debug("NativeReadable - emitReadable", stream.__id);
+      $debug("NativeReadable - emitReadable", stream.__id);
       _emitReadable(stream, state);
     }
     var destroyImpl = require_destroy();
@@ -2599,7 +2550,7 @@ var require_readable = __commonJS({
       return readableAddChunk(this, chunk, encoding, true);
     };
     function readableAddChunk(stream, chunk, encoding, addToFront) {
-      __DEBUG__ && debug("readableAddChunk", chunk, stream.__id);
+      $debug("readableAddChunk", chunk, stream.__id);
       const state = stream._readableState;
       let err;
       if (!state.objectMode) {
@@ -2655,8 +2606,8 @@ var require_readable = __commonJS({
       return !state.ended && (state.length < state.highWaterMark || state.length === 0);
     }
     function addChunk(stream, state, chunk, addToFront) {
-      __DEBUG__ && debug("adding chunk", stream.__id);
-      __DEBUG__ && debug("chunk", chunk.toString(), stream.__id);
+      $debug("adding chunk", stream.__id);
+      $debug("chunk", chunk.toString(), stream.__id);
       if (state.flowing && state.length === 0 && !state.sync && stream.listenerCount("data") > 0) {
         if (state.multiAwaitDrain) {
           state.awaitDrainWriters.clear();
@@ -2669,9 +2620,10 @@ var require_readable = __commonJS({
         state.length += state.objectMode ? 1 : chunk.length;
         if (addToFront) state.buffer.unshift(chunk);
         else state.buffer.push(chunk);
-        __DEBUG__ && debug("needReadable @ addChunk", state.needReadable, stream.__id);
+        $debug("needReadable @ addChunk", state.needReadable, stream.__id);
         if (state.needReadable) emitReadable(stream, state);
       }
+      $debug("about to maybereadmore");
       maybeReadMore(stream, state);
     }
     Readable.prototype.isPaused = function () {
@@ -2723,7 +2675,7 @@ var require_readable = __commonJS({
     }
     // You can override either this method, or the async _read(n) below.
     Readable.prototype.read = function (n) {
-      __DEBUG__ && debug("read - n =", n, this.__id);
+      $debug("read - n =", n, this.__id);
       if (!NumberIsInteger(n)) {
         n = NumberParseInt(n, 10);
       }
@@ -2743,7 +2695,7 @@ var require_readable = __commonJS({
         state.needReadable &&
         ((state.highWaterMark !== 0 ? state.length >= state.highWaterMark : state.length > 0) || state.ended)
       ) {
-        __DEBUG__ && debug("read: emitReadable or endReadable", state.length, state.ended, this.__id);
+        $debug("read: emitReadable or endReadable", state.length, state.ended, this.__id);
         if (state.length === 0 && state.ended) endReadable(this);
         else emitReadable(this, state);
         return null;
@@ -2753,8 +2705,7 @@ var require_readable = __commonJS({
 
       // If we've ended, and we're now clear, then finish it up.
       if (n === 0 && state.ended) {
-        __DEBUG__ &&
-          debug("read: calling endReadable if length 0 -- length, state.ended", state.length, state.ended, this.__id);
+        $debug("read: calling endReadable if length 0 -- length, state.ended", state.length, state.ended, this.__id);
         if (state.length === 0) endReadable(this);
         return null;
       }
@@ -2783,23 +2734,23 @@ var require_readable = __commonJS({
 
       // if we need a readable event, then we need to do some reading.
       let doRead = state.needReadable;
-      __DEBUG__ && debug("need readable", doRead, this.__id);
+      $debug("need readable", doRead, this.__id);
 
       // If we currently have less than the highWaterMark, then also read some.
       if (state.length === 0 || state.length - n < state.highWaterMark) {
         doRead = true;
-        __DEBUG__ && debug("length less than watermark", doRead, this.__id);
+        $debug("length less than watermark", doRead, this.__id);
       }
 
       // However, if we've ended, then there's no point, if we're already
       // reading, then it's unnecessary, if we're constructing we have to wait,
       // and if we're destroyed or errored, then it's not allowed,
       if (state.ended || state.reading || state.destroyed || state.errored || !state.constructed) {
-        __DEBUG__ && debug("state.constructed?", state.constructed, this.__id);
+        $debug("state.constructed?", state.constructed, this.__id);
         doRead = false;
-        __DEBUG__ && debug("reading, ended or constructing", doRead, this.__id);
+        $debug("reading, ended or constructing", doRead, this.__id);
       } else if (doRead) {
-        __DEBUG__ && debug("do read", this.__id);
+        $debug("do read", this.__id);
         state.reading = true;
         state.sync = true;
         // If the length is currently zero, then we *need* a readable event.
@@ -2808,17 +2759,17 @@ var require_readable = __commonJS({
         // Call internal read method
         try {
           var result = this._read(state.highWaterMark);
-          if (isPromise(result)) {
-            __DEBUG__ && debug("async _read", this.__id);
+          if ($isPromise(result)) {
+            $debug("async _read", this.__id);
             const peeked = Bun.peek(result);
-            __DEBUG__ && debug("peeked promise", peeked, this.__id);
+            $debug("peeked promise", peeked, this.__id);
             if (peeked !== result) {
               result = peeked;
             }
           }
 
-          if (isPromise(result) && result?.then && isCallable(result.then)) {
-            __DEBUG__ && debug("async _read result.then setup", this.__id);
+          if ($isPromise(result) && result?.then && $isCallable(result.then)) {
+            $debug("async _read result.then setup", this.__id);
             result.then(nop, function (err) {
               errorOrDestroy(this, err);
             });
@@ -2833,16 +2784,16 @@ var require_readable = __commonJS({
         if (!state.reading) n = howMuchToRead(nOrig, state);
       }
 
-      __DEBUG__ && debug("n @ fromList", n, this.__id);
+      $debug("n @ fromList", n, this.__id);
       let ret;
       if (n > 0) ret = fromList(n, state);
       else ret = null;
 
-      __DEBUG__ && debug("ret @ read", ret, this.__id);
+      $debug("ret @ read", ret, this.__id);
 
       if (ret === null) {
         state.needReadable = state.length <= state.highWaterMark;
-        __DEBUG__ && debug("state.length while ret = null", state.length, this.__id);
+        $debug("state.length while ret = null", state.length, this.__id);
         n = 0;
       } else {
         state.length -= n;
@@ -2882,14 +2833,14 @@ var require_readable = __commonJS({
         }
       }
       state.pipes.push(dest);
-      __DEBUG__ && debug("pipe count=%d opts=%j", state.pipes.length, pipeOpts, src.__id);
+      $debug("pipe count=%d opts=%j", state.pipes.length, pipeOpts, src.__id);
       const doEnd = (!pipeOpts || pipeOpts.end !== false) && dest !== process.stdout && dest !== process.stderr;
       const endFn = doEnd ? onend : unpipe;
       if (state.endEmitted) runOnNextTick(endFn);
       else src.once("end", endFn);
       dest.on("unpipe", onunpipe);
       function onunpipe(readable, unpipeInfo) {
-        __DEBUG__ && debug("onunpipe", src.__id);
+        $debug("onunpipe", src.__id);
         if (readable === src) {
           if (unpipeInfo && unpipeInfo.hasUnpiped === false) {
             unpipeInfo.hasUnpiped = true;
@@ -2898,13 +2849,13 @@ var require_readable = __commonJS({
         }
       }
       function onend() {
-        __DEBUG__ && debug("onend", src.__id);
+        $debug("onend", src.__id);
         dest.end();
       }
       let ondrain;
       let cleanedUp = false;
       function cleanup() {
-        __DEBUG__ && debug("cleanup", src.__id);
+        $debug("cleanup", src.__id);
         dest.removeListener("close", onclose);
         dest.removeListener("finish", onfinish);
         if (ondrain) {
@@ -2921,11 +2872,11 @@ var require_readable = __commonJS({
       function pause() {
         if (!cleanedUp) {
           if (state.pipes.length === 1 && state.pipes[0] === dest) {
-            __DEBUG__ && debug("false write response, pause", 0, src.__id);
+            $debug("false write response, pause", 0, src.__id);
             state.awaitDrainWriters = dest;
             state.multiAwaitDrain = false;
           } else if (state.pipes.length > 1 && state.pipes.includes(dest)) {
-            __DEBUG__ && debug("false write response, pause", state.awaitDrainWriters.size, src.__id);
+            $debug("false write response, pause", state.awaitDrainWriters.size, src.__id);
             state.awaitDrainWriters.add(dest);
           }
           src.pause();
@@ -2937,15 +2888,15 @@ var require_readable = __commonJS({
       }
       src.on("data", ondata);
       function ondata(chunk) {
-        __DEBUG__ && debug("ondata", src.__id);
+        $debug("ondata", src.__id);
         const ret = dest.write(chunk);
-        __DEBUG__ && debug("dest.write", ret, src.__id);
+        $debug("dest.write", ret, src.__id);
         if (ret === false) {
           pause();
         }
       }
       function onerror(er) {
-        debug("onerror", er);
+        $debug("onerror", er);
         unpipe();
         dest.removeListener("error", onerror);
         if (dest.listenerCount("error") === 0) {
@@ -2964,13 +2915,13 @@ var require_readable = __commonJS({
       }
       dest.once("close", onclose);
       function onfinish() {
-        debug("onfinish");
+        $debug("onfinish");
         dest.removeListener("close", onclose);
         unpipe();
       }
       dest.once("finish", onfinish);
       function unpipe() {
-        debug("unpipe");
+        $debug("unpipe");
         src.unpipe(dest);
       }
       dest.emit("pipe", src);
@@ -2979,7 +2930,7 @@ var require_readable = __commonJS({
           pause();
         }
       } else if (!state.flowing) {
-        debug("pipe resume");
+        $debug("pipe resume");
         src.resume();
       }
       return dest;
@@ -2988,10 +2939,10 @@ var require_readable = __commonJS({
       return function pipeOnDrainFunctionResult() {
         const state = src._readableState;
         if (state.awaitDrainWriters === dest) {
-          debug("pipeOnDrain", 1);
+          $debug("pipeOnDrain", 1);
           state.awaitDrainWriters = null;
         } else if (state.multiAwaitDrain) {
-          debug("pipeOnDrain", state.awaitDrainWriters.size);
+          $debug("pipeOnDrain", state.awaitDrainWriters.size);
           state.awaitDrainWriters.delete(dest);
         }
         if ((!state.awaitDrainWriters || state.awaitDrainWriters.size === 0) && src.listenerCount("data")) {
@@ -3050,13 +3001,13 @@ var require_readable = __commonJS({
       }
     }
     function nReadingNextTick(self) {
-      __DEBUG__ && debug("on readable nextTick, calling read(0)", self.__id);
+      $debug("on readable nextTick, calling read(0)", self.__id);
       self.read(0);
     }
     Readable.prototype.resume = function () {
       const state = this._readableState;
       if (!state.flowing) {
-        __DEBUG__ && debug("resume", this.__id);
+        $debug("resume", this.__id);
         state.flowing = !state.readableListening;
         resume(this, state);
       }
@@ -3064,9 +3015,9 @@ var require_readable = __commonJS({
       return this;
     };
     Readable.prototype.pause = function () {
-      __DEBUG__ && debug("call pause flowing=%j", this._readableState.flowing, this.__id);
+      $debug("call pause flowing=%j", this._readableState.flowing, this.__id);
       if (this._readableState.flowing !== false) {
-        __DEBUG__ && debug("pause", this.__id);
+        $debug("pause", this.__id);
         this._readableState.flowing = false;
         this.emit("pause");
       }
@@ -3294,18 +3245,18 @@ var require_readable = __commonJS({
     }
     function endReadable(stream) {
       const state = stream._readableState;
-      __DEBUG__ && debug("endEmitted @ endReadable", state.endEmitted, stream.__id);
+      $debug("endEmitted @ endReadable", state.endEmitted, stream.__id);
       if (!state.endEmitted) {
         state.ended = true;
         runOnNextTick(endReadableNT, state, stream);
       }
     }
     function endReadableNT(state, stream) {
-      __DEBUG__ && debug("endReadableNT -- endEmitted, state.length", state.endEmitted, state.length, stream.__id);
+      $debug("endReadableNT -- endEmitted, state.length", state.endEmitted, state.length, stream.__id);
       if (!state.errored && !state.closeEmitted && !state.endEmitted && state.length === 0) {
         state.endEmitted = true;
         stream.emit("end");
-        __DEBUG__ && debug("end emitted @ endReadableNT", stream.__id);
+        $debug("end emitted @ endReadableNT", stream.__id);
         if (stream.writable && stream.allowHalfOpen === false) {
           runOnNextTick(endWritableNT, stream);
         } else if (state.autoDestroy) {
@@ -3492,6 +3443,7 @@ var require_writable = __commonJS({
         finishMaybe(this, state);
       });
     }
+    Writable.prototype = {};
     ObjectSetPrototypeOf(Writable.prototype, Stream.prototype);
     ObjectSetPrototypeOf(Writable, Stream);
     module.exports = Writable;
@@ -3535,6 +3487,7 @@ var require_writable = __commonJS({
       this.closeEmitted = false;
       this[kOnFinished] = [];
     }
+    WritableState.prototype = {};
     function resetBuffer(state) {
       state.buffered = [];
       state.bufferedIndex = 0;
@@ -3814,7 +3767,7 @@ var require_writable = __commonJS({
     Writable.prototype._writev = null;
     Writable.prototype.end = function (chunk, encoding, cb, native = false) {
       const state = this._writableState;
-      __DEBUG__ && debug("end", state, this.__id);
+      $debug("end", state, this.__id);
       if (typeof chunk === "function") {
         cb = chunk;
         chunk = null;
@@ -3871,7 +3824,7 @@ var require_writable = __commonJS({
         !state.writing &&
         !state.errorEmitted &&
         !state.closeEmitted;
-      debug("needFinish", needFinish, tag);
+      $debug("needFinish", needFinish, tag);
       return needFinish;
     }
     function callFinal(stream, state) {
@@ -3917,7 +3870,7 @@ var require_writable = __commonJS({
       }
     }
     function finishMaybe(stream, state, sync) {
-      __DEBUG__ && debug("finishMaybe -- state, sync", state, sync, stream.__id);
+      $debug("finishMaybe -- state, sync", state, sync, stream.__id);
 
       if (!needFinish(state, stream.__id)) return;
 
@@ -4454,8 +4407,8 @@ var require_duplex = __commonJS({
         this.allowHalfOpen = true;
       }
     }
+    Duplex.prototype = {};
     module.exports = Duplex;
-
     ObjectSetPrototypeOf(Duplex.prototype, Readable.prototype);
     ObjectSetPrototypeOf(Duplex, Readable);
 
@@ -4532,6 +4485,7 @@ var require_transform = __commonJS({
 
       this.on("prefinish", prefinish.bind(this));
     }
+    Transform.prototype = {};
     ObjectSetPrototypeOf(Transform.prototype, Duplex.prototype);
     ObjectSetPrototypeOf(Transform, Duplex);
 
@@ -4618,6 +4572,7 @@ var require_passthrough = __commonJS({
       if (!(this instanceof PassThrough)) return new PassThrough(options);
       Transform.call(this, options);
     }
+    PassThrough.prototype = {};
 
     ObjectSetPrototypeOf(PassThrough.prototype, Transform.prototype);
     ObjectSetPrototypeOf(PassThrough, Transform);
@@ -5240,47 +5195,6 @@ var require_stream = __commonJS({
   },
 });
 
-// node_modules/readable-stream/lib/ours/index.js
-var require_ours = __commonJS({
-  "node_modules/readable-stream/lib/ours/index.js"(exports, module) {
-    "use strict";
-    const CustomStream = require_stream();
-    const promises = require_promises();
-    const originalDestroy = CustomStream.Readable.destroy;
-    module.exports = CustomStream;
-    module.exports._uint8ArrayToBuffer = CustomStream._uint8ArrayToBuffer;
-    module.exports._isUint8Array = CustomStream._isUint8Array;
-    module.exports.isDisturbed = CustomStream.isDisturbed;
-    module.exports.isErrored = CustomStream.isErrored;
-    module.exports.isWritable = CustomStream.isWritable;
-    module.exports.isReadable = CustomStream.isReadable;
-    module.exports.Readable = CustomStream.Readable;
-    module.exports.Writable = CustomStream.Writable;
-    module.exports.Duplex = CustomStream.Duplex;
-    module.exports.Transform = CustomStream.Transform;
-    module.exports.PassThrough = CustomStream.PassThrough;
-    module.exports.addAbortSignal = CustomStream.addAbortSignal;
-    module.exports.finished = CustomStream.finished;
-    module.exports.destroy = CustomStream.destroy;
-    module.exports.destroy = originalDestroy;
-    module.exports.pipeline = CustomStream.pipeline;
-    module.exports.compose = CustomStream.compose;
-
-    module.exports._getNativeReadableStreamPrototype = getNativeReadableStreamPrototype;
-    module.exports.NativeWritable = NativeWritable;
-
-    Object.defineProperty(CustomStream, "promises", {
-      configurable: true,
-      enumerable: true,
-      get() {
-        return promises;
-      },
-    });
-    module.exports.Stream = CustomStream.Stream;
-    module.exports.default = module.exports;
-  },
-});
-
 /**
  * Bun native stream wrapper
  *
@@ -5357,21 +5271,21 @@ function createNativeStreamReadable(nativeType, Readable) {
     // However, in the case of an fs.ReadStream, we can pass the number of bytes we want to read
     // which may be significantly less than the actual highWaterMark
     _read(maxToRead) {
-      __DEBUG__ && debug("NativeReadable._read", this.__id);
+      $debug("NativeReadable._read", this.__id);
       if (this.#pendingRead) {
-        __DEBUG__ && debug("pendingRead is true", this.__id);
+        $debug("pendingRead is true", this.__id);
         return;
       }
 
       var ptr = this.#bunNativePtr;
-      __DEBUG__ && debug("ptr @ NativeReadable._read", ptr, this.__id);
+      $debug("ptr @ NativeReadable._read", ptr, this.__id);
       if (ptr === 0) {
         this.push(null);
         return;
       }
 
       if (!this.#constructed) {
-        __DEBUG__ && debug("NativeReadable not constructed yet", this.__id);
+        $debug("NativeReadable not constructed yet", this.__id);
         this.#internalConstruct(ptr);
       }
 
@@ -5398,18 +5312,18 @@ function createNativeStreamReadable(nativeType, Readable) {
     #internalConstruct(ptr) {
       this.#constructed = true;
       const result = start(ptr, this.#highWaterMark);
-      __DEBUG__ && debug("NativeReadable internal `start` result", result, this.__id);
+      $debug("NativeReadable internal `start` result", result, this.__id);
 
       if (typeof result === "number" && result > 1) {
         this.#hasResized = true;
-        __DEBUG__ && debug("NativeReadable resized", this.__id);
+        $debug("NativeReadable resized", this.__id);
 
         this.#highWaterMark = Math.min(this.#highWaterMark, result);
       }
 
       if (drainFn) {
         const drainResult = drainFn(ptr);
-        __DEBUG__ && debug("NativeReadable drain result", drainResult, this.__id);
+        $debug("NativeReadable drain result", drainResult, this.__id);
         if ((drainResult?.byteLength ?? 0) > 0) {
           this.push(drainResult);
         }
@@ -5421,7 +5335,7 @@ function createNativeStreamReadable(nativeType, Readable) {
     // how many bytes they want to read (ie. when reading only part of a file)
     #getRemainingChunk(maxToRead = this.#highWaterMark) {
       var chunk = this.#remainingChunk;
-      __DEBUG__ && debug("chunk @ #getRemainingChunk", chunk, this.__id);
+      $debug("chunk @ #getRemainingChunk", chunk, this.__id);
       if (chunk?.byteLength ?? 0 < MIN_BUFFER_SIZE) {
         var size = maxToRead > MIN_BUFFER_SIZE ? maxToRead : MIN_BUFFER_SIZE;
         this.#remainingChunk = chunk = new Buffer(size);
@@ -5430,12 +5344,12 @@ function createNativeStreamReadable(nativeType, Readable) {
     }
 
     // push(result, encoding) {
-    //   __DEBUG__ && debug("NativeReadable push -- result, encoding", result, encoding, this.__id);
+    //   debug("NativeReadable push -- result, encoding", result, encoding, this.__id);
     //   return super.push(...arguments);
     // }
 
     #handleResult(result, view, isClosed) {
-      __DEBUG__ && debug("result, isClosed @ #handleResult", result, isClosed, this.__id);
+      $debug("result, isClosed @ #handleResult", result, isClosed, this.__id);
 
       if (typeof result === "number") {
         if (result >= this.#highWaterMark && !this.#hasResized && !isClosed) {
@@ -5453,30 +5367,30 @@ function createNativeStreamReadable(nativeType, Readable) {
         if (result.byteLength >= this.#highWaterMark && !this.#hasResized && !isClosed) {
           this.#highWaterMark *= 2;
           this.#hasResized = true;
-          __DEBUG__ && debug("Resized", this.__id);
+          $debug("Resized", this.__id);
         }
 
         return handleArrayBufferViewResult(this, result, view, isClosed);
       } else {
-        __DEBUG__ && debug("Unknown result type", result, this.__id);
+        $debug("Unknown result type", result, this.__id);
         throw new Error("Invalid result from pull");
       }
     }
 
     #internalRead(view, ptr) {
-      __DEBUG__ && debug("#internalRead()", this.__id);
+      $debug("#internalRead()", this.__id);
       closer[0] = false;
       var result = pull(ptr, view, closer);
-      if (isPromise(result)) {
+      if ($isPromise(result)) {
         this.#pendingRead = true;
         return result.then(
           result => {
             this.#pendingRead = false;
-            __DEBUG__ && debug("pending no longerrrrrrrr (result returned from pull)", this.__id);
+            $debug("pending no longerrrrrrrr (result returned from pull)", this.__id);
             this.#remainingChunk = this.#handleResult(result, view, closer[0]);
           },
           reason => {
-            __DEBUG__ && debug("error from pull", reason, this.__id);
+            $debug("error from pull", reason, this.__id);
             errorOrDestroy(this, reason);
           },
         );
@@ -5497,7 +5411,7 @@ function createNativeStreamReadable(nativeType, Readable) {
       if (updateRef) {
         updateRef(ptr, false);
       }
-      __DEBUG__ && debug("NativeReadable destroyed", this.__id);
+      $debug("NativeReadable destroyed", this.__id);
       cancel(ptr, error);
       callback(error);
     }
@@ -5544,9 +5458,9 @@ function getNativeReadableStream(Readable, stream, options) {
     return undefined;
   }
 
-  const native = direct(stream);
+  const native = $direct(stream);
   if (!native) {
-    debug("no native readable stream");
+    $debug("no native readable stream");
     return undefined;
   }
   const { stream: ptr, data: type } = native;
@@ -5611,7 +5525,7 @@ var NativeWritable = class NativeWritable extends Writable {
     var fileSink = this.#fileSink;
     var result = fileSink.write(chunk);
 
-    if (isPromise(result)) {
+    if ($isPromise(result)) {
       // var writePromises = this.#writePromises;
       // var i = writePromises.length;
       // writePromises[i] = result;
@@ -5658,28 +5572,19 @@ var NativeWritable = class NativeWritable extends Writable {
   }
 };
 
-const stream_exports = require_ours();
-stream_exports[Symbol.for("CommonJS")] = 0;
-stream_exports[Symbol.for("::bunternal::")] = { _ReadableFromWeb, _ReadableFromWebForUndici };
-export default stream_exports;
-export var _uint8ArrayToBuffer = stream_exports._uint8ArrayToBuffer;
-export var _isUint8Array = stream_exports._isUint8Array;
-export var isDisturbed = stream_exports.isDisturbed;
-export var isErrored = stream_exports.isErrored;
-export var isWritable = stream_exports.isWritable;
-export var isReadable = stream_exports.isReadable;
-export var Readable = stream_exports.Readable;
-export var Writable = stream_exports.Writable;
-export var Duplex = stream_exports.Duplex;
-export var Transform = stream_exports.Transform;
-export var PassThrough = stream_exports.PassThrough;
-export var addAbortSignal = stream_exports.addAbortSignal;
-export var finished = stream_exports.finished;
-export var destroy = stream_exports.destroy;
-export var pipeline = stream_exports.pipeline;
-export var compose = stream_exports.compose;
-export var Stream = stream_exports.Stream;
-export var eos = (stream_exports["eos"] = require_end_of_stream);
-export var _getNativeReadableStreamPrototype = stream_exports._getNativeReadableStreamPrototype;
-export var NativeWritable = stream_exports.NativeWritable;
-export var promises = Stream.promises;
+const exports = require_stream();
+const promises = require_promises();
+exports._getNativeReadableStreamPrototype = getNativeReadableStreamPrototype;
+exports.NativeWritable = NativeWritable;
+Object.defineProperty(exports, "promises", {
+  configurable: true,
+  enumerable: true,
+  get() {
+    return promises;
+  },
+});
+
+exports[Symbol.for("::bunternal::")] = { _ReadableFromWeb, _ReadableFromWebForUndici };
+exports.eos = require_end_of_stream();
+
+export default exports;

@@ -322,7 +322,7 @@ pub const Request = struct {
 
     pub fn sizeOfURL(this: *const Request) usize {
         if (this.url.length() > 0)
-            return this.url.length();
+            return this.url.byteSlice().len;
 
         if (this.uws_request) |req| {
             const req_url = req.url();
@@ -369,8 +369,8 @@ pub const Request = struct {
                         std.debug.assert(this.sizeOfURL() == url_bytelength);
                     }
 
-                    if (url_bytelength < 64) {
-                        var buffer: [64]u8 = undefined;
+                    if (url_bytelength < 128) {
+                        var buffer: [128]u8 = undefined;
                         const url = std.fmt.bufPrint(&buffer, "{s}{any}{s}", .{
                             this.getProtocol(),
                             fmt,
@@ -381,21 +381,30 @@ pub const Request = struct {
                             std.debug.assert(this.sizeOfURL() == url.len);
                         }
 
-                        if (bun.String.tryCreateAtom(url)) |atomized| {
-                            this.url = atomized;
-                            return;
+                        var href = bun.JSC.URL.hrefFromString(bun.String.fromBytes(url));
+                        if (!href.isEmpty()) {
+                            if (href.byteSlice().ptr == url.ptr) {
+                                this.url = bun.String.createLatin1(url[0..href.length()]);
+                                href.deref();
+                            } else {
+                                this.url = href;
+                            }
+                        } else {
+                            // TODO: what is the right thing to do for invalid URLS?
+                            this.url = bun.String.create(url);
                         }
+
+                        return;
                     }
 
                     if (strings.isAllASCII(host) and strings.isAllASCII(req_url)) {
                         this.url = bun.String.createUninitializedLatin1(url_bytelength);
                         var bytes = @constCast(this.url.byteSlice());
-                        const url = std.fmt.bufPrint(bytes, "{s}{any}{s}", .{
+                        _ = std.fmt.bufPrint(bytes, "{s}{any}{s}", .{
                             this.getProtocol(),
                             fmt,
                             req_url,
                         }) catch @panic("Unexpected error while printing URL");
-                        _ = url;
                     } else {
                         // slow path
                         var temp_url = std.fmt.allocPrint(bun.default_allocator, "{s}{any}{s}", .{
@@ -406,6 +415,13 @@ pub const Request = struct {
                         defer bun.default_allocator.free(temp_url);
                         this.url = bun.String.create(temp_url);
                     }
+
+                    const href = bun.JSC.URL.hrefFromString(this.url);
+                    // TODO: what is the right thing to do for invalid URLS?
+                    if (!href.isEmpty()) {
+                        this.url = href;
+                    }
+
                     return;
                 }
             }

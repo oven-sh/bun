@@ -15,26 +15,3 @@ test.todo("running a commonjs module works", async () => {
   });
   expect(stdout.toString("utf8")).toEqual("hello world\n");
 });
-
-test("not running with export default class", async () => {
-  const dir = join(realpathSync(tmpdir()), "bun-run-test2");
-  mkdirSync(dir, { recursive: true });
-  await Bun.write(
-    join(dir, "index1.js"),
-    `// @bun
-class Foo {
-  constructor() {
-    console.log('hello world');
-  }
-};
-Foo[Symbol.for("CommonJS")] = true;
-export default Foo
-`,
-  );
-  let { stdout } = Bun.spawnSync({
-    cmd: [bunExe(), join(dir, "index1.js")],
-    cwd: dir,
-    env: bunEnv,
-  });
-  expect(stdout.toString("utf8")).toEqual("");
-});

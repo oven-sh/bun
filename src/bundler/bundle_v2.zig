@@ -1862,13 +1862,6 @@ pub const BundleV2 = struct {
                     continue;
                 }
 
-                if (JSC.DisabledModule.has(import_record.path.text)) {
-                    import_record.path.is_disabled = true;
-                    import_record.do_commonjs_transform_in_printer = true;
-                    import_record.source_index = Index.invalid;
-                    continue;
-                }
-
                 if (this.bundler.options.rewrite_jest_for_tests) {
                     if (strings.eqlComptime(
                         import_record.path.text,

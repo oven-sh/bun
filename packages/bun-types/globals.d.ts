@@ -366,93 +366,15 @@ declare function structuredClone<T>(
   options?: StructuredSerializeOptions,
 ): T;
 
-/**
- * This Channel Messaging API interface allows us to create a new message channel and send data through it via its two MessagePort properties.
- *
- * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessageChannel)
- */
-interface MessageChannel {
-  /**
-   * Returns the first MessagePort object.
-   *
-   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessageChannel/port1)
-   */
-  readonly port1: MessagePort;
-  /**
-   * Returns the second MessagePort object.
-   *
-   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessageChannel/port2)
-   */
-  readonly port2: MessagePort;
-}
+declare var MessagePort: typeof import("worker_threads").MessagePort;
+declare type MessagePort = import("worker_threads").MessagePort;
+declare var MessageChannel: typeof import("worker_threads").MessageChannel;
+declare type MessageChannel = import("worker_threads").MessageChannel;
+declare var BroadcastChannel: typeof import("worker_threads").BroadcastChannel;
+declare type BroadcastChannel = import("worker_threads").BroadcastChannel;
 
-declare var MessageChannel: {
-  prototype: MessageChannel;
-  new (): MessageChannel;
-};
-
-interface MessagePortEventMap {
-  message: MessageEvent;
-  messageerror: MessageEvent;
-}
-
-/**
- * This Channel Messaging API interface represents one of the two ports of a MessageChannel, allowing messages to be sent from one port and listening out for them arriving at the other.
- *
- * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessagePort)
- */
-interface MessagePort extends EventTarget {
-  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessagePort/message_event) */
-  onmessage: ((this: MessagePort, ev: MessageEvent) => any) | null;
-  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessagePort/messageerror_event) */
-  onmessageerror: ((this: MessagePort, ev: MessageEvent) => any) | null;
-  /**
-   * Disconnects the port, so that it is no longer active.
-   *
-   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessagePort/close)
-   */
-  close(): void;
-  /**
-   * Posts a message through the channel. Objects listed in transfer are transferred, not just cloned, meaning that they are no longer usable on the sending side.
-   *
-   * Throws a "DataCloneError" DOMException if transfer contains duplicate objects or port, or if message could not be cloned.
-   *
-   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessagePort/postMessage)
-   */
-  postMessage(message: any, transfer: Transferable[]): void;
-  postMessage(message: any, options?: StructuredSerializeOptions): void;
-  /**
-   * Begins dispatching messages received on the port.
-   *
-   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/MessagePort/start)
-   */
-  start(): void;
-  addEventListener<K extends keyof MessagePortEventMap>(
-    type: K,
-    listener: (this: MessagePort, ev: MessagePortEventMap[K]) => any,
-    options?: boolean | AddEventListenerOptions,
-  ): void;
-  addEventListener(
-    type: string,
-    listener: EventListenerOrEventListenerObject,
-    options?: boolean | AddEventListenerOptions,
-  ): void;
-  removeEventListener<K extends keyof MessagePortEventMap>(
-    type: K,
-    listener: (this: MessagePort, ev: MessagePortEventMap[K]) => any,
-    options?: boolean | EventListenerOptions,
-  ): void;
-  removeEventListener(
-    type: string,
-    listener: EventListenerOrEventListenerObject,
-    options?: boolean | EventListenerOptions,
-  ): void;
-}
-
-declare var MessagePort: {
-  prototype: MessagePort;
-  new (): MessagePort;
-};
+declare var Worker: typeof import("worker_threads").Worker;
+declare type Worker = typeof import("worker_threads").Worker;
 
 interface EncodeIntoResult {
   /**
@@ -648,7 +570,7 @@ declare module "node:process" {
 interface BlobInterface {
   text(): Promise<string>;
   arrayBuffer(): Promise<ArrayBuffer>;
-  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
+  json<TJSONReturnType = any>(): Promise<TJSONReturnType>;
   formData(): Promise<FormData>;
 }
 
@@ -787,14 +709,7 @@ declare var FormData: {
   new (): FormData;
 };
 
-declare class Blob implements BlobInterface {
-  /**
-   * Create a new [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
-   *
-   * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
-   * @param `options` - An object containing properties to be added to the [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
-   */
-  constructor(parts?: BlobPart[], options?: BlobPropertyBag);
+declare interface Blob {
   /**
    * Create a new view **without 🚫 copying** the underlying data.
    *
@@ -851,7 +766,7 @@ declare class Blob implements BlobInterface {
    * This first decodes the data from UTF-8, then parses it as JSON.
    *
    */
-  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
+  json<TJSONReturnType = any>(): Promise<TJSONReturnType>;
 
   /**
    * Read the data from the blob as a {@link FormData} object.
@@ -870,6 +785,16 @@ declare class Blob implements BlobInterface {
   type: string;
   readonly size: number;
 }
+declare var Blob: {
+  prototype: Blob;
+  /**
+   * Create a new [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
+   *
+   * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
+   * @param `options` - An object containing properties to be added to the [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
+   */
+  new (parts?: BlobPart[], options?: BlobPropertyBag): Blob;
+};
 
 interface ResponseInit {
   headers?: HeadersInit;
@@ -1008,7 +933,7 @@ declare class Response implements BlobInterface {
    * This first decodes the data from UTF-8, then parses it as JSON.
    *
    */
-  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
+  json<TJSONReturnType = any>(): Promise<TJSONReturnType>;
 
   /**
    * Read the data from the Response as a Blob.
@@ -1269,7 +1194,7 @@ declare class Request implements BlobInterface {
    * This first decodes the data from UTF-8, then parses it as JSON.
    *
    */
-  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
+  json<TJSONReturnType = any>(): Promise<TJSONReturnType>;
 
   /**
    * Consume the [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) body as a `Blob`.
@@ -1554,24 +1479,6 @@ declare class ShadowRealm {
   constructor();
   importValue(specifier: string, bindingName: string): Promise<any>;
   evaluate(sourceText: string): any;
-}
-
-interface Blob {
-  /**
-   * Read the contents of the [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) as a JSON object
-   * @warn in browsers, this function is only available for `Response` and `Request`
-   */
-  json(): Promise<any>;
-  /**
-   * Read the [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) as a UTF-8 string
-   * @link https://developer.mozilla.org/en-US/docs/Web/API/Blob/text
-   */
-  text(): Promise<string>;
-  /**
-   * Read the [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) as an ArrayBuffer object
-   * @link https://developer.mozilla.org/en-US/docs/Web/API/Blob/arrayBuffer
-   */
-  arrayBuffer(): Promise<ArrayBuffer>;
 }
 
 declare var performance: {
@@ -3584,41 +3491,15 @@ declare module "*.txt" {
   export = text;
 }
 
+declare module "*.toml" {
+  var contents: unknown;
+  export = contents;
+}
+
 interface EventSourceEventMap {
   error: Event;
   message: MessageEvent;
   open: Event;
-}
-
-interface Worker extends EventTarget {
-  onerror: ((this: Worker, ev: ErrorEvent) => any) | null;
-  onmessage: ((this: Worker, ev: MessageEvent) => any) | null;
-  onmessageerror: ((this: Worker, ev: MessageEvent) => any) | null;
-
-  addEventListener<K extends keyof WorkerEventMap>(
-    type: K,
-    listener: (this: Worker, ev: WorkerEventMap[K]) => any,
-    options?: boolean | AddEventListenerOptions,
-  ): void;
-
-  removeEventListener<K extends keyof WorkerEventMap>(
-    type: K,
-    listener: (this: Worker, ev: WorkerEventMap[K]) => any,
-    options?: boolean | EventListenerOptions,
-  ): void;
-
-  terminate(): void;
-
-  postMessage(message: any, transfer?: Transferable[]): void;
-
-  /**
-   * Keep the process alive until the worker is terminated or `unref`'d
-   */
-  ref(): void;
-  /**
-   * Undo a previous `ref()`
-   */
-  unref(): void;
 }
 
 /**
@@ -3627,44 +3508,6 @@ interface Worker extends EventTarget {
  * Only useful in a worker thread; calling this from the main thread does nothing.
  */
 declare function postMessage(message: any, transfer?: Transferable[]): void;
-
-declare var Worker: {
-  prototype: Worker;
-  new (stringUrl: string | URL, options?: WorkerOptions): Worker;
-};
-
-interface WorkerOptions {
-  name?: string;
-
-  /**
-   * Use less memory, but make the worker slower.
-   *
-   * Internally, this sets the heap size configuration in JavaScriptCore to be
-   * the small heap instead of the large heap.
-   */
-  smol?: boolean;
-
-  /**
-   * When `true`, the worker will keep the parent thread alive until the worker is terminated or `unref`'d.
-   * When `false`, the worker will not keep the parent thread alive.
-   *
-   * By default, this is `false`.
-   */
-  ref?: boolean;
-
-  /**
-   * Does nothing in Bun
-   */
-  type?: string;
-}
-
-interface WorkerEventMap {
-  message: MessageEvent;
-  messageerror: MessageEvent;
-  error: ErrorEvent;
-  open: Event;
-  close: Event;
-}
 
 interface EventSource extends EventTarget {
   onerror: ((this: EventSource, ev: ErrorEvent) => any) | null;

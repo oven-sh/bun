@@ -14,7 +14,6 @@ describe("jest-each", () => {
   it.each(NUMBERS)("add two numbers", (a, b, e) => {
     expect(a + b).toBe(e);
   });
-
   it.each(NUMBERS)("add two numbers with callback", (a, b, e, done) => {
     expect(a + b).toBe(e);
     expect(done).toBeDefined();
@@ -36,10 +35,17 @@ describe("jest-each", () => {
     { a: 1, b: 2, e: 3 },
     { a: 2, b: 13, e: 15 },
     { a: 2, b: 13, e: 15 },
-    { a: 2, b: 13, e: 15 },
-    { a: 2, b: 13, e: 15 },
+    { a: 2, b: 123, e: 125 },
+    { a: 15, b: 13, e: 28 },
   ])("add two numbers with object", ({ a, b, e }, cb) => {
     expect(a + b).toBe(e);
     cb();
+  });
+});
+
+describe.each(["some", "cool", "strings"])("works with describe", s => {
+  it(`has access to params : ${s}`, done => {
+    expect(s).toBeTypeOf("string");
+    done();
   });
 });

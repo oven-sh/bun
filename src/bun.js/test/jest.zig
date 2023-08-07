@@ -410,6 +410,11 @@ pub const Jest = struct {
             ZigString.static("skipIf"),
             JSC.NewFunction(globalObject, ZigString.static("skipIf"), 2, DescribeScope.skipIf, false),
         );
+        describe.put(
+            globalObject,
+            ZigString.static("each"),
+            JSC.NewFunction(globalObject, ZigString.static("each"), 2, DescribeScope.each, false),
+        );
 
         module.put(
             globalObject,
@@ -553,8 +558,9 @@ pub const TestScope = struct {
     parent: *DescribeScope,
 
     func: JSC.JSValue,
-    func_arg: JSC.JSValue,
-    func_has_args: bool = false,
+    func_arg: []JSC.JSValue,
+    func_has_callback: bool = false,
+    func_arg_size: usize,
 
     id: TestRunner.Test.ID = 0,
     promise: ?*JSInternalPromise = null,
@@ -588,7 +594,7 @@ pub const TestScope = struct {
     }
 
     pub fn each(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createEach(globalThis, callframe, "test.each()", "each", TestScope);
+        return createEach(globalThis, callframe, "test.each()", "each", true);
     }
 
     pub fn callIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
@@ -653,11 +659,15 @@ pub const TestScope = struct {
         const func = this.func;
         Jest.runner.?.did_pending_test_fail = false;
         defer {
+            var idx: u32 = 0;
+            while (idx < this.func_arg_size) {
+                this.func_arg[idx].unprotect();
+                idx += 1;
+            }
             func.unprotect();
             this.func = .zero;
-            this.func_has_args = false;
-            this.func_arg.unprotect();
-            this.func_arg = .zero;
+            this.func_arg_size = 0;
+            this.func_has_callback = false;
             vm.autoGarbageCollect();
         }
         JSC.markBinding(@src());
@@ -673,66 +683,20 @@ pub const TestScope = struct {
             task.test_id,
         );
 
-        const func_params_length = func.getLength(vm.global);
-        var has_callback_function = false;
-
-        if (func_params_length > 0) {
-            var func_args_length: usize = 0;
-
-            if (this.func_has_args) {
-                // If the func arg is an array, we will spread it as the arguments, so assume its length
-                if (!this.func_arg.isEmptyOrUndefinedOrNull() and this.func_arg.jsType().isArray()) {
-                    func_args_length = this.func_arg.getLength(vm.global);
-                } else {
-                    func_args_length = 1;
-                }
-            }
-
-            const allocator = getAllocator(vm.global);
-            const should_add_callback_function: bool = !this.func_has_args or (func_params_length > func_args_length);
-
-            var argSize: usize = func_args_length;
-            if (should_add_callback_function) {
-                argSize += 1;
-            }
-
-            const function_args = allocator.alloc(JSC.JSValue, argSize) catch @panic("can't create function_args");
-            var idx: u32 = 0;
-
-            // Spread the array as arguments
-            if (this.func_has_args) {
-                if (!this.func_arg.isEmptyOrUndefinedOrNull() and this.func_arg.jsType().isArray()) {
-                    const length = this.func_arg.getLength(vm.global);
-
-                    while (idx < length) : (idx += 1) {
-                        function_args[idx] = this.func_arg.getIndex(vm.global, idx);
-                    }
-                } else {
-                    function_args[idx] = this.func_arg;
-                    idx += 1;
-                }
-            }
-
-            if (should_add_callback_function) {
-                has_callback_function = true;
-                const callback_func = JSC.NewFunctionWithData(
-                    vm.global,
-                    ZigString.static("done"),
-                    0,
-                    TestScope.onDone,
-                    false,
-                    task,
-                );
-                task.done_callback_state = .pending;
-                function_args[idx] = callback_func;
-            }
-
-            initial_value = func.call(vm.global, function_args);
-
-            allocator.free(function_args);
-        } else {
-            initial_value = func.call(vm.global, &.{});
+        if (this.func_has_callback) {
+            const callback_func = JSC.NewFunctionWithData(
+                vm.global,
+                ZigString.static("done"),
+                0,
+                TestScope.onDone,
+                false,
+                task,
+            );
+            task.done_callback_state = .pending;
+            this.func_arg[this.func_arg_size - 1] = callback_func;
         }
+
+        initial_value = this.func.call(vm.global, @as([]const JSC.JSValue, this.func_arg));
 
         if (initial_value.isAnyError()) {
             if (!Jest.runner.?.did_pending_test_fail) {
@@ -790,7 +754,7 @@ pub const TestScope = struct {
             }
         }
 
-        if (has_callback_function) {
+        if (this.func_has_callback) {
             return .{ .pending = {} };
         }
 
@@ -1094,6 +1058,10 @@ pub const DescribeScope = struct {
         return createScope(globalThis, callframe, "describe.todo()", false, .todo);
     }
 
+    pub fn each(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createEach(globalThis, callframe, "describe.each()", "each", false);
+    }
+
     pub fn callIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
         return createIfScope(globalThis, callframe, "describe.if()", "if", DescribeScope, false);
     }
@@ -1102,7 +1070,7 @@ pub const DescribeScope = struct {
         return createIfScope(globalThis, callframe, "describe.skipIf()", "skipIf", DescribeScope, true);
     }
 
-    pub fn run(this: *DescribeScope, globalObject: *JSC.JSGlobalObject, callback: JSC.JSValue) JSC.JSValue {
+    pub fn run(this: *DescribeScope, globalObject: *JSC.JSGlobalObject, callback: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
         if (comptime is_bindgen) return undefined;
         callback.protect();
         defer callback.unprotect();
@@ -1117,7 +1085,7 @@ pub const DescribeScope = struct {
         {
             JSC.markBinding(@src());
             globalObject.clearTerminationException();
-            var result = callback.call(globalObject, &.{});
+            var result = callback.call(globalObject, args);
 
             if (result.asAnyPromise()) |prom| {
                 globalObject.bunVM().waitForPromise(prom);
@@ -1620,13 +1588,23 @@ inline fn createScope(
             function.protect();
         }
 
+        const func_params_length = function.getLength(globalThis);
+        var arg_size: usize = 0;
+        var has_callback = false;
+        if (func_params_length > 0) {
+            has_callback = true;
+            arg_size = 1;
+        }
+        var function_args = allocator.alloc(JSC.JSValue, arg_size) catch unreachable;
+
         parent.tests.append(allocator, TestScope{
             .label = label,
             .parent = parent,
             .tag = tag_to_use,
             .func = if (is_skip) .zero else function,
-            .func_arg = .zero,
-            .func_has_args = false,
+            .func_arg = function_args,
+            .func_arg_size = arg_size,
+            .func_has_callback = has_callback,
             .timeout_millis = timeout_ms,
         }) catch unreachable;
 
@@ -1645,7 +1623,10 @@ inline fn createScope(
             .is_skip = is_skip or parent.is_skip,
         };
 
-        return scope.run(globalThis, function);
+        const function_args = allocator.alloc(JSC.JSValue, 0) catch unreachable;
+        defer allocator.free(function_args);
+
+        return scope.run(globalThis, function, function_args);
     }
 
     return this;
@@ -1800,6 +1781,8 @@ pub fn printGithubAnnotation(exception: *JSC.ZigException) void {
     Output.flush();
 }
 
+pub const EachData = struct { strong: JSC.Strong, is_test: bool };
+
 fn eachBind(
     globalThis: *JSGlobalObject,
     callframe: *CallFrame,
@@ -1852,12 +1835,12 @@ fn eachBind(
 
     if (JSC.getFunctionData(callee)) |data| {
         const allocator = getAllocator(globalThis);
-        const strong_ptr = bun.cast(*JSC.Strong, data);
+        const each_data = bun.cast(*EachData, data);
         JSC.setFunctionData(callee, null);
-        const array = strong_ptr.*.get() orelse return .zero;
+        const array = each_data.*.strong.get() orelse return .zero;
         defer {
-            strong_ptr.*.deinit();
-            allocator.destroy(strong_ptr);
+            each_data.*.strong.deinit();
+            allocator.destroy(each_data);
         }
 
         if (array.isUndefinedOrNull() or !array.jsType().isArray()) {
@@ -1873,17 +1856,69 @@ fn eachBind(
             else
                 (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
 
-            function.protect();
-            item.protect();
-            parent.tests.append(allocator, TestScope{
-                .label = label,
-                .parent = parent,
-                .tag = parent.tag,
-                .func = function,
-                .func_arg = item,
-                .func_has_args = true,
-                .timeout_millis = timeout_ms,
-            }) catch unreachable;
+            const func_params_length = function.getLength(globalThis);
+            const item_is_array = !item.isEmptyOrUndefinedOrNull() and item.jsType().isArray();
+            var arg_size: usize = 1;
+
+            if (item_is_array) {
+                arg_size = item.getLength(globalThis);
+            }
+
+            // add room for callback function
+            var has_callback_function: bool = func_params_length > arg_size and each_data.is_test;
+            if (has_callback_function) {
+                arg_size += 1;
+            }
+
+            var function_args = allocator.alloc(JSC.JSValue, arg_size) catch @panic("can't create function_args");
+            var idx: u32 = 0;
+
+            if (item_is_array) {
+                // Spread array as args
+                const item_length = item.getLength(globalThis);
+                while (idx < item_length) : (idx += 1) {
+                    var arg = item.getIndex(globalThis, idx);
+                    arg.protect();
+                    function_args[idx] = arg;
+                }
+            } else {
+                item.protect();
+                function_args[idx] = item;
+                idx += 1;
+            }
+
+            if (each_data.is_test) {
+                function.protect();
+                parent.tests.append(allocator, TestScope{
+                    .label = label,
+                    .parent = parent,
+                    .tag = parent.tag,
+                    .func = function,
+                    .func_arg = function_args,
+                    .func_arg_size = arg_size,
+                    .func_has_callback = has_callback_function,
+                    .timeout_millis = timeout_ms,
+                }) catch unreachable;
+
+                if (test_elapsed_timer == null) create_timer: {
+                    var timer = allocator.create(std.time.Timer) catch unreachable;
+                    timer.* = std.time.Timer.start() catch break :create_timer;
+                    test_elapsed_timer = timer;
+                }
+            } else {
+                var scope = allocator.create(DescribeScope) catch unreachable;
+                scope.* = .{
+                    .label = label,
+                    .parent = parent,
+                    .file_id = parent.file_id,
+                    .tag = if (parent.is_skip) parent.tag else .pass,
+                    .is_skip = parent.is_skip,
+                };
+
+                var ret = scope.run(globalThis, function, function_args);
+                _ = ret;
+                allocator.free(function_args);
+            }
         }
     }
 
@@ -1895,10 +1930,8 @@ inline fn createEach(
     callframe: *CallFrame,
     comptime property: string,
     comptime signature: string,
-    comptime Scope: type,
+    comptime is_test: bool,
 ) JSValue {
-    _ = Scope;
-
     const arguments = callframe.arguments(1);
     const args = arguments.ptr[0..arguments.len];
 
@@ -1916,8 +1949,11 @@ inline fn createEach(
     const allocator = getAllocator(globalThis);
     const name = ZigString.static(property);
     var strong = JSC.Strong.create(array, globalThis);
-    var strong_ptr = allocator.create(JSC.Strong) catch unreachable;
-    strong_ptr.* = strong;
+    var each_data = allocator.create(EachData) catch unreachable;
+    each_data.* = EachData{
+        .strong = strong,
+        .is_test = is_test,
+    };
 
-    return JSC.NewFunctionWithData(globalThis, name, 3, eachBind, true, strong_ptr);
+    return JSC.NewFunctionWithData(globalThis, name, 3, eachBind, true, each_data);
 }

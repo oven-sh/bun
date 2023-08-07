@@ -566,6 +566,7 @@ it("path.normalize", () => {
   strictEqual(path.posix.normalize("../foobar/barfoo/foo/../../../bar/../../"), "../../");
   strictEqual(path.posix.normalize("../.../../foobar/../../../bar/../../baz"), "../../../../baz");
   strictEqual(path.posix.normalize("foo/bar\\baz"), "foo/bar\\baz");
+  strictEqual(path.posix.normalize(""), ".");
 });
 
 it("path.resolve", () => {

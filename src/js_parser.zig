@@ -2847,6 +2847,8 @@ pub const Parser = struct {
 
         if (self.log.errors > 0) {
             if (comptime Environment.isWasm) {
+                // If the logger is backed by console.log, every print appends a newline.
+                // so buffering is kind of mandatory here
                 const fakeWriter = struct {
                     fn writeAll(_: @This(), data: []const u8) anyerror!usize {
                         if (data.len == 0) return 0;

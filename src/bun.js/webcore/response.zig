@@ -37,6 +37,7 @@ const JSValue = JSC.JSValue;
 const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
 const NullableAllocator = @import("../../nullable_allocator.zig").NullableAllocator;
+const DataURL = @import("../../resolver/data_url.zig").DataURL;
 
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
@@ -971,6 +972,45 @@ pub const Fetch = struct {
         }
     };
 
+    fn dataURLResponse(
+        _data_url: DataURL,
+        globalThis: *JSGlobalObject,
+        allocator: std.mem.Allocator,
+    ) JSValue {
+        var data_url = _data_url;
+
+        const data = data_url.decodeData(allocator) catch {
+            const err = JSC.createError(globalThis, "failed to fetch the data URL", .{});
+            return JSPromise.rejectedPromiseValue(globalThis, err);
+        };
+        var blob = Blob.init(data, allocator, globalThis);
+
+        var allocated = false;
+        const mime_type = bun.HTTP.MimeType.init(data_url.mime_type, allocator, &allocated);
+        blob.content_type = mime_type.value;
+        if (allocated) {
+            blob.content_type_allocated = true;
+        }
+
+        var response = allocator.create(Response) catch @panic("out of memory");
+
+        response.* = Response{
+            .body = Body{
+                .init = Body.Init{
+                    .status_code = 200,
+                },
+                .value = .{
+                    .Blob = blob,
+                },
+            },
+            .allocator = allocator,
+            .status_text = bun.String.createAtom("OK"),
+            .url = data_url.url.dupeRef(),
+        };
+
+        return JSPromise.resolvedPromiseValue(globalThis, response.toJS(globalThis));
+    }
+
     pub export fn Bun__fetch(
         ctx: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
@@ -1036,6 +1076,19 @@ pub const Fetch = struct {
                     bun.default_allocator.free(host);
                 }
                 return JSPromise.rejectedPromiseValue(globalThis, err);
+            }
+
+            if (request.url.hasPrefixComptime("data:")) {
+                var url_slice = request.url.toUTF8WithoutRef(bun.default_allocator);
+                defer url_slice.deinit();
+
+                var data_url = DataURL.parseWithoutCheck(url_slice.slice()) catch {
+                    const err = JSC.createError(globalThis, "failed to fetch the data URL", .{});
+                    return JSPromise.rejectedPromiseValue(globalThis, err);
+                };
+
+                data_url.url = request.url;
+                return dataURLResponse(data_url, globalThis, bun.default_allocator);
             }
 
             url = ZigURL.fromString(bun.default_allocator, request.url) catch {
@@ -1185,6 +1238,19 @@ pub const Fetch = struct {
                     bun.default_allocator.free(host);
                 }
                 return JSPromise.rejectedPromiseValue(globalThis, err);
+            }
+
+            if (str.hasPrefixComptime("data:")) {
+                var url_slice = str.toUTF8WithoutRef(bun.default_allocator);
+                defer url_slice.deinit();
+
+                var data_url = DataURL.parseWithoutCheck(url_slice.slice()) catch {
+                    const err = JSC.createError(globalThis, "failed to fetch the data URL", .{});
+                    return JSPromise.rejectedPromiseValue(globalThis, err);
+                };
+                data_url.url = str;
+
+                return dataURLResponse(data_url, globalThis, bun.default_allocator);
             }
 
             url = ZigURL.fromString(bun.default_allocator, str) catch {

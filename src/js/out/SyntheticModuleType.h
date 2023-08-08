@@ -69,14 +69,15 @@ enum SyntheticModuleType : uint32_t {
     // Native modules run through the same system, but with different underlying initializers.
     // They also have bit 10 set to differentiate them from JS builtins.
     NativeModuleFlag = (1 << 10) | (1 << 9),
-    BunJSC = 1024,
-    NodeBuffer = 1025,
-    NodeConstants = 1026,
-    NodeModule = 1027,
-    NodeProcess = 1028,
-    NodeStringDecoder = 1029,
-    NodeTTY = 1030,
-    NodeUtilTypes = 1031,
-    UTF8Validate = 1032,
+    BunObject = 1024,
+    BunJSC = 1025,
+    NodeBuffer = 1026,
+    NodeConstants = 1027,
+    NodeModule = 1028,
+    NodeProcess = 1029,
+    NodeStringDecoder = 1030,
+    NodeTTY = 1031,
+    NodeUtilTypes = 1032,
+    UTF8Validate = 1033,
 };
 

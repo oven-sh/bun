@@ -182,7 +182,7 @@ pub fn build(b: *Build) !void {
     is_debug_build = optimize == OptimizeMode.Debug;
     const bun_executable_name = if (optimize == std.builtin.OptimizeMode.Debug) "bun-debug" else "bun";
     const root_src = if (target.getOsTag() == std.Target.Os.Tag.freestanding)
-        "src/main_wasm.zig"
+        "root_wasm.zig"
     else
         "root.zig";
 
@@ -322,7 +322,7 @@ pub fn build(b: *Build) !void {
         const wasm = b.step("bun-wasm", "Build WASM");
         var wasm_step = b.addStaticLibrary(.{
             .name = "bun-wasm",
-            .root_source_file = FileSource.relative("src/main_wasm.zig"),
+            .root_source_file = FileSource.relative("root_wasm.zig"),
             .target = target,
             .optimize = optimize,
         });
@@ -332,6 +332,8 @@ pub fn build(b: *Build) !void {
         // wasm_step.link_emit_relocs = true;
         // wasm_step.single_threaded = true;
         try configureObjectStep(b, wasm_step, @TypeOf(target), target, obj.main_pkg_path.?);
+        var build_opts = default_build_options;
+        wasm_step.addOptions("build_options", build_opts.step(b));
     }
 
     {

@@ -875,6 +875,10 @@ pub const ExportRenamer = struct {
 pub fn computeInitialReservedNames(
     allocator: std.mem.Allocator,
 ) !bun.StringHashMapUnmanaged(u32) {
+    if (comptime bun.Environment.isWasm) {
+        unreachable;
+    }
+
     var names = bun.StringHashMapUnmanaged(u32){};
 
     const extras = .{

@@ -50,12 +50,14 @@ test("all properties are present", () => {
   expect(Worker).toBeDefined();
 
   expect(() => {
+    // @ts-expect-error no args
     wt.markAsUntransferable();
-  }).toThrow("not implemented");
+  }).toThrow("not yet implemented");
 
   expect(() => {
+    // @ts-expect-error no args
     wt.moveMessagePortToContext();
-  }).toThrow("not implemented");
+  }).toThrow("not yet implemented");
 });
 
 test("receiveMessageOnPort works across threads", () => {

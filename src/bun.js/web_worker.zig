@@ -341,22 +341,20 @@ pub const WebWorker = struct {
         if (this.requested_terminate) {
             return;
         }
-
-        this.allowed_to_exit = false;
         _ = this.requestTerminate();
     }
 
     pub fn setRef(this: *WebWorker, value: bool) callconv(.C) void {
-        if (this.requested_terminate and value) {
+        if (this.requested_terminate and !value) {
             this.parent_poll_ref.unref(this.parent);
             return;
         }
 
-        this.allowed_to_exit = value;
-        if (value) {
-            this.parent_poll_ref.ref(this.parent);
-        } else {
+        this.allowed_to_exit = !value;
+        if (this.allowed_to_exit) {
             this.parent_poll_ref.unref(this.parent);
+        } else {
+            this.parent_poll_ref.ref(this.parent);
         }
 
         if (this.vm) |vm| {
@@ -404,6 +402,7 @@ pub const WebWorker = struct {
     }
 
     fn requestTerminate(this: *WebWorker) bool {
+        this.setRef(false);
         var vm = this.vm orelse {
             this.requested_terminate = true;
             return false;

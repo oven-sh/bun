@@ -627,73 +627,204 @@ it("path.resolve", () => {
   strictEqual(failures.length, 0, failures.join("\n"));
 });
 
-it("path.parse", () => {
-  expect(path.parse("/tmp")).toStrictEqual({ root: "/", dir: "/", base: "tmp", ext: "", name: "tmp" });
+describe("path.parse and path.format", () => {
+  const testCases = [
+    {
+      input: "/tmp/test.txt",
+      expected: {
+        root: "/",
+        dir: "/tmp",
+        base: "test.txt",
+        ext: ".txt",
+        name: "test",
+      },
+    },
+    {
+      input: "/tmp/test/file.txt",
+      expected: {
+        root: "/",
+        dir: "/tmp/test",
+        base: "file.txt",
+        ext: ".txt",
+        name: "file",
+      },
+    },
+    {
+      input: "/tmp/test/dir",
+      expected: {
+        root: "/",
+        dir: "/tmp/test",
+        base: "dir",
+        ext: "",
+        name: "dir",
+      },
+    },
+    {
+      input: "/tmp/test/dir/",
+      expected: {
+        root: "/",
+        dir: "/tmp/test",
+        base: "dir",
+        ext: "",
+        name: "dir",
+      },
+    },
+    {
+      input: ".",
+      expected: {
+        root: "",
+        dir: "",
+        base: ".",
+        ext: "",
+        name: ".",
+      },
+    },
+    {
+      input: "./",
+      expected: {
+        root: "",
+        dir: "",
+        base: ".",
+        ext: "",
+        name: ".",
+      },
+    },
+    {
+      input: "/.",
+      expected: {
+        root: "/",
+        dir: "/",
+        base: ".",
+        ext: "",
+        name: ".",
+      },
+    },
+    {
+      input: "/../",
+      expected: {
+        root: "/",
+        dir: "/",
+        base: "..",
+        ext: ".",
+        name: ".",
+      },
+    },
+    {
+      input: "./file.txt",
+      expected: {
+        root: "",
+        dir: ".",
+        base: "file.txt",
+        ext: ".txt",
+        name: "file",
+      },
+    },
+    {
+      input: "../file.txt",
+      expected: {
+        root: "",
+        dir: "..",
+        base: "file.txt",
+        ext: ".txt",
+        name: "file",
+      },
+    },
+    {
+      input: "../test/file.txt",
+      expected: {
+        root: "",
+        dir: "../test",
+        base: "file.txt",
+        ext: ".txt",
+        name: "file",
+      },
+    },
+    {
+      input: "test/file.txt",
+      expected: {
+        root: "",
+        dir: "test",
+        base: "file.txt",
+        ext: ".txt",
+        name: "file",
+      },
+    },
+    {
+      input: "test/dir",
+      expected: {
+        root: "",
+        dir: "test",
+        base: "dir",
+        ext: "",
+        name: "dir",
+      },
+    },
+    {
+      input: "test/dir/another_dir",
+      expected: {
+        root: "",
+        dir: "test/dir",
+        base: "another_dir",
+        ext: "",
+        name: "another_dir",
+      },
+    },
+    {
+      input: "./dir",
+      expected: {
+        root: "",
+        dir: ".",
+        base: "dir",
+        ext: "",
+        name: "dir",
+      },
+    },
+    {
+      input: "../dir",
+      expected: {
+        root: "",
+        dir: "..",
+        base: "dir",
+        ext: "",
+        name: "dir",
+      },
+    },
+    {
+      input: "../dir/another_dir",
+      expected: {
+        root: "",
+        dir: "../dir",
+        base: "another_dir",
+        ext: "",
+        name: "another_dir",
+      },
+    },
+  ];
+  testCases.forEach(({ input, expected }) => {
+    it(`case ${input}`, () => {
+      const parsed = path.parse(input);
+      expect(parsed).toStrictEqual(expected);
 
-  expect(path.parse("/tmp/test.txt")).toStrictEqual({
-    root: "/",
-    dir: "/tmp",
-    base: "test.txt",
-    ext: ".txt",
-    name: "test",
+      const formatted = path.format(parsed);
+      expect(formatted).toStrictEqual(input.slice(-1) === "/" ? input.slice(0, -1) : input);
+    });
   });
-
-  expect(path.parse("/tmp/test/file.txt")).toStrictEqual({
-    root: "/",
-    dir: "/tmp/test",
-    base: "file.txt",
-    ext: ".txt",
-    name: "file",
-  });
-
-  expect(path.parse("/tmp/test/dir")).toStrictEqual({ root: "/", dir: "/tmp/test", base: "dir", ext: "", name: "dir" });
-  expect(path.parse("/tmp/test/dir/")).toStrictEqual({
-    root: "/",
-    dir: "/tmp/test",
-    base: "dir",
-    ext: "",
-    name: "dir",
-  });
-
-  expect(path.parse(".")).toStrictEqual({ root: "", dir: "", base: ".", ext: "", name: "." });
-  expect(path.parse("./")).toStrictEqual({ root: "", dir: "", base: ".", ext: "", name: "." });
-  expect(path.parse("/.")).toStrictEqual({ root: "/", dir: "/", base: ".", ext: "", name: "." });
-  expect(path.parse("/../")).toStrictEqual({ root: "/", dir: "/", base: "..", ext: ".", name: "." });
-
-  expect(path.parse("./file.txt")).toStrictEqual({ root: "", dir: ".", base: "file.txt", ext: ".txt", name: "file" });
-  expect(path.parse("../file.txt")).toStrictEqual({ root: "", dir: "..", base: "file.txt", ext: ".txt", name: "file" });
-  expect(path.parse("../test/file.txt")).toStrictEqual({
-    root: "",
-    dir: "../test",
-    base: "file.txt",
-    ext: ".txt",
-    name: "file",
-  });
-  expect(path.parse("test/file.txt")).toStrictEqual({
-    root: "",
-    dir: "test",
-    base: "file.txt",
-    ext: ".txt",
-    name: "file",
-  });
-
-  expect(path.parse("test/dir")).toStrictEqual({ root: "", dir: "test", base: "dir", ext: "", name: "dir" });
-  expect(path.parse("test/dir/another_dir")).toStrictEqual({
-    root: "",
-    dir: "test/dir",
-    base: "another_dir",
-    ext: "",
-    name: "another_dir",
-  });
-
-  expect(path.parse("./dir")).toStrictEqual({ root: "", dir: ".", base: "dir", ext: "", name: "dir" });
-  expect(path.parse("../dir")).toStrictEqual({ root: "", dir: "..", base: "dir", ext: "", name: "dir" });
-  expect(path.parse("../dir/another_dir")).toStrictEqual({
-    root: "",
-    dir: "../dir",
-    base: "another_dir",
-    ext: "",
-    name: "another_dir",
+  it("empty string arguments, issue #4005", () => {
+    expect(
+      path.format({
+        root: "",
+        dir: "",
+        base: "",
+        name: "foo",
+        ext: ".ts",
+      }),
+    ).toStrictEqual("foo.ts");
+    expect(
+      path.format({
+        name: "foo",
+        ext: ".ts",
+      }),
+    ).toStrictEqual("foo.ts");
   });
 });
 

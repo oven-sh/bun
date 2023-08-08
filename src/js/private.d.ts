@@ -193,6 +193,12 @@ interface BunLazyModules {
     set: typeof import("./builtins/AsyncContext").setAsyncContext;
     cleanupLater: () => void;
   };
+  "worker_threads": [
+    //
+    workerData: any,
+    threadId: number,
+    _receiveMessageOnPort: (port: MessagePort) => any,
+  ];
 
   // ReadableStream related
   [1]: any;

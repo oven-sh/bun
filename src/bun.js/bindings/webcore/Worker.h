@@ -94,7 +94,7 @@ public:
     void drainEvents();
     void dispatchOnline(Zig::GlobalObject* workerGlobalObject);
     void dispatchError(WTF::String message);
-    void dispatchExit();
+    void dispatchExit(int32_t exitCode);
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
     ScriptExecutionContextIdentifier clientIdentifier() const { return m_clientIdentifier; }
     WorkerOptions& options() { return m_options; }

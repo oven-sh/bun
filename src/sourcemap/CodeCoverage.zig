@@ -632,10 +632,12 @@ pub const ByteRangeMapping = struct {
 };
 
 comptime {
-    @export(ByteRangeMapping.generate, .{ .name = "ByteRangeMapping__generate" });
-    @export(ByteRangeMapping.findExecutedLines, .{ .name = "ByteRangeMapping__findExecutedLines" });
-    @export(ByteRangeMapping.find, .{ .name = "ByteRangeMapping__find" });
-    @export(ByteRangeMapping.getSourceID, .{ .name = "ByteRangeMapping__getSourceID" });
+    if (bun.Environment.isNative) {
+        @export(ByteRangeMapping.generate, .{ .name = "ByteRangeMapping__generate" });
+        @export(ByteRangeMapping.findExecutedLines, .{ .name = "ByteRangeMapping__findExecutedLines" });
+        @export(ByteRangeMapping.find, .{ .name = "ByteRangeMapping__find" });
+        @export(ByteRangeMapping.getSourceID, .{ .name = "ByteRangeMapping__getSourceID" });
+    }
 }
 
 pub const CoverageFraction = struct {

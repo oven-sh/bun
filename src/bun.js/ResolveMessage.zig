@@ -35,6 +35,9 @@ pub const ResolveMessage = struct {
                     return try std.fmt.allocPrint(allocator, "Cannot find module \"{s}\" from \"{s}\"", .{ specifier, referrer });
                 }
             },
+            error.InvalidDataURL => {
+                return try std.fmt.allocPrint(allocator, "Cannot resolve invalid data URL \"{s}\" from \"{s}\"", .{ specifier, referrer });
+            },
             else => {
                 if (Resolver.isPackagePath(specifier)) {
                     return try std.fmt.allocPrint(allocator, "{s} while resolving package \"{s}\" from \"{s}\"", .{ @errorName(err), specifier, referrer });

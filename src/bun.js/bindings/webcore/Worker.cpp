@@ -61,7 +61,7 @@
 #include "MessageEvent.h"
 #include <JavaScriptCore/HashMapImplInlines.h>
 #include "BunWorkerGlobalScope.h"
-
+#include "CloseEvent.h"
 namespace WebCore {
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(Worker);
@@ -210,6 +210,7 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
 
 void Worker::terminate()
 {
+    printf("terminate\n");
     // m_contextProxy.terminateWorkerGlobalScope();
     m_wasTerminated = true;
     WebWorker__terminate(impl_);
@@ -339,19 +340,19 @@ void Worker::dispatchError(WTF::String message)
         protectedThis->dispatchEvent(event);
     });
 }
-void Worker::dispatchExit()
+void Worker::dispatchExit(int32_t exitCode)
 {
     auto* ctx = scriptExecutionContext();
     if (!ctx)
         return;
 
-    ScriptExecutionContext::postTaskTo(ctx->identifier(), [protectedThis = Ref { *this }](ScriptExecutionContext& context) -> void {
+    ScriptExecutionContext::postTaskTo(ctx->identifier(), [exitCode, protectedThis = Ref { *this }](ScriptExecutionContext& context) -> void {
         protectedThis->m_isOnline = false;
         protectedThis->m_isClosing = true;
         protectedThis->setKeepAlive(false);
 
         if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
-            auto event = Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No);
+            auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
             protectedThis->dispatchEvent(event);
         }
     });
@@ -377,6 +378,8 @@ void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)
 
 extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker* worker, int32_t exitCode)
 {
+    worker->dispatchExit(exitCode);
+
     if (globalObject) {
         auto* ctx = globalObject->scriptExecutionContext();
         if (ctx) {
@@ -398,8 +401,6 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
         vm.notifyNeedTermination();
         vm.deferredWorkTimer->doWork(vm);
     }
-
-    worker->dispatchExit();
 }
 extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)
 {

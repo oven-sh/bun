@@ -3140,4 +3140,87 @@ pub const Api = struct {
             try writer.writeArray(u8, this.contents);
         }
     };
+
+    pub const GetTestsRequest = struct {
+        /// path
+        path: []const u8,
+
+        /// contents
+        contents: []const u8,
+
+        pub fn decode(reader: anytype) anyerror!GetTestsRequest {
+            var this = std.mem.zeroes(GetTestsRequest);
+
+            this.path = try reader.readValue([]const u8);
+            this.contents = try reader.readArray(u8);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeValue(@TypeOf(this.path), this.path);
+            try writer.writeArray(u8, this.contents);
+        }
+    };
+
+    pub const TestKind = enum(u8) {
+        _none,
+        /// test_fn
+        test_fn,
+
+        /// describe_fn
+        describe_fn,
+
+        _,
+
+        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+            return try std.json.stringify(@tagName(self), opts, o);
+        }
+    };
+
+    pub const TestResponseItem = struct {
+        /// byteOffset
+        byte_offset: i32 = 0,
+
+        /// label
+        label: StringPointer,
+
+        /// kind
+        kind: TestKind,
+
+        pub fn decode(reader: anytype) anyerror!TestResponseItem {
+            var this = std.mem.zeroes(TestResponseItem);
+
+            this.byte_offset = try reader.readValue(i32);
+            this.label = try reader.readValue(StringPointer);
+            this.kind = try reader.readValue(TestKind);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeInt(this.byte_offset);
+            try writer.writeValue(@TypeOf(this.label), this.label);
+            try writer.writeEnum(this.kind);
+        }
+    };
+
+    pub const GetTestsResponse = struct {
+        /// tests
+        tests: []const TestResponseItem,
+
+        /// contents
+        contents: []const u8,
+
+        pub fn decode(reader: anytype) anyerror!GetTestsResponse {
+            var this = std.mem.zeroes(GetTestsResponse);
+
+            this.tests = try reader.readArray(TestResponseItem);
+            this.contents = try reader.readArray(u8);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeArray(TestResponseItem, this.tests);
+            try writer.writeArray(u8, this.contents);
+        }
+    };
 };

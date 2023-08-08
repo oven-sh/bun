@@ -373,8 +373,169 @@ declare type MessageChannel = import("worker_threads").MessageChannel;
 declare var BroadcastChannel: typeof import("worker_threads").BroadcastChannel;
 declare type BroadcastChannel = import("worker_threads").BroadcastChannel;
 
-declare var Worker: typeof import("worker_threads").Worker;
-declare type Worker = typeof import("worker_threads").Worker;
+interface AbstractWorkerEventMap {
+  error: ErrorEvent;
+}
+
+interface WorkerEventMap extends AbstractWorkerEventMap {
+  message: MessageEvent;
+  messageerror: MessageEvent;
+}
+
+interface AbstractWorker {
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/ServiceWorker/error_event) */
+  onerror: ((this: AbstractWorker, ev: ErrorEvent) => any) | null;
+  addEventListener<K extends keyof AbstractWorkerEventMap>(
+    type: K,
+    listener: (this: AbstractWorker, ev: AbstractWorkerEventMap[K]) => any,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  removeEventListener<K extends keyof AbstractWorkerEventMap>(
+    type: K,
+    listener: (this: AbstractWorker, ev: AbstractWorkerEventMap[K]) => any,
+    options?: boolean | EventListenerOptions,
+  ): void;
+  removeEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | EventListenerOptions,
+  ): void;
+}
+
+/**
+ * Bun's Web Worker constructor supports some extra options on top of the API browsers have.
+ */
+interface WorkerOptions {
+  /**
+   * A string specifying an identifying name for the DedicatedWorkerGlobalScope representing the scope of
+   * the worker, which is mainly useful for debugging purposes.
+   */
+  name?: string;
+
+  /**
+   * Use less memory, but make the worker slower.
+   *
+   * Internally, this sets the heap size configuration in JavaScriptCore to be
+   * the small heap instead of the large heap.
+   */
+  smol?: boolean;
+
+  /**
+   * When `true`, the worker will keep the parent thread alive until the worker is terminated or `unref`'d.
+   * When `false`, the worker will not keep the parent thread alive.
+   *
+   * By default, this is `false`.
+   */
+  ref?: boolean;
+
+  /**
+   * In Bun, this does nothing.
+   */
+  type?: string;
+
+  /**
+   * List of arguments which would be stringified and appended to
+   * `Bun.argv` / `process.argv` in the worker. This is mostly similar to the `data`
+   * but the values will be available on the global `Bun.argv` as if they
+   * were passed as CLI options to the script.
+   */
+  // argv?: any[] | undefined;
+
+  /** If `true` and the first argument is a string, interpret the first argument to the constructor as a script that is executed once the worker is online. */
+  // eval?: boolean | undefined;
+
+  /**
+   * If set, specifies the initial value of process.env inside the Worker thread. As a special value, worker.SHARE_ENV may be used to specify that the parent thread and the child thread should share their environment variables; in that case, changes to one thread's process.env object affect the other thread as well. Default: process.env.
+   */
+  env?:
+    | Record<string, string>
+    | typeof import("node:worker_threads")["SHARE_ENV"]
+    | undefined;
+
+  /**
+   * In Bun, this does nothing.
+   */
+  credentials?: string;
+
+  /**
+   * @default true
+   */
+  // trackUnmanagedFds?: boolean;
+
+  // resourceLimits?: import("worker_threads").ResourceLimits;
+}
+
+interface Worker extends EventTarget, AbstractWorker {
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Worker/message_event) */
+  onmessage: ((this: Worker, ev: MessageEvent) => any) | null;
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Worker/messageerror_event) */
+  onmessageerror: ((this: Worker, ev: MessageEvent) => any) | null;
+  /**
+   * Clones message and transmits it to worker's global environment. transfer can be passed as a list of objects that are to be transferred rather than cloned.
+   *
+   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Worker/postMessage)
+   */
+  postMessage(message: any, transfer: Transferable[]): void;
+  postMessage(message: any, options?: StructuredSerializeOptions): void;
+  /**
+   * Aborts worker's associated global environment.
+   *
+   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Worker/terminate)
+   */
+  terminate(): void;
+  addEventListener<K extends keyof WorkerEventMap>(
+    type: K,
+    listener: (this: Worker, ev: WorkerEventMap[K]) => any,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  removeEventListener<K extends keyof WorkerEventMap>(
+    type: K,
+    listener: (this: Worker, ev: WorkerEventMap[K]) => any,
+    options?: boolean | EventListenerOptions,
+  ): void;
+  removeEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | EventListenerOptions,
+  ): void;
+
+  /**
+   * Opposite of `unref()`, calling `ref()` on a previously `unref()`ed worker does _not_ let the program exit if it's the only active handle left (the default
+   * behavior). If the worker is `ref()`ed, calling `ref()` again has
+   * no effect.
+   * @since v10.5.0
+   */
+  ref(): void;
+  /**
+   * Calling `unref()` on a worker allows the thread to exit if this is the only
+   * active handle in the event system. If the worker is already `unref()`ed calling`unref()` again has no effect.
+   * @since v10.5.0
+   */
+  unref(): void;
+
+  threadId: number;
+}
+
+declare var Worker: {
+  prototype: Worker;
+  new (scriptURL: string | URL, options?: WorkerOptions): Worker;
+  /**
+   * This is the cloned value of the `data` property passed to `new Worker()`
+   *
+   * This is Bun's equivalent of `workerData` in Node.js.
+   */
+  data: any;
+};
 
 interface EncodeIntoResult {
   /**

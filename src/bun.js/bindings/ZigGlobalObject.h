@@ -457,6 +457,8 @@ public:
 
     Bun::JSMockModule mockModule;
 
+    LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
+
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
 private:
@@ -519,7 +521,6 @@ private:
     LazyProperty<JSGlobalObject, JSObject> m_JSHTTPSResponseControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
-    LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
     LazyProperty<JSGlobalObject, JSObject> m_subtleCryptoObject;
     LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;

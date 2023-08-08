@@ -429,7 +429,7 @@ static String computeErrorInfo(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsi
 }
 
 extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObjectClass, int count,
-    void* console_client, int32_t executionContextId, bool miniMode)
+    void* console_client, int32_t executionContextId, bool miniMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
 
@@ -448,6 +448,19 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObje
             vm,
             Zig::GlobalObject::createStructure(vm, JSC::JSGlobalObject::create(vm, JSC::JSGlobalObject::createStructure(vm, JSC::jsNull())), JSC::jsNull()),
             static_cast<ScriptExecutionContextIdentifier>(executionContextId));
+
+        if (auto* worker = static_cast<WebCore::Worker*>(worker_ptr)) {
+            auto& options = worker->options();
+            if (options.bun.env) {
+                auto map = *options.bun.env;
+                auto size = map.size();
+                auto env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
+                for (auto k : map) {
+                    env->putDirect(vm, JSC::Identifier::fromString(vm, k.key), JSC::jsString(vm, k.value));
+                }
+                globalObject->m_processEnvObject.set(vm, globalObject, env);
+            }
+        }
     } else {
         globalObject = Zig::GlobalObject::create(
             vm,

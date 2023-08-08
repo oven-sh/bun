@@ -10,8 +10,43 @@ test("worker", done => {
     done(e.error);
   };
   worker.onmessage = e => {
-    expect(e.data).toEqual("initial message");
+    try {
+      expect(e.data).toEqual("initial message");
+    } catch (e) {
+      done(e);
+    } finally {
+      worker.terminate();
+      done();
+    }
     worker.terminate();
     done();
+  };
+});
+
+test("worker-env", done => {
+  const worker = new Worker(new URL("worker-fixture-env.js", import.meta.url).href, {
+    env: {
+      hello: "world",
+      another_key: 123 as any,
+    },
+  });
+  worker.postMessage("hello");
+  worker.onerror = e => {
+    done(e.error);
+  };
+  worker.onmessage = e => {
+    try {
+      expect(e.data).toEqual({
+        env: {
+          hello: "world",
+          another_key: "123",
+        },
+      });
+    } catch (e) {
+      done(e);
+    } finally {
+      worker.terminate();
+      done();
+    }
   };
 });

@@ -110,7 +110,7 @@ fn initComptime(comptime str: string, t: Category) MimeType {
     };
 }
 
-pub fn init(str_: string) MimeType {
+pub fn init(str_: string, allocator: ?std.mem.Allocator, allocated: ?*bool) MimeType {
     var str = str_;
     if (std.mem.indexOfScalar(u8, str, '/')) |slash| {
         const category_ = str[0..slash];
@@ -141,12 +141,17 @@ pub fn init(str_: string) MimeType {
                     return wasm;
                 }
 
-                return MimeType{ .value = str_, .category = .application };
+                if (allocated != null and allocator != null) allocated.?.* = true;
+                return MimeType{
+                    .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
+                    .category = .application,
+                };
             },
             "font".len => {
                 if (strings.eqlComptimeIgnoreLen(category_, "font")) {
+                    if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
-                        .value = str_,
+                        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
                         .category = .font,
                     };
                 }
@@ -168,27 +173,34 @@ pub fn init(str_: string) MimeType {
                         return all.@"text/plain";
                     }
 
-                    return MimeType{ .value = str_, .category = .text };
+                    if (allocated != null and allocator != null) allocated.?.* = true;
+                    return MimeType{
+                        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
+                        .category = .text,
+                    };
                 }
             },
             "image".len => {
                 if (strings.eqlComptimeIgnoreLen(category_, "image")) {
+                    if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
-                        .value = str_,
+                        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
                         .category = .image,
                     };
                 }
 
                 if (strings.eqlComptimeIgnoreLen(category_, "audio")) {
+                    if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
-                        .value = str_,
+                        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
                         .category = .audio,
                     };
                 }
 
                 if (strings.eqlComptimeIgnoreLen(category_, "video")) {
+                    if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
-                        .value = str_,
+                        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
                         .category = .video,
                     };
                 }
@@ -197,7 +209,11 @@ pub fn init(str_: string) MimeType {
         }
     }
 
-    return MimeType{ .value = str_, .category = .other };
+    if (allocated != null and allocator != null) allocated.?.* = true;
+    return MimeType{
+        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
+        .category = .other,
+    };
 }
 
 // TODO: improve this
@@ -2516,7 +2532,7 @@ pub const all = struct {
 // TODO: do a comptime static hash map for this
 // its too many branches to use ComptimeStringMap
 pub fn byName(name: []const u8) MimeType {
-    return MimeType.init(name);
+    return MimeType.init(name, null, null);
 }
 
 pub const extensions = ComptimeStringMap(MimeType, .{

@@ -80,3 +80,17 @@ test("worker-env with a lot of properties", done => {
     }
   };
 });
+
+test("sending a few messages should just work", done => {
+  const worker = new Worker(new URL("worker-fixture-many-messages.js", import.meta.url).href, {});
+
+  worker.postMessage("initial message");
+  worker.addEventListener("message", ({ data }) => {
+    if (data.done) {
+      worker.terminate();
+      done();
+    } else {
+      worker.postMessage({ i: data.i + 1 });
+    }
+  });
+});

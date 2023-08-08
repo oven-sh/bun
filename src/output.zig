@@ -3,7 +3,7 @@ const bun = @import("root").bun;
 const std = @import("std");
 const Environment = @import("./env.zig");
 const string = @import("root").bun.string;
-const root = @import("root").bun;
+const root = @import("root");
 const strings = @import("root").bun.strings;
 const StringTypes = @import("root").bun.StringTypes;
 const Global = @import("root").bun.Global;
@@ -420,7 +420,7 @@ pub noinline fn print(comptime fmt: string, args: anytype) void {
 ///   BUN_DEBUG_ALL=1
 const _log_fn = fn (comptime fmt: string, args: anytype) void;
 pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_fn {
-    if (comptime !Environment.isDebug) {
+    if (comptime !Environment.isDebug or !Environment.isNative) {
         return struct {
             pub fn log(comptime _: string, _: anytype) void {}
         }.log;

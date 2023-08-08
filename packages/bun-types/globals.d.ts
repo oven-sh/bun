@@ -381,6 +381,7 @@ interface WorkerEventMap extends AbstractWorkerEventMap {
   message: MessageEvent;
   messageerror: MessageEvent;
   close: CloseEvent;
+  open: Event;
 }
 
 interface AbstractWorker {

@@ -262,16 +262,6 @@ void FetchHeaders::filterAndFill(const HTTPHeaderMap& headers, Guard guard)
     }
 }
 
-static const WTF::String setCookieLowercaseString = WTF::staticHeaderNames[static_cast<uint8_t>(HTTPHeaderName::SetCookie)];
-
-static bool compareIteratorKeys(const String& a, const String& b)
-{
-    // null in the iterator's m_keys represents Set-Cookie.
-    return WTF::codePointCompareLessThan(
-        a.isNull() ? "set-cookie"_s : a,
-        b.isNull() ? "set-cookie"_s : b);
-}
-
 std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
 {
     if (m_keys.isEmpty() || m_updateCounter != m_headers->m_updateCounter) {
@@ -280,13 +270,13 @@ std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
         m_keys.reserveCapacity(m_headers->m_headers.size() + (hasSetCookie ? 1 : 0));
         for (auto& header : m_headers->m_headers)
             m_keys.uncheckedAppend(header.asciiLowerCaseName());
-        std::sort(m_keys.begin(), m_keys.end(), compareIteratorKeys);
+        std::sort(m_keys.begin(), m_keys.end(), WTF::codePointCompareLessThan);
         if (hasSetCookie)
             m_keys.uncheckedAppend(String());
 
         m_currentIndex += m_cookieIndex;
         if (hasSetCookie) {
-            size_t setCookieKeyIndex = std::lower_bound(m_keys.begin(), m_keys.end(), String(), compareIteratorKeys) - m_keys.begin();
+            size_t setCookieKeyIndex = m_keys.size() - 1;
             if (m_currentIndex < setCookieKeyIndex)
                 m_cookieIndex = 0;
             else {
@@ -307,7 +297,7 @@ std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
         if (key.isNull()) {
             if (m_cookieIndex < setCookieHeaders.size()) {
                 String value = setCookieHeaders[m_cookieIndex++];
-                return KeyValuePair<String, String> { setCookieLowercaseString, WTFMove(value) };
+                return KeyValuePair<String, String> { WTF::staticHeaderNames[static_cast<uint8_t>(HTTPHeaderName::SetCookie)], WTFMove(value) };
             }
             m_currentIndex++;
             continue;

@@ -234,11 +234,11 @@ describe("Headers", () => {
     ]);
     const actual = [...headers];
     expect(actual).toEqual([
+      ["x-bun", "abc, def"],
       ["set-cookie", "foo=bar"],
       ["set-cookie", "bar=baz"],
-      ["x-bun", "abc, def"],
     ]);
-    expect([...headers.values()]).toEqual(["foo=bar", "bar=baz", "abc, def"]);
+    expect([...headers.values()]).toEqual(["abc, def", "foo=bar", "bar=baz"]);
   });
 
   it("Headers append multiple", () => {
@@ -253,9 +253,9 @@ describe("Headers", () => {
     // we do not preserve the order
     // which is kind of bad
     expect(actual).toEqual([
+      ["x-bun", "foo, bar"],
       ["set-cookie", "foo=bar"],
       ["set-cookie", "bar=baz"],
-      ["x-bun", "foo, bar"],
     ]);
   });
 

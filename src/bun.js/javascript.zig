@@ -910,6 +910,7 @@ pub const VirtualMachine = struct {
             vm.console,
             -1,
             false,
+            null,
         );
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;
@@ -1014,6 +1015,7 @@ pub const VirtualMachine = struct {
             vm.console,
             -1,
             smol,
+            null,
         );
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;
@@ -1118,6 +1120,7 @@ pub const VirtualMachine = struct {
             vm.console,
             @as(i32, @intCast(worker.execution_context_id)),
             worker.mini,
+            worker.cpp_worker,
         );
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;

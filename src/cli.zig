@@ -1092,11 +1092,11 @@ pub const Command = struct {
                 for (args_iter.buf) |arg| {
                     const span = std.mem.span(arg);
                     if (span.len > 0 and (strings.eqlComptime(span, "-g") or strings.eqlComptime(span, "--global"))) {
-                        break :brk Command.Tag.AddCommand;
+                        break :brk .AddCommand;
                     }
                 }
 
-                break :brk Command.Tag.InstallCommand;
+                break :brk .InstallCommand;
             },
             RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
 
@@ -1104,7 +1104,8 @@ pub const Command = struct {
 
             RootCommandMatcher.case("pm") => .PackageManagerCommand,
 
-            RootCommandMatcher.case("add"), RootCommandMatcher.case("update"), RootCommandMatcher.case("a") => .AddCommand,
+            RootCommandMatcher.case("add"), RootCommandMatcher.case("a") => .AddCommand,
+            RootCommandMatcher.case("update") => .UpdateCommand,
             RootCommandMatcher.case("r"), RootCommandMatcher.case("remove"), RootCommandMatcher.case("rm"), RootCommandMatcher.case("uninstall") => .RemoveCommand,
 
             RootCommandMatcher.case("run") => .RunCommand,
@@ -1154,6 +1155,7 @@ pub const Command = struct {
         const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
         const RunCommand = @import("./cli/run_command.zig").RunCommand;
         const ShellCompletions = @import("./cli/shell_completions.zig");
+        const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
 
         const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
         const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
@@ -1173,6 +1175,7 @@ pub const Command = struct {
             // _ = RunCommand;
             // _ = ShellCompletions;
             // _ = TestCommand;
+            // _ = UpdateCommand;
             // _ = UpgradeCommand;
             // _ = BunxCommand;
         }
@@ -1241,6 +1244,13 @@ pub const Command = struct {
                 const ctx = try Command.Context.create(allocator, log, .AddCommand);
 
                 try AddCommand.exec(ctx);
+                return;
+            },
+            .UpdateCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UpdateCommand) unreachable;
+                const ctx = try Command.Context.create(allocator, log, .UpdateCommand);
+
+                try UpdateCommand.exec(ctx);
                 return;
             },
             .BunxCommand => {
@@ -1624,6 +1634,7 @@ pub const Command = struct {
         RunCommand,
         TestCommand,
         UnlinkCommand,
+        UpdateCommand,
         UpgradeCommand,
 
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
@@ -1637,14 +1648,14 @@ pub const Command = struct {
 
         pub fn readGlobalConfig(this: Tag) bool {
             return switch (this) {
-                .BunxCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand => true,
+                .BunxCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand => true,
                 else => false,
             };
         }
 
         pub fn isNPMRelated(this: Tag) bool {
             return switch (this) {
-                .BunxCommand, .LinkCommand, .UnlinkCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand => true,
+                .BunxCommand, .LinkCommand, .UnlinkCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand => true,
                 else => false,
             };
         }
@@ -1656,6 +1667,7 @@ pub const Command = struct {
             .InstallCommand = true,
             .AddCommand = true,
             .RemoveCommand = true,
+            .UpdateCommand = true,
             .PackageManagerCommand = true,
             .BunxCommand = true,
             .AutoCommand = true,
@@ -1669,6 +1681,7 @@ pub const Command = struct {
             .InstallCommand = true,
             .AddCommand = true,
             .RemoveCommand = true,
+            .UpdateCommand = true,
             .PackageManagerCommand = true,
             .BunxCommand = true,
         });
@@ -1678,6 +1691,7 @@ pub const Command = struct {
             .InstallCommand = false,
             .AddCommand = false,
             .RemoveCommand = false,
+            .UpdateCommand = false,
             .PackageManagerCommand = false,
             .LinkCommand = false,
             .UnlinkCommand = false,

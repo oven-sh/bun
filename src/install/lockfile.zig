@@ -2393,6 +2393,7 @@ pub const Package = extern struct {
             to_lockfile: *Lockfile,
             from: *Lockfile.Package,
             to: *Lockfile.Package,
+            update_requests: ?[]PackageManager.UpdateRequest,
             id_mapping: ?[]PackageID,
         ) !Summary {
             var summary = Summary{};
@@ -2427,6 +2428,19 @@ pub const Package = extern struct {
                 defer to_i += 1;
 
                 if (to_deps[to_i].eql(from_dep, to_lockfile.buffers.string_bytes.items, from_lockfile.buffers.string_bytes.items)) {
+                    if (update_requests) |updates| {
+                        if (updates.len == 0 or brk: {
+                            for (updates) |request| {
+                                if (from_dep.name_hash == request.name_hash) break :brk true;
+                            }
+                            break :brk false;
+                        }) {
+                            // Listed as to be updated
+                            summary.update += 1;
+                            continue;
+                        }
+                    }
+
                     if (id_mapping) |mapping| {
                         const version = to_deps[to_i].version;
                         if (switch (version.tag) {
@@ -2452,6 +2466,7 @@ pub const Package = extern struct {
                                     to_lockfile,
                                     &from_pkg,
                                     &workspace,
+                                    update_requests,
                                     null,
                                 );
 

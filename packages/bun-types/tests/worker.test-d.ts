@@ -1,18 +1,29 @@
-import { Worker } from "node:worker_threads";
+import { Worker as NodeWorker } from "node:worker_threads";
+import * as tsd from "tsd";
 
-const _workerthread = new Worker("./worker.js");
-_workerthread;
-const worker = new Worker("./worker.ts");
-worker.addEventListener("message", (event: MessageEvent) => {
-  console.log("Message from worker:", event.data);
+const webWorker = new Worker("./worker.js");
+
+webWorker.addEventListener("message", event => {
+  tsd.expectType<MessageEvent>(event);
 });
-worker.postMessage("Hello from main thread!");
+webWorker.addEventListener("error", event => {
+  tsd.expectType<ErrorEvent>(event);
+});
+webWorker.addEventListener("messageerror", event => {
+  tsd.expectType<MessageEvent>(event);
+});
+
+const nodeWorker = new NodeWorker("./worker.ts");
+nodeWorker.on("message", event => {
+  console.log("Message from worker:", event);
+});
+nodeWorker.postMessage("Hello from main thread!");
 
 const workerURL = new URL("worker.ts", import.meta.url).href;
 const _worker2 = new Worker(workerURL);
 
-worker.postMessage("hello");
-worker.onmessage = event => {
+nodeWorker.postMessage("hello");
+webWorker.onmessage = event => {
   console.log(event.data);
 };
 
@@ -20,15 +31,20 @@ worker.onmessage = event => {
 postMessage({ hello: "world" });
 
 // On the main thread
-worker.postMessage({ hello: "world" });
+nodeWorker.postMessage({ hello: "world" });
 
 // ...some time later
-worker.terminate();
+nodeWorker.terminate();
 
 // Bun.pathToFileURL
 const _worker3 = new Worker(new URL("worker.ts", import.meta.url).href, {
   ref: true,
   smol: true,
+  credentials: "",
+  name: "a name",
+  env: {
+    envValue: "hello",
+  },
 });
 
-export { worker, _worker2, _worker3 };
+export { nodeWorker as worker, _worker2, _worker3 };

@@ -12,6 +12,7 @@ struct BunOptions {
     bool unref { false };
     RefPtr<SerializedScriptValue> data;
     Vector<TransferredMessagePort> dataMessagePorts;
+    std::unique_ptr<HashMap<String, String>> env { nullptr };
 };
 
 struct WorkerOptions {

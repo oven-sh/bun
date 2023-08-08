@@ -145,16 +145,19 @@ declare module "perf_hooks" {
   //    */
   //   readonly v8Start: number;
   // }
-  // interface EventLoopUtilization {
-  //   idle: number;
-  //   active: number;
-  //   utilization: number;
-  // }
+  interface EventLoopUtilization {
+    idle: number;
+    active: number;
+    utilization: number;
+  }
   // /**
   //  * @param util1 The result of a previous call to eventLoopUtilization()
   //  * @param util2 The result of a previous call to eventLoopUtilization() prior to util1
   //  */
-  // type EventLoopUtilityFunction = (util1?: EventLoopUtilization, util2?: EventLoopUtilization) => EventLoopUtilization;
+  type EventLoopUtilityFunction = (
+    util1?: EventLoopUtilization,
+    util2?: EventLoopUtilization,
+  ) => EventLoopUtilization;
   // interface MarkOptions {
   //   /**
   //    * Additional optional detail to include with the mark.

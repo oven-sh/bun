@@ -41,6 +41,7 @@ test("worker-env", done => {
           hello: "world",
           another_key: "123",
         },
+        hello: "world",
       });
     } catch (e) {
       done(e);

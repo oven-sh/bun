@@ -5,5 +5,6 @@ if(worker_threads.isMainThread) throw new Error('worker_threads.isMainThread is 
 onmessage = ({ }) => {
   postMessage({
     env: process.env,
+    hello: process.env.hello,
   });
 };

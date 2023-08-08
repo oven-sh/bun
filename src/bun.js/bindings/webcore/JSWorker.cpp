@@ -219,9 +219,9 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::const
             for (const auto& key : keys) {
                 JSValue value = envObject->get(lexicalGlobalObject, key);
                 RETURN_IF_EXCEPTION(throwScope, {});
-                String str = value.toWTFString(lexicalGlobalObject);
+                String str = value.toWTFString(lexicalGlobalObject).isolatedCopy();
                 RETURN_IF_EXCEPTION(throwScope, {});
-                env.add(key.string(), str);
+                env.add(key.impl()->isolatedCopy(), str);
             }
 
             options.bun.env = std::make_unique<HashMap<String, String>>(WTFMove(env));

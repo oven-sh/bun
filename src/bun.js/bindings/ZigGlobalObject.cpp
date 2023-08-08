@@ -454,7 +454,7 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObje
             if (options.bun.env) {
                 auto map = *options.bun.env;
                 auto size = map.size();
-                auto env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
+                auto env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size > 63 ? 63 : size);
                 for (auto k : map) {
                     env->putDirect(vm, JSC::Identifier::fromString(vm, k.key), JSC::jsString(vm, k.value));
                 }

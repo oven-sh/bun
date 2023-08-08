@@ -352,7 +352,7 @@ pub const WebWorker = struct {
             return;
         }
 
-        this.allowed_to_exit = value;
+        this.allowed_to_exit = !value;
         if (value) {
             this.parent_poll_ref.ref(this.parent);
         } else {

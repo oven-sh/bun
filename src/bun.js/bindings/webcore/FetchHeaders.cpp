@@ -28,6 +28,7 @@
 
 #include "config.h"
 #include "FetchHeaders.h"
+#include "HTTPHeaderNames.h"
 
 #include "HTTPParsers.h"
 
@@ -227,8 +228,6 @@ ExceptionOr<bool> FetchHeaders::has(const String& name) const
     return m_headers.contains(name);
 }
 
-static NeverDestroyed<const String> setCookieLowercaseString(MAKE_STATIC_STRING_IMPL("set-cookie"));
-
 ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
 {
     String normalizedValue = value.trim(isHTTPSpace);
@@ -239,12 +238,7 @@ ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
         return {};
 
     ++m_updateCounter;
-    if (equalIgnoringASCIICase(name, setCookieLowercaseString)) {
-        m_headers.getSetCookieHeaders().clear();
-        m_headers.getSetCookieHeaders().append(normalizedValue);
-    } else {
-        m_headers.set(name, normalizedValue);
-    }
+    m_headers.set(name, normalizedValue);
 
     if (m_guard == FetchHeaders::Guard::RequestNoCors)
         removePrivilegedNoCORSRequestHeaders(m_headers);
@@ -267,6 +261,8 @@ void FetchHeaders::filterAndFill(const HTTPHeaderMap& headers, Guard guard)
             m_headers.add(header.key, header.value);
     }
 }
+
+static const WTF::String setCookieLowercaseString = WTF::staticHeaderNames[static_cast<uint8_t>(HTTPHeaderName::SetCookie)];
 
 static bool compareIteratorKeys(const String& a, const String& b)
 {

@@ -181,3 +181,7 @@ it('import("bun") works', async () => {
 it("require.resolve with empty options object", () => {
   expect(require.resolve(import.meta.path + String(""), {})).toBe(import.meta.path);
 });
+
+it("dynamically import bun", async () => {
+  expect((await import(eval("'bun'"))).default).toBe(Bun);
+});

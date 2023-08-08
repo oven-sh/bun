@@ -24,6 +24,7 @@
 // given is the default export
 
 #define BUN_FOREACH_NATIVE_MODULE(macro) \
+    macro("bun"_s, BunObject) \
     macro("bun:jsc"_s, BunJSC) \
     macro("node:buffer"_s, NodeBuffer) \
     macro("node:constants"_s, NodeConstants) \

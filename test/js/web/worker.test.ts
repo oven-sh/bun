@@ -51,3 +51,32 @@ test("worker-env", done => {
     }
   };
 });
+
+test("worker-env with a lot of properties", done => {
+  const obj: any = {};
+
+  for (let i = 0; i < 1000; i++) {
+    obj["prop " + i] = Math.random().toString();
+  }
+
+  const worker = new Worker(new URL("worker-fixture-env.js", import.meta.url).href, {
+    env: obj,
+  });
+  worker.postMessage("hello");
+  worker.onerror = e => {
+    done(e.error);
+  };
+  worker.onmessage = e => {
+    try {
+      expect(e.data).toEqual({
+        env: obj,
+        hello: undefined,
+      });
+    } catch (e) {
+      done(e);
+    } finally {
+      worker.terminate();
+      done();
+    }
+  };
+});

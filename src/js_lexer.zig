@@ -734,7 +734,7 @@ fn NewLexer_(
                             needs_slow_path = true;
                         } else if (is_json and lexer.code_point < 0x20) {
                             try lexer.syntaxError();
-                        } else if (comptime quote == '"' or quote == '\'') {
+                        } else if (comptime (quote == '"' or quote == '\'') and Environment.isNative) {
                             const remainder = lexer.source.contents[lexer.current..];
                             if (remainder.len >= 4096) {
                                 lexer.current += indexOfInterestingCharacterInStringLiteral(remainder, quote) orelse {

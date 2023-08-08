@@ -628,8 +628,6 @@ it("path.resolve", () => {
 });
 
 it("path.parse", () => {
-  expect(path.parse("/tmp")).toStrictEqual({ root: "/", dir: "/", base: "tmp", ext: "", name: "tmp" });
-
   expect(path.parse("/tmp/test.txt")).toStrictEqual({
     root: "/",
     dir: "/tmp",

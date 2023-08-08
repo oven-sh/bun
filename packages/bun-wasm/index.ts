@@ -1,11 +1,14 @@
 // @ts-nocheck
 import { ByteBuffer } from "peechy/bb";
 import {
+  Loader as BunLoader,
+  TestKind,
+  decodeGetTestsResponse,
   decodeScanResult,
   decodeTransformResponse,
+  encodeGetTestsRequest,
   encodeScan,
   encodeTransform,
-  Loader as BunLoader,
   type ScanResult,
   type TransformResponse,
 } from "./schema";
@@ -15,9 +18,13 @@ export enum Loader {
   tsx = BunLoader.tsx,
   ts = BunLoader.ts,
 }
-
+const testKindMap = {
+  [TestKind.describe_fn]: "describe",
+  [TestKind.test_fn]: "test",
+};
+const capturedErrors = [];
+let captureErrors = false;
 export type { ScanResult, TransformResponse };
-
 function normalizeLoader(file_name: string, loader?: Loader): BunLoader {
   return (
     (loader
@@ -82,12 +89,22 @@ var scratch2: Uint8Array;
 
 const env = {
   console_log(slice: number) {
+    const text = Bun._wasmPtrLenToString(slice);
+    if (captureErrors) {
+      capturedErrors.push(text);
+      return;
+    }
     //@ts-ignore
-    console.log(Bun._wasmPtrLenToString(slice));
+    console.log(text);
   },
   console_error(slice: number) {
     //@ts-ignore
-    console.error(Bun._wasmPtrLenToString(slice));
+    const text = Bun._wasmPtrLenToString(slice);
+    if (captureErrors) {
+      capturedErrors.push(text);
+      return;
+    }
+    console.error(text);
   },
   console_warn(slice: number) {
     //@ts-ignore
@@ -148,7 +165,6 @@ const env = {
   },
   emscripten_notify_memory_growth() {},
 };
-
 export class Bun {
   private static has_initialized = false;
   // @ts-ignore-line
@@ -179,63 +195,115 @@ export class Bun {
     return Bun._decoder.decode(region);
   }
 
-  static async init(url, fetch = globalThis.fetch) {
-    // globalThis.sucraseTransform = sucraseTransform;
+  static async init(url, heapSize = 64_000_000, fetch = globalThis.fetch) {
     scratch = new Uint8Array(8096);
 
     if (Bun.has_initialized) {
       return;
     }
-
-    if (globalThis?.WebAssembly?.instantiateStreaming) {
-      Bun.wasm_source = await globalThis.WebAssembly.instantiateStreaming(
-        fetch(url),
-        { env: env, wasi_snapshot_preview1: Wasi },
-      );
-    } else if (typeof window !== "undefined") {
-      const resp = await fetch(url);
-      Bun.wasm_source = await globalThis.WebAssembly.instantiate(
-        await resp.arrayBuffer(),
-        {
+    if (typeof process === "undefined") {
+      if (globalThis?.WebAssembly?.instantiateStreaming) {
+        Bun.wasm_source = await globalThis.WebAssembly.instantiateStreaming(fetch(url), {
           env: env,
           wasi_snapshot_preview1: Wasi,
-        },
-      );
-      // is it node?
+        });
+      } else if (typeof window !== "undefined") {
+        const resp = await fetch(url);
+        Bun.wasm_source = await globalThis.WebAssembly.instantiate(await resp.arrayBuffer(), {
+          env: env,
+          wasi_snapshot_preview1: Wasi,
+        });
+        // is it node?
+      }
     } else {
       //@ts-ignore
       const fs = await import("fs");
 
-      Bun.wasm_source = await globalThis.WebAssembly.instantiate(
-        fs.readFileSync(url),
-        {
-          env: env,
-          wasi_snapshot_preview1: Wasi,
-        },
-      );
+      Bun.wasm_source = await globalThis.WebAssembly.instantiate(fs.readFileSync(url), {
+        env: env,
+        wasi_snapshot_preview1: Wasi,
+      });
     }
 
-    const res = Bun.wasm_exports.init();
+    const res = Bun.wasm_exports.init(heapSize);
+
     if (res < 0) {
-      throw `[Bun] Failed to initialize WASM module: code ${res}`;
+      throw new Error(`[Bun] Failed to initialize WASM module: code ${res}`);
     }
 
     Bun.has_initialized = true;
   }
 
-  static transformSync(
-    content: Uint8Array | string,
-    file_name: string,
-    loader?: Loader,
-  ): TransformResponse {
-    if (!Bun.has_initialized) {
-      throw "Please run await Bun.init(wasm_url) before using this.";
+  static getTests(content: Uint8Array | string, filename = "my.test.tsx") {
+    const bb = new ByteBuffer(scratch);
+    bb.length = 0;
+    bb.index = 0;
+    const contents_buffer = content;
+
+    encodeGetTestsRequest(
+      {
+        contents: contents_buffer,
+        path: filename,
+      },
+      bb,
+    );
+
+    const data = bb.toUint8Array();
+
+    const input_ptr = Bun.wasm_exports.bun_malloc(data.length);
+    var buffer = Bun._wasmPtrToSlice(input_ptr);
+    buffer.set(data);
+    captureErrors = true;
+    try {
+      var resp_ptr = Bun.wasm_exports.getTests(input_ptr);
+    } catch (e) {
+      throw e;
+    } finally {
+      captureErrors = false;
+      Bun.wasm_exports.bun_free(input_ptr);
     }
 
-    // if (process.env.NODE_ENV === "development") {
-    //   console.time("[Bun] Transform " + file_name);
-    // }
+    if (Number(resp_ptr) === 0) {
+      if (capturedErrors.length) {
+        const err = capturedErrors.slice();
+        capturedErrors.length = 0;
+        throw new Error(err.join("\n").trim());
+      }
 
+      throw new Error("Failed to parse");
+    }
+
+    if (capturedErrors.length) {
+      Bun.wasm_exports.bun_free(resp_ptr);
+      const err = capturedErrors.slice();
+      capturedErrors.length = 0;
+      throw new Error(err.join("\n").trim());
+    }
+
+    var _bb = new ByteBuffer(Bun._wasmPtrToSlice(resp_ptr));
+
+    const response = decodeGetTestsResponse(_bb);
+    var tests = new Array(response.tests.length);
+
+    for (var i = 0; i < response.tests.length; i++) {
+      tests[i] = {
+        name: new TextDecoder().decode(
+          response.contents.subarray(
+            response.tests[i].label.offset,
+            response.tests[i].label.offset + response.tests[i].label.length,
+          ),
+        ),
+        byteOffset: response.tests[i].byteOffset,
+        kind: testKindMap[response.tests[i].kind],
+      };
+    }
+
+    Bun.wasm_exports.bun_free(resp_ptr);
+
+    return tests;
+  }
+
+  static transformSync(content: Uint8Array | string, file_name: string, loader?: Loader): TransformResponse {
     const bb = new ByteBuffer(scratch);
     bb.length = 0;
     bb.index = 0;
@@ -274,28 +342,14 @@ export class Bun {
     buffer.set(data);
 
     const resp_ptr = Bun.wasm_exports.transform(input_ptr);
-
     var _bb = new ByteBuffer(Bun._wasmPtrToSlice(resp_ptr));
-
     const response = decodeTransformResponse(_bb);
     Bun.wasm_exports.bun_free(input_ptr);
     scratch = bb.data;
     return response;
   }
 
-  static scan(
-    content: Uint8Array | string,
-    file_name: string,
-    loader?: Loader,
-  ): ScanResult {
-    if (!Bun.has_initialized) {
-      throw "Please run await Bun.init(wasm_url) before using this.";
-    }
-
-    // if (process.env.NODE_ENV === "development") {
-    //   console.time("[Bun] Transform " + file_name);
-    // }
-    scratch.fill(0);
+  static scan(content: Uint8Array | string, file_name: string, loader?: Loader): ScanResult {
     const bb = new ByteBuffer(scratch);
     bb.length = 0;
     bb.index = 0;
@@ -337,15 +391,5 @@ export class Bun {
 export const transformSync = Bun.transformSync;
 export const scan = Bun.scan;
 export const init = Bun.init;
+export const getTests = Bun.getTests;
 export default Bun;
-
-if ("window" in globalThis && !("Bun" in globalThis)) {
-  // @ts-ignore-line
-  globalThis.Bun = Bun;
-}
-
-//@ts-ignore
-if (process.env.NODE_ENV === "development") {
-  //@ts-ignore
-  Bun.env = env;
-}

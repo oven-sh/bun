@@ -441,6 +441,10 @@ fn ___tracy_emit_frame_mark(name: ?[*:0]const u8) void {
 }
 
 pub fn init() bool {
+    if (comptime !bun.Environment.isNative) {
+        return false;
+    }
+
     if (enable)
         return true;
 
@@ -452,6 +456,10 @@ pub fn init() bool {
 }
 
 pub fn isConnected() bool {
+    if (comptime !bun.Environment.isNative) {
+        return false;
+    }
+
     if (!enable)
         return false;
 
@@ -460,6 +468,10 @@ pub fn isConnected() bool {
 }
 
 pub fn initThread(comptime name: [:0]const u8) void {
+    if (comptime !bun.Environment.isNative) {
+        return;
+    }
+
     if (!enable)
         return;
 
@@ -475,6 +487,10 @@ const ___tracy_source_location_data = extern struct {
 };
 
 fn dlsym(comptime Type: type, comptime symbol: [:0]const u8) ?Type {
+    if (comptime !bun.Environment.isNative) {
+        return null;
+    }
+
     if (comptime bun.Environment.isLinux) {
         // use LD_PRELOAD on linux
         if (bun.C.dlsym(Type, symbol)) |val| {

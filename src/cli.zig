@@ -857,6 +857,7 @@ pub const HelpCommand = struct {
             \\>  <b><cyan>create<r>    <d>next ./app<r>            Create a new project from a template <d>(bun c)<r>
             \\>  <b><green>install<r>                         Install dependencies for a package.json <d>(bun i)<r>
             \\>  <b><blue>add<r>       <d>{s:<16}<r>      Add a dependency to package.json <d>(bun a)<r>
+            \\>  <b><blue>update<r>    <d>{s:<16}<r>      Update outdated dependencies & save to package.json
             \\>  <b><blue>link<r>                            Link an npm package globally
             \\>  remove<r>    <d>{s:<16}<r>      Remove a dependency from package.json <d>(bun rm)<r>
             \\>  unlink<r>                          Globally unlink an npm package
@@ -878,6 +879,7 @@ pub const HelpCommand = struct {
 
         const args = .{
             packages_to_add_filler[package_add_i],
+            packages_to_add_filler[(package_add_i + 1) % packages_to_add_filler.len],
             packages_to_remove_filler[package_remove_i],
         };
 

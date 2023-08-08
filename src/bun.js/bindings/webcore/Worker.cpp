@@ -210,7 +210,6 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
 
 void Worker::terminate()
 {
-    printf("terminate\n");
     // m_contextProxy.terminateWorkerGlobalScope();
     m_wasTerminated = true;
     WebWorker__terminate(impl_);

@@ -251,8 +251,7 @@ describe("Headers", () => {
       // @ts-expect-error
       expect(() => cookies.getAll("not-set-cookie")).toThrow(TypeError);
     });
-    const it1 = "getSetCookie" in cookies ? test : test.skip;
-    it1("can get header with set-cookie using getSetCookie()", () => {
+    test("can get header with set-cookie using getSetCookie()", () => {
       // @ts-expect-error
       expect(cookies.getSetCookie()).toEqual([
         "__Secure-ID=123; Secure; Domain=example.com",

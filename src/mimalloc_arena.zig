@@ -80,7 +80,7 @@ const ArenaRegistry = struct {
     var registry = ArenaRegistry{};
 
     pub fn register(arena: Arena) void {
-        if (comptime Environment.allow_assert) {
+        if (comptime Environment.allow_assert and Environment.isNative) {
             registry.mutex.lock();
             defer registry.mutex.unlock();
             var entry = registry.arenas.getOrPut(arena.heap.?) catch unreachable;
@@ -100,7 +100,7 @@ const ArenaRegistry = struct {
     }
 
     pub fn assert(arena: Arena) void {
-        if (comptime Environment.allow_assert) {
+        if (comptime Environment.allow_assert and Environment.isNative) {
             registry.mutex.lock();
             defer registry.mutex.unlock();
             const expected = registry.arenas.get(arena.heap.?) orelse {
@@ -117,7 +117,7 @@ const ArenaRegistry = struct {
     }
 
     pub fn unregister(arena: Arena) void {
-        if (comptime Environment.allow_assert) {
+        if (comptime Environment.allow_assert and Environment.isNative) {
             registry.mutex.lock();
             defer registry.mutex.unlock();
             if (!registry.arenas.swapRemove(arena.heap.?)) {

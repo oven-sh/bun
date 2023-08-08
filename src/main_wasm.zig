@@ -1,3 +1,4 @@
+const bun = @import("root").bun;
 const JSParser = bun.js_parser;
 const JSPrinter = bun.js_printer;
 const JSAst = bun.JSAst;
@@ -181,25 +182,324 @@ var output_stream = std.io.fixedBufferStream(&output_stream_buf);
 var error_stream_buf: [16384]u8 = undefined;
 var error_stream = std.io.fixedBufferStream(&error_stream_buf);
 var output_source: global.Output.Source = undefined;
-export fn init() void {
+var init_counter: usize = 0;
+export fn init(heapsize: u32) void {
     const Mimalloc = @import("./allocators/mimalloc.zig");
-    // reserve 256 MB upfront
-    Mimalloc.mi_option_set(Mimalloc.mi_option_t.allow_decommit, 0);
-    Mimalloc.mi_option_set(Mimalloc.mi_option_t.limit_os_alloc, 1);
-    _ = Mimalloc.mi_reserve_os_memory(2.56e+8, false, true);
+    defer init_counter +%= 1;
+    if (init_counter == 0) {
 
-    output_source = global.Output.Source.init(output_stream, error_stream);
-    global.Output.Source.set(&output_source);
-    JSAst.Stmt.Data.Store.create(default_allocator);
-    JSAst.Expr.Data.Store.create(default_allocator);
-    buffer_writer = JSPrinter.BufferWriter.init(default_allocator) catch unreachable;
-    buffer_writer.buffer.growBy(1024) catch unreachable;
-    writer = JSPrinter.BufferPrinter.init(buffer_writer);
-    define = Define.Define.init(default_allocator, null, null) catch unreachable;
+        // reserve 256 MB upfront
+        Mimalloc.mi_option_set(.allow_decommit, 0);
+        Mimalloc.mi_option_set(.limit_os_alloc, 1);
+        _ = Mimalloc.mi_reserve_os_memory(heapsize, false, true);
+
+        JSAst.Stmt.Data.Store.create(default_allocator);
+        JSAst.Expr.Data.Store.create(default_allocator);
+        buffer_writer = JSPrinter.BufferWriter.init(default_allocator) catch unreachable;
+        buffer_writer.buffer.growBy(1024) catch unreachable;
+        writer = JSPrinter.BufferPrinter.init(buffer_writer);
+        define = Define.Define.init(default_allocator, null, null) catch unreachable;
+        output_source = global.Output.Source.init(output_stream, error_stream);
+        global.Output.Source.set(&output_source);
+    } else {
+        buffer_writer = writer.ctx;
+    }
 }
 const Arena = @import("./mimalloc_arena.zig").Arena;
 
 var log: Logger.Log = undefined;
+
+const TestAnalyzer = struct {
+    string_buffer: std.ArrayList(u8),
+    items: std.ArrayList(Api.TestResponseItem),
+
+    pub fn visitExpr(this: *TestAnalyzer, parser: *bun.js_parser.TSXParser, expr: JSAst.Expr) !void {
+        switch (expr.data) {
+            .e_call => |call| {
+                if (call.target.isRef(parser.jest.@"test") or call.target.isRef(parser.jest.it) or call.target.isRef(parser.jest.describe)) {
+                    if (call.args.len > 0) {
+                        const label_expr: JSAst.Expr = call.args.slice()[0];
+                        switch (label_expr.data) {
+                            .e_string => |str| {
+                                try str.toUTF8(this.string_buffer.allocator);
+                                const ptr = Api.StringPointer{
+                                    .offset = this.string_buffer.items.len,
+                                    .length = str.data.len,
+                                };
+                                try this.string_buffer.appendSlice(str.data);
+                                try this.items.append(Api.TestResponseItem{
+                                    .byte_offset = expr.loc.start,
+                                    .kind = if (call.target.isRef(parser.jest.describe)) Api.TestKind.describe_fn else .test_fn,
+                                    .label = ptr,
+                                });
+                            },
+                            .e_dot => {},
+                            else => {},
+                        }
+
+                        return;
+                    }
+                } else if (call.target.data == .e_dot and bun.strings.eqlComptime(call.target.data.e_dot.name, "only")) {
+                    const target = call.target.data.e_dot.target;
+                    if (target.isRef(parser.jest.@"test") or target.isRef(parser.jest.it) or target.isRef(parser.jest.describe)) {
+                        if (call.args.len > 0) {
+                            const label_expr: JSAst.Expr = call.args.slice()[0];
+                            switch (label_expr.data) {
+                                .e_string => |str| {
+                                    try str.toUTF8(this.string_buffer.allocator);
+                                    const ptr = Api.StringPointer{
+                                        .offset = this.string_buffer.items.len,
+                                        .length = str.data.len,
+                                    };
+                                    try this.string_buffer.appendSlice(str.data);
+                                    try this.items.append(Api.TestResponseItem{
+                                        .byte_offset = expr.loc.start,
+                                        .kind = if (target.isRef(parser.jest.describe)) Api.TestKind.describe_fn else .test_fn,
+                                        .label = ptr,
+                                    });
+                                },
+                                .e_dot => {},
+                                else => {},
+                            }
+
+                            return;
+                        }
+                    }
+                }
+
+                try this.visitExpr(parser, call.target);
+                for (call.args.slice()) |arg| {
+                    try this.visitExpr(parser, arg);
+                }
+            },
+            .e_binary => |bin| {
+                try this.visitExpr(parser, bin.left);
+                try this.visitExpr(parser, bin.right);
+            },
+            .e_new => |new| {
+                try this.visitExpr(parser, new.target);
+                for (new.args.slice()) |arg| {
+                    try this.visitExpr(parser, arg);
+                }
+            },
+
+            .e_array => |arr| {
+                for (arr.items.slice()) |item| {
+                    try this.visitExpr(parser, item);
+                }
+            },
+
+            .e_if => |if_| {
+                try this.visitExpr(parser, if_.no);
+                try this.visitExpr(parser, if_.test_);
+                try this.visitExpr(parser, if_.yes);
+            },
+
+            .e_function => |func| {
+                for (func.func.body.stmts) |stmt| {
+                    try this.visitStmt(parser, stmt);
+                }
+            },
+
+            .e_arrow => |arrow| {
+                for (arrow.body.stmts) |stmt| {
+                    try this.visitStmt(parser, stmt);
+                }
+            },
+            else => {},
+        }
+    }
+
+    pub fn visitStmt(this: *TestAnalyzer, parser: *bun.js_parser.TSXParser, stmt: JSAst.Stmt) anyerror!void {
+        switch (stmt.data) {
+            .s_block => |s| {
+                for (s.stmts) |s2| {
+                    try this.visitStmt(parser, s2);
+                }
+            },
+            .s_do_while => |s| {
+                try this.visitStmt(parser, s.body);
+                try this.visitExpr(parser, s.test_);
+            },
+            .s_expr => |s| {
+                try this.visitExpr(parser, s.value);
+            },
+            .s_for_in => |s| {
+                try this.visitStmt(parser, s.init);
+                try this.visitStmt(parser, s.body);
+                try this.visitExpr(parser, s.value);
+            },
+            .s_for_of => |s| {
+                try this.visitStmt(parser, s.init);
+                try this.visitStmt(parser, s.body);
+                try this.visitExpr(parser, s.value);
+            },
+            .s_for => |s| {
+                if (s.init) |i| {
+                    try this.visitStmt(parser, i);
+                }
+                if (s.test_) |i| {
+                    try this.visitExpr(parser, i);
+                }
+                if (s.update) |i| {
+                    try this.visitExpr(parser, i);
+                }
+
+                try this.visitStmt(parser, s.body);
+            },
+            .s_function => |s| {
+                for (s.func.args) |arg| {
+                    if (arg.default) |def| {
+                        try this.visitExpr(parser, def);
+                    }
+                }
+
+                for (s.func.body.stmts) |s2| {
+                    try this.visitStmt(parser, s2);
+                }
+            },
+            .s_if => |s| {
+                try this.visitExpr(parser, s.test_);
+                try this.visitStmt(parser, s.yes);
+                if (s.no) |no| {
+                    try this.visitStmt(parser, no);
+                }
+            },
+            .s_local => |s| {
+                for (s.decls.slice()) |decl| {
+                    if (decl.value) |val| {
+                        try this.visitExpr(parser, val);
+                    }
+                }
+            },
+            .s_switch => |s| {
+                try this.visitExpr(parser, s.test_);
+                for (s.cases) |c| {
+                    for (c.body) |t| {
+                        try this.visitStmt(parser, t);
+                    }
+                    if (c.value) |e2| {
+                        try this.visitExpr(parser, e2);
+                    }
+                }
+            },
+            .s_throw => |s| {
+                try this.visitExpr(parser, s.value);
+            },
+            .s_try => |s| {
+                for (s.body) |s2| {
+                    try this.visitStmt(parser, s2);
+                }
+                if (s.catch_) |c| {
+                    for (c.body) |s2| {
+                        try this.visitStmt(parser, s2);
+                    }
+                }
+                if (s.finally) |f| {
+                    for (f.stmts) |s2| {
+                        try this.visitStmt(parser, s2);
+                    }
+                }
+            },
+            .s_while => |s| {
+                try this.visitExpr(parser, s.test_);
+                try this.visitStmt(parser, s.body);
+            },
+
+            .s_import => |import| {
+                if (bun.strings.eqlComptime(parser.import_records.items[import.import_record_index].path.text, "bun:test")) {
+                    for (import.items) |item| {
+                        const clause: bun.JSAst.ClauseItem = item;
+                        if (bun.strings.eqlComptime(clause.alias, "test")) {
+                            parser.jest.@"test" = clause.name.ref.?;
+                        } else if (bun.strings.eqlComptime(clause.alias, "it")) {
+                            parser.jest.it = clause.name.ref.?;
+                        } else if (bun.strings.eqlComptime(clause.alias, "describe")) {
+                            parser.jest.describe = clause.name.ref.?;
+                        }
+                    }
+                }
+            },
+            else => {},
+        }
+    }
+
+    pub fn visitParts(
+        this: *TestAnalyzer,
+        parser: *bun.js_parser.TSXParser,
+        parts: []bun.JSAst.Part,
+    ) anyerror!void {
+        var jest = &parser.jest;
+        if (parser.symbols.items[jest.it.innerIndex()].use_count_estimate == 0) {
+            if (parser.symbols.items[jest.it.innerIndex()].use_count_estimate > 0) {
+                jest.@"test" = jest.it;
+            }
+        } else if (parser.symbols.items[jest.@"test".innerIndex()].use_count_estimate == 0) {
+            if (parser.symbols.items[jest.it.innerIndex()].use_count_estimate > 0) {
+                jest.@"test" = jest.it;
+            }
+        }
+
+        for (parts) |part| {
+            for (part.stmts) |stmt| {
+                try this.visitStmt(parser, stmt);
+            }
+        }
+    }
+};
+export fn getTests(opts_array: u64) u64 {
+    var arena = Arena.init() catch unreachable;
+    var allocator = arena.allocator();
+    defer arena.deinit();
+    var log_ = Logger.Log.init(allocator);
+    var reader = ApiReader.init(Uint8Array.fromJS(opts_array), allocator);
+    var opts = Api.GetTestsRequest.decode(&reader) catch @panic("out of memory");
+    var code = Logger.Source.initPathString(if (opts.path.len > 0) opts.path else "my-test-file.test.tsx", opts.contents);
+    code.contents_is_recycled = true;
+    defer {
+        JSAst.Stmt.Data.Store.reset();
+        JSAst.Expr.Data.Store.reset();
+    }
+
+    var parser = JSParser.Parser.init(.{
+        .jsx = .{},
+        .ts = true,
+    }, &log_, &code, define, allocator) catch @panic("out of memory");
+
+    var anaylzer = TestAnalyzer{
+        .items = std.ArrayList(
+            Api.TestResponseItem,
+        ).init(allocator),
+        .string_buffer = std.ArrayList(
+            u8,
+        ).init(allocator),
+    };
+    parser.options.features.inject_jest_globals = true;
+    parser.options.features.commonjs_at_runtime = true;
+    parser.options.features.top_level_await = true;
+
+    parser.analyze(&anaylzer, @ptrCast(&TestAnalyzer.visitParts)) catch |err| {
+        Output.print("Error: {s}\n", .{@errorName(err)});
+
+        if (@errorReturnTrace()) |trace| {
+            Output.print("{}\n", .{trace});
+        }
+        log_.printForLogLevel(Output.writer()) catch unreachable;
+        return 0;
+    };
+
+    var output = std.ArrayList(u8).init(default_allocator);
+    var output_writer = output.writer();
+    const Encoder = ApiWriter(@TypeOf(output_writer));
+    var encoder = Encoder.init(output_writer);
+    var response = Api.GetTestsResponse{
+        .tests = anaylzer.items.items,
+        .contents = anaylzer.string_buffer.items,
+    };
+
+    response.encode(&encoder) catch return 0;
+    return @as(u64, @bitCast([2]u32{ @intFromPtr(output.items.ptr), output.items.len }));
+}
 
 export fn transform(opts_array: u64) u64 {
     // var arena = @import("root").bun.ArenaAllocator.init(default_allocator);
@@ -235,8 +535,8 @@ export fn transform(opts_array: u64) u64 {
     parser.options.tree_shaking = false;
     parser.options.features.top_level_await = true;
     const result = parser.parse() catch unreachable;
-    if (result.ok) {
-        var symbols: [][]JSAst.Symbol = &([_][]JSAst.Symbol{result.ast.symbols});
+    if (result == .ast and log.errors == 0) {
+        var symbols = JSAst.Symbol.NestedList.init(&[_]JSAst.Symbol.List{result.ast.symbols});
 
         _ = JSPrinter.printAst(
             @TypeOf(&writer),
@@ -246,8 +546,6 @@ export fn transform(opts_array: u64) u64 {
             &code,
             false,
             .{},
-            void,
-            null,
             false,
         ) catch 0;
 
@@ -260,7 +558,7 @@ export fn transform(opts_array: u64) u64 {
     }
 
     transform_response = Api.TransformResponse{
-        .status = if (result.ok) Api.TransformResponseStatus.success else Api.TransformResponseStatus.fail,
+        .status = if (result == .ast and log.errors == 0) Api.TransformResponseStatus.success else Api.TransformResponseStatus.fail,
         .files = &output_files,
         .errors = (log.toAPI(allocator) catch unreachable).msgs,
     };
@@ -269,7 +567,7 @@ export fn transform(opts_array: u64) u64 {
     var output_writer = output.writer();
     const Encoder = ApiWriter(@TypeOf(output_writer));
     var encoder = Encoder.init(output_writer);
-    transform_response.encode(&encoder) catch unreachable;
+    transform_response.encode(&encoder) catch {};
     return @as(u64, @bitCast([2]u32{ @intFromPtr(output.items.ptr), output.items.len }));
 }
 
@@ -311,10 +609,10 @@ export fn scan(opts_array: u64) u64 {
     var output_writer = output.writer();
     const Encoder = ApiWriter(@TypeOf(output_writer));
 
-    if (result.ok) {
+    if (result == .ast) {
         var scanned_imports = allocator.alloc(Api.ScannedImport, result.ast.import_records.len) catch unreachable;
         var scanned_i: usize = 0;
-        for (result.ast.import_records) |import_record| {
+        for (result.ast.import_records.slice()) |import_record| {
             if (import_record.kind == .internal) continue;
             scanned_imports[scanned_i] = Api.ScannedImport{ .path = import_record.path.text, .kind = import_record.kind.toAPI() };
             scanned_i += 1;
@@ -337,6 +635,7 @@ export fn emsc_main() void {
     _ = transform;
     _ = bun_free;
     _ = bun_malloc;
+    _ = getTests;
 }
 
 comptime {
@@ -347,4 +646,5 @@ comptime {
     _ = bun_free;
     _ = scan;
     _ = bun_malloc;
+    _ = getTests;
 }

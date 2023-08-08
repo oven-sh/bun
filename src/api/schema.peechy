@@ -609,3 +609,25 @@ struct ClientServerModuleManifest {
   StringPointer[] exportNames;
   byte[] contents;
 }
+
+
+struct GetTestsRequest {
+  string path;
+  byte[] contents;
+}
+
+smol TestKind {
+  test_fn = 1;
+  describe_fn = 2;
+}
+
+struct TestResponseItem {
+  int32 byteOffset;
+  StringPointer label;
+  TestKind kind;
+}
+
+struct GetTestsResponse {
+  TestResponseItem[] tests;
+  byte[] contents;
+}

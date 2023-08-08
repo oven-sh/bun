@@ -112,7 +112,7 @@ pub const hardcode_localhost_to_127_0_0_1 = false;
 /// so we just disable it
 pub const support_jsxs_in_jsx_transform = false;
 
-pub const use_simdutf = !@import("root").bun.JSC.is_bindgen;
+pub const use_simdutf = @import("root").bun.Environment.isNative and !@import("root").bun.JSC.is_bindgen;
 
 pub const inline_properties_in_transpiler = true;
 

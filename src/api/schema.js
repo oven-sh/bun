@@ -3315,6 +3315,108 @@ function encodeClientServerModuleManifest(message, bb) {
   }
 }
 
+function decodeGetTestsRequest(bb) {
+  var result = {};
+
+  result["path"] = bb.readString();
+  result["contents"] = bb.readByteArray();
+  return result;
+}
+
+function encodeGetTestsRequest(message, bb) {
+  var value = message["path"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error('Missing required field "path"');
+  }
+
+  var value = message["contents"];
+  if (value != null) {
+    bb.writeByteArray(value);
+  } else {
+    throw new Error('Missing required field "contents"');
+  }
+}
+const TestKind = {
+  "1": 1,
+  "2": 2,
+  "test_fn": 1,
+  "describe_fn": 2,
+};
+const TestKindKeys = {
+  "1": "test_fn",
+  "2": "describe_fn",
+  "test_fn": "test_fn",
+  "describe_fn": "describe_fn",
+};
+
+function decodeTestResponseItem(bb) {
+  var result = {};
+
+  result["byteOffset"] = bb.readInt32();
+  result["label"] = decodeStringPointer(bb);
+  result["kind"] = TestKind[bb.readByte()];
+  return result;
+}
+
+function encodeTestResponseItem(message, bb) {
+  var value = message["byteOffset"];
+  if (value != null) {
+    bb.writeInt32(value);
+  } else {
+    throw new Error('Missing required field "byteOffset"');
+  }
+
+  var value = message["label"];
+  if (value != null) {
+    encodeStringPointer(value, bb);
+  } else {
+    throw new Error('Missing required field "label"');
+  }
+
+  var value = message["kind"];
+  if (value != null) {
+    var encoded = TestKind[value];
+    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "TestKind"');
+    bb.writeByte(encoded);
+  } else {
+    throw new Error('Missing required field "kind"');
+  }
+}
+
+function decodeGetTestsResponse(bb) {
+  var result = {};
+
+  var length = bb.readVarUint();
+  var values = (result["tests"] = Array(length));
+  for (var i = 0; i < length; i++) values[i] = decodeTestResponseItem(bb);
+  result["contents"] = bb.readByteArray();
+  return result;
+}
+
+function encodeGetTestsResponse(message, bb) {
+  var value = message["tests"];
+  if (value != null) {
+    var values = value,
+      n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      encodeTestResponseItem(value, bb);
+    }
+  } else {
+    throw new Error('Missing required field "tests"');
+  }
+
+  var value = message["contents"];
+  if (value != null) {
+    bb.writeByteArray(value);
+  } else {
+    throw new Error('Missing required field "contents"');
+  }
+}
+
 export { Loader };
 export { LoaderKeys };
 export { FrameworkEntryPointType };
@@ -3461,3 +3563,11 @@ export { decodeClientServerModule };
 export { encodeClientServerModule };
 export { decodeClientServerModuleManifest };
 export { encodeClientServerModuleManifest };
+export { decodeGetTestsRequest };
+export { encodeGetTestsRequest };
+export { TestKind };
+export { TestKindKeys };
+export { decodeTestResponseItem };
+export { encodeTestResponseItem };
+export { decodeGetTestsResponse };
+export { encodeGetTestsResponse };

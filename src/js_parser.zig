@@ -46,6 +46,12 @@ fn _disabledAssert(_: bool) void {
     unreachable;
 }
 
+fn __wrapSyntaxError(loc: @import("std").builtin.SourceLocation) void {
+    Output.print("SyntaxError at {d}:{d}", .{
+        loc.line,
+        loc.column,
+    });
+}
 const assert = if (Environment.allow_assert) std.debug.assert else _disabledAssert;
 const debug = Output.scoped(.JSParser, false);
 const ExprListLoc = struct {
@@ -386,6 +392,7 @@ const JSXTag = struct {
 
             if (strings.indexOfChar(member, '-')) |index| {
                 try p.log.addError(p.source, logger.Loc{ .start = member_range.loc.start + @as(i32, @intCast(index)) }, "Unexpected \"-\"");
+                __wrapSyntaxError(@src());
                 return error.SyntaxError;
             }
 
@@ -2810,6 +2817,74 @@ pub const Parser = struct {
         }
     }
 
+    pub fn analyze(self: *Parser, context: *anyopaque, callback: *const fn (*anyopaque, *TSXParser, []js_ast.Part) anyerror!void) anyerror!void {
+        var p: TSXParser = undefined;
+        try TSXParser.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
+        p.should_fold_typescript_constant_expressions = false;
+
+        defer p.lexer.deinit();
+
+        // Consume a leading hashbang comment
+        var hashbang: string = "";
+        if (p.lexer.token == .t_hashbang) {
+            hashbang = p.lexer.identifier;
+            try p.lexer.next();
+        }
+
+        // Parse the file in the first pass, but do not bind symbols
+        var opts = ParseStatementOptions{ .is_module_scope = true };
+        const parse_tracer = bun.tracy.traceNamed(@src(), "JSParser.parse");
+
+        const stmts = p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts) catch |err| {
+            if (comptime Environment.isWasm) {
+                Output.print("JSParser.parse: caught error {s} at location: {d}\n", .{ @errorName(err), p.lexer.loc().start });
+                p.log.printForLogLevel(Output.writer()) catch {};
+            }
+            return err;
+        };
+
+        parse_tracer.end();
+
+        if (self.log.errors > 0) {
+            if (comptime Environment.isWasm) {
+                // If the logger is backed by console.log, every print appends a newline.
+                // so buffering is kind of mandatory here
+                const fakeWriter = struct {
+                    fn writeAll(_: @This(), data: []const u8) anyerror!usize {
+                        if (data.len == 0) return 0;
+
+                        Output.print("{s}", .{data});
+                        return data.len;
+                    }
+                };
+                var writer = std.io.Writer(fakeWriter, anyerror, fakeWriter.writeAll){
+                    .context = fakeWriter{},
+                };
+                var buffered_writer = std.io.bufferedWriter(writer);
+                var actual = buffered_writer.writer();
+                for (self.log.msgs.items) |msg| {
+                    var m: logger.Msg = msg;
+                    m.writeFormat(actual, true) catch {};
+                }
+                buffered_writer.flush() catch {};
+            }
+            return error.SyntaxError;
+        }
+
+        const visit_tracer = bun.tracy.traceNamed(@src(), "JSParser.visit");
+        try p.prepareForVisitPass();
+
+        var parts = ListManaged(js_ast.Part).init(p.allocator);
+        defer parts.deinit();
+
+        try p.appendPart(&parts, stmts);
+        visit_tracer.end();
+
+        const analyze_tracer = bun.tracy.traceNamed(@src(), "JSParser.analyze");
+        try callback(context, &p, parts.items);
+        analyze_tracer.end();
+    }
+
     fn _parse(self: *Parser, comptime ParserType: type) !js_ast.Result {
         var p: ParserType = undefined;
         const orig_error_count = self.log.errors;
@@ -2858,6 +2933,7 @@ pub const Parser = struct {
         //   Example where NOT halting causes a crash: A TS enum with a number literal as a member name
         //     https://discord.com/channels/876711213126520882/876711213126520885/1039325382488371280
         if (self.log.errors > orig_error_count) {
+            __wrapSyntaxError(@src());
             return error.SyntaxError;
         }
 
@@ -3015,6 +3091,7 @@ pub const Parser = struct {
 
         // If there were errors while visiting, also halt here
         if (self.log.errors > orig_error_count) {
+            __wrapSyntaxError(@src());
             return error.SyntaxError;
         }
 
@@ -4287,11 +4364,10 @@ pub const Parser = struct {
     }
 
     pub fn init(_options: Options, log: *logger.Log, source: *const logger.Source, define: *Define, allocator: Allocator) !Parser {
-        const lexer = try js_lexer.Lexer.init(log, source.*, allocator);
         return Parser{
             .options = _options,
             .allocator = allocator,
-            .lexer = lexer,
+            .lexer = try js_lexer.Lexer.init(log, source.*, allocator),
             .define = define,
             .source = source,
             .log = log,
@@ -8100,6 +8176,7 @@ fn NewParser_(
                     else => {
                         if (!found_key) {
                             try p.lexer.unexpected();
+                            __wrapSyntaxError(@src());
                             return error.SyntaxError;
                         }
                     },
@@ -8112,6 +8189,7 @@ fn NewParser_(
                     else => {
                         if (!p.lexer.has_newline_before) {
                             try p.lexer.unexpected();
+                            __wrapSyntaxError(@src());
                             return error.SyntaxError;
                         }
                     },
@@ -8488,6 +8566,7 @@ fn NewParser_(
                 // example:
                 // export class {}
                 if (!is_identifier) {
+                    __wrapSyntaxError(@src());
                     return error.SyntaxError;
                 }
 
@@ -8617,6 +8696,7 @@ fn NewParser_(
                         p.esm_export_keyword = p.lexer.range();
                     } else if (!opts.is_namespace_scope) {
                         try p.lexer.unexpected();
+                        __wrapSyntaxError(@src());
                         return error.SyntaxError;
                     }
                     try p.lexer.next();
@@ -8650,12 +8730,14 @@ fn NewParser_(
                             }
 
                             try p.lexer.unexpected();
+                            __wrapSyntaxError(@src());
                             return error.SyntaxError;
                         },
 
                         T.t_enum => {
                             if (!is_typescript_enabled) {
                                 try p.lexer.unexpected();
+                                __wrapSyntaxError(@src());
                                 return error.SyntaxError;
                             }
 
@@ -8728,12 +8810,14 @@ fn NewParser_(
                             }
 
                             try p.lexer.unexpected();
+                            __wrapSyntaxError(@src());
                             return error.SyntaxError;
                         },
 
                         T.t_default => {
                             if (!opts.is_module_scope and (!opts.is_namespace_scope or !opts.is_typescript_declare)) {
                                 try p.lexer.unexpected();
+                                __wrapSyntaxError(@src());
                                 return error.SyntaxError;
                             }
 
@@ -8883,6 +8967,7 @@ fn NewParser_(
                         T.t_asterisk => {
                             if (!opts.is_module_scope and !(opts.is_namespace_scope or !opts.is_typescript_declare)) {
                                 try p.lexer.unexpected();
+                                __wrapSyntaxError(@src());
                                 return error.SyntaxError;
                             }
 
@@ -8936,6 +9021,7 @@ fn NewParser_(
                         T.t_open_brace => {
                             if (!opts.is_module_scope and !(opts.is_namespace_scope or !opts.is_typescript_declare)) {
                                 try p.lexer.unexpected();
+                                __wrapSyntaxError(@src());
                                 return error.SyntaxError;
                             }
 
@@ -9013,10 +9099,12 @@ fn NewParser_(
                                 return p.s(S.ExportEquals{ .value = value }, loc);
                             }
                             try p.lexer.unexpected();
+                            __wrapSyntaxError(@src());
                             return error.SyntaxError;
                         },
                         else => {
                             try p.lexer.unexpected();
+                            __wrapSyntaxError(@src());
                             return error.SyntaxError;
                         },
                     }
@@ -9029,6 +9117,7 @@ fn NewParser_(
                 .t_enum => {
                     if (!is_typescript_enabled) {
                         try p.lexer.unexpected();
+                        __wrapSyntaxError(@src());
                         return error.SyntaxError;
                     }
                     return p.parseTypescriptEnumStmt(loc, opts);
@@ -9072,6 +9161,7 @@ fn NewParser_(
                     // notimpl();
 
                     try p.lexer.unexpected();
+                    __wrapSyntaxError(@src());
                     return error.SyntaxError;
                 },
                 .t_class => {
@@ -9198,6 +9288,7 @@ fn NewParser_(
                         if (p.lexer.token == .t_default) {
                             if (foundDefault) {
                                 try p.log.addRangeError(p.source, p.lexer.range(), "Multiple default clauses are not allowed");
+                                __wrapSyntaxError(@src());
                                 return error.SyntaxError;
                             }
 
@@ -9387,6 +9478,7 @@ fn NewParser_(
                     if (p.lexer.isContextualKeyword("of") or isForAwait) {
                         if (bad_let_range) |r| {
                             try p.log.addRangeError(p.source, r, "\"let\" must be wrapped in parentheses to be used as an expression here");
+                            __wrapSyntaxError(@src());
                             return error.SyntaxError;
                         }
 
@@ -9395,6 +9487,7 @@ fn NewParser_(
                                 try p.lexer.expectedString("\"of\"");
                             } else {
                                 try p.lexer.unexpected();
+                                __wrapSyntaxError(@src());
                                 return error.SyntaxError;
                             }
                         }
@@ -9480,6 +9573,7 @@ fn NewParser_(
                             // "import 'path'"
                             if (!opts.is_module_scope and (!opts.is_namespace_scope or !opts.is_typescript_declare)) {
                                 try p.lexer.unexpected();
+                                __wrapSyntaxError(@src());
                                 return error.SyntaxError;
                             }
                             was_originally_bare_import = true;
@@ -9488,6 +9582,7 @@ fn NewParser_(
                             // "import * as ns from 'path'"
                             if (!opts.is_module_scope and (!opts.is_namespace_scope or !opts.is_typescript_declare)) {
                                 try p.lexer.unexpected();
+                                __wrapSyntaxError(@src());
                                 return error.SyntaxError;
                             }
 
@@ -9505,6 +9600,7 @@ fn NewParser_(
                             // "import {item1, item2} from 'path'"
                             if (!opts.is_module_scope and (!opts.is_namespace_scope or !opts.is_typescript_declare)) {
                                 try p.lexer.unexpected();
+                                __wrapSyntaxError(@src());
                                 return error.SyntaxError;
                             }
                             var importClause = try p.parseImportClause();
@@ -9530,6 +9626,7 @@ fn NewParser_(
                             // "import foo = bar"
                             if (!opts.is_module_scope and (!opts.is_namespace_scope)) {
                                 try p.lexer.unexpected();
+                                __wrapSyntaxError(@src());
                                 return error.SyntaxError;
                             }
 
@@ -9615,6 +9712,7 @@ fn NewParser_(
                                     },
                                     else => {
                                         try p.lexer.unexpected();
+                                        __wrapSyntaxError(@src());
                                         return error.SyntaxError;
                                     },
                                 }
@@ -9624,6 +9722,7 @@ fn NewParser_(
                         },
                         else => {
                             try p.lexer.unexpected();
+                            __wrapSyntaxError(@src());
                             return error.SyntaxError;
                         },
                     }
@@ -9669,6 +9768,7 @@ fn NewParser_(
                         try p.log.addError(p.source, logger.Loc{
                             .start = loc.start + 5,
                         }, "Unexpected newline after \"throw\"");
+                        __wrapSyntaxError(@src());
                         return error.SyntaxError;
                     }
                     const expr = try p.parseExpr(.lowest);
@@ -10441,6 +10541,7 @@ fn NewParser_(
                             // Commas after spread elements are not allowed
                             if (has_spread and p.lexer.token == .t_comma) {
                                 p.log.addRangeError(p.source, p.lexer.range(), "Unexpected \",\" after rest pattern") catch unreachable;
+                                __wrapSyntaxError(@src());
                                 return error.SyntaxError;
                             }
                         }
@@ -10488,6 +10589,7 @@ fn NewParser_(
                         // Commas after spread elements are not allowed
                         if (property.flags.contains(.is_spread) and p.lexer.token == .t_comma) {
                             p.log.addRangeError(p.source, p.lexer.range(), "Unexpected \",\" after rest pattern") catch unreachable;
+                            __wrapSyntaxError(@src());
                             return error.SyntaxError;
                         }
 
@@ -10939,6 +11041,7 @@ fn NewParser_(
             if (first_non_identifier_loc.start != 0 and !p.lexer.isContextualKeyword("from")) {
                 const r = js_lexer.rangeOfIdentifier(p.source, first_non_identifier_loc);
                 try p.lexer.addRangeError(r, "Expected identifier but found \"{s}\"", .{p.source.textForRange(r)}, true);
+                __wrapSyntaxError(@src());
                 return error.SyntaxError;
             }
 
@@ -11390,6 +11493,7 @@ fn NewParser_(
             // Newlines are not allowed before "=>"
             if (p.lexer.has_newline_before) {
                 try p.log.addRangeError(p.source, p.lexer.range(), "Unexpected newline before \"=>\"");
+                __wrapSyntaxError(@src());
                 return error.SyntaxError;
             }
 
@@ -11880,6 +11984,7 @@ fn NewParser_(
             if (isStar) {
                 if (p.lexer.has_newline_before) {
                     try p.lexer.unexpected();
+                    __wrapSyntaxError(@src());
                     return error.SyntaxError;
                 }
                 try p.lexer.next();
@@ -11964,6 +12069,7 @@ fn NewParser_(
                 .t_asterisk => {
                     if (kind != .normal or opts.is_generator) {
                         try p.lexer.unexpected();
+                        __wrapSyntaxError(@src());
                         return error.SyntaxError;
                     }
 
@@ -12734,6 +12840,7 @@ fn NewParser_(
                                 // "a?.<T>()"
                                 if (comptime !is_typescript_enabled) {
                                     try p.lexer.expected(.t_identifier);
+                                    __wrapSyntaxError(@src());
                                     return error.SyntaxError;
                                 }
 
@@ -12885,6 +12992,7 @@ fn NewParser_(
                         {
                             if (errors == null) {
                                 try p.lexer.unexpected();
+                                __wrapSyntaxError(@src());
                                 return error.SyntaxError;
                             }
                             errors.?.invalid_expr_after_question = p.lexer.range();
@@ -12916,6 +13024,7 @@ fn NewParser_(
 
                         if (!is_typescript_enabled) {
                             try p.lexer.unexpected();
+                            __wrapSyntaxError(@src());
                             return error.SyntaxError;
                         }
 
@@ -13191,6 +13300,7 @@ fn NewParser_(
                         // Prevent "||" inside "??" from the right
                         if (level.eql(.nullish_coalescing)) {
                             try p.lexer.unexpected();
+                            __wrapSyntaxError(@src());
                             return error.SyntaxError;
                         }
 
@@ -13203,6 +13313,7 @@ fn NewParser_(
 
                             if (p.lexer.token == .t_question_question) {
                                 try p.lexer.unexpected();
+                                __wrapSyntaxError(@src());
                                 return error.SyntaxError;
                             }
                         }
@@ -13223,6 +13334,7 @@ fn NewParser_(
                         // Prevent "&&" inside "??" from the right
                         if (level.eql(.nullish_coalescing)) {
                             try p.lexer.unexpected();
+                            __wrapSyntaxError(@src());
                             return error.SyntaxError;
                         }
 
@@ -13235,6 +13347,7 @@ fn NewParser_(
 
                             if (p.lexer.token == .t_question_question) {
                                 try p.lexer.unexpected();
+                                __wrapSyntaxError(@src());
                                 return error.SyntaxError;
                             }
                         }
@@ -13508,6 +13621,7 @@ fn NewParser_(
                 .t_private_identifier => {
                     if (!p.allow_private_identifiers or !p.allow_in or level.gte(.compare)) {
                         try p.lexer.unexpected();
+                        __wrapSyntaxError(@src());
                         return error.SyntaxError;
                     }
 
@@ -13556,6 +13670,7 @@ fn NewParser_(
                                         const value = try p.parseExpr(.prefix);
                                         if (p.lexer.token == T.t_asterisk_asterisk) {
                                             try p.lexer.unexpected();
+                                            __wrapSyntaxError(@src());
                                             return error.SyntaxError;
                                         }
 
@@ -13667,6 +13782,7 @@ fn NewParser_(
                     const value = try p.parseExpr(.prefix);
                     if (p.lexer.token == .t_asterisk_asterisk) {
                         try p.lexer.unexpected();
+                        __wrapSyntaxError(@src());
                         return error.SyntaxError;
                     }
 
@@ -13680,6 +13796,7 @@ fn NewParser_(
                     const value = try p.parseExpr(.prefix);
                     if (p.lexer.token == .t_asterisk_asterisk) {
                         try p.lexer.unexpected();
+                        __wrapSyntaxError(@src());
                         return error.SyntaxError;
                     }
 
@@ -13690,6 +13807,7 @@ fn NewParser_(
                     const value = try p.parseExpr(.prefix);
                     if (p.lexer.token == .t_asterisk_asterisk) {
                         try p.lexer.unexpected();
+                        __wrapSyntaxError(@src());
                         return error.SyntaxError;
                     }
                     if (value.data == .e_index) {
@@ -13708,6 +13826,7 @@ fn NewParser_(
                     const value = try p.parseExpr(.prefix);
                     if (p.lexer.token == .t_asterisk_asterisk) {
                         try p.lexer.unexpected();
+                        __wrapSyntaxError(@src());
                         return error.SyntaxError;
                     }
 
@@ -13718,6 +13837,7 @@ fn NewParser_(
                     const value = try p.parseExpr(.prefix);
                     if (p.lexer.token == .t_asterisk_asterisk) {
                         try p.lexer.unexpected();
+                        __wrapSyntaxError(@src());
                         return error.SyntaxError;
                     }
 
@@ -13728,6 +13848,7 @@ fn NewParser_(
                     const value = try p.parseExpr(.prefix);
                     if (p.lexer.token == .t_asterisk_asterisk) {
                         try p.lexer.unexpected();
+                        __wrapSyntaxError(@src());
                         return error.SyntaxError;
                     }
 
@@ -13738,6 +13859,7 @@ fn NewParser_(
                     const value = try p.parseExpr(.prefix);
                     if (p.lexer.token == .t_asterisk_asterisk) {
                         try p.lexer.unexpected();
+                        __wrapSyntaxError(@src());
                         return error.SyntaxError;
                     }
 
@@ -13800,6 +13922,7 @@ fn NewParser_(
 
                         if (p.lexer.token != .t_identifier or !strings.eqlComptime(p.lexer.raw(), "target")) {
                             try p.lexer.unexpected();
+                            __wrapSyntaxError(@src());
                             return error.SyntaxError;
                         }
                         const range = logger.Range{ .loc = loc, .len = p.lexer.range().end().start - loc.start };
@@ -14067,17 +14190,21 @@ fn NewParser_(
                     }
 
                     try p.lexer.unexpected();
+                    __wrapSyntaxError(@src());
                     return error.SyntaxError;
                 },
                 .t_import => {
                     try p.lexer.next();
                     return p.parseImportExpr(loc, level);
                 },
-                else => {
+                else => |tok| {
+                    Output.print("Unexpected {s}", .{@tagName(tok)});
                     try p.lexer.unexpected();
+                    __wrapSyntaxError(@src());
                     return error.SyntaxError;
                 },
             }
+            __wrapSyntaxError(@src());
             return error.SyntaxError;
         }
 
@@ -14340,6 +14467,7 @@ fn NewParser_(
 
                                         // If we get here, it's invalid
                                         try p.log.addError(p.source, expr.loc, "Invalid JSX prop shorthand, must be identifier, dot or string");
+                                        __wrapSyntaxError(@src());
                                         return error.SyntaxError;
                                     };
 
@@ -14394,6 +14522,7 @@ fn NewParser_(
                 const r = p.lexer.range();
                 // Not dealing with this right now.
                 try p.log.addRangeError(p.source, r, "Invalid JSX escape - use XML entity codes quotes or pass a JavaScript string instead");
+                __wrapSyntaxError(@src());
                 return error.SyntaxError;
             }
 
@@ -14475,6 +14604,7 @@ fn NewParser_(
                                 end_tag.name,
                                 tag.name,
                             });
+                            __wrapSyntaxError(@src());
                             return error.SyntaxError;
                         }
 
@@ -14497,6 +14627,7 @@ fn NewParser_(
                     },
                     else => {
                         try p.lexer.unexpected();
+                        __wrapSyntaxError(@src());
                         return error.SyntaxError;
                     },
                 }
@@ -15739,7 +15870,7 @@ fn NewParser_(
                                     return p.newExpr(
                                         // Use libc fmod here to be consistent with what JavaScriptCore does
                                         // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
-                                        E.Number{ .value = bun.C.fmod(vals[0], vals[1]) },
+                                        E.Number{ .value = if (comptime Environment.isNative) bun.C.fmod(vals[0], vals[1]) else std.math.mod(f64, vals[0], vals[1]) catch 0 },
                                         expr.loc,
                                     );
                                 }
@@ -20807,6 +20938,7 @@ fn NewParser_(
                 // Arrow functions are not allowed inside certain expressions
                 if (level.gt(.assign)) {
                     try p.lexer.unexpected();
+                    __wrapSyntaxError(@src());
                     return error.SyntaxError;
                 }
 
@@ -20879,6 +21011,7 @@ fn NewParser_(
             // If this isn't an arrow function, then types aren't allowed
             if (type_colon_range.len > 0) {
                 try p.log.addRangeError(p.source, type_colon_range, "Unexpected \":\"");
+                __wrapSyntaxError(@src());
                 return error.SyntaxError;
             }
 
@@ -20894,6 +21027,7 @@ fn NewParser_(
                 p.logExprErrors(&errors);
                 if (spread_range.len > 0) {
                     try p.log.addRangeError(p.source, type_colon_range, "Unexpected \"...\"");
+                    __wrapSyntaxError(@src());
                     return error.SyntaxError;
                 }
 
@@ -20904,6 +21038,7 @@ fn NewParser_(
 
             // Indicate that we expected an arrow function
             try p.lexer.expected(.t_equals_greater_than);
+            __wrapSyntaxError(@src());
             return error.SyntaxError;
         }
 
@@ -21997,7 +22132,7 @@ const JSXParser = if (bun.fast_debug_build_mode)
     TSXParser
 else
     NewParser(.{ .jsx = .react });
-const TSXParser = NewParser(.{ .jsx = .react, .typescript = true });
+pub const TSXParser = NewParser(.{ .jsx = .react, .typescript = true });
 const TypeScriptParser = NewParser(.{ .typescript = true });
 const JSParserMacro = if (bun.fast_debug_build_mode)
     TSParserMacro

@@ -71,7 +71,7 @@ pub const PercentEncoding = struct {
             }
         }
 
-        if (ret) |some| return allocator.realloc(some, ret_index) catch unreachable;
+        if (ret) |some| return some[0..ret_index];
         return null;
     }
 };

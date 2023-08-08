@@ -1004,7 +1004,7 @@ pub const Fetch = struct {
                 },
             },
             .allocator = allocator,
-            .status_text = bun.String.create("OK"),
+            .status_text = bun.String.createAtom("OK"),
             .url = data_url.url.dupeRef(),
         };
 

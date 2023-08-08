@@ -234,11 +234,11 @@ describe("Headers", () => {
     ]);
     const actual = [...headers];
     expect(actual).toEqual([
+      ["x-bun", "abc, def"],
       ["set-cookie", "foo=bar"],
       ["set-cookie", "bar=baz"],
-      ["x-bun", "abc, def"],
     ]);
-    expect([...headers.values()]).toEqual(["foo=bar", "bar=baz", "abc, def"]);
+    expect([...headers.values()]).toEqual(["abc, def", "foo=bar", "bar=baz"]);
   });
 
   it("Headers append multiple", () => {
@@ -253,9 +253,9 @@ describe("Headers", () => {
     // we do not preserve the order
     // which is kind of bad
     expect(actual).toEqual([
+      ["x-bun", "foo, bar"],
       ["set-cookie", "foo=bar"],
       ["set-cookie", "bar=baz"],
-      ["x-bun", "foo, bar"],
     ]);
   });
 
@@ -276,9 +276,17 @@ describe("Headers", () => {
     headers.set("set-Cookie", "foo=baz");
     headers.set("set-cookie", "bar=qat");
     const actual = [...headers];
+    expect(actual).toEqual([["set-cookie", "bar=qat"]]);
+  });
+
+  it("should include set-cookie headers in array", () => {
+    const headers = new Headers();
+    headers.append("Set-Cookie", "foo=bar");
+    headers.append("Content-Type", "text/plain");
+    const actual = [...headers];
     expect(actual).toEqual([
-      ["set-cookie", "foo=baz"],
-      ["set-cookie", "bar=qat"],
+      ["content-type", "text/plain"],
+      ["set-cookie", "foo=bar"],
     ]);
   });
 });

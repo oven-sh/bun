@@ -560,7 +560,6 @@ pub const TestScope = struct {
     func: JSC.JSValue,
     func_arg: []JSC.JSValue,
     func_has_callback: bool = false,
-    func_arg_size: usize,
 
     id: TestRunner.Test.ID = 0,
     promise: ?*JSInternalPromise = null,
@@ -659,14 +658,11 @@ pub const TestScope = struct {
         const func = this.func;
         Jest.runner.?.did_pending_test_fail = false;
         defer {
-            var idx: u32 = 0;
-            while (idx < this.func_arg_size) {
-                this.func_arg[idx].unprotect();
-                idx += 1;
+            for (this.func_arg) |arg| {
+                arg.unprotect();
             }
             func.unprotect();
             this.func = .zero;
-            this.func_arg_size = 0;
             this.func_has_callback = false;
             vm.autoGarbageCollect();
         }
@@ -693,7 +689,7 @@ pub const TestScope = struct {
                 task,
             );
             task.done_callback_state = .pending;
-            this.func_arg[this.func_arg_size - 1] = callback_func;
+            this.func_arg[this.func_arg.len - 1] = callback_func;
         }
 
         initial_value = this.func.call(vm.global, @as([]const JSC.JSValue, this.func_arg));
@@ -1603,7 +1599,6 @@ inline fn createScope(
             .tag = tag_to_use,
             .func = if (is_skip) .zero else function,
             .func_arg = function_args,
-            .func_arg_size = arg_size,
             .func_has_callback = has_callback,
             .timeout_millis = timeout_ms,
         }) catch unreachable;
@@ -1623,10 +1618,7 @@ inline fn createScope(
             .is_skip = is_skip or parent.is_skip,
         };
 
-        const function_args = allocator.alloc(JSC.JSValue, 0) catch unreachable;
-        defer allocator.free(function_args);
-
-        return scope.run(globalThis, function, function_args);
+        return scope.run(globalThis, function, &.{});
     }
 
     return this;
@@ -1801,6 +1793,11 @@ fn eachBind(
     var function = args[1];
     var options = if (args.len > 2) args[2] else .zero;
 
+    if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(globalThis.vm())) {
+        globalThis.throwPretty("{s} expects a function", .{signature});
+        return .zero;
+    }
+
     var timeout_ms: u32 = Jest.runner.?.default_timeout_ms;
     if (options.isNumber()) {
         timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
@@ -1847,11 +1844,11 @@ fn eachBind(
             return .zero;
         }
 
-        var iter = JSC.JSArrayIterator.init(array, globalThis);
+        var iter = array.arrayIterator(globalThis);
 
         while (iter.next()) |item| {
             // TODO: node:util.format() the label
-            const label = if (description == .zero)
+            const label = if (description.isEmptyOrUndefinedOrNull())
                 ""
             else
                 (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
@@ -1865,7 +1862,7 @@ fn eachBind(
             }
 
             // add room for callback function
-            var has_callback_function: bool = func_params_length > arg_size and each_data.is_test;
+            const has_callback_function: bool = (func_params_length > arg_size) and each_data.is_test;
             if (has_callback_function) {
                 arg_size += 1;
             }
@@ -1875,16 +1872,19 @@ fn eachBind(
 
             if (item_is_array) {
                 // Spread array as args
-                const item_length = item.getLength(globalThis);
-                while (idx < item_length) : (idx += 1) {
-                    var arg = item.getIndex(globalThis, idx);
-                    arg.protect();
-                    function_args[idx] = arg;
+                var item_iter = item.arrayIterator(globalThis);
+                while (item_iter.next()) |array_item| {
+                    if (array_item == .zero) {
+                        allocator.free(function_args);
+                        break;
+                    }
+                    array_item.protect();
+                    function_args[idx] = array_item;
+                    idx += 1;
                 }
             } else {
                 item.protect();
-                function_args[idx] = item;
-                idx += 1;
+                function_args[0] = item;
             }
 
             if (each_data.is_test) {
@@ -1895,7 +1895,6 @@ fn eachBind(
                     .tag = parent.tag,
                     .func = function,
                     .func_arg = function_args,
-                    .func_arg_size = arg_size,
                     .func_has_callback = has_callback_function,
                     .timeout_millis = timeout_ms,
                 }) catch unreachable;
@@ -1915,7 +1914,7 @@ fn eachBind(
                     .is_skip = parent.is_skip,
                 };
 
-                var ret = scope.run(globalThis, function, function_args);
+                const ret = scope.run(globalThis, function, function_args);
                 _ = ret;
                 allocator.free(function_args);
             }

@@ -3192,24 +3192,24 @@ pub const Hash = struct {
                 } else {
                     var seed: u64 = 0;
                     if (args.nextEat()) |arg| {
-                        if (arg.isNumber()) {
-                            seed = arg.toU32();
+                        if (arg.isNumber() or arg.isBigInt()) {
+                            seed = arg.toUInt64NoTruncate();
                         }
                     }
                     if (comptime std.meta.trait.isNumber(@TypeOf(function_args[0]))) {
-                        function_args[0] = @as(@TypeOf(function_args[0]), @intCast(seed));
+                        function_args[0] = @as(@TypeOf(function_args[0]), @truncate(seed));
                         function_args[1] = input;
                     } else {
-                        function_args[1] = @as(@TypeOf(function_args[1]), @intCast(seed));
                         function_args[0] = input;
+                        function_args[1] = @as(@TypeOf(function_args[1]), @truncate(seed));
                     }
 
                     const value = @call(.auto, Function, function_args);
 
                     if (@TypeOf(value) == u32) {
-                        return JSC.JSValue.jsNumber(@as(i32, @bitCast(value))).asObjectRef();
+                        return JSC.JSValue.jsNumber(@as(u32, @bitCast(value))).asObjectRef();
                     }
-                    return JSC.JSValue.jsNumber(value).asObjectRef();
+                    return JSC.JSValue.fromUInt64NoTruncate(ctx.ptr(), value).asObjectRef();
                 }
             }
         };

@@ -1,6 +1,6 @@
 addEventListener("message", e => {
   const data = e.data;
-  console.log("worker", data);
+  // console.log("worker", data);
 
   if (data === "initial message") {
     postMessage({ i: 0 });

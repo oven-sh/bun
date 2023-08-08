@@ -1,4 +1,4 @@
-const worker = new Worker(new URL("worker-fixture-many-messages.js", import.meta.url).href, {});
+const worker = new Worker(new URL("worker-fixture-many-messages.js", import.meta.url).href);
 
 worker.postMessage("initial message");
 worker.addEventListener("message", ({ data }) => {

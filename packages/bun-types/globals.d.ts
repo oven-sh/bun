@@ -380,6 +380,7 @@ interface AbstractWorkerEventMap {
 interface WorkerEventMap extends AbstractWorkerEventMap {
   message: MessageEvent;
   messageerror: MessageEvent;
+  close: CloseEvent;
 }
 
 interface AbstractWorker {

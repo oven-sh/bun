@@ -251,11 +251,11 @@ class Worker extends EventEmitter {
     this.#worker.addEventListener(
       "close",
       event => {
-        // TODO: exit code
-        resolve(0);
+        resolve(event.code);
       },
       { once: true },
     );
+    this.#worker.terminate();
 
     return (this.#onExitPromise = promise);
   }

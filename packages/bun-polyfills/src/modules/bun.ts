@@ -72,6 +72,12 @@ export const SHA384 = SHA384Polyfill satisfies typeof Bun.SHA384;
 export const SHA256 = SHA256Polyfill satisfies typeof Bun.SHA256;
 export const SHA512_256 = SHA512_256Polyfill satisfies typeof Bun.SHA512_256;
 
+export const indexOfLine = ((data, offset) => {
+    if (data instanceof ArrayBuffer || data instanceof SharedArrayBuffer) data = new Uint8Array(data);
+    if (data instanceof DataView || !(data instanceof Uint8Array)) data = new Uint8Array(data.buffer);
+    return data.indexOf(10, offset);
+}) satisfies typeof Bun.indexOfLine;
+
 export const sleep = (ms => {
     return new Promise(r => setTimeout(r, ms instanceof Date ? ms.valueOf() - Date.now() : ms));
 }) satisfies typeof Bun.sleep;

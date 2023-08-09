@@ -982,6 +982,23 @@ declare module "bun:test" {
      */
     toInclude(expected: string): void;
     /**
+     * Asserts that a value includes a `string` {times} times.
+     * @param expected the expected substring
+     * @param times the number of times the substring should occur
+     */
+    toIncludeRepeated(expected: string, times: number): void;
+    /**
+     * Checks whether a value satisfies a custom condition.
+     * @param {Function} predicate - The custom condition to be satisfied. It should be a function that takes a value as an argument (in this case the value from expect) and returns a boolean.
+     * @example
+     * expect(1).toSatisfy((val) => val > 0);
+     * expect("foo").toSatisfy((val) => val === "foo");
+     * expect("bar").not.toSatisfy((val) => val === "bun");
+     * @link https://vitest.dev/api/expect.html#tosatisfy
+     * @link https://jest-extended.jestcommunity.dev/docs/matchers/toSatisfy
+    */
+    toSatisfy(predicate: (value: T) => boolean): void;
+    /**
      * Asserts that a value starts with a `string`.
      *
      * @param expected the string to start with

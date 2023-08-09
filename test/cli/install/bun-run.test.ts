@@ -1,6 +1,6 @@
-import { file, spawn } from "bun";
-import { afterEach, beforeEach, expect, it } from "bun:test";
-import { bunExe, bunEnv as env } from "harness";
+import { file, spawn, spawnSync } from "bun";
+import { afterEach, beforeEach, expect, it, describe } from "bun:test";
+import { bunEnv, bunExe, bunEnv as env } from "harness";
 import { mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -9,11 +9,75 @@ import { readdirSorted } from "./dummy.registry";
 let run_dir: string;
 
 beforeEach(async () => {
-  run_dir = await realpath(await mkdtemp(join(tmpdir(), "bun-run.test")));
+  run_dir = await realpath(
+    await mkdtemp(join(tmpdir(), "bun-run.test." + Math.trunc(Math.random() * 9999999).toString(32))),
+  );
 });
 afterEach(async () => {
   await rm(run_dir, { force: true, recursive: true });
 });
+
+for (let withRun of [false, true]) {
+  describe(withRun ? "bun run" : "bun", () => {
+    describe("should work with .", () => {
+      it("respecting 'main' field", async () => {
+        await writeFile(join(run_dir, "test.js"), "console.log('Hello, world!');");
+        await writeFile(
+          join(run_dir, "package.json"),
+          JSON.stringify({
+            name: "test",
+            version: "0.0.0",
+            main: "test.js",
+          }),
+        );
+        const { stdout, stderr, exitCode } = spawnSync({
+          cmd: [bunExe(), withRun ? "run" : "", "."].filter(Boolean),
+          cwd: run_dir,
+          env: bunEnv,
+        });
+
+        expect(stderr.toString()).toBe("");
+        expect(stdout.toString()).toBe("Hello, world!\n");
+        expect(exitCode).toBe(0);
+      });
+
+      it("falling back to index", async () => {
+        await writeFile(join(run_dir, "index.ts"), "console.log('Hello, world!');");
+        await writeFile(
+          join(run_dir, "package.json"),
+          JSON.stringify({
+            name: "test",
+            version: "0.0.0",
+          }),
+        );
+
+        const { stdout, stderr, exitCode } = spawnSync({
+          cmd: [bunExe(), withRun ? "run" : "", "."].filter(Boolean),
+          cwd: run_dir,
+          env: bunEnv,
+        });
+
+        expect(stderr.toString()).toBe("");
+        expect(stdout.toString()).toBe("Hello, world!\n");
+        expect(exitCode).toBe(0);
+      });
+
+      it("falling back to index with no package.json", async () => {
+        await writeFile(join(run_dir, "index.ts"), "console.log('Hello, world!');");
+
+        const { stdout, stderr, exitCode } = spawnSync({
+          cmd: [bunExe(), withRun ? "run" : "", "."].filter(Boolean),
+          cwd: run_dir,
+          env: bunEnv,
+        });
+
+        expect(stderr.toString()).toBe("");
+        expect(stdout.toString()).toBe("Hello, world!\n");
+        expect(exitCode).toBe(0);
+      });
+    });
+  });
+}
 
 it("should download dependency to run local file", async () => {
   await writeFile(

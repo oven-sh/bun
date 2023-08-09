@@ -98,21 +98,23 @@ import { stuff } from "foo";
 
 The full specification of this algorithm are officially documented in the [Node.js documentation](https://nodejs.org/api/modules.html); we won't rehash it here. Briefly: if you import `from "foo"`, Bun scans up the file system for a `node_modules` directory containing the package `foo`.
 
-Once it finds the `foo` package, Bun reads the `package.json` to determine how the package should be imported. Unless `"type": "module"` is specified, Bun assumes the package is using CommonJS and transpiles into a synchronous ES module internally. To determine the package's entrypoint, Bun first reads the `exports` field in and checks the following conditions in order:
+Once it finds the `foo` package, Bun reads the `package.json` to determine how the package should be imported. To determine the package's entrypoint, Bun first reads the `exports` field and checks for the following conditions.
 
 ```jsonc#package.json
 {
   "name": "foo",
   "exports": {
-    "bun": "./index.js",        // highest priority
+    "bun": "./index.js",
     "worker": "./index.js",
-    "module": "./index.js",
     "node": "./index.js",
+    "require": "./index.js", # if importer is CommonJS
+    "import": "./index.mjs", # if importer is ES module
     "default": "./index.js",
-    "browser": "./index.js"     // lowest priority
   }
 }
 ```
+
+Whichever one of these conditions occurs _first_ in the `package.json` is used to determine the package's entrypoint.
 
 Bun respects subpath [`"exports"`](https://nodejs.org/api/packages.html#subpath-exports) and [`"imports"`](https://nodejs.org/api/packages.html#imports). Specifying any subpath in the `"exports"` map will prevent other subpaths from being importable.
 

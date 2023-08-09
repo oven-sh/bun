@@ -3,7 +3,6 @@ import type {
   BuildConfig,
   BunPlugin,
   OnLoadCallback,
-  OnLoadResult,
   OnLoadResultObject,
   OnLoadResultSourceCode,
   OnResolveCallback,

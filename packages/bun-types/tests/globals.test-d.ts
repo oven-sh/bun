@@ -93,3 +93,6 @@ new Request("", { method: "POST" });
 
 Bun.sleepSync(1); // sleep for 1 ms (not recommended)
 await Bun.sleep(1); // sleep for 1 ms (recommended)
+
+Blob;
+WebSocket;

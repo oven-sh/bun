@@ -872,6 +872,26 @@ pub const RunCommand = struct {
         const passthrough = ctx.passthrough;
         const force_using_bun = ctx.debug.run_in_bun;
 
+        // This doesn't cover every case
+        if ((script_name_to_search.len == 1 and script_name_to_search[0] == '.') or
+            (script_name_to_search.len == 2 and @as(u16, @bitCast(script_name_to_search[0..2].*)) == @as(u16, @bitCast([_]u8{ '.', '/' }))))
+        {
+            Run.boot(ctx, ".") catch |err| {
+                if (Output.enable_ansi_colors) {
+                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                } else {
+                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                }
+
+                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
+                    script_name_to_search,
+                    @errorName(err),
+                });
+                Global.exit(1);
+            };
+            return true;
+        }
+
         if (log_errors or force_using_bun) {
             if (script_name_to_search.len > 0) {
                 possibly_open_with_bun_js: {
@@ -952,8 +972,7 @@ pub const RunCommand = struct {
                     }
 
                     Global.configureAllocator(.{ .long_running = true });
-
-                    Run.boot(ctx, file, ctx.allocator.dupe(u8, file_path) catch unreachable) catch |err| {
+                    Run.boot(ctx, ctx.allocator.dupe(u8, file_path) catch unreachable) catch |err| {
                         if (Output.enable_ansi_colors) {
                             ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
                         } else {
@@ -1115,7 +1134,7 @@ pub const RunCommand = struct {
 
         if (comptime log_errors) {
             Output.prettyError("<r><red>error<r><d>:<r> missing script \"<b>{s}<r>\"\n", .{script_name_to_search});
-            Global.exit(0);
+            Global.exit(1);
         }
 
         return false;

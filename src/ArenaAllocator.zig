@@ -1,4 +1,3 @@
-/// TODO: delete this once we've upgraded Zig and https://github.com/ziglang/zig/pull/15985 is merged.
 const std = @import("std");
 const assert = std.debug.assert;
 const mem = std.mem;
@@ -152,7 +151,7 @@ pub const ArenaAllocator = struct {
                     return false;
                 };
                 self.child_allocator.rawFree(first_alloc_buf, align_bits, @returnAddress());
-                const node = @as(*BufNode, @ptrCast(@alignCast(new_ptr)));
+                const node: *BufNode = @ptrCast(@alignCast(new_ptr));
                 node.* = .{ .data = total_size };
                 self.state.buffer_list.first = node;
             }
@@ -167,7 +166,7 @@ pub const ArenaAllocator = struct {
         const log2_align = comptime std.math.log2_int(usize, @alignOf(BufNode));
         const ptr = self.child_allocator.rawAlloc(len, log2_align, @returnAddress()) orelse
             return null;
-        const buf_node = @as(*BufNode, @ptrCast(@alignCast(ptr)));
+        const buf_node: *BufNode = @ptrCast(@alignCast(ptr));
         buf_node.* = .{ .data = len };
         self.state.buffer_list.prepend(buf_node);
         self.state.end_index = 0;
@@ -175,7 +174,7 @@ pub const ArenaAllocator = struct {
     }
 
     fn alloc(ctx: *anyopaque, n: usize, log2_ptr_align: u8, ra: usize) ?[*]u8 {
-        const self = @as(*ArenaAllocator, @ptrCast(@alignCast(ctx)));
+        const self: *ArenaAllocator = @ptrCast(@alignCast(ctx));
         _ = ra;
 
         const ptr_align = @as(usize, 1) << @as(Allocator.Log2Align, @intCast(log2_ptr_align));
@@ -209,7 +208,7 @@ pub const ArenaAllocator = struct {
     }
 
     fn resize(ctx: *anyopaque, buf: []u8, log2_buf_align: u8, new_len: usize, ret_addr: usize) bool {
-        const self = @as(*ArenaAllocator, @ptrCast(@alignCast(ctx)));
+        const self: *ArenaAllocator = @ptrCast(@alignCast(ctx));
         _ = log2_buf_align;
         _ = ret_addr;
 
@@ -236,7 +235,7 @@ pub const ArenaAllocator = struct {
         _ = log2_buf_align;
         _ = ret_addr;
 
-        const self = @as(*ArenaAllocator, @ptrCast(@alignCast(ctx)));
+        const self: *ArenaAllocator = @ptrCast(@alignCast(ctx));
 
         const cur_node = self.state.buffer_list.first orelse return;
         const cur_buf = @as([*]u8, @ptrCast(cur_node))[@sizeOf(BufNode)..cur_node.data];

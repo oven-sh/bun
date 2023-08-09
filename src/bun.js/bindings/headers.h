@@ -428,6 +428,7 @@ CPP_DECL bool JSC__VM__isEntered(JSC__VM* arg0);
 CPP_DECL bool JSC__VM__isJITEnabled();
 CPP_DECL void JSC__VM__releaseWeakRefs(JSC__VM* arg0);
 CPP_DECL JSC__JSValue JSC__VM__runGC(JSC__VM* arg0, bool arg1);
+CPP_DECL void JSC__VM__setControlFlowProfiler(JSC__VM* arg0, bool arg1);
 CPP_DECL void JSC__VM__setExecutionForbidden(JSC__VM* arg0, bool arg1);
 CPP_DECL void JSC__VM__setExecutionTimeLimit(JSC__VM* arg0, double arg1);
 CPP_DECL void JSC__VM__shrinkFootprint(JSC__VM* arg0);

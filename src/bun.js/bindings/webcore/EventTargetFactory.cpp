@@ -57,8 +57,8 @@ JSC::JSValue toJS(JSC::JSGlobalObject* state, JSDOMGlobalObject* globalObject, E
         //     case BaseAudioContextEventTargetInterfaceType:
         //         return toJS(state, globalObject, static_cast<BaseAudioContext&>(impl));
         // #endif
-        //     case BroadcastChannelEventTargetInterfaceType:
-        //         return toJS(state, globalObject, static_cast<BroadcastChannel&>(impl));
+    case BroadcastChannelEventTargetInterfaceType:
+        return toJS(state, globalObject, static_cast<BroadcastChannel&>(impl));
         //     case ClipboardEventTargetInterfaceType:
         //         return toJS(state, globalObject, static_cast<Clipboard&>(impl));
         //     case DOMApplicationCacheEventTargetInterfaceType:
@@ -117,8 +117,8 @@ JSC::JSValue toJS(JSC::JSGlobalObject* state, JSDOMGlobalObject* globalObject, E
         //     case MediaStreamTrackEventTargetInterfaceType:
         //         return toJS(state, globalObject, static_cast<MediaStreamTrack&>(impl));
         // #endif
-        //     case MessagePortEventTargetInterfaceType:
-        //         return toJS(state, globalObject, static_cast<MessagePort&>(impl));
+    case MessagePortEventTargetInterfaceType:
+        return toJS(state, globalObject, static_cast<MessagePort&>(impl));
         //     case NodeEventTargetInterfaceType:
         //         return toJS(state, globalObject, static_cast<Node&>(impl));
         // #if ENABLE(NOTIFICATIONS)

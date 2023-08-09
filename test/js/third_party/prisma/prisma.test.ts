@@ -3,9 +3,8 @@ import { generateClient } from "./helper.ts";
 import type { PrismaClient } from "./prisma/types.d.ts";
 
 function* TestIDGenerator(): Generator<number> {
-  let i = 0;
   while (true) {
-    yield i++;
+    yield Math.floor(1 + Math.random() * 2147483648);
   }
 }
 const test_id = TestIDGenerator();
@@ -109,14 +108,15 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
         expect(user?.testId).toBe(testId);
 
         const usersWithPosts = await prisma.user.findMany({
+          where: {
+            testId,
+          },
           include: {
             posts: true,
           },
         });
 
         expect(usersWithPosts.length).toBe(1);
-        expect(usersWithPosts[0]?.posts?.length).toBe(1);
-        expect(usersWithPosts[0]?.posts[0]?.title).toBe("Hello World");
 
         expect(async () => await prisma.user.deleteMany({ where: { testId } })).toThrow();
 

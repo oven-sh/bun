@@ -20,6 +20,7 @@ const json_parser = bun.JSON;
 const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
+const RegularExpression = bun.RegularExpression;
 
 const sync = @import("./sync.zig");
 const Api = @import("api/schema.zig").Api;
@@ -218,7 +219,9 @@ pub const Arguments = struct {
         clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
         clap.parseParam("--only                           Only run tests that are marked with \"test.only()\"") catch unreachable,
         clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
+        clap.parseParam("--coverage                       Generate a coverage profile") catch unreachable,
         clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
+        clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
     };
 
     const build_params_public = public_params ++ build_only_params;
@@ -385,15 +388,20 @@ pub const Arguments = struct {
                     };
                 }
             }
+
+            if (!ctx.test_options.coverage.enabled) {
+                ctx.test_options.coverage.enabled = args.flag("--coverage");
+            }
+
             if (args.option("--bail")) |bail| {
                 if (bail.len > 0) {
                     ctx.test_options.bail = std.fmt.parseInt(u32, bail, 10) catch |e| {
-                        Output.prettyErrorln("--bail expects a number: {s}", .{@errorName(e)});
+                        Output.prettyErrorln("<r><red>error<r>: --bail expects a number: {s}", .{@errorName(e)});
                         Global.exit(1);
                     };
 
                     if (ctx.test_options.bail == 0) {
-                        Output.prettyErrorln("--bail expects a number greater than 0", .{});
+                        Output.prettyErrorln("<r><red>error<r>: --bail expects a number greater than 0", .{});
                         Global.exit(1);
                     }
                 } else {
@@ -403,10 +411,24 @@ pub const Arguments = struct {
             if (args.option("--rerun-each")) |repeat_count| {
                 if (repeat_count.len > 0) {
                     ctx.test_options.repeat_count = std.fmt.parseInt(u32, repeat_count, 10) catch |e| {
-                        Output.prettyErrorln("--rerun-each expects a number: {s}", .{@errorName(e)});
+                        Output.prettyErrorln("<r><red>error<r>: --rerun-each expects a number: {s}", .{@errorName(e)});
                         Global.exit(1);
                     };
                 }
+            }
+            if (args.option("--test-name-pattern")) |namePattern| {
+                const regex = RegularExpression.init(bun.String.fromBytes(namePattern), RegularExpression.Flags.none) catch {
+                    Output.prettyErrorln(
+                        "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {}",
+                        .{
+                            strings.QuotedFormatter{
+                                .text = namePattern,
+                            },
+                        },
+                    );
+                    Global.exit(1);
+                };
+                ctx.test_options.test_filter_regex = regex;
             }
             ctx.test_options.update_snapshots = args.flag("--update-snapshots");
             ctx.test_options.run_todo = args.flag("--todo");
@@ -949,6 +971,8 @@ pub const Command = struct {
         run_todo: bool = false,
         only: bool = false,
         bail: u32 = 0,
+        coverage: TestCommand.CodeCoverageOptions = .{},
+        test_filter_regex: ?*RegularExpression = null,
     };
 
     pub const Context = struct {
@@ -1564,7 +1588,6 @@ pub const Command = struct {
 
         BunJS.Run.boot(
             ctx.*,
-            file,
             absolute_script_path,
         ) catch |err| {
             if (Output.enable_ansi_colors) {

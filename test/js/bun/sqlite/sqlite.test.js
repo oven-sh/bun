@@ -553,3 +553,39 @@ describe("Database.run", () => {
     }
   });
 });
+
+it("#3991", () => {
+  const db = new Database(":memory:");
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    xx TEXT)
+`,
+  ).run();
+
+  db.prepare(
+    `insert into users (id, xx) values (
+    'foobar',
+    '{
+        "links": [{"1": {
+    "2": "https://foobar.to/123",
+    "3": "4"
+    }}]
+
+    }'
+)`,
+  ).run();
+
+  let x = db
+    .query(
+      `SELECT * FROM users
+        WHERE users.id = 'foobar'
+        limit 1`,
+    )
+    .get();
+
+  // Check we don't crash when a column with a string value greater than 64 characters is present.
+  expect(x.abc).toBeUndefined();
+
+  expect(x.id).toBe("foobar");
+});

@@ -17,7 +17,7 @@ The following Web APIs are partially or completely supported.
 ---
 
 - Web Workers
-- [`Worker`](https://developer.mozilla.org/en-US/docs/Web/API/Worker) [`self.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/DedicatedWorkerGlobalScope/postMessage) [`structuredClone`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone). Missing `MessagePort`, `MessageChannel`, `BroadcastChannel`.
+- [`Worker`](https://developer.mozilla.org/en-US/docs/Web/API/Worker) [`self.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/DedicatedWorkerGlobalScope/postMessage) [`structuredClone`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone) [`MessagePort`](https://developer.mozilla.org/en-US/docs/Web/API/MessagePort) [`MessageChannel`](https://developer.mozilla.org/en-US/docs/Web/API/MessageChannel), [`BroadcastChannel`](https://developer.mozilla.org/en-US/docs/Web/API/BroadcastChannel).
 
 ---
 

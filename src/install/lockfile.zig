@@ -886,29 +886,32 @@ pub const Printer = struct {
 
     pub const Format = enum { yarn };
 
-    var lockfile_path_buf1: [bun.MAX_PATH_BYTES]u8 = undefined;
-    var lockfile_path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
-
     pub fn print(
         allocator: Allocator,
         log: *logger.Log,
-        lockfile_path_: string,
+        input_lockfile_path: string,
         format: Format,
     ) !void {
         @setCold(true);
 
+        // We truncate longer than allowed paths. We should probably throw an error instead.
+        var path = input_lockfile_path[0..@min(input_lockfile_path.len, bun.MAX_PATH_BYTES)];
+
+        var lockfile_path_buf1: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var lockfile_path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+
         var lockfile_path: stringZ = "";
 
-        if (!std.fs.path.isAbsolute(lockfile_path_)) {
+        if (!std.fs.path.isAbsolute(path)) {
             var cwd = try std.os.getcwd(&lockfile_path_buf1);
-            var parts = [_]string{lockfile_path_};
+            var parts = [_]string{path};
             var lockfile_path__ = Path.joinAbsStringBuf(cwd, &lockfile_path_buf2, &parts, .auto);
             lockfile_path_buf2[lockfile_path__.len] = 0;
             lockfile_path = lockfile_path_buf2[0..lockfile_path__.len :0];
-        } else {
-            bun.copy(u8, &lockfile_path_buf1, lockfile_path);
-            lockfile_path_buf1[lockfile_path_.len] = 0;
-            lockfile_path = lockfile_path_buf1[0..lockfile_path_.len :0];
+        } else if (path.len > 0) {
+            @memcpy(lockfile_path_buf1[0..path.len], path);
+            lockfile_path_buf1[path.len] = 0;
+            lockfile_path = lockfile_path_buf1[0..path.len :0];
         }
 
         if (lockfile_path.len > 0 and lockfile_path[0] == std.fs.path.sep)
@@ -942,8 +945,8 @@ pub const Printer = struct {
                 Global.crash();
             },
             .not_found => {
-                Output.prettyErrorln("<r><red>lockfile not found:<r> {s}", .{
-                    std.mem.sliceAsBytes(lockfile_path),
+                Output.prettyErrorln("<r><red>lockfile not found:<r> {}", .{
+                    strings.QuotedFormatter{ .text = std.mem.sliceAsBytes(lockfile_path) },
                 });
                 Global.crash();
             },
@@ -1234,7 +1237,7 @@ pub const Printer = struct {
                     }
 
                     var dependency_versions = requested_version_start[0..j];
-                    if (dependency_versions.len > 1) std.sort.insertion(Dependency.Version, dependency_versions, string_buf, Dependency.Version.isLessThan);
+                    if (dependency_versions.len > 1) std.sort.insertion(Dependency.Version, dependency_versions, string_buf, Dependency.Version.isLessThanWithTag);
                     try requested_versions.put(i, dependency_versions);
                 }
             }
@@ -2371,36 +2374,48 @@ pub const Package = extern struct {
             add: u32 = 0,
             remove: u32 = 0,
             update: u32 = 0,
-            deduped: u32 = 0,
 
             pub inline fn sum(this: *Summary, that: Summary) void {
                 this.add += that.add;
                 this.remove += that.remove;
                 this.update += that.update;
-                this.deduped += that.deduped;
+            }
+
+            pub inline fn hasDiffs(this: Summary) bool {
+                return this.add > 0 or this.remove > 0 or this.update > 0;
             }
         };
 
         pub fn generate(
-            _: Allocator,
+            allocator: Allocator,
+            log: *logger.Log,
             from_lockfile: *Lockfile,
             to_lockfile: *Lockfile,
             from: *Lockfile.Package,
             to: *Lockfile.Package,
-            mapping: []PackageID,
+            id_mapping: ?[]PackageID,
         ) !Summary {
             var summary = Summary{};
             const to_deps = to.dependencies.get(to_lockfile.buffers.dependencies.items);
             const from_deps = from.dependencies.get(from_lockfile.buffers.dependencies.items);
+            const from_resolutions = from.resolutions.get(from_lockfile.buffers.resolutions.items);
+            var to_i: usize = 0;
 
             for (from_deps, 0..) |*from_dep, i| {
-                // common case: dependency is present in both versions and in the same position
-                const to_i = if (to_deps.len > i and to_deps[i].name_hash == from_dep.name_hash)
-                    i
-                else brk: {
+                found: {
+                    const prev_i = to_i;
+
+                    // common case, dependency is present in both versions:
+                    // - in the same position
+                    // - shifted by a constant offset
+                    while (to_i < to_deps.len) : (to_i += 1) {
+                        if (from_dep.name_hash == to_deps[to_i].name_hash) break :found;
+                    }
+
                     // less common, o(n^2) case
-                    for (to_deps, 0..) |to_dep, j| {
-                        if (from_dep.name_hash == to_dep.name_hash) break :brk j;
+                    to_i = 0;
+                    while (to_i < prev_i) : (to_i += 1) {
+                        if (from_dep.name_hash == to_deps[to_i].name_hash) break :found;
                     }
 
                     // We found a removed dependency!
@@ -2408,26 +2423,55 @@ pub const Package = extern struct {
                     // It will be cleaned up later
                     summary.remove += 1;
                     continue;
-                };
+                }
+                defer to_i += 1;
 
                 if (to_deps[to_i].eql(from_dep, to_lockfile.buffers.string_bytes.items, from_lockfile.buffers.string_bytes.items)) {
-                    mapping[to_i] = @as(PackageID, @truncate(i));
-                    continue;
+                    if (id_mapping) |mapping| {
+                        const version = to_deps[to_i].version;
+                        if (switch (version.tag) {
+                            .workspace => if (to_lockfile.workspace_paths.getPtr(@truncate(from_dep.name_hash))) |path_ptr| brk: {
+                                const path = to_lockfile.str(path_ptr);
+                                var file = std.fs.cwd().openFile(Path.join(
+                                    &[_]string{ path, "package.json" },
+                                    .auto,
+                                ), .{ .mode = .read_only }) catch break :brk false;
+                                defer file.close();
+                                const bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+                                defer allocator.free(bytes);
+                                const source = logger.Source.initPathString(path, bytes);
+
+                                var workspace = Package{};
+                                try workspace.parseMain(to_lockfile, allocator, log, source, Features.workspace);
+
+                                var from_pkg = from_lockfile.packages.get(from_resolutions[i]);
+                                const diff = try generate(
+                                    allocator,
+                                    log,
+                                    from_lockfile,
+                                    to_lockfile,
+                                    &from_pkg,
+                                    &workspace,
+                                    null,
+                                );
+
+                                break :brk !diff.hasDiffs();
+                            } else false,
+                            else => true,
+                        }) {
+                            mapping[to_i] = @truncate(i);
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
                 }
 
                 // We found a changed dependency!
                 summary.update += 1;
             }
 
-            outer: for (to_deps, 0..) |to_dep, i| {
-                if (from_deps.len > i and from_deps[i].name_hash == to_dep.name_hash) continue;
-
-                for (from_deps) |from_dep| {
-                    if (from_dep.name_hash == to_dep.name_hash) continue :outer;
-                }
-
-                summary.add += 1;
-            }
+            summary.add = @truncate(to_deps.len - (from_deps.len - summary.remove));
 
             return summary;
         }
@@ -2520,14 +2564,15 @@ pub const Package = extern struct {
             .npm => String.Builder.stringHash(dependency_version.value.npm.name.slice(buf)),
             .workspace => if (strings.hasPrefixComptime(sliced.slice, "workspace:")) brk: {
                 const input = sliced.slice["workspace:".len..];
-                const at = strings.lastIndexOfChar(input, '@') orelse 0;
-                if (at > 0) {
-                    workspace_range = Semver.Query.parse(allocator, input[at + 1 ..], sliced) catch return error.InstallFailed;
-                    break :brk String.Builder.stringHash(input[0..at]);
-                } else {
+                if (!strings.eqlComptime(input, "*")) {
+                    const at = strings.lastIndexOfChar(input, '@') orelse 0;
+                    if (at > 0) {
+                        workspace_range = Semver.Query.parse(allocator, input[at + 1 ..], sliced) catch return error.InstallFailed;
+                        break :brk String.Builder.stringHash(input[0..at]);
+                    }
                     workspace_range = Semver.Query.parse(allocator, input, sliced) catch null;
-                    break :brk external_alias.hash;
                 }
+                break :brk external_alias.hash;
             } else external_alias.hash,
             else => external_alias.hash,
         };
@@ -2579,79 +2624,87 @@ pub const Package = extern struct {
                 if (workspace_range) |range| {
                     if (workspace_version) |ver| {
                         if (range.satisfies(ver)) {
+                            dependency_version.literal = path;
                             dependency_version.value.workspace = path;
                         }
                     }
                 } else {
+                    dependency_version.literal = path;
                     dependency_version.value.workspace = path;
                 }
             } else {
-                {
-                    const workspace = dependency_version.value.workspace.slice(buf);
-                    var path = string_builder.append(
-                        String,
-                        if (strings.eqlComptime(workspace, "*")) "*" else Path.relative(
+                const workspace = dependency_version.value.workspace.slice(buf);
+                const path = string_builder.append(
+                    String,
+                    if (strings.eqlComptime(workspace, "*")) "*" else Path.relative(
+                        FileSystem.instance.top_level_dir,
+                        Path.joinAbsString(
                             FileSystem.instance.top_level_dir,
-                            Path.joinAbsString(
-                                FileSystem.instance.top_level_dir,
-                                &[_]string{
-                                    source.path.name.dir,
-                                    workspace,
-                                },
-                                .posix,
-                            ),
+                            &[_]string{
+                                source.path.name.dir,
+                                workspace,
+                            },
+                            .posix,
                         ),
-                    );
-                    defer dependency_version.value.workspace = path;
-                    var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, @truncate(name_hash));
-                    if (workspace_entry.found_existing) {
-                        const old_path = workspace_entry.value_ptr.*;
-
-                        if (strings.eqlComptime(workspace, "*")) {
-                            path = old_path;
-                            return null;
-                        } else if (strings.eqlComptime(old_path.slice(buf), "*")) brk: {
-                            workspace_entry.value_ptr.* = path;
-                            for (package_dependencies[0..dependencies_count]) |*package_dep| {
-                                if (String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash) {
-                                    if (package_dep.version.tag != .workspace) break :brk;
-                                    package_dep.version.value.workspace = path;
-                                    return null;
-                                }
-                            }
-                            return error.InstallFailed;
-                        } else if (strings.eql(old_path.slice(buf), path.slice(buf))) {
-                            return null;
-                        } else {
-                            log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Workspace name \"{s}\" already exists", .{
-                                external_alias.slice(buf),
-                            }) catch {};
-                            return error.InstallFailed;
-                        }
-                    }
-                    workspace_entry.value_ptr.* = path;
+                    ),
+                );
+                if (comptime Environment.allow_assert) {
+                    std.debug.assert(path.len() > 0);
+                    std.debug.assert(!std.fs.path.isAbsolute(path.slice(buf)));
                 }
+                dependency_version.literal = path;
+                dependency_version.value.workspace = path;
+
+                var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, @truncate(name_hash));
+                if (workspace_entry.found_existing) {
+                    if (strings.eqlComptime(workspace, "*")) return null;
+
+                    const old_path = workspace_entry.value_ptr.*.slice(buf);
+                    if (!strings.eqlComptime(old_path, "*")) {
+                        if (strings.eql(old_path, path.slice(buf))) return null;
+
+                        log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Workspace name \"{s}\" already exists", .{
+                            external_alias.slice(buf),
+                        }) catch {};
+                        return error.InstallFailed;
+                    }
+                }
+                workspace_entry.value_ptr.* = path;
 
                 if (workspace_version) |ver| {
                     try lockfile.workspace_versions.put(allocator, @truncate(name_hash), ver);
 
                     for (package_dependencies[0..dependencies_count]) |*package_dep| {
-                        // `dependencies` & `workspaces` defined within the same `package.json`
-                        if (package_dep.version.tag == .npm and
-                            String.Builder.stringHash(package_dep.version.value.npm.name.slice(buf)) == name_hash and
-                            package_dep.version.value.npm.version.satisfies(ver))
+                        if (switch (package_dep.version.tag) {
+                            // `dependencies` & `workspaces` defined within the same `package.json`
+                            .npm => String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash and
+                                package_dep.version.value.npm.version.satisfies(ver),
+                            // `workspace:*`
+                            .workspace => workspace_entry.found_existing and
+                                String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash,
+                            else => false,
+                        }) {
+                            package_dep.version = dependency_version;
+                            return null;
+                        }
+                    }
+                } else if (workspace_entry.found_existing) {
+                    for (package_dependencies[0..dependencies_count]) |*package_dep| {
+                        if (package_dep.version.tag == .workspace and
+                            String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash)
                         {
                             package_dep.version = dependency_version;
                             return null;
                         }
                     }
+                    return error.InstallFailed;
                 }
             },
             else => {},
         }
 
         const this_dep = Dependency{
-            .behavior = group.behavior.setWorkspace(in_workspace),
+            .behavior = if (in_workspace) group.behavior.setWorkspace(in_workspace) else group.behavior,
             .name = external_alias.value,
             .name_hash = external_alias.hash,
             .version = dependency_version,

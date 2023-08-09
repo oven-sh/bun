@@ -1,9 +1,7 @@
-const { Object } = $lazy("primordials");
-import { EventEmitter } from "events";
-import NodeStreamModule from "node:stream";
-import { Readable } from "node:stream";
-
-const { _ReadableFromWebForUndici: ReadableFromWeb } = NodeStreamModule[Symbol.for("::bunternal::")];
+const EventEmitter = require("node:events");
+const StreamModule = require("node:stream");
+const { Readable } = StreamModule;
+const { _ReadableFromWebForUndici: ReadableFromWeb } = StreamModule[Symbol.for("::bunternal::")];
 
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);
@@ -261,7 +259,7 @@ function mockErrors() {
   throw new Error("Not implemented in bun");
 }
 
-export function Undici() {
+function Undici() {
   throw new Error("Not implemented in bun");
 }
 
@@ -327,31 +325,4 @@ export default {
   Client,
   Agent,
   Undici,
-  [Symbol.for("CommonJS")]: 0,
-};
-
-export {
-  fetch,
-  Response,
-  Headers,
-  Request,
-  URLSearchParams,
-  URL,
-  File,
-  FileReader,
-  FormData,
-  request,
-  stream,
-  pipeline,
-  connect,
-  upgrade,
-  MockClient,
-  MockPool,
-  MockAgent,
-  mockErrors,
-  Dispatcher,
-  Pool,
-  BalancedPool,
-  Client,
-  Agent,
 };

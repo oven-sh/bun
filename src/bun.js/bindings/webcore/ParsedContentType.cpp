@@ -40,7 +40,7 @@ namespace WebCore {
 
 static void skipSpaces(StringView input, unsigned& startIndex)
 {
-    while (startIndex < input.length() && isJSONOrHTTPWhitespace(input[startIndex]))
+    while (startIndex < input.length() && isASCIIWhitespaceWithoutFF(input[startIndex]))
         ++startIndex;
 }
 
@@ -78,7 +78,7 @@ static StringView parseToken(StringView input, unsigned& startIndex, CharacterMe
             while (input[tokenEnd - 1] == ' ')
                 --tokenEnd;
         } else {
-            while (isJSONOrHTTPWhitespace(input[tokenEnd - 1]))
+            while (isASCIIWhitespaceWithoutFF(input[tokenEnd - 1]))
                 --tokenEnd;
         }
     }
@@ -328,7 +328,7 @@ bool ParsedContentType::parseContentType(Mode mode)
 
 std::optional<ParsedContentType> ParsedContentType::create(const String& contentType, Mode mode)
 {
-    ParsedContentType parsedContentType(mode == Mode::Rfc2045 ? contentType : contentType.trim(isJSONOrHTTPWhitespace<UChar>));
+    ParsedContentType parsedContentType(mode == Mode::Rfc2045 ? contentType : contentType.trim(isASCIIWhitespaceWithoutFF<UChar>));
     if (!parsedContentType.parseContentType(mode))
         return std::nullopt;
     return { WTFMove(parsedContentType) };
@@ -368,7 +368,7 @@ void ParsedContentType::setContentType(String&& contentRange, Mode mode)
 {
     m_mimeType = WTFMove(contentRange);
     if (mode == Mode::MimeSniff)
-        m_mimeType = StringView(m_mimeType).trim(isJSONOrHTTPWhitespace<UChar>).convertToASCIILowercase();
+        m_mimeType = StringView(m_mimeType).trim(isASCIIWhitespaceWithoutFF<UChar>).convertToASCIILowercase();
     else
         m_mimeType = m_mimeType.trim(deprecatedIsSpaceOrNewline);
 }

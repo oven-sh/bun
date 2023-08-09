@@ -1249,7 +1249,7 @@ function generateZig(
   if (structuredClone) {
     exports.set("onStructuredCloneSerialize", symbolName(typeName, "onStructuredCloneSerialize"));
 
-    if (structuredClone === "transferrable") {
+    if (structuredClone === "transferable") {
       exports.set("onStructuredCloneTransfer", symbolName(typeName, "onStructuredCloneTransfer"));
     }
 
@@ -1306,8 +1306,8 @@ function generateZig(
       }
       `;
 
-      if (structuredClone === "transferrable") {
-        exports.set("structuredClone", symbolName(typeName, "onTransferrableStructuredClone"));
+      if (structuredClone === "transferable") {
+        exports.set("structuredClone", symbolName(typeName, "onTransferableStructuredClone"));
         output += `
         if (@TypeOf(${typeName}.onStructuredCloneTransfer) != (fn(*${typeName}, globalThis: *JSC.JSGlobalObject, ctx: *anyopaque, write: *const fn(*anyopaque, ptr: [*]const u8, len: usize) callconv(.C) void) callconv(.C) void)) {
           @compileLog("${typeName}.onStructuredCloneTransfer is not a structured clone transfer function");

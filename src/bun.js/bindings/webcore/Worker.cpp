@@ -185,25 +185,25 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
     if (m_wasTerminated)
         return Exception { InvalidStateError, "Worker has been terminated"_s };
 
-    auto message = SerializedScriptValue::create(state, messageValue, WTFMove(options.transfer), SerializationForStorage::No, SerializationContext::WorkerPostMessage);
-    if (message.hasException())
-        return message.releaseException();
+    Vector<RefPtr<MessagePort>> ports;
+    auto serialized = SerializedScriptValue::create(state, messageValue, WTFMove(options.transfer), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
+    if (serialized.hasException())
+        return serialized.releaseException();
 
-    RefPtr<SerializedScriptValue> result = message.releaseReturnValue();
+    ExceptionOr<Vector<TransferredMessagePort>> disentangledPorts = MessagePort::disentanglePorts(WTFMove(ports));
+    if (disentangledPorts.hasException()) {
+        return disentangledPorts.releaseException();
+    }
 
-    this->postTaskToWorkerGlobalScope([message = WTFMove(result)](auto& context) {
+    MessageWithMessagePorts messageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() };
+
+    this->postTaskToWorkerGlobalScope([message = messageWithMessagePorts](auto& context) mutable {
         Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(context.jsGlobalObject());
-        bool didFail = false;
-        JSValue value = message->deserialize(*globalObject, globalObject, SerializationErrorMode::NonThrowing, &didFail);
 
-        if (didFail) {
-            globalObject->globalEventScope.dispatchEvent(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init {}, MessageEvent::IsTrusted::Yes));
-            return;
-        }
+        auto ports = MessagePort::entanglePorts(context, WTFMove(message.transferredPorts));
+        auto event = MessageEvent::create(*globalObject, message.message.releaseNonNull(), std::nullopt, WTFMove(ports));
 
-        WebCore::MessageEvent::Init init;
-        init.data = value;
-        globalObject->globalEventScope.dispatchEvent(MessageEvent::create(eventNames().messageEvent, WTFMove(init), MessageEvent::IsTrusted::Yes));
+        globalObject->globalEventScope.dispatchEvent(event.event);
     });
     return {};
 }

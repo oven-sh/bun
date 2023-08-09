@@ -2,7 +2,7 @@
 
 This benchmarks a websocket server intended as a simple but very active chat room.
 
-First, start the server. By default, it will wait for 16 clients which the client script will handle.
+First, start the server. By default, it will wait for 32 clients which the client script will handle.
 
 Run in Bun (`Bun.serve`):
 
@@ -19,10 +19,10 @@ node ./chat-server.node.mjs
 Run in Deno (`Deno.serve`):
 
 ```bash
-deno run -A --unstable ./chat-server.deno.mjs
+deno run -A ./chat-server.deno.mjs
 ```
 
-Then, run the client script. By default, it will connect 16 clients. This client script can run in Bun, Node, or Deno
+Then, run the client script. By default, it will connect 32 clients. This client script can run in Bun, Node, or Deno
 
 ```bash
 node ./chat-client.mjs

@@ -6,7 +6,7 @@ Bun provides a number of convenience functions for reading the contents of a [`R
 
 ```ts
 const stream = new ReadableStream();
-const str = await Bun.readableStreamToString(stream);
+const str = await Bun.readableStreamToText(stream);
 ```
 
 ---

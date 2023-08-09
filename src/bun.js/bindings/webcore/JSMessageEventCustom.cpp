@@ -45,26 +45,21 @@ namespace WebCore {
 
 JSC::JSValue JSMessageEvent::ports(JSC::JSGlobalObject& lexicalGlobalObject) const
 {
-    return JSC::jsUndefined();
+    auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject.vm());
+    return cachedPropertyValue(lexicalGlobalObject, *this, wrapped().cachedPorts(), [&] {
+        JSC::JSValue ports = toJS<IDLFrozenArray<IDLInterface<MessagePort>>>(lexicalGlobalObject, *globalObject(), throwScope, wrapped().ports());
+        return ports;
+    });
 }
-//     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject.vm());
-//     return cachedPropertyValue(lexicalGlobalObject, *this, wrapped().cachedPorts(), [&] {
-//         JSC::JSValue ports = toJS<IDLFrozenArray<IDLInterface<MessagePort>>>(lexicalGlobalObject, *globalObject(), throwScope, wrapped().ports());
-//         return ports;
-//     });
-// }
 
 JSC::JSValue JSMessageEvent::data(JSC::JSGlobalObject& lexicalGlobalObject) const
 {
-    return cachedPropertyValue(lexicalGlobalObject, *this, wrapped().cachedData(), [this, &lexicalGlobalObject] {
+    auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject.vm());
+    return cachedPropertyValue(throwScope, lexicalGlobalObject, *this, wrapped().cachedData(), [this, &lexicalGlobalObject](JSC::ThrowScope&) {
         return WTF::switchOn(
-            wrapped().data(), [this](MessageEvent::JSValueTag) -> JSC::JSValue { return wrapped().jsData().getValue(JSC::jsNull()); },
-            // [this, &lexicalGlobalObject](const Ref<SerializedScriptValue>& data) {
-            // // FIXME: Is it best to handle errors by returning null rather than throwing an exception?
-            // return data->deserialize(lexicalGlobalObject, globalObject(), wrapped().ports(), SerializationErrorMode::NonThrowing); },
-            [&lexicalGlobalObject](const String& data) { return toJS<IDLDOMString>(lexicalGlobalObject, data); },
-            // [this, &lexicalGlobalObject](const Ref<Blob>& data) { return toJS<IDLInterface<Blob>>(lexicalGlobalObject, *globalObject(), data); },
-            [this, &lexicalGlobalObject](const Ref<ArrayBuffer>& data) { return toJS<IDLInterface<ArrayBuffer>>(lexicalGlobalObject, *globalObject(), data); });
+            wrapped().data(), [this](MessageEvent::JSValueTag) -> JSC::JSValue { return wrapped().jsData().getValue(JSC::jsNull()); }, [this, &lexicalGlobalObject](const Ref<SerializedScriptValue>& data) {
+            // FIXME: Is it best to handle errors by returning null rather than throwing an exception?
+            return data->deserialize(lexicalGlobalObject, globalObject(), wrapped().ports(), SerializationErrorMode::NonThrowing); }, [&lexicalGlobalObject](const String& data) { return toJS<IDLDOMString>(lexicalGlobalObject, data); }, [this, &lexicalGlobalObject](const Ref<ArrayBuffer>& data) { return toJS<IDLInterface<ArrayBuffer>>(lexicalGlobalObject, *globalObject(), data); });
     });
 }
 

@@ -1,13 +1,11 @@
 // Hardcoded module "node:child_process"
-import { EventEmitter } from "node:events";
-import * as StreamModule from "node:stream";
-import { constants } from "node:os";
-import { promisify } from "node:util";
-const signals = constants.signals;
+const EventEmitter = require("node:events");
+const StreamModule = require("node:stream");
+const {
+  constants: { signals },
+} = require("node:os");
+const { promisify } = require("node:util");
 
-const { ArrayBuffer, Uint8Array, String, Object, Buffer, Promise } = $lazy("primordials");
-
-var ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 var ObjectCreate = Object.create;
 var ObjectAssign = Object.assign;
 var ObjectDefineProperty = Object.defineProperty;
@@ -22,6 +20,8 @@ var ArrayPrototypeMap = Array.prototype.map;
 var ArrayPrototypeIncludes = Array.prototype.includes;
 var ArrayPrototypeSlice = Array.prototype.slice;
 var ArrayPrototypeUnshift = Array.prototype.unshift;
+var ArrayPrototypeLastIndexOf = Array.prototype.lastIndexOf;
+var ArrayPrototypeSplice = Array.prototype.splice;
 var ArrayIsArray = Array.isArray;
 
 // var ArrayBuffer = ArrayBuffer;
@@ -37,17 +37,9 @@ var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
 
-// General debug vs tracking stdio streams. Useful for stream debugging in particular
-const __DEBUG__ = process.env.DEBUG || false;
-
-// You can use this env var along with `process.env.DEBUG_TRACK_EE` to debug stdio streams
-// Just set `DEBUG_TRACK_EE=PARENT_STDOUT-0, PARENT_STDOUT-1`, etc. and `DEBUG_STDIO=1` and you will be able to track particular stdio streams
-// TODO: Add ability to track a range of IDs rather than just enumerated ones
-const __TRACK_STDIO__ = process.env.DEBUG_STDIO;
-const debug = __DEBUG__ ? console.log : () => {};
-
-if (__TRACK_STDIO__) {
-  debug("child_process: debug mode on");
+// Pass DEBUG_CHILD_PROCESS=1 to enable debug output
+if ($debug) {
+  $debug("child_process: debug mode on");
   globalThis.__lastId = null;
   globalThis.__getId = () => {
     return globalThis.__lastId !== null ? globalThis.__lastId++ : 0;
@@ -154,14 +146,14 @@ function spawnTimeoutFunction(child, timeoutHolder) {
  *   }} [options]
  * @returns {ChildProcess}
  */
-export function spawn(file, args, options) {
+function spawn(file, args, options) {
   options = normalizeSpawnArguments(file, args, options);
   validateTimeout(options.timeout);
   validateAbortSignal(options.signal, "options.signal");
   const killSignal = sanitizeKillSignal(options.killSignal);
   const child = new ChildProcess();
 
-  debug("spawn", options);
+  $debug("spawn", options);
   child.spawn(options);
 
   if (options.timeout > 0) {
@@ -194,7 +186,7 @@ export function spawn(file, args, options) {
     }
 
     function onAbortListener() {
-      abortChildProcess(child, killSignal);
+      abortChildProcess(child, killSignal, options.signal.reason);
     }
   }
   return child;
@@ -225,7 +217,7 @@ export function spawn(file, args, options) {
  *   ) => any} [callback]
  * @returns {ChildProcess}
  */
-export function execFile(file, args, options, callback) {
+function execFile(file, args, options, callback) {
   ({ file, args, options, callback } = normalizeExecFileArgs(file, args, options, callback));
 
   options = {
@@ -479,7 +471,7 @@ export function execFile(file, args, options, callback) {
  *   ) => any} [callback]
  * @returns {ChildProcess}
  */
-export function exec(command, options, callback) {
+function exec(command, options, callback) {
   const opts = normalizeExecArgs(command, options, callback);
   return execFile(opts.file, opts.options, opts.callback);
 }
@@ -541,7 +533,7 @@ ObjectDefineProperty(exec, promisify.custom, {
  *   error: Error;
  *   }}
  */
-export function spawnSync(file, args, options) {
+function spawnSync(file, args, options) {
   options = {
     maxBuffer: MAX_BUFFER,
     ...normalizeSpawnArguments(file, args, options),
@@ -550,7 +542,7 @@ export function spawnSync(file, args, options) {
   const maxBuffer = options.maxBuffer;
   const encoding = options.encoding;
 
-  debug("spawnSync", options);
+  $debug("spawnSync", options);
 
   // Validate the timeout, if present.
   validateTimeout(options.timeout);
@@ -629,7 +621,7 @@ export function spawnSync(file, args, options) {
  *   }} [options]
  * @returns {Buffer | string}
  */
-export function execFileSync(file, args, options) {
+function execFileSync(file, args, options) {
   ({ file, args, options } = normalizeExecFileArgs(file, args, options));
 
   // const inheritStderr = !options.stdio;
@@ -665,7 +657,7 @@ export function execFileSync(file, args, options) {
  *   }} [options]
  * @returns {Buffer | string}
  */
-export function execSync(command, options) {
+function execSync(command, options) {
   const opts = normalizeExecArgs(command, options, null);
   // const inheritStderr = !opts.options.stdio;
 
@@ -680,8 +672,97 @@ export function execSync(command, options) {
   return ret.stdout;
 }
 
-export function fork() {
-  throw new Error("Not implemented");
+function stdioStringToArray(stdio, channel) {
+  const options = [];
+
+  switch (stdio) {
+    case "ignore":
+    case "overlapped":
+    case "pipe":
+      ArrayPrototypePush.call(options, stdio, stdio, stdio);
+      break;
+    case "inherit":
+      ArrayPrototypePush.call(options, 0, 1, 2);
+      break;
+    default:
+      throw new ERR_INVALID_ARG_VALUE("stdio", stdio);
+  }
+
+  if (channel) ArrayPrototypePush.call(options, channel);
+
+  return options;
+}
+
+/**
+ * Spawns a new Node.js process + fork.
+ * @param {string|URL} modulePath
+ * @param {string[]} [args]
+ * @param {{
+ *   cwd?: string;
+ *   detached?: boolean;
+ *   env?: Record<string, string>;
+ *   execPath?: string;
+ *   execArgv?: string[];
+ *   gid?: number;
+ *   serialization?: string;
+ *   signal?: AbortSignal;
+ *   killSignal?: string | number;
+ *   silent?: boolean;
+ *   stdio?: Array | string;
+ *   uid?: number;
+ *   windowsVerbatimArguments?: boolean;
+ *   timeout?: number;
+ *   }} [options]
+ * @returns {ChildProcess}
+ */
+function fork(modulePath, args = [], options) {
+  modulePath = getValidatedPath(modulePath, "modulePath");
+
+  // Get options and args arguments.
+  let execArgv;
+
+  if (args == null) {
+    args = [];
+  } else if (typeof args === "object" && !ArrayIsArray(args)) {
+    options = args;
+    args = [];
+  } else {
+    validateArray(args, "args");
+  }
+
+  if (options != null) {
+    validateObject(options, "options");
+  }
+  options = { __proto__: null, ...options, shell: false };
+  options.execPath = options.execPath || process.execPath;
+  validateArgumentNullCheck(options.execPath, "options.execPath");
+
+  // Prepare arguments for fork:
+  execArgv = options.execArgv || process.execArgv;
+  validateArgumentsNullCheck(execArgv, "options.execArgv");
+
+  if (execArgv === process.execArgv && process._eval != null) {
+    const index = ArrayPrototypeLastIndexOf.call(execArgv, process._eval);
+    if (index > 0) {
+      // Remove the -e switch to avoid fork bombing ourselves.
+      execArgv = ArrayPrototypeSlice.call(execArgv);
+      ArrayPrototypeSplice.call(execArgv, index - 1, 2);
+    }
+  }
+
+  args = [...execArgv, modulePath, ...args];
+
+  if (typeof options.stdio === "string") {
+    options.stdio = stdioStringToArray(options.stdio, "ipc");
+  } else if (!ArrayIsArray(options.stdio)) {
+    // Use a separate fd=3 for the IPC channel. Inherit stdin, stdout,
+    // and stderr from the parent if silent isn't set.
+    options.stdio = stdioStringToArray(options.silent ? "pipe" : "inherit", "ipc");
+  } else if (!ArrayPrototypeIncludes.call(options.stdio, "ipc")) {
+    throw new ERR_CHILD_PROCESS_IPC_REQUIRED("options.stdio");
+  }
+
+  return spawn(options.execPath, args, options);
 }
 
 //------------------------------------------------------------------------------
@@ -884,7 +965,7 @@ function checkExecSyncError(ret, args, cmd) {
 //------------------------------------------------------------------------------
 // Section 3. ChildProcess class
 //------------------------------------------------------------------------------
-export class ChildProcess extends EventEmitter {
+class ChildProcess extends EventEmitter {
   #handle;
   #exited = false;
   #closesNeeded = 1;
@@ -909,8 +990,11 @@ export class ChildProcess extends EventEmitter {
 
   #handleOnExit(exitCode, signalCode, err) {
     if (this.#exited) return;
-    this.exitCode = this.#handle.exitCode;
-    this.signalCode = exitCode > 0 ? signalCode : null;
+    if (signalCode) {
+      this.signalCode = signalCode;
+    } else {
+      this.exitCode = exitCode;
+    }
 
     if (this.#stdin) {
       this.#stdin.destroy();
@@ -951,11 +1035,11 @@ export class ChildProcess extends EventEmitter {
   }
 
   #getBunSpawnIo(i, encoding) {
-    if (__DEBUG__ && !this.#handle) {
+    if ($debug && !this.#handle) {
       if (this.#handle === null) {
-        debug("ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited");
+        $debug("ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited");
       } else {
-        debug("ChildProcess: getBunSpawnIo: this.#handle is undefined");
+        $debug("ChildProcess: getBunSpawnIo: this.#handle is undefined");
       }
     }
 
@@ -1159,7 +1243,7 @@ export class ChildProcess extends EventEmitter {
   }
 
   #maybeClose() {
-    debug("Attempting to maybe close...");
+    $debug("Attempting to maybe close...");
     this.#closesGot++;
     if (this.#closesGot === this.#closesNeeded) {
       this.emit("close", this.exitCode, this.signalCode);
@@ -1286,11 +1370,11 @@ function onSpawnNT(self) {
   self.emit("spawn");
 }
 
-function abortChildProcess(child, killSignal) {
+function abortChildProcess(child, killSignal, reason) {
   if (!child) return;
   try {
     if (child.kill(killSignal)) {
-      child.emit("error", new AbortError());
+      child.emit("error", new AbortError(undefined, { cause: reason }));
     }
   } catch (err) {
     child.emit("error", err);
@@ -1696,7 +1780,7 @@ function ERR_UNKNOWN_SIGNAL(name) {
 }
 
 function ERR_INVALID_ARG_TYPE(name, type, value) {
-  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value}`);
+  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value?.toString()}`);
   err.code = "ERR_INVALID_ARG_TYPE";
   return err;
 }
@@ -1707,6 +1791,12 @@ function ERR_INVALID_OPT_VALUE(name, value) {
 
 function ERR_INVALID_ARG_VALUE(name, value, reason) {
   return new Error(`The value "${value}" is invalid for argument '${name}'. Reason: ${reason}`);
+}
+
+function ERR_CHILD_PROCESS_IPC_REQUIRED(name) {
+  const err = new TypeError(`Forked processes must have an IPC channel, missing value 'ipc' in ${name}`);
+  err.code = "ERR_CHILD_PROCESS_IPC_REQUIRED";
+  return err;
 }
 
 class SystemError extends Error {
@@ -1736,6 +1826,4 @@ export default {
   spawnSync,
   execFileSync,
   execSync,
-
-  [Symbol.for("CommonJS")]: 0,
 };

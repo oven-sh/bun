@@ -62,7 +62,7 @@ public:
 };
 
 class NapiRef : public RefCounted<NapiRef>, public CanMakeWeakPtr<NapiRef> {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_ISO_ALLOCATED(NapiRef);
 
 public:
     void ref();

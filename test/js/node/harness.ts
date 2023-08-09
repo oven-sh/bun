@@ -109,6 +109,7 @@ export function createTest(path: string) {
     function mustNotCall(reason: string = "function should not have been called", optionalCb?: (err?: any) => void) {
       const localDone = createDone();
       timers.push(setTimeout(() => localDone(), 200));
+
       return () => {
         closeTimers();
         if (optionalCb) optionalCb.apply(undefined, reason ? [reason] : []);

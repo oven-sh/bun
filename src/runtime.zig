@@ -314,8 +314,6 @@ pub const Runtime = struct {
 
         replace_exports: ReplaceableExport.Map = .{},
 
-        hoist_bun_plugin: bool = false,
-
         dont_bundle_twice: bool = false,
 
         /// This is a list of packages which even when require() is used, we will

@@ -1,7 +1,5 @@
 // Hardcoded module "node:fs/promises"
-
-// Note: `constants` is injected into the top of this file
-declare var constants: typeof import("node:fs/promises").constants;
+const constants = $processBindingConstants.fs;
 
 var fs = Bun.fs();
 
@@ -11,35 +9,14 @@ var fs = Bun.fs();
 const notrace = "::bunternal::";
 var promisify = {
   [notrace]: fsFunction => {
-    // TODO: remove variadic arguments
-    // we can use new Function() here instead
-    // based on fsFucntion.length
-    var func = {
-      [notrace]: function (resolve, reject, args) {
-        var result;
-        try {
-          result = fsFunction.apply(fs, args);
-          args = undefined;
-        } catch (err) {
-          args = undefined;
-          reject(err);
-          return;
-        }
-
-        resolve(result);
-      },
-    }[notrace];
-
     return async function (...args) {
-      // we await it so that the stack is captured
-      return await new Promise((resolve, reject) => {
-        process.nextTick(func, resolve, reject, args);
-      });
+      await 1;
+      return fsFunction.apply(fs, args);
     };
   },
 }[notrace];
 
-export function watch(
+function watch(
   filename: string | Buffer | URL,
   options: { encoding?: BufferEncoding; persistent?: boolean; recursive?: boolean; signal?: AbortSignal } = {},
 ) {
@@ -47,7 +24,7 @@ export function watch(
     eventType: string;
     filename: string | Buffer | undefined;
   };
-  const events: Array<Event> = [];
+
   if (filename instanceof URL) {
     throw new TypeError("Watch URLs are not supported yet");
   } else if (Buffer.isBuffer(filename)) {
@@ -59,72 +36,97 @@ export function watch(
   if (typeof options === "string") {
     options = { encoding: options };
   }
-  fs.watch(filename, options || {}, (eventType: string, filename: string | Buffer | undefined) => {
-    events.push({ eventType, filename });
+  const queue = $createFIFO();
+
+  const watcher = fs.watch(filename, options || {}, (eventType: string, filename: string | Buffer | undefined) => {
+    queue.push({ eventType, filename });
     if (nextEventResolve) {
       const resolve = nextEventResolve;
       nextEventResolve = null;
       resolve();
     }
   });
+
   return {
-    async *[Symbol.asyncIterator]() {
+    [Symbol.asyncIterator]() {
       let closed = false;
-      while (!closed) {
-        while (events.length) {
-          let event = events.shift() as Event;
-          if (event.eventType === "close") {
-            closed = true;
-            break;
+      return {
+        async next() {
+          while (!closed) {
+            let event: Event;
+            while ((event = queue.shift() as Event)) {
+              if (event.eventType === "close") {
+                closed = true;
+                return { value: undefined, done: true };
+              }
+              if (event.eventType === "error") {
+                closed = true;
+                throw event.filename;
+              }
+              return { value: event, done: false };
+            }
+            const { promise, resolve } = Promise.withResolvers();
+            nextEventResolve = resolve;
+            await promise;
           }
-          if (event.eventType === "error") {
+          return { value: undefined, done: true };
+        },
+
+        return() {
+          if (!closed) {
+            watcher.close();
             closed = true;
-            throw event.filename;
+            if (nextEventResolve) {
+              const resolve = nextEventResolve;
+              nextEventResolve = null;
+              resolve();
+            }
           }
-          yield event;
-        }
-        await new Promise((resolve: Function) => (nextEventResolve = resolve));
-      }
+          return { value: undefined, done: true };
+        },
+      };
     },
   };
 }
-export var access = promisify(fs.accessSync),
-  appendFile = promisify(fs.appendFileSync),
-  close = promisify(fs.closeSync),
-  copyFile = promisify(fs.copyFileSync),
-  exists = promisify(fs.existsSync),
-  chown = promisify(fs.chownSync),
-  chmod = promisify(fs.chmodSync),
-  fchmod = promisify(fs.fchmodSync),
-  fchown = promisify(fs.fchownSync),
-  fstat = promisify(fs.fstatSync),
-  fsync = promisify(fs.fsyncSync),
-  ftruncate = promisify(fs.ftruncateSync),
-  futimes = promisify(fs.futimesSync),
-  lchmod = promisify(fs.lchmodSync),
-  lchown = promisify(fs.lchownSync),
-  link = promisify(fs.linkSync),
-  lstat = promisify(fs.lstatSync),
-  mkdir = promisify(fs.mkdirSync),
-  mkdtemp = promisify(fs.mkdtempSync),
-  open = promisify(fs.openSync),
-  read = promisify(fs.readSync),
-  write = promisify(fs.writeSync),
-  readdir = promisify(fs.readdirSync),
-  readFile = promisify(fs.readFileSync),
-  writeFile = promisify(fs.writeFileSync),
-  readlink = promisify(fs.readlinkSync),
-  realpath = promisify(fs.realpathSync),
-  rename = promisify(fs.renameSync),
-  stat = promisify(fs.statSync),
-  symlink = promisify(fs.symlinkSync),
-  truncate = promisify(fs.truncateSync),
-  unlink = promisify(fs.unlinkSync),
-  utimes = promisify(fs.utimesSync),
-  lutimes = promisify(fs.lutimesSync),
-  rm = promisify(fs.rmSync),
-  rmdir = promisify(fs.rmdirSync),
-  writev = (fd, buffers, position) => {
+
+export default {
+  access: promisify(fs.accessSync),
+  appendFile: promisify(fs.appendFileSync),
+  close: promisify(fs.closeSync),
+  copyFile: promisify(fs.copyFileSync),
+  exists: promisify(fs.existsSync),
+  chown: promisify(fs.chownSync),
+  chmod: promisify(fs.chmodSync),
+  fchmod: promisify(fs.fchmodSync),
+  fchown: promisify(fs.fchownSync),
+  fstat: promisify(fs.fstatSync),
+  fsync: promisify(fs.fsyncSync),
+  ftruncate: promisify(fs.ftruncateSync),
+  futimes: promisify(fs.futimesSync),
+  lchmod: promisify(fs.lchmodSync),
+  lchown: promisify(fs.lchownSync),
+  link: promisify(fs.linkSync),
+  lstat: fs.lstat.bind(fs),
+  mkdir: promisify(fs.mkdirSync),
+  mkdtemp: promisify(fs.mkdtempSync),
+  open: promisify(fs.openSync),
+  read: promisify(fs.readSync),
+  write: promisify(fs.writeSync),
+  readdir: fs.readdir.bind(fs),
+  readFile: fs.readFile.bind(fs),
+  writeFile: promisify(fs.writeFileSync),
+  readlink: promisify(fs.readlinkSync),
+  realpath: promisify(fs.realpathSync),
+  rename: promisify(fs.renameSync),
+  stat: fs.stat.bind(fs),
+  symlink: promisify(fs.symlinkSync),
+  truncate: promisify(fs.truncateSync),
+  unlink: promisify(fs.unlinkSync),
+  utimes: promisify(fs.utimesSync),
+  lutimes: promisify(fs.lutimesSync),
+  rm: promisify(fs.rmSync),
+  rmdir: promisify(fs.rmdirSync),
+  writev: (fd, buffers, position) => {
     return new Promise((resolve, reject) => {
       try {
         var bytesWritten = fs.writevSync(fd, buffers, position);
@@ -139,7 +141,7 @@ export var access = promisify(fs.accessSync),
       });
     });
   },
-  readv = (fd, buffers, position) => {
+  readv: (fd, buffers, position) => {
     return new Promise((resolve, reject) => {
       try {
         var bytesRead = fs.readvSync(fd, buffers, position);
@@ -153,48 +155,7 @@ export var access = promisify(fs.accessSync),
         buffers,
       });
     });
-  };
-
-export default {
-  access,
-  appendFile,
-  close,
-  copyFile,
-  exists,
-  chown,
-  chmod,
-  fchmod,
-  fchown,
-  fstat,
-  fsync,
-  ftruncate,
-  futimes,
-  lchmod,
-  lchown,
-  link,
-  lstat,
-  mkdir,
-  mkdtemp,
-  open,
-  read,
-  write,
-  readdir,
-  readFile,
-  writeFile,
-  readlink,
-  realpath,
-  rename,
-  stat,
-  symlink,
-  truncate,
-  unlink,
-  utimes,
-  lutimes,
-  rm,
-  rmdir,
-  watch,
-  writev,
-  readv,
+  },
   constants,
-  [Symbol.for("CommonJS")]: 0,
+  watch,
 };

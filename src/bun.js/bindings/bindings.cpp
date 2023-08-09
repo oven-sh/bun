@@ -1404,7 +1404,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC__JSValue value, JSC__
         return 0;
     }
 
-    case JSC::JSType(JSDOMWrapperType): {
+    case WebCore::JSDOMWrapperType: {
         if (auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(cell))
             return static_cast<double>(jsCast<WebCore::JSFetchHeaders*>(cell)->wrapped().size());
 
@@ -4551,4 +4551,13 @@ CPP_DECL bool JSC__JSMap__remove(JSC__JSMap* map, JSC__JSGlobalObject* arg1, JSC
 CPP_DECL void JSC__JSMap__set(JSC__JSMap* map, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2, JSC__JSValue JSValue3)
 {
     map->set(arg1, JSC::JSValue::decode(JSValue2), JSC::JSValue::decode(JSValue3));
+}
+
+CPP_DECL void JSC__VM__setControlFlowProfiler(JSC__VM* vm, bool isEnabled)
+{
+    if (isEnabled) {
+        vm->enableControlFlowProfiler();
+    } else {
+        vm->disableControlFlowProfiler();
+    }
 }

@@ -15,17 +15,22 @@ const inspect = isBun ? Bun.inspect : require("util").inspect;
 
 // https://jest-extended.jestcommunity.dev/docs/matchers/
 describe("jest-extended", () => {
-  test.todo("pass()", () => {
-    expect(typeof expect().pass).toBe("function");
-    expect(() => expect().not.pass()).toThrow();
+  test("pass()", () => {
+    expect(expect().pass).toBeTypeOf("function");
+    expect(() => expect("ignored value").not.pass()).toThrow("passes by .pass() assertion");
+    expect(() => expect().not.pass("message here")).toThrow("message here");
+    expect(() => expect().pass(1)).toThrow("Expected message to be a string for 'pass'.");
     expect().pass();
     expect().pass("message ignored");
   });
 
-  test.todo("fail()", () => {
-    expect(typeof expect().fail).toBe("function");
+  test("fail()", () => {
+    expect(expect().fail).toBeTypeOf("function");
     expect(() => expect("ignored value").fail("message here")).toThrow("message here");
+    expect(() => expect().fail()).toThrow("fails by .fail() assertion");
+    expect(() => expect().fail(1)).toThrow("Expected message to be a string for 'fail'.");
     expect().not.fail();
+    expect().not.fail("message ignored");
   });
 
   describe("toBeEmpty()", () => {
@@ -109,8 +114,28 @@ describe("jest-extended", () => {
 
   // Array
 
-  // test('toBeArray()')
-  // test('toBeArrayOfSize()')
+  test("toBeArray()", () => {
+    expect([]).toBeArray();
+    expect([1, 2, 3, "🫓"]).toBeArray();
+    expect(new Array()).toBeArray();
+    expect(new Array(1, 2, 3)).toBeArray();
+    expect({}).not.toBeArray();
+    expect("🫓").not.toBeArray();
+    expect(0).not.toBeArray();
+    expect(true).not.toBeArray();
+    expect(null).not.toBeArray();
+  });
+
+  test("toBeArrayOfSize()", () => {
+    expect([]).toBeArrayOfSize(0);
+    expect(new Array()).toBeArrayOfSize(0);
+    expect([1, 2, 3, "🫓"]).toBeArrayOfSize(4);
+    expect(new Array(1, 2, 3, "🫓")).toBeArrayOfSize(4);
+    expect({}).not.toBeArrayOfSize(1);
+    expect("").not.toBeArrayOfSize(1);
+    expect(0).not.toBeArrayOfSize(1);
+  });
+
   // test('toIncludeAllMembers()')
   // test('toIncludeAllPartialMembers()')
   // test('toIncludeAnyMembers()')

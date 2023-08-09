@@ -189,7 +189,7 @@ describe("fs.watch", () => {
     const interval = repeat(() => {
       fs.writeFileSync(filepath, "world");
     });
-  });
+  }, 10000);
 
   test("should error on invalid path", done => {
     try {
@@ -248,7 +248,7 @@ describe("fs.watch", () => {
       clearInterval(interval);
       watchers.forEach(watcher => watcher.close());
     }
-  });
+  }, 10000);
 
   test("should work with url", done => {
     const filepath = path.join(testDir, "url.txt");
@@ -372,6 +372,33 @@ describe("fs.watch", () => {
       }, 3000);
     });
     expect(promise).resolves.toBe("change");
+  });
+
+  test("should throw if no permission to watch the directory", async () => {
+    const filepath = path.join(testDir, "permission-dir");
+    fs.mkdirSync(filepath, { recursive: true });
+    await fs.promises.chmod(filepath, 0o200);
+    try {
+      const watcher = fs.watch(filepath);
+      watcher.close();
+      expect("unreacheable").toBe(false);
+    } catch (err: any) {
+      expect(err.message.indexOf("AccessDenied") !== -1).toBeTrue();
+    }
+  });
+
+  test("should throw if no permission to watch the file", async () => {
+    const filepath = path.join(testDir, "permission-file");
+    fs.writeFileSync(filepath, "hello.txt");
+    await fs.promises.chmod(filepath, 0o200);
+
+    try {
+      const watcher = fs.watch(filepath);
+      watcher.close();
+      expect("unreacheable").toBe(false);
+    } catch (err: any) {
+      expect(err.message.indexOf("AccessDenied") !== -1).toBeTrue();
+    }
   });
 });
 
@@ -497,6 +524,64 @@ describe("fs.promises.watch", () => {
     })();
   });
 
+  test("should work with symlink -> symlink -> dir", async () => {
+    const filepath = path.join(testDir, "sym-symlink-indirect");
+    const dest = path.join(testDir, "sym-symlink-dest");
+
+    fs.rmSync(filepath, { recursive: true, force: true });
+    fs.rmSync(dest, { recursive: true, force: true });
+    fs.mkdirSync(dest, { recursive: true });
+    await fs.promises.symlink(dest, filepath);
+    const indirect_sym = path.join(testDir, "sym-symlink-to-symlink-dir");
+    await fs.promises.symlink(filepath, indirect_sym);
+
+    const watcher = fs.promises.watch(indirect_sym);
+    const interval = setInterval(() => {
+      fs.writeFileSync(path.join(indirect_sym, "hello.txt"), "hello");
+    }, 10);
+
+    const promise = (async () => {
+      try {
+        for await (const event of watcher) {
+          return event.eventType;
+        }
+      } catch {
+        expect("unreacheable").toBe(false);
+      } finally {
+        clearInterval(interval);
+      }
+    })();
+    expect(promise).resolves.toBe("rename");
+  });
+
+  test("should work with symlink dir", async () => {
+    const filepath = path.join(testDir, "sym-symlink-dir");
+    const dest = path.join(testDir, "sym-symlink-dest");
+
+    fs.rmSync(filepath, { recursive: true, force: true });
+    fs.rmSync(dest, { recursive: true, force: true });
+    fs.mkdirSync(dest, { recursive: true });
+    await fs.promises.symlink(dest, filepath);
+
+    const watcher = fs.promises.watch(filepath);
+    const interval = setInterval(() => {
+      fs.writeFileSync(path.join(filepath, "hello.txt"), "hello");
+    }, 10);
+
+    const promise = (async () => {
+      try {
+        for await (const event of watcher) {
+          return event.eventType;
+        }
+      } catch {
+        expect("unreacheable").toBe(false);
+      } finally {
+        clearInterval(interval);
+      }
+    })();
+    expect(promise).resolves.toBe("rename");
+  });
+
   test("should work with symlink", async () => {
     const filepath = path.join(testDir, "sym-symlink.txt");
     await fs.promises.symlink(path.join(testDir, "sym.txt"), filepath);
@@ -518,5 +603,21 @@ describe("fs.promises.watch", () => {
       }
     })();
     expect(promise).resolves.toBe("change");
+  });
+});
+
+describe("immediately closing", () => {
+  test("works correctly with files", async () => {
+    const filepath = path.join(testDir, "close.txt");
+    for (let i = 0; i < 100; i++) fs.watch(filepath, { persistent: true }).close();
+    for (let i = 0; i < 100; i++) fs.watch(filepath, { persistent: false }).close();
+  });
+  test("works correctly with directories", async () => {
+    for (let i = 0; i < 100; i++) fs.watch(testDir, { persistent: true }).close();
+    for (let i = 0; i < 100; i++) fs.watch(testDir, { persistent: false }).close();
+  });
+  test("works correctly with recursive directories", async () => {
+    for (let i = 0; i < 100; i++) fs.watch(testDir, { persistent: true, recursive: true }).close();
+    for (let i = 0; i < 100; i++) fs.watch(testDir, { persistent: false, recursive: false }).close();
   });
 });

@@ -1,10 +1,8 @@
 // Reimplementation of https://nodejs.org/api/events.html
 // Reference: https://github.com/nodejs/node/blob/main/lib/events.js
-import { throwNotImplemented } from "../shared";
+const { throwNotImplemented } = require("$shared");
 
-var { isPromise, Array, Object } = $lazy("primordials");
 const SymbolFor = Symbol.for;
-const ObjectDefineProperty = Object.defineProperty;
 const kCapture = Symbol("kCapture");
 const kErrorMonitor = SymbolFor("events.errorMonitor");
 const kMaxEventTargetListeners = Symbol("events.maxEventTargetListeners");
@@ -17,7 +15,7 @@ const ArrayPrototypeSlice = Array.prototype.slice;
 var defaultMaxListeners = 10;
 
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.apply(this)`.
-function EventEmitter(opts) {
+const EventEmitter = function EventEmitter(opts) {
   if (this._events === undefined || this._events === this.__proto__._events) {
     this._events = { __proto__: null };
     this._eventsCount = 0;
@@ -27,8 +25,9 @@ function EventEmitter(opts) {
   if ((this[kCapture] = opts?.captureRejections ? Boolean(opts?.captureRejections) : EventEmitterPrototype[kCapture])) {
     this.emit = emitWithRejectionCapture;
   }
-}
-const EventEmitterPrototype = EventEmitter.prototype;
+};
+const EventEmitterPrototype = (EventEmitter.prototype = {});
+
 EventEmitterPrototype._events = undefined;
 EventEmitterPrototype._eventsCount = 0;
 EventEmitterPrototype._maxListeners = undefined;
@@ -108,7 +107,7 @@ const emitWithRejectionCapture = function emit(type, ...args) {
   if (handlers === undefined) return false;
   for (var handler of [...handlers]) {
     var result = handler.apply(this, args);
-    if (result !== undefined && isPromise(result)) {
+    if (result !== undefined && $isPromise(result)) {
       addCatch(this, result, type, args);
     }
   }
@@ -308,13 +307,11 @@ function once(emitter, type, options) {
     }
   });
 }
-EventEmitter.once = once;
 
 function on(emitter, type, options) {
   var { signal, close, highWatermark = Number.MAX_SAFE_INTEGER, lowWatermark = 1 } = options || {};
   throwNotImplemented("events.on", 2679);
 }
-EventEmitter.on = on;
 
 function getEventListeners(emitter, type) {
   if (emitter instanceof EventTarget) {
@@ -322,7 +319,6 @@ function getEventListeners(emitter, type) {
   }
   return emitter.listeners(type);
 }
-EventEmitter.getEventListeners = getEventListeners;
 
 function setMaxListeners(n, ...eventTargets) {
   validateNumber(n, "setMaxListeners", 0);
@@ -335,57 +331,10 @@ function setMaxListeners(n, ...eventTargets) {
     defaultMaxListeners = n;
   }
 }
-EventEmitter.setMaxListeners = setMaxListeners;
 
 function listenerCount(emitter, type) {
   return emitter.listenerCount(type);
 }
-EventEmitter.listenerCount = listenerCount;
-
-EventEmitter.EventEmitter = EventEmitter;
-EventEmitter.usingDomains = false;
-EventEmitter.captureRejectionSymbol = captureRejectionSymbol;
-ObjectDefineProperty(EventEmitter, "captureRejections", {
-  __proto__: null,
-  get() {
-    return EventEmitterPrototype[kCapture];
-  },
-  set(value) {
-    validateBoolean(value, "EventEmitter.captureRejections");
-
-    EventEmitterPrototype[kCapture] = value;
-  },
-  enumerable: true,
-});
-EventEmitter.errorMonitor = kErrorMonitor;
-Object.defineProperties(EventEmitter, {
-  defaultMaxListeners: {
-    enumerable: true,
-    get: () => {
-      return defaultMaxListeners;
-    },
-    set: arg => {
-      validateNumber(arg, "defaultMaxListeners", 0);
-      defaultMaxListeners = arg;
-    },
-  },
-  kMaxEventTargetListeners: {
-    __proto__: null,
-    value: kMaxEventTargetListeners,
-    enumerable: false,
-    configurable: false,
-    writable: false,
-  },
-  kMaxEventTargetListenersWarned: {
-    __proto__: null,
-    value: kMaxEventTargetListenersWarned,
-    enumerable: false,
-    configurable: false,
-    writable: false,
-  },
-});
-EventEmitter.init = EventEmitter;
-EventEmitter[Symbol.for("CommonJS")] = 0;
 
 function eventTargetAgnosticRemoveListener(emitter, name, listener, flags) {
   if (typeof emitter.removeListener === "function") {
@@ -460,7 +409,9 @@ class EventEmitterAsyncResource extends EventEmitter {
   asyncResource;
 
   constructor(options) {
-    if (!AsyncResource) AsyncResource = import.meta.require("async_hooks").AsyncResource;
+    if (!AsyncResource) {
+      AsyncResource = require("node:async_hooks").AsyncResource;
+    }
     var { captureRejections = false, triggerAsyncId, name = new.target.name, requireManualDestroy } = options || {};
     super({ captureRejections });
     this.triggerAsyncId = triggerAsyncId ?? 0;
@@ -476,19 +427,55 @@ class EventEmitterAsyncResource extends EventEmitter {
   }
 }
 
-const usingDomains = false;
-// EventEmitter[Symbol.for("CommonJS")] = 0;
-Object.assign(EventEmitter, { once, on, getEventListeners, setMaxListeners, listenerCount, EventEmitterAsyncResource });
-export {
-  EventEmitter,
-  captureRejectionSymbol,
-  kErrorMonitor as errorMonitor,
-  getEventListeners,
-  listenerCount,
-  on,
+Object.defineProperties(EventEmitter, {
+  captureRejections: {
+    get() {
+      return EventEmitterPrototype[kCapture];
+    },
+    set(value) {
+      validateBoolean(value, "EventEmitter.captureRejections");
+
+      EventEmitterPrototype[kCapture] = value;
+    },
+    enumerable: true,
+  },
+  defaultMaxListeners: {
+    enumerable: true,
+    get: () => {
+      return defaultMaxListeners;
+    },
+    set: arg => {
+      validateNumber(arg, "defaultMaxListeners", 0);
+      defaultMaxListeners = arg;
+    },
+  },
+  kMaxEventTargetListeners: {
+    value: kMaxEventTargetListeners,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  },
+  kMaxEventTargetListenersWarned: {
+    value: kMaxEventTargetListenersWarned,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  },
+});
+Object.assign(EventEmitter, {
   once,
+  on,
+  getEventListeners,
+  // getMaxListeners,
   setMaxListeners,
-  usingDomains,
+  EventEmitter,
+  usingDomains: false,
+  captureRejectionSymbol,
   EventEmitterAsyncResource,
-};
+  errorMonitor: kErrorMonitor,
+  setMaxListeners,
+  init: EventEmitter,
+  listenerCount,
+});
+
 export default EventEmitter;

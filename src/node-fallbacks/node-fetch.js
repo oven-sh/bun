@@ -71,7 +71,6 @@ export default Object.assign(fetch, {
   fileFromSync,
   isRedirect,
   default: fetch,
-  [Symbol.for("CommonJS")]: 0,
 });
 
 export {

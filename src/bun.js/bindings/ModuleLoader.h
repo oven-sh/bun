@@ -81,13 +81,13 @@ public:
 };
 
 OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue);
-JSValue fetchSourceCodeSync(
+JSValue fetchESMSourceCodeSync(
     Zig::GlobalObject* globalObject,
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer);
 
-JSValue fetchSourceCodeAsync(
+JSValue fetchESMSourceCodeAsync(
     Zig::GlobalObject* globalObject,
     ErrorableResolvedSource* res,
     BunString* specifier,

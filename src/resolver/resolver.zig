@@ -32,6 +32,7 @@ const NodeFallbackModules = @import("../node_fallbacks.zig");
 const Mutex = @import("../lock.zig").Lock;
 const StringBoolMap = bun.StringHashMap(bool);
 const FileDescriptorType = bun.FileDescriptor;
+const JSC = bun.JSC;
 
 const allocators = @import("../allocators.zig");
 const Msg = logger.Msg;
@@ -1272,6 +1273,8 @@ pub const Resolver = struct {
                     // "fs"
                     // "fs/*"
                     // These are disabled!
+                } else if (had_node_prefix and !JSC.HardcodedModule.Aliases.has(import_path_without_node_prefix)) {
+                    return .{ .not_found = {} };
                 } else if (had_node_prefix or
                     (strings.hasPrefixComptime(import_path_without_node_prefix, "fs") and
                     (import_path_without_node_prefix.len == 2 or

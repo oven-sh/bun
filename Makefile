@@ -6,8 +6,6 @@ BUN_AUTO_UPDATER_REPO = Jarred-Sumner/bun-releases-for-updater
 
 CMAKE_CXX_COMPILER_LAUNCHER_FLAG :=
 
-
-
 # 'make' command will trigger the help target
 .DEFAULT_GOAL := help
 
@@ -20,7 +18,7 @@ CPU_TARGET ?= native
 MARCH_NATIVE = -mtune=$(CPU_TARGET)
 NATIVE_OR_OLD_MARCH =
 
-MMD_IF_LOCAL = 
+MMD_IF_LOCAL =
 DEFAULT_MIN_MACOS_VERSION=
 ARCH_NAME :=
 DOCKER_BUILDARCH =
@@ -556,21 +554,12 @@ tinycc:
 
 PYTHON=$(shell which python 2>/dev/null || which python3 2>/dev/null || which python2 2>/dev/null)
 
-.PHONY: builtins
-builtins:
-	NODE_ENV=production bun src/js/builtins/codegen/index.ts --minify
-
 .PHONY: esm
-esm:
-	NODE_ENV=production bun src/js/build-esm.ts
+js:
+	NODE_ENV=production bun src/js/_codegen/index.ts
 
 esm-debug:
 	BUN_DEBUG_QUIET_LOGS=1 NODE_ENV=production bun-debug src/js/build-esm.ts
-
-.PHONY: generate-builtins
-generate-builtins: builtins
-
-
 
 BUN_TYPES_REPO_PATH ?= $(realpath packages/bun-types)
 
@@ -1118,7 +1107,7 @@ dev-obj-linux:
 	$(ZIG) build obj -Dtarget=x86_64-linux-gnu -Dcpu="$(CPU_TARGET)"
 
 .PHONY: dev
-dev: mkdir-dev esm dev-obj link ## compile zig changes + link bun
+dev: mkdir-dev dev-obj link ## compile zig changes + link bun
 
 mkdir-dev:
 	mkdir -p $(DEBUG_PACKAGE_DIR)
@@ -1203,6 +1192,7 @@ jsc-build-mac-compile:
 			-DPORT="JSCOnly" \
 			-DENABLE_STATIC_JSC=ON \
 			-DENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE=ON \
+			-DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON \
 			-DCMAKE_BUILD_TYPE=Release \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DBUN_FAST_TLS=ON \
@@ -1225,6 +1215,7 @@ jsc-build-mac-compile-lto:
 			-DPORT="JSCOnly" \
 			-DENABLE_STATIC_JSC=ON \
 			-DENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE=ON \
+			-DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON \
 			-DCMAKE_BUILD_TYPE=Release \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DBUN_FAST_TLS=ON \
@@ -1252,6 +1243,7 @@ jsc-build-mac-compile-debug:
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DENABLE_FTL_JIT=ON \
 			-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+			-DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON \
 			-G Ninja \
 			$(CMAKE_FLAGS_WITHOUT_RELEASE) \
 			-DPTHREAD_JIT_PERMISSIONS_API=1 \
@@ -1275,6 +1267,7 @@ jsc-build-linux-compile-config:
 			-DENABLE_FTL_JIT=ON \
 			-DENABLE_REMOTE_INSPECTOR=ON \
 			-DJSEXPORT_PRIVATE=WTF_EXPORT_DECLARATION \
+			-DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON \
 			-USE_VISIBILITY_ATTRIBUTE=1 \
 			-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
 			-G Ninja \
@@ -1914,11 +1907,11 @@ bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release
 
 .PHONY: regenerate-bindings
 regenerate-bindings: ## compile src/js/builtins + all c++ code, does not link
-	@make clean-bindings builtins
+	@make clean-bindings js
 	@make bindings -j$(CPU_COUNT)
 
 .PHONY: setup
-setup: vendor-dev identifier-cache clean-bindings
+setup: vendor-dev identifier-cache clean-bindings js
 	make jsc-check
 	make bindings -j$(CPU_COUNT)
 	@echo ""

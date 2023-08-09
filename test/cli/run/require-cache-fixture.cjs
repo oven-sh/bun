@@ -27,13 +27,15 @@ const foo = require("./require-cache-fixture-b.cjs");
 
 exports.foo = foo;
 
-if (require.cache[require.resolve("./require-cache-fixture-b.cjs")].exports !== exports.foo) {
+var res = require.resolve;
+
+if (require.cache[res("./require-cache-fixture-b.cjs")].exports !== exports.foo) {
   throw new Error("exports.foo !== require.cache[require.resolve('./require-cache-fixture-b')]");
 }
 
 Bun.gc(true);
 
-delete require.cache[require.resolve("./require-cache-fixture-b.cjs")];
+delete require.cache[res("./require-cache-fixture-b.cjs")];
 
 Bun.gc(true);
 
@@ -41,7 +43,7 @@ exports.bar = require("./require-cache-fixture-b.cjs");
 
 Bun.gc(true);
 
-if (require.cache[require.resolve("./require-cache-fixture-b.cjs")].exports !== exports.bar) {
+if (require.cache[res("./require-cache-fixture-b.cjs")].exports !== exports.bar) {
   throw new Error("exports.bar !== require.cache[require.resolve('./require-cache-fixture-b')]");
 }
 

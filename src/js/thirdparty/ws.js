@@ -3,8 +3,8 @@
 // this just wraps WebSocket to look like an EventEmitter
 // without actually using an EventEmitter polyfill
 
-import { EventEmitter } from "node:events";
-import http from "node:http";
+const EventEmitter = require("node:events");
+const http = require("node:http");
 
 const kBunInternals = Symbol.for("::bunternal::");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
@@ -265,8 +265,7 @@ class BunWebSocket extends EventEmitter {
     emitWarning("resume()", "ws.WebSocket.resume() is not implemented in bun");
   }
 }
-
-BunWebSocket.WebSocket = BunWebSocket;
+Object.defineProperty(BunWebSocket, "name", { value: "WebSocket" });
 
 const wsKeyRegex = /^[+/0-9A-Za-z]{22}==$/;
 const wsTokenChars = [
@@ -715,7 +714,7 @@ class BunWebSocketMocked extends EventEmitter {
   }
 }
 
-class Server extends EventEmitter {
+class WebSocketServer extends EventEmitter {
   _server;
   options;
   clients;
@@ -1082,9 +1081,6 @@ class Server extends EventEmitter {
   }
 }
 
-BunWebSocket.WebSocketServer = Server;
-BunWebSocket.Server = Server;
-
 Object.defineProperty(BunWebSocket, "CONNECTING", {
   enumerable: true,
   value: readyStates.indexOf("CONNECTING"),
@@ -1131,23 +1127,21 @@ class Sender {
   }
 }
 
-BunWebSocket.Sender = Sender;
-
 class Receiver {
   constructor() {
     throw new Error("Not supported yet in Bun");
   }
 }
 
-BunWebSocket.Receiver = Receiver;
-
 var createWebSocketStream = ws => {
   throw new Error("Not supported yet in Bun");
 };
 
-BunWebSocket.createWebSocketStream = createWebSocketStream;
-
-BunWebSocket[Symbol.for("CommonJS")] = 0;
-
-export default BunWebSocket;
-export { createWebSocketStream, Server, Receiver, Sender, BunWebSocket as WebSocket, Server as WebSocketServer };
+export default Object.assign(BunWebSocket, {
+  createWebSocketStream,
+  Receiver,
+  Sender,
+  WebSocket: BunWebSocket,
+  Server: WebSocketServer,
+  WebSocketServer: WebSocketServer,
+});

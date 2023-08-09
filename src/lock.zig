@@ -116,6 +116,12 @@ pub const Lock = struct {
     pub inline fn unlock(this: *Lock) void {
         this.mutex.release();
     }
+
+    pub inline fn assertUnlocked(this: *Lock, comptime message: []const u8) void {
+        if (this.mutex.state.load(.Monotonic) != 0) {
+            @panic(message);
+        }
+    }
 };
 
 pub fn spinCycle() void {}

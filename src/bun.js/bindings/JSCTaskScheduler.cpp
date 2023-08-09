@@ -24,8 +24,10 @@ public:
     Ticket ticket;
     Task task;
 
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_ISO_ALLOCATED(JSCDeferredWorkTask);
 };
+
+WTF_MAKE_ISO_ALLOCATED_IMPL(JSCDeferredWorkTask);
 
 static JSC::VM& getVM(Ticket ticket)
 {

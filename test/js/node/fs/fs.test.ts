@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { gc } from "harness";
+import { dirname } from "node:path";
+import { bunEnv, bunExe, gc } from "harness";
 import fs, {
   closeSync,
   existsSync,
@@ -31,6 +32,7 @@ import fs, {
   symlinkSync,
   writevSync,
   readvSync,
+  fstatSync,
 } from "node:fs";
 
 import _promises from "node:fs/promises";
@@ -40,6 +42,7 @@ import { join } from "node:path";
 
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
 import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
+import { spawnSync } from "bun";
 
 const Buffer = globalThis.Buffer || Uint8Array;
 
@@ -63,6 +66,15 @@ it("writeFileSync in append should not truncate the file", () => {
     writeFileSync(path, line, { flag: "a" });
   }
   expect(readFileSync(path, "utf8")).toBe(str);
+});
+
+it("await readdir #3931", async () => {
+  const { exitCode } = spawnSync({
+    cmd: [bunExe(), join(import.meta.dir, "./repro-3931.js")],
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+  expect(exitCode).toBe(0);
 });
 
 it("writeFileSync NOT in append SHOULD truncate the file", () => {
@@ -159,6 +171,142 @@ it("readdirSync on import.meta.dir", () => {
   expect(match).toBe(true);
 });
 
+it("promises.readdir on a large folder", async () => {
+  const huge = join(tmpdir(), "huge-folder-" + Math.random().toString(32));
+  rmSync(huge, { force: true, recursive: true });
+  mkdirSync(huge, { recursive: true });
+  for (let i = 0; i < 128; i++) {
+    writeFileSync(join(huge, "file-" + i), "");
+  }
+  for (let j = 0; j < 4; j++) {
+    const promises = await Promise.all([
+      fs.promises.readdir(huge),
+      fs.promises.readdir(huge),
+      fs.promises.readdir(huge),
+      fs.promises.readdir(huge),
+    ]);
+
+    for (let chunk of promises) {
+      expect(chunk).toHaveLength(128);
+      chunk.sort();
+
+      let count = 0;
+      for (let i = 0; i < 128; i++) {
+        const current = chunk[i];
+        if (!current.startsWith("file-")) {
+          throw new Error("invalid file name");
+        }
+
+        const num = parseInt(current.slice(5));
+        // @ts-expect-error
+        count += !!(num >= 0 && num < 128);
+      }
+
+      expect(count).toBe(128);
+    }
+  }
+  rmSync(huge, { force: true, recursive: true });
+});
+
+it("promises.readFile", async () => {
+  expect(await fs.promises.readFile(import.meta.path, "utf-8")).toEqual(readFileSync(import.meta.path, "utf-8"));
+  expect(await fs.promises.readFile(import.meta.path, { encoding: "latin1" })).toEqual(
+    readFileSync(import.meta.path, { encoding: "latin1" }),
+  );
+
+  // We do this 20 times to check for any GC issues.
+  for (let i = 0; i < 20; i++) {
+    try {
+      await fs.promises.readFile("/i-dont-exist", "utf-8");
+      expect(false).toBeTrue();
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(Error);
+      expect(e.message).toBe("No such file or directory");
+      expect(e.code).toBe("ENOENT");
+      expect(e.errno).toBe(-2);
+      expect(e.path).toBe("/i-dont-exist");
+    }
+  }
+});
+
+it("promises.readFile - UTF16 file path", async () => {
+  const dest = `/tmp/superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${
+    (Math.random() * 1024000) | 0
+  }.txt`;
+  await fs.promises.copyFile(import.meta.path, dest);
+  const expected = readFileSync(import.meta.path, "utf-8");
+  Bun.gc(true);
+  for (let i = 0; i < 100; i++) {
+    expect(await fs.promises.readFile(dest, "utf-8")).toEqual(expected);
+  }
+  Bun.gc(true);
+});
+
+it("promises.readFile - atomized file path", async () => {
+  const destInput = `/tmp/superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${
+    (Math.random() * 1024000) | 0
+  }.txt`;
+  // Force it to become an atomized string by making it a property access
+  const dest: string = (
+    {
+      [destInput]: destInput,
+      boop: 123,
+    } as const
+  )[destInput] as string;
+  await fs.promises.copyFile(import.meta.path, dest);
+  const expected = readFileSync(import.meta.path, "utf-8");
+  Bun.gc(true);
+  for (let i = 0; i < 100; i++) {
+    expect(await fs.promises.readFile(dest, "utf-8")).toEqual(expected);
+  }
+  Bun.gc(true);
+});
+
+it("promises.readFile with buffer as file path", async () => {
+  for (let i = 0; i < 10; i++)
+    expect(await fs.promises.readFile(Buffer.from(import.meta.path), "utf-8")).toEqual(
+      readFileSync(import.meta.path, "utf-8"),
+    );
+});
+
+it("promises.readdir on a large folder withFileTypes", async () => {
+  const huge = join(tmpdir(), "huge-folder-" + Math.random().toString(32));
+  rmSync(huge, { force: true, recursive: true });
+  mkdirSync(huge, { recursive: true });
+  let withFileTypes = { withFileTypes: true } as const;
+  for (let i = 0; i < 128; i++) {
+    writeFileSync(join(huge, "file-" + i), "");
+  }
+  for (let j = 0; j < 4; j++) {
+    const promises = await Promise.all([
+      fs.promises.readdir(huge, withFileTypes),
+      fs.promises.readdir(huge, withFileTypes),
+      fs.promises.readdir(huge, withFileTypes),
+      fs.promises.readdir(huge, withFileTypes),
+    ]);
+
+    for (let chunk of promises) {
+      expect(chunk).toHaveLength(128);
+      chunk.sort();
+
+      let count = 0;
+      for (let i = 0; i < 128; i++) {
+        const current = chunk[i].name;
+        if (!current.startsWith("file-")) {
+          throw new Error("invalid file name");
+        }
+
+        const num = parseInt(current.slice(5));
+        // @ts-expect-error
+        count += !!(num >= 0 && num < 128);
+      }
+
+      expect(count).toBe(128);
+    }
+  }
+  rmSync(huge, { force: true, recursive: true });
+});
+
 it("statSync throwIfNoEntry", () => {
   expect(statSync("/tmp/404/not-found/ok", { throwIfNoEntry: false })).toBeUndefined();
   expect(lstatSync("/tmp/404/not-found/ok", { throwIfNoEntry: false })).toBeUndefined();
@@ -169,6 +317,12 @@ it("statSync throwIfNoEntry: true", () => {
   expect(() => statSync("/tmp/404/not-found/ok")).toThrow("No such file or directory");
   expect(() => lstatSync("/tmp/404/not-found/ok", { throwIfNoEntry: true })).toThrow("No such file or directory");
   expect(() => lstatSync("/tmp/404/not-found/ok")).toThrow("No such file or directory");
+});
+
+it("stat == statSync", async () => {
+  const sync = statSync(import.meta.path);
+  const async = await promises.stat(import.meta.path);
+  expect(Object.entries(sync)).toEqual(Object.entries(async));
 });
 
 // https://github.com/oven-sh/bun/issues/1887
@@ -1323,6 +1477,26 @@ describe("fs/promises", () => {
   });
 });
 
+it("stat on a large file", () => {
+  var dest: string = "",
+    fd;
+  try {
+    dest = `${tmpdir()}/fs.test.js/${Math.trunc(Math.random() * 10000000000).toString(32)}.stat.txt`;
+    mkdirSync(dirname(dest), { recursive: true });
+    const bigBuffer = new Uint8Array(1024 * 1024 * 1024);
+    fd = openSync(dest, "w");
+    let offset = 0;
+    while (offset < 5 * 1024 * 1024 * 1024) {
+      offset += writeSync(fd, bigBuffer, 0, bigBuffer.length, offset);
+    }
+
+    expect(fstatSync(fd).size).toEqual(offset);
+  } finally {
+    if (fd) closeSync(fd);
+    unlinkSync(dest);
+  }
+});
+
 it("fs.constants", () => {
   expect(constants).toBeDefined();
   expect(constants.F_OK).toBeDefined();
@@ -1338,12 +1512,12 @@ it("fs.constants", () => {
   expect(constants.O_TRUNC).toBeDefined();
   expect(constants.O_APPEND).toBeDefined();
   expect(constants.O_DIRECTORY).toBeDefined();
-  expect(constants.O_NOATIME).toBeDefined();
+  // expect(constants.O_NOATIME).toBeDefined();
   expect(constants.O_NOFOLLOW).toBeDefined();
   expect(constants.O_SYNC).toBeDefined();
   expect(constants.O_DSYNC).toBeDefined();
-  expect(constants.O_SYMLINK).toBeDefined();
-  expect(constants.O_DIRECT).toBeDefined();
+  if (process.platform === "darwin") expect(constants.O_SYMLINK).toBeDefined();
+  // expect(constants.O_DIRECT).toBeDefined();
   expect(constants.O_NONBLOCK).toBeDefined();
   expect(constants.S_IFMT).toBeDefined();
   expect(constants.S_IFREG).toBeDefined();

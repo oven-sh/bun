@@ -1,6 +1,6 @@
 // Hardcoded module "node:http2"
 // This is a stub! None of this is actually implemented yet.
-import { hideFromStack, throwNotImplemented } from "../shared";
+const { hideFromStack, throwNotImplemented } = require("$shared");
 
 function connect() {
   throwNotImplemented("node:http2 connect", 887);
@@ -280,7 +280,7 @@ function Http2ServerResponse() {
   throwNotImplemented("node:http2 Http2ServerResponse", 887);
 }
 
-const defaultObject = {
+export default {
   constants,
   createServer,
   createSecureServer,
@@ -290,21 +290,6 @@ const defaultObject = {
   sensitiveHeaders,
   Http2ServerRequest,
   Http2ServerResponse,
-  [Symbol.for("CommonJS")]: 0,
-  connect,
-};
-
-export {
-  constants,
-  createServer,
-  createSecureServer,
-  getDefaultSettings,
-  getPackedSettings,
-  getUnpackedSettings,
-  sensitiveHeaders,
-  Http2ServerRequest,
-  Http2ServerResponse,
-  defaultObject as default,
   connect,
 };
 

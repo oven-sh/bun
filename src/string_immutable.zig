@@ -672,15 +672,7 @@ pub fn startsWith(self: string, str: string) bool {
         return false;
     }
 
-    var i: usize = 0;
-    while (i < str.len) {
-        if (str[i] != self[i]) {
-            return false;
-        }
-        i += 1;
-    }
-
-    return true;
+    return eqlLong(self[0..str.len], str, false);
 }
 
 pub inline fn endsWith(self: string, str: string) bool {

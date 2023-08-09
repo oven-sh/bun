@@ -232,5 +232,12 @@ function setIntervalPromise(after = 1, value, options = {}) {
   }
 }
 
-export { setTimeoutPromise as setTimeout, setImmediatePromise as setImmediate, setIntervalPromise as setInterval };
-export default { setTimeout: setTimeoutPromise, setImmediate: setImmediatePromise, setInterval: setIntervalPromise };
+export default {
+  setTimeout: setTimeoutPromise,
+  setImmediate: setImmediatePromise,
+  setInterval: setIntervalPromise,
+  scheduler: {
+    wait: (delay, options) => setTimeoutPromise(delay, undefined, options),
+    yield: setImmediatePromise,
+  },
+};

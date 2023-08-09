@@ -170,6 +170,8 @@ typedef struct StackAllocatedCallFrame {
 extern "C" Zig::GlobalObject*
 Bun__getDefaultGlobal();
 
+WTF_MAKE_ISO_ALLOCATED_IMPL(NapiRef);
+
 static uint32_t getPropertyAttributes(napi_property_attributes attributes)
 {
     uint32_t result = 0;
@@ -951,7 +953,7 @@ extern "C" napi_status napi_delete_reference(napi_env env, napi_ref ref)
 extern "C" void napi_delete_reference_internal(napi_ref ref)
 {
     NapiRef* napiRef = toJS(ref);
-    napiRef->~NapiRef();
+    delete napiRef;
 }
 
 extern "C" napi_status napi_is_detached_arraybuffer(napi_env env,

@@ -8,6 +8,9 @@
 
 namespace Zig {
 
+// TODO: find a better place for this
+int getRSS(size_t* rss);
+
 using namespace JSC;
 
 class Process : public WebCore::JSEventEmitter {

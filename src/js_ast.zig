@@ -25,6 +25,7 @@ const JSONParser = bun.JSON;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const JSPrinter = @import("./js_printer.zig");
+const js_lexer = @import("./js_lexer.zig");
 const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
 
 /// This is the index to the automatically-generated part containing code that
@@ -840,6 +841,7 @@ pub const G = struct {
             get,
             set,
             spread,
+            declare,
             class_static_block,
 
             pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
@@ -2358,7 +2360,6 @@ pub const E = struct {
         }
 
         pub fn toJS(s: *String, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-            s.resolveRopeIfNeeded(allocator);
             if (!s.isPresent()) {
                 var emp = bun.String.empty;
                 return emp.toJS(globalObject);
@@ -2366,14 +2367,20 @@ pub const E = struct {
 
             if (s.is_utf16) {
                 var out = bun.String.createUninitializedUTF16(s.len());
-                defer out.deref();
                 @memcpy(@constCast(out.utf16()), s.slice16());
                 return out.toJS(globalObject);
             }
 
             {
-                var out = bun.String.create(s.slice(allocator));
+                s.resolveRopeIfNeeded(allocator);
+
+                const decoded = js_lexer.decodeUTF8(s.slice(allocator), allocator) catch unreachable;
+                defer allocator.free(decoded);
+
+                var out = bun.String.createUninitializedUTF16(decoded.len);
                 defer out.deref();
+                @memcpy(@constCast(out.utf16()), decoded);
+
                 return out.toJS(globalObject);
             }
         }
@@ -5940,8 +5947,6 @@ pub const Ast = struct {
     wrapper_ref: Ref = Ref.None,
     require_ref: Ref = Ref.None,
 
-    bun_plugin: BunPlugin = .{},
-
     prepend_part: ?Part = null,
 
     // These are used when bundling. They are filled in during the parser pass
@@ -6413,7 +6418,6 @@ pub const Part = struct {
         cjs_imports,
         react_fast_refresh,
         dirname_filename,
-        bun_plugin,
         bun_test,
         dead_due_to_inlining,
         commonjs_named_export,
@@ -6680,11 +6684,6 @@ pub fn printmem(comptime format: string, args: anytype) void {
     Output.initTest();
     Output.print(format, args);
 }
-
-pub const BunPlugin = struct {
-    ref: Ref = Ref.None,
-    hoisted_stmts: std.ArrayListUnmanaged(Stmt) = .{},
-};
 
 pub const Macro = struct {
     const JavaScript = @import("root").bun.JSC;
@@ -9951,12 +9950,8 @@ pub const Macro = struct {
                         },
                         .String => {
                             var bun_str = value.toBunString(this.global);
-                            if (bun_str.is8Bit()) {
-                                if (strings.isAllASCII(bun_str.latin1())) {
-                                    return Expr.init(E.String, E.String.init(this.allocator.dupe(u8, bun_str.latin1()) catch unreachable), this.caller.loc);
-                                }
-                            }
 
+                            // encode into utf16 so the printer escapes the string correctly
                             var utf16_bytes = this.allocator.alloc(u16, bun_str.length()) catch unreachable;
                             var out_slice = utf16_bytes[0 .. (bun_str.encodeInto(std.mem.sliceAsBytes(utf16_bytes), .utf16le) catch 0) / 2];
                             return Expr.init(E.String, E.String.init(out_slice), this.caller.loc);

@@ -668,45 +668,7 @@ pub const Bundler = struct {
             }
         }
 
-        // if you pass just a directory, activate the router configured for the pages directory
-        // for now:
-        // - "." is not supported
-        // - multiple pages directories is not supported
-        if (!this.options.routes.routes_enabled and this.options.entry_points.len == 1 and !this.options.serve) {
-
-            // When inferring:
-            // - pages directory with a file extension is not supported. e.g. "pages.app/" won't work.
-            //     This is a premature optimization to avoid this magical auto-detection we do here from meaningfully increasing startup time if you're just passing a file
-            //     readDirInfo is a recursive lookup, top-down instead of bottom-up. It opens each folder handle and potentially reads the package.jsons
-            // So it is not fast! Unless it's already cached.
-            var paths = [_]string{std.mem.trimLeft(u8, this.options.entry_points[0], "./")};
-            if (std.mem.indexOfScalar(u8, paths[0], '.') == null) {
-                var pages_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var entry = this.fs.absBuf(&paths, &pages_dir_buf);
-
-                if (std.fs.path.extension(entry).len == 0) {
-                    bun.constStrToU8(entry).ptr[entry.len] = '/';
-
-                    // Only throw if they actually passed in a route config and the directory failed to load
-                    var dir_info_ = this.resolver.readDirInfo(entry) catch return;
-                    var dir_info = dir_info_ orelse return;
-
-                    this.options.routes.dir = dir_info.abs_path;
-                    this.options.routes.extensions = options.RouteConfig.DefaultExtensions[0..];
-                    this.options.routes.routes_enabled = true;
-                    this.router = try Router.init(this.fs, this.allocator, this.options.routes);
-                    try this.router.?.loadRoutes(
-                        this.log,
-                        dir_info,
-                        Resolver,
-                        &this.resolver,
-                        this.fs.top_level_dir,
-                    );
-                    this.router.?.routes.client_framework_enabled = this.options.isFrontendFrameworkEnabled();
-                    return;
-                }
-            }
-        } else if (this.options.routes.routes_enabled) {
+        if (this.options.routes.routes_enabled) {
             var dir_info_ = try this.resolver.readDirInfo(this.options.routes.dir);
             var dir_info = dir_info_ orelse return error.MissingRoutesDir;
 
@@ -1296,7 +1258,6 @@ pub const Bundler = struct {
         macro_js_ctx: MacroJSValueType = default_macro_js_value,
         virtual_source: ?*const logger.Source = null,
         replace_exports: runtime.Runtime.Features.ReplaceableExport.Map = .{},
-        hoist_bun_plugin: bool = false,
         inject_jest_globals: bool = false,
 
         dont_bundle_twice: bool = false,
@@ -1450,7 +1411,6 @@ pub const Bundler = struct {
                     strings.eqlComptime(jsx.import_source.production, "react/jsx-runtime");
 
                 opts.features.jsx_optimization_hoist = bundler.options.jsx_optimization_hoist orelse opts.features.jsx_optimization_inline;
-                opts.features.hoist_bun_plugin = this_parse.hoist_bun_plugin;
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
                 opts.features.minify_syntax = bundler.options.minify_syntax;
                 opts.features.minify_identifiers = bundler.options.minify_identifiers;

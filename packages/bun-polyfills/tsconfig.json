@@ -10,6 +10,7 @@
     "skipLibCheck": true,
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
+    "inlineSourceMap": true,
     "allowJs": true,
     "outDir": "dist",
     "types": ["node"]

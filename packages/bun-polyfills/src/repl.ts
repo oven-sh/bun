@@ -13,7 +13,6 @@ globalThis.Bun = bun as typeof bun & {
     build: typeof import('bun').build;
     mmap: typeof import('bun').mmap;
     gc: typeof import('bun').gc;
-    sleep: typeof import('bun').sleep;
     connect: typeof import('bun').connect;
     listen: typeof import('bun').listen;
     indexOfLine: typeof import('bun').indexOfLine;

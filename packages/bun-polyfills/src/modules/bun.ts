@@ -72,9 +72,12 @@ export const SHA384 = SHA384Polyfill satisfies typeof Bun.SHA384;
 export const SHA256 = SHA256Polyfill satisfies typeof Bun.SHA256;
 export const SHA512_256 = SHA512_256Polyfill satisfies typeof Bun.SHA512_256;
 
-export const sleepSync = ((s: number) => {
-    if (!s || s < 0) throw new RangeError('sleepSync() argument must be a positive number');
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, s * 1000);
+export const sleep = (ms => {
+    return new Promise(r => setTimeout(r, ms instanceof Date ? ms.valueOf() - Date.now() : ms));
+}) satisfies typeof Bun.sleep;
+export const sleepSync = (ms => {
+    if (ms < 0) throw new TypeError('argument to sleepSync must not be negative');
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }) satisfies typeof Bun.sleepSync;
 
 //? This is not 1:1 matching, but no one should be relying on the exact output of this function anyway.

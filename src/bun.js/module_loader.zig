@@ -2396,6 +2396,7 @@ pub const HardcodedModule = enum {
             .{ "node:child_process", .{ .path = "node:child_process" } },
             .{ "node:constants", .{ .path = "node:constants" } },
             .{ "node:console", .{ .path = "node:console" } },
+            .{ "console", .{ .path = "node:console" } },
             .{ "node:querystring", .{ .path = "node:querystring" } },
             .{ "querystring", .{ .path = "node:querystring" } },
             .{ "node:domain", .{ .path = "node:domain" } },

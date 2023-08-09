@@ -22,6 +22,7 @@ import path from 'node:path';
 import util from 'node:util';
 import zlib from 'node:zlib';
 import streams from 'node:stream';
+import workers from 'node:worker_threads';
 import chp, { type ChildProcess, type StdioOptions, type SpawnSyncReturns } from 'node:child_process';
 import { fileURLToPath as fileURLToPathNode, pathToFileURL as pathToFileURLNode } from 'node:url';
 import npm_which from 'which';
@@ -434,6 +435,8 @@ export const pathToFileURL = pathToFileURLNode satisfies typeof Bun.pathToFileUR
 export const fileURLToPath = fileURLToPathNode satisfies typeof Bun.fileURLToPath;
 
 export const dns = dnsPolyfill satisfies typeof Bun.dns;
+
+export const isMainThread = workers.isMainThread satisfies typeof Bun.isMainThread;
 
 //! It may be possible to implement plugins with Node ESM loaders, but it would take some effort and have some caveats.
 //! For now, we'll simply make all calls to Bun.plugin no-op, such that manual implementation of an external ESM loader is possible,

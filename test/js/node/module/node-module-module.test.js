@@ -26,6 +26,13 @@ test("Module exists", () => {
   expect(Module).toBeDefined();
 });
 
+test("module.Module works", () => {
+  expect(Module.Module === Module).toBeTrue();
+
+  const m = new Module("asdf");
+  expect(m.exports).toEqual({});
+});
+
 test("_nodeModulePaths() works", () => {
   expect(() => {
     _nodeModulePaths();

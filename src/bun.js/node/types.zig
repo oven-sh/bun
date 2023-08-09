@@ -1861,14 +1861,17 @@ pub const Path = struct {
         var insert_separator = true;
         if (path_object.getTruthy(globalThis, "dir")) |prop| {
             prop.toZigString(&dir, globalThis);
-            insert_separator = !dir.isEmpty();
-        } else if (path_object.getTruthy(globalThis, "root")) |prop| {
-            prop.toZigString(&dir, globalThis);
+        }
+        if (dir.isEmpty()) {
+            if (path_object.getTruthy(globalThis, "root")) |prop| {
+                prop.toZigString(&dir, globalThis);
+            }
         }
 
         if (path_object.getTruthy(globalThis, "base")) |prop| {
             prop.toZigString(&name_with_ext, globalThis);
-        } else {
+        }
+        if (name_with_ext.isEmpty()) {
             var had_ext = false;
             if (path_object.getTruthy(globalThis, "ext")) |prop| {
                 prop.toZigString(&ext, globalThis);
@@ -1897,6 +1900,16 @@ pub const Path = struct {
             defer allocator.free(out);
 
             return JSC.ZigString.init(out).withEncoding().toValueGC(globalThis);
+        } else {
+            if (!isWindows) {
+                if (dir.eqlComptime("/")) {
+                    insert_separator = false;
+                }
+            } else {
+                if (dir.eqlComptime("\\")) {
+                    insert_separator = false;
+                }
+            }
         }
 
         if (insert_separator) {

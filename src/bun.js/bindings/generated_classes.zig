@@ -991,6 +991,8 @@ pub const JSExpect = struct {
             @compileLog("Expected Expect.toHaveReturnedWith to be a callback but received " ++ @typeName(@TypeOf(Expect.toHaveReturnedWith)));
         if (@TypeOf(Expect.toInclude) != CallbackType)
             @compileLog("Expected Expect.toInclude to be a callback but received " ++ @typeName(@TypeOf(Expect.toInclude)));
+        if (@TypeOf(Expect.toIncludeRepeated) != CallbackType)
+            @compileLog("Expected Expect.toIncludeRepeated to be a callback but received " ++ @typeName(@TypeOf(Expect.toIncludeRepeated)));
         if (@TypeOf(Expect.toMatch) != CallbackType)
             @compileLog("Expected Expect.toMatch to be a callback but received " ++ @typeName(@TypeOf(Expect.toMatch)));
         if (@TypeOf(Expect.toMatchInlineSnapshot) != CallbackType)
@@ -999,6 +1001,8 @@ pub const JSExpect = struct {
             @compileLog("Expected Expect.toMatchObject to be a callback but received " ++ @typeName(@TypeOf(Expect.toMatchObject)));
         if (@TypeOf(Expect.toMatchSnapshot) != CallbackType)
             @compileLog("Expected Expect.toMatchSnapshot to be a callback but received " ++ @typeName(@TypeOf(Expect.toMatchSnapshot)));
+        if (@TypeOf(Expect.toSatisfy) != CallbackType)
+            @compileLog("Expected Expect.toSatisfy to be a callback but received " ++ @typeName(@TypeOf(Expect.toSatisfy)));
         if (@TypeOf(Expect.toStartWith) != CallbackType)
             @compileLog("Expected Expect.toStartWith to be a callback but received " ++ @typeName(@TypeOf(Expect.toStartWith)));
         if (@TypeOf(Expect.toStrictEqual) != CallbackType)
@@ -1111,10 +1115,12 @@ pub const JSExpect = struct {
             @export(Expect.toHaveReturnedTimes, .{ .name = "ExpectPrototype__toHaveReturnedTimes" });
             @export(Expect.toHaveReturnedWith, .{ .name = "ExpectPrototype__toHaveReturnedWith" });
             @export(Expect.toInclude, .{ .name = "ExpectPrototype__toInclude" });
+            @export(Expect.toIncludeRepeated, .{ .name = "ExpectPrototype__toIncludeRepeated" });
             @export(Expect.toMatch, .{ .name = "ExpectPrototype__toMatch" });
             @export(Expect.toMatchInlineSnapshot, .{ .name = "ExpectPrototype__toMatchInlineSnapshot" });
             @export(Expect.toMatchObject, .{ .name = "ExpectPrototype__toMatchObject" });
             @export(Expect.toMatchSnapshot, .{ .name = "ExpectPrototype__toMatchSnapshot" });
+            @export(Expect.toSatisfy, .{ .name = "ExpectPrototype__toSatisfy" });
             @export(Expect.toStartWith, .{ .name = "ExpectPrototype__toStartWith" });
             @export(Expect.toStrictEqual, .{ .name = "ExpectPrototype__toStrictEqual" });
             @export(Expect.toThrow, .{ .name = "ExpectPrototype__toThrow" });

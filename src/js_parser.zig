@@ -47,7 +47,7 @@ fn _disabledAssert(_: bool) void {
 }
 
 fn __wrapSyntaxError(loc: @import("std").builtin.SourceLocation) void {
-    Output.print("SyntaxError at {d}:{d}", .{
+    Output.printError("SyntaxError at {d}:{d}", .{
         loc.line,
         loc.column,
     });
@@ -14198,7 +14198,7 @@ fn NewParser_(
                     return p.parseImportExpr(loc, level);
                 },
                 else => |tok| {
-                    Output.print("Unexpected {s}", .{@tagName(tok)});
+                    Output.printError("Unexpected {s}", .{@tagName(tok)});
                     try p.lexer.unexpected();
                     __wrapSyntaxError(@src());
                     return error.SyntaxError;

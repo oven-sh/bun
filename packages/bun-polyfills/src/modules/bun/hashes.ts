@@ -6,14 +6,14 @@ import { wyhash, adler32, crc32, cityhash32, cityhash64, murmur32v3, murmur64v2,
 
 export const bunHash = ((data, seed = 0): bigint => wyhash(data, BigInt(seed))) as typeof Bun.hash;
 export const bunHashProto: Hash = {
-    wyhash(data, seed = 0) { return wyhash(data, BigInt(seed)); },
+    wyhash(data, seed = 0n) { return wyhash(data, seed); },
     adler32(data) { return adler32(data); },
     crc32(data) { return crc32(data); },
     cityHash32(data) { return cityhash32(data); },
-    cityHash64(data, seed = 0) { return cityhash64(data, BigInt(seed)); },
+    cityHash64(data, seed = 0n) { return cityhash64(data, seed); },
     murmur32v3(data, seed = 0) { return murmur32v3(data, seed); },
     murmur32v2(data, seed = 0) { return murmur32v2(data, seed); },
-    murmur64v2(data, seed = 0) { return murmur64v2(data, BigInt(seed)); },
+    murmur64v2(data, seed = 0n) { return murmur64v2(data, seed); },
 };
 
 type HashImpl = {

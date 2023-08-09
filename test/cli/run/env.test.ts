@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunRun, bunTest, tempDirWithFiles, bunExe, bunEnv } from "harness";
+import { bunRun, bunTest, tempDirWithFiles, bunExe, bunEnv, bunRunAsScript } from "harness";
 import path from "path";
 
 function bunRunWithoutTrim(file: string, env?: Record<string, string>) {
@@ -403,4 +403,75 @@ describe("boundary tests", () => {
     expect(stdout).toBe(expected);
     expect(stdout2).toBe(expected);
   });
+});
+
+test("npm_package_config", () => {
+  const vals = {
+    "port": 8000,
+    "password": "hello world",
+    "isDev": true,
+    "isProd": false,
+    "piNum": 3.14,
+    "emptyStr": "",
+    "emptyStr2": " ",
+    "why": 0,
+    "none": null,
+    "emoji": "🍕"
+  };
+
+  const dir = tempDirWithFiles("npmpkgcfg", {
+    "package.json": JSON.stringify({
+      config: vals,
+      "scripts": {
+        "dev": bunExe() + " run index.js"
+      }
+    }),
+    "index.js": "console.log(JSON.stringify(process.env))"
+  });
+
+  const { stdout } = bunRunAsScript(dir, "dev");
+  const jsStd = JSON.parse(stdout.toString())
+
+  for (const [key, val] of Object.entries(vals)) {
+    const jsVl = jsStd[`npm_package_config_${key}`];
+
+    expect(jsVl).toBeTypeOf("string");
+
+    if (val === false || val === null || val === "") {
+      expect(jsVl).toEqual("\"\"");
+      continue;
+    }
+
+    expect(jsVl).toEqual(val.toString());
+  }
+
+  // Now deep objects
+  const deepDir = tempDirWithFiles("npmpkgcfg", {
+    "package.json": JSON.stringify({
+      config: {
+        "test": 1,
+        "foo": {
+          "bar": "baz",
+          "buzz": {
+            "fizz": "fuzz",
+            "dave": "🕶️",
+            "something": 1
+          }
+        }
+      },
+      "scripts": {
+        "dev": bunExe() + " run index.js"
+      }
+    }),
+    "index.js": "console.log(JSON.stringify(process.env))"
+  });
+
+  const { stdout: deepStdout } = bunRunAsScript(deepDir, "dev");
+  const deepJsStd = JSON.parse(deepStdout.toString())
+
+  expect(deepJsStd.npm_package_config_test).toEqual("1")
+  expect(deepJsStd.npm_package_config_foo_bar).toEqual("baz");
+  expect(deepJsStd.npm_package_config_foo_buzz_fizz).toEqual("fuzz");
+  expect(deepJsStd.npm_package_config_foo_buzz_dave).toEqual("🕶️");
+  expect(deepJsStd.npm_package_config_foo_buzz_something).toEqual("1");
 });

@@ -10,6 +10,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
 
+const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const lex = bun.js_lexer;
 const logger = @import("root").bun.logger;
 
@@ -222,6 +223,31 @@ pub const RunCommand = struct {
 
     const log = Output.scoped(.RUN, false);
 
+    pub fn parseNpmPackageConfig(
+        allocator: std.mem.Allocator,
+        package_json: *PackageJSON,
+        env: *DotEnv.Loader,
+    ) !void {
+        const prefix = "npm_package_config_";
+
+        var buf = try std.ArrayList(u8).initCapacity(allocator, prefix.len);
+        defer buf.deinit();
+        buf.appendSliceAssumeCapacity(prefix);
+
+        for (package_json.npm_cfg_map.keys(), package_json.npm_cfg_map.values()) |key, value| {
+            buf.shrinkRetainingCapacity(prefix.len);
+            try buf.appendSlice(key);
+
+            if (package_json.npm_cfg_map.map.getPtr(buf.items)) |ptr| {
+                ptr.* = value;
+                continue;
+            }
+
+            const prefixed_key = try allocator.dupe(u8, buf.items);
+            errdefer allocator.free(prefixed_key);
+            try env.map.put(prefixed_key, value);
+        }
+    }
     pub fn runPackageScript(
         allocator: std.mem.Allocator,
         original_script: string,
@@ -230,6 +256,7 @@ pub const RunCommand = struct {
         env: *DotEnv.Loader,
         passthrough: []const string,
         silent: bool,
+        package_json: ?*PackageJSON,
     ) !bool {
         const shell_bin = findShell(env.map.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
@@ -240,6 +267,19 @@ pub const RunCommand = struct {
         // Find exact matches of yarn, pnpm, npm
 
         try replacePackageManagerRun(&copy_script, script);
+
+        if (package_json) |pkg_json| {
+            var i: usize = 0;
+            const prefix = "$npm_package_config_";
+            while (std.mem.indexOfPos(u8, copy_script.items, i, prefix)) |start| {
+                const end = std.mem.indexOfAnyPos(u8, copy_script.items, start + prefix.len, &std.ascii.whitespace) orelse copy_script.items.len;
+                const key = copy_script.items[start + prefix.len .. end];
+                i = end;
+                const value = pkg_json.npm_cfg_map.get(key) orelse continue;
+                i = start + value.len;
+                try copy_script.replaceRange(start, prefix.len + key.len, value);
+            }
+        }
 
         var combined_script: []u8 = copy_script.items;
 
@@ -1032,6 +1072,8 @@ pub const RunCommand = struct {
                         }
                     },
                     else => {
+                        try parseNpmPackageConfig(default_allocator, package_json, this_bundler.env);
+
                         if (scripts.get(script_name_to_search)) |script_content| {
                             // allocate enough to hold "post${scriptname}"
 
@@ -1046,6 +1088,7 @@ pub const RunCommand = struct {
                                     this_bundler.env,
                                     passthrough,
                                     ctx.debug.silent,
+                                    root_dir_info.enclosing_package_json,
                                 )) {
                                     return false;
                                 }
@@ -1059,20 +1102,13 @@ pub const RunCommand = struct {
                                 this_bundler.env,
                                 passthrough,
                                 ctx.debug.silent,
+                                root_dir_info.enclosing_package_json,
                             )) return false;
 
                             temp_script_buffer[0.."post".len].* = "post".*;
 
                             if (scripts.get(temp_script_buffer)) |postscript| {
-                                if (!try runPackageScript(
-                                    ctx.allocator,
-                                    postscript,
-                                    temp_script_buffer,
-                                    this_bundler.fs.top_level_dir,
-                                    this_bundler.env,
-                                    passthrough,
-                                    ctx.debug.silent,
-                                )) {
+                                if (!try runPackageScript(ctx.allocator, postscript, temp_script_buffer, this_bundler.fs.top_level_dir, this_bundler.env, passthrough, ctx.debug.silent, root_dir_info.enclosing_package_json)) {
                                     return false;
                                 }
                             }

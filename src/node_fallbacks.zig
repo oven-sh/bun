@@ -71,6 +71,7 @@ const assert_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("assert@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/assert/package.json", ""),
 };
 const buffer_package_json = PackageJSON{
@@ -80,6 +81,7 @@ const buffer_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("buffer@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/buffer/package.json", ""),
 };
 const console_package_json = PackageJSON{
@@ -89,6 +91,7 @@ const console_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("console@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/console/package.json", ""),
 };
 const constants_package_json = PackageJSON{
@@ -98,6 +101,7 @@ const constants_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("constants@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/constants/package.json", ""),
 };
 const crypto_package_json = PackageJSON{
@@ -107,6 +111,7 @@ const crypto_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("crypto@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/crypto/package.json", ""),
 };
 const domain_package_json = PackageJSON{
@@ -116,6 +121,7 @@ const domain_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("domain@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/domain/package.json", ""),
 };
 const events_package_json = PackageJSON{
@@ -125,6 +131,7 @@ const events_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("events@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/events/package.json", ""),
 };
 const http_package_json = PackageJSON{
@@ -134,6 +141,7 @@ const http_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("http@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/http/package.json", ""),
 };
 const https_package_json = PackageJSON{
@@ -143,6 +151,7 @@ const https_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("https@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/https/package.json", ""),
 };
 const net_package_json = PackageJSON{
@@ -152,6 +161,7 @@ const net_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("net@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/net/package.json", ""),
 };
 const os_package_json = PackageJSON{
@@ -161,6 +171,7 @@ const os_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("os@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/os/package.json", ""),
 };
 const path_package_json = PackageJSON{
@@ -170,6 +181,7 @@ const path_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("path@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/path/package.json", ""),
 };
 const process_package_json = PackageJSON{
@@ -179,6 +191,7 @@ const process_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("process@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/process/package.json", ""),
 };
 const punycode_package_json = PackageJSON{
@@ -188,6 +201,7 @@ const punycode_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("punycode@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/punycode/package.json", ""),
 };
 const querystring_package_json = PackageJSON{
@@ -197,6 +211,7 @@ const querystring_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("querystring@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/querystring/package.json", ""),
 };
 const stream_package_json = PackageJSON{
@@ -206,6 +221,7 @@ const stream_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("stream@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/stream/package.json", ""),
 };
 const string_decoder_package_json = PackageJSON{
@@ -219,6 +235,7 @@ const string_decoder_package_json = PackageJSON{
 
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/string_decoder/package.json", ""),
 };
 
@@ -229,6 +246,7 @@ const sys_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("sys@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/sys/package.json", ""),
 };
 const timers_package_json = PackageJSON{
@@ -238,6 +256,7 @@ const timers_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("timers@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/timers/package.json", ""),
 };
 const tty_package_json = PackageJSON{
@@ -247,6 +266,7 @@ const tty_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("tty@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/tty/package.json", ""),
 };
 const url_package_json = PackageJSON{
@@ -256,6 +276,7 @@ const url_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("url@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/url/package.json", ""),
 };
 const util_package_json = PackageJSON{
@@ -265,6 +286,7 @@ const util_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("util@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/util/package.json", ""),
 };
 const zlib_package_json = PackageJSON{
@@ -274,6 +296,7 @@ const zlib_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("zlib@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/zlib/package.json", ""),
 };
 
@@ -284,6 +307,7 @@ const node_fetch_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("node-fetch@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/node-fetch/package.json", ""),
 };
 const isomorphic_fetch_package_json = PackageJSON{
@@ -293,6 +317,7 @@ const isomorphic_fetch_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("isomorphic-fetch@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/isomorphic-fetch/package.json", ""),
 };
 const supports_color_package_json = PackageJSON{
@@ -302,6 +327,7 @@ const supports_color_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("supports-color@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/supports-color/package.json", ""),
 };
 
@@ -312,6 +338,7 @@ const vercel_fetch_package_json = PackageJSON{
     .hash = @as(u32, @truncate(bun.hash("@vercel/fetch@0.0.0-polyfill"))),
     .main_fields = undefined,
     .browser_map = undefined,
+    .npm_cfg_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/@vercel/fetch/package.json", ""),
 };
 

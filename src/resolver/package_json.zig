@@ -23,6 +23,7 @@ const resolve_path = @import("./resolve_path.zig");
 // Assume they're not going to have hundreds of main fields or browser map
 // so use an array-backed hash table instead of bucketed
 const MainFieldMap = bun.StringMap;
+const NpmCfgMap = bun.StringMap;
 pub const BrowserMap = bun.StringMap;
 pub const MacroImportReplacementMap = bun.StringArrayHashMap(string);
 pub const MacroMap = bun.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
@@ -144,7 +145,7 @@ pub const PackageJSON = struct {
     //   should match and the query "./ext" should ALSO match.
     //
     browser_map: BrowserMap,
-
+    npm_cfg_map: NpmCfgMap,
     exports: ?ExportsMap = null,
     imports: ?ExportsMap = null,
 
@@ -644,6 +645,7 @@ pub const PackageJSON = struct {
             .module_type = .unknown,
             .browser_map = BrowserMap.init(allocator, false),
             .main_fields = MainFieldMap.init(allocator, false),
+            .npm_cfg_map = NpmCfgMap.init(allocator, false),
         };
 
         // Note: we tried rewriting this to be fewer loops over all the properties (asProperty loops over each)
@@ -664,6 +666,22 @@ pub const PackageJSON = struct {
                 if (version_str.len > 0) {
                     package_json.name = allocator.dupe(u8, version_str) catch unreachable;
                 }
+            }
+        }
+
+        if (json.asProperty("config")) |npm_pkg_cfg| {
+            switch (npm_pkg_cfg.expr.data) {
+                .e_object => |obj| {
+                    for (obj.properties.slice()) |*prop| {
+                        const key = prop.key.?.asString(allocator) orelse continue;
+                        const value = prop.value.?.asString(allocator) orelse continue;
+
+                        if (!(key.len > 0 and value.len > 0)) continue;
+
+                        package_json.npm_cfg_map.put(key, value) catch unreachable;
+                    }
+                },
+                else => r.log.addWarning(&json_source, npm_pkg_cfg.loc, "The \"config\" field must be an object") catch unreachable,
             }
         }
 
@@ -1010,6 +1028,10 @@ pub const PackageJSON = struct {
                     }
                 }
             }
+
+            if (json.asProperty("config")) |npm_pkg_cfg| {
+                parseNpmCfg(allocator, &json_source, r, npm_pkg_cfg.expr, &package_json, "");
+            }
         }
 
         if (generate_hash) {
@@ -1019,6 +1041,55 @@ pub const PackageJSON = struct {
         }
 
         return package_json;
+    }
+
+    pub fn parseNpmCfg(allocator: std.mem.Allocator, json_source: ?*const logger.Source, r: *resolver.Resolver, jsonDataExpr: js_ast.Expr, package_json: *PackageJSON, prefix: []const u8) void {
+        switch (jsonDataExpr.data) {
+            .e_object => |obj| {
+                for (obj.properties.slice()) |*prop| {
+                    const key = prop.key.?.asString(allocator) orelse continue;
+                    if (key.len <= 0) continue;
+
+                    const lkey = strings.concat(allocator, &.{ prefix, key }) catch unreachable;
+
+                    switch (prop.value.?.data) {
+                        .e_object => {
+                            const newkey = strings.concat(allocator, &.{ lkey, "_" }) catch unreachable;
+                            parseNpmCfg(allocator, json_source, r, prop.value.?, package_json, newkey);
+                        },
+                        .e_string => {
+                            const value = prop.value.?.asString(allocator) orelse continue;
+                            package_json.npm_cfg_map.put(lkey, value) catch unreachable;
+                        },
+                        .e_number => {
+                            if (prop.value.?.data.e_number.toStringSafelyWithDecimalPlaces(allocator)) |value| {
+                                if (!(value.len > 0)) continue;
+                                package_json.npm_cfg_map.put(lkey, value) catch unreachable;
+                            }
+                        },
+                        .e_boolean => {
+                            const value = prop.value.?.asBool() orelse continue;
+                            if (value) {
+                                package_json.npm_cfg_map.put(lkey, "true") catch unreachable;
+                            } else {
+                                // Node.js interprets false as an empty string
+                                package_json.npm_cfg_map.put(lkey, "") catch unreachable;
+                            }
+                        },
+                        .e_null => {
+                            // Node.js interprets null as an empty string
+                            package_json.npm_cfg_map.put(lkey, "") catch unreachable;
+                        },
+                        // TODO: Add support for arrays, https://github.com/oven-sh/bun/pull/3661#issuecomment-1657227789
+                        else => {
+                            r.log.addWarning(json_source, prop.value.?.loc, "Values of 'config' must be either a boolean, number, string, or object.") catch unreachable;
+                            continue;
+                        },
+                    }
+                }
+            },
+            else => r.log.addWarning(json_source, jsonDataExpr.loc, "The \"config\" field must be an object") catch unreachable,
+        }
     }
 
     pub fn hashModule(this: *const PackageJSON, module: string) u32 {

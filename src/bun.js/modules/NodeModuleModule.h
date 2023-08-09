@@ -292,10 +292,12 @@ DEFINE_NATIVE_MODULE(NodeModule) {
     exportNames.append(name);
     exportValues.append(value);
   };
-  exportNames.reserveCapacity(14);
-  exportValues.ensureCapacity(14);
+  exportNames.reserveCapacity(15);
+  exportValues.ensureCapacity(15);
   exportNames.append(vm.propertyNames->defaultKeyword);
   exportValues.append(defaultObject);
+
+  put(Identifier::fromString(vm, "Module"_s), defaultObject);
 
   putNativeFn(Identifier::fromString(vm, "createRequire"_s),
               jsFunctionNodeModuleCreateRequire);

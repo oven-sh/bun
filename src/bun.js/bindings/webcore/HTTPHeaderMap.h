@@ -69,12 +69,9 @@ public:
             : m_table(table)
             , m_commonHeadersIt(commonHeadersIt)
             , m_uncommonHeadersIt(uncommonHeadersIt)
-            , m_setCookiesIter(setCookiesIter)
         {
             if (!updateKeyValue(m_commonHeadersIt)) {
-                if (!updateSetCookieHeaderPosition(setCookiesIter)) {
-                    updateKeyValue(m_uncommonHeadersIt);
-                }
+                updateKeyValue(m_uncommonHeadersIt);
             }
         }
 
@@ -107,9 +104,6 @@ public:
             if (m_commonHeadersIt != m_table.m_commonHeaders.end()) {
                 if (updateKeyValue(++m_commonHeadersIt))
                     return *this;
-            } else if (m_setCookiesIter != m_table.m_setCookieHeaders.end()) {
-                if (updateSetCookieHeaderPosition(++m_setCookiesIter))
-                    return *this;
             } else {
                 ++m_uncommonHeadersIt;
             }
@@ -122,7 +116,7 @@ public:
         bool operator!=(const HTTPHeaderMapConstIterator &other) const { return !(*this == other); }
         bool operator==(const HTTPHeaderMapConstIterator &other) const
         {
-            return m_commonHeadersIt == other.m_commonHeadersIt && m_uncommonHeadersIt == other.m_uncommonHeadersIt && m_setCookiesIter == other.m_setCookiesIter;
+            return m_commonHeadersIt == other.m_commonHeadersIt && m_uncommonHeadersIt == other.m_uncommonHeadersIt;
         }
 
     private:
@@ -145,22 +139,9 @@ public:
             return true;
         }
 
-        bool updateSetCookieHeaderPosition(Vector<String, 0>::const_iterator cookieI)
-        {
-            if (cookieI == m_table.m_setCookieHeaders.end()) {
-                return false;
-            }
-
-            m_keyValue.key = httpHeaderNameString(HTTPHeaderName::SetCookie).toStringWithoutCopying();
-            m_keyValue.keyAsHTTPHeaderName = HTTPHeaderName::SetCookie;
-            m_keyValue.value = *cookieI;
-            return true;
-        }
-
         const HTTPHeaderMap &m_table;
         CommonHeadersVector::const_iterator m_commonHeadersIt;
         UncommonHeadersVector::const_iterator m_uncommonHeadersIt;
-        Vector<String, 0>::const_iterator m_setCookiesIter;
         KeyValue m_keyValue;
     };
     typedef HTTPHeaderMapConstIterator const_iterator;
@@ -178,14 +159,12 @@ public:
     {
         m_commonHeaders.clear();
         m_uncommonHeaders.clear();
-        m_setCookieHeaders.clear();
     }
 
     void shrinkToFit()
     {
         m_commonHeaders.shrinkToFit();
         m_uncommonHeaders.shrinkToFit();
-        m_setCookieHeaders.shrinkToFit();
     }
 
     WEBCORE_EXPORT String get(const String &name) const;

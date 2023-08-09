@@ -2038,6 +2038,7 @@ pub const ModuleLoader = struct {
                 },
 
                 // Native modules
+                .bun => return jsSyntheticModule(.bun, specifier),
                 .@"node:buffer" => return jsSyntheticModule(.@"node:buffer", specifier),
                 .@"node:string_decoder" => return jsSyntheticModule(.@"node:string_decoder", specifier),
                 .@"node:module" => return jsSyntheticModule(.@"node:module", specifier),
@@ -2217,6 +2218,7 @@ pub const FetchFlags = enum {
 const SavedSourceMap = JSC.SavedSourceMap;
 
 pub const HardcodedModule = enum {
+    bun,
     @"bun:ffi",
     @"bun:jsc",
     @"bun:main",
@@ -2290,6 +2292,7 @@ pub const HardcodedModule = enum {
         HardcodedModule,
         .{
             .{ "buffer", HardcodedModule.@"node:buffer" },
+            .{ "bun", HardcodedModule.bun },
             .{ "bun:ffi", HardcodedModule.@"bun:ffi" },
             .{ "bun:jsc", HardcodedModule.@"bun:jsc" },
             .{ "bun:main", HardcodedModule.@"bun:main" },
@@ -2393,6 +2396,7 @@ pub const HardcodedModule = enum {
             .{ "node:child_process", .{ .path = "node:child_process" } },
             .{ "node:constants", .{ .path = "node:constants" } },
             .{ "node:console", .{ .path = "node:console" } },
+            .{ "console", .{ .path = "node:console" } },
             .{ "node:querystring", .{ .path = "node:querystring" } },
             .{ "querystring", .{ .path = "node:querystring" } },
             .{ "node:domain", .{ .path = "node:domain" } },

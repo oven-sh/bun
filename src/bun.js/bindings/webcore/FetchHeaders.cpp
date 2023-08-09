@@ -28,6 +28,7 @@
 
 #include "config.h"
 #include "FetchHeaders.h"
+#include "HTTPHeaderNames.h"
 
 #include "HTTPParsers.h"
 
@@ -261,30 +262,48 @@ void FetchHeaders::filterAndFill(const HTTPHeaderMap& headers, Guard guard)
     }
 }
 
-static NeverDestroyed<const String> setCookieLowercaseString(MAKE_STATIC_STRING_IMPL("set-cookie"));
-
 std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
 {
     if (m_keys.isEmpty() || m_updateCounter != m_headers->m_updateCounter) {
+        bool hasSetCookie = !m_headers->getSetCookieHeaders().isEmpty();
         m_keys.resize(0);
-        m_keys.reserveCapacity(m_headers->m_headers.size());
+        m_keys.reserveCapacity(m_headers->m_headers.size() + (hasSetCookie ? 1 : 0));
         for (auto& header : m_headers->m_headers)
             m_keys.uncheckedAppend(header.asciiLowerCaseName());
         std::sort(m_keys.begin(), m_keys.end(), WTF::codePointCompareLessThan);
+        if (hasSetCookie)
+            m_keys.uncheckedAppend(String());
+
+        m_currentIndex += m_cookieIndex;
+        if (hasSetCookie) {
+            size_t setCookieKeyIndex = m_keys.size() - 1;
+            if (m_currentIndex < setCookieKeyIndex)
+                m_cookieIndex = 0;
+            else {
+                m_cookieIndex = std::min(m_currentIndex - setCookieKeyIndex, m_headers->getSetCookieHeaders().size());
+                m_currentIndex -= m_cookieIndex;
+            }
+        } else
+            m_cookieIndex = 0;
+
         m_updateCounter = m_headers->m_updateCounter;
-        m_cookieIndex = 0;
     }
 
     auto& setCookieHeaders = m_headers->m_headers.getSetCookieHeaders();
 
     while (m_currentIndex < m_keys.size()) {
-        auto key = m_keys[m_currentIndex++];
+        auto key = m_keys[m_currentIndex];
 
-        if (!setCookieHeaders.isEmpty() && key == setCookieLowercaseString) {
-            auto cookie = setCookieHeaders[m_cookieIndex++];
-            return KeyValuePair<String, String> { WTFMove(key), WTFMove(cookie) };
+        if (key.isNull()) {
+            if (m_cookieIndex < setCookieHeaders.size()) {
+                String value = setCookieHeaders[m_cookieIndex++];
+                return KeyValuePair<String, String> { WTF::staticHeaderNames[static_cast<uint8_t>(HTTPHeaderName::SetCookie)], WTFMove(value) };
+            }
+            m_currentIndex++;
+            continue;
         }
 
+        m_currentIndex++;
         auto value = m_headers->m_headers.get(key);
         if (!value.isNull())
             return KeyValuePair<String, String> { WTFMove(key), WTFMove(value) };

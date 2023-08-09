@@ -1,3 +1,4 @@
+#include "../../bun.js/modules/BunObjectModule.h"
 #include "../../bun.js/modules/BunJSCModule.h"
 #include "../../bun.js/modules/NodeBufferModule.h"
 #include "../../bun.js/modules/NodeConstantsModule.h"

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
+import * as wt from "worker_threads";
 
 test("worker", done => {
   const worker = new Worker(new URL("worker-fixture.js", import.meta.url).href, {
@@ -115,7 +116,7 @@ test("worker by default will not close the event loop", done => {
       done(new Error("exited with non-zero code"));
     } else {
       const text = await new Response(x.stdout).text();
-      if (text.includes("done")) {
+      if (!text.includes("done")) {
         console.log({ text });
         done(new Error("event loop killed early"));
       } else {
@@ -123,4 +124,50 @@ test("worker by default will not close the event loop", done => {
       }
     }
   });
+});
+
+test("worker with process.exit", done => {
+  const worker = new Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
+    smol: true,
+  });
+  worker.addEventListener("close", e => {
+    try {
+      expect(e.code).toBe(2);
+    } catch (e) {
+      done(e);
+    }
+    done();
+  });
+});
+
+test("worker_threads with process.exit", done => {
+  const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
+    smol: true,
+  });
+  worker.on("exit", event => {
+    try {
+      console.log({ event });
+      expect(event).toBe(2);
+    } catch (e) {
+      done(e);
+    }
+    done();
+  });
+});
+
+test.skip("worker_threads with process.exit and terminate", async () => {
+  const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
+    smol: true,
+  });
+  const code = await worker.terminate();
+  expect(code).toBe(2);
+});
+
+test.skip("worker_threads with process.exit (delay) and terminate", async () => {
+  const worker2 = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
+    smol: true,
+  });
+  await Bun.sleep(100);
+  const code2 = await worker2.terminate();
+  expect(code2).toBe(2);
 });

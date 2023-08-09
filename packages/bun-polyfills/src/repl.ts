@@ -15,7 +15,6 @@ globalThis.Bun = bun as typeof bun & {
     gc: typeof import('bun').gc;
     connect: typeof import('bun').connect;
     listen: typeof import('bun').listen;
-    peek: typeof import('bun').peek;
     Transpiler: typeof import('bun').Transpiler;
     password: typeof import('bun').password;
     CryptoHashInterface: typeof import('bun').CryptoHashInterface;

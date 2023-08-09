@@ -78,6 +78,15 @@ export const indexOfLine = ((data, offset) => {
     return data.indexOf(10, offset);
 }) satisfies typeof Bun.indexOfLine;
 
+const peek_ = function peek(promise: Parameters<typeof Bun.peek>[0]) {
+    throw new NotImplementedError('Bun.peek', peek);
+};
+peek_.status = (promise => {
+    return util.inspect(promise).includes('<pending>') ? 'pending'
+        : util.inspect(promise).includes('<rejected>') ? 'rejected' : 'fulfilled';
+}) satisfies typeof Bun.peek.status;
+export const peek = peek_ satisfies typeof Bun.peek;
+
 export const sleep = (ms => {
     return new Promise(r => setTimeout(r, ms instanceof Date ? ms.valueOf() - Date.now() : ms));
 }) satisfies typeof Bun.sleep;

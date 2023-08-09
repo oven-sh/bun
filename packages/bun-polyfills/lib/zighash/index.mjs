@@ -28,13 +28,18 @@ const memview = {
     get f32() { return new Float32Array(mem.buffer); },
     get f64() { return new Float64Array(mem.buffer); },
 };
+
+const nullptr = { ptr: -1, size: 0 };
 const encoder = new TextEncoder();
+
 const allocBuffer = (
     /** @type {ArrayBufferView | ArrayBuffer | SharedArrayBuffer} */ buf,
     /** @type {boolean=} */ nullTerminate = false,
 ) => {
     const size = buf.byteLength + +nullTerminate;
+    if (size === 0) return nullptr;
     const ptr = exports.alloc(size);
+    if (ptr === -1) throw new Error('WASM memory allocation failed');
     const u8heap = memview.u8;
     u8heap.set(new Uint8Array(ArrayBuffer.isView(buf) ? buf.buffer : buf), ptr);
     if (nullTerminate) u8heap[ptr + buf.byteLength] = 0;
@@ -49,42 +54,42 @@ const allocString = (
 };
 
 /** @type {JSSeededHash64Function} */
-export function wyhash(input, seed = 0n) {
+export function wyhash(input = '', seed = 0n) {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
     return BigInt.asUintN(64, exports.wyhash(ptr, size, seed));
 }
 /** @type {JSHash32Function} */
-export function adler32(input) {
+export function adler32(input = '') {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
     return exports.adler32(ptr, size) >>> 0;
 }
 /** @type {JSHash32Function} */
-export function crc32(input) {
+export function crc32(input = '') {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
     return exports.crc32(ptr, size) >>> 0;
 }
 /** @type {JSHash32Function} */
-export function cityhash32(input) {
+export function cityhash32(input = '') {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
     return exports.cityhash32(ptr, size) >>> 0;
 }
 /** @type {JSSeededHash64Function} */
-export function cityhash64(input, seed = 0n) {
+export function cityhash64(input = '', seed = 0n) {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
     return BigInt.asUintN(64, exports.cityhash64(ptr, size, seed));
 }
 /** @type {JSSeededHash32Function} */
-export function murmur32v3(input, seed = 0) {
+export function murmur32v3(input = '', seed = 0) {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
     return exports.murmur32v3(ptr, size, seed); //! Bun doesn't unsigned-cast this one, likely unintended but for now we'll do the same
 }
 /** @type {JSSeededHash32Function} */
-export function murmur32v2(input, seed = 0) {
+export function murmur32v2(input = '', seed = 0) {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
     return exports.murmur32v2(ptr, size, seed); //! Bun doesn't unsigned-cast this one, likely unintended but for now we'll do the same
 }
 /** @type {JSSeededHash64Function} */
-export function murmur64v2(input, seed = 0n) {
+export function murmur64v2(input = '', seed = 0n) {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
     return BigInt.asUintN(64, exports.murmur64v2(ptr, size, seed));
 }

@@ -26,6 +26,10 @@ test("Module exists", () => {
   expect(Module).toBeDefined();
 });
 
+test("module.Module exists", () => {
+  expect(Module.Module === Module).toBeTrue();
+});
+
 test("_nodeModulePaths() works", () => {
   expect(() => {
     _nodeModulePaths();

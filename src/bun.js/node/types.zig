@@ -1471,10 +1471,42 @@ pub const Stats = union(enum) {
         return this;
     }
 
-    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*Stats {
-        globalThis.throw("Stats is not constructable. use fs.stat()", .{});
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) ?*Stats {
+        // dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeMs, mtimeMs, ctimeMs, birthtimeMs
+        var args = callFrame.argumentsPtr()[0..@min(callFrame.argumentsCount(), 14)];
 
-        return null;
+        var this = globalThis.allocator().create(Stats) catch {
+            globalThis.throwOutOfMemory();
+            return null;
+        };
+
+        var atime_ms = if (args.len > 10 and args[10].isNumber()) args[10].asInt52() else 0;
+        var mtime_ms = if (args.len > 11 and args[11].isNumber()) args[11].asInt52() else 0;
+        var ctime_ms = if (args.len > 12 and args[12].isNumber()) args[12].asInt52() else 0;
+        var birthtime_ms = if (args.len > 13 and args[13].isNumber()) args[13].asInt32() else 0;
+        this.* = .{
+            .small = StatsDataType(i32){
+                .dev = if (args.len > 0 and args[0].isNumber()) args[0].toInt32() else 0,
+                .mode = if (args.len > 1 and args[1].isNumber()) args[1].toInt32() else 0,
+                .nlink = if (args.len > 2 and args[2].isNumber()) args[2].toInt32() else 0,
+                .uid = if (args.len > 3 and args[3].isNumber()) args[3].toInt32() else 0,
+                .gid = if (args.len > 4 and args[4].isNumber()) args[4].toInt32() else 0,
+                .rdev = if (args.len > 5 and args[5].isNumber()) args[5].toInt32() else 0,
+                .blksize = if (args.len > 6 and args[6].isNumber()) args[6].toInt32() else 0,
+                .ino = if (args.len > 7 and args[7].isNumber()) args[7].toInt32() else 0,
+                .size = if (args.len > 8 and args[8].isNumber()) args[8].toInt32() else 0,
+                .blocks = if (args.len > 9 and args[9].isNumber()) args[9].toInt32() else 0,
+                .atime_ms = @floatFromInt(atime_ms),
+                .mtime_ms = @floatFromInt(mtime_ms),
+                .ctime_ms = @floatFromInt(ctime_ms),
+                .birthtime_ms = birthtime_ms,
+                .atime = @enumFromInt(atime_ms),
+                .mtime = @enumFromInt(mtime_ms),
+                .ctime = @enumFromInt(ctime_ms),
+                .birthtime = @enumFromInt(birthtime_ms),
+            },
+        };
+        return this;
     }
 
     comptime {

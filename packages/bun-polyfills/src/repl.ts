@@ -23,6 +23,7 @@ globalThis.Bun = bun as typeof bun & {
     CryptoHashInterface: typeof import('bun').CryptoHashInterface;
     CryptoHasher: typeof import('bun').CryptoHasher;
     FileSystemRouter: typeof import('bun').FileSystemRouter;
+    isMainThread: typeof import('bun').isMainThread;
 
     //? Polyfilled but with broken types (See each one in ./src/modules/bun.ts for details)
     generateHeapSnapshot: typeof import('bun').generateHeapSnapshot;

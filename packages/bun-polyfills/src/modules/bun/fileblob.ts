@@ -83,7 +83,6 @@ export const NodeJSStreamFileBlob = class FileBlob extends Blob {
         return JSON.parse(await this.text()) as Promise<TJSONReturnType>;
     }
 
-    // @ts-expect-error Complains about property -> getter, workaround by deleting the property in the ctor
     override get size(): number { return this.#size; }
     override set size(_) { return; }
 };
@@ -190,7 +189,6 @@ export class FileBlob extends Blob implements BunFileBlob {
         return new Blob([this.#data ?? '']).stream();
     }
 
-    // @ts-expect-error Complains about property -> getter, workaround by deleting the property in the ctor
     override get size(): number {
         return this.#data?.size ?? (this.#sliceSize || 0);
     }

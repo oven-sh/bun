@@ -4,9 +4,9 @@ import './process.js';
 import os from 'node:os';
 
 //? NodeJS Blob doesn't implement Blob.json(), so we need to polyfill it.
-Blob.prototype.json = async function json(this: Blob) {
+Blob.prototype.json = async function json<T>(this: Blob): Promise<T> {
     try {
-        return JSON.parse(await this.text()) as unknown;
+        return JSON.parse(await this.text()) as T;
     } catch (err) {
         Error.captureStackTrace(err as Error, json);
         throw err;

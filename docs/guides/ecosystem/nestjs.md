@@ -35,8 +35,8 @@ CREATE my-app/test/jest-e2e.json (183 bytes)
 🚀  Successfully created project my-app
 👉  Get started with the following commands:
 
-$ cd my-app
-$ bun run start
+  $ cd my-app
+  $ bun run start
 ```
 
 ---
@@ -46,8 +46,22 @@ As the Nest.js templater intructed, let's `cd` into our app directory and start 
 ```sh
 $ cd my-app
 $ bun run start
+ $ nest start
+  [Nest] 35114  - 08/09/2023, 1:51:29 PM     LOG [NestFactory] Starting Nest application...
+  [Nest] 35114  - 08/09/2023, 1:51:29 PM     LOG [InstanceLoader] AppModule dependencies initialized +5ms
+  [Nest] 35114  - 08/09/2023, 1:51:29 PM     LOG [RoutesResolver] AppController {/}: +7ms
+  [Nest] 35114  - 08/09/2023, 1:51:29 PM     LOG [RouterExplorer] Mapped {/, GET} route +0ms
+  [Nest] 35114  - 08/09/2023, 1:51:29 PM     LOG [NestApplication] Nest application successfully started +1ms
 ```
 
 ---
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result. Any changes you make to `pages/index.tsx` will be hot-reloaded in the browser.
+To run the server in watch mode. Nest.js does not support hot reloading [out of the box](https://docs.nestjs.com/recipes/hot-reload), but you can run the server in watch mode. This will restart the server when changes are made.
+
+```sh
+$ bun run start:dev
+```
+
+---
+
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.

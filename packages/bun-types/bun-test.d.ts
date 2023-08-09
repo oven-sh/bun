@@ -169,6 +169,25 @@ declare module "bun:test" {
      * @param condition if these tests should be skipped
      */
     skipIf(condition: boolean): (label: string, fn: () => void) => void;
+    /**
+     * Returns a function that runs for each item in `table`.
+     *
+     * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
+     */
+    each<T extends ReadonlyArray<unknown>>(
+      table: ReadonlyArray<T>,
+    ): (
+      label: string,
+      fn: (...args: T) => void | Promise<unknown>,
+      options?: number | TestOptions,
+    ) => void;
+    each<T>(
+      table: ReadonlyArray<T>,
+    ): (
+      label: string,
+      fn: (arg: T) => void | Promise<unknown>,
+      options?: number | TestOptions,
+    ) => void;
   };
   /**
    * Describes a group of related tests.
@@ -393,6 +412,25 @@ declare module "bun:test" {
       fn:
         | (() => void | Promise<unknown>)
         | ((done: (err?: unknown) => void) => void),
+      options?: number | TestOptions,
+    ) => void;
+    /**
+     * Returns a function that runs for each item in `table`.
+     *
+     * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
+     */
+    each<T extends ReadonlyArray<unknown>>(
+      table: ReadonlyArray<T>,
+    ): (
+      label: string,
+      fn: (...args: T) => void | Promise<unknown>,
+      options?: number | TestOptions,
+    ) => void;
+    each<T>(
+      table: ReadonlyArray<T>,
+    ): (
+      label: string,
+      fn: (arg: T, done: (err?: unknown) => void) => void | Promise<unknown>,
       options?: number | TestOptions,
     ) => void;
   };

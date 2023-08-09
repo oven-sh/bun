@@ -52,7 +52,11 @@ describe("bun", () => {
       expect(exitCode).toBe(0);
       expect(revision).toStartWith(version);
       // https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string
-      expect(revision).toMatch(new RegExp('\^\(0\|\[1\-9\]\\d\*\)\\\.\(0\|\[1\-9\]\\d\*\)\\\.\(0\|\[1\-9\]\\d\*\)\(\?\:\-\(\(\?\:0\|\[1\-9\]\\d\*\|\\d\*\[a\-zA\-Z\-\]\[0\-9a\-zA\-Z\-\]\*\)\(\?\:\\\.\(\?\:0\|\[1\-9\]\\d\*\|\\d\*\[a\-zA\-Z\-\]\[0\-9a\-zA\-Z\-\]\*\)\)\*\)\)\?\(\?\:\\\+\(\[0\-9a\-zA\-Z\-\]\+\(\?\:\\\.\[0\-9a\-zA\-Z\-\]\+\)\*\)\)\?\$'))
+      expect(revision).toMatch(
+        new RegExp(
+          "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$",
+        ),
+      );
     });
   });
 });

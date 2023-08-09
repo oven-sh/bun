@@ -42,6 +42,7 @@ function formatWithOptions(inspectOptions, f) {
       case "%s":
         return String(args[i++]);
       case "%f":
+      case "%d":
         return Number(args[i++]);
       case "%d":
         return Math.round(Number(args[i++]));

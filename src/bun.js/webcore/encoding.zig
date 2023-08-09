@@ -808,7 +808,8 @@ pub const Encoder = struct {
             .utf16le => constructFromU16(input, len, .utf16le),
             .ucs2 => constructFromU16(input, len, .utf16le),
             .utf8 => constructFromU16(input, len, .utf8),
-            .ascii => constructFromU16(input, len, .utf8),
+            .ascii => constructFromU16(input, len, .ascii),
+            .latin1 => constructFromU16(input, len, .latin1),
             else => unreachable,
         };
         return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
@@ -1170,12 +1171,7 @@ pub const Encoder = struct {
             },
             .latin1, .buffer, .ascii => {
                 var to = allocator.alloc(u8, len) catch return &[_]u8{};
-                var input_bytes = std.mem.sliceAsBytes(input[0..len]);
-                @memcpy(to[0..input_bytes.len], input_bytes);
-                for (to[0..len], 0..) |c, i| {
-                    to[i] = @as(u8, @as(u7, @truncate(c)));
-                }
-
+                strings.copyU16IntoU8(to[0..len], []const u16, input[0..len]);
                 return to;
             },
             // string is already encoded, just need to copy the data

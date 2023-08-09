@@ -478,7 +478,7 @@ describe("bun test", () => {
       expect(stderr).toMatch(/::error title=error: Oops!::/);
     });
   });
-  describe.only(".each", () => {
+  describe(".each", () => {
     test("should run tests with test.each", () => {
       const numbers = [
         [1, 2, 3],

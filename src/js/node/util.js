@@ -23,7 +23,7 @@ const deepEquals = Bun.deepEquals;
 const isDeepStrictEqual = (a, b) => deepEquals(a, b, true);
 var getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 var formatRegExp = /%[sdj%]/g;
-function format(f) {
+function formatWithOptions(inspectOptions, f) {
   if (!isString(f)) {
     var objects = [];
     for (var i = 0; i < arguments.length; i++) {
@@ -60,6 +60,9 @@ function format(f) {
     }
   }
   return str;
+}
+function format(f) {
+  return formatWithOptions.call(null, {}, f);
 }
 
 function deprecate(fn, msg, code) {
@@ -538,6 +541,7 @@ var toUSVString = input => {
 
 export default Object.assign(cjs_exports, {
   format,
+  formatWithOptions,
   deprecate,
   debuglog,
   _extend,

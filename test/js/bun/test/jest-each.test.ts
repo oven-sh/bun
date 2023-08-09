@@ -11,10 +11,10 @@ describe("jest-each", () => {
     expect(it.each).toBeTypeOf("function");
     expect(it.each([])).toBeTypeOf("function");
   });
-  it.each(NUMBERS)("add two numbers", (a, b, e) => {
+  it.each(NUMBERS)("%i + %i = %i", (a, b, e) => {
     expect(a + b).toBe(e);
   });
-  it.each(NUMBERS)("add two numbers with callback", (a, b, e, done) => {
+  it.each(NUMBERS)("with callback: %f + %d = %f", (a, b, e, done) => {
     expect(a + b).toBe(e);
     expect(done).toBeDefined();
     // We cast here because we cannot type done when typing args as ...T
@@ -24,7 +24,7 @@ describe("jest-each", () => {
     ["a", "b", "ab"],
     ["c", "d", "cd"],
     ["e", "f", "ef"],
-  ])(`adds two strings`, (a, b, res) => {
+  ])("%s + %s = %s", (a, b, res) => {
     expect(typeof a).toBe("string");
     expect(typeof b).toBe("string");
     expect(typeof res).toBe("string");
@@ -37,13 +37,17 @@ describe("jest-each", () => {
     { a: 2, b: 13, e: 15 },
     { a: 2, b: 123, e: 125 },
     { a: 15, b: 13, e: 28 },
-  ])("add two numbers with object", ({ a, b, e }, cb) => {
+  ])("add two numbers with object: %o", ({ a, b, e }, cb) => {
     expect(a + b).toBe(e);
+    cb();
+  });
+
+  it.each([undefined, null, NaN, Infinity])("stringify %#: %j", (arg, cb) => {
     cb();
   });
 });
 
-describe.each(["some", "cool", "strings"])("works with describe", s => {
+describe.each(["some", "cool", "strings"])("works with describe: %s", s => {
   it(`has access to params : ${s}`, done => {
     expect(s).toBeTypeOf("string");
     done();

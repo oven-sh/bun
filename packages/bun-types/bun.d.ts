@@ -759,8 +759,8 @@ declare module "bun" {
   interface Hash {
     wyhash: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-      seed?: number | bigint,
-    ) => number | bigint;
+      seed?: bigint,
+    ) => bigint;
     adler32: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
     ) => number;
@@ -772,8 +772,8 @@ declare module "bun" {
     ) => number;
     cityHash64: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-      seed?: number | bigint,
-    ) => number | bigint;
+      seed?: bigint,
+    ) => bigint;
     murmur32v3: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
       seed?: number,
@@ -784,8 +784,8 @@ declare module "bun" {
     ) => number;
     murmur64v2: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-      seed?: number | bigint,
-    ) => number | bigint;
+      seed?: bigint,
+    ) => bigint;
   }
 
   export type JavaScriptLoader = "jsx" | "js" | "ts" | "tsx";

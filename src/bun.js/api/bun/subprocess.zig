@@ -1372,8 +1372,8 @@ pub const Subprocess = struct {
                 return .zero;
             },
             // stdout and stderr only uses allocator and default_max_buffer_size if they are pipes and not a array buffer
-            .stdout = Readable.init(stdio[std.os.STDOUT_FILENO], stdout_pipe[0], jsc_vm.allocator, default_max_buffer_size),
-            .stderr = Readable.init(stdio[std.os.STDERR_FILENO], stderr_pipe[0], jsc_vm.allocator, default_max_buffer_size),
+            .stdout = Readable.init(stdio[std.os.STDOUT_FILENO], stdout_pipe[0], bun.default_allocator, default_max_buffer_size),
+            .stderr = Readable.init(stdio[std.os.STDERR_FILENO], stderr_pipe[0], bun.default_allocator, default_max_buffer_size),
             .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
             .is_sync = is_sync,
         };

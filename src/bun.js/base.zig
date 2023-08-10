@@ -1824,31 +1824,31 @@ pub const ArrayBuffer = extern struct {
             return this.value;
         }
 
-        // If it's not a mimalloc heap buffer, we're not going to call a deallocator
-        if (this.len > 0 and !bun.Mimalloc.mi_is_in_heap_region(this.ptr)) {
-            log("toJS but will never free: {d} bytes", .{this.len});
+        // // If it's not a mimalloc heap buffer, we're not going to call a deallocator
+        // if (this.len > 0 and !bun.Mimalloc.mi_is_in_heap_region(this.ptr)) {
+        //     log("toJS but will never free: {d} bytes", .{this.len});
 
-            if (this.typed_array_type == .ArrayBuffer) {
-                return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(
-                    ctx,
-                    this.ptr,
-                    this.byte_len,
-                    null,
-                    null,
-                    exception,
-                ));
-            }
+        //     if (this.typed_array_type == .ArrayBuffer) {
+        //         return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(
+        //             ctx,
+        //             this.ptr,
+        //             this.byte_len,
+        //             null,
+        //             null,
+        //             exception,
+        //         ));
+        //     }
 
-            return JSC.JSValue.fromRef(JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(
-                ctx,
-                this.typed_array_type.toC(),
-                this.ptr,
-                this.byte_len,
-                null,
-                null,
-                exception,
-            ));
-        }
+        //     return JSC.JSValue.fromRef(JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(
+        //         ctx,
+        //         this.typed_array_type.toC(),
+        //         this.ptr,
+        //         this.byte_len,
+        //         null,
+        //         null,
+        //         exception,
+        //     ));
+        // }
 
         return this.toJSUnchecked(ctx, exception);
     }

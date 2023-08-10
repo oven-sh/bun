@@ -50,7 +50,7 @@ describe("bun", () => {
       var revision = stdout.toString().trim();
 
       expect(exitCode).toBe(0);
-      expect(revision).toStartWith(version);
+      expect(revision).toStartWith(version.replaceAll("_", "-"));
       // https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string
       expect(revision).toMatch(
         new RegExp(

@@ -5514,7 +5514,6 @@ pub const URLSearchParams = opaque {
 
 pub const WTF = struct {
     extern fn WTF__copyLCharsFromUCharSource(dest: [*]u8, source: *const anyopaque, len: usize) void;
-    extern fn WTF__toBase64URLStringValue(bytes: [*]const u8, length: usize, globalObject: *JSGlobalObject) JSValue;
     extern fn WTF__parseDouble(bytes: [*]const u8, length: usize, counted: *usize) f64;
 
     pub fn parseDouble(buf: []const u8) !f64 {
@@ -5540,13 +5539,6 @@ pub const WTF = struct {
         WTF__copyLCharsFromUCharSource(destination, source.ptr, source.len);
     }
 
-    /// Encode a byte array to a URL-safe base64 string for use with JS
-    /// Memory is managed by JavaScriptCore instead of us
-    pub fn toBase64URLStringValue(bytes: []const u8, globalObject: *JSGlobalObject) JSValue {
-        JSC.markBinding(@src());
-
-        return WTF__toBase64URLStringValue(bytes.ptr, bytes.len, globalObject);
-    }
 };
 
 pub const Callback = struct {

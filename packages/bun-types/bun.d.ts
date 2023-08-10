@@ -24,7 +24,7 @@ declare module "bun" {
   import { Encoding as CryptoEncoding } from "crypto";
 
   export interface Env extends Dict<string>, NodeJS.ProcessEnv {
-    NODE_ENV: string;
+    NODE_ENV?: string;
 
     /**
      * The timezone used by Intl, Date, etc.
@@ -68,7 +68,7 @@ declare module "bun" {
   export function which(
     command: string,
     options?: { PATH?: string; cwd?: string },
-  ): string;
+  ): string | null;
 
   export type Serve<WebSocketDataType = undefined> =
     | ServeOptions
@@ -752,39 +752,40 @@ declare module "bun" {
    */
   export const hash: ((
     data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-    seed?: number,
+    seed?: number | bigint,
   ) => number | bigint) &
     Hash;
 
   interface Hash {
     wyhash: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-      seed?: number,
-    ) => number | bigint;
-    crc32: (
-      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-      seed?: number,
-    ) => number | bigint;
+      seed?: bigint,
+    ) => bigint;
     adler32: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-      seed?: number,
-    ) => number | bigint;
+    ) => number;
+    crc32: (
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
+    ) => number;
     cityHash32: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-      seed?: number,
-    ) => number | bigint;
+    ) => number;
     cityHash64: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-      seed?: number,
-    ) => number | bigint;
+      seed?: bigint,
+    ) => bigint;
     murmur32v3: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
       seed?: number,
-    ) => number | bigint;
-    murmur64v2: (
+    ) => number;
+    murmur32v2: (
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
       seed?: number,
-    ) => number | bigint;
+    ) => number;
+    murmur64v2: (
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
+      seed?: bigint,
+    ) => bigint;
   }
 
   export type JavaScriptLoader = "jsx" | "js" | "ts" | "tsx";
@@ -2428,8 +2429,8 @@ declare module "bun" {
    * If you have any ideas, please file an issue https://github.com/oven-sh/bun
    */
   interface HeapSnapshot {
-    /** "2" */
-    version: string;
+    /** 2 */
+    version: number;
 
     /** "Inspector" */
     type: string;
@@ -2675,7 +2676,7 @@ declare module "bun" {
    * openssl sha512-256 /path/to/file
    *```
    */
-  export function sha(input: StringOrBuffer, hashInto?: Uint8Array): Uint8Array;
+  export function sha(input: StringOrBuffer, hashInto?: TypedArray): TypedArray;
 
   /**
    *

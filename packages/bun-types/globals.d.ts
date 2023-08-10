@@ -2648,10 +2648,6 @@ interface ReadableStream<R = any> {
     options?: StreamPipeOptions,
   ): Promise<void>;
   tee(): [ReadableStream<R>, ReadableStream<R>];
-  forEach(
-    callbackfn: (value: any, key: number, parent: ReadableStream<R>) => void,
-    thisArg?: any,
-  ): void;
   [Symbol.asyncIterator](): AsyncIterableIterator<R>;
   values(options?: { preventCancel: boolean }): AsyncIterableIterator<R>;
 }

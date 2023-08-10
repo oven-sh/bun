@@ -1773,6 +1773,83 @@ pub fn printGithubAnnotation(exception: *JSC.ZigException) void {
     Output.flush();
 }
 
+fn consumeArg(
+    globalThis: *JSC.JSGlobalObject,
+    should_write: bool,
+    str_idx: *usize,
+    args_idx: *usize,
+    array_list: *std.ArrayListUnmanaged(u8),
+    arg: *const JSC.JSValue,
+    fallback: []const u8,
+) !void {
+    const allocator = getAllocator(globalThis);
+    if (should_write) {
+        const owned_slice = try arg.*.toBunString(globalThis).toOwnedSlice(allocator);
+        defer allocator.free(owned_slice);
+        try array_list.*.appendSlice(allocator, owned_slice);
+    } else {
+        try array_list.appendSlice(allocator, fallback);
+    }
+    str_idx.* += 1;
+    args_idx.* += 1;
+}
+
+// Generate test label by positionally injecting parameters with printf formatting
+fn formatLabel(globalThis: *JSC.JSGlobalObject, label: string, function_args: []JSC.JSValue, test_idx: usize) !string {
+    const allocator = getAllocator(globalThis);
+    var idx: usize = 0;
+    var args_idx: usize = 0;
+    var list = try std.ArrayListUnmanaged(u8).initCapacity(allocator, label.len);
+
+    while (idx < label.len) {
+        const char = label[idx];
+        if (char == '%' and (idx + 1 < label.len) and !(args_idx >= function_args.len)) {
+            const current_arg = function_args[args_idx];
+
+            switch (label[idx + 1]) {
+                's' => {
+                    try consumeArg(globalThis, current_arg.jsType().isString(), &idx, &args_idx, &list, &current_arg, "%s");
+                },
+                'i' => {
+                    try consumeArg(globalThis, current_arg.isAnyInt(), &idx, &args_idx, &list, &current_arg, "%i");
+                },
+                'd' => {
+                    try consumeArg(globalThis, current_arg.isNumber(), &idx, &args_idx, &list, &current_arg, "%d");
+                },
+                'f' => {
+                    try consumeArg(globalThis, current_arg.isNumber(), &idx, &args_idx, &list, &current_arg, "%f");
+                },
+                'j', 'o' => {
+                    var str = bun.String.empty;
+                    defer str.deref();
+                    current_arg.jsonStringify(globalThis, 0, &str);
+                    const owned_slice = try str.toOwnedSlice(allocator);
+                    defer allocator.free(owned_slice);
+                    try list.appendSlice(allocator, owned_slice);
+                    idx += 1;
+                    args_idx += 1;
+                },
+                '#' => {
+                    const test_index_str = try std.fmt.allocPrint(allocator, "{d}", .{test_idx});
+                    defer allocator.free(test_index_str);
+                    try list.appendSlice(allocator, test_index_str);
+                    idx += 1;
+                },
+                '%' => {
+                    try list.append(allocator, '%');
+                    idx += 1;
+                },
+                else => {
+                    // ignore unrecognized fmt
+                },
+            }
+        } else try list.append(allocator, char);
+        idx += 1;
+    }
+
+    return list.toOwnedSlice(allocator);
+}
+
 pub const EachData = struct { strong: JSC.Strong, is_test: bool };
 
 fn eachBind(
@@ -1846,13 +1923,8 @@ fn eachBind(
 
         var iter = array.arrayIterator(globalThis);
 
+        var test_idx: usize = 0;
         while (iter.next()) |item| {
-            // TODO: node:util.format() the label
-            const label = if (description.isEmptyOrUndefinedOrNull())
-                ""
-            else
-                (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
-
             const func_params_length = function.getLength(globalThis);
             const item_is_array = !item.isEmptyOrUndefinedOrNull() and item.jsType().isArray();
             var arg_size: usize = 1;
@@ -1887,10 +1959,16 @@ fn eachBind(
                 function_args[0] = item;
             }
 
+            const label = if (description.isEmptyOrUndefinedOrNull())
+                ""
+            else
+                (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
+            const formattedLabel = formatLabel(globalThis, label, function_args, test_idx) catch return .zero;
+
             if (each_data.is_test) {
                 function.protect();
                 parent.tests.append(allocator, TestScope{
-                    .label = label,
+                    .label = formattedLabel,
                     .parent = parent,
                     .tag = parent.tag,
                     .func = function,
@@ -1907,7 +1985,7 @@ fn eachBind(
             } else {
                 var scope = allocator.create(DescribeScope) catch unreachable;
                 scope.* = .{
-                    .label = label,
+                    .label = formattedLabel,
                     .parent = parent,
                     .file_id = parent.file_id,
                     .tag = if (parent.is_skip) parent.tag else .pass,
@@ -1918,6 +1996,7 @@ fn eachBind(
                 _ = ret;
                 allocator.free(function_args);
             }
+            test_idx += 1;
         }
     }
 

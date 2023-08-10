@@ -22,16 +22,17 @@ function isFunction(value) {
 const deepEquals = Bun.deepEquals;
 const isDeepStrictEqual = (a, b) => deepEquals(a, b, true);
 var getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
-var formatRegExp = /%[sdj%]/g;
-function format(f) {
+var formatRegExp = /%[sdjfoc%]/g;
+// This function is nowhere near what Node.js does but it is close enough of a shim.
+function formatWithOptions(inspectOptions, f) {
   if (!isString(f)) {
     var objects = [];
     for (var i = 0; i < arguments.length; i++) {
-      objects.push(inspect(arguments[i]));
+      objects.push(inspect(arguments[i], inspectOptions));
     }
     return objects.join(" ");
   }
-  var i = 1;
+  var i = 2;
   var args = arguments;
   var len = args.length;
   var str = String(f).replace(formatRegExp, function (x2) {
@@ -40,14 +41,20 @@ function format(f) {
     switch (x2) {
       case "%s":
         return String(args[i++]);
-      case "%d":
+      case "%f":
         return Number(args[i++]);
+      case "%d":
+        return Math.round(Number(args[i++]));
       case "%j":
         try {
           return JSON.stringify(args[i++]);
         } catch (_) {
           return "[Circular]";
         }
+      case "%o":
+        return inspect(args[i++], { showHidden: true, showProxy: true, ...inspectOptions });
+      case "%O":
+        return inspect(args[i++], { showHidden: true, showProxy: true, ...inspectOptions });
       default:
         return x2;
     }
@@ -56,10 +63,13 @@ function format(f) {
     if (isNull(x) || !isObject(x)) {
       str += " " + x;
     } else {
-      str += " " + inspect(x);
+      str += " " + inspect(x, inspectOptions);
     }
   }
   return str;
+}
+function format(...args) {
+  return formatWithOptions({}, ...args);
 }
 
 function deprecate(fn, msg, code) {
@@ -538,6 +548,7 @@ var toUSVString = input => {
 
 export default Object.assign(cjs_exports, {
   format,
+  formatWithOptions,
   deprecate,
   debuglog,
   _extend,

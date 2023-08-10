@@ -1,5 +1,5 @@
 ---
-name: Build an app with Next.js and Bun
+name: Build an app with Remix and Bun
 ---
 
 {% callout %}

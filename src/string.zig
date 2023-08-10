@@ -503,6 +503,12 @@ pub const String = extern struct {
         return BunString__toJS(globalObject, this);
     }
 
+    pub fn toJSWithLength(this: *String, globalObject: *bun.JSC.JSGlobalObject, len: usize) JSC.JSValue {
+        JSC.markBinding(@src());
+
+        return BunString__toJSWithLength(globalObject, this, len);
+    }
+
     pub fn toJSConst(this: *const String, globalObject: *bun.JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
         var a = this.*;
@@ -685,6 +691,7 @@ pub const String = extern struct {
 
     extern fn BunString__fromJS(globalObject: *JSC.JSGlobalObject, value: bun.JSC.JSValue, out: *String) bool;
     extern fn BunString__toJS(globalObject: *JSC.JSGlobalObject, in: *String) JSC.JSValue;
+    extern fn BunString__toJSWithLength(globalObject: *JSC.JSGlobalObject, in: *String, usize) JSC.JSValue;
     extern fn BunString__toWTFString(this: *String) void;
 
     pub fn ref(this: String) void {

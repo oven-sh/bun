@@ -60,6 +60,11 @@ JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
     return JSValue(Zig::toJSStringGC(bunString.impl.zig, globalObject));
 }
 
+JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, BunString bunString, size_t length)
+{
+    return jsSubstring(globalObject, jsUndefined(), Bun::toWTFString(bunString), 0, length);
+}
+
 WTF::String toWTFString(const BunString& bunString)
 {
     if (bunString.tag == BunStringTag::ZigString) {
@@ -193,6 +198,11 @@ BunString fromString(WTF::StringImpl* wtfString)
 extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject, BunString* bunString)
 {
     return JSValue::encode(Bun::toJS(globalObject, *bunString));
+}
+
+extern "C" JSC::EncodedJSValue BunString__toJSWithLength(JSC::JSGlobalObject* globalObject, BunString* bunString, size_t length)
+{
+    return JSValue::encode(Bun::toJS(globalObject, *bunString, length));
 }
 
 extern "C" BunString BunString__fromUTF16Unitialized(size_t length)

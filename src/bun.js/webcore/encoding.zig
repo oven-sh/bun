@@ -911,8 +911,8 @@ pub const Encoder = struct {
             .base64url => {
                 var out = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input)) orelse return ZigString.init("Out of memory").toErrorInstance(global);
                 defer out.deref();
-                const outlen = bun.base64.encodeURLSafe(@constCast(out.latin1()), input);
-                return out.toJSWithLength(global, outlen);
+                _ = bun.base64.encodeURLSafe(@constCast(out.latin1()), input);
+               return out.toJS(global);
             },
 
             .base64 => {

@@ -622,7 +622,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
     case JSDOMWrapperType: {
         if (c2Type == JSDOMWrapperType) {
-            //
+            // https://github.com/oven-sh/bun/issues/4089
             if (auto* url1 = jsDynamicCast<JSDOMURL*>(v1)) {
 
                 if (auto* url2 = jsDynamicCast<JSDOMURL*>(v2)) {

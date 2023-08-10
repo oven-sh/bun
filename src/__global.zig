@@ -31,13 +31,13 @@ else
 pub const package_json_version_with_revision = if (Environment.git_sha.len == 0)
     package_json_version
 else if (Environment.isDebug)
-    std.fmt.comptimePrint(version_string ++ ".{d}-debug+{s}", .{ build_id, Environment.git_sha })
+    std.fmt.comptimePrint(version_string ++ "-debug+{s}", .{ Environment.git_sha })
 else if (Environment.is_canary)
-    std.fmt.comptimePrint(version_string ++ ".{d}-canary+{s}", .{ build_id, Environment.git_sha })
+    std.fmt.comptimePrint(version_string ++ "-canary+{s}", .{ Environment.git_sha })
 else if (Environment.isTest)
-    std.fmt.comptimePrint(version_string ++ ".{d}-test+{s}", .{ build_id, Environment.git_sha })
+    std.fmt.comptimePrint(version_string ++ "-test+{s}", .{ Environment.git_sha })
 else
-    std.fmt.comptimePrint(version_string ++ ".{d}+{s}", .{ build_id, Environment.git_sha });
+    std.fmt.comptimePrint(version_string ++ "+{s}", .{ Environment.git_sha });
 
 pub const os_name = if (Environment.isWindows)
     "win32"

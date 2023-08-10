@@ -487,6 +487,17 @@ pub const GarbageCollectionController = struct {
     };
 };
 
+export fn Bun__tickWhilePaused(paused: *bool) void {
+    JSC.markBinding(@src());
+    JSC.VirtualMachine.get().eventLoop().tickWhilePaused(paused);
+}
+
+comptime {
+    if (!JSC.is_bindgen) {
+        _ = Bun__tickWhilePaused;
+    }
+}
+
 pub const EventLoop = struct {
     tasks: Queue = undefined,
     concurrent_tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
@@ -499,6 +510,12 @@ pub const EventLoop = struct {
 
     pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
     const log = bun.Output.scoped(.EventLoop, false);
+
+    pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
+        while (!done.*) {
+            this.virtual_machine.uws_event_loop.?.tick();
+        }
+    }
 
     pub fn tickWithCount(this: *EventLoop) u32 {
         var global = this.global;

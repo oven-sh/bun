@@ -58,8 +58,8 @@ static constexpr char base64URLEncMap[encodeMapSize] = {
     0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x2D, 0x5F
 };
 
-extern "C" size_t WTF__base64URLEncode(const __restrict unsigned char* inputDataBuffer, size_t inputDataBufferSize,
-    __restrict unsigned char* destinationDataBuffer,
+extern "C" size_t WTF__base64URLEncode(const unsigned char* __restrict inputDataBuffer, size_t inputDataBufferSize,
+    unsigned char* __restrict destinationDataBuffer,
     size_t destinationDataBufferSize)
 {
     size_t sidx = 0;

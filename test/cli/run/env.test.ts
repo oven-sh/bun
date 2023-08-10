@@ -446,7 +446,7 @@ test("npm_package_config", () => {
   }
 
   // Now deep objects
-  const deepDir = tempDirWithFiles("npmpkgcfg", {
+  const deepDir = tempDirWithFiles("npmpkgcfg2", {
     "package.json": JSON.stringify({
       config: {
         "test": 1,

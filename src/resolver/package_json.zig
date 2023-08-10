@@ -1080,6 +1080,11 @@ pub const PackageJSON = struct {
                             // Node.js interprets null as an empty string
                             package_json.npm_cfg_map.put(lkey, "") catch unreachable;
                         },
+                        // https://github.com/oven-sh/bun/pull/3661#issuecomment-1657227789
+                        .e_array => {
+                            r.log.addWarning(json_source, prop.value.?.loc, "Arrays in package.json config is not implemented in Bun. If you depend on this, please file an issue.") catch unreachable;
+                            continue;
+                        },
                         // TODO: Add support for arrays, https://github.com/oven-sh/bun/pull/3661#issuecomment-1657227789
                         else => {
                             r.log.addWarning(json_source, prop.value.?.loc, "Values of 'config' must be either a boolean, number, string, or object.") catch unreachable;

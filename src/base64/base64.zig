@@ -70,8 +70,15 @@ pub fn encodeLen(source: anytype) usize {
     return zig_base64.standard.Encoder.calcSize(source.len);
 }
 
-// This is just std.base64 copy-pasted
-// with support for returning how many bytes were decoded
+pub fn urlSafeEncodeLen(source: anytype) usize {
+    // Copied from WebKit
+    return ((source.len * 4) + 2) / 3;
+}
+extern fn WTF__base64URLEncode(input: [*]const u8, input_len: usize, output: [*]u8, output_len: usize) usize;
+pub fn encodeURLSafe(dest: []u8, source: []const u8) usize {
+    return WTF__base64URLEncode(source.ptr, source.len, dest.ptr, dest.len);
+}
+
 const zig_base64 = struct {
     const assert = std.debug.assert;
     const testing = std.testing;
@@ -167,6 +174,7 @@ const zig_base64 = struct {
         }
 
         /// Compute the encoded length
+        /// Note: this is wrong for base64url encoding. Do not use it for that.
         pub fn calcSize(encoder: *const Base64Encoder, source_len: usize) usize {
             if (encoder.pad_char != null) {
                 return @divTrunc(source_len + 2, 3) * 4;
@@ -181,6 +189,16 @@ const zig_base64 = struct {
             const out_len = encoder.calcSize(source.len);
             assert(dest.len >= out_len);
 
+            const out_idx = encoder.encodeWithoutSizeCheck(dest, source);
+            if (encoder.pad_char) |pad_char| {
+                for (dest[out_idx..out_len]) |*pad| {
+                    pad.* = pad_char;
+                }
+            }
+            return dest[0..out_len];
+        }
+
+        pub fn encodeWithoutSizeCheck(encoder: *const Base64Encoder, dest: []u8, source: []const u8) usize {
             var acc: u12 = 0;
             var acc_len: u4 = 0;
             var out_idx: usize = 0;
@@ -197,12 +215,7 @@ const zig_base64 = struct {
                 dest[out_idx] = encoder.alphabet_chars[@as(u6, @truncate((acc << 6 - acc_len)))];
                 out_idx += 1;
             }
-            if (encoder.pad_char) |pad_char| {
-                for (dest[out_idx..out_len]) |*pad| {
-                    pad.* = pad_char;
-                }
-            }
-            return dest[0..out_len];
+            return out_idx;
         }
     };
 

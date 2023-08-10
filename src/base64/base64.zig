@@ -74,11 +74,9 @@ pub fn urlSafeEncodeLen(source: anytype) usize {
     // Copied from WebKit
     return ((source.len * 4) + 2) / 3;
 }
-
+extern fn WTF__base64URLEncode(input: [*]const u8, input_len: usize, output: [*]u8, output_len: usize) usize;
 pub fn encodeURLSafe(dest: []u8, source: []const u8) usize {
-    var out = zig_base64.url_safe.Encoder.encodeWithoutSizeCheck(dest, source);
-    @memset(dest[out..], '=');
-    return dest.len;
+    return WTF__base64URLEncode(source.ptr, source.len, dest.ptr, dest.len);
 }
 
 const zig_base64 = struct {

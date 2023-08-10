@@ -29,3 +29,7 @@ To start the dev server, run `bun run dev` from the project root.
 $ cd my-app
 $ bun run dev
 ```
+
+---
+
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result. Any changes you make to `pages/index.tsx` will be hot-reloaded in the browser.

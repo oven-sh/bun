@@ -28,6 +28,17 @@ else if (Environment.isDebug)
 else
     std.fmt.comptimePrint("{s} ({s})", .{ version_string, Environment.git_sha[0..@min(Environment.git_sha.len, 8)] });
 
+pub const package_json_version_with_revision = if (Environment.git_sha.len == 0)
+    package_json_version
+else if (Environment.isDebug)
+    std.fmt.comptimePrint(version_string ++ "-debug+{s}", .{ Environment.git_sha })
+else if (Environment.is_canary)
+    std.fmt.comptimePrint(version_string ++ "-canary+{s}", .{ Environment.git_sha })
+else if (Environment.isTest)
+    std.fmt.comptimePrint(version_string ++ "-test+{s}", .{ Environment.git_sha })
+else
+    std.fmt.comptimePrint(version_string ++ "+{s}", .{ Environment.git_sha });
+
 pub const os_name = if (Environment.isWindows)
     "win32"
 else if (Environment.isMac)

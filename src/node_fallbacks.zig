@@ -29,11 +29,6 @@ const tty_code: string = @embedFile("./node-fallbacks/out/tty.js");
 const url_code: string = @embedFile("./node-fallbacks/out/url.js");
 const util_code: string = @embedFile("./node-fallbacks/out/util.js");
 const zlib_code: string = @embedFile("./node-fallbacks/out/zlib.js");
-const supports_color_code: string = @embedFile("./node-fallbacks/out/supports-color.js");
-
-const node_fetch_code: string = @embedFile("./node-fallbacks/out/node-fetch.js");
-const isomorphic_fetch_code: string = @embedFile("./node-fallbacks/out/isomorphic-fetch.js");
-const vercel_fetch_code: string = @embedFile("./node-fallbacks/out/@vercel_fetch.js");
 
 const assert_import_path = "/bun-vfs/node_modules/assert/index.js";
 const buffer_import_path = "/bun-vfs/node_modules/buffer/index.js";
@@ -58,11 +53,6 @@ const tty_import_path = "/bun-vfs/node_modules/tty/index.js";
 const url_import_path = "/bun-vfs/node_modules/url/index.js";
 const util_import_path = "/bun-vfs/node_modules/util/index.js";
 const zlib_import_path = "/bun-vfs/node_modules/zlib/index.js";
-const supports_color_import_path = "/bun-vfs/node_modules/supports-color/index.js";
-
-const node_fetch_import_path = "/bun-vfs/node_modules/node-fetch/index.js";
-const isomorphic_fetch_import_path = "/bun-vfs/node_modules/isomorphic-fetch/index.js";
-const vercel_fetch_import_path = "/bun-vfs/node_modules/@vercel/fetch/index.js";
 
 const assert_package_json = PackageJSON{
     .name = "assert",
@@ -277,44 +267,6 @@ const zlib_package_json = PackageJSON{
     .source = logger.Source.initPathString("/bun-vfs/node_modules/zlib/package.json", ""),
 };
 
-const node_fetch_package_json = PackageJSON{
-    .name = "node-fetch",
-    .version = "0.0.0-polyfill",
-    .module_type = .esm,
-    .hash = @as(u32, @truncate(bun.hash("node-fetch@0.0.0-polyfill"))),
-    .main_fields = undefined,
-    .browser_map = undefined,
-    .source = logger.Source.initPathString("/bun-vfs/node_modules/node-fetch/package.json", ""),
-};
-const isomorphic_fetch_package_json = PackageJSON{
-    .name = "isomorphic-fetch",
-    .version = "0.0.0-polyfill",
-    .module_type = .esm,
-    .hash = @as(u32, @truncate(bun.hash("isomorphic-fetch@0.0.0-polyfill"))),
-    .main_fields = undefined,
-    .browser_map = undefined,
-    .source = logger.Source.initPathString("/bun-vfs/node_modules/isomorphic-fetch/package.json", ""),
-};
-const supports_color_package_json = PackageJSON{
-    .name = "supports-color",
-    .version = "0.0.0-polyfill",
-    .module_type = .esm,
-    .hash = @as(u32, @truncate(bun.hash("supports-color@0.0.0-polyfill"))),
-    .main_fields = undefined,
-    .browser_map = undefined,
-    .source = logger.Source.initPathString("/bun-vfs/node_modules/supports-color/package.json", ""),
-};
-
-const vercel_fetch_package_json = PackageJSON{
-    .name = "@vercel/fetch",
-    .version = "0.0.0-polyfill",
-    .module_type = .esm,
-    .hash = @as(u32, @truncate(bun.hash("@vercel/fetch@0.0.0-polyfill"))),
-    .main_fields = undefined,
-    .browser_map = undefined,
-    .source = logger.Source.initPathString("/bun-vfs/node_modules/@vercel/fetch/package.json", ""),
-};
-
 pub const FallbackModule = struct {
     path: Fs.Path,
     code: string,
@@ -435,30 +387,6 @@ pub const FallbackModule = struct {
         .code = zlib_code,
         .package_json = &zlib_package_json,
     };
-
-    pub const @"node-fetch" = FallbackModule{
-        .path = Fs.Path.initWithNamespaceVirtual(node_fetch_import_path, "node", "node-fetch"),
-        .code = node_fetch_code,
-        .package_json = &node_fetch_package_json,
-    };
-
-    pub const @"isomorphic-fetch" = FallbackModule{
-        .path = Fs.Path.initWithNamespaceVirtual(isomorphic_fetch_import_path, "node", "isomorphic-fetch"),
-        .code = isomorphic_fetch_code,
-        .package_json = &isomorphic_fetch_package_json,
-    };
-
-    pub const @"@vercel/fetch" = FallbackModule{
-        .path = Fs.Path.initWithNamespaceVirtual(vercel_fetch_import_path, "node", "@vercel/fetch"),
-        .code = vercel_fetch_code,
-        .package_json = &vercel_fetch_package_json,
-    };
-
-    pub const @"supports-color" = FallbackModule{
-        .path = Fs.Path.initWithNamespaceVirtual(supports_color_import_path, "node", "supports-color"),
-        .code = supports_color_code,
-        .package_json = &supports_color_package_json,
-    };
 };
 
 pub const Map = ComptimeStringMap(FallbackModule, .{
@@ -485,12 +413,6 @@ pub const Map = ComptimeStringMap(FallbackModule, .{
     &.{ "url", FallbackModule.url },
     &.{ "util", FallbackModule.util },
     &.{ "zlib", FallbackModule.zlib },
-
-    &.{ "supports-color", FallbackModule.@"supports-color" },
-
-    &.{ "node-fetch", FallbackModule.@"node-fetch" },
-    &.{ "isomorphic-fetch", FallbackModule.@"isomorphic-fetch" },
-    &.{ "@vercel/fetch", FallbackModule.@"@vercel/fetch" },
 });
 
 pub fn contentsFromPath(path: string) ?string {

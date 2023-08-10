@@ -39,7 +39,7 @@ $ bunx create-remix
 
 ---
 
-To start the dev server, run `bun run dev` from the project root.
+To start the dev server, run `bun run dev` from the project root. This will start the dev server using the `remix dev` command. Note that Node.js will be used to run the dev server.
 
 ```sh
 $ cd my-app
@@ -55,4 +55,6 @@ $ bun run dev
 
 ---
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result. Any changes you make to `app/routes/_index.tsx` will be hot-reloaded in the browser.
+Open [http://localhost:3000](http://localhost:3000) to see the app. Any changes you make to `app/routes/_index.tsx` will be hot-reloaded in the browser.
+
+{% image src="https://github.com/oven-sh/bun/assets/3084745/c26f1059-a5d4-4c0b-9a88-d9902472fd77" caption="Remix app running on localhost" /%}

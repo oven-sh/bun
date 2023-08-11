@@ -20,7 +20,6 @@ pub const WebWorker = struct {
     arena: bun.MimallocArena = undefined,
     name: [:0]const u8 = "Worker",
     cpp_worker: *anyopaque,
-    allowed_to_exit: bool = false,
     mini: bool = false,
     user_poll_ref: JSC.PollRef = .{},
     eventloop_poll_ref: JSC.PollRef = .{},
@@ -51,17 +50,10 @@ pub const WebWorker = struct {
     pub fn hasPendingActivity(this: *WebWorker) callconv(.C) bool {
         JSC.markBinding(@src());
 
-        if (this.vm == null) {
-            return !this.requested_terminate;
+        if (this.vm) |vm| {
+            return vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0;
         }
-
-        if (!this.allowed_to_exit) {
-            return true;
-        }
-
-        var vm = this.vm.?;
-
-        return vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0;
+        return !this.requested_terminate;
     }
 
     pub fn create(
@@ -114,11 +106,9 @@ pub const WebWorker = struct {
             },
         };
 
-        worker.eventloop_poll_ref.ref(parent);
-
+        worker.eventloop_poll_ref.refConcurrently(parent);
         if (!default_unref) {
-            worker.allowed_to_exit = false;
-            worker.user_poll_ref.ref(parent);
+            worker.user_poll_ref.refConcurrently(parent);
         }
 
         return worker;
@@ -186,8 +176,8 @@ pub const WebWorker = struct {
 
     fn deinit(this: *WebWorker) void {
         log("deinit WebWorker id={d}", .{this.execution_context_id});
-        this.user_poll_ref.unref(this.parent);
-        this.eventloop_poll_ref.unref(this.parent);
+        this.user_poll_ref.unrefConcurrently(this.parent);
+        this.eventloop_poll_ref.unrefConcurrently(this.parent);
         bun.default_allocator.free(this.specifier);
         // bun.default_allocator.destroy(this);
     }
@@ -288,6 +278,7 @@ pub const WebWorker = struct {
 
         while (true) {
             while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
+                this.eventloop_poll_ref.refConcurrently(this.parent);
                 vm.tick();
                 // When the worker is done, the VM is cleared, but we don't free
                 // the entire worker object, because this loop is still active and UAF will happen.
@@ -308,7 +299,6 @@ pub const WebWorker = struct {
             this.eventloop_poll_ref.unrefConcurrently(this.parent);
             vm.eventLoop().tickPossiblyForever();
             this.parent.eventLoop().wakeup();
-            this.eventloop_poll_ref.refConcurrently(this.parent);
         }
     }
 
@@ -327,16 +317,14 @@ pub const WebWorker = struct {
     }
 
     pub fn setRef(this: *WebWorker, value: bool) callconv(.C) void {
-        if (this.requested_terminate and !value) {
-            this.user_poll_ref.unref(this.parent);
+        if (this.requested_terminate) {
             return;
         }
 
-        this.allowed_to_exit = !value;
-        if (this.allowed_to_exit) {
-            this.user_poll_ref.unref(this.parent);
+        if (value) {
+            this.user_poll_ref.refConcurrently(this.parent);
         } else {
-            this.user_poll_ref.ref(this.parent);
+            this.user_poll_ref.unrefConcurrently(this.parent);
         }
 
         if (this.vm) |vm| {
@@ -381,12 +369,10 @@ pub const WebWorker = struct {
     }
 
     fn requestTerminate(this: *WebWorker) bool {
-        this.setRef(false);
         var vm = this.vm orelse {
             this.requested_terminate = true;
             return false;
         };
-        this.allowed_to_exit = true;
         log("requesting terminate", .{});
         var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch @panic("OOM");
         var task = bun.default_allocator.create(JSC.AnyTask) catch @panic("OOM");

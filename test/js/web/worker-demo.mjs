@@ -1,28 +1,15 @@
-import path from "path";
-import { Worker, isMainThread, threadId, workerData } from "worker_threads";
+import { Worker, isMainThread, workerData, parentPort } from "worker_threads";
 
 if (isMainThread) {
   for (let i = 0; i < 1000; i++) {
-    const w = new Worker("/Users/dave/code/bun/test/js/web/worker-demo.mjs", { ref: false, workerData: i });
-    let recieved = false;
-    w.on("message", msg => {
-      if (msg === "initial message") {
-        recieved = true;
-      } else {
-        console.log("WHAT?", msg);
-      }
-    });
-    setTimeout(() => {
-      // w.terminate();
-      if (!recieved) console.log("we didn't hear from", i);
-    }, 10000 + 500);
+    const w = new Worker("/Users/dave/code/bun/test/js/web/worker-demo.mjs", { workerData: i });
   }
-  setInterval(() => {
-    console.log("main thread");
-  }, 1000);
-} else {
-  self.postMessage("initial message");
   setTimeout(() => {
-    console.log("workerid=", workerData);
-  }, Math.random() * 5000 + 500);
+    console.log(13421);
+  }, 1554);
+} else {
+  setTimeout(() => {
+    parentPort.postMessage("initial message");
+    console.log(workerData.toString().padStart(4, "0"), "in worker");
+  }, 1000);
 }

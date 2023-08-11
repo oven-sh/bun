@@ -210,7 +210,9 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
 
 void Worker::terminate()
 {
-    printf("terminate\n");
+    if (m_wasTerminated) {
+        return;
+    }
     // m_contextProxy.terminateWorkerGlobalScope();
     m_wasTerminated = true;
     WebWorker__terminate(impl_);
@@ -286,7 +288,6 @@ void Worker::drainEvents()
 
 void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
 {
-
     auto* ctx = scriptExecutionContext();
     if (ctx) {
         ScriptExecutionContext::postTaskTo(ctx->identifier(), [protectedThis = Ref { *this }](ScriptExecutionContext& context) -> void {

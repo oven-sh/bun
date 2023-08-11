@@ -190,14 +190,29 @@ function moveMessagePortToContext() {
   throwNotImplemented("worker_threads.moveMessagePortToContext");
 }
 
+const unsupportedOptions = [
+  "eval",
+  "argv",
+  "execArgv",
+  "stdin",
+  "stdout",
+  "stderr",
+  "trackedUnmanagedFds",
+  "resourceLimits",
+];
+
 class Worker extends EventEmitter {
   #worker: WebWorker;
   #performance;
-  #onExitPromise = undefined;
+  #onExitPromise: Promise<number> | number | undefined = undefined;
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
-    // TODO: stdin, stdout, stderr, and other node specific options.
+    for (const key of unsupportedOptions) {
+      if (key in options) {
+        emitWarning("option." + key, `worker_threads.Worker option "${key}" is not implemented.`);
+      }
+    }
     this.#worker = new WebWorker(filename, options);
     this.#worker.addEventListener("close", this.#onClose.bind(this));
     this.#worker.addEventListener("error", this.#onError.bind(this));
@@ -264,13 +279,14 @@ class Worker extends EventEmitter {
     return this.#worker.postMessage(...args);
   }
 
-  #onClose() {
-    this.emit("exit");
+  #onClose(e) {
+    this.#onExitPromise = e.code;
+    this.emit("exit", e.code);
   }
 
   #onError(event: ErrorEvent) {
     // TODO: is this right?
-    this.emit("error", event);
+    this.emit("error", event.error);
   }
 
   #onMessage(event: MessageEvent) {
@@ -278,13 +294,12 @@ class Worker extends EventEmitter {
     this.emit("message", event.data);
   }
 
-  #onMessageError(event: Event) {
+  #onMessageError(event: MessageEvent) {
     // TODO: is this right?
-    this.emit("messageerror", (event as any).error || event);
+    this.emit("messageerror", (event as any).error ?? event.data ?? event);
   }
 
   #onOpen() {
-    // TODO: is this right?
     this.emit("online");
   }
 

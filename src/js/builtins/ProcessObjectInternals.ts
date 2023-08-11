@@ -71,6 +71,14 @@ export function getStdioWriteStream(fd_, getWindowSize) {
         return fd_;
       }
 
+      get writable() {
+        return this.#writable;
+      }
+
+      get readable() {
+        return this.#readable;
+      }
+
       constructor(fd) {
         super({ readable: true, writable: true });
         this.#fdPath = `/dev/fd/${fd}`;
@@ -146,7 +154,8 @@ export function getStdioWriteStream(fd_, getWindowSize) {
             this.#onFinished(err);
           });
         }
-        if (stream.write(chunk, encoding)) {
+
+        if (this.#writeStream.write(chunk, encoding)) {
           callback();
         } else {
           this.#onDrain = callback;
@@ -294,6 +303,16 @@ export function getStdioWriteStream(fd_, getWindowSize) {
     get _readableState() {
       this.#ensureInnerStream();
       return this.#innerStream._readableState;
+    }
+
+    get writable() {
+      this.#ensureInnerStream();
+      return this.#innerStream.writable;
+    }
+
+    get readable() {
+      this.#ensureInnerStream();
+      return this.#innerStream.readable;
     }
 
     pipe(destination) {

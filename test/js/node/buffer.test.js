@@ -2552,3 +2552,15 @@ it("write alias", () => {
   shouldBeSame("writeBigUint64BE", "writeBigUInt64BE", BigInt(1000));
   shouldBeSame("writeBigUint64LE", "writeBigUInt64LE", BigInt(1000));
 });
+
+it("construct buffer from UTF16, issue #3914", () => {
+  const raw = Buffer.from([0, 104, 0, 101, 0, 108, 0, 108, 0, 111]);
+  const data = new Uint16Array(raw);
+
+  const decoder = new TextDecoder("UTF-16");
+  const str = decoder.decode(data);
+  expect(str).toStrictEqual("\x00h\x00e\x00l\x00l\x00o");
+
+  const buf = Buffer.from(str, "latin1");
+  expect(buf).toStrictEqual(raw);
+});

@@ -7,20 +7,37 @@ const StringTypes = @import("./string_types.zig");
 const Mimalloc = @import("root").bun.Mimalloc;
 const bun = @import("root").bun;
 
-const BASE_VERSION = "0.7";
-
 pub const build_id = std.fmt.parseInt(u64, std.mem.trim(u8, @embedFile("./build-id"), "\n \r\t"), 10) catch unreachable;
+pub const version: @import("./install/semver.zig").Version = .{
+    .major = 0,
+    .minor = 7,
+    .patch = build_id,
+};
+
+const version_string = std.fmt.comptimePrint("{d}.{d}.{d}", .{ version.major, version.minor, version.patch });
+
 pub const package_json_version = if (Environment.isDebug)
-    std.fmt.comptimePrint(BASE_VERSION ++ ".{d}_debug", .{build_id})
+    version_string ++ "_debug"
 else
-    std.fmt.comptimePrint(BASE_VERSION ++ ".{d}", .{build_id});
+    version_string;
 
 pub const package_json_version_with_sha = if (Environment.git_sha.len == 0)
     package_json_version
 else if (Environment.isDebug)
-    std.fmt.comptimePrint(BASE_VERSION ++ ".{d}_debug ({s})", .{ build_id, Environment.git_sha[0..@min(Environment.git_sha.len, 8)] })
+    std.fmt.comptimePrint("{s}_debug ({s})", .{ version_string, Environment.git_sha[0..@min(Environment.git_sha.len, 8)] })
 else
-    std.fmt.comptimePrint(BASE_VERSION ++ ".{d} ({s})", .{ build_id, Environment.git_sha[0..@min(Environment.git_sha.len, 8)] });
+    std.fmt.comptimePrint("{s} ({s})", .{ version_string, Environment.git_sha[0..@min(Environment.git_sha.len, 8)] });
+
+pub const package_json_version_with_revision = if (Environment.git_sha.len == 0)
+    package_json_version
+else if (Environment.isDebug)
+    std.fmt.comptimePrint(version_string ++ "-debug+{s}", .{Environment.git_sha})
+else if (Environment.is_canary)
+    std.fmt.comptimePrint(version_string ++ "-canary+{s}", .{Environment.git_sha})
+else if (Environment.isTest)
+    std.fmt.comptimePrint(version_string ++ "-test+{s}", .{Environment.git_sha})
+else
+    std.fmt.comptimePrint(version_string ++ "+{s}", .{Environment.git_sha});
 
 pub const os_name = if (Environment.isWindows)
     "win32"
@@ -46,12 +63,6 @@ pub inline fn getStartTime() i128 {
     if (Environment.isTest) return 0;
     return @import("root").bun.start_time;
 }
-
-pub const version: @import("./install/semver.zig").Version = .{
-    .major = 0,
-    .minor = 6,
-    .patch = build_id,
-};
 
 pub fn setThreadName(name: StringTypes.stringZ) void {
     if (Environment.isLinux) {

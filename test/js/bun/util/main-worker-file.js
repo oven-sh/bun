@@ -11,4 +11,5 @@ if (isMainThread) {
   });
 
   await promise;
+  worker.terminate();
 }

@@ -238,14 +238,15 @@ pub const RunCommand = struct {
             buf.shrinkRetainingCapacity(prefix.len);
             try buf.appendSlice(key);
 
-            if (package_json.npm_cfg_map.map.getPtr(buf.items)) |ptr| {
-                ptr.* = value;
-                continue;
+            // Here we use zig's getOrPut to avoid multiple lookups,
+            // and to avoid duplicating buf.items if it's already been duped
+            const gop = try env.map.map.getOrPut(buf.items);
+
+            if (!gop.found_existing) {
+                gop.key_ptr.* = try allocator.dupe(u8, buf.items);
             }
 
-            const prefixed_key = try allocator.dupe(u8, buf.items);
-            errdefer allocator.free(prefixed_key);
-            try env.map.put(prefixed_key, value);
+            gop.value_ptr.* = value;
         }
     }
     pub fn runPackageScript(allocator: std.mem.Allocator, original_script: string, name: string, cwd: string, env: *DotEnv.Loader, passthrough: []const string, silent: bool) !bool {

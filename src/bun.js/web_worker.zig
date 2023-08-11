@@ -169,17 +169,17 @@ pub const WebWorker = struct {
 
         std.debug.assert(this.status == .start);
         std.debug.assert(this.vm == null);
-        this.arena = try bun.MimallocArena.init();
+        // this.arena = try bun.MimallocArena.init();
         var vm = try JSC.VirtualMachine.initWorker(
-            this.arena.allocator(),
+            bun.default_allocator,
             this.parent.bundler.options.transform_options,
             null,
             null,
             this.store_fd,
             this,
         );
-        vm.allocator = this.arena.allocator();
-        vm.arena = &this.arena;
+        vm.allocator = bun.default_allocator;
+        // vm.arena = &this.arena;
 
         var b = &vm.bundler;
 
@@ -296,7 +296,6 @@ pub const WebWorker = struct {
             vm.eventLoop().tickConcurrentWithCount() > 0)
         {
             vm.global.vm().releaseWeakRefs();
-            _ = vm.arena.gc(false);
             _ = vm.global.vm().runGC(false);
         }
 

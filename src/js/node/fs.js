@@ -157,7 +157,13 @@ var access = function access(...args) {
     callbackify(fs.readlinkSync, args);
   },
   realpath = function realpath(...args) {
-    callbackify(fs.realpathSync, args);
+    const callback = args[args.length - 1];
+    if (typeof callback !== "function") {
+      // TODO: set code
+      throw new TypeError("Callback must be a function");
+    }
+
+    fs.realpath(...args).then(result => callback(null, result), callback);
   },
   rename = function rename(...args) {
     callbackify(fs.renameSync, args);

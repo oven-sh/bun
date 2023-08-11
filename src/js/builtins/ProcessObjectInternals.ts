@@ -128,9 +128,9 @@ export function getStdioWriteStream(fd_, getWindowSize) {
       _write(chunk, encoding, callback) {
         if (!this.#writeStream) {
           var { createWriteStream } = require("node:fs");
-          this.#writeStream = createWriteStream(this.#fdPath);
+          var stream = (this.#writeStream = createWriteStream(this.#fdPath));
 
-          this.#writeStream.on("finish", () => {
+          stream.on("finish", () => {
             if (this.#onFinish) {
               const cb = this.#onFinish;
               this.#onFinish = null;
@@ -138,7 +138,7 @@ export function getStdioWriteStream(fd_, getWindowSize) {
             }
           });
 
-          this.#writeStream.on("drain", () => {
+          stream.on("drain", () => {
             if (this.#onDrain) {
               const cb = this.#onDrain;
               this.#onDrain = null;
@@ -146,14 +146,15 @@ export function getStdioWriteStream(fd_, getWindowSize) {
             }
           });
 
-          eos(this.#writeStream, err => {
+          eos(stream, err => {
             this.#writable = false;
             if (err) {
-              destroy(this.#writeStream, err);
+              destroy(stream, err);
             }
             this.#onFinished(err);
           });
         }
+
         if (this.#writeStream.write(chunk, encoding)) {
           callback();
         } else {

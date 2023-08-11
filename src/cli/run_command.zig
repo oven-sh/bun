@@ -1079,8 +1079,7 @@ pub const RunCommand = struct {
 
                             return true;
                         } else if ((script_name_to_search.len > 1 and script_name_to_search[0] == '/') or
-                            (script_name_to_search.len > 2 and script_name_to_search[0] == '.' and script_name_to_search[1] == '/' and
-                            script_name_to_search[script_name_to_search.len - 1] != '/'))
+                            (script_name_to_search.len > 2 and script_name_to_search[0] == '.' and script_name_to_search[1] == '/'))
                         {
                             Run.boot(ctx, ctx.allocator.dupe(u8, script_name_to_search) catch unreachable) catch |err| {
                                 if (Output.enable_ansi_colors) {

@@ -116,7 +116,7 @@ export default {
   readFile: fs.readFile.bind(fs),
   writeFile: promisify(fs.writeFileSync),
   readlink: promisify(fs.readlinkSync),
-  realpath: promisify(fs.realpathSync),
+  realpath: fs.realpath.bind(fs),
   rename: promisify(fs.renameSync),
   stat: fs.stat.bind(fs),
   symlink: promisify(fs.symlinkSync),

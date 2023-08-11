@@ -3597,9 +3597,14 @@ pub const Timer = struct {
                         break :brk true;
                     }
                 } else {
-                    if (map.get(this.id)) |tombstone_or_timer| {
+                    if (map.getPtr(this.id)) |tombstone_or_timer| {
+                        // Disable thundering herd of setInterval() calls
+                        if (tombstone_or_timer.* != null) {
+                            tombstone_or_timer.*.?.has_scheduled_job = false;
+                        }
+
                         // .refresh() was called after CallbackJob enqueued
-                        break :brk tombstone_or_timer == null;
+                        break :brk tombstone_or_timer.* == null;
                     }
                 }
 
@@ -3869,6 +3874,7 @@ pub const Timer = struct {
         did_unref_timer: bool = false,
         poll_ref: JSC.PollRef = JSC.PollRef.init(),
         arguments: JSC.Strong = .{},
+        has_scheduled_job: bool = false,
 
         pub const Kind = enum(u32) {
             setTimeout,
@@ -3905,6 +3911,12 @@ pub const Timer = struct {
                 return;
 
             var globalThis = this.globalThis;
+
+            // Disable thundering herd of setInterval() calls
+            // Skip setInterval() calls when the previous one has not been run yet.
+            if (repeats and this.has_scheduled_job) {
+                return;
+            }
 
             var cb: CallbackJob = .{
                 .callback = if (repeats)
@@ -3950,6 +3962,9 @@ pub const Timer = struct {
                 this.arguments = .{};
                 map.put(vm.allocator, timer_id.id, null) catch unreachable;
                 this.deinit();
+            } else {
+                this.has_scheduled_job = true;
+                map.put(vm.allocator, timer_id.id, this) catch {};
             }
 
             var job = vm.allocator.create(CallbackJob) catch @panic(

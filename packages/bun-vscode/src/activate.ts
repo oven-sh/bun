@@ -6,11 +6,14 @@ import {
   WorkspaceFolder,
 } from "vscode";
 import { DAPAdapter } from "./dap";
+import lockfile from "./lockfile";
 
 export function activateBunDebug(
   context: vscode.ExtensionContext,
   factory?: vscode.DebugAdapterDescriptorFactory
 ) {
+  lockfile(context);
+
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "extension.bun.runEditorContents",

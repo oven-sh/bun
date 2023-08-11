@@ -12,6 +12,7 @@ import {
   ExitedEvent,
   TerminatedEvent,
   Source,
+  BreakpointEvent,
 } from "@vscode/debugadapter";
 import type { DebugProtocol as DAP } from "@vscode/debugprotocol";
 import { JSCClient, type JSC } from "./jsc";
@@ -20,11 +21,11 @@ const capabilities: Required<DAP.Capabilities> = {
   /** The debug adapter supports the `configurationDone` request. */
   supportsConfigurationDoneRequest: true,
   /** The debug adapter supports function breakpoints. */
-  supportsFunctionBreakpoints: false, // TODO
+  supportsFunctionBreakpoints: true,
   /** The debug adapter supports conditional breakpoints. */
-  supportsConditionalBreakpoints: false, // TODO
+  supportsConditionalBreakpoints: true,
   /** The debug adapter supports breakpoints that break execution after a specified number of hits. */
-  supportsHitConditionalBreakpoints: false, // TODO
+  supportsHitConditionalBreakpoints: true, // TODO
   /** The debug adapter supports a (side effect free) `evaluate` request for data hovers. */
   supportsEvaluateForHovers: true,
   /** Available exception filter options for the `setExceptionBreakpoints` request. */
@@ -42,9 +43,9 @@ const capabilities: Required<DAP.Capabilities> = {
   /** The debug adapter supports the `completions` request. */
   supportsCompletionsRequest: false, // TODO
   /** The set of characters that should trigger completion in a REPL. If not specified, the UI should assume the `.` character. */
-  completionTriggerCharacters: ['.', '[', '"', "'"],
+  completionTriggerCharacters: [".", "[", '"', "'"],
   /** The debug adapter supports the `modules` request. */
-  supportsModulesRequest: false, // TODO
+  supportsModulesRequest: true,
   /** The set of additional module information exposed by the debug adapter. */
   additionalModuleColumns: [],
   /** Checksum algorithms supported by the debug adapter. */
@@ -52,21 +53,21 @@ const capabilities: Required<DAP.Capabilities> = {
   /** The debug adapter supports the `restart` request. In this case a client should not implement `restart` by terminating and relaunching the adapter but by calling the `restart` request. */
   supportsRestartRequest: false,
   /** The debug adapter supports `exceptionOptions` on the `setExceptionBreakpoints` request. */
-  supportsExceptionOptions: false, // TODO
+  supportsExceptionOptions: true,
   /** The debug adapter supports a `format` attribute on the `stackTrace`, `variables`, and `evaluate` requests. */
   supportsValueFormattingOptions: false, // TODO
   /** The debug adapter supports the `exceptionInfo` request. */
-  supportsExceptionInfoRequest: false, // TODO
+  supportsExceptionInfoRequest: true,
   /** The debug adapter supports the `terminateDebuggee` attribute on the `disconnect` request. */
   supportTerminateDebuggee: true,
   /** The debug adapter supports the `suspendDebuggee` attribute on the `disconnect` request. */
   supportSuspendDebuggee: false,
   /** The debug adapter supports the delayed loading of parts of the stack, which requires that both the `startFrame` and `levels` arguments and the `totalFrames` result of the `stackTrace` request are supported. */
-  supportsDelayedStackTraceLoading: false, // TODO
+  supportsDelayedStackTraceLoading: true,
   /** The debug adapter supports the `loadedSources` request. */
-  supportsLoadedSourcesRequest: false, // TODO
+  supportsLoadedSourcesRequest: true,
   /** The debug adapter supports log points by interpreting the `logMessage` attribute of the `SourceBreakpoint`. */
-  supportsLogPoints: false,
+  supportsLogPoints: true,
   /** The debug adapter supports the `terminateThreads` request. */
   supportsTerminateThreadsRequest: false,
   /** The debug adapter supports the `setExpression` request. */
@@ -74,7 +75,7 @@ const capabilities: Required<DAP.Capabilities> = {
   /** The debug adapter supports the `terminate` request. */
   supportsTerminateRequest: true,
   /** The debug adapter supports data breakpoints. */
-  supportsDataBreakpoints: false, // TODO
+  supportsDataBreakpoints: true,
   /** The debug adapter supports the `readMemory` request. */
   supportsReadMemoryRequest: false,
   /** The debug adapter supports the `writeMemory` request. */
@@ -90,11 +91,68 @@ const capabilities: Required<DAP.Capabilities> = {
   /** The debug adapter supports stepping granularities (argument `granularity`) for the stepping requests. */
   supportsSteppingGranularity: false, // TODO
   /** The debug adapter supports adding breakpoints based on instruction references. */
-  supportsInstructionBreakpoints: false, // TODO
+  supportsInstructionBreakpoints: true,
   /** The debug adapter supports `filterOptions` as an argument on the `setExceptionBreakpoints` request. */
   supportsExceptionFilterOptions: false, // TODO
   /** The debug adapter supports the `singleThread` property on the execution requests (`continue`, `next`, `stepIn`, `stepOut`, `reverseContinue`, `stepBack`). */
   supportsSingleThreadExecutionRequests: false,
+};
+
+const nodejsCapabilities: DAP.Capabilities = {
+  supportsConfigurationDoneRequest: true,
+  supportsFunctionBreakpoints: false,
+  supportsConditionalBreakpoints: true,
+  supportsHitConditionalBreakpoints: true,
+  supportsEvaluateForHovers: true,
+  supportsReadMemoryRequest: true,
+  supportsWriteMemoryRequest: true,
+  exceptionBreakpointFilters: [
+    {
+      filter: "all",
+      label: 'Caught Exceptions',
+      default: false,
+      supportsCondition: true,
+      description: "Breaks on all throw errors, even if they're caught later.",
+      conditionDescription: `error.name == "MyError"`,
+    },
+    {
+      filter: "uncaught",
+      label: 'Uncaught Exceptions',
+      default: false,
+      supportsCondition: true,
+      description: 'Breaks only on errors or promise rejections that are not handled.',
+      conditionDescription: `error.name == "MyError"`,
+    },
+  ],
+  supportsStepBack: false,
+  supportsSetVariable: true,
+  supportsRestartFrame: true,
+  supportsGotoTargetsRequest: false,
+  supportsStepInTargetsRequest: true,
+  supportsCompletionsRequest: true,
+  supportsModulesRequest: false,
+  additionalModuleColumns: [],
+  supportedChecksumAlgorithms: [],
+  supportsRestartRequest: true,
+  supportsExceptionOptions: false,
+  supportsValueFormattingOptions: true,
+  supportsExceptionInfoRequest: true,
+  supportTerminateDebuggee: true,
+  supportsDelayedStackTraceLoading: true,
+  supportsLoadedSourcesRequest: true,
+  supportsLogPoints: true,
+  supportsTerminateThreadsRequest: false,
+  supportsSetExpression: true,
+  supportsTerminateRequest: false,
+  completionTriggerCharacters: ['.', '[', '"', "'"],
+  supportsBreakpointLocationsRequest: true,
+  supportsClipboardContext: true,
+  supportsExceptionFilterOptions: true,
+  //supportsEvaluationOptions: extended ? true : false,
+  //supportsDebuggerProperties: extended ? true : false,
+  //supportsSetSymbolOptions: extended ? true : false,
+  //supportsDataBreakpoints: false,
+  //supportsDisassembleRequest: false,
 };
 
 export type LaunchRequestArguments = DAP.LaunchRequestArguments & {
@@ -111,19 +169,21 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
   #client?: JSCClient;
   #process?: ChildProcess;
   #thread?: DAP.Thread;
+  #ready: AbortController;
   #sources: Map<string, DAP.Source>;
   #stackFrames: DAP.StackFrame[];
   #scopes: Map<number, DAP.Scope[]>;
 
   public constructor(session: vscode.DebugSession) {
     super();
+    this.#ready = new AbortController();
     this.#session = session;
     this.#sources = new Map();
     this.#stackFrames = [];
     this.#scopes = new Map();
-    // 0-based lines and columns
-    this.setDebuggerLinesStartAt1(false);
-		this.setDebuggerColumnsStartAt1(false);
+    // 1-based lines and columns
+    this.setDebuggerLinesStartAt1(true);
+    this.setDebuggerColumnsStartAt1(false);
   }
 
   #ack<R extends DAP.Response = DAP.Response>(response: R, extra?: Partial<R>["body"]): void {
@@ -200,6 +260,17 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     }
   }
 
+  getCallFrameId(stackFrameId: number): string {
+    const objectId = String(stackFrameId);
+    try {
+      const injectedScriptId = Number(objectId.slice(0, 1));
+      const ordinal = Number(objectId.slice(1));
+      return JSON.stringify({ injectedScriptId, ordinal });
+    } catch {
+      return objectId;
+    }
+  }
+
   getSource(scriptId: string): DAP.Source | undefined {
     return this.#sources.get(scriptId);
   }
@@ -255,11 +326,12 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     const threadId = Number(scriptId);
     const name = vscode.workspace.asRelativePath(url);
     const source = new Source(name, url, threadId);
+    source.sourceReference = threadId;
     this.#sources.set(scriptId, source);
     this.sendEvent(new LoadedSourceEvent("new", source));
     if (threadId !== this.#thread?.id) {
       this.#thread = new Thread(threadId, url);
-      this.sendEvent(new ThreadEvent("started", threadId));
+      // this.sendEvent(new ThreadEvent("started", threadId));
     }
   }
 
@@ -267,12 +339,7 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     const { reason, callFrames, asyncStackTrace } = event;
     const [{ location }] = callFrames;
     const { scriptId } = location;
-    this.sendEvent(
-      new StoppedEvent(
-        reason === "PauseOnNextStatement" ? "pause" : "breakpoint",
-        Number(scriptId),
-      )
-    );
+    this.sendEvent(new StoppedEvent(reason === "PauseOnNextStatement" ? "pause" : "breakpoint", Number(scriptId)));
     const stackFrames: DAP.StackFrame[] = [];
     const scopes: Map<number, DAP.Scope[]> = new Map();
     for (const callFrame of callFrames) {
@@ -286,14 +353,10 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     }
     this.#scopes = scopes;
     this.#stackFrames = stackFrames;
-    console.log("SCOPES:", this.#scopes);
-    console.log("STACK FRAMES:", this.#stackFrames);
   }
 
   protected ["Debugger.resumed"](event: JSC.Debugger.ResumedEvent): void {
-    this.sendEvent(
-      new ContinuedEvent(this.#thread?.id),
-    );
+    this.sendEvent(new ContinuedEvent(this.#thread?.id));
   }
 
   handleMessage(message: DAP.ProtocolMessage): void {
@@ -311,16 +374,24 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     super.sendEvent(event);
   }
 
-  runInTerminalRequest(args: DAP.RunInTerminalRequestArguments, timeout: number, cb: (response: DAP.RunInTerminalResponse) => void): void {
+  runInTerminalRequest(
+    args: DAP.RunInTerminalRequestArguments,
+    timeout: number,
+    cb: (response: DAP.RunInTerminalResponse) => void,
+  ): void {
     // TODO
   }
 
   protected initializeRequest(response: DAP.InitializeResponse, args: DAP.InitializeRequestArguments): void {
-    this.#ack(response, capabilities);
+    this.#ack(response, nodejsCapabilities);
     this.sendEvent(new InitializedEvent());
   }
 
-  protected async disconnectRequest(response: DAP.DisconnectResponse, args: DAP.DisconnectArguments, request?: DAP.Request): Promise<void> {
+  protected async disconnectRequest(
+    response: DAP.DisconnectResponse,
+    args: DAP.DisconnectArguments,
+    request?: DAP.Request,
+  ): Promise<void> {
     await this.#client?.fetch("Debugger.disable");
     const { terminateDebuggee } = args;
     if (terminateDebuggee) {
@@ -332,10 +403,7 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
   async #launch(path: string): Promise<void> {
     this.#process?.kill();
     // TODO: Change to "bun" before merging, or make it configurable
-    const process = spawn("bun-debug", [
-      "run",
-      path,
-    ], {
+    const process = spawn("/Users/ashcon/Desktop/code/bun/packages/debug-bun-darwin-aarch64/bun-debug", ["run", path], {
       cwd: this.#session.workspaceFolder?.uri?.fsPath,
       stdio: ["ignore", "pipe", "pipe"],
       env: {
@@ -345,13 +413,13 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
         FORCE_COLOR: "1",
       },
     });
-    process.on("error", (error) => {
+    process.on("error", error => {
       console.error(error);
       vscode.window.showErrorMessage(`Failed to start Bun: ${error.message}`);
       this.sendEvent(new ExitedEvent(-1));
       this.#process = undefined;
     });
-    process.on("exit", (exitCode) => {
+    process.on("exit", exitCode => {
       this.sendEvent(new ExitedEvent(exitCode));
       this.#process = undefined;
     });
@@ -396,7 +464,20 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     ]);
   }
 
-  protected async launchRequest(response: DAP.LaunchResponse, args: LaunchRequestArguments, request?: DAP.Request): Promise<void> {
+  protected async launchRequest(
+    response: DAP.LaunchResponse,
+    args: LaunchRequestArguments,
+    request?: DAP.Request,
+  ): Promise<void> {
+    await new Promise<void>((resolve) => {
+      if (this.#ready.signal.aborted) {
+        resolve();
+        return;
+      }
+      this.#ready.signal.addEventListener("abort", () => {
+        resolve();
+      });
+    });
     const { program } = args;
     try {
       await this.#launch(program);
@@ -406,7 +487,11 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     }
   }
 
-  protected async attachRequest(response: DAP.AttachResponse, args: AttachRequestArguments, request?: DAP.Request): Promise<void> {
+  protected async attachRequest(
+    response: DAP.AttachResponse,
+    args: AttachRequestArguments,
+    request?: DAP.Request,
+  ): Promise<void> {
     const { url, port } = args;
     try {
       if (url) {
@@ -422,7 +507,11 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     }
   }
 
-  protected terminateRequest(response: DAP.TerminateResponse, args: DAP.TerminateArguments, request?: DAP.Request): void {
+  protected terminateRequest(
+    response: DAP.TerminateResponse,
+    args: DAP.TerminateArguments,
+    request?: DAP.Request,
+  ): void {
     this.#client?.close();
     this.sendEvent(new TerminatedEvent());
     this.#ack(response);
@@ -432,55 +521,92 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     this.#noop(response, "restartRequest");
   }
 
-  protected async setBreakPointsRequest(response: DAP.SetBreakpointsResponse, args: DAP.SetBreakpointsArguments, request?: DAP.Request): Promise<void> {
+  protected async setBreakPointsRequest(
+    response: DAP.SetBreakpointsResponse,
+    args: DAP.SetBreakpointsArguments,
+    request?: DAP.Request,
+  ): Promise<void> {
     if (!args.breakpoints?.length) {
       this.#nack(response, "No breakpoints");
       return;
     }
     const { source, breakpoints } = args;
-    const results: DAP.Breakpoint[] = await Promise.all(breakpoints
-      .map(({ line, column }) => this.#client.fetch("Debugger.setBreakpoint", {
-        location: {
-          scriptId: String(source.sourceReference), // FIXME
-          lineNumber: line,
-          columnNumber: column,
-        },
-      })
-      .then(({ breakpointId, actualLocation }) => ({
-        id: Number(breakpointId),
-        line: actualLocation.lineNumber,
-        column: actualLocation.columnNumber,
-        verified: true,
-      }))
-    ));
+    const results: DAP.Breakpoint[] = await Promise.all(
+      breakpoints.map(({ line, column }) =>
+        this.#client
+          .fetch("Debugger.setBreakpoint", {
+            location: {
+              scriptId: String(source.sourceReference), // FIXME
+              lineNumber: line,
+              columnNumber: column,
+            },
+          })
+          .then(({ breakpointId, actualLocation }) => ({
+            id: Number(breakpointId),
+            line: actualLocation.lineNumber,
+            column: actualLocation.columnNumber,
+            verified: true,
+          })),
+      ),
+    );
     this.#ack(response, { breakpoints: results });
   }
 
-  protected setFunctionBreakPointsRequest(response: DAP.SetFunctionBreakpointsResponse, args: DAP.SetFunctionBreakpointsArguments, request?: DAP.Request): void {
+  protected setFunctionBreakPointsRequest(
+    response: DAP.SetFunctionBreakpointsResponse,
+    args: DAP.SetFunctionBreakpointsArguments,
+    request?: DAP.Request,
+  ): void {
     this.#todo(response, "setFunctionBreakPointsRequest");
   }
 
-  protected setExceptionBreakPointsRequest(response: DAP.SetExceptionBreakpointsResponse, args: DAP.SetExceptionBreakpointsArguments, request?: DAP.Request): void {
+  protected setExceptionBreakPointsRequest(
+    response: DAP.SetExceptionBreakpointsResponse,
+    args: DAP.SetExceptionBreakpointsArguments,
+    request?: DAP.Request,
+  ): void {
     this.#todo(response, "setExceptionBreakPointsRequest");
   }
 
-  protected configurationDoneRequest(response: DAP.ConfigurationDoneResponse, args: DAP.ConfigurationDoneArguments, request?: DAP.Request): void {
-    this.#ack(response);
+  protected configurationDoneRequest(
+    response: DAP.ConfigurationDoneResponse,
+    args: DAP.ConfigurationDoneArguments,
+    request?: DAP.Request,
+  ): void {
+    super.configurationDoneRequest(response, args, request);
+    this.#ready.abort();
+    // this.#ack(response);
   }
 
-  protected async continueRequest(response: DAP.ContinueResponse, args: DAP.ContinueArguments, request?: DAP.Request): Promise<void> {
+  protected async continueRequest(
+    response: DAP.ContinueResponse,
+    args: DAP.ContinueArguments,
+    request?: DAP.Request,
+  ): Promise<void> {
     await this.#send(response, "Debugger.resume");
   }
 
-  protected async nextRequest(response: DAP.NextResponse, args: DAP.NextArguments, request?: DAP.Request): Promise<void> {
+  protected async nextRequest(
+    response: DAP.NextResponse,
+    args: DAP.NextArguments,
+    request?: DAP.Request,
+  ): Promise<void> {
     await this.#send(response, "Debugger.stepNext");
   }
 
-  protected async stepInRequest(response: DAP.StepInResponse, args: DAP.StepInArguments, request?: DAP.Request): Promise<void> {
+  protected async stepInRequest(
+    response: DAP.StepInResponse,
+    args: DAP.StepInArguments,
+    request?: DAP.Request,
+  ): Promise<void> {
     await this.#send(response, "Debugger.stepInto");
   }
 
-  protected async stepOutRequest(response: DAP.StepOutResponse, args: DAP.StepOutArguments, request?: DAP.Request): Promise<void> {
+  protected async stepOutRequest(
+    response: DAP.StepOutResponse,
+    args: DAP.StepOutArguments,
+    request?: DAP.Request,
+  ): Promise<void> {
     await this.#send(response, "Debugger.stepOut");
   }
 
@@ -488,11 +614,19 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     this.#todo(response, "stepBackRequest");
   }
 
-  protected reverseContinueRequest(response: DAP.ReverseContinueResponse, args: DAP.ReverseContinueArguments, request?: DAP.Request): void {
+  protected reverseContinueRequest(
+    response: DAP.ReverseContinueResponse,
+    args: DAP.ReverseContinueArguments,
+    request?: DAP.Request,
+  ): void {
     this.#todo(response, "reverseContinueRequest");
   }
-  
-  protected restartFrameRequest(response: DAP.RestartFrameResponse, args: DAP.RestartFrameArguments, request?: DAP.Request): void {
+
+  protected restartFrameRequest(
+    response: DAP.RestartFrameResponse,
+    args: DAP.RestartFrameArguments,
+    request?: DAP.Request,
+  ): void {
     this.#todo(response, "restartFrameRequest");
   }
 
@@ -504,7 +638,11 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     this.#send(response, "Debugger.pause");
   }
 
-  protected async sourceRequest(response: DAP.SourceResponse, args: DAP.SourceArguments, request?: DAP.Request): Promise<void> {
+  protected async sourceRequest(
+    response: DAP.SourceResponse,
+    args: DAP.SourceArguments,
+    request?: DAP.Request,
+  ): Promise<void> {
     const { sourceReference } = args;
     const scriptId = String(sourceReference);
     await this.#send(response, "Debugger.getScriptSource", { scriptId }, ({ scriptSource }) => ({
@@ -520,11 +658,19 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     }
   }
 
-  protected terminateThreadsRequest(response: DAP.TerminateThreadsResponse, args: DAP.TerminateThreadsArguments, request?: DAP.Request): void {
+  protected terminateThreadsRequest(
+    response: DAP.TerminateThreadsResponse,
+    args: DAP.TerminateThreadsArguments,
+    request?: DAP.Request,
+  ): void {
     this.#todo(response, "terminateThreadsRequest");
   }
 
-  protected stackTraceRequest(response: DAP.StackTraceResponse, args: DAP.StackTraceArguments, request?: DAP.Request): void {
+  protected stackTraceRequest(
+    response: DAP.StackTraceResponse,
+    args: DAP.StackTraceArguments,
+    request?: DAP.Request,
+  ): void {
     const totalFrames = this.#stackFrames.length;
     const { startFrame = 0, levels = totalFrames } = args;
     this.#ack(response, {
@@ -539,7 +685,11 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     this.#ack(response, { scopes });
   }
 
-  protected async variablesRequest(response: DAP.VariablesResponse, args: DAP.VariablesArguments, request?: DAP.Request): Promise<void> {
+  protected async variablesRequest(
+    response: DAP.VariablesResponse,
+    args: DAP.VariablesArguments,
+    request?: DAP.Request,
+  ): Promise<void> {
     const { variablesReference } = args;
     const objectId = this.getObjectId(variablesReference);
     try {
@@ -550,81 +700,123 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     }
   }
 
-  protected setVariableRequest(response: DAP.SetVariableResponse, args: DAP.SetVariableArguments, request?: DAP.Request): void {
+  protected setVariableRequest(
+    response: DAP.SetVariableResponse,
+    args: DAP.SetVariableArguments,
+    request?: DAP.Request,
+  ): void {
     this.#todo(response, "setVariableRequest");
   }
 
-  protected setExpressionRequest(response: DAP.SetExpressionResponse, args: DAP.SetExpressionArguments, request?: DAP.Request): void {
+  protected setExpressionRequest(
+    response: DAP.SetExpressionResponse,
+    args: DAP.SetExpressionArguments,
+    request?: DAP.Request,
+  ): void {
     this.#todo(response, "setExpressionRequest");
   }
 
-  #sanitizeExpression(expression: string): string {
-    let code: string = expression;
-    if (code.startsWith("return")) {
-      code = code.slice(6);
+  protected async evaluateRequest(
+    response: DAP.EvaluateResponse,
+    args: DAP.EvaluateArguments,
+    request?: DAP.Request,
+  ): Promise<void> {
+    const { context, expression, frameId } = args;
+    if (frameId) {
     }
-    if (code.startsWith("await")) {
-      code = code.slice(5);
-    }
-    return `try{console.log(${code})}catch(e){console.error(e)}`
+    await this.#send(
+      response,
+      "Runtime.evaluate",
+      {
+        expression,
+        includeCommandLineAPI: true,
+      },
+      ({ result: { objectId, value, description }, wasThrown }) => {
+        return {
+          result: value ?? description,
+          variablesReference: objectId ? this.getReferenceId(objectId) : 0,
+        };
+      },
+    );
   }
 
-  protected async evaluateRequest(response: DAP.EvaluateResponse, args: DAP.EvaluateArguments, request?: DAP.Request): Promise<void> {
-    const { expression } = args;
-    await this.#send(response, "Runtime.evaluate", {
-      expression: this.#sanitizeExpression(expression),
-      includeCommandLineAPI: true,
-    }, ({ result, wasThrown }) => {
-      const { objectId, className, description } = result;
-      if (wasThrown) {
-        this.#client.fetch("Runtime.evaluate", {
-          expression: `console.error("${description}")`,
-        });
-      }
-      return {
-        result: result.value ?? result.preview?.description,
-        variablesReference: 0, // TODO
-      };
-    });
-  }
-
-  protected stepInTargetsRequest(response: DAP.StepInTargetsResponse, args: DAP.StepInTargetsArguments, request?: DAP.Request): void {
+  protected stepInTargetsRequest(
+    response: DAP.StepInTargetsResponse,
+    args: DAP.StepInTargetsArguments,
+    request?: DAP.Request,
+  ): void {
     this.#todo(response, "stepInTargetsRequest");
   }
 
-  protected gotoTargetsRequest(response: DAP.GotoTargetsResponse, args: DAP.GotoTargetsArguments, request?: DAP.Request): void {
+  protected gotoTargetsRequest(
+    response: DAP.GotoTargetsResponse,
+    args: DAP.GotoTargetsArguments,
+    request?: DAP.Request,
+  ): void {
     this.#todo(response, "gotoTargetsRequest");
   }
 
-  protected completionsRequest(response: DAP.CompletionsResponse, args: DAP.CompletionsArguments, request?: DAP.Request): void {
+  protected completionsRequest(
+    response: DAP.CompletionsResponse,
+    args: DAP.CompletionsArguments,
+    request?: DAP.Request,
+  ): void {
     this.#todo(response, "completionsRequest");
   }
 
-  protected exceptionInfoRequest(response: DAP.ExceptionInfoResponse, args: DAP.ExceptionInfoArguments, request?: DAP.Request): void {
+  protected exceptionInfoRequest(
+    response: DAP.ExceptionInfoResponse,
+    args: DAP.ExceptionInfoArguments,
+    request?: DAP.Request,
+  ): void {
     this.#todo(response, "exceptionInfoRequest");
   }
 
-  protected loadedSourcesRequest(response: DAP.LoadedSourcesResponse, args: DAP.LoadedSourcesArguments, request?: DAP.Request): void {
+  protected loadedSourcesRequest(
+    response: DAP.LoadedSourcesResponse,
+    args: DAP.LoadedSourcesArguments,
+    request?: DAP.Request,
+  ): void {
     this.#todo(response, "loadedSourcesRequest");
   }
 
-  protected dataBreakpointInfoRequest(response: DAP.DataBreakpointInfoResponse, args: DAP.DataBreakpointInfoArguments, request?: DAP.Request): void {
+  protected dataBreakpointInfoRequest(
+    response: DAP.DataBreakpointInfoResponse,
+    args: DAP.DataBreakpointInfoArguments,
+    request?: DAP.Request,
+  ): void {
     this.#todo(response, "dataBreakpointInfoRequest");
   }
 
-  protected setDataBreakpointsRequest(response: DAP.SetDataBreakpointsResponse, args: DAP.SetDataBreakpointsArguments, request?: DAP.Request): void {
+  protected setDataBreakpointsRequest(
+    response: DAP.SetDataBreakpointsResponse,
+    args: DAP.SetDataBreakpointsArguments,
+    request?: DAP.Request,
+  ): void {
     this.#todo(response, "setDataBreakpointsRequest");
   }
 
-  protected readMemoryRequest(response: DAP.ReadMemoryResponse, args: DAP.ReadMemoryArguments, request?: DAP.Request): void {
+  protected readMemoryRequest(
+    response: DAP.ReadMemoryResponse,
+    args: DAP.ReadMemoryArguments,
+    request?: DAP.Request,
+  ): void {
     this.#todo(response, "readMemoryRequest");
   }
 
-  protected writeMemoryRequest(response: DAP.WriteMemoryResponse, args: DAP.WriteMemoryArguments, request?: DAP.Request): void {
+  protected writeMemoryRequest(
+    response: DAP.WriteMemoryResponse,
+    args: DAP.WriteMemoryArguments,
+    request?: DAP.Request,
+  ): void {
     this.#todo(response, "writeMemoryRequest");
   }
 
-  protected disassembleRequest(response: DAP.DisassembleResponse, args: DAP.DisassembleArguments, request?: DAP.Request): void {
+  protected disassembleRequest(
+    response: DAP.DisassembleResponse,
+    args: DAP.DisassembleArguments,
+    request?: DAP.Request,
+  ): void {
     this.#todo(response, "disassembleRequest");
   }
 
@@ -632,32 +824,67 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     this.#todo(response, "cancelRequest");
   }
 
-  protected async breakpointLocationsRequest(response: DAP.BreakpointLocationsResponse, args: DAP.BreakpointLocationsArguments, request?: DAP.Request): Promise<void> {
-    const { line, endLine, column, endColumn } = args;
-    const scriptId = String(this.#thread?.id);
-    await this.#send(response, "Debugger.getBreakpointLocations", {
-      start: {
-        scriptId,
-        lineNumber: line,
-        columnNumber: column,
+  protected async breakpointLocationsRequest(
+    response: DAP.BreakpointLocationsResponse,
+    args: DAP.BreakpointLocationsArguments,
+    request?: DAP.Request,
+  ): Promise<void> {
+    const {
+      line,
+      endLine,
+      column,
+      endColumn,
+      source: { path, sourceReference },
+    } = args;
+    let scriptId: string;
+    if (sourceReference) {
+      scriptId = String(sourceReference);
+    } else if (path) {
+      for (const [id, source] of this.#sources) {
+        if (source.path === path) {
+          scriptId = id;
+          break;
+        }
+      }
+    }
+    if (!scriptId) {
+      this.#nack(response, new Error("Either source.path or source.sourceReference must be specified"));
+      return;
+    }
+    await this.#send(
+      response,
+      "Debugger.getBreakpointLocations",
+      {
+        start: {
+          scriptId,
+          lineNumber: line,
+          columnNumber: column,
+        },
+        end: {
+          scriptId,
+          lineNumber: endLine ?? line + 1,
+          columnNumber: endColumn,
+        },
       },
-      end: {
-        scriptId,
-        lineNumber: endLine ?? line + 1,
-        columnNumber: endColumn,
+      ({ locations }) => {
+        return {
+          breakpoints: locations.map(({ lineNumber, columnNumber }) => ({
+            line: lineNumber,
+            //column: columnNumber,
+          })),
+        };
       },
-    }, ({ locations }) => ({
-      breakpoints: locations.map(({ lineNumber, columnNumber }) => ({
-        line: lineNumber,
-        column: columnNumber,
-      })),
-    }));
+    );
   }
 
-  protected setInstructionBreakpointsRequest(response: DAP.SetInstructionBreakpointsResponse, args: DAP.SetInstructionBreakpointsArguments, request?: DAP.Request): void {
+  protected setInstructionBreakpointsRequest(
+    response: DAP.SetInstructionBreakpointsResponse,
+    args: DAP.SetInstructionBreakpointsArguments,
+    request?: DAP.Request,
+  ): void {
     this.#todo(response, "setInstructionBreakpointsRequest");
   }
-  
+
   protected customRequest(command: string, response: DAP.Response, args: any, request?: DAP.Request): void {
     super.customRequest(command, response, args, request);
   }
@@ -688,11 +915,13 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
 }
 
 function hashCode(string: string): number {
-  let hash = 0, i, chr;
+  let hash = 0,
+    i,
+    chr;
   if (this.length === 0) return hash;
   for (i = 0; i < this.length; i++) {
     chr = this.charCodeAt(i);
-    hash = ((hash << 5) - hash) + chr;
+    hash = (hash << 5) - hash + chr;
     hash |= 0;
   }
   return hash;
@@ -702,15 +931,13 @@ interface Context {
   getReferenceId(objectId: string): number;
   getObjectId(referenceId: number): string;
   getStackFrameId(callFrameId: string): number;
+  getCallFrameId(stackFrameId: number): string;
   getSource(scriptId: string): DAP.Source | undefined;
   getModuleId(scriptId: string): number | undefined;
   getProperties(objectId: string): Promise<JSC.Runtime.PropertyDescriptor[]>;
 }
 
-function formatStackFrame(
-  ctx: Context,
-  callFrame: JSC.Debugger.CallFrame,
-): DAP.StackFrame {
+function formatStackFrame(ctx: Context, callFrame: JSC.Debugger.CallFrame): DAP.StackFrame {
   const { callFrameId, functionName, location } = callFrame;
   const { scriptId, lineNumber, columnNumber = 0 } = location;
   return {
@@ -723,10 +950,7 @@ function formatStackFrame(
   };
 }
 
-function formatScope(
-  ctx: Context,
-  scope: JSC.Debugger.Scope,
-): DAP.Scope[] {
+function formatScope(ctx: Context, scope: JSC.Debugger.Scope): DAP.Scope[] {
   const { name, type, location, object, empty } = scope;
   if (empty) {
     return [];
@@ -734,15 +958,17 @@ function formatScope(
   const presentationHint = formatScopeHint(type);
   const title = presentationHint.charAt(0).toUpperCase() + presentationHint.slice(1);
   const displayName = name ? `${title}: ${name}` : title;
-  return [{
-    name: displayName,
-    presentationHint,
-    expensive: presentationHint === "globals",
-    variablesReference: object ? ctx.getReferenceId(object.objectId) : 0,
-    line: location?.lineNumber,
-    column: location?.columnNumber,
-    source: location && ctx.getSource(location.scriptId),
-  }];
+  return [
+    {
+      name: displayName,
+      presentationHint,
+      expensive: presentationHint === "globals",
+      variablesReference: object ? ctx.getReferenceId(object.objectId) : 0,
+      line: location?.lineNumber,
+      column: location?.columnNumber,
+      source: location && ctx.getSource(location.scriptId),
+    },
+  ];
 }
 
 function formatScopeHint(type: JSC.Debugger.Scope["type"]): "arguments" | "locals" | "globals" | "" {
@@ -762,18 +988,12 @@ function formatScopeHint(type: JSC.Debugger.Scope["type"]): "arguments" | "local
   }
 }
 
-async function formatObject(
-  ctx: Context,
-  objectId: JSC.Runtime.RemoteObjectId,
-): Promise<DAP.Variable[]> {
+async function formatObject(ctx: Context, objectId: JSC.Runtime.RemoteObjectId): Promise<DAP.Variable[]> {
   const properties = await ctx.getProperties(objectId);
-  return properties.flatMap((property) => formatProperty(ctx, property));
+  return properties.flatMap(property => formatProperty(ctx, property));
 }
 
-function formatProperty(
-  ctx: Context,
-  propertyDescriptor: JSC.Runtime.PropertyDescriptor,
-): DAP.Variable[] {
+function formatProperty(ctx: Context, propertyDescriptor: JSC.Runtime.PropertyDescriptor): DAP.Variable[] {
   const { name, value, get, set, symbol } = propertyDescriptor;
   const variables: DAP.Variable[] = [];
   if (value) {
@@ -782,11 +1002,7 @@ function formatProperty(
   return variables;
 }
 
-function formatPropertyValue(
-  ctx: Context,
-  name: string,
-  remoteObject: JSC.Runtime.RemoteObject,
-): DAP.Variable {
+function formatPropertyValue(ctx: Context, name: string, remoteObject: JSC.Runtime.RemoteObject): DAP.Variable {
   const { type, subtype, value, description, objectId } = remoteObject;
   return {
     name,
@@ -797,9 +1013,7 @@ function formatPropertyValue(
   };
 }
 
-function formatPropertyHint(
-  propertyDescriptor: JSC.Runtime.PropertyDescriptor,
-): DAP.VariablePresentationHint {
+function formatPropertyHint(propertyDescriptor: JSC.Runtime.PropertyDescriptor): DAP.VariablePresentationHint {
   const { value, get, set, configurable, enumerable, writable } = propertyDescriptor;
   const hasGetter = get?.type !== "undefined";
   const hasSetter = set?.type !== "undefined";
@@ -817,9 +1031,7 @@ function formatPropertyHint(
   return hint;
 }
 
-function formatPropertyKind(
-  remoteObject: JSC.Runtime.RemoteObject,
-): DAP.VariablePresentationHint["kind"] {
+function formatPropertyKind(remoteObject: JSC.Runtime.RemoteObject): DAP.VariablePresentationHint["kind"] {
   const { type, subtype, className } = remoteObject;
   if (type === "function") {
     return "method";

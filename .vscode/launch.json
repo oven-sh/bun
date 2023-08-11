@@ -133,12 +133,12 @@
       "type": "lldb",
       "request": "launch",
       "name": "bun run [file]",
-      "program": "bun-debug",
+      "program": "/Users/ashcon/Desktop/code/bun/packages/debug-bun-darwin-aarch64/bun-debug",
       "args": ["run", "${file}"],
       "cwd": "${fileDirname}",
       "env": {
         "FORCE_COLOR": "1",
-        "BUN_DEBUG_QUIET_LOGS": "1"
+        "NODE_ENV": "development",
       },
       "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"

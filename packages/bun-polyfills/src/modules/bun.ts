@@ -34,6 +34,12 @@ export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satis
 export const version = '0.7.4' satisfies typeof Bun.version;
 export const revision = '115704b27b85922b32214981b28dfd243e4a7740' satisfies typeof Bun.revision;
 
+export const gc = (globalThis.gc ? (() => (globalThis.gc!(), process.memoryUsage().heapUsed)) : (() => {
+    const err = new Error('[bun-polyfills] Garbage collection polyfills are only available when Node.js is ran with the --expose-gc flag.');
+    Error.captureStackTrace(err, gc);
+    throw err;
+})) satisfies typeof Bun.gc;
+
 //getter(bun, 'cwd', proc.cwd); //! Can't named export a getter
 export const origin = '' satisfies typeof Bun.origin;
 // @ts-expect-error ---

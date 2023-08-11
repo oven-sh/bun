@@ -12,7 +12,6 @@ globalThis.Bun = bun as typeof bun & {
     deepMatch: typeof import('bun').deepMatch;
     build: typeof import('bun').build;
     mmap: typeof import('bun').mmap;
-    gc: typeof import('bun').gc;
     connect: typeof import('bun').connect;
     listen: typeof import('bun').listen;
     Transpiler: typeof import('bun').Transpiler;

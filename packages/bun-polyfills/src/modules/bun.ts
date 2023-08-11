@@ -30,8 +30,10 @@ import openEditor from 'open-editor';
 
 export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satisfies typeof Bun.main;
 
-export const version = '0.7.1' satisfies typeof Bun.version; // TODO: This can probably be fetched from somewhere in the repo
-export const revision = '0'.repeat(39) + '1' satisfies typeof Bun.revision;
+//? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
+export const version = '0.7.4' satisfies typeof Bun.version;
+export const revision = '115704b27b85922b32214981b28dfd243e4a7740' satisfies typeof Bun.revision;
+
 //getter(bun, 'cwd', proc.cwd); //! Can't named export a getter
 export const origin = '' satisfies typeof Bun.origin;
 // @ts-expect-error ---

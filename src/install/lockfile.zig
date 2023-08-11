@@ -137,7 +137,7 @@ pub const Scripts = struct {
     pub fn run(this: *Scripts, allocator: Allocator, env: *DotEnv.Loader, silent: bool, comptime hook: []const u8) !void {
         for (@field(this, hook).items) |entry| {
             if (comptime Environment.allow_assert) std.debug.assert(Fs.FileSystem.instance_loaded);
-            _ = try RunCommand.runPackageScript(allocator, entry.script, hook, entry.cwd, env, &.{}, silent, null);
+            _ = try RunCommand.runPackageScript(allocator, entry.script, hook, entry.cwd, env, &.{}, silent);
         }
     }
 

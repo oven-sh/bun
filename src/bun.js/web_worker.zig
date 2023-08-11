@@ -22,7 +22,7 @@ pub const WebWorker = struct {
     cpp_worker: *anyopaque,
     mini: bool = false,
     user_poll_ref: JSC.PollRef = .{},
-    eventloop_poll_ref: JSC.PollRef = .{},
+    worker_loop_poll_ref: JSC.PollRef = .{},
 
     extern fn WebWorker__dispatchExit(?*JSC.JSGlobalObject, *anyopaque, i32) void;
     extern fn WebWorker__dispatchOnline(this: *anyopaque, *JSC.JSGlobalObject) void;
@@ -106,7 +106,7 @@ pub const WebWorker = struct {
             },
         };
 
-        worker.eventloop_poll_ref.refConcurrently(parent);
+        worker.worker_loop_poll_ref.refConcurrently(parent);
         if (!default_unref) {
             worker.user_poll_ref.refConcurrently(parent);
         }
@@ -177,9 +177,9 @@ pub const WebWorker = struct {
     fn deinit(this: *WebWorker) void {
         log("deinit WebWorker id={d}", .{this.execution_context_id});
         this.user_poll_ref.unrefConcurrently(this.parent);
-        this.eventloop_poll_ref.unrefConcurrently(this.parent);
+        this.worker_loop_poll_ref.unrefConcurrently(this.parent);
         bun.default_allocator.free(this.specifier);
-        // bun.default_allocator.destroy(this);
+        bun.default_allocator.destroy(this);
     }
 
     fn flushLogs(this: *WebWorker) void {
@@ -278,7 +278,6 @@ pub const WebWorker = struct {
 
         while (true) {
             while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
-                this.eventloop_poll_ref.refConcurrently(this.parent);
                 vm.tick();
                 // When the worker is done, the VM is cleared, but we don't free
                 // the entire worker object, because this loop is still active and UAF will happen.
@@ -296,9 +295,9 @@ pub const WebWorker = struct {
             }
 
             this.flushLogs();
-            this.eventloop_poll_ref.unrefConcurrently(this.parent);
+            this.worker_loop_poll_ref.unrefConcurrently(this.parent);
             vm.eventLoop().tickPossiblyForever();
-            this.parent.eventLoop().wakeup();
+            this.worker_loop_poll_ref.refConcurrently(this.parent);
         }
     }
 

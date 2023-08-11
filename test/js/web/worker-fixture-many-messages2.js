@@ -1,4 +1,4 @@
-addEventListener("message", ({ data }) => {
+onmessage = ({ data }) => {
   // console.log("worker", data);
 
   if (data === "initial message") {
@@ -8,4 +8,4 @@ addEventListener("message", ({ data }) => {
   } else {
     postMessage({ i: data.i + 1 });
   }
-});
+};

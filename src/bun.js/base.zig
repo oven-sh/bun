@@ -3285,6 +3285,15 @@ pub const PollRef = struct {
         this.status = .inactive;
         vm.uws_event_loop.?.unref();
     }
+
+    /// From another thread, Prevent a poll from keeping the process alive.
+    pub fn unrefConcurrently(this: *PollRef, vm: *JSC.VirtualMachine) void {
+        if (this.status != .active)
+            return;
+        this.status = .inactive;
+        vm.uws_event_loop.?.unrefConcurrently();
+    }
+
     /// Prevent a poll from keeping the process alive on the next tick.
     pub fn unrefOnNextTick(this: *PollRef, vm: *JSC.VirtualMachine) void {
         if (this.status != .active)
@@ -3293,12 +3302,28 @@ pub const PollRef = struct {
         vm.pending_unref_counter +|= 1;
     }
 
+    /// From another thread, prevent a poll from keeping the process alive on the next tick.
+    pub fn unrefOnNextTickConcurrently(this: *PollRef, vm: *JSC.VirtualMachine) void {
+        if (this.status != .active)
+            return;
+        this.status = .inactive;
+        _ = @atomicRmw(@TypeOf(vm.pending_unref_counter), &vm.pending_unref_counter, .Add, 1, .Monotonic);
+    }
+
     /// Allow a poll to keep the process alive.
     pub fn ref(this: *PollRef, vm: *JSC.VirtualMachine) void {
         if (this.status != .inactive)
             return;
         this.status = .active;
         vm.uws_event_loop.?.ref();
+    }
+
+    /// Allow a poll to keep the process alive.
+    pub fn refConcurrently(this: *PollRef, vm: *JSC.VirtualMachine) void {
+        if (this.status != .inactive)
+            return;
+        this.status = .active;
+        vm.uws_event_loop.?.refConcurrently();
     }
 };
 

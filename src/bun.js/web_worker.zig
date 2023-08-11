@@ -22,9 +22,8 @@ pub const WebWorker = struct {
     cpp_worker: *anyopaque,
     allowed_to_exit: bool = false,
     mini: bool = false,
-    parent_poll_ref: JSC.PollRef = .{},
-    initial_poll_ref: JSC.PollRef = .{},
-    did_send_initial_task: bool = false,
+    user_poll_ref: JSC.PollRef = .{},
+    eventloop_poll_ref: JSC.PollRef = .{},
 
     extern fn WebWorker__dispatchExit(?*JSC.JSGlobalObject, *anyopaque, i32) void;
     extern fn WebWorker__dispatchOnline(this: *anyopaque, *JSC.JSGlobalObject) void;
@@ -43,9 +42,6 @@ pub const WebWorker = struct {
             .{worker},
         ) catch {
             worker.deinit();
-            worker.parent_poll_ref.unref(worker.parent);
-            worker.initial_poll_ref.unref(worker.parent);
-            bun.default_allocator.destroy(worker);
             return false;
         };
         thread.detach();
@@ -80,6 +76,7 @@ pub const WebWorker = struct {
         default_unref: bool,
     ) callconv(.C) ?*WebWorker {
         JSC.markBinding(@src());
+        log("init WebWorker id={d}", .{this_context_id});
         var spec_slice = specifier_str.toUTF8(bun.default_allocator);
         defer spec_slice.deinit();
         var prev_log = parent.bundler.log;
@@ -117,31 +114,14 @@ pub const WebWorker = struct {
             },
         };
 
-        worker.initial_poll_ref.ref(parent);
+        worker.eventloop_poll_ref.ref(parent);
 
         if (!default_unref) {
             worker.allowed_to_exit = false;
-            worker.parent_poll_ref.ref(parent);
+            worker.user_poll_ref.ref(parent);
         }
 
         return worker;
-    }
-
-    pub fn queueInitialTask(this: *WebWorker) void {
-        if (this.did_send_initial_task) return;
-        this.did_send_initial_task = true;
-
-        const Unref = struct {
-            pub fn unref(worker: *WebWorker) void {
-                worker.initial_poll_ref.unref(worker.parent);
-            }
-        };
-
-        const AnyTask = JSC.AnyTask.New(WebWorker, Unref.unref);
-        var any_task = bun.default_allocator.create(JSC.AnyTask) catch @panic("OOM");
-        any_task.* = AnyTask.init(this);
-        var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch @panic("OOM");
-        this.parent.eventLoop().enqueueTaskConcurrent(concurrent_task.from(any_task, .auto_deinit));
     }
 
     pub fn startWithErrorHandling(
@@ -162,7 +142,6 @@ pub const WebWorker = struct {
         }
 
         if (this.requested_terminate) {
-            this.queueInitialTask();
             this.deinit();
             return;
         }
@@ -206,7 +185,11 @@ pub const WebWorker = struct {
     }
 
     fn deinit(this: *WebWorker) void {
+        log("deinit WebWorker id={d}", .{this.execution_context_id});
+        this.user_poll_ref.unref(this.parent);
+        this.eventloop_poll_ref.unref(this.parent);
         bun.default_allocator.free(this.specifier);
+        // bun.default_allocator.destroy(this);
     }
 
     fn flushLogs(this: *WebWorker) void {
@@ -269,16 +252,16 @@ pub const WebWorker = struct {
         var promise = vm.loadEntryPointForWebWorker(this.specifier) catch {
             this.flushLogs();
             this.onTerminate();
+            this.deinit();
             return;
         };
-
-        this.queueInitialTask();
 
         if (promise.status(vm.global.vm()) == .Rejected) {
             vm.onUnhandledError(vm.global, promise.result(vm.global.vm()));
 
             vm.exit_handler.exit_code = 1;
             this.onTerminate();
+            this.deinit();
 
             return;
         }
@@ -303,30 +286,29 @@ pub const WebWorker = struct {
         // always doing a first tick so we call CppTask without delay after dispatchOnline
         vm.tick();
 
-        {
-            while (true) {
-                while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
-                    vm.tick();
-
-                    vm.eventLoop().autoTickActive();
+        while (true) {
+            while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
+                vm.tick();
+                // When the worker is done, the VM is cleared, but we don't free
+                // the entire worker object, because this loop is still active and UAF will happen.
+                if (this.vm == null) {
+                    this.deinit();
+                    return;
                 }
 
-                if (!this.allowed_to_exit) {
-                    this.flushLogs();
-                    vm.eventLoop().tickPossiblyForever();
-                    continue;
-                }
+                vm.eventLoop().autoTickActive();
+            }
 
-                vm.onBeforeExit();
-
-                if (!this.allowed_to_exit)
-                    continue;
-
-                break;
+            if (this.vm == null) {
+                this.deinit();
+                return;
             }
 
             this.flushLogs();
-            this.onTerminate();
+            this.eventloop_poll_ref.unrefConcurrently(this.parent);
+            vm.eventLoop().tickPossiblyForever();
+            this.parent.eventLoop().wakeup();
+            this.eventloop_poll_ref.refConcurrently(this.parent);
         }
     }
 
@@ -346,15 +328,15 @@ pub const WebWorker = struct {
 
     pub fn setRef(this: *WebWorker, value: bool) callconv(.C) void {
         if (this.requested_terminate and !value) {
-            this.parent_poll_ref.unref(this.parent);
+            this.user_poll_ref.unref(this.parent);
             return;
         }
 
         this.allowed_to_exit = !value;
         if (this.allowed_to_exit) {
-            this.parent_poll_ref.unref(this.parent);
+            this.user_poll_ref.unref(this.parent);
         } else {
-            this.parent_poll_ref.ref(this.parent);
+            this.user_poll_ref.ref(this.parent);
         }
 
         if (this.vm) |vm| {
@@ -364,7 +346,6 @@ pub const WebWorker = struct {
 
     fn onTerminate(this: *WebWorker) void {
         log("onTerminate", .{});
-
         this.reallyExit();
     }
 
@@ -397,8 +378,6 @@ pub const WebWorker = struct {
             this.arena.deinit();
         }
         WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
-
-        this.deinit();
     }
 
     fn requestTerminate(this: *WebWorker) bool {

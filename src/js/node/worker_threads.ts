@@ -284,9 +284,8 @@ class Worker extends EventEmitter {
     this.emit("exit", e.code);
   }
 
-  #onError(event: ErrorEvent) {
-    // TODO: is this right?
-    this.emit("error", event.error);
+  #onError(error: ErrorEvent) {
+    this.emit("error", error);
   }
 
   #onMessage(event: MessageEvent) {

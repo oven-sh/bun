@@ -128,7 +128,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::const
     EnsureStillAliveScope argument1 = callFrame->argument(1);
 
     auto options = WorkerOptions {};
-    options.bun.unref = false;
+    options.bun.unref = true;
 
     if (JSObject* optionsObject = JSC::jsDynamicCast<JSC::JSObject*>(argument1.value())) {
         if (auto nameValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "name"_s))) {

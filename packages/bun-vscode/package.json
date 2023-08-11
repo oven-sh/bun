@@ -10,8 +10,8 @@
     "typescript": "^5.0.0"
   },
   "activationEvents": [
-    "onDebugResolve:mock",
-    "onDebugDynamicConfigurations:mock",
+    "onDebugResolve:bun",
+    "onDebugDynamicConfigurations:bun",
     "onCommand:extension.bun.getProgramName"
   ],
   "browser": "./dist/web-extension.js",
@@ -48,14 +48,14 @@
       {
         "command": "extension.bun.debugEditorContents",
         "title": "Debug File",
-        "category": "Mock Debug",
+        "category": "Bun Debug",
         "enablement": "!inDebugMode",
         "icon": "$(debug-alt)"
       },
       {
         "command": "extension.bun.runEditorContents",
         "title": "Run File",
-        "category": "Mock Debug",
+        "category": "Bun Debug",
         "enablement": "!inDebugMode",
         "icon": "$(play)"
       }
@@ -207,5 +207,8 @@
   },
   "workspaceTrust": {
     "request": "never"
+  },
+  "dependencies": {
+    "ws": "^8.13.0"
   }
 }

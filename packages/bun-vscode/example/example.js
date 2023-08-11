@@ -2,22 +2,24 @@
 const express = import.meta.require("express");
 const app = express();
 
-app.get('/', (req, res) => {
-  new Promise((resolve, reject) => {
-    setTimeout(() => resolve(), 1);
-  }).then(() => {
-    debugger;
-  });
-  res.send('hello world');
-}).listen(3000);
+app
+  .get("/", (req, res) => {
+    new Promise((resolve, reject) => {
+      setTimeout(() => resolve(), 1);
+    }).then(() => {
+      debugger;
+    });
+    res.send("hello world");
+  })
+  .listen(3000);
 
 const va = 1;
 let vb = 2;
 var vc = 3;
 
 setInterval(() => {
-  
-}, 3000);
+  debugger;
+}, 10);
 
 function fa() {
   fb();

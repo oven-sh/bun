@@ -109,7 +109,7 @@ const nodejsCapabilities: DAP.Capabilities = {
   exceptionBreakpointFilters: [
     {
       filter: "all",
-      label: 'Caught Exceptions',
+      label: "Caught Exceptions",
       default: false,
       supportsCondition: true,
       description: "Breaks on all throw errors, even if they're caught later.",
@@ -117,10 +117,10 @@ const nodejsCapabilities: DAP.Capabilities = {
     },
     {
       filter: "uncaught",
-      label: 'Uncaught Exceptions',
+      label: "Uncaught Exceptions",
       default: false,
       supportsCondition: true,
-      description: 'Breaks only on errors or promise rejections that are not handled.',
+      description: "Breaks only on errors or promise rejections that are not handled.",
       conditionDescription: `error.name == "MyError"`,
     },
   ],
@@ -144,7 +144,7 @@ const nodejsCapabilities: DAP.Capabilities = {
   supportsTerminateThreadsRequest: false,
   supportsSetExpression: true,
   supportsTerminateRequest: false,
-  completionTriggerCharacters: ['.', '[', '"', "'"],
+  completionTriggerCharacters: [".", "[", '"', "'"],
   supportsBreakpointLocationsRequest: true,
   supportsClipboardContext: true,
   supportsExceptionFilterOptions: true,
@@ -403,7 +403,7 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
   async #launch(path: string): Promise<void> {
     this.#process?.kill();
     // TODO: Change to "bun" before merging, or make it configurable
-    const process = spawn("/Users/ashcon/Desktop/code/bun/packages/debug-bun-darwin-aarch64/bun-debug", ["run", path], {
+    const process = spawn("bun-debug", ["run", path], {
       cwd: this.#session.workspaceFolder?.uri?.fsPath,
       stdio: ["ignore", "pipe", "pipe"],
       env: {
@@ -469,7 +469,7 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     args: LaunchRequestArguments,
     request?: DAP.Request,
   ): Promise<void> {
-    await new Promise<void>((resolve) => {
+    await new Promise<void>(resolve => {
       if (this.#ready.signal.aborted) {
         resolve();
         return;
@@ -918,9 +918,9 @@ function hashCode(string: string): number {
   let hash = 0,
     i,
     chr;
-  if (this.length === 0) return hash;
-  for (i = 0; i < this.length; i++) {
-    chr = this.charCodeAt(i);
+  if (string.length === 0) return hash;
+  for (i = 0; i < string.length; i++) {
+    chr = string.charCodeAt(i);
     hash = (hash << 5) - hash + chr;
     hash |= 0;
   }

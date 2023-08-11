@@ -71,6 +71,14 @@ export function getStdioWriteStream(fd_, getWindowSize) {
         return fd_;
       }
 
+      get writable() {
+        return this.#writable;
+      }
+
+      get readable() {
+        return this.#readable;
+      }
+
       constructor(fd) {
         super({ readable: true, writable: true });
         this.#fdPath = `/dev/fd/${fd}`;
@@ -120,9 +128,9 @@ export function getStdioWriteStream(fd_, getWindowSize) {
       _write(chunk, encoding, callback) {
         if (!this.#writeStream) {
           var { createWriteStream } = require("node:fs");
-          var stream = (this.#writeStream = createWriteStream(this.#fdPath));
+          this.#writeStream = createWriteStream(this.#fdPath);
 
-          stream.on("finish", () => {
+          this.#writeStream.on("finish", () => {
             if (this.#onFinish) {
               const cb = this.#onFinish;
               this.#onFinish = null;
@@ -130,7 +138,7 @@ export function getStdioWriteStream(fd_, getWindowSize) {
             }
           });
 
-          stream.on("drain", () => {
+          this.#writeStream.on("drain", () => {
             if (this.#onDrain) {
               const cb = this.#onDrain;
               this.#onDrain = null;
@@ -138,15 +146,15 @@ export function getStdioWriteStream(fd_, getWindowSize) {
             }
           });
 
-          eos(stream, err => {
+          eos(this.#writeStream, err => {
             this.#writable = false;
             if (err) {
-              destroy(stream, err);
+              destroy(this.#writeStream, err);
             }
             this.#onFinished(err);
           });
         }
-        if (stream.write(chunk, encoding)) {
+        if (this.#writeStream.write(chunk, encoding)) {
           callback();
         } else {
           this.#onDrain = callback;
@@ -294,6 +302,16 @@ export function getStdioWriteStream(fd_, getWindowSize) {
     get _readableState() {
       this.#ensureInnerStream();
       return this.#innerStream._readableState;
+    }
+
+    get writable() {
+      this.#ensureInnerStream();
+      return this.#innerStream.writable;
+    }
+
+    get readable() {
+      this.#ensureInnerStream();
+      return this.#innerStream.readable;
     }
 
     pipe(destination) {

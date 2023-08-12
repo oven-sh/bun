@@ -468,7 +468,6 @@ pub const RunCommand = struct {
         force_using_bun: bool,
     ) !*DirInfo {
         var args = ctx.args;
-        args.generate_node_module_bundle = false;
         this_bundler.* = try bundler.Bundler.init(ctx.allocator, ctx.log, args, env);
         this_bundler.options.env.behavior = Api.DotEnvBehavior.load_all;
         this_bundler.env.quiet = true;

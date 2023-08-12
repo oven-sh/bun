@@ -35,7 +35,6 @@ pub fn configureTransformOptionsForBunVM(allocator: std.mem.Allocator, _args: Ap
     // args.serve = false;
     args.write = false;
     args.resolve = Api.ResolveMode.lazy;
-    args.generate_node_module_bundle = false;
     return try configureTransformOptionsForBun(allocator, args);
 }
 

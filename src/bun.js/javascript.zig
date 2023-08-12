@@ -496,6 +496,8 @@ pub const VirtualMachine = struct {
     gc_controller: JSC.GarbageCollectionController = .{},
     worker: ?*JSC.WebWorker = null,
 
+    debugger: ?Debugger = null,
+
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
     pub const OnException = fn (*ZigException) void;
@@ -705,6 +707,94 @@ pub const VirtualMachine = struct {
             hook = next;
         }
     }
+
+    pub const Debugger = struct {
+        path_or_port: []const u8 = "",
+        script_execution_context_id: u32 = 0,
+        poll_ref: JSC.PollRef = .{},
+        const debug = Output.scoped(.DEBUGGER, false);
+
+        extern "C" fn Bun__createJSDebugger(*JSC.JSGlobalObject) u32;
+        extern "C" fn Bun__waitForDebugger(u32) void;
+        extern "C" fn Bun__startJSDebuggerThread(*JSC.JSGlobalObject, u32, *bun.String) void;
+        var has_started_debugger_thread: bool = false;
+        var futex_atomic: std.atomic.Atomic(u32) = undefined;
+
+        pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
+            debug("create", .{});
+            this.debugger.?.script_execution_context_id = Bun__createJSDebugger(globalObject);
+            if (!has_started_debugger_thread) {
+                has_started_debugger_thread = true;
+                futex_atomic = std.atomic.Atomic(u32).init(0);
+                var thread = try std.Thread.spawn(.{}, startJSDebuggerThread, .{this});
+                thread.detach();
+            }
+            this.eventLoop().ensureWaker();
+
+            this.debugger.?.poll_ref.ref(this);
+
+            debug("spin", .{});
+            while (futex_atomic.load(.Monotonic) > 0) std.Thread.Futex.wait(&futex_atomic, 1);
+            if (comptime Environment.allow_assert)
+                debug("waitForDebugger: {}", .{Output.ElapsedFormatter{
+                    .colors = Output.enable_ansi_colors_stderr,
+                    .duration_ns = @truncate(@as(u128, @intCast(std.time.nanoTimestamp() - bun.CLI.start_time))),
+                }});
+
+            Bun__waitForDebugger(this.debugger.?.script_execution_context_id);
+        }
+
+        pub fn startJSDebuggerThread(other_vm: *VirtualMachine) void {
+            var arena = bun.MimallocArena.init() catch unreachable;
+            Output.Source.configureNamedThread("Debugger");
+            debug("startJSDebuggerThread", .{});
+
+            var vm = JSC.VirtualMachine.init(.{
+                .allocator = arena.allocator(),
+                .args = std.mem.zeroes(Api.TransformOptions),
+                .store_fd = false,
+            }) catch @panic("Failed to create Debugger VM");
+            vm.allocator = arena.allocator();
+            vm.arena = &arena;
+
+            vm.bundler.configureDefines() catch @panic("Failed to configure defines");
+            vm.is_main_thread = false;
+            vm.eventLoop().ensureWaker();
+
+            vm.global.vm().holdAPILock(other_vm, @ptrCast(&start));
+        }
+
+        fn start(other_vm: *VirtualMachine) void {
+            var this = VirtualMachine.get();
+            var str = bun.String.create(other_vm.debugger.?.path_or_port);
+            Bun__startJSDebuggerThread(this.global, other_vm.debugger.?.script_execution_context_id, &str);
+            this.global.handleRejectedPromises();
+
+            if (this.log.msgs.items.len > 0) {
+                if (Output.enable_ansi_colors) {
+                    this.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                } else {
+                    this.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                }
+                Output.prettyErrorln("\n", .{});
+                Output.flush();
+            }
+
+            futex_atomic.store(0, .Monotonic);
+            std.Thread.Futex.wake(&futex_atomic, 1);
+            debug("wake", .{});
+            this.eventLoop().tick();
+
+            while (true) {
+                while (this.eventLoop().tasks.count > 0 or this.active_tasks > 0 or this.uws_event_loop.?.active > 0) {
+                    this.tick();
+                    this.eventLoop().autoTickActive();
+                }
+
+                this.eventLoop().tickPossiblyForever();
+            }
+        }
+    };
 
     pub inline fn enqueueTask(this: *VirtualMachine, task: Task) void {
         this.eventLoop().enqueueTask(task);
@@ -917,6 +1007,8 @@ pub const VirtualMachine = struct {
             source_code_printer.?.ctx.append_null_byte = false;
         }
 
+        vm.configureDebugger(opts.debugger);
+
         return vm;
     }
 
@@ -928,6 +1020,7 @@ pub const VirtualMachine = struct {
         store_fd: bool = false,
         smol: bool = false,
         graph: ?*bun.StandaloneModuleGraph = null,
+        debugger: bun.CLI.Command.Debugger = .{ .unspecified = {} },
     };
 
     pub fn init(opts: Options) !*VirtualMachine {
@@ -1023,7 +1116,30 @@ pub const VirtualMachine = struct {
             source_code_printer.?.ctx.append_null_byte = false;
         }
 
+        vm.configureDebugger(opts.debugger);
+
         return vm;
+    }
+
+    fn configureDebugger(this: *VirtualMachine, debugger: bun.CLI.Command.Debugger) void {
+        switch (debugger) {
+            .unspecified => {},
+            .enable => {
+                this.debugger = Debugger{};
+            },
+            .path_or_port => {
+                this.debugger = Debugger{
+                    .path_or_port = debugger.path_or_port,
+                };
+            },
+        }
+
+        if (debugger != .unspecified) {
+            this.bundler.options.minify_identifiers = false;
+            this.bundler.options.minify_syntax = false;
+            this.bundler.options.minify_whitespace = false;
+            this.bundler.options.debugger = true;
+        }
     }
 
     pub fn initWorker(
@@ -1125,11 +1241,6 @@ pub const VirtualMachine = struct {
 
         return vm;
     }
-
-    // dynamic import
-    // pub fn import(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableZigString {
-
-    // }
 
     pub threadlocal var source_code_printer: ?*js_printer.BufferPrinter = null;
 
@@ -1748,6 +1859,10 @@ pub const VirtualMachine = struct {
         this.eventLoop().ensureWaker();
 
         var promise: *JSInternalPromise = undefined;
+
+        if (this.debugger != null) {
+            try Debugger.create(this, this.global);
+        }
 
         if (!this.bundler.options.disable_transpilation) {
             {

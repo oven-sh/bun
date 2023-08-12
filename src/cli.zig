@@ -514,7 +514,7 @@ pub const Arguments = struct {
             ctx.runtime_options.smol = args.flag("--smol");
             if (args.option("--inspect")) |inspect_flag| {
                 ctx.runtime_options.debugger = if (inspect_flag.len == 0)
-                    Command.Debugger{ .enabled = {} }
+                    Command.Debugger{ .enable = {} }
                 else
                     Command.Debugger{
                         .path_or_port = inspect_flag,

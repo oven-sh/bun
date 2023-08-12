@@ -705,7 +705,7 @@ dev-build-obj-wasm:
 dev-wasm: dev-build-obj-wasm
 	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init', '_getTests']" \
 		-g2 -s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
-		$(BUN_DEPS_DIR)/libmimalloc.a.wasm  \
+		$(BUN_DEPS_DIR)/$(MIMALLOC_FILE).wasm  \
 		packages/debug-bun-freestanding-wasm32/bun-wasm.o --no-entry --allow-undefined  -s ASSERTIONS=0  -s ALLOW_MEMORY_GROWTH=1 -s WASM_BIGINT=1  \
 		-o packages/debug-bun-freestanding-wasm32/bun-wasm.wasm
 	cp packages/debug-bun-freestanding-wasm32/bun-wasm.wasm packages/bun-wasm/bun.wasm
@@ -715,7 +715,7 @@ build-obj-wasm:
 	$(ZIG) build bun-wasm -Doptimize=ReleaseFast -Dtarget=wasm32-freestanding
 	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init', '_getTests']" \
 		-s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
-		$(BUN_DEPS_DIR)/libmimalloc.a.wasm  \
+		$(BUN_DEPS_DIR)/$(MIMALLOC_FILE).wasm  \
 		packages/bun-freestanding-wasm32/bun-wasm.o $(OPTIMIZATION_LEVEL) --no-entry --allow-undefined  -s ASSERTIONS=0  -s ALLOW_MEMORY_GROWTH=1 -s WASM_BIGINT=1  \
 		-o packages/bun-freestanding-wasm32/bun-wasm.wasm
 	cp packages/bun-freestanding-wasm32/bun-wasm.wasm packages/bun-wasm/bun.wasm
@@ -725,18 +725,20 @@ build-obj-wasm-small:
 	$(ZIG) build bun-wasm -Doptimize=ReleaseFast -Dtarget=wasm32-freestanding
 	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init', '_getTests']" \
 		-Oz -s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
-		$(BUN_DEPS_DIR)/libmimalloc.a.wasm  \
+		$(BUN_DEPS_DIR)/$(MIMALLOC_FILE).wasm  \
 		packages/bun-freestanding-wasm32/bun-wasm.o -Oz --no-entry --allow-undefined  -s ASSERTIONS=0  -s ALLOW_MEMORY_GROWTH=1 -s WASM_BIGINT=1  \
 		-o packages/bun-freestanding-wasm32/bun-wasm.wasm
 	cp packages/bun-freestanding-wasm32/bun-wasm.wasm packages/bun-wasm/bun.wasm
 
 .PHONY: wasm
 wasm: api mimalloc-wasm build-obj-wasm-small
-	@rm -rf packages/bun-wasm/*.{d.ts,js,wasm,cjs,mjs,tsbuildinfo}
+	@rm -rf packages/bun-wasm/*.{d.ts,d.cts,d.mts,js,wasm,cjs,mjs,tsbuildinfo}
 	@cp packages/bun-freestanding-wasm32/bun-wasm.wasm packages/bun-wasm/bun.wasm
 	@cp src/api/schema.d.ts packages/bun-wasm/schema.d.ts
 	@cp src/api/schema.js packages/bun-wasm/schema.js
 	@cd packages/bun-wasm && $(NPM_CLIENT) run tsc -- -p .
+	@cp packages/bun-wasm/index.d.ts packages/bun-wasm/index.d.cts
+	@mv packages/bun-wasm/index.d.ts packages/bun-wasm/index.d.mts
 	@bun build --sourcemap=external --external=fs --outdir=packages/bun-wasm --target=browser --minify ./packages/bun-wasm/index.ts
 	@mv packages/bun-wasm/index.js packages/bun-wasm/index.mjs
 	@mv packages/bun-wasm/index.js.map packages/bun-wasm/index.mjs.map

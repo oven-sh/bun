@@ -270,7 +270,6 @@ class Worker extends EventEmitter {
     this.#worker.addEventListener(
       "close",
       event => {
-        console.log(event.code);
         resolve(event.code);
       },
       { once: true },

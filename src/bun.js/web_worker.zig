@@ -314,8 +314,10 @@ pub const WebWorker = struct {
             return;
         }
         log("[{d}] requestTerminate", .{this.execution_context_id});
+        this.setRef(false);
         this.requested_terminate = true;
         if (this.vm) |vm| {
+            vm.global.vm().notifyNeedTermination();
             vm.eventLoop().wakeup();
         }
     }
@@ -326,7 +328,6 @@ pub const WebWorker = struct {
     fn exitAndDeinit(this: *WebWorker) void {
         JSC.markBinding(@src());
         log("[{d}] exitAndDeinit", .{this.execution_context_id});
-        // this.requested_terminate = true;
         var cpp_worker = this.cpp_worker;
         var exit_code: i32 = 0;
         var globalObject: ?*JSC.JSGlobalObject = null;

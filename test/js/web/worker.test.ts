@@ -198,3 +198,12 @@ test("worker_threads with process.exit (delay) and terminate", async () => {
   const code2 = await worker2.terminate();
   expect(code2).toBe(2);
 });
+
+test("terminating forcefully exits the code", async () => {
+  const worker2 = new wt.Worker(new URL("worker-fixture-while-true.js", import.meta.url).href, {});
+  await new Promise<void>(done => {
+    worker2.on("message", () => done());
+  });
+  const code2 = await worker2.terminate();
+  expect(code2).toBe(0);
+});

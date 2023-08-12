@@ -1669,42 +1669,30 @@ function decodeTransformOptions(bb) {
         break;
 
       case 18:
-        result["generate_node_module_bundle"] = !!bb.readByte();
-        break;
-
-      case 19:
-        result["node_modules_bundle_path"] = bb.readString();
-        break;
-
-      case 20:
-        result["node_modules_bundle_path_server"] = bb.readString();
-        break;
-
-      case 21:
         result["framework"] = decodeFrameworkConfig(bb);
         break;
 
-      case 22:
+      case 19:
         result["router"] = decodeRouteConfig(bb);
         break;
 
-      case 23:
+      case 20:
         result["no_summary"] = !!bb.readByte();
         break;
 
-      case 24:
+      case 21:
         result["disable_hmr"] = !!bb.readByte();
         break;
 
-      case 25:
+      case 22:
         result["port"] = bb.readUint16();
         break;
 
-      case 26:
+      case 23:
         result["logLevel"] = MessageLevel[bb.readVarUint()];
         break;
 
-      case 27:
+      case 24:
         result["source_map"] = SourceMapMode[bb.readByte()];
         break;
 
@@ -1851,57 +1839,39 @@ function encodeTransformOptions(message, bb) {
     }
   }
 
-  var value = message["generate_node_module_bundle"];
-  if (value != null) {
-    bb.writeByte(18);
-    bb.writeByte(value);
-  }
-
-  var value = message["node_modules_bundle_path"];
-  if (value != null) {
-    bb.writeByte(19);
-    bb.writeString(value);
-  }
-
-  var value = message["node_modules_bundle_path_server"];
-  if (value != null) {
-    bb.writeByte(20);
-    bb.writeString(value);
-  }
-
   var value = message["framework"];
   if (value != null) {
-    bb.writeByte(21);
+    bb.writeByte(18);
     encodeFrameworkConfig(value, bb);
   }
 
   var value = message["router"];
   if (value != null) {
-    bb.writeByte(22);
+    bb.writeByte(19);
     encodeRouteConfig(value, bb);
   }
 
   var value = message["no_summary"];
   if (value != null) {
-    bb.writeByte(23);
+    bb.writeByte(20);
     bb.writeByte(value);
   }
 
   var value = message["disable_hmr"];
   if (value != null) {
-    bb.writeByte(24);
+    bb.writeByte(21);
     bb.writeByte(value);
   }
 
   var value = message["port"];
   if (value != null) {
-    bb.writeByte(25);
+    bb.writeByte(22);
     bb.writeUint16(value);
   }
 
   var value = message["logLevel"];
   if (value != null) {
-    bb.writeByte(26);
+    bb.writeByte(23);
     var encoded = MessageLevel[value];
     if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "MessageLevel"');
     bb.writeVarUint(encoded);
@@ -1909,7 +1879,7 @@ function encodeTransformOptions(message, bb) {
 
   var value = message["source_map"];
   if (value != null) {
-    bb.writeByte(27);
+    bb.writeByte(24);
     var encoded = SourceMapMode[value];
     if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "SourceMapMode"');
     bb.writeByte(encoded);

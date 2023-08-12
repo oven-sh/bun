@@ -182,19 +182,19 @@ test("worker_threads with process.exit", done => {
   });
 });
 
-test.skip("worker_threads with process.exit and terminate", async () => {
-  const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
+test("worker_threads terminate", async () => {
+  const worker = new wt.Worker(new URL("worker-fixture-hang.js", import.meta.url).href, {
     smol: true,
   });
   const code = await worker.terminate();
-  expect(code).toBe(2);
+  expect(code).toBe(0);
 });
 
-test.skip("worker_threads with process.exit (delay) and terminate", async () => {
+test("worker_threads with process.exit (delay) and terminate", async () => {
   const worker2 = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
     smol: true,
   });
-  await Bun.sleep(100);
+  await Bun.sleep(200);
   const code2 = await worker2.terminate();
   expect(code2).toBe(2);
 });

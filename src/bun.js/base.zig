@@ -2122,6 +2122,11 @@ pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) v
     // zig's memory allocator interface won't work here
     // mimalloc knows the size of things
     // but we don't
+    if (comptime Environment.allow_assert) {
+        std.debug.assert(mimalloc.mi_check_owned(bytes_) or
+            mimalloc.mi_heap_check_owned(JSC.VirtualMachine.get().arena.heap.?, bytes_));
+    }
+
     mimalloc.mi_free(bytes_);
 }
 

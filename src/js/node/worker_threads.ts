@@ -204,6 +204,9 @@ const unsupportedOptions = [
 class Worker extends EventEmitter {
   #worker: WebWorker;
   #performance;
+
+  // this is used by wt.Worker.terminate();
+  // either is the exit code if exited, a promise resolving to the exit code, or undefined if we havent sent .terminate() yet
   #onExitPromise: Promise<number> | number | undefined = undefined;
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
@@ -258,14 +261,16 @@ class Worker extends EventEmitter {
   }
 
   terminate() {
-    if (this.#onExitPromise) {
-      return this.#onExitPromise;
+    var onExitPromise = this.#onExitPromise;
+    if (onExitPromise) {
+      return $isPromise(onExitPromise) ? onExitPromise : Promise.resolve(onExitPromise);
     }
 
     const { resolve, promise } = Promise.withResolvers();
     this.#worker.addEventListener(
       "close",
       event => {
+        console.log(event.code);
         resolve(event.code);
       },
       { once: true },

@@ -66,7 +66,7 @@ namespace WebCore {
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(Worker);
 
-extern "C" void WebWorker__terminate(
+extern "C" void WebWorker__requestTerminate(
     void* worker);
 
 static Lock allWorkersLock;
@@ -210,12 +210,9 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
 
 void Worker::terminate()
 {
-    if (m_wasTerminated) {
-        return;
-    }
     // m_contextProxy.terminateWorkerGlobalScope();
     m_wasTerminated = true;
-    WebWorker__terminate(impl_);
+    WebWorker__requestTerminate(impl_);
 }
 
 // const char* Worker::activeDOMObjectName() const
@@ -259,9 +256,6 @@ bool Worker::hasPendingActivity() const
 
 void Worker::dispatchEvent(Event& event)
 {
-    if (m_wasTerminated)
-        return;
-
     EventTargetWithInlineData::dispatchEvent(event);
 }
 

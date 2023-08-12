@@ -12,4 +12,19 @@ declare module 'stream/web' {
 
 declare global {
     var performance: typeof import('perf_hooks').performance;
+
+    // TODO: These should be contributed to @types/node upstream
+    namespace NodeJS {
+        interface CallSite {
+            getScriptNameOrSourceURL(): string;
+            getEnclosingColumnNumber(): number;
+            getEnclosingLineNumber(): number;
+            getPosition(): number;
+            getPromiseIndex(): number;
+            getScriptHash(): string;
+            isAsync(): boolean;
+            isPromiseAll(): boolean;
+            toString(): string;
+        }
+    }
 }

@@ -1,6 +1,15 @@
 type PosixErrNo = MapKeysType<ReturnType<typeof getPosixSystemErrorMap>>;
 type Win32ErrNo = MapKeysType<ReturnType<typeof getWin32SystemErrorMap>>;
 
+export function getCallSites(sliceOff = 1) {
+    const originalPST = Error.prepareStackTrace;
+    Error.prepareStackTrace = (error, stack) => stack;
+    const { stack } = new Error();
+    if (stack?.constructor.name !== 'Array') throw new Error('Failed to acquire structured JS stack trace');
+    Error.prepareStackTrace = originalPST;
+    return (stack as unknown as NodeJS.CallSite[]).slice(sliceOff);
+}
+
 export function getPosixSystemErrorMap() {
     return new Map([
         [ -7, [ 'E2BIG', 'argument list too long' ] ],

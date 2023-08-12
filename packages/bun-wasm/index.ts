@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { ByteBuffer } from "peechy/bb";
 import {
   Loader as BunLoader,
@@ -12,20 +11,28 @@ import {
   type ScanResult,
   type TransformResponse,
 } from "./schema";
+
 export enum Loader {
   jsx = BunLoader.jsx,
   js = BunLoader.js,
   tsx = BunLoader.tsx,
   ts = BunLoader.ts,
 }
+export interface TestReference {
+  name: string,
+  byteOffset: number,
+  kind: 'test' | 'describe',
+}
+export type { ScanResult, TransformResponse };
+
 const testKindMap = {
   [TestKind.describe_fn]: "describe",
   [TestKind.test_fn]: "test",
 };
-const capturedErrors = [];
+const capturedErrors: string[] = [];
 let captureErrors = false;
-export type { ScanResult, TransformResponse };
-function normalizeLoader(file_name: string, loader?: Loader): BunLoader {
+
+function normalizeLoader(file_name: string, loader?: keyof typeof Loader): BunLoader {
   return (
     (loader
       ? {
@@ -46,11 +53,12 @@ function normalizeLoader(file_name: string, loader?: Loader): BunLoader {
 }
 
 interface WebAssemblyModule {
-  init(): number;
+  init(heapSize: number): number;
   transform(a: number): number;
   bun_malloc(a: number): number;
   bun_free(a: number): number;
   scan(a: number): number;
+  getTests(a: number): number;
 }
 
 const ptr_converter = new ArrayBuffer(16);
@@ -58,28 +66,28 @@ const ptr_float = new BigUint64Array(ptr_converter);
 const slice = new Uint32Array(ptr_converter);
 
 const Wasi = {
-  clock_time_get(clk_id, tp) {
+  clock_time_get(clk_id: unknown, tp: unknown) {
     return Date.now();
   },
   environ_sizes_get() {
     debugger;
     return 0;
   },
-  environ_get(__environ, environ_buf) {
+  environ_get(__environ: unknown, environ_buf: unknown) {
     debugger;
     return 0;
   },
 
-  fd_close(fd) {
+  fd_close(fd: number) {
     debugger;
     return 0;
   },
   proc_exit() {},
 
-  fd_seek(fd, offset_bigint, whence, newOffset) {
+  fd_seek(fd: number, offset_bigint: bigint, whence: unknown, newOffset: unknown) {
     debugger;
   },
-  fd_write(fd, iov, iovcnt, pnum) {
+  fd_write(fd: unknown, iov: unknown, iovcnt: unknown, pnum: unknown) {
     debugger;
   },
 };
@@ -89,16 +97,16 @@ var scratch2: Uint8Array;
 
 const env = {
   console_log(slice: number) {
+    // @ts-expect-error
     const text = Bun._wasmPtrLenToString(slice);
     if (captureErrors) {
       capturedErrors.push(text);
       return;
     }
-    //@ts-ignore
     console.log(text);
   },
   console_error(slice: number) {
-    //@ts-ignore
+    // @ts-expect-error
     const text = Bun._wasmPtrLenToString(slice);
     if (captureErrors) {
       capturedErrors.push(text);
@@ -107,19 +115,17 @@ const env = {
     console.error(text);
   },
   console_warn(slice: number) {
-    //@ts-ignore
+    // @ts-expect-error
     console.warn(Bun._wasmPtrLenToString(slice));
   },
   console_info(slice: number) {
-    //@ts-ignore
+    // @ts-expect-error
     console.info(Bun._wasmPtrLenToString(slice));
   },
-  // @ts-ignore-line
   __indirect_function_table: new WebAssembly.Table({
     initial: 0,
     element: "anyfunc",
   }),
-  // @ts-ignore-line
   __stack_pointer: new WebAssembly.Global({
     mutable: true,
     value: "i32",
@@ -131,11 +137,11 @@ const env = {
     return one % two;
   },
   memset(ptr: number, value: number, len: number) {
-    //@ts-ignore
+    // @ts-expect-error
     Bun.memory_array.fill(value, ptr, ptr + len);
   },
   memcpy(ptr: number, value: number, len: number) {
-    //@ts-ignore
+    // @ts-expect-error
     Bun.memory_array.copyWithin(ptr, value, value + len);
   },
   // These functions convert a to an unsigned long long, rounding toward zero. Negative values all become zero.
@@ -167,14 +173,13 @@ const env = {
 };
 export class Bun {
   private static has_initialized = false;
-  // @ts-ignore-line
-  private static wasm_source: WebAssembly.WebAssemblyInstantiatedSource = null;
+  private static wasm_source: WebAssembly.WebAssemblyInstantiatedSource;
   private static get wasm_exports(): WebAssemblyModule {
-    return Bun.wasm_source.instance.exports as any;
+    return Bun.wasm_source.instance.exports as unknown as WebAssemblyModule;
   }
-  // @ts-ignore-line
+
   private static get memory(): WebAssembly.Memory {
-    return Bun.wasm_source.instance.exports.memory as any;
+    return Bun.wasm_source.instance.exports.memory as WebAssembly.Memory;
   }
 
   private static memory_array: Uint8Array;
@@ -195,7 +200,8 @@ export class Bun {
     return Bun._decoder.decode(region);
   }
 
-  static async init(url, heapSize = 64_000_000, fetch = globalThis.fetch) {
+  static async init(url?: URL | string | null, heapSize = 64_000_000, fetch = globalThis.fetch) {
+    url ??= new URL("./bun.wasm", import.meta.url);
     scratch = new Uint8Array(8096);
 
     if (Bun.has_initialized) {
@@ -216,8 +222,11 @@ export class Bun {
         // is it node?
       }
     } else {
-      //@ts-ignore
       const fs = await import("fs");
+
+      if (typeof url === 'string' && url.startsWith('file://')) {
+        url = new URL(url); // fs.readFileSync cannot consume URL strings, only URL objects
+      }
 
       Bun.wasm_source = await globalThis.WebAssembly.instantiate(fs.readFileSync(url), {
         env: env,
@@ -234,7 +243,7 @@ export class Bun {
     Bun.has_initialized = true;
   }
 
-  static getTests(content: Uint8Array | string, filename = "my.test.tsx") {
+  static getTests(content: Uint8Array, filename = "my.test.tsx") {
     const bb = new ByteBuffer(scratch);
     bb.length = 0;
     bb.index = 0;
@@ -283,7 +292,7 @@ export class Bun {
     var _bb = new ByteBuffer(Bun._wasmPtrToSlice(resp_ptr));
 
     const response = decodeGetTestsResponse(_bb);
-    var tests = new Array(response.tests.length);
+    var tests: TestReference[] = new Array(response.tests.length);
 
     for (var i = 0; i < response.tests.length; i++) {
       tests[i] = {
@@ -294,7 +303,7 @@ export class Bun {
           ),
         ),
         byteOffset: response.tests[i].byteOffset,
-        kind: testKindMap[response.tests[i].kind],
+        kind: testKindMap[response.tests[i].kind] as 'test' | 'describe',
       };
     }
 
@@ -303,7 +312,7 @@ export class Bun {
     return tests;
   }
 
-  static transformSync(content: Uint8Array | string, file_name: string, loader?: Loader): TransformResponse {
+  static transformSync(content: Uint8Array | string, file_name: string, loader?: keyof typeof Loader): TransformResponse {
     const bb = new ByteBuffer(scratch);
     bb.length = 0;
     bb.index = 0;
@@ -330,7 +339,6 @@ export class Bun {
       {
         contents: contents_buffer,
         path: file_name,
-        // @ts-ignore
         loader: normalizeLoader(file_name, loader),
       },
       bb,
@@ -349,7 +357,7 @@ export class Bun {
     return response;
   }
 
-  static scan(content: Uint8Array | string, file_name: string, loader?: Loader): ScanResult {
+  static scan(content: Uint8Array | string, file_name: string, loader?: keyof typeof Loader): ScanResult {
     const bb = new ByteBuffer(scratch);
     bb.length = 0;
     bb.index = 0;
@@ -368,7 +376,6 @@ export class Bun {
       {
         contents: contents_buffer,
         path: file_name,
-        // @ts-ignore
         loader: normalizeLoader(file_name, loader),
       },
       bb,

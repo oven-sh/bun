@@ -141,6 +141,9 @@ private:
     mutable std::atomic<unsigned> m_refCount { 1 };
 
     bool m_hasRef { false };
+
+    uint32_t m_messageEventCount { 0 };
+    static void onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind);
 };
 
 WebCoreOpaqueRoot root(MessagePort*);

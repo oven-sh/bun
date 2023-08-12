@@ -350,7 +350,6 @@ void Worker::dispatchExit(int32_t exitCode)
     ScriptExecutionContext::postTaskTo(ctx->identifier(), [exitCode, protectedThis = Ref { *this }](ScriptExecutionContext& context) -> void {
         protectedThis->m_isOnline = false;
         protectedThis->m_isClosing = true;
-        protectedThis->setKeepAlive(false);
 
         if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
             auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);

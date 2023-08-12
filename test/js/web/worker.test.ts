@@ -100,7 +100,7 @@ test("sending 50 messages should just work", done => {
 
 test("worker with event listeners doesnt close event loop", done => {
   const x = Bun.spawn({
-    cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.js"), "worker-fixture-many-messages.js"],
+    cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.mjs"), "worker-fixture-many-messages.js"],
     env: bunEnv,
     stdio: ["inherit", "pipe", "inherit"],
   });
@@ -128,7 +128,7 @@ test("worker with event listeners doesnt close event loop", done => {
 
 test("worker with event listeners doesnt close event loop 2", done => {
   const x = Bun.spawn({
-    cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.js"), "worker-fixture-many-messages2.js"],
+    cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.mjs"), "worker-fixture-many-messages2.js"],
     env: bunEnv,
     stdio: ["inherit", "pipe", "inherit"],
   });

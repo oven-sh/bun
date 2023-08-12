@@ -1,10 +1,11 @@
-addEventListener("message", ({ data }) => {
+addEventListener("message", function fn({ data }) {
   // console.log("worker", data);
 
   if (data === "initial message") {
     postMessage({ i: 0 });
   } else if (data.i > 50) {
     postMessage({ done: true });
+    removeEventListener("message", fn);
   } else {
     postMessage({ i: data.i + 1 });
   }

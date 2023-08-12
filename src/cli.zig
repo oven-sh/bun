@@ -317,7 +317,7 @@ pub const Arguments = struct {
         defer ctx.debug.loaded_bunfig = true;
         var config_path: [:0]u8 = undefined;
         if (config_path_[0] == '/') {
-            @memcpy(config_buf[0..config_path.len], config_path);
+            @memcpy(config_buf[0..config_path_.len], config_path_);
             config_buf[config_path_.len] = 0;
             config_path = config_buf[0..config_path_.len :0];
         } else {

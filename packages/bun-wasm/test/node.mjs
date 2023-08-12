@@ -1,7 +1,10 @@
 import { readFileSync } from "fs";
 import { init, getTests } from "../index.mjs";
 
-const buf = (process.argv.length > 2 ? readFileSync(process.argv.at(-1)) : "") || readFileSync(import.meta.url);
-await init(new URL("../bun.wasm", import.meta.url));
+const filePath = process.argv[2];
+if (!filePath) throw new Error("Usage: node node.mjs <file>");
+
+const buf = readFileSync(filePath);
+await init();
 
 console.log(getTests(buf));

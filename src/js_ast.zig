@@ -9630,18 +9630,13 @@ pub const Macro = struct {
             JavaScript.VirtualMachine.get()
         else brk: {
             var old_transform_options = resolver.opts.transform_options;
-            resolver.opts.transform_options.node_modules_bundle_path = null;
-            resolver.opts.transform_options.node_modules_bundle_path_server = null;
             defer resolver.opts.transform_options = old_transform_options;
-            var _vm = try JavaScript.VirtualMachine.init(
-                default_allocator,
-                resolver.opts.transform_options,
-                null,
-                log,
-                env,
-                false,
-                false,
-            );
+            var _vm = try JavaScript.VirtualMachine.init(.{
+                .allocator = default_allocator,
+                .args = resolver.opts.transform_options,
+                .log = log,
+                .env_loader = env,
+            });
 
             _vm.enableMacroMode();
             _vm.eventLoop().ensureWaker();

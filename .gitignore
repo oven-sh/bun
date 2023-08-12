@@ -96,6 +96,8 @@ packages/bun-wasm/*.cjs
 packages/bun-wasm/*.map
 packages/bun-wasm/*.js
 packages/bun-wasm/*.d.ts
+packages/bun-wasm/*.d.cts
+packages/bun-wasm/*.d.mts
 *.bc
 
 src/fallback.version

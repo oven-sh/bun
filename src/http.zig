@@ -27,7 +27,6 @@ const ErrorCSS = @import("./runtime.zig").ErrorCSS;
 const ErrorJS = @import("./runtime.zig").ErrorJS;
 const Runtime = @import("./runtime.zig").Runtime;
 const Css = @import("css_scanner.zig");
-const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 const resolve_path = @import("./resolver/resolve_path.zig");
 const OutputFile = Options.OutputFile;
 const DotEnv = @import("./env_loader.zig");
@@ -344,12 +343,11 @@ pub const RequestContext = struct {
                 @as(?*bundler.FallbackEntryPoint, &fallback_entry_point),
             );
             if (tmp) |*result| {
-                try bundler_.linker.linkAllowImportingFromBundle(
+                try bundler_.linker.link(
                     fallback_entry_point.source.path,
                     result,
                     this.origin,
                     .absolute_url,
-                    false,
                     false,
                     false,
                 );
@@ -841,66 +839,6 @@ pub const RequestContext = struct {
         ctx.done();
     }
 
-    pub fn sendJSB(ctx: *RequestContext) !void {
-        const node_modules_bundle = ctx.bundler.options.node_modules_bundle orelse unreachable;
-        if (ctx.header("Open-In-Editor") != null) {
-            if (http_editor_context.editor == null) {
-                http_editor_context.detectEditor(ctx.bundler.env);
-            }
-
-            if (http_editor_context.editor.? != .none) {
-                var buf: string = "";
-
-                if (node_modules_bundle.code_string == null) {
-                    buf = try node_modules_bundle.readCodeAsStringSlow(bun.default_allocator);
-                } else {
-                    buf = node_modules_bundle.code_string.?.str;
-                }
-
-                http_editor_context.openInEditor(
-                    http_editor_context.editor.?,
-                    buf,
-                    std.fs.path.basename(ctx.url.path),
-                    ctx.bundler.fs.tmpdir(),
-                    ctx.header("Editor-Line") orelse "",
-                    ctx.header("Editor-Column") orelse "",
-                );
-
-                if (http_editor_context.editor.? != .none) {
-                    try ctx.sendNoContent();
-                    return;
-                }
-            }
-        }
-
-        ctx.appendHeader("ETag", node_modules_bundle.bundle.etag);
-        ctx.appendHeader("Content-Type", "text/javascript");
-        ctx.appendHeader("Cache-Control", "immutable, max-age=99999");
-
-        if (ctx.header("If-None-Match")) |etag_header| {
-            if (strings.eqlLong(node_modules_bundle.bundle.etag, etag_header, true)) {
-                try ctx.sendNotModified();
-                return;
-            }
-        }
-
-        defer ctx.done();
-
-        const content_length = node_modules_bundle.container.code_length.? - node_modules_bundle.codeStartOffset();
-        try ctx.writeStatus(200);
-        try ctx.prepareToSendBody(content_length, false);
-
-        _ = try std.os.sendfile(
-            ctx.conn.handle,
-            node_modules_bundle.fd,
-            node_modules_bundle.codeStartOffset(),
-            content_length,
-            &[_]std.os.iovec_const{},
-            &[_]std.os.iovec_const{},
-            0,
-        );
-    }
-
     pub fn sendSinglePageHTML(ctx: *RequestContext) !void {
         std.debug.assert(ctx.bundler.options.routes.single_page_app_fd > 0);
         const file = std.fs.File{ .handle = ctx.bundler.options.routes.single_page_app_fd };
@@ -1205,7 +1143,6 @@ pub const RequestContext = struct {
         pub const HandlerThread = struct {
             args: Api.TransformOptions,
             framework: Options.Framework,
-            existing_bundle: ?*NodeModuleBundle,
             log: *logger.Log = undefined,
             watcher: *Watcher,
             env_loader: *DotEnv.Loader,
@@ -1465,15 +1402,13 @@ pub const RequestContext = struct {
             js_ast.Stmt.Data.Store.create(bun.default_allocator);
             js_ast.Expr.Data.Store.create(bun.default_allocator);
 
-            var vm: *JavaScript.VirtualMachine = JavaScript.VirtualMachine.init(
-                bun.default_allocator,
-                handler.args,
-                null,
-                handler.log,
-                handler.env_loader,
-                true,
-                false,
-            ) catch |err| {
+            var vm: *JavaScript.VirtualMachine = JavaScript.VirtualMachine.init(.{
+                .allocator = bun.default_allocator,
+                .args = handler.args,
+                .log = handler.log,
+                .env_loader = handler.env_loader,
+                .store_fd = true,
+            }) catch |err| {
                 handler.handleJSError(.create_vm, err) catch {};
                 javascript_disabled = true;
                 return;
@@ -1627,32 +1562,16 @@ pub const RequestContext = struct {
 
                 has_loaded_channel = true;
                 channel = Channel.init();
-                var transform_options = server.transform_options;
-                if (server.transform_options.node_modules_bundle_path_server) |bundle_path| {
-                    transform_options.node_modules_bundle_path = bundle_path;
-                    transform_options.node_modules_bundle_path_server = null;
-                    handler_thread.* = HandlerThread{
-                        .args = transform_options,
-                        .framework = server.bundler.options.framework.?,
-                        .existing_bundle = null,
-                        .log = undefined,
-                        .watcher = server.watcher,
-                        .env_loader = server.bundler.env,
-                        .origin = server.bundler.options.origin,
-                        .client_bundler = undefined,
-                    };
-                } else {
-                    handler_thread.* = HandlerThread{
-                        .args = server.transform_options,
-                        .framework = server.bundler.options.framework.?,
-                        .existing_bundle = server.bundler.options.node_modules_bundle,
-                        .watcher = server.watcher,
-                        .env_loader = server.bundler.env,
-                        .log = undefined,
-                        .origin = server.bundler.options.origin,
-                        .client_bundler = undefined,
-                    };
-                }
+
+                handler_thread.* = HandlerThread{
+                    .args = server.transform_options,
+                    .framework = server.bundler.options.framework.?,
+                    .watcher = server.watcher,
+                    .env_loader = server.bundler.env,
+                    .log = undefined,
+                    .origin = server.bundler.options.origin,
+                    .client_bundler = undefined,
+                };
                 try server.bundler.clone(server.allocator, &handler_thread.client_bundler);
                 handler_thread.log = try server.allocator.create(logger.Log);
                 handler_thread.log.* = logger.Log.init(server.allocator);
@@ -2698,28 +2617,12 @@ pub const RequestContext = struct {
                 if (vm.blobs.?.get(id)) |blob| {
                     break :brk blob;
                 }
-
-                if (strings.eqlComptime(id, "node_modules.server.bun")) {
-                    if (vm.node_modules) |_bun| {
-                        if (_bun.code_string) |code| {
-                            break :brk Blob{ .ptr = code.str.ptr, .len = code.str.len };
-                        }
-                    }
-                }
             }
 
             if (JavaScript.VirtualMachine.isLoaded()) {
                 var vm = JavaScript.VirtualMachine.get();
                 if (vm.blobs.?.get(id)) |blob| {
                     break :brk blob;
-                }
-
-                if (strings.eqlComptime(id, "node_modules.server.bun")) {
-                    if (vm.node_modules) |_bun| {
-                        if (_bun.code_string) |code| {
-                            break :brk Blob{ .ptr = code.str.ptr, .len = code.str.len };
-                        }
-                    }
                 }
             }
 
@@ -3080,11 +2983,6 @@ pub const RequestContext = struct {
     }
 
     pub fn handleReservedRoutes(ctx: *RequestContext, server: *Server) !bool {
-        if (strings.eqlComptime(ctx.url.extname, "bun") and ctx.bundler.options.node_modules_bundle != null) {
-            try ctx.sendJSB();
-            return true;
-        }
-
         if (strings.hasPrefixComptime(ctx.url.path, "blob:")) {
             try ctx.handleBlobURL(server);
             return true;
@@ -3566,10 +3464,8 @@ pub const Server = struct {
 
         Output.flush();
 
-        Analytics.Features.bun_bun = server.bundler.options.node_modules_bundle != null;
         Analytics.Features.framework = server.bundler.options.framework != null;
         Analytics.Features.filesystem_router = server.bundler.router != null;
-        Analytics.Features.bunjs = server.transform_options.node_modules_bundle_path_server != null;
 
         const UpgradeCheckerThread = @import("./cli/upgrade_command.zig").UpgradeCheckerThread;
 
@@ -3904,15 +3800,6 @@ pub const Server = struct {
 
         defer this.bundler.resetStore();
 
-        const runtime = this.bundler.options.jsx.refresh_runtime;
-
-        // If there's a .bun, don't even read the filesystem
-        // Just use the .bun
-        if (this.bundler.options.node_modules_bundle) |node_modules_bundle| {
-            const package_name = runtime[0 .. strings.indexOfChar(runtime, '/') orelse runtime.len];
-            if (node_modules_bundle.getPackageIDByName(package_name) != null) return;
-        }
-
         _ = this.bundler.resolver.resolve(this.bundler.fs.top_level_dir, this.bundler.options.jsx.importSource(), .internal) catch {
             // if they don't have React, they can't use fast refresh
             this.bundler.options.jsx.supports_fast_refresh = false;
@@ -3955,7 +3842,7 @@ pub const Server = struct {
         };
         global_start_time = server.timer;
         server.bundler = try allocator.create(Bundler);
-        server.bundler.* = try Bundler.init(allocator, &server.log, options, null, null);
+        server.bundler.* = try Bundler.init(allocator, &server.log, options, null);
         server.bundler.configureLinker();
         try server.bundler.configureRouter(true);
         Server.current = server;

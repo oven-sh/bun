@@ -767,7 +767,6 @@ pub fn constructor(
         allocator,
         log,
         transpiler_options.transform,
-        null,
         JavaScript.VirtualMachine.get().bundler.env,
     ) catch |err| {
         if ((log.warnings + log.errors) > 0) {

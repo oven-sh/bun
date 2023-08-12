@@ -502,11 +502,6 @@ pub const Bunfig = struct {
 
             if (json.get("bundle")) |_bun| {
                 if (comptime cmd == .DevCommand or cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BuildCommand) {
-                    if (_bun.get("saveTo")) |file| {
-                        try this.expect(file, .e_string);
-                        this.bunfig.node_modules_bundle_path = try file.data.e_string.string(allocator);
-                    }
-
                     if (_bun.get("outdir")) |dir| {
                         try this.expect(dir, .e_string);
                         this.bunfig.output_dir = try dir.data.e_string.string(allocator);

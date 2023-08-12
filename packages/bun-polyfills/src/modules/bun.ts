@@ -30,8 +30,16 @@ import openEditor from 'open-editor';
 
 export const main = path.resolve(process.cwd(), process.argv[1] ?? 'repl') satisfies typeof Bun.main;
 
-export const version = '0.7.1' satisfies typeof Bun.version; // TODO: This can probably be fetched from somewhere in the repo
-export const revision = '0'.repeat(39) + '1' satisfies typeof Bun.revision;
+//? These are automatically updated on build by tools/updateversions.ts, do not edit manually.
+export const version = '0.7.4' satisfies typeof Bun.version;
+export const revision = '7088d7e182635a58a50860302da0b1abc42c7ce7' satisfies typeof Bun.revision;
+
+export const gc = (globalThis.gc ? (() => (globalThis.gc!(), process.memoryUsage().heapUsed)) : (() => {
+    const err = new Error('[bun-polyfills] Garbage collection polyfills are only available when Node.js is ran with the --expose-gc flag.');
+    Error.captureStackTrace(err, gc);
+    throw err;
+})) satisfies typeof Bun.gc;
+
 //getter(bun, 'cwd', proc.cwd); //! Can't named export a getter
 export const origin = '' satisfies typeof Bun.origin;
 // @ts-expect-error ---

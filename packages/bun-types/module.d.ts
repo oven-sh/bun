@@ -13,4 +13,6 @@ declare module "module" {
    * Bun's module cache is not exposed but this property exists for compatibility.
    */
   export var _cache: {};
+
+  export var builtinModules: string[];
 }

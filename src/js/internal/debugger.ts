@@ -1,4 +1,8 @@
-import type JSC = require("../../../packages/bun-vscode/types/jsc.d.ts")["JSC"];
+import type { JSC } from "../../../packages/bun-vscode/types/jsc.d.ts";
+
+import { Logger } from "@vscode/debugadapter";
+
+console.log(Logger);
 
 class JavaScriptCoreInspector {
   #requestId: number;

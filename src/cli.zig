@@ -769,7 +769,7 @@ pub const Arguments = struct {
         }
 
         if (cmd == .BuildCommand) {
-            if (opts.entry_points.len == 0 and opts.framework == null and opts.node_modules_bundle_path == null) {
+            if (opts.entry_points.len == 0 and opts.framework == null) {
                 return error.MissingEntryPoint;
             }
         }

@@ -26,7 +26,7 @@ const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const bundler = bun.bundler;
-const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
+
 const DotEnv = @import("../env_loader.zig");
 
 const fs = @import("../fs.zig");
@@ -48,7 +48,7 @@ pub const BuildCommand = struct {
             ctx.args.target = .bun;
         }
 
-        var this_bundler = try bundler.Bundler.init(allocator, log, ctx.args, null, null);
+        var this_bundler = try bundler.Bundler.init(allocator, log, ctx.args, null);
 
         this_bundler.options.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
         this_bundler.resolver.opts.source_map = options.SourceMapOption.fromApi(ctx.args.source_map);
@@ -200,9 +200,6 @@ pub const BuildCommand = struct {
                 router.config.static_dir_enabled = false;
                 this_bundler.router = null;
             }
-            this_bundler.options.node_modules_bundle = null;
-            this_bundler.options.node_modules_bundle_pretty_path = "";
-            this_bundler.options.node_modules_bundle_url = "";
         };
 
         this_bundler.options.jsx.development = !this_bundler.options.production;

@@ -9630,7 +9630,6 @@ pub const Macro = struct {
             JavaScript.VirtualMachine.get()
         else brk: {
             var old_transform_options = resolver.opts.transform_options;
-            resolver.opts.transform_options.node_modules_bundle_path = null;
             defer resolver.opts.transform_options = old_transform_options;
             var _vm = try JavaScript.VirtualMachine.init(.{
                 .allocator = default_allocator,

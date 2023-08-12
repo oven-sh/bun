@@ -235,7 +235,6 @@ pub const UpgradeCommand = struct {
             http_proxy,
             null,
             HTTP.FetchRedirect.follow,
-            false,
         );
         if (!silent) async_http.client.progress_node = progress;
         const response = try async_http.sendSync(true);
@@ -467,7 +466,19 @@ pub const UpgradeCommand = struct {
             var zip_file_buffer = try ctx.allocator.create(MutableString);
             zip_file_buffer.* = try MutableString.init(ctx.allocator, @max(version.size, 1024));
 
-            async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, zip_url, .{}, "", zip_file_buffer, "", timeout, http_proxy, null, HTTP.FetchRedirect.follow, false);
+            async_http.* = HTTP.AsyncHTTP.initSync(
+                ctx.allocator,
+                .GET,
+                zip_url,
+                .{},
+                "",
+                zip_file_buffer,
+                "",
+                timeout,
+                http_proxy,
+                null,
+                HTTP.FetchRedirect.follow,
+            );
             async_http.client.timeout = timeout;
             async_http.client.progress_node = progress;
             const response = try async_http.sendSync(true);

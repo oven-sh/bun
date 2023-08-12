@@ -201,23 +201,6 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             ).?;
         }
 
-        pub fn pausePoll(this: ThisSocket) i32 {
-            const p = bun.cast(*Poll, this.socket);
-            if (this.context().getLoop(is_ssl)) |loop| {
-                const events = p.getEvents();
-                p.change(loop, 0);
-                return events;
-            }
-            return 0;
-        }
-
-        pub fn resumePoll(this: ThisSocket, events: i32) void {
-            const p = bun.cast(*Poll, this.socket);
-            if (this.context().getLoop(is_ssl)) |loop| {
-                p.change(loop, events);
-            }
-        }
-
         pub fn flush(this: ThisSocket) void {
             return us_socket_flush(
                 comptime ssl_int,

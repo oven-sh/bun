@@ -226,7 +226,6 @@ pub fn main() anyerror!void {
                     response_body,
                     "",
                     args.timeout,
-                    false,
                 ),
             };
             ctx.http.client.verbose = args.verbose;

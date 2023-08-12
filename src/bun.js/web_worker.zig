@@ -5,10 +5,12 @@ const log = Output.scoped(.Worker, true);
 const std = @import("std");
 const JSValue = JSC.JSValue;
 
+/// Shared implementation of Web and Node `Worker`
 pub const WebWorker = struct {
-    // null when haven't started yet
+    /// null when haven't started yet
     vm: ?*JSC.VirtualMachine = null,
     status: Status = .start,
+    /// To prevent UAF, the `spin` function (aka the worker's event loop) will call deinit once this is set and properly exit the loop.
     requested_terminate: bool = false,
     execution_context_id: u32 = 0,
     parent_context_id: u32 = 0,
@@ -20,15 +22,25 @@ pub const WebWorker = struct {
     arena: bun.MimallocArena = undefined,
     name: [:0]const u8 = "Worker",
     cpp_worker: *anyopaque,
-    allowed_to_exit: bool = false,
     mini: bool = false,
+
+    /// `user_keep_alive` is the state of the user's .ref()/.unref() calls
+    /// if false, then the parent poll will always be unref, otherwise the worker's event loop will keep the poll alive.
+    user_keep_alive: bool = false,
+    worker_event_loop_running: bool = true,
     parent_poll_ref: JSC.PollRef = .{},
-    initial_poll_ref: JSC.PollRef = .{},
-    did_send_initial_task: bool = false,
+
+    pub const Status = enum {
+        start,
+        starting,
+        running,
+        terminated,
+    };
 
     extern fn WebWorker__dispatchExit(?*JSC.JSGlobalObject, *anyopaque, i32) void;
     extern fn WebWorker__dispatchOnline(this: *anyopaque, *JSC.JSGlobalObject) void;
     extern fn WebWorker__dispatchError(*JSC.JSGlobalObject, *anyopaque, bun.String, JSValue) void;
+
     export fn WebWorker__getParentWorker(vm: *JSC.VirtualMachine) ?*anyopaque {
         var worker = vm.worker orelse return null;
         return worker.cpp_worker;
@@ -43,29 +55,10 @@ pub const WebWorker = struct {
             .{worker},
         ) catch {
             worker.deinit();
-            worker.parent_poll_ref.unref(worker.parent);
-            worker.initial_poll_ref.unref(worker.parent);
-            bun.default_allocator.destroy(worker);
             return false;
         };
         thread.detach();
         return true;
-    }
-
-    pub fn hasPendingActivity(this: *WebWorker) callconv(.C) bool {
-        JSC.markBinding(@src());
-
-        if (this.vm == null) {
-            return !this.requested_terminate;
-        }
-
-        if (!this.allowed_to_exit) {
-            return true;
-        }
-
-        var vm = this.vm.?;
-
-        return vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0;
     }
 
     pub fn create(
@@ -80,6 +73,7 @@ pub const WebWorker = struct {
         default_unref: bool,
     ) callconv(.C) ?*WebWorker {
         JSC.markBinding(@src());
+        log("[{d}] WebWorker.create", .{this_context_id});
         var spec_slice = specifier_str.toUTF8(bun.default_allocator);
         defer spec_slice.deinit();
         var prev_log = parent.bundler.log;
@@ -115,33 +109,13 @@ pub const WebWorker = struct {
                 }
                 break :brk "";
             },
+            .user_keep_alive = !default_unref,
+            .worker_event_loop_running = true,
         };
 
-        worker.initial_poll_ref.ref(parent);
-
-        if (!default_unref) {
-            worker.allowed_to_exit = false;
-            worker.parent_poll_ref.ref(parent);
-        }
+        worker.parent_poll_ref.refConcurrently(parent);
 
         return worker;
-    }
-
-    pub fn queueInitialTask(this: *WebWorker) void {
-        if (this.did_send_initial_task) return;
-        this.did_send_initial_task = true;
-
-        const Unref = struct {
-            pub fn unref(worker: *WebWorker) void {
-                worker.initial_poll_ref.unref(worker.parent);
-            }
-        };
-
-        const AnyTask = JSC.AnyTask.New(WebWorker, Unref.unref);
-        var any_task = bun.default_allocator.create(JSC.AnyTask) catch @panic("OOM");
-        any_task.* = AnyTask.init(this);
-        var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch @panic("OOM");
-        this.parent.eventLoop().enqueueTaskConcurrent(concurrent_task.from(any_task, .auto_deinit));
     }
 
     pub fn startWithErrorHandling(
@@ -162,7 +136,6 @@ pub const WebWorker = struct {
         }
 
         if (this.requested_terminate) {
-            this.queueInitialTask();
             this.deinit();
             return;
         }
@@ -182,12 +155,12 @@ pub const WebWorker = struct {
 
         b.configureRouter(false) catch {
             this.flushLogs();
-            this.onTerminate();
+            this.exitAndDeinit();
             return;
         };
         b.configureDefines() catch {
             this.flushLogs();
-            this.onTerminate();
+            this.exitAndDeinit();
             return;
         };
 
@@ -202,8 +175,13 @@ pub const WebWorker = struct {
         vm.global.vm().holdAPILock(this, callback);
     }
 
+    /// Deinit will clean up vm and everything.
+    /// Early deinit may be called from caller thread, but full vm deinit will only be called within worker's thread.
     fn deinit(this: *WebWorker) void {
+        log("[{d}] deinit", .{this.execution_context_id});
+        this.parent_poll_ref.unrefConcurrently(this.parent);
         bun.default_allocator.free(this.specifier);
+        bun.default_allocator.destroy(this);
     }
 
     fn flushLogs(this: *WebWorker) void {
@@ -250,7 +228,7 @@ pub const WebWorker = struct {
     }
 
     fn setStatus(this: *WebWorker, status: Status) void {
-        log("status: {s}", .{@tagName(status)});
+        log("[{d}] status: {s}", .{ this.execution_context_id, @tagName(status) });
         this.status = status;
     }
 
@@ -265,18 +243,15 @@ pub const WebWorker = struct {
 
         var promise = vm.loadEntryPointForWebWorker(this.specifier) catch {
             this.flushLogs();
-            this.onTerminate();
+            this.exitAndDeinit();
             return;
         };
-
-        this.queueInitialTask();
 
         if (promise.status(vm.global.vm()) == .Rejected) {
             vm.onUnhandledError(vm.global, promise.result(vm.global.vm()));
 
             vm.exit_handler.exit_code = 1;
-            this.onTerminate();
-
+            this.exitAndDeinit();
             return;
         }
 
@@ -300,89 +275,56 @@ pub const WebWorker = struct {
         // always doing a first tick so we call CppTask without delay after dispatchOnline
         vm.tick();
 
-        {
-            while (true) {
-                while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
-                    vm.tick();
-
-                    vm.eventLoop().autoTickActive();
-                }
-
-                if (!this.allowed_to_exit) {
-                    this.flushLogs();
-                    vm.eventLoop().tickPossiblyForever();
-                    continue;
-                }
-
-                vm.onBeforeExit();
-
-                if (!this.allowed_to_exit)
-                    continue;
-
-                break;
-            }
-
-            this.flushLogs();
-            this.onTerminate();
+        while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
+            vm.tick();
+            if (this.requested_terminate) break;
+            vm.eventLoop().autoTickActive();
+            if (this.requested_terminate) break;
         }
+
+        // Only call "beforeExit" if we weren't from a .terminate
+        if (!this.requested_terminate) {
+            // TODO: is this able to allow the event loop to continue?
+            vm.onBeforeExit();
+        }
+
+        this.flushLogs();
+        this.exitAndDeinit();
     }
 
-    pub const Status = enum {
-        start,
-        starting,
-        running,
-        terminated,
-    };
-
-    pub fn terminate(this: *WebWorker) callconv(.C) void {
+    /// This is worker.ref()/.unref() from JS (Caller thread)
+    pub fn setRef(this: *WebWorker, value: bool) callconv(.C) void {
         if (this.requested_terminate) {
             return;
         }
-        _ = this.requestTerminate();
+        if (value) {
+            this.parent_poll_ref.ref(this.parent);
+        } else {
+            this.parent_poll_ref.unref(this.parent);
+        }
     }
 
-    pub fn setRef(this: *WebWorker, value: bool) callconv(.C) void {
-        if (this.requested_terminate and !value) {
-            this.parent_poll_ref.unref(this.parent);
+    /// Request a terminate (Called from main thread from worker.terminate(), or inside worker in process.exit())
+    /// The termination will actually happen after the next tick of the worker's loop.
+    pub fn requestTerminate(this: *WebWorker) callconv(.C) void {
+        if (this.requested_terminate) {
             return;
         }
-
-        this.allowed_to_exit = !value;
-        if (this.allowed_to_exit) {
-            this.parent_poll_ref.unref(this.parent);
-        } else {
-            this.parent_poll_ref.ref(this.parent);
-        }
-
+        log("[{d}] requestTerminate", .{this.execution_context_id});
+        this.setRef(false);
+        this.requested_terminate = true;
         if (this.vm) |vm| {
+            vm.global.vm().notifyNeedTermination();
             vm.eventLoop().wakeup();
         }
     }
 
-    fn onTerminate(this: *WebWorker) void {
-        log("onTerminate", .{});
-
-        this.reallyExit();
-    }
-
-    comptime {
-        if (!JSC.is_bindgen) {
-            @export(hasPendingActivity, .{ .name = "WebWorker__hasPendingActivity" });
-            @export(create, .{ .name = "WebWorker__create" });
-            @export(terminate, .{ .name = "WebWorker__terminate" });
-            @export(setRef, .{ .name = "WebWorker__setRef" });
-            _ = WebWorker__updatePtr;
-        }
-    }
-
-    fn reallyExit(this: *WebWorker) void {
+    /// This handles cleanup, emitting the "close" event, and deinit.
+    /// Only call after the VM is initialized AND on the same thread as the worker.
+    /// Otherwise, call `requestTerminate` to cause the event loop to safely terminate after the next tick.
+    fn exitAndDeinit(this: *WebWorker) void {
         JSC.markBinding(@src());
-
-        if (this.requested_terminate) {
-            return;
-        }
-        this.requested_terminate = true;
-
+        log("[{d}] exitAndDeinit", .{this.execution_context_id});
         var cpp_worker = this.cpp_worker;
         var exit_code: i32 = 0;
         var globalObject: ?*JSC.JSGlobalObject = null;
@@ -392,24 +334,18 @@ pub const WebWorker = struct {
             exit_code = vm.exit_handler.exit_code;
             globalObject = vm.global;
             this.arena.deinit();
+            vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
         }
         WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
-
         this.deinit();
     }
 
-    fn requestTerminate(this: *WebWorker) bool {
-        this.setRef(false);
-        var vm = this.vm orelse {
-            this.requested_terminate = true;
-            return false;
-        };
-        this.allowed_to_exit = true;
-        log("requesting terminate", .{});
-        var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch @panic("OOM");
-        var task = bun.default_allocator.create(JSC.AnyTask) catch @panic("OOM");
-        task.* = JSC.AnyTask.New(WebWorker, onTerminate).init(this);
-        vm.eventLoop().enqueueTaskConcurrent(concurrent_task.from(task, .auto_deinit));
-        return true;
+    comptime {
+        if (!JSC.is_bindgen) {
+            @export(create, .{ .name = "WebWorker__create" });
+            @export(requestTerminate, .{ .name = "WebWorker__requestTerminate" });
+            @export(setRef, .{ .name = "WebWorker__setRef" });
+            _ = WebWorker__updatePtr;
+        }
     }
 };

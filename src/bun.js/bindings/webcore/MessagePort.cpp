@@ -392,10 +392,38 @@ Vector<RefPtr<MessagePort>> MessagePort::entanglePorts(ScriptExecutionContext& c
     });
 }
 
+void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind)
+{
+    if (eventType == eventNames().messageEvent) {
+        auto& port = static_cast<MessagePort&>(self);
+        switch (kind) {
+        case Add:
+            if (port.m_messageEventCount == 0) {
+                port.scriptExecutionContext()->refEventLoop();
+            }
+            port.m_messageEventCount++;
+            break;
+        case Remove:
+            port.m_messageEventCount--;
+            if (port.m_messageEventCount == 0) {
+                port.scriptExecutionContext()->unrefEventLoop();
+            }
+            break;
+        case Clear:
+            if (port.m_messageEventCount > 0) {
+                port.scriptExecutionContext()->unrefEventLoop();
+            }
+            port.m_messageEventCount = 0;
+            break;
+        }
+    }
+};
+
 Ref<MessagePort> MessagePort::entangle(ScriptExecutionContext& context, TransferredMessagePort&& transferredPort)
 {
     auto port = MessagePort::create(context, transferredPort.first, transferredPort.second);
     port->entangle();
+    port->onDidChangeListener = &MessagePort::onDidChangeListenerImpl;
     return port;
 }
 
@@ -406,7 +434,6 @@ bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListene
             start();
         m_hasMessageEventListener = true;
     }
-
     return EventTarget::addEventListener(eventType, WTFMove(listener), options);
 }
 

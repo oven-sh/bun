@@ -2346,7 +2346,7 @@ pub const Process = struct {
         var vm = globalObject.bunVM();
         if (vm.worker) |worker| {
             vm.exit_handler.exit_code = code;
-            worker.terminate();
+            worker.requestTerminate();
             return;
         }
 

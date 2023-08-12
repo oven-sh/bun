@@ -82,5 +82,3 @@ import { build, buildSync, transform, transformSync } from "esbuild";
     throw new Error("Test failed.");
   }
 }
-
-process.exit(0);

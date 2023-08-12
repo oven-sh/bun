@@ -115,18 +115,16 @@ $ bun install -g @oven/zig
 $ zigup 0.11.0-dev.4006+bf827d0b5
 ```
 
-## Building
+{% callout %}
+We last updated Zig on **July 18th, 2023**
+{% /callout %}
 
-After cloning the repository, run the following command. The runs
+## First Build
+
+After cloning the repository, run the following command to run the first build. This may take a while as it will clone submodules and build dependencies.
 
 ```bash
 $ make setup
-```
-
-Then to build Bun:
-
-```bash
-$ make dev
 ```
 
 The binary will be located at `packages/debug-bun-{platform}-{arch}/bun-debug`. It is recommended to add this to your `$PATH`. To verify the build worked, lets print the version number on the development build of Bun.
@@ -136,16 +134,78 @@ $ packages/debug-bun-*/bun-debug --version
 bun 0.x.y__dev
 ```
 
+Note: `make setup` is just an alias for the following:
+
+```bash
+$ make assert-deps submodule npm-install-dev node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws tinycc c-ares zstd base64 cpp zig link
+```
+
+## Rebuilding
+
+Bun uses a series of make commands to rebuild parts of the codebase. The general rule for rebuilding is there is `make link` to rerun the linker, and then different make targets for different parts of the codebase. Do not pass `-j` to make as these scripts will break if run out of order, and multiple cores will be used when possible during the builds.
+
+| What changed                         | Run this command                                                                                                                                                |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Zig Code                             | `make zig`                                                                                                                                                      |
+| C++ Code                             | `make cpp`                                                                                                                                                      |
+| Zig + C++ Code                       | `make dev` (combination of the above two)                                                                                                                       |
+| JS/TS Code in `src/js`               | `make js` (in bun-debug, js is loaded from disk without a recompile). If you change the names of any file or add/remove anything, you must also run `make dev`. |
+| `*.classes.ts`                       | `make generate-classes dev`                                                                                                                                     |
+| JSSink                               | `make generate-sink cpp`                                                                                                                                        |
+| `src/node_fallbacks/*`               | `make node-fallbacks zig`                                                                                                                                       |
+| `identifier_data.zig`                | `make identifier-cache zig`                                                                                                                                     |
+| Code using `cppFn`/`JSC.markBinding` | `make headers` (TODO: explain explain what this is used for and why it's useful)                                                                                |
+
+`make setup` cloned a bunch of submodules and built the subprojects. When a submodule is out of date, run `make submodule` to quickly reset/update all your submodules, then you can rebuild individual submodules with their respective command.
+
+| Dependency     | Run this command                         |
+| -------------- | ---------------------------------------- |
+| WebKit         | `bun install` (it is a prebuilt package) |
+| uWebSockets    | `make uws`                               |
+| Mimalloc       | `make mimalloc`                          |
+| PicoHTTPParser | `make picohttp`                          |
+| zlib           | `make zlib`                              |
+| BoringSSL      | `make boringssl`                         |
+| libarchive     | `make libarchive`                        |
+| lolhtml        | `make lolhtml`                           |
+| sqlite         | `make sqlite`                            |
+| TinyCC         | `make tinycc`                            |
+| c-ares         | `make c-ares`                            |
+| zstd           | `make zstd`                              |
+| Base64         | `make base64`                            |
+
+The above will probably also need Zig and/or C++ code rebuilt.
+
 ## VSCode
 
 VSCode is the recommended IDE for working on Bun, as it has been configured. Once opening, you can run `Extensions: Show Recommended Extensions` to install the recommended extensions for Zig and C++. ZLS is automatically configured.
+
+### ZLS
+
+ZLS is the language server for Zig. The latest binary that the extension auto-updates may not function with the version of Zig that Bun uses. It may be more reliable to build ZLS from source:
+
+```bash
+$ git clone https://github.com/zigtools/zls
+$ cd zls
+$ git checkout f91ff831f4959efcb7e648dba4f0132c296d26c0
+$ zig build
+```
+
+Then add absolute paths to Zig and ZLS in your vscode config:
+
+```json
+{
+  "zig.zigPath": "/path/to/zig/install/zig",
+  "zig.zls.path": "/path/to/zls/zig-out/bin/zls"
+}
+```
 
 ## JavaScript builtins
 
 When you change anything in `src/js/builtins/*` or switch branches, run this:
 
 ```bash
-$ make regenerate-bindings
+$ make js cpp
 ```
 
 That inlines the TypeScript code into C++ headers.
@@ -153,6 +213,8 @@ That inlines the TypeScript code into C++ headers.
 {% callout %}
 Make sure you have `ccache` installed, otherwise regeneration will take much longer than it should.
 {% /callout %}
+
+For more information on how `src/js` works, see `src/js/README.md` in the codebase.
 
 ## Code generation scripts
 
@@ -193,7 +255,7 @@ Certain modules like `node:fs`, `node:stream`, `bun:sqlite`, and `ws` are implem
 When these are changed, run:
 
 ```
-$ make esm
+$ make js
 ```
 
 In debug builds, Bun automatically loads these from the filesystem, wherever it was compiled, so no need to re-run `make dev`. In release builds, this same behavior can be done via the environment variable `BUN_OVERRIDE_MODULE_PATH`. When set to the repository root, Bun will read from the bundled modules in the repository instead of the ones baked into the binary.
@@ -244,7 +306,7 @@ For performance reasons, `make submodule` does not automatically update the WebK
 
 ```bash
 $ bun install
-$ make regenerate-bindings
+$ make cpp
 ```
 
 <!-- Check the [Bun repo](https://github.com/oven-sh/bun/tree/main/src/bun.js) to get the hash of the commit of WebKit is currently being used.

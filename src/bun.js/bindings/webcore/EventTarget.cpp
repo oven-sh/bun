@@ -111,6 +111,9 @@ bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListene
     // invalidateEventListenerRegions();
 
     eventListenersDidChange();
+    if (UNLIKELY(this->onDidChangeListener)) {
+        this->onDidChangeListener(*this, eventType, OnDidChangeListenerKind::Add);
+    }
     return true;
 }
 
@@ -146,6 +149,9 @@ bool EventTarget::removeEventListener(const AtomString& eventType, EventListener
         if (eventNames().isWheelEventType(eventType))
             invalidateEventListenerRegions();
 
+        if (UNLIKELY(this->onDidChangeListener)) {
+            this->onDidChangeListener(*this, eventType, OnDidChangeListenerKind::Remove);
+        }
         eventListenersDidChange();
         return true;
     }
@@ -376,6 +382,11 @@ void EventTarget::removeAllEventListeners()
         // if (data->eventListenerMap.contains(eventNames().wheelEvent) || data->eventListenerMap.contains(eventNames().mousewheelEvent))
         // invalidateEventListenerRegions();
 
+        if (UNLIKELY(this->onDidChangeListener)) {
+            for (auto& eventType : data->eventListenerMap.eventTypes()) {
+                this->onDidChangeListener(*this, eventType, OnDidChangeListenerKind::Clear);
+            }
+        }
         data->eventListenerMap.clear();
         eventListenersDidChange();
     }

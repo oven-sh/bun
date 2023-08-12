@@ -619,10 +619,13 @@ pub const Fetch = struct {
         global_this: *JSGlobalObject = undefined,
         request_body: HTTPRequestBody = undefined,
         response_buffer: MutableString = undefined,
+        scheduled_response_buffer: MutableString = undefined,
+
         request_headers: Headers = Headers{ .allocator = undefined },
         promise: JSC.JSPromise.Strong,
         concurrent_task: JSC.ConcurrentTask = .{},
         poll_ref: JSC.PollRef = .{},
+        body_size: usize = 0,
 
         /// This is url + proxy memory buffer and is owned by FetchTasklet
         /// We always clone url and proxy (if informed)
@@ -635,6 +638,7 @@ pub const Fetch = struct {
         abort_reason: JSValue = JSValue.zero,
         // Custom Hostname
         hostname: ?[]u8 = null,
+        is_waiting_body: bool = false,
 
         tracker: JSC.AsyncTaskTracker,
 
@@ -691,6 +695,7 @@ pub const Fetch = struct {
 
             this.result.deinitMetadata();
             this.response_buffer.deinit();
+            this.scheduled_response_buffer.deinit();
             this.request_body.detach();
 
             if (this.abort_reason != .zero)
@@ -707,9 +712,35 @@ pub const Fetch = struct {
             this.javascript_vm.allocator.destroy(this);
         }
 
-        pub fn onDone(this: *FetchTasklet) void {
-            JSC.markBinding(@src());
+        pub fn onBodyReceived(this: *FetchTasklet) void {
+            // const globalThis = this.global_this;
+            if (this.aborted.load(.Acquire) or this.http == null) return;
 
+
+            const success = this.result.isSuccess();
+            const globalThis = this.global_this;      
+                    
+            defer {
+                if(!success or !this.result.has_more) {       
+                    var vm = globalThis.bunVM();
+                    this.poll_ref.unref(vm);
+                    this.clearData();
+                    this.deinit();
+                }
+            }
+
+            if(!success) {
+                const err = this.onReject();
+                globalThis.throwValue(err);
+                return;
+            }
+        }
+
+        pub fn onProgressUpdate(this: *FetchTasklet) void {
+            JSC.markBinding(@src());
+            if (this.is_waiting_body) {
+                return this.onBodyReceived();
+            }
             const globalThis = this.global_this;
 
             var ref = this.promise;
@@ -718,11 +749,20 @@ pub const Fetch = struct {
 
             var poll_ref = this.poll_ref;
             var vm = globalThis.bunVM();
-            defer poll_ref.unref(vm);
-
+            
             if (promise_value.isEmptyOrUndefinedOrNull()) {
+                poll_ref.unref(vm);
                 this.clearData();
+                this.deinit();
                 return;
+            }
+
+            defer {
+                if (!this.is_waiting_body) {
+                    poll_ref.unref(vm);
+                    this.clearData();
+                    this.deinit();
+                }
             }
 
             const promise = promise_value.asAnyPromise().?;
@@ -735,7 +775,7 @@ pub const Fetch = struct {
                 false => this.onReject(),
             };
             result.ensureStillAlive();
-            this.clearData();
+
 
             promise_value.ensureStillAlive();
 
@@ -784,7 +824,67 @@ pub const Fetch = struct {
             return fetch_error.toErrorInstance(this.global_this);
         }
 
+        pub fn onStartBufferingCallback(ctx: *anyopaque) void {
+            const this = bun.cast(*FetchTasklet, ctx);
+            if (this.http != null) {
+                // we need to resume the socket on the http thread
+                HTTPClient.http_thread.scheduleResume(this.http.?);
+            }
+        }
+
+        pub fn onStartStreamingRequestBodyCallback(ctx: *anyopaque) JSC.WebCore.DrainResult {
+            const this = bun.cast(*FetchTasklet, ctx);
+            if (this.aborted.load(.Acquire) or this.http == null) {
+                return JSC.WebCore.DrainResult{
+                    .aborted = {},
+                };
+            }
+            var scheduled_response_buffer = this.scheduled_response_buffer.list;
+
+            // This means we have received part of the body but not the whole thing
+            if (scheduled_response_buffer.items.len > 0) {
+                this.scheduled_response_buffer = .{
+                    .allocator = bun.default_allocator,
+                    .list = .{
+                        .items = &.{},
+                        .capacity = 0,
+                    },
+                };
+                // we are handling buffers one by one so wee need to resume it again
+                HTTPClient.http_thread.scheduleResume(this.http.?);
+                return .{
+                    .owned = .{
+                        .list = scheduled_response_buffer.toManaged(bun.default_allocator),
+                        .size_hint = scheduled_response_buffer.items.len,
+                    },
+                };
+            }
+
+            return .{
+                .estimated_size = this.body_size,
+            };
+        }
+
         fn toBodyValue(this: *FetchTasklet) Body.Value {
+
+            // if (response_buffer.items.len < InlineBlob.available_bytes) {
+            //     const inline_blob = InlineBlob.init(response_buffer.items);
+            //     defer response_buffer.deinit(bun.default_allocator);
+            //     return .{ .InlineBlob = inline_blob };
+            // }
+
+            if (this.is_waiting_body) {
+                const response = Body.Value{
+                    .Locked = .{
+                        .task = this,
+                        .global = this.global_this,
+                        .onStartBuffering = FetchTasklet.onStartBufferingCallback,
+                        .onStartStreaming = FetchTasklet.onStartStreamingRequestBodyCallback,
+                    },
+                };
+                return response;
+            }
+
             var response_buffer = this.response_buffer.list;
             this.response_buffer = .{
                 .allocator = default_allocator,
@@ -793,13 +893,6 @@ pub const Fetch = struct {
                     .capacity = 0,
                 },
             };
-
-            // if (response_buffer.items.len < InlineBlob.available_bytes) {
-            //     const inline_blob = InlineBlob.init(response_buffer.items);
-            //     defer response_buffer.deinit(bun.default_allocator);
-            //     return .{ .InlineBlob = inline_blob };
-            // }
-
             const response = Body.Value{
                 .InternalBlob = .{
                     .bytes = response_buffer.toManaged(bun.default_allocator),
@@ -811,6 +904,8 @@ pub const Fetch = struct {
 
         fn toResponse(this: *FetchTasklet, allocator: std.mem.Allocator) Response {
             const http_response = this.result.response;
+            this.is_waiting_body = this.result.has_more;
+            this.body_size = this.result.body_size;
             return Response{
                 .allocator = allocator,
                 .url = bun.String.createAtomIfPossible(this.result.href),
@@ -896,6 +991,7 @@ pub const Fetch = struct {
                 if (fetch_tasklet.signal != null) &fetch_tasklet.aborted else null,
                 fetch_options.hostname,
                 fetch_options.redirect_type,
+                true,
             );
 
             if (fetch_options.redirect_type != FetchRedirect.follow) {
@@ -973,7 +1069,15 @@ pub const Fetch = struct {
         }
 
         pub fn callback(task: *FetchTasklet, result: HTTPClient.HTTPClientResult) void {
-            task.response_buffer = result.body.?.*;
+            // TODO: handle this better
+            task.scheduled_response_buffer = result.body.?.*;
+            task.response_buffer = MutableString{
+                .allocator = bun.default_allocator,
+                .list = .{
+                    .items = &.{},
+                    .capacity = 0,
+                },
+            };
             task.result = result;
             task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
         }

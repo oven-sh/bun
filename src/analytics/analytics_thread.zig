@@ -408,6 +408,7 @@ fn readloop() anyerror!void {
         &out_buffer,
         "",
         std.time.ns_per_ms * 10000,
+        false,
     ) catch return;
 
     event_list.async_http.client.verbose = FeatureFlags.verbose_analytics;

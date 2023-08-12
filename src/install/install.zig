@@ -372,6 +372,7 @@ const NetworkTask = struct {
             null,
             null,
             HTTP.FetchRedirect.follow,
+            false,
         );
         this.callback = .{
             .package_manifest = .{
@@ -450,6 +451,7 @@ const NetworkTask = struct {
             null,
             null,
             HTTP.FetchRedirect.follow,
+            false,
         );
         this.callback = .{ .extract = tarball };
     }

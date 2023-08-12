@@ -200,6 +200,24 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 this.socket,
             ).?;
         }
+
+        pub fn pausePoll(this: ThisSocket) i32 {
+            const p = bun.cast(*Poll, this.socket);
+            if (this.context().getLoop(is_ssl)) |loop| {
+                const events = p.getEvents();
+                p.change(loop, 0);
+                return events;
+            }
+            return 0;
+        }
+
+        pub fn resumePoll(this: ThisSocket, events: i32) void {
+            const p = bun.cast(*Poll, this.socket);
+            if (this.context().getLoop(is_ssl)) |loop| {
+                p.change(loop, events);
+            }
+        }
+
         pub fn flush(this: ThisSocket) void {
             return us_socket_flush(
                 comptime ssl_int,
@@ -687,6 +705,13 @@ pub const SocketContext = opaque {
         us_socket_context_free(@as(i32, 0), this);
     }
 
+    fn getLoop(this: *SocketContext, ssl: bool) ?*Loop {
+        if (ssl) {
+            return us_socket_context_loop(@as(i32, 1), this);
+        }
+        return us_socket_context_loop(@as(i32, 0), this);
+    }
+
     /// closes and deinit the SocketContexts
     pub fn deinit(this: *SocketContext, ssl: bool) void {
         this.close(ssl);
@@ -998,6 +1023,14 @@ pub const Poll = opaque {
 
     pub fn stop(self: *Poll, loop: *Loop) void {
         us_poll_stop(self, loop);
+    }
+
+    pub fn change(self: *Poll, loop: *Loop, events: i32) void {
+        us_poll_change(self, loop, events);
+    }
+
+    pub fn getEvents(self: *Poll) i32 {
+        return us_poll_events(self);
     }
 
     pub fn data(self: *Poll, comptime Data: type) *Data {

@@ -1,6 +1,8 @@
 import { describe, test, expect } from "bun:test";
 import { spawnSync } from "bun";
 import { bunExe } from "harness";
+import { tmpdir } from "node:os";
+import fs from "node:fs";
 
 describe("bun", () => {
   describe("NO_COLOR", () => {
@@ -57,6 +59,24 @@ describe("bun", () => {
           "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$",
         ),
       );
+    });
+  });
+
+  describe("test command line arguments", () => {
+    test("test --config, issue #4128", () => {
+      const path = `${tmpdir()}/bunfig-${Date.now()}.toml`;
+      fs.writeFileSync(path, "[debug]");
+
+      const p = Bun.spawnSync({
+        cmd: [bunExe(), "--config", path],
+        env: {},
+        stderr: "inherit",
+      });
+      try {
+        expect(p.exitCode).toBe(0);
+      } finally {
+        fs.unlinkSync(path);
+      }
     });
   });
 });

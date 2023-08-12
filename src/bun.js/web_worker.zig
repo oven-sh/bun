@@ -170,14 +170,11 @@ pub const WebWorker = struct {
         std.debug.assert(this.status == .start);
         std.debug.assert(this.vm == null);
         this.arena = try bun.MimallocArena.init();
-        var vm = try JSC.VirtualMachine.initWorker(
-            this.arena.allocator(),
-            this.parent.bundler.options.transform_options,
-            null,
-            null,
-            this.store_fd,
-            this,
-        );
+        var vm = try JSC.VirtualMachine.initWorker(this, .{
+            .allocator = this.arena.allocator(),
+            .args = this.parent.bundler.options.transform_options,
+            .store_fd = this.store_fd,
+        });
         vm.allocator = this.arena.allocator();
         vm.arena = &this.arena;
 

@@ -26,7 +26,7 @@ const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
 const bundler = bun.bundler;
-const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
+
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
@@ -385,11 +385,8 @@ pub const RunCommand = struct {
 
     pub fn ls(ctx: Command.Context) !void {
         var args = ctx.args;
-        args.node_modules_bundle_path = null;
-        args.node_modules_bundle_path_server = null;
-        args.generate_node_module_bundle = false;
 
-        var this_bundler = try bundler.Bundler.init(ctx.allocator, ctx.log, args, null, null);
+        var this_bundler = try bundler.Bundler.init(ctx.allocator, ctx.log, args, null);
         this_bundler.options.env.behavior = Api.DotEnvBehavior.load_all;
         this_bundler.options.env.prefix = "";
 
@@ -471,10 +468,8 @@ pub const RunCommand = struct {
         force_using_bun: bool,
     ) !*DirInfo {
         var args = ctx.args;
-        args.node_modules_bundle_path = null;
-        args.node_modules_bundle_path_server = null;
         args.generate_node_module_bundle = false;
-        this_bundler.* = try bundler.Bundler.init(ctx.allocator, ctx.log, args, null, env);
+        this_bundler.* = try bundler.Bundler.init(ctx.allocator, ctx.log, args, env);
         this_bundler.options.env.behavior = Api.DotEnvBehavior.load_all;
         this_bundler.env.quiet = true;
         this_bundler.options.env.prefix = "";
@@ -661,11 +656,8 @@ pub const RunCommand = struct {
         }
 
         var args = ctx.args;
-        args.node_modules_bundle_path = null;
-        args.node_modules_bundle_path_server = null;
-        args.generate_node_module_bundle = false;
 
-        var this_bundler = bundler.Bundler.init(ctx.allocator, ctx.log, args, null, null) catch return shell_out;
+        var this_bundler = bundler.Bundler.init(ctx.allocator, ctx.log, args, null) catch return shell_out;
         this_bundler.options.env.behavior = Api.DotEnvBehavior.load_all;
         this_bundler.options.env.prefix = "";
         this_bundler.env.quiet = true;

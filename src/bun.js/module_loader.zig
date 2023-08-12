@@ -20,7 +20,6 @@ const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const Fs = @import("../fs.zig");
 const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
-const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const MacroEntryPoint = bun.bundler.MacroEntryPoint;
 const ParseResult = bun.bundler.ParseResult;
 const logger = @import("root").bun.logger;
@@ -1994,23 +1993,7 @@ pub const ModuleLoader = struct {
     }
 
     pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?ResolvedSource {
-        if (jsc_vm.node_modules != null and specifier.eqlComptime(JSC.bun_file_import_path)) {
-            // We kind of need an abstraction around this.
-            // Basically we should subclass JSC::SourceCode with:
-            // - hash
-            // - file descriptor for source input
-            // - file path + file descriptor for bytecode caching
-            // - separate bundles for server build vs browser build OR at least separate sections
-            const code = try jsc_vm.node_modules.?.readCodeAsStringSlow(jsc_vm.allocator);
-
-            return ResolvedSource{
-                .allocator = null,
-                .source_code = bun.String.init(code),
-                .specifier = bun.String.init(JSC.bun_file_import_path),
-                .source_url = ZigString.init(JSC.bun_file_import_path[1..]),
-                .hash = 0, // TODO
-            };
-        } else if (jsc_vm.node_modules == null and specifier.eqlComptime(Runtime.Runtime.Imports.Name)) {
+        if (specifier.eqlComptime(Runtime.Runtime.Imports.Name)) {
             return ResolvedSource{
                 .allocator = null,
                 .source_code = bun.String.init(Runtime.Runtime.sourceContentBun()),

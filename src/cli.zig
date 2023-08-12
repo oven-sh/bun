@@ -35,8 +35,6 @@ const DotEnv = @import("./env_loader.zig");
 const fs = @import("fs.zig");
 const Router = @import("./router.zig");
 
-const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
-
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const TestCommand = @import("./cli/test_command.zig").TestCommand;
 const Reporter = @import("./report.zig");
@@ -188,8 +186,6 @@ pub const Arguments = struct {
     pub const dev_params = [_]ParamType{
         clap.parseParam("--disable-bun.js                  Disable bun.js from loading in the dev server") catch unreachable,
         clap.parseParam("--disable-react-fast-refresh      Disable React Fast Refresh") catch unreachable,
-        clap.parseParam("--bunfile <STR>                   Use a .bun file (default: node_modules.bun)") catch unreachable,
-        clap.parseParam("--server-bunfile <STR>            Use a .server.bun file (default: node_modules.server.bun)") catch unreachable,
         clap.parseParam("--public-dir <STR>                Top-level directory for .html files, fonts or anything external. Defaults to \"<cwd>/public\", to match create-react-app and Next.js") catch unreachable,
         clap.parseParam("--disable-hmr                     Disable Hot Module Reloading (disables fast refresh too) in bun dev") catch unreachable,
         clap.parseParam("--use <STR>                       Choose a framework, e.g. \"--use next\". It checks first for a package named \"bun-framework-packagename\" and then \"packagename\".") catch unreachable,
@@ -523,8 +519,7 @@ pub const Arguments = struct {
 
         const print_help = args.flag("--help");
         if (print_help) {
-            const params_len = if (cmd == .BuildCommand) build_params_public.len else public_params.len;
-            clap.help(Output.writer(), params_to_use[0..params_len]) catch {};
+            clap.help(Output.writer(), params_to_use[0..params_to_use.len]) catch {};
             Output.prettyln("\n-------\n\n", .{});
             Output.flush();
             HelpCommand.printWithReason(.explicit);
@@ -681,18 +676,6 @@ pub const Arguments = struct {
                     opts.router = Api.RouteConfig{ .extensions = &.{}, .dir = &.{}, .static_dir = public_dir };
                 }
             }
-
-            opts.node_modules_bundle_path = args.option("--bunfile") orelse opts.node_modules_bundle_path orelse brk: {
-                const node_modules_bundle_path_absolute = resolve_path.joinAbs(cwd, .auto, "node_modules.bun");
-
-                break :brk std.fs.realpathAlloc(allocator, node_modules_bundle_path_absolute) catch null;
-            };
-
-            opts.node_modules_bundle_path_server = args.option("--server-bunfile") orelse opts.node_modules_bundle_path_server orelse brk: {
-                const node_modules_bundle_path_absolute = resolve_path.joinAbs(cwd, .auto, "node_modules.server.bun");
-
-                break :brk std.fs.realpathAlloc(allocator, node_modules_bundle_path_absolute) catch null;
-            };
 
             if (args.option("--use")) |entry| {
                 opts.framework = Api.FrameworkConfig{
@@ -918,33 +901,6 @@ pub const HelpCommand = struct {
 };
 
 const AddCompletions = @import("./cli/add_completions.zig");
-
-pub const PrintBundleCommand = struct {
-    pub fn exec(ctx: Command.Context) !void {
-        @setCold(true);
-
-        const entry_point = ctx.args.entry_points[0];
-        var out_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var stdout = std.io.getStdOut();
-
-        var input = try std.fs.openFileAbsolute(try std.os.realpath(entry_point, &out_buffer), .{ .mode = .read_only });
-        const params = comptime [_]Arguments.ParamType{
-            clap.parseParam("--summary  Peek inside the .bun") catch unreachable,
-        };
-
-        var jsBundleArgs = clap.parse(clap.Help, &params, .{ .allocator = ctx.allocator }) catch {
-            try NodeModuleBundle.printBundle(std.fs.File, input, @TypeOf(stdout), stdout);
-            return;
-        };
-
-        if (jsBundleArgs.flag("--summary")) {
-            NodeModuleBundle.printSummaryFromDisk(std.fs.File, input, @TypeOf(stdout), stdout, ctx.allocator) catch {};
-            return;
-        }
-
-        try NodeModuleBundle.printBundle(std.fs.File, input, @TypeOf(stdout), stdout);
-    }
-};
 
 pub const Command = struct {
     var script_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -1456,11 +1412,6 @@ pub const Command = struct {
                     @as([]const u8, "");
                 // KEYWORDS: open file argv argv0
                 if (ctx.args.entry_points.len == 1) {
-                    if (strings.eqlComptime(extension, ".bun")) {
-                        try PrintBundleCommand.exec(ctx);
-                        return;
-                    }
-
                     if (strings.eqlComptime(extension, ".lockb")) {
                         for (std.os.argv) |arg| {
                             if (strings.eqlComptime(std.mem.span(arg), "--hash")) {

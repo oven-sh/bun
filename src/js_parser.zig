@@ -9980,12 +9980,9 @@ fn NewParser_(
                         return;
                     },
                     .t_asterisk => {
-                        // export type * as Foo from 'bar';
-                        //
-                        // Invalid, but we allow it:
-                        //
-                        //    export type Foo from 'bar';
-                        //
+                        // https://github.com/microsoft/TypeScript/pull/52217
+                        // - export type * as Foo from 'bar';
+                        // - export type Foo from 'bar';
                         try p.lexer.next();
                         if (p.lexer.isContextualKeyword("as")) {
                             // "export type * as ns from 'path'"

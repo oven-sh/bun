@@ -2718,7 +2718,7 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
     if (this.is_streaming and buffer.list.items.len >= streaming_buffer_size) {
         // we filled up the buffer, so we can process it
         this.pauseSocket(is_ssl, socket);
-        
+
         try this.state.processBodyBuffer(buffer.*);
         return true;
     }

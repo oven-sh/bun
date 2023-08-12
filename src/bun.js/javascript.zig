@@ -1277,9 +1277,7 @@ pub const VirtualMachine = struct {
         source: string,
         is_esm: bool,
         comptime is_a_file_path: bool,
-        comptime realpath: bool,
     ) !void {
-        _ = realpath;
         std.debug.assert(VirtualMachine.isLoaded());
         // macOS threadlocal vars are very slow
         // we won't change threads in this function
@@ -1398,7 +1396,7 @@ pub const VirtualMachine = struct {
         query_string: *ZigString,
         is_esm: bool,
     ) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, false, true);
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, false);
     }
 
     pub fn resolveFilePathForAPI(
@@ -1409,7 +1407,7 @@ pub const VirtualMachine = struct {
         query_string: *ZigString,
         is_esm: bool,
     ) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true, true);
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true);
     }
 
     pub fn resolve(
@@ -1420,7 +1418,7 @@ pub const VirtualMachine = struct {
         query_string: *ZigString,
         is_esm: bool,
     ) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true, false);
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true);
     }
 
     fn normalizeSource(source: []const u8) []const u8 {
@@ -1439,7 +1437,6 @@ pub const VirtualMachine = struct {
         query_string: ?*ZigString,
         is_esm: bool,
         comptime is_a_file_path: bool,
-        comptime realpath: bool,
     ) void {
         var result = ResolveFunctionResult{ .path = "", .result = null };
         var jsc_vm = VirtualMachine.get();
@@ -1473,7 +1470,6 @@ pub const VirtualMachine = struct {
                     query_string,
                     is_esm,
                     is_a_file_path,
-                    realpath,
                 );
                 return;
             }
@@ -1493,7 +1489,7 @@ pub const VirtualMachine = struct {
             jsc_vm.bundler.linker.log = old_log;
             jsc_vm.bundler.resolver.log = old_log;
         }
-        _resolve(&result, global, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path, realpath) catch |err_| {
+        _resolve(&result, global, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path) catch |err_| {
             var err = err_;
             const msg: logger.Msg = brk: {
                 var msgs: []logger.Msg = log.msgs.items;

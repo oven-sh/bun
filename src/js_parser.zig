@@ -9966,16 +9966,37 @@ fn NewParser_(
         }
 
         fn skipTypeScriptTypeStmt(p: *P, opts: *ParseStatementOptions) anyerror!void {
-            if (opts.is_export and p.lexer.token == .t_open_brace) {
-                // "export type {foo}"
-                // "export type {foo} from 'bar'"
-                _ = try p.parseExportClause();
-                if (p.lexer.isContextualKeyword("from")) {
-                    try p.lexer.next();
-                    _ = try p.parsePath();
+            if (opts.is_export) {
+                switch (p.lexer.token) {
+                    .t_open_brace => {
+                        // "export type {foo}"
+                        // "export type {foo} from 'bar'"
+                        _ = try p.parseExportClause();
+                        if (p.lexer.isContextualKeyword("from")) {
+                            try p.lexer.next();
+                            _ = try p.parsePath();
+                        }
+                        try p.lexer.expectOrInsertSemicolon();
+                        return;
+                    },
+                    .t_asterisk => {
+                        // https://github.com/microsoft/TypeScript/pull/52217
+                        // - export type * as Foo from 'bar';
+                        // - export type Foo from 'bar';
+                        try p.lexer.next();
+                        if (p.lexer.isContextualKeyword("as")) {
+                            // "export type * as ns from 'path'"
+                            try p.lexer.next();
+                            _ = try p.parseClauseAlias("export");
+                            try p.lexer.next();
+                        }
+                        try p.lexer.expectContextualKeyword("from");
+                        _ = try p.parsePath();
+                        try p.lexer.expectOrInsertSemicolon();
+                        return;
+                    },
+                    else => {},
                 }
-                try p.lexer.expectOrInsertSemicolon();
-                return;
             }
 
             const name = p.lexer.identifier;

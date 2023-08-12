@@ -8,7 +8,11 @@ const Mimalloc = @import("root").bun.Mimalloc;
 const bun = @import("root").bun;
 
 pub const build_id = std.fmt.parseInt(u64, std.mem.trim(u8, @embedFile("./build-id"), "\n \r\t"), 10) catch unreachable;
-pub const version: @import("./install/semver.zig").Version = .{
+
+pub const version: if (Environment.isWasm)
+    std.SemanticVersion
+else
+    @import("./install/semver.zig").Version = .{
     .major = 0,
     .minor = 7,
     .patch = build_id,

@@ -108,7 +108,7 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
-            if (comptime FunctionEnum != .readdir and FunctionEnum != .lstat and FunctionEnum != .stat and FunctionEnum != .readFile) {
+            if (comptime FunctionEnum != .readdir and FunctionEnum != .lstat and FunctionEnum != .stat and FunctionEnum != .readFile and FunctionEnum != .realpath) {
                 globalObject.throw("Not implemented yet", .{});
                 return .zero;
             }
@@ -145,6 +145,10 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 
             if (comptime FunctionEnum == .readFile) {
                 return JSC.Node.AsyncReadFileTask.create(globalObject, args, slice.vm, slice.arena);
+            }
+
+             if (comptime FunctionEnum == .realpath) {
+                return JSC.Node.AsyncRealpathTask.create(globalObject, args, slice.vm, slice.arena);
             }
 
             if (comptime FunctionEnum == .stat or FunctionEnum == .lstat) {

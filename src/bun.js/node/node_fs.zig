@@ -123,10 +123,10 @@ pub const AsyncReaddirTask = struct {
     }
 
     pub fn deinit(this: *AsyncReaddirTask) void {
-        this.arena.deinit();
         this.ref.unref(this.globalObject.bunVM());
         this.args.deinitAndUnprotect();
         this.promise.strong.deinit();
+        this.arena.deinit();
         bun.default_allocator.destroy(this);
     }
 };
@@ -210,10 +210,99 @@ pub const AsyncStatTask = struct {
     }
 
     pub fn deinit(this: *AsyncStatTask) void {
-        this.arena.deinit();
         this.ref.unref(this.globalObject.bunVM());
         this.args.deinitAndUnprotect();
         this.promise.strong.deinit();
+        this.arena.deinit();
+        bun.default_allocator.destroy(this);
+    }
+};
+
+pub const AsyncRealpathTask = struct {
+    promise: JSC.JSPromise.Strong,
+    args: Arguments.Realpath,
+    globalObject: *JSC.JSGlobalObject,
+    task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
+    result: JSC.Maybe(Return.Realpath),
+    ref: JSC.PollRef = .{},
+    arena: bun.ArenaAllocator,
+
+    pub fn create(
+        globalObject: *JSC.JSGlobalObject,
+        args: Arguments.Realpath,
+        vm: *JSC.VirtualMachine,
+        arena: bun.ArenaAllocator,
+    ) JSC.JSValue {
+        var task = bun.default_allocator.create(AsyncRealpathTask) catch @panic("out of memory");
+        task.* = AsyncRealpathTask{
+            .promise = JSC.JSPromise.Strong.init(globalObject),
+            .args = args,
+            .result = undefined,
+            .globalObject = globalObject,
+            .arena = arena,
+        };
+        task.ref.ref(vm);
+        task.args.path.toThreadSafe();
+
+        JSC.WorkPool.schedule(&task.task);
+
+        return task.promise.value();
+    }
+
+    fn workPoolCallback(task: *JSC.WorkPoolTask) void {
+        var this: *AsyncRealpathTask = @fieldParentPtr(AsyncRealpathTask, "task", task);
+
+        var node_fs = NodeFS{};
+        this.result = node_fs.realpath(this.args, .promise);
+
+        if (this.result == .err) {
+            this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
+        }
+
+        this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(this, runFromJSThread));
+    }
+
+    fn runFromJSThread(this: *AsyncRealpathTask) void {
+        var globalObject = this.globalObject;
+        var success = @as(JSC.Maybe(Return.Realpath).Tag, this.result) == .result;
+        const result = switch (this.result) {
+            .err => |err| err.toJSC(globalObject),
+            .result => |res| brk: {
+                var exceptionref: JSC.C.JSValueRef = null;
+                const out = JSC.JSValue.c(JSC.To.JS.withType(Return.Realpath, res, globalObject, &exceptionref));
+                const exception = JSC.JSValue.c(exceptionref);
+                if (exception != .zero) {
+                    success = false;
+                    break :brk exception;
+                }
+
+                break :brk out;
+            },
+        };
+        var promise_value = this.promise.value();
+        var promise = this.promise.get();
+        promise_value.ensureStillAlive();
+
+        this.deinit();
+        switch (success) {
+            false => {
+                promise.reject(globalObject, result);
+            },
+            true => {
+                promise.resolve(globalObject, result);
+            },
+        }
+    }
+
+    pub fn deinit(this: *AsyncRealpathTask) void {
+        if (this.result == .err) {
+            bun.default_allocator.free(this.result.err.path);
+        }
+
+        this.ref.unref(this.globalObject.bunVM());
+        this.args.deinitAndUnprotect();
+        this.promise.strong.deinit();
+        this.arena.deinit();
         bun.default_allocator.destroy(this);
     }
 };
@@ -1155,6 +1244,10 @@ pub const Arguments = struct {
 
         pub fn deinit(this: Realpath) void {
             this.path.deinit();
+        }
+
+        pub fn deinitAndUnprotect(this: *Realpath) void {
+            this.path.deinitAndUnprotect();
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Realpath {
@@ -4269,65 +4362,58 @@ pub const NodeFS = struct {
 
         return Maybe(Return.Readlink).todo;
     }
-    pub fn realpath(this: *NodeFS, args: Arguments.Realpath, comptime flavor: Flavor) Maybe(Return.Realpath) {
+    pub fn realpath(this: *NodeFS, args: Arguments.Realpath, comptime _: Flavor) Maybe(Return.Realpath) {
         var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var inbuf = &this.sync_error_buf;
         if (comptime Environment.allow_assert) std.debug.assert(FileSystem.instance_loaded);
 
-        switch (comptime flavor) {
-            .sync => {
-                var path_slice = args.path.slice();
+        var path_slice = args.path.slice();
 
-                var parts = [_]string{ FileSystem.instance.top_level_dir, path_slice };
-                var path_ = FileSystem.instance.absBuf(&parts, inbuf);
-                inbuf[path_.len] = 0;
-                var path: [:0]u8 = inbuf[0..path_.len :0];
+        var parts = [_]string{ FileSystem.instance.top_level_dir, path_slice };
+        var path_ = FileSystem.instance.absBuf(&parts, inbuf);
+        inbuf[path_.len] = 0;
+        var path: [:0]u8 = inbuf[0..path_.len :0];
 
-                const flags = if (comptime Environment.isLinux)
-                    // O_PATH is faster
-                    std.os.O.PATH
-                else
-                    std.os.O.RDONLY;
+        const flags = if (comptime Environment.isLinux)
+            // O_PATH is faster
+            std.os.O.PATH
+        else
+            std.os.O.RDONLY;
 
-                const fd = switch (Syscall.open(path, flags, 0)) {
-                    .err => |err| return .{
-                        .err = err.withPath(path),
-                    },
-                    .result => |fd_| fd_,
-                };
-
-                defer {
-                    _ = Syscall.close(fd);
-                }
-
-                const buf = switch (Syscall.getFdPath(fd, &outbuf)) {
-                    .err => |err| return .{
-                        .err = err.withPath(path),
-                    },
-                    .result => |buf_| buf_,
-                };
-
-                return .{
-                    .result = switch (args.encoding) {
-                        .buffer => .{
-                            .buffer = Buffer.fromString(buf, bun.default_allocator) catch unreachable,
-                        },
-                        else => if (args.path == .slice_with_underlying_string and
-                            strings.eqlLong(args.path.slice_with_underlying_string.slice(), buf, true))
-                            .{
-                                .BunString = args.path.slice_with_underlying_string.underlying.dupeRef(),
-                            }
-                        else
-                            .{
-                                .BunString = bun.String.create(buf),
-                            },
-                    },
-                };
+        const fd = switch (Syscall.open(path, flags, 0)) {
+            .err => |err| return .{
+                .err = err.withPath(path),
             },
-            else => {},
+            .result => |fd_| fd_,
+        };
+
+        defer {
+            _ = Syscall.close(fd);
         }
 
-        return Maybe(Return.Realpath).todo;
+        const buf = switch (Syscall.getFdPath(fd, &outbuf)) {
+            .err => |err| return .{
+                .err = err.withPath(path),
+            },
+            .result => |buf_| buf_,
+        };
+
+        return .{
+            .result = switch (args.encoding) {
+                .buffer => .{
+                    .buffer = Buffer.fromString(buf, bun.default_allocator) catch unreachable,
+                },
+                else => if (args.path == .slice_with_underlying_string and
+                    strings.eqlLong(args.path.slice_with_underlying_string.slice(), buf, true))
+                    .{
+                        .BunString = args.path.slice_with_underlying_string.underlying.dupeRef(),
+                    }
+                else
+                    .{
+                        .BunString = bun.String.create(buf),
+                    },
+            },
+        };
     }
     pub const realpathNative = realpath;
     // pub fn realpathNative(this: *NodeFS,  args: Arguments.Realpath, comptime flavor: Flavor) Maybe(Return.Realpath) {

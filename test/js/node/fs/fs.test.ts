@@ -42,7 +42,7 @@ import { join } from "node:path";
 
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
 import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
-import { spawnSync } from "bun";
+import { SystemError, spawnSync } from "bun";
 
 const Buffer = globalThis.Buffer || Uint8Array;
 
@@ -799,6 +799,36 @@ it("readlink", () => {
   symlinkSync(import.meta.path, actual);
 
   expect(readlinkSync(actual)).toBe(realpathSync(import.meta.path));
+});
+
+it("realpath async", async () => {
+  const actual = join(tmpdir(), Math.random().toString(32) + "-fs-realpath.txt");
+  try {
+    unlinkSync(actual);
+  } catch (e) {}
+
+  symlinkSync(import.meta.path, actual);
+
+  expect(await promises.realpath(actual)).toBe(realpathSync(import.meta.path));
+  const tasks = new Array(500);
+  for (let i = 0; i < 500; i++) {
+    const current = actual + i;
+    tasks[i] = promises.realpath(current).then(
+      () => {
+        throw new Error("should not get here");
+      },
+      e => {
+        expect(e?.path).toBe(current);
+      },
+    );
+  }
+  await Promise.all(tasks);
+
+  const { promise, resolve, reject } = Promise.withResolvers();
+  fs.realpath(actual, (err, path) => {
+    err ? reject(err) : resolve(path);
+  });
+  expect(await promise).toBe(realpathSync(import.meta.path));
 });
 
 describe("stat", () => {

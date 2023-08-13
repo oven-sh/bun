@@ -219,7 +219,17 @@ pub const Expect = struct {
     }
 
     pub fn getSnapshotName(this: *Expect, allocator: std.mem.Allocator, hint: string) ![]const u8 {
-        const test_name = this.scope.tests.items[this.test_id].label;
+        var test_name = this.scope.tests.items[this.test_id].label;
+        var name_builder = MutableString.initEmpty(allocator);
+        
+        for (test_name) | value | { 
+            if(value == '`') {
+                try name_builder.append("\\");
+            } 
+            try name_builder.appendChar(value);
+        }
+        const escaped_name = name_builder.toOwnedSentinelLeaky();  
+        defer allocator.free(escaped_name);
 
         var length: usize = 0;
         var curr_scope: ?*DescribeScope = this.scope;
@@ -229,7 +239,7 @@ pub const Expect = struct {
             }
             curr_scope = scope.parent;
         }
-        length += test_name.len;
+        length += escaped_name.len;
         if (hint.len > 0) {
             length += hint.len + 2;
         }
@@ -240,12 +250,12 @@ pub const Expect = struct {
         if (hint.len > 0) {
             index -= hint.len;
             bun.copy(u8, buf[index..], hint);
-            index -= test_name.len + 2;
-            bun.copy(u8, buf[index..], test_name);
-            bun.copy(u8, buf[index + test_name.len ..], ": ");
+            index -= escaped_name.len + 2;
+            bun.copy(u8, buf[index..], escaped_name);
+            bun.copy(u8, buf[index + escaped_name.len ..], ": ");
         } else {
-            index -= test_name.len;
-            bun.copy(u8, buf[index..], test_name);
+            index -= escaped_name.len;
+            bun.copy(u8, buf[index..], escaped_name);
         }
         // copy describe scopes in reverse order
         curr_scope = this.scope;

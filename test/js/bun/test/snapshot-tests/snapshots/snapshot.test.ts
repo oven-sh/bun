@@ -166,5 +166,5 @@ it("should work with expect.anything()", () => {
 });
 
 it("should work with `backticks` in the test name", () => {
-  expect(true).toMatchSnapshot()
-})
+  expect(true).toMatchSnapshot();
+});

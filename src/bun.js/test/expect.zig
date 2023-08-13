@@ -221,14 +221,14 @@ pub const Expect = struct {
     pub fn getSnapshotName(this: *Expect, allocator: std.mem.Allocator, hint: string) ![]const u8 {
         const test_name = this.scope.tests.items[this.test_id].label;
         var name_builder = MutableString.initEmpty(allocator);
-        
-        for (test_name) | value | { 
-            if(value == '`') {
+
+        for (test_name) |value| {
+            if (value == '`') {
                 try name_builder.append("\\");
-            } 
+            }
             try name_builder.appendChar(value);
         }
-        const escaped_name = name_builder.toOwnedSentinelLeaky();  
+        const escaped_name = name_builder.toOwnedSentinelLeaky();
         defer allocator.free(escaped_name);
 
         var length: usize = 0;

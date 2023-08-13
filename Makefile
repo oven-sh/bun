@@ -555,7 +555,7 @@ tinycc:
 PYTHON=$(shell which python 2>/dev/null || which python3 2>/dev/null || which python2 2>/dev/null)
 
 .PHONY: esm
-js:
+js: # to rebundle js (rebuilding binary not needed to reload js code)
 	NODE_ENV=production bun src/js/_codegen/index.ts
 
 esm-debug:
@@ -660,8 +660,8 @@ else
 PKGNAME_NINJA := ninja-build
 endif
 
-.PHONY: require
-require:
+.PHONY: assert-deps
+assert-deps:
 	@echo "Checking if the required utilities are available..."
 	@if [ $(CLANG_VERSION) -lt "15" ]; then echo -e "ERROR: clang version >=15 required, found: $(CLANG_VERSION). Install with:\n\n    $(POSIX_PKG_MANAGER) install llvm@15"; exit 1; fi
 	@cmake --version >/dev/null 2>&1 || (echo -e "ERROR: cmake is required."; exit 1)
@@ -673,6 +673,9 @@ require:
 	@which $(LIBTOOL) > /dev/null || (echo -e "ERROR: libtool is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install libtool"; exit 1)
 	@which ninja > /dev/null || (echo -e "ERROR: Ninja is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install $(PKGNAME_NINJA)"; exit 1)
 	@which pkg-config > /dev/null || (echo -e "ERROR: pkg-config is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install pkg-config"; exit 1)
+	@which rustc > /dev/null || (echo -e "ERROR: rustc is required." exit 1)
+	@which cargo > /dev/null || (echo -e "ERROR: cargo is required." exit 1)
+	@test $(shell cargo --version | awk '{print $$2}' | cut -d. -f2) -gt 57 || (echo -e "ERROR: cargo version must be at least 1.57."; exit 1)
 	@echo "You have the dependencies installed! Woo"
 
 # the following allows you to run `make submodule` to update or init submodules. but we will exclude webkit
@@ -703,44 +706,46 @@ dev-build-obj-wasm:
 
 .PHONY: dev-wasm
 dev-wasm: dev-build-obj-wasm
-	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init']" \
-		-g -s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
-		$(BUN_DEPS_DIR)/libmimalloc.a.wasm  \
-		packages/debug-bun-freestanding-wasm32/bun-wasm.o $(OPTIMIZATION_LEVEL) --no-entry --allow-undefined  -s ASSERTIONS=0  -s ALLOW_MEMORY_GROWTH=1 -s WASM_BIGINT=1  \
+	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init', '_getTests']" \
+		-g2 -s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
+		$(BUN_DEPS_DIR)/$(MIMALLOC_FILE).wasm  \
+		packages/debug-bun-freestanding-wasm32/bun-wasm.o --no-entry --allow-undefined  -s ASSERTIONS=0  -s ALLOW_MEMORY_GROWTH=1 -s WASM_BIGINT=1  \
 		-o packages/debug-bun-freestanding-wasm32/bun-wasm.wasm
-	cp packages/debug-bun-freestanding-wasm32/bun-wasm.wasm src/api/demo/public/bun-wasm.wasm
+	cp packages/debug-bun-freestanding-wasm32/bun-wasm.wasm packages/bun-wasm/bun.wasm
 
 .PHONY: build-obj-wasm
 build-obj-wasm:
 	$(ZIG) build bun-wasm -Doptimize=ReleaseFast -Dtarget=wasm32-freestanding
-	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init']" \
-		-g -s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
-		$(BUN_DEPS_DIR)/libmimalloc.a.wasm  \
+	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init', '_getTests']" \
+		-s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
+		$(BUN_DEPS_DIR)/$(MIMALLOC_FILE).wasm  \
 		packages/bun-freestanding-wasm32/bun-wasm.o $(OPTIMIZATION_LEVEL) --no-entry --allow-undefined  -s ASSERTIONS=0  -s ALLOW_MEMORY_GROWTH=1 -s WASM_BIGINT=1  \
 		-o packages/bun-freestanding-wasm32/bun-wasm.wasm
-	cp packages/bun-freestanding-wasm32/bun-wasm.wasm src/api/demo/public/bun-wasm.wasm
+	cp packages/bun-freestanding-wasm32/bun-wasm.wasm packages/bun-wasm/bun.wasm
 
 .PHONY: build-obj-wasm-small
 build-obj-wasm-small:
-	$(ZIG) build bun-wasm -Doptimize=ReleaseSmall -Dtarget=wasm32-freestanding
-	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init']" \
-		-g -s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
-		$(BUN_DEPS_DIR)/libmimalloc.a.wasm  \
+	$(ZIG) build bun-wasm -Doptimize=ReleaseFast -Dtarget=wasm32-freestanding
+	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init', '_getTests']" \
+		-Oz -s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
+		$(BUN_DEPS_DIR)/$(MIMALLOC_FILE).wasm  \
 		packages/bun-freestanding-wasm32/bun-wasm.o -Oz --no-entry --allow-undefined  -s ASSERTIONS=0  -s ALLOW_MEMORY_GROWTH=1 -s WASM_BIGINT=1  \
 		-o packages/bun-freestanding-wasm32/bun-wasm.wasm
-	cp packages/bun-freestanding-wasm32/bun-wasm.wasm src/api/demo/public/bun-wasm.wasm
+	cp packages/bun-freestanding-wasm32/bun-wasm.wasm packages/bun-wasm/bun.wasm
 
 .PHONY: wasm
-wasm: api build-obj-wasm-small
-	@rm -rf packages/bun-wasm/*.{d.ts,js,wasm,cjs,mjs,tsbuildinfo}
+wasm: api mimalloc-wasm build-obj-wasm-small
+	@rm -rf packages/bun-wasm/*.{d.ts,d.cts,d.mts,js,wasm,cjs,mjs,tsbuildinfo}
 	@cp packages/bun-freestanding-wasm32/bun-wasm.wasm packages/bun-wasm/bun.wasm
 	@cp src/api/schema.d.ts packages/bun-wasm/schema.d.ts
 	@cp src/api/schema.js packages/bun-wasm/schema.js
 	@cd packages/bun-wasm && $(NPM_CLIENT) run tsc -- -p .
-	@$(ESBUILD) --sourcemap=external --external:fs --define:process.env.NODE_ENV='"production"' --outdir=packages/bun-wasm --target=esnext --bundle packages/bun-wasm/index.ts --format=esm --minify 2> /dev/null
+	@cp packages/bun-wasm/index.d.ts packages/bun-wasm/index.d.cts
+	@mv packages/bun-wasm/index.d.ts packages/bun-wasm/index.d.mts
+	@bun build --sourcemap=external --external=fs --outdir=packages/bun-wasm --target=browser --minify ./packages/bun-wasm/index.ts
 	@mv packages/bun-wasm/index.js packages/bun-wasm/index.mjs
 	@mv packages/bun-wasm/index.js.map packages/bun-wasm/index.mjs.map
-	@$(ESBUILD) --sourcemap=external --external:fs --define:process.env.NODE_ENV='"production"' --outdir=packages/bun-wasm --target=esnext --bundle packages/bun-wasm/index.ts --format=cjs --minify --platform=node 2> /dev/null
+	@$(ESBUILD) --sourcemap=external --external:fs --outdir=packages/bun-wasm --target=esnext --bundle packages/bun-wasm/index.ts --format=cjs --minify --platform=node 2> /dev/null
 	@mv packages/bun-wasm/index.js packages/bun-wasm/index.cjs
 	@mv packages/bun-wasm/index.js.map packages/bun-wasm/index.cjs.map
 	@rm -rf packages/bun-wasm/*.tsbuildinfo
@@ -1106,9 +1111,6 @@ endif
 dev-obj-linux:
 	$(ZIG) build obj -Dtarget=x86_64-linux-gnu -Dcpu="$(CPU_TARGET)"
 
-.PHONY: dev
-dev: mkdir-dev dev-obj link ## compile zig changes + link bun
-
 mkdir-dev:
 	mkdir -p $(DEBUG_PACKAGE_DIR)
 
@@ -1379,7 +1381,8 @@ mimalloc:
 
 
 mimalloc-wasm:
-	cd $(BUN_DEPS_DIR)/mimalloc; emcmake cmake -DMI_BUILD_SHARED=OFF -DMI_BUILD_STATIC=ON -DMI_BUILD_TESTS=OFF -DMI_BUILD_OBJECT=ON ${MIMALLOC_OVERRIDE_FLAG} -DMI_USE_CXX=ON .; emmake make;
+	rm -rf $(BUN_DEPS_DIR)/mimalloc/CMakeCache* $(BUN_DEPS_DIR)/mimalloc/CMakeFiles
+	cd $(BUN_DEPS_DIR)/mimalloc; emcmake cmake -DMI_BUILD_SHARED=OFF -DMI_BUILD_STATIC=ON -DMI_BUILD_TESTS=OFF -GNinja -DMI_BUILD_OBJECT=ON ${MIMALLOC_OVERRIDE_FLAG} -DMI_USE_CXX=OFF .; emmake cmake --build .;
 	cp $(BUN_DEPS_DIR)/mimalloc/$(MIMALLOC_INPUT_PATH) $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE).wasm
 
 # alias for link, incase anyone still types that
@@ -1897,26 +1900,44 @@ vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimallo
 vendor-without-check: npm-install vendor-without-npm
 
 .PHONY: vendor
-vendor: require submodule vendor-without-check
+vendor: assert-deps submodule vendor-without-check
 
 .PHONY: vendor-dev
-vendor-dev: require submodule npm-install-dev vendor-without-npm
+vendor-dev: assert-deps submodule npm-install-dev vendor-without-npm
 
 .PHONY: bun
 bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local
 
-.PHONY: regenerate-bindings
-regenerate-bindings: ## compile src/js/builtins + all c++ code, does not link
+.PHONY: cpp
+cpp: ## compile src/js/builtins + all c++ code then link
+	@make clean-bindings js
+	@make bindings -j$(CPU_COUNT)
+	@make link
+
+.PHONY: cpp
+cpp-no-link:
 	@make clean-bindings js
 	@make bindings -j$(CPU_COUNT)
 
+.PHONY: zig
+zig: ## compile zig code then link
+	@make mkdir-dev dev-obj link
+
+.PHONY: zig-no-link
+zig-no-link:
+	@make mkdir-dev dev-obj
+
+.PHONY: dev
+dev: # combo of `make cpp` and `make zig`
+	@make cpp-no-link zig-no-link -j2
+	@make link
+
 .PHONY: setup
-setup: vendor-dev identifier-cache clean-bindings js
-	make jsc-check
-	make bindings -j$(CPU_COUNT)
+setup: vendor-dev identifier-cache clean-bindings
+	make jsc-check cpp zig link
 	@echo ""
-	@echo "Development environment setup complete"
-	@echo "Run \`make dev\` to build \`bun-debug\`"
+	@echo "First build complete!"
+	@echo "\"bun-debug\" is available at $(DEBUG_BIN)/bun-debug"
 	@echo ""
 
 .PHONY: help

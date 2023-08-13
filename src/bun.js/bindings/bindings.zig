@@ -5063,6 +5063,26 @@ pub const VM = extern struct {
         });
     }
 
+    // These four functions fire VM traps. To understand what that means, see VMTraps.h for a giant explainer.
+    // These may be called concurrently from another thread.
+
+    /// Fires NeedTermination Trap. Thread safe. See JSC's "VMTraps.h" for explaination on traps.
+    pub fn notifyNeedTermination(vm: *VM) void {
+        cppFn("notifyNeedTermination", .{vm});
+    }
+    /// Fires NeedWatchdogCheck Trap. Thread safe. See JSC's "VMTraps.h" for explaination on traps.
+    pub fn notifyNeedWatchdogCheck(vm: *VM) void {
+        cppFn("notifyNeedWatchdogCheck", .{vm});
+    }
+    /// Fires NeedDebuggerBreak Trap. Thread safe. See JSC's "VMTraps.h" for explaination on traps.
+    pub fn notifyNeedDebuggerBreak(vm: *VM) void {
+        cppFn("notifyNeedDebuggerBreak", .{vm});
+    }
+    /// Fires NeedShellTimeoutCheck Trap. Thread safe. See JSC's "VMTraps.h" for explaination on traps.
+    pub fn notifyNeedShellTimeoutCheck(vm: *VM) void {
+        cppFn("notifyNeedShellTimeoutCheck", .{vm});
+    }
+
     pub fn isEntered(vm: *VM) bool {
         return cppFn("isEntered", .{
             vm,
@@ -5514,7 +5534,6 @@ pub const URLSearchParams = opaque {
 
 pub const WTF = struct {
     extern fn WTF__copyLCharsFromUCharSource(dest: [*]u8, source: *const anyopaque, len: usize) void;
-    extern fn WTF__toBase64URLStringValue(bytes: [*]const u8, length: usize, globalObject: *JSGlobalObject) JSValue;
     extern fn WTF__parseDouble(bytes: [*]const u8, length: usize, counted: *usize) f64;
 
     pub fn parseDouble(buf: []const u8) !f64 {
@@ -5538,14 +5557,6 @@ pub const WTF = struct {
 
         // This is any alignment
         WTF__copyLCharsFromUCharSource(destination, source.ptr, source.len);
-    }
-
-    /// Encode a byte array to a URL-safe base64 string for use with JS
-    /// Memory is managed by JavaScriptCore instead of us
-    pub fn toBase64URLStringValue(bytes: []const u8, globalObject: *JSGlobalObject) JSValue {
-        JSC.markBinding(@src());
-
-        return WTF__toBase64URLStringValue(bytes.ptr, bytes.len, globalObject);
     }
 };
 

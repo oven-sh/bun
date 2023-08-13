@@ -35,8 +35,6 @@ const DotEnv = @import("./env_loader.zig");
 const fs = @import("fs.zig");
 const Router = @import("./router.zig");
 
-const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
-
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const TestCommand = @import("./cli/test_command.zig").TestCommand;
 const Reporter = @import("./report.zig");
@@ -148,6 +146,7 @@ pub const Arguments = struct {
         clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
         clap.parseParam("--no-summary                      Don't print a summary (when generating .bun)") catch unreachable,
         clap.parseParam("-v, --version                     Print version and exit") catch unreachable,
+        clap.parseParam("--revision                        Print version with revision and exit") catch unreachable,
         clap.parseParam("--tsconfig-override <STR>         Load tsconfig from path instead of cwd/tsconfig.json") catch unreachable,
         clap.parseParam("-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
         clap.parseParam("-e, --external <STR>...           Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
@@ -187,8 +186,6 @@ pub const Arguments = struct {
     pub const dev_params = [_]ParamType{
         clap.parseParam("--disable-bun.js                  Disable bun.js from loading in the dev server") catch unreachable,
         clap.parseParam("--disable-react-fast-refresh      Disable React Fast Refresh") catch unreachable,
-        clap.parseParam("--bunfile <STR>                   Use a .bun file (default: node_modules.bun)") catch unreachable,
-        clap.parseParam("--server-bunfile <STR>            Use a .server.bun file (default: node_modules.server.bun)") catch unreachable,
         clap.parseParam("--public-dir <STR>                Top-level directory for .html files, fonts or anything external. Defaults to \"<cwd>/public\", to match create-react-app and Next.js") catch unreachable,
         clap.parseParam("--disable-hmr                     Disable Hot Module Reloading (disables fast refresh too) in bun dev") catch unreachable,
         clap.parseParam("--use <STR>                       Choose a framework, e.g. \"--use next\". It checks first for a package named \"bun-framework-packagename\" and then \"packagename\".") catch unreachable,
@@ -231,6 +228,12 @@ pub const Arguments = struct {
     fn printVersionAndExit() noreturn {
         @setCold(true);
         Output.writer().writeAll(Global.package_json_version ++ "\n") catch {};
+        Global.exit(0);
+    }
+
+    fn printRevisionAndExit() noreturn {
+        @setCold(true);
+        Output.writer().writeAll(Global.package_json_version_with_revision ++ "\n") catch {};
         Global.exit(0);
     }
 
@@ -310,7 +313,7 @@ pub const Arguments = struct {
         defer ctx.debug.loaded_bunfig = true;
         var config_path: [:0]u8 = undefined;
         if (config_path_[0] == '/') {
-            @memcpy(config_buf[0..config_path.len], config_path);
+            @memcpy(config_buf[0..config_path_.len], config_path_);
             config_buf[config_path_.len] = 0;
             config_path = config_buf[0..config_path_.len :0];
         } else {
@@ -363,6 +366,10 @@ pub const Arguments = struct {
 
         if (args.flag("--version")) {
             printVersionAndExit();
+        }
+
+        if (args.flag("--revision")) {
+            printRevisionAndExit();
         }
 
         var cwd: []u8 = undefined;
@@ -512,8 +519,7 @@ pub const Arguments = struct {
 
         const print_help = args.flag("--help");
         if (print_help) {
-            const params_len = if (cmd == .BuildCommand) build_params_public.len else public_params.len;
-            clap.help(Output.writer(), params_to_use[0..params_len]) catch {};
+            clap.help(Output.writer(), params_to_use[0..params_to_use.len]) catch {};
             Output.prettyln("\n-------\n\n", .{});
             Output.flush();
             HelpCommand.printWithReason(.explicit);
@@ -671,18 +677,6 @@ pub const Arguments = struct {
                 }
             }
 
-            opts.node_modules_bundle_path = args.option("--bunfile") orelse opts.node_modules_bundle_path orelse brk: {
-                const node_modules_bundle_path_absolute = resolve_path.joinAbs(cwd, .auto, "node_modules.bun");
-
-                break :brk std.fs.realpathAlloc(allocator, node_modules_bundle_path_absolute) catch null;
-            };
-
-            opts.node_modules_bundle_path_server = args.option("--server-bunfile") orelse opts.node_modules_bundle_path_server orelse brk: {
-                const node_modules_bundle_path_absolute = resolve_path.joinAbs(cwd, .auto, "node_modules.server.bun");
-
-                break :brk std.fs.realpathAlloc(allocator, node_modules_bundle_path_absolute) catch null;
-            };
-
             if (args.option("--use")) |entry| {
                 opts.framework = Api.FrameworkConfig{
                     .package = entry,
@@ -775,7 +769,7 @@ pub const Arguments = struct {
         }
 
         if (cmd == .BuildCommand) {
-            if (opts.entry_points.len == 0 and opts.framework == null and opts.node_modules_bundle_path == null) {
+            if (opts.entry_points.len == 0 and opts.framework == null) {
                 return error.MissingEntryPoint;
             }
         }
@@ -857,6 +851,7 @@ pub const HelpCommand = struct {
             \\>  <b><cyan>create<r>    <d>next ./app<r>            Create a new project from a template <d>(bun c)<r>
             \\>  <b><green>install<r>                         Install dependencies for a package.json <d>(bun i)<r>
             \\>  <b><blue>add<r>       <d>{s:<16}<r>      Add a dependency to package.json <d>(bun a)<r>
+            \\>  <b><blue>update<r>    <d>{s:<16}<r>      Update outdated dependencies & save to package.json
             \\>  <b><blue>link<r>                            Link an npm package globally
             \\>  remove<r>    <d>{s:<16}<r>      Remove a dependency from package.json <d>(bun rm)<r>
             \\>  unlink<r>                          Globally unlink an npm package
@@ -878,6 +873,7 @@ pub const HelpCommand = struct {
 
         const args = .{
             packages_to_add_filler[package_add_i],
+            packages_to_add_filler[(package_add_i + 1) % packages_to_add_filler.len],
             packages_to_remove_filler[package_remove_i],
         };
 
@@ -905,33 +901,6 @@ pub const HelpCommand = struct {
 };
 
 const AddCompletions = @import("./cli/add_completions.zig");
-
-pub const PrintBundleCommand = struct {
-    pub fn exec(ctx: Command.Context) !void {
-        @setCold(true);
-
-        const entry_point = ctx.args.entry_points[0];
-        var out_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var stdout = std.io.getStdOut();
-
-        var input = try std.fs.openFileAbsolute(try std.os.realpath(entry_point, &out_buffer), .{ .mode = .read_only });
-        const params = comptime [_]Arguments.ParamType{
-            clap.parseParam("--summary  Peek inside the .bun") catch unreachable,
-        };
-
-        var jsBundleArgs = clap.parse(clap.Help, &params, .{ .allocator = ctx.allocator }) catch {
-            try NodeModuleBundle.printBundle(std.fs.File, input, @TypeOf(stdout), stdout);
-            return;
-        };
-
-        if (jsBundleArgs.flag("--summary")) {
-            NodeModuleBundle.printSummaryFromDisk(std.fs.File, input, @TypeOf(stdout), stdout, ctx.allocator) catch {};
-            return;
-        }
-
-        try NodeModuleBundle.printBundle(std.fs.File, input, @TypeOf(stdout), stdout);
-    }
-};
 
 pub const Command = struct {
     var script_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -1092,11 +1061,11 @@ pub const Command = struct {
                 for (args_iter.buf) |arg| {
                     const span = std.mem.span(arg);
                     if (span.len > 0 and (strings.eqlComptime(span, "-g") or strings.eqlComptime(span, "--global"))) {
-                        break :brk Command.Tag.AddCommand;
+                        break :brk .AddCommand;
                     }
                 }
 
-                break :brk Command.Tag.InstallCommand;
+                break :brk .InstallCommand;
             },
             RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
 
@@ -1104,7 +1073,8 @@ pub const Command = struct {
 
             RootCommandMatcher.case("pm") => .PackageManagerCommand,
 
-            RootCommandMatcher.case("add"), RootCommandMatcher.case("update"), RootCommandMatcher.case("a") => .AddCommand,
+            RootCommandMatcher.case("add"), RootCommandMatcher.case("a") => .AddCommand,
+            RootCommandMatcher.case("update") => .UpdateCommand,
             RootCommandMatcher.case("r"), RootCommandMatcher.case("remove"), RootCommandMatcher.case("rm"), RootCommandMatcher.case("uninstall") => .RemoveCommand,
 
             RootCommandMatcher.case("run") => .RunCommand,
@@ -1154,6 +1124,7 @@ pub const Command = struct {
         const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
         const RunCommand = @import("./cli/run_command.zig").RunCommand;
         const ShellCompletions = @import("./cli/shell_completions.zig");
+        const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
 
         const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
         const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
@@ -1173,6 +1144,7 @@ pub const Command = struct {
             // _ = RunCommand;
             // _ = ShellCompletions;
             // _ = TestCommand;
+            // _ = UpdateCommand;
             // _ = UpgradeCommand;
             // _ = BunxCommand;
         }
@@ -1241,6 +1213,13 @@ pub const Command = struct {
                 const ctx = try Command.Context.create(allocator, log, .AddCommand);
 
                 try AddCommand.exec(ctx);
+                return;
+            },
+            .UpdateCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UpdateCommand) unreachable;
+                const ctx = try Command.Context.create(allocator, log, .UpdateCommand);
+
+                try UpdateCommand.exec(ctx);
                 return;
             },
             .BunxCommand => {
@@ -1433,11 +1412,6 @@ pub const Command = struct {
                     @as([]const u8, "");
                 // KEYWORDS: open file argv argv0
                 if (ctx.args.entry_points.len == 1) {
-                    if (strings.eqlComptime(extension, ".bun")) {
-                        try PrintBundleCommand.exec(ctx);
-                        return;
-                    }
-
                     if (strings.eqlComptime(extension, ".lockb")) {
                         for (std.os.argv) |arg| {
                             if (strings.eqlComptime(std.mem.span(arg), "--hash")) {
@@ -1624,6 +1598,7 @@ pub const Command = struct {
         RunCommand,
         TestCommand,
         UnlinkCommand,
+        UpdateCommand,
         UpgradeCommand,
 
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
@@ -1637,14 +1612,14 @@ pub const Command = struct {
 
         pub fn readGlobalConfig(this: Tag) bool {
             return switch (this) {
-                .BunxCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand => true,
+                .BunxCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand => true,
                 else => false,
             };
         }
 
         pub fn isNPMRelated(this: Tag) bool {
             return switch (this) {
-                .BunxCommand, .LinkCommand, .UnlinkCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand => true,
+                .BunxCommand, .LinkCommand, .UnlinkCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand => true,
                 else => false,
             };
         }
@@ -1656,6 +1631,7 @@ pub const Command = struct {
             .InstallCommand = true,
             .AddCommand = true,
             .RemoveCommand = true,
+            .UpdateCommand = true,
             .PackageManagerCommand = true,
             .BunxCommand = true,
             .AutoCommand = true,
@@ -1669,6 +1645,7 @@ pub const Command = struct {
             .InstallCommand = true,
             .AddCommand = true,
             .RemoveCommand = true,
+            .UpdateCommand = true,
             .PackageManagerCommand = true,
             .BunxCommand = true,
         });
@@ -1678,6 +1655,7 @@ pub const Command = struct {
             .InstallCommand = false,
             .AddCommand = false,
             .RemoveCommand = false,
+            .UpdateCommand = false,
             .PackageManagerCommand = false,
             .LinkCommand = false,
             .UnlinkCommand = false,

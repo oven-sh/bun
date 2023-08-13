@@ -397,7 +397,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
 
     Process__dispatchOnExit(zigGlobal, exitCode);
     Bun__Process__exit(zigGlobal, exitCode);
-    __builtin_unreachable();
+    return JSC::JSValue::encode(jsUndefined());
 }
 
 extern "C" uint64_t Bun__readOriginTimer(void*);
@@ -1156,7 +1156,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
         zigGlobal = Bun__getDefaultGlobal();
     }
     Bun__Process__exit(zigGlobal, exitCode);
-    __builtin_unreachable();
+    return JSC::JSValue::encode(jsUndefined());
 }
 
 template<typename Visitor>

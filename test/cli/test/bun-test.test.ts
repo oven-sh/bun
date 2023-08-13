@@ -478,6 +478,221 @@ describe("bun test", () => {
       expect(stderr).toMatch(/::error title=error: Oops!::/);
     });
   });
+  describe(".each", () => {
+    test("should run tests with test.each", () => {
+      const numbers = [
+        [1, 2, 3],
+        [1, 1, 2],
+        [3, 4, 7],
+      ];
+
+      const stderr = runTest({
+        args: [],
+        input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(numbers)})("%i + %i = %i", (a, b, e) => {
+            expect(a + b).toBe(e);
+          });
+        `,
+      });
+      numbers.forEach(numbers => {
+        expect(stderr).toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+      });
+    });
+    test("should run tests with describe.each", () => {
+      const numbers = [
+        [1, 2, 3],
+        [1, 1, 2],
+        [3, 4, 7],
+      ];
+
+      const stderr = runTest({
+        args: [],
+        input: `
+          import { test, expect, describe } from "bun:test";
+
+          describe.each(${JSON.stringify(numbers)})("%i + %i = %i", (a, b, e) => {\
+            test("addition", () => {
+              expect(a + b).toBe(e);
+            });
+          });
+        `,
+      });
+      numbers.forEach(numbers => {
+        expect(stderr).toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+      });
+    });
+    test("check formatting for %i", () => {
+      const numbers = [
+        [1, 2, 3],
+        [1, 1, 2],
+        [3, 4, 7],
+      ];
+
+      const stderr = runTest({
+        args: [],
+        input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(numbers)})("%i + %i = %i", (a, b, e) => {
+            expect(a + b).toBe(e);
+          });
+        `,
+      });
+      numbers.forEach(numbers => {
+        expect(stderr).toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+      });
+    });
+    test("check formatting for %f", () => {
+      const numbers = [
+        [1.4, 2.9, 4.3],
+        [1, 1, 2],
+        [3.1, 4.5, 7.6],
+      ];
+
+      const stderr = runTest({
+        args: [],
+        input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(numbers)})("%f + %f = %d", (a, b, e) => {
+            expect(a + b).toBe(e);
+          });
+        `,
+      });
+      numbers.forEach(numbers => {
+        expect(stderr).toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+      });
+    });
+    test("check formatting for %d", () => {
+      const numbers = [
+        [1.4, 2.9, 4.3],
+        [1, 1, 2],
+        [3.1, 4.5, 7.6],
+      ];
+
+      const stderr = runTest({
+        args: [],
+        input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(numbers)})("%f + %f = %d", (a, b, e) => {
+            expect(a + b).toBe(e);
+          });
+        `,
+      });
+      numbers.forEach(numbers => {
+        expect(stderr).toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+      });
+    });
+    test("check formatting for %s", () => {
+      const strings = ["hello", "world", "foo"];
+
+      const stderr = runTest({
+        args: [],
+        input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(strings)})("with a string: %s", (s) => {
+            expect(s).toBeType("string");
+          });
+        `,
+      });
+      strings.forEach(s => {
+        expect(stderr).toContain(`with a string: ${s}`);
+      });
+    });
+    test("check formatting for %j", () => {
+      const input = [
+        {
+          foo: "bar",
+          nested: {
+            again: {
+              a: 2,
+            },
+          },
+        },
+      ];
+
+      const stderr = runTest({
+        args: [],
+        input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(input)})("with an object: %o", (o) => {
+            expect(o).toBe(o);
+          });
+        `,
+      });
+      expect(stderr).toContain(`with an object: ${JSON.stringify(input[0])}`);
+    });
+    test("check formatting for %o", () => {
+      const input = [
+        {
+          foo: "bar",
+          nested: {
+            again: {
+              a: 2,
+            },
+          },
+        },
+      ];
+
+      const stderr = runTest({
+        args: [],
+        input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(input)})("with an object: %o", (o) => {
+            expect(o).toBe(o);
+          });
+        `,
+      });
+      expect(stderr).toContain(`with an object: ${JSON.stringify(input[0])}`);
+    });
+    test("check formatting for %#", () => {
+      const numbers = [
+        [1, 2, 3],
+        [1, 1, 2],
+        [3, 4, 7],
+      ];
+
+      const stderr = runTest({
+        args: [],
+        input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(numbers)})("test number %#: %i + %i = %i", (a, b, e) => {
+            expect(a + b).toBe(e);
+          });
+        `,
+      });
+      numbers.forEach((_, idx) => {
+        expect(stderr).toContain(`test number ${idx}:`);
+      });
+    });
+    test("check formatting for %%", () => {
+      const numbers = [
+        [1, 2, 3],
+        [1, 1, 2],
+        [3, 4, 7],
+      ];
+
+      const stderr = runTest({
+        args: [],
+        input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(numbers)})("test number %#: %i + %i = %i %%", (a, b, e) => {
+            expect(a + b).toBe(e);
+          });
+        `,
+      });
+      expect(stderr).toContain(`%`);
+    });
+    test.todo("check formatting for %p", () => {});
+  });
 });
 
 function createTest(input?: string | string[], filename?: string): string {

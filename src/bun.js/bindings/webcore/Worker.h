@@ -76,6 +76,7 @@ public:
     const String& name() const { return m_options.name; }
 
     void dispatchEvent(Event&);
+    void dispatchCloseEvent(Event&);
     void setKeepAlive(bool);
 
 #if ENABLE(WEB_RTC)
@@ -94,7 +95,7 @@ public:
     void drainEvents();
     void dispatchOnline(Zig::GlobalObject* workerGlobalObject);
     void dispatchError(WTF::String message);
-    void dispatchExit();
+    void dispatchExit(int32_t exitCode);
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
     ScriptExecutionContextIdentifier clientIdentifier() const { return m_clientIdentifier; }
     WorkerOptions& options() { return m_options; }

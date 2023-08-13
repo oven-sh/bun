@@ -14,7 +14,7 @@ const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const Fs = @import("../../fs.zig");
 const Resolver = @import("../../resolver/resolver.zig");
 const ast = @import("../../import_record.zig");
-const NodeModuleBundle = @import("../../node_module_bundle.zig").NodeModuleBundle;
+
 const MacroEntryPoint = bun.bundler.MacroEntryPoint;
 const logger = @import("root").bun.logger;
 const Api = @import("../../api/schema.zig").Api;
@@ -3192,24 +3192,24 @@ pub const Hash = struct {
                 } else {
                     var seed: u64 = 0;
                     if (args.nextEat()) |arg| {
-                        if (arg.isNumber()) {
-                            seed = arg.toU32();
+                        if (arg.isNumber() or arg.isBigInt()) {
+                            seed = arg.toUInt64NoTruncate();
                         }
                     }
                     if (comptime std.meta.trait.isNumber(@TypeOf(function_args[0]))) {
-                        function_args[0] = @as(@TypeOf(function_args[0]), @intCast(seed));
+                        function_args[0] = @as(@TypeOf(function_args[0]), @truncate(seed));
                         function_args[1] = input;
                     } else {
-                        function_args[1] = @as(@TypeOf(function_args[1]), @intCast(seed));
                         function_args[0] = input;
+                        function_args[1] = @as(@TypeOf(function_args[1]), @truncate(seed));
                     }
 
                     const value = @call(.auto, Function, function_args);
 
                     if (@TypeOf(value) == u32) {
-                        return JSC.JSValue.jsNumber(@as(i32, @bitCast(value))).asObjectRef();
+                        return JSC.JSValue.jsNumber(@as(u32, @bitCast(value))).asObjectRef();
                     }
-                    return JSC.JSValue.jsNumber(value).asObjectRef();
+                    return JSC.JSValue.fromUInt64NoTruncate(ctx.ptr(), value).asObjectRef();
                 }
             }
         };
@@ -3597,9 +3597,14 @@ pub const Timer = struct {
                         break :brk true;
                     }
                 } else {
-                    if (map.get(this.id)) |tombstone_or_timer| {
+                    if (map.getPtr(this.id)) |tombstone_or_timer| {
+                        // Disable thundering herd of setInterval() calls
+                        if (tombstone_or_timer.* != null) {
+                            tombstone_or_timer.*.?.has_scheduled_job = false;
+                        }
+
                         // .refresh() was called after CallbackJob enqueued
-                        break :brk tombstone_or_timer == null;
+                        break :brk tombstone_or_timer.* == null;
                     }
                 }
 
@@ -3869,6 +3874,7 @@ pub const Timer = struct {
         did_unref_timer: bool = false,
         poll_ref: JSC.PollRef = JSC.PollRef.init(),
         arguments: JSC.Strong = .{},
+        has_scheduled_job: bool = false,
 
         pub const Kind = enum(u32) {
             setTimeout,
@@ -3905,6 +3911,12 @@ pub const Timer = struct {
                 return;
 
             var globalThis = this.globalThis;
+
+            // Disable thundering herd of setInterval() calls
+            // Skip setInterval() calls when the previous one has not been run yet.
+            if (repeats and this.has_scheduled_job) {
+                return;
+            }
 
             var cb: CallbackJob = .{
                 .callback = if (repeats)
@@ -3950,6 +3962,9 @@ pub const Timer = struct {
                 this.arguments = .{};
                 map.put(vm.allocator, timer_id.id, null) catch unreachable;
                 this.deinit();
+            } else {
+                this.has_scheduled_job = true;
+                map.put(vm.allocator, timer_id.id, this) catch {};
             }
 
             var job = vm.allocator.create(CallbackJob) catch @panic(

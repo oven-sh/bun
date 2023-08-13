@@ -20,7 +20,6 @@ const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const Fs = @import("../fs.zig");
 const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
-const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const MacroEntryPoint = bun.bundler.MacroEntryPoint;
 const ParseResult = bun.bundler.ParseResult;
 const logger = @import("root").bun.logger;
@@ -1994,23 +1993,7 @@ pub const ModuleLoader = struct {
     }
 
     pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?ResolvedSource {
-        if (jsc_vm.node_modules != null and specifier.eqlComptime(JSC.bun_file_import_path)) {
-            // We kind of need an abstraction around this.
-            // Basically we should subclass JSC::SourceCode with:
-            // - hash
-            // - file descriptor for source input
-            // - file path + file descriptor for bytecode caching
-            // - separate bundles for server build vs browser build OR at least separate sections
-            const code = try jsc_vm.node_modules.?.readCodeAsStringSlow(jsc_vm.allocator);
-
-            return ResolvedSource{
-                .allocator = null,
-                .source_code = bun.String.init(code),
-                .specifier = bun.String.init(JSC.bun_file_import_path),
-                .source_url = ZigString.init(JSC.bun_file_import_path[1..]),
-                .hash = 0, // TODO
-            };
-        } else if (jsc_vm.node_modules == null and specifier.eqlComptime(Runtime.Runtime.Imports.Name)) {
+        if (specifier.eqlComptime(Runtime.Runtime.Imports.Name)) {
             return ResolvedSource{
                 .allocator = null,
                 .source_code = bun.String.init(Runtime.Runtime.sourceContentBun()),
@@ -2021,12 +2004,6 @@ pub const ModuleLoader = struct {
         } else if (HardcodedModule.Map.getWithEql(specifier, bun.String.eqlComptime)) |hardcoded| {
             switch (hardcoded) {
                 .@"bun:main" => {
-                    defer {
-                        if (jsc_vm.worker) |worker| {
-                            worker.queueInitialTask();
-                        }
-                    }
-
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = bun.String.create(jsc_vm.entry_point.source.contents),
@@ -2038,6 +2015,7 @@ pub const ModuleLoader = struct {
                 },
 
                 // Native modules
+                .bun => return jsSyntheticModule(.bun, specifier),
                 .@"node:buffer" => return jsSyntheticModule(.@"node:buffer", specifier),
                 .@"node:string_decoder" => return jsSyntheticModule(.@"node:string_decoder", specifier),
                 .@"node:module" => return jsSyntheticModule(.@"node:module", specifier),
@@ -2217,6 +2195,7 @@ pub const FetchFlags = enum {
 const SavedSourceMap = JSC.SavedSourceMap;
 
 pub const HardcodedModule = enum {
+    bun,
     @"bun:ffi",
     @"bun:jsc",
     @"bun:main",
@@ -2290,6 +2269,7 @@ pub const HardcodedModule = enum {
         HardcodedModule,
         .{
             .{ "buffer", HardcodedModule.@"node:buffer" },
+            .{ "bun", HardcodedModule.bun },
             .{ "bun:ffi", HardcodedModule.@"bun:ffi" },
             .{ "bun:jsc", HardcodedModule.@"bun:jsc" },
             .{ "bun:main", HardcodedModule.@"bun:main" },
@@ -2362,52 +2342,34 @@ pub const HardcodedModule = enum {
     pub const Aliases = bun.ComptimeStringMap(
         Alias,
         .{
-            .{ "assert", .{ .path = "node:assert" } },
-            .{ "assert/strict", .{ .path = "node:assert/strict" } },
-            .{ "async_hooks", .{ .path = "node:async_hooks" } },
-            .{ "buffer", .{ .path = "node:buffer" } },
             .{ "bun", .{ .path = "bun", .tag = .bun } },
             .{ "bun:ffi", .{ .path = "bun:ffi" } },
             .{ "bun:jsc", .{ .path = "bun:jsc" } },
             .{ "bun:sqlite", .{ .path = "bun:sqlite" } },
             .{ "bun:wrap", .{ .path = "bun:wrap" } },
-            .{ "child_process", .{ .path = "node:child_process" } },
-            .{ "constants", .{ .path = "node:constants" } },
-            .{ "crypto", .{ .path = "node:crypto" } },
-            .{ "detect-libc", .{ .path = "detect-libc" } },
-            .{ "detect-libc/lib/detect-libc.js", .{ .path = "detect-libc" } },
-            .{ "dns", .{ .path = "node:dns" } },
-            .{ "dns/promises", .{ .path = "node:dns/promises" } },
-            .{ "events", .{ .path = "node:events" } },
             .{ "ffi", .{ .path = "bun:ffi" } },
-            .{ "fs", .{ .path = "node:fs" } },
-            .{ "fs/promises", .{ .path = "node:fs/promises" } },
-            .{ "http", .{ .path = "node:http" } },
-            .{ "https", .{ .path = "node:https" } },
-            .{ "module", .{ .path = "node:module" } },
-            .{ "net", .{ .path = "node:net" } },
+
             .{ "node:assert", .{ .path = "node:assert" } },
             .{ "node:assert/strict", .{ .path = "node:assert/strict" } },
             .{ "node:async_hooks", .{ .path = "node:async_hooks" } },
             .{ "node:buffer", .{ .path = "node:buffer" } },
             .{ "node:child_process", .{ .path = "node:child_process" } },
-            .{ "node:constants", .{ .path = "node:constants" } },
+            .{ "node:cluster", .{ .path = "node:cluster" } },
             .{ "node:console", .{ .path = "node:console" } },
-            .{ "node:querystring", .{ .path = "node:querystring" } },
-            .{ "querystring", .{ .path = "node:querystring" } },
-            .{ "node:domain", .{ .path = "node:domain" } },
-            .{ "domain", .{ .path = "node:domain" } },
-            .{ "@vercel/fetch", .{ .path = "@vercel/fetch" } },
-            .{ "node:punycode", .{ .path = "node:punycode" } },
-            .{ "punycode", .{ .path = "node:punycode" } },
+            .{ "node:constants", .{ .path = "node:constants" } },
             .{ "node:crypto", .{ .path = "node:crypto" } },
+            .{ "node:dgram", .{ .path = "node:dgram" } },
+            .{ "node:diagnostics_channel", .{ .path = "node:diagnostics_channel" } },
             .{ "node:dns", .{ .path = "node:dns" } },
             .{ "node:dns/promises", .{ .path = "node:dns/promises" } },
+            .{ "node:domain", .{ .path = "node:domain" } },
             .{ "node:events", .{ .path = "node:events" } },
             .{ "node:fs", .{ .path = "node:fs" } },
             .{ "node:fs/promises", .{ .path = "node:fs/promises" } },
             .{ "node:http", .{ .path = "node:http" } },
+            .{ "node:http2", .{ .path = "node:http2" } },
             .{ "node:https", .{ .path = "node:https" } },
+            .{ "node:inspector", .{ .path = "node:inspector" } },
             .{ "node:module", .{ .path = "node:module" } },
             .{ "node:net", .{ .path = "node:net" } },
             .{ "node:os", .{ .path = "node:os" } },
@@ -2416,8 +2378,11 @@ pub const HardcodedModule = enum {
             .{ "node:path/win32", .{ .path = "node:path/win32" } },
             .{ "node:perf_hooks", .{ .path = "node:perf_hooks" } },
             .{ "node:process", .{ .path = "node:process" } },
+            .{ "node:punycode", .{ .path = "node:punycode" } },
+            .{ "node:querystring", .{ .path = "node:querystring" } },
             .{ "node:readline", .{ .path = "node:readline" } },
             .{ "node:readline/promises", .{ .path = "node:readline/promises" } },
+            .{ "node:repl", .{ .path = "node:repl" } },
             .{ "node:stream", .{ .path = "node:stream" } },
             .{ "node:stream/consumers", .{ .path = "node:stream/consumers" } },
             .{ "node:stream/promises", .{ .path = "node:stream/promises" } },
@@ -2426,21 +2391,51 @@ pub const HardcodedModule = enum {
             .{ "node:timers", .{ .path = "node:timers" } },
             .{ "node:timers/promises", .{ .path = "node:timers/promises" } },
             .{ "node:tls", .{ .path = "node:tls" } },
+            .{ "node:trace_events", .{ .path = "node:trace_events" } },
             .{ "node:tty", .{ .path = "node:tty" } },
             .{ "node:url", .{ .path = "node:url" } },
             .{ "node:util", .{ .path = "node:util" } },
             .{ "node:util/types", .{ .path = "node:util/types" } },
+            .{ "node:v8", .{ .path = "node:v8" } },
+            .{ "node:vm", .{ .path = "node:vm" } },
             .{ "node:wasi", .{ .path = "node:wasi" } },
             .{ "node:worker_threads", .{ .path = "node:worker_threads" } },
             .{ "node:zlib", .{ .path = "node:zlib" } },
+
+            .{ "assert", .{ .path = "node:assert" } },
+            .{ "assert/strict", .{ .path = "node:assert/strict" } },
+            .{ "async_hooks", .{ .path = "node:async_hooks" } },
+            .{ "buffer", .{ .path = "node:buffer" } },
+            .{ "child_process", .{ .path = "node:child_process" } },
+            .{ "cluster", .{ .path = "node:cluster" } },
+            .{ "console", .{ .path = "node:console" } },
+            .{ "constants", .{ .path = "node:constants" } },
+            .{ "crypto", .{ .path = "node:crypto" } },
+            .{ "dgram", .{ .path = "node:dgram" } },
+            .{ "diagnostics_channel", .{ .path = "node:diagnostics_channel" } },
+            .{ "dns", .{ .path = "node:dns" } },
+            .{ "dns/promises", .{ .path = "node:dns/promises" } },
+            .{ "domain", .{ .path = "node:domain" } },
+            .{ "events", .{ .path = "node:events" } },
+            .{ "fs", .{ .path = "node:fs" } },
+            .{ "fs/promises", .{ .path = "node:fs/promises" } },
+            .{ "http", .{ .path = "node:http" } },
+            .{ "http2", .{ .path = "node:http2" } },
+            .{ "https", .{ .path = "node:https" } },
+            .{ "inspector", .{ .path = "node:inspector" } },
+            .{ "module", .{ .path = "node:module" } },
+            .{ "net", .{ .path = "node:net" } },
             .{ "os", .{ .path = "node:os" } },
             .{ "path", .{ .path = "node:path" } },
             .{ "path/posix", .{ .path = "node:path/posix" } },
             .{ "path/win32", .{ .path = "node:path/win32" } },
             .{ "perf_hooks", .{ .path = "node:perf_hooks" } },
             .{ "process", .{ .path = "node:process" } },
+            .{ "punycode", .{ .path = "node:punycode" } },
+            .{ "querystring", .{ .path = "node:querystring" } },
             .{ "readline", .{ .path = "node:readline" } },
             .{ "readline/promises", .{ .path = "node:readline/promises" } },
+            .{ "repl", .{ .path = "node:repl" } },
             .{ "stream", .{ .path = "node:stream" } },
             .{ "stream/consumers", .{ .path = "node:stream/consumers" } },
             .{ "stream/promises", .{ .path = "node:stream/promises" } },
@@ -2449,22 +2444,22 @@ pub const HardcodedModule = enum {
             .{ "timers", .{ .path = "node:timers" } },
             .{ "timers/promises", .{ .path = "node:timers/promises" } },
             .{ "tls", .{ .path = "node:tls" } },
+            .{ "trace_events", .{ .path = "node:trace_events" } },
             .{ "tty", .{ .path = "node:tty" } },
-            .{ "undici", .{ .path = "undici" } },
             .{ "url", .{ .path = "node:url" } },
             .{ "util", .{ .path = "node:util" } },
             .{ "util/types", .{ .path = "node:util/types" } },
+            .{ "v8", .{ .path = "node:v8" } },
+            .{ "vm", .{ .path = "node:vm" } },
             .{ "wasi", .{ .path = "node:wasi" } },
             .{ "worker_threads", .{ .path = "node:worker_threads" } },
-            .{ "ws", .{ .path = "ws" } },
-            .{ "ws/lib/websocket", .{ .path = "ws" } },
-            .{ "utf-8-validate", .{ .path = "utf-8-validate" } },
             .{ "zlib", .{ .path = "node:zlib" } },
-            // .{ "readable-stream", .{ .path = "node:stream" } },
-            // .{ "readable-stream/consumer", .{ .path = "node:stream/consumers" } },
-            // .{ "readable-stream/web", .{ .path = "node:stream/web" } },
-            // Older versions of `readable-stream` is incompatible with latest
-            // version of Node.js Stream API, which `bun` implements
+
+            // It implements the same interface
+            .{ "sys", .{ .path = "node:util" } },
+            .{ "node:sys", .{ .path = "node:util" } },
+            .{ "inspector/promises", .{ .path = "node:inspector" } },
+            .{ "node:inspector/promises", .{ .path = "node:inspector" } },
 
             // These are returned in builtinModules, but probably not many packages use them
             // so we will just alias them.
@@ -2483,37 +2478,22 @@ pub const HardcodedModule = enum {
             .{ "_tls_wrap", .{ .path = "node:tls" } },
             .{ "_tls_common", .{ .path = "node:tls" } },
 
-            // These are not actually implemented, they are stubbed out
-            .{ "cluster", .{ .path = "node:cluster" } },
-            .{ "dgram", .{ .path = "node:dgram" } },
-            .{ "diagnostics_channel", .{ .path = "node:diagnostics_channel" } },
-            .{ "http2", .{ .path = "node:http2" } },
-            .{ "inspector", .{ .path = "node:inspector" } },
-            .{ "repl", .{ .path = "node:repl" } },
-            .{ "trace_events", .{ .path = "node:trace_events" } },
-            .{ "v8", .{ .path = "node:v8" } },
-            .{ "vm", .{ .path = "node:vm" } },
+            // Older versions of `readable-stream` is incompatible with latest
+            // version of Node.js Stream API, which `bun` implements
+            // .{ "readable-stream", .{ .path = "node:stream" } },
+            // .{ "readable-stream/consumer", .{ .path = "node:stream/consumers" } },
+            // .{ "readable-stream/web", .{ .path = "node:stream/web" } },
 
-            // It implements the same interface
-            .{ "inspector/promises", .{ .path = "node:inspector" } },
-            .{ "node:inspector/promises", .{ .path = "node:inspector" } },
-
-            .{ "node:cluster", .{ .path = "node:cluster" } },
-            .{ "node:dgram", .{ .path = "node:dgram" } },
-            .{ "node:diagnostics_channel", .{ .path = "node:diagnostics_channel" } },
-            .{ "node:http2", .{ .path = "node:http2" } },
-            .{ "node:inspector", .{ .path = "node:inspector" } },
-            .{ "node:repl", .{ .path = "node:repl" } },
-            .{ "node:trace_events", .{ .path = "node:trace_events" } },
-            .{ "node:v8", .{ .path = "node:v8" } },
-            .{ "node:vm", .{ .path = "node:vm" } },
-
-            .{ "node:sys", .{ .path = "node:util" } },
-            .{ "sys", .{ .path = "node:util" } },
-
-            .{ "node-fetch", .{ .path = "node-fetch" } },
-            .{ "isomorphic-fetch", .{ .path = "isomorphic-fetch" } },
+            // Thirdparty packages we override
             .{ "@vercel/fetch", .{ .path = "@vercel/fetch" } },
+            .{ "detect-libc", .{ .path = "detect-libc" } },
+            .{ "detect-libc/lib/detect-libc.js", .{ .path = "detect-libc" } },
+            .{ "isomorphic-fetch", .{ .path = "isomorphic-fetch" } },
+            .{ "node-fetch", .{ .path = "node-fetch" } },
+            .{ "undici", .{ .path = "undici" } },
+            .{ "utf-8-validate", .{ .path = "utf-8-validate" } },
+            .{ "ws", .{ .path = "ws" } },
+            .{ "ws/lib/websocket", .{ .path = "ws" } },
         },
     );
 };

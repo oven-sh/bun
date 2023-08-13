@@ -8,4 +8,10 @@ describe("ResolveMessage", () => {
       expect(Bun.inspect(e.position).length > 0).toBe(true);
     }
   });
+  it("invalid data URL import", async () => {
+    expect(async () => {
+      // @ts-ignore
+      await import("data:Hello%2C%20World!");
+    }).toThrow("Cannot resolve invalid data URL");
+  });
 });

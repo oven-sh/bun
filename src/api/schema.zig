@@ -1732,15 +1732,6 @@ pub const Api = struct {
         /// extension_order
         extension_order: []const []const u8,
 
-        /// generate_node_module_bundle
-        generate_node_module_bundle: ?bool = null,
-
-        /// node_modules_bundle_path
-        node_modules_bundle_path: ?[]const u8 = null,
-
-        /// node_modules_bundle_path_server
-        node_modules_bundle_path_server: ?[]const u8 = null,
-
         /// framework
         framework: ?FrameworkConfig = null,
 
@@ -1823,33 +1814,24 @@ pub const Api = struct {
                         this.extension_order = try reader.readArray([]const u8);
                     },
                     18 => {
-                        this.generate_node_module_bundle = try reader.readValue(bool);
-                    },
-                    19 => {
-                        this.node_modules_bundle_path = try reader.readValue([]const u8);
-                    },
-                    20 => {
-                        this.node_modules_bundle_path_server = try reader.readValue([]const u8);
-                    },
-                    21 => {
                         this.framework = try reader.readValue(FrameworkConfig);
                     },
-                    22 => {
+                    19 => {
                         this.router = try reader.readValue(RouteConfig);
                     },
-                    23 => {
+                    20 => {
                         this.no_summary = try reader.readValue(bool);
                     },
-                    24 => {
+                    21 => {
                         this.disable_hmr = try reader.readValue(bool);
                     },
-                    25 => {
+                    22 => {
                         this.port = try reader.readValue(u16);
                     },
-                    26 => {
+                    23 => {
                         this.log_level = try reader.readValue(MessageLevel);
                     },
-                    27 => {
+                    24 => {
                         this.source_map = try reader.readValue(SourceMapMode);
                     },
                     else => {
@@ -1929,44 +1911,32 @@ pub const Api = struct {
                 try writer.writeFieldID(17);
                 try writer.writeArray([]const u8, extension_order);
             }
-            if (this.generate_node_module_bundle) |generate_node_module_bundle| {
-                try writer.writeFieldID(18);
-                try writer.writeInt(@as(u8, @intFromBool(generate_node_module_bundle)));
-            }
-            if (this.node_modules_bundle_path) |node_modules_bundle_path| {
-                try writer.writeFieldID(19);
-                try writer.writeValue(@TypeOf(node_modules_bundle_path), node_modules_bundle_path);
-            }
-            if (this.node_modules_bundle_path_server) |node_modules_bundle_path_server| {
-                try writer.writeFieldID(20);
-                try writer.writeValue(@TypeOf(node_modules_bundle_path_server), node_modules_bundle_path_server);
-            }
             if (this.framework) |framework| {
-                try writer.writeFieldID(21);
+                try writer.writeFieldID(18);
                 try writer.writeValue(@TypeOf(framework), framework);
             }
             if (this.router) |router| {
-                try writer.writeFieldID(22);
+                try writer.writeFieldID(19);
                 try writer.writeValue(@TypeOf(router), router);
             }
             if (this.no_summary) |no_summary| {
-                try writer.writeFieldID(23);
+                try writer.writeFieldID(20);
                 try writer.writeInt(@as(u8, @intFromBool(no_summary)));
             }
             if (this.disable_hmr) |disable_hmr| {
-                try writer.writeFieldID(24);
+                try writer.writeFieldID(21);
                 try writer.writeInt(@as(u8, @intFromBool(disable_hmr)));
             }
             if (this.port) |port| {
-                try writer.writeFieldID(25);
+                try writer.writeFieldID(22);
                 try writer.writeInt(port);
             }
             if (this.log_level) |log_level| {
-                try writer.writeFieldID(26);
+                try writer.writeFieldID(23);
                 try writer.writeEnum(log_level);
             }
             if (this.source_map) |source_map| {
-                try writer.writeFieldID(27);
+                try writer.writeFieldID(24);
                 try writer.writeEnum(source_map);
             }
             try writer.endMessage();
@@ -3137,6 +3107,89 @@ pub const Api = struct {
             try writer.writeArray(ClientServerModule, this.server_modules);
             try writer.writeArray(ClientServerModule, this.ssr_modules);
             try writer.writeArray(StringPointer, this.export_names);
+            try writer.writeArray(u8, this.contents);
+        }
+    };
+
+    pub const GetTestsRequest = struct {
+        /// path
+        path: []const u8,
+
+        /// contents
+        contents: []const u8,
+
+        pub fn decode(reader: anytype) anyerror!GetTestsRequest {
+            var this = std.mem.zeroes(GetTestsRequest);
+
+            this.path = try reader.readValue([]const u8);
+            this.contents = try reader.readArray(u8);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeValue(@TypeOf(this.path), this.path);
+            try writer.writeArray(u8, this.contents);
+        }
+    };
+
+    pub const TestKind = enum(u8) {
+        _none,
+        /// test_fn
+        test_fn,
+
+        /// describe_fn
+        describe_fn,
+
+        _,
+
+        pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {
+            return try std.json.stringify(@tagName(self), opts, o);
+        }
+    };
+
+    pub const TestResponseItem = struct {
+        /// byteOffset
+        byte_offset: i32 = 0,
+
+        /// label
+        label: StringPointer,
+
+        /// kind
+        kind: TestKind,
+
+        pub fn decode(reader: anytype) anyerror!TestResponseItem {
+            var this = std.mem.zeroes(TestResponseItem);
+
+            this.byte_offset = try reader.readValue(i32);
+            this.label = try reader.readValue(StringPointer);
+            this.kind = try reader.readValue(TestKind);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeInt(this.byte_offset);
+            try writer.writeValue(@TypeOf(this.label), this.label);
+            try writer.writeEnum(this.kind);
+        }
+    };
+
+    pub const GetTestsResponse = struct {
+        /// tests
+        tests: []const TestResponseItem,
+
+        /// contents
+        contents: []const u8,
+
+        pub fn decode(reader: anytype) anyerror!GetTestsResponse {
+            var this = std.mem.zeroes(GetTestsResponse);
+
+            this.tests = try reader.readArray(TestResponseItem);
+            this.contents = try reader.readArray(u8);
+            return this;
+        }
+
+        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+            try writer.writeArray(TestResponseItem, this.tests);
             try writer.writeArray(u8, this.contents);
         }
     };

@@ -1704,17 +1704,19 @@ pub const E = struct {
         }
 
         pub fn toStringFromF64Safe(value: f64, allocator: std.mem.Allocator) ?string {
-            if (value == @trunc(value) and (value < std.math.maxInt(i32) and value > std.math.minInt(i32))) {
-                const int_value = @as(i64, @intFromFloat(value));
-                const abs = @as(u64, @intCast(std.math.absInt(int_value) catch return null));
-                if (abs < double_digit.len) {
-                    return if (int_value < 0)
-                        neg_double_digit[abs]
-                    else
-                        double_digit[abs];
-                }
+            if (comptime !Environment.isWasm) {
+                if (value == @trunc(value) and (value < std.math.maxInt(i32) and value > std.math.minInt(i32))) {
+                    const int_value = @as(i64, @intFromFloat(value));
+                    const abs = @as(u64, @intCast(std.math.absInt(int_value) catch return null));
+                    if (abs < double_digit.len) {
+                        return if (int_value < 0)
+                            neg_double_digit[abs]
+                        else
+                            double_digit[abs];
+                    }
 
-                return std.fmt.allocPrint(allocator, "{d}", .{@as(i32, @intCast(int_value))}) catch return null;
+                    return std.fmt.allocPrint(allocator, "{d}", .{@as(i32, @intCast(int_value))}) catch return null;
+                }
             }
 
             if (std.math.isNan(value)) {
@@ -2250,6 +2252,11 @@ pub const E = struct {
             }
 
             if (s.isUTF8()) {
+                if (comptime !Environment.isNative) {
+                    var allocated = (strings.toUTF16Alloc(bun.default_allocator, s.data, false) catch return 0) orelse return s.data.len;
+                    defer bun.default_allocator.free(allocated);
+                    return @as(u32, @truncate(allocated.len));
+                }
                 return @as(u32, @truncate(bun.simdutf.length.utf16.from.utf8.le(s.data)));
             }
 
@@ -3069,7 +3076,7 @@ pub const Expr = struct {
     ) !Expr {
         var bytes = blob.sharedView();
 
-        const mime_type = mime_type_ orelse HTTP.MimeType.init(blob.content_type);
+        const mime_type = mime_type_ orelse HTTP.MimeType.init(blob.content_type, null, null);
 
         if (mime_type.category == .json) {
             var source = logger.Source.initPathString("fetch.json", bytes);
@@ -4132,6 +4139,14 @@ pub const Expr = struct {
 
     pub fn isPrimitiveLiteral(this: Expr) bool {
         return @as(Tag, this.data).isPrimitiveLiteral();
+    }
+
+    pub fn isRef(this: Expr, ref: Ref) bool {
+        return switch (this.data) {
+            .e_import_identifier => |import_identifier| import_identifier.ref.eql(ref),
+            .e_identifier => |ident| ident.ref.eql(ref),
+            else => false,
+        };
     }
 
     pub const Tag = enum(u6) {
@@ -9615,18 +9630,13 @@ pub const Macro = struct {
             JavaScript.VirtualMachine.get()
         else brk: {
             var old_transform_options = resolver.opts.transform_options;
-            resolver.opts.transform_options.node_modules_bundle_path = null;
-            resolver.opts.transform_options.node_modules_bundle_path_server = null;
             defer resolver.opts.transform_options = old_transform_options;
-            var _vm = try JavaScript.VirtualMachine.init(
-                default_allocator,
-                resolver.opts.transform_options,
-                null,
-                log,
-                env,
-                false,
-                false,
-            );
+            var _vm = try JavaScript.VirtualMachine.init(.{
+                .allocator = default_allocator,
+                .args = resolver.opts.transform_options,
+                .log = log,
+                .env_loader = env,
+            });
 
             _vm.enableMacroMode();
             _vm.eventLoop().ensureWaker();
@@ -9779,10 +9789,10 @@ pub const Macro = struct {
 
                             if (value.jsType() == .DOMWrapper) {
                                 if (value.as(JSC.WebCore.Response)) |resp| {
-                                    mime_type = HTTP.MimeType.init(resp.mimeType(null));
+                                    mime_type = HTTP.MimeType.init(resp.mimeType(null), null, null);
                                     blob_ = resp.body.use();
                                 } else if (value.as(JSC.WebCore.Request)) |resp| {
-                                    mime_type = HTTP.MimeType.init(resp.mimeType());
+                                    mime_type = HTTP.MimeType.init(resp.mimeType(), null, null);
                                     blob_ = resp.body.value.use();
                                 } else if (value.as(JSC.WebCore.Blob)) |resp| {
                                     blob_ = resp.*;

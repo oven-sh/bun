@@ -169,6 +169,25 @@ declare module "bun:test" {
      * @param condition if these tests should be skipped
      */
     skipIf(condition: boolean): (label: string, fn: () => void) => void;
+    /**
+     * Returns a function that runs for each item in `table`.
+     *
+     * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
+     */
+    each<T extends ReadonlyArray<unknown>>(
+      table: ReadonlyArray<T>,
+    ): (
+      label: string,
+      fn: (...args: T) => void | Promise<unknown>,
+      options?: number | TestOptions,
+    ) => void;
+    each<T>(
+      table: ReadonlyArray<T>,
+    ): (
+      label: string,
+      fn: (arg: T) => void | Promise<unknown>,
+      options?: number | TestOptions,
+    ) => void;
   };
   /**
    * Describes a group of related tests.
@@ -393,6 +412,25 @@ declare module "bun:test" {
       fn:
         | (() => void | Promise<unknown>)
         | ((done: (err?: unknown) => void) => void),
+      options?: number | TestOptions,
+    ) => void;
+    /**
+     * Returns a function that runs for each item in `table`.
+     *
+     * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
+     */
+    each<T extends ReadonlyArray<unknown>>(
+      table: ReadonlyArray<T>,
+    ): (
+      label: string,
+      fn: (...args: T) => void | Promise<unknown>,
+      options?: number | TestOptions,
+    ) => void;
+    each<T>(
+      table: ReadonlyArray<T>,
+    ): (
+      label: string,
+      fn: (arg: T, done: (err?: unknown) => void) => void | Promise<unknown>,
       options?: number | TestOptions,
     ) => void;
   };
@@ -981,6 +1019,23 @@ declare module "bun:test" {
      * @param expected the expected substring
      */
     toInclude(expected: string): void;
+    /**
+     * Asserts that a value includes a `string` {times} times.
+     * @param expected the expected substring
+     * @param times the number of times the substring should occur
+     */
+    toIncludeRepeated(expected: string, times: number): void;
+    /**
+     * Checks whether a value satisfies a custom condition.
+     * @param {Function} predicate - The custom condition to be satisfied. It should be a function that takes a value as an argument (in this case the value from expect) and returns a boolean.
+     * @example
+     * expect(1).toSatisfy((val) => val > 0);
+     * expect("foo").toSatisfy((val) => val === "foo");
+     * expect("bar").not.toSatisfy((val) => val === "bun");
+     * @link https://vitest.dev/api/expect.html#tosatisfy
+     * @link https://jest-extended.jestcommunity.dev/docs/matchers/toSatisfy
+    */
+    toSatisfy(predicate: (value: T) => boolean): void;
     /**
      * Asserts that a value starts with a `string`.
      *

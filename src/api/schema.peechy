@@ -337,20 +337,15 @@ message TransformOptions {
 
   string[] extension_order = 17;
 
-  bool generate_node_module_bundle = 18;
+  FrameworkConfig framework = 18;
+  RouteConfig router = 19;
+  bool no_summary = 20;
 
-  string node_modules_bundle_path = 19;
-  string node_modules_bundle_path_server = 20;
+  bool disable_hmr = 21;
 
-  FrameworkConfig framework = 21;
-  RouteConfig router = 22;
-  bool no_summary = 23;
-
-  bool disable_hmr = 24;
-
-  uint16 port = 25;
-  MessageLevel logLevel = 26;
-  SourceMapMode source_map = 27;
+  uint16 port = 22;
+  MessageLevel logLevel = 23;
+  SourceMapMode source_map = 24;
 }
 
 smol SourceMapMode {
@@ -607,5 +602,27 @@ struct ClientServerModuleManifest {
   ClientServerModule[] serverModules;
   ClientServerModule[] ssrModules;
   StringPointer[] exportNames;
+  byte[] contents;
+}
+
+
+struct GetTestsRequest {
+  string path;
+  byte[] contents;
+}
+
+smol TestKind {
+  test_fn = 1;
+  describe_fn = 2;
+}
+
+struct TestResponseItem {
+  int32 byteOffset;
+  StringPointer label;
+  TestKind kind;
+}
+
+struct GetTestsResponse {
+  TestResponseItem[] tests;
   byte[] contents;
 }

@@ -37,7 +37,7 @@ const JSC = bun.JSC;
 const allocators = @import("../allocators.zig");
 const Msg = logger.Msg;
 const Path = Fs.Path;
-const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
+
 const PackageManager = @import("../install/install.zig").PackageManager;
 const Dependency = @import("../install/dependency.zig");
 const Install = @import("../install/install.zig");
@@ -464,7 +464,6 @@ pub const Resolver = struct {
     fs: *Fs.FileSystem,
     log: *logger.Log,
     allocator: std.mem.Allocator,
-    node_module_bundle: ?*NodeModuleBundle,
     extension_order: []const string = undefined,
     timer: Timer = undefined,
 
@@ -577,7 +576,6 @@ pub const Resolver = struct {
             .opts = opts,
             .timer = Timer.start() catch @panic("Timer fail"),
             .fs = _fs,
-            .node_module_bundle = opts.node_modules_bundle,
             .log = log,
             .extension_order = opts.extension_order,
             .care_about_browser_field = opts.target.isWebLike(),
@@ -842,7 +840,9 @@ pub const Resolver = struct {
             }
         }
 
-        if (DataURL.parse(import_path)) |_data_url| {
+        if (DataURL.parse(import_path) catch {
+            return .{ .failure = error.InvalidDataURL };
+        }) |_data_url| {
             const data_url: DataURL = _data_url;
             // "import 'data:text/javascript,console.log(123)';"
             // "@import 'data:text/css,body{background:white}';"

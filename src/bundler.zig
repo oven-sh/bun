@@ -37,7 +37,6 @@ const runtime = @import("./runtime.zig");
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DebugLogs = _resolver.DebugLogs;
-const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 const Router = @import("./router.zig");
 const isPackagePath = _resolver.isPackagePath;
 const Css = @import("css_scanner.zig");
@@ -68,54 +67,6 @@ const default_macro_js_value = if (JSC.is_bindgen) MacroJSValueType{} else JSC.J
 const EntryPoints = @import("./bundler/entry_points.zig");
 const SystemTimer = @import("./system_timer.zig").Timer;
 pub usingnamespace EntryPoints;
-// How it works end-to-end
-// 1. Resolve a file path from input using the resolver
-// 2. Look at the extension of that file path, and determine a loader
-// 3. If the loader is .js, .jsx, .ts, .tsx, or .json, run it through our JavaScript Parser
-// IF serving via HTTP and it's parsed without errors:
-// 4. If parsed without errors, generate a strong ETag & write the output to a buffer that sends to the in the Printer.
-// 4. Else, write any errors to error page (which doesn't exist yet)
-// IF writing to disk AND it's parsed without errors:
-// 4. Write the output to a temporary file.
-//    Why? Two reasons.
-//    1. At this point, we don't know what the best output path is.
-//       Most of the time, you want the shortest common path, which you can't know until you've
-//       built & resolved all paths.
-//       Consider this directory tree:
-//          - /Users/jarred/Code/app/src/index.tsx
-//          - /Users/jarred/Code/app/src/Button.tsx
-//          - /Users/jarred/Code/app/assets/logo.png
-//          - /Users/jarred/Code/app/src/Button.css
-//          - /Users/jarred/Code/app/node_modules/react/index.js
-//          - /Users/jarred/Code/app/node_modules/react/cjs/react.development.js
-//        Remember that we cannot know which paths need to be resolved without parsing the JavaScript.
-//        If we stopped here: /Users/jarred/Code/app/src/Button.tsx
-//        We would choose /Users/jarred/Code/app/src/ as the directory
-//        Then, that would result in a directory structure like this:
-//         - /Users/jarred/Code/app/src/Users/jarred/Code/app/node_modules/react/cjs/react.development.js
-//        Which is absolutely insane
-//
-//    2. We will need to write to disk at some point!
-//          - If we delay writing to disk, we need to print & allocate a potentially quite large
-//          buffer (react-dom.development.js is 550 KB)
-//             ^ This is how it used to work!
-//          - If we delay printing, we need to keep the AST around. Which breaks all our
-//          memory-saving recycling logic since that could be many many ASTs.
-//  5. Once all files are written, determine the shortest common path
-//  6. Move all the temporary files to their intended destinations
-// IF writing to disk AND it's a file-like loader
-// 4. Hash the contents
-//     - rewrite_paths.put(absolute_path, hash(file(absolute_path)))
-// 5. Resolve any imports of this file to that hash(file(absolute_path))
-// 6. Append to the files array with the new filename
-// 7. When parsing & resolving is over, just copy the file.
-//     - on macOS, ensure it does an APFS shallow clone so that doesn't use disk space (only possible if file doesn't already exist)
-//          fclonefile
-// IF serving via HTTP AND it's a file-like loader:
-// 4. Use os.sendfile so copying/reading the file happens in the kernel instead of in bun.
-//      This unfortunately means content hashing for HTTP server is unsupported, but metadata etags work
-// For each imported file, GOTO 1.
-
 pub const ParseResult = struct {
     source: logger.Source,
     loader: options.Loader,
@@ -420,7 +371,6 @@ pub const Bundler = struct {
         allocator: std.mem.Allocator,
         log: *logger.Log,
         opts: Api.TransformOptions,
-        existing_bundle: ?*NodeModuleBundle,
         env_loader_: ?*DotEnv.Loader,
     ) !Bundler {
         js_ast.Expr.Data.Store.create(allocator);
@@ -433,7 +383,6 @@ pub const Bundler = struct {
             fs,
             log,
             opts,
-            existing_bundle,
         );
 
         var env_loader: *DotEnv.Loader = env_loader_ orelse DotEnv.instance orelse brk: {
@@ -869,7 +818,7 @@ pub const Bundler = struct {
                                 &result.source,
                                 Writer,
                                 writer,
-                                .cjs_ascii,
+                                .cjs,
                                 is_source_map,
                                 source_map_handler,
                             ),
@@ -1181,27 +1130,7 @@ pub const Bundler = struct {
                     enable_source_map,
                 ),
             },
-            .cjs_ascii => try js_printer.printCommonJS(
-                Writer,
-                writer,
-                ast,
-                js_ast.Symbol.Map.initList(symbols),
-                source,
-                true,
-                js_printer.Options{
-                    .externals = ast.externals,
-                    .runtime_imports = ast.runtime_imports,
-                    .require_ref = ast.require_ref,
-                    .css_import_behavior = bundler.options.cssImportBehavior(),
-                    .source_map_handler = source_map_context,
-                    .minify_whitespace = bundler.options.minify_whitespace,
-                    .minify_syntax = bundler.options.minify_syntax,
-                    .minify_identifiers = bundler.options.minify_identifiers,
-                    .transform_only = bundler.options.transform_only,
-                    .module_type = if (ast.exports_kind == .cjs) .cjs else .esm,
-                },
-                enable_source_map,
-            ),
+            else => unreachable,
         };
     }
 
@@ -1371,7 +1300,6 @@ pub const Bundler = struct {
                 jsx.parse = loader.isJSX();
 
                 var opts = js_parser.Parser.Options.init(jsx, loader);
-                opts.enable_legacy_bundling = false;
                 opts.legacy_transform_require_to_import = bundler.options.allow_runtime and !bundler.options.target.isBun();
                 opts.features.allow_runtime = bundler.options.allow_runtime;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
@@ -1385,19 +1313,9 @@ pub const Bundler = struct {
 
                 opts.features.commonjs_at_runtime = this_parse.allow_commonjs;
 
-                opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
-
                 opts.tree_shaking = bundler.options.tree_shaking;
                 opts.features.inlining = bundler.options.inlining;
 
-                // HMR is enabled when devserver is running
-                // unless you've explicitly disabled it
-                // or you're running in SSR
-                // or the file is a node_module
-                opts.features.hot_module_reloading = bundler.options.hot_module_reloading and
-                    target.isNotBun() and
-                    (!opts.can_import_from_bundle or
-                    (opts.can_import_from_bundle and !path.isNodeModule()));
                 opts.features.react_fast_refresh = opts.features.hot_module_reloading and
                     jsx.parse and
                     bundler.options.jsx.supports_fast_refresh;

@@ -53,9 +53,10 @@
  */
 declare module "worker_threads" {
   // import { Blob } from "node:buffer";
+  import { Readable, Writable } from "node:stream";
   import { Context } from "node:vm";
   import { EventEmitter } from "node:events";
-  // import { EventLoopUtilityFunction } from "node:perf_hooks";
+  import { EventLoopUtilityFunction } from "node:perf_hooks";
   // import { FileHandle } from "node:fs/promises";
   // import { Readable, Writable } from "node:stream";
   import { URL } from "node:url";
@@ -67,9 +68,9 @@ declare module "worker_threads" {
   const threadId: number;
   const workerData: any;
 
-  // interface WorkerPerformance {
-  //   eventLoopUtilization: EventLoopUtilityFunction;
-  // }
+  interface WorkerPerformance {
+    eventLoopUtilization: EventLoopUtilityFunction;
+  }
   type TransferListItem =
     | ArrayBuffer
     | MessagePort
@@ -251,28 +252,73 @@ declare module "worker_threads" {
   }
   interface WorkerOptions {
     /**
+     * A string specifying an identifying name for the DedicatedWorkerGlobalScope representing the scope of
+     * the worker, which is mainly useful for debugging purposes.
+     */
+    name?: string;
+
+    /**
+     * Use less memory, but make the worker slower.
+     *
+     * Internally, this sets the heap size configuration in JavaScriptCore to be
+     * the small heap instead of the large heap.
+     */
+    smol?: boolean;
+
+    /**
+     * When `true`, the worker will keep the parent thread alive until the worker is terminated or `unref`'d.
+     * When `false`, the worker will not keep the parent thread alive.
+     *
+     * By default, this is `false`.
+     */
+    ref?: boolean;
+
+    /**
+     * In Bun, this does nothing.
+     */
+    type?: string;
+
+    /**
      * List of arguments which would be stringified and appended to
-     * `process.argv` in the worker. This is mostly similar to the `workerData`
-     * but the values will be available on the global `process.argv` as if they
+     * `Bun.argv` / `process.argv` in the worker. This is mostly similar to the `data`
+     * but the values will be available on the global `Bun.argv` as if they
      * were passed as CLI options to the script.
      */
-    argv?: any[] | undefined;
-    env?: Record<string, string> | typeof SHARE_ENV | undefined;
-    eval?: boolean | undefined;
-    workerData?: any;
-    stdin?: boolean | undefined;
-    stdout?: boolean | undefined;
-    stderr?: boolean | undefined;
-    execArgv?: string[] | undefined;
-    resourceLimits?: ResourceLimits | undefined;
+    // argv?: any[] | undefined;
+
+    /** If `true` and the first argument is a string, interpret the first argument to the constructor as a script that is executed once the worker is online. */
+    // eval?: boolean | undefined;
+
     /**
-     * Additional data to send in the first worker message.
+     * If set, specifies the initial value of process.env inside the Worker thread. As a special value, worker.SHARE_ENV may be used to specify that the parent thread and the child thread should share their environment variables; in that case, changes to one thread's process.env object affect the other thread as well. Default: process.env.
      */
-    transferList?: TransferListItem[] | undefined;
+    env?:
+      | Record<string, string>
+      | typeof import("node:worker_threads")["SHARE_ENV"]
+      | undefined;
+
+    /**
+     * In Bun, this does nothing.
+     */
+    credentials?: string;
+
     /**
      * @default true
      */
-    trackUnmanagedFds?: boolean | undefined;
+    // trackUnmanagedFds?: boolean;
+
+    workerData?: any;
+
+    /**
+     * An array of objects that are transferred rather than cloned when being passed between threads.
+     */
+    transferList?: import("worker_threads").TransferListItem[];
+
+    // resourceLimits?: import("worker_threads").ResourceLimits;
+    // stdin?: boolean | undefined;
+    // stdout?: boolean | undefined;
+    // stderr?: boolean | undefined;
+    // execArgv?: string[] | undefined;
   }
   interface ResourceLimits {
     /**
@@ -356,76 +402,164 @@ declare module "worker_threads" {
    * ```
    * @since v10.5.0
    */
-  interface Worker extends EventTarget {
-    onerror: ((this: Worker, ev: ErrorEvent) => any) | null;
-    onmessage: ((this: Worker, ev: MessageEvent) => any) | null;
-    onmessageerror: ((this: Worker, ev: MessageEvent) => any) | null;
-
-    addEventListener<K extends keyof WorkerEventMap>(
-      type: K,
-      listener: (this: Worker, ev: WorkerEventMap[K]) => any,
-      options?: boolean | AddEventListenerOptions,
-    ): void;
-
-    removeEventListener<K extends keyof WorkerEventMap>(
-      type: K,
-      listener: (this: Worker, ev: WorkerEventMap[K]) => any,
-      options?: boolean | EventListenerOptions,
-    ): void;
-
-    terminate(): void;
-
-    postMessage(message: any, transfer?: Transferable[]): void;
-
+  class Worker extends EventEmitter {
     /**
-     * Keep the process alive until the worker is terminated or `unref`'d
+     * If `stdin: true` was passed to the `Worker` constructor, this is a
+     * writable stream. The data written to this stream will be made available in
+     * the worker thread as `process.stdin`.
+     * @since v10.5.0
+     */
+    readonly stdin: Writable | null;
+    /**
+     * This is a readable stream which contains data written to `process.stdout` inside the worker thread. If `stdout: true` was not passed to the `Worker` constructor, then data is piped to the
+     * parent thread's `process.stdout` stream.
+     * @since v10.5.0
+     */
+    readonly stdout: Readable;
+    /**
+     * This is a readable stream which contains data written to `process.stderr` inside the worker thread. If `stderr: true` was not passed to the `Worker` constructor, then data is piped to the
+     * parent thread's `process.stderr` stream.
+     * @since v10.5.0
+     */
+    readonly stderr: Readable;
+    /**
+     * An integer identifier for the referenced thread. Inside the worker thread,
+     * it is available as `require('node:worker_threads').threadId`.
+     * This value is unique for each `Worker` instance inside a single process.
+     * @since v10.5.0
+     */
+    readonly threadId: number;
+    /**
+     * Provides the set of JS engine resource constraints for this Worker thread.
+     * If the `resourceLimits` option was passed to the `Worker` constructor,
+     * this matches its values.
+     *
+     * If the worker has stopped, the return value is an empty object.
+     * @since v13.2.0, v12.16.0
+     */
+    readonly resourceLimits?: ResourceLimits | undefined;
+    /**
+     * An object that can be used to query performance information from a worker
+     * instance. Similar to `perf_hooks.performance`.
+     * @since v15.1.0, v14.17.0, v12.22.0
+     */
+    readonly performance: WorkerPerformance;
+    /**
+     * @param filename  The path to the Worker’s main script or module.
+     *                  Must be either an absolute path or a relative path (i.e. relative to the current working directory) starting with ./ or ../,
+     *                  or a WHATWG URL object using file: protocol. If options.eval is true, this is a string containing JavaScript code rather than a path.
+     */
+    constructor(filename: string | URL, options?: WorkerOptions);
+    /**
+     * Send a message to the worker that is received via `require('node:worker_threads').parentPort.on('message')`.
+     * See `port.postMessage()` for more details.
+     * @since v10.5.0
+     */
+    postMessage(
+      value: any,
+      transferList?: ReadonlyArray<TransferListItem>,
+    ): void;
+    /**
+     * Opposite of `unref()`, calling `ref()` on a previously `unref()`ed worker does _not_ let the program exit if it's the only active handle left (the default
+     * behavior). If the worker is `ref()`ed, calling `ref()` again has
+     * no effect.
+     * @since v10.5.0
      */
     ref(): void;
     /**
-     * Undo a previous `ref()`
+     * Calling `unref()` on a worker allows the thread to exit if this is the only
+     * active handle in the event system. If the worker is already `unref()`ed calling`unref()` again has no effect.
+     * @since v10.5.0
      */
     unref(): void;
-
     /**
-     * Unique per-process thread ID. Main thread ID is always `0`.
+     * Stop all JavaScript execution in the worker thread as soon as possible.
+     * Returns a Promise for the exit code that is fulfilled when the `'exit' event` is emitted.
+     * @since v10.5.0
      */
-    readonly threadId: number;
-  }
-  var Worker: {
-    prototype: Worker;
-    new (stringUrl: string | URL, options?: WorkerOptions): Worker;
-  };
-  interface WorkerOptions {
-    name?: string;
-
+    terminate(): Promise<number>;
     /**
-     * Use less memory, but make the worker slower.
+     * Returns a readable stream for a V8 snapshot of the current state of the Worker.
+     * See `v8.getHeapSnapshot()` for more details.
      *
-     * Internally, this sets the heap size configuration in JavaScriptCore to be
-     * the small heap instead of the large heap.
+     * If the Worker thread is no longer running, which may occur before the `'exit' event` is emitted, the returned `Promise` is rejected
+     * immediately with an `ERR_WORKER_NOT_RUNNING` error.
+     * @since v13.9.0, v12.17.0
+     * @return A promise for a Readable Stream containing a V8 heap snapshot
      */
-    smol?: boolean;
-
-    /**
-     * When `true`, the worker will keep the parent thread alive until the worker is terminated or `unref`'d.
-     * When `false`, the worker will not keep the parent thread alive.
-     *
-     * By default, this is `false`.
-     */
-    ref?: boolean;
-
-    /**
-     * Does nothing in Bun
-     */
-    type?: string;
-  }
-
-  interface WorkerEventMap {
-    message: MessageEvent;
-    messageerror: MessageEvent;
-    error: ErrorEvent;
-    open: Event;
-    close: Event;
+    getHeapSnapshot(): Promise<Readable>;
+    addListener(event: "error", listener: (err: Error) => void): this;
+    addListener(event: "exit", listener: (exitCode: number) => void): this;
+    addListener(event: "message", listener: (value: any) => void): this;
+    addListener(event: "messageerror", listener: (error: Error) => void): this;
+    addListener(event: "online", listener: () => void): this;
+    addListener(
+      event: string | symbol,
+      listener: (...args: any[]) => void,
+    ): this;
+    emit(event: "error", err: Error): boolean;
+    emit(event: "exit", exitCode: number): boolean;
+    emit(event: "message", value: any): boolean;
+    emit(event: "messageerror", error: Error): boolean;
+    emit(event: "online"): boolean;
+    emit(event: string | symbol, ...args: any[]): boolean;
+    on(event: "error", listener: (err: Error) => void): this;
+    on(event: "exit", listener: (exitCode: number) => void): this;
+    on(event: "message", listener: (value: any) => void): this;
+    on(event: "messageerror", listener: (error: Error) => void): this;
+    on(event: "online", listener: () => void): this;
+    on(event: string | symbol, listener: (...args: any[]) => void): this;
+    once(event: "error", listener: (err: Error) => void): this;
+    once(event: "exit", listener: (exitCode: number) => void): this;
+    once(event: "message", listener: (value: any) => void): this;
+    once(event: "messageerror", listener: (error: Error) => void): this;
+    once(event: "online", listener: () => void): this;
+    once(event: string | symbol, listener: (...args: any[]) => void): this;
+    prependListener(event: "error", listener: (err: Error) => void): this;
+    prependListener(event: "exit", listener: (exitCode: number) => void): this;
+    prependListener(event: "message", listener: (value: any) => void): this;
+    prependListener(
+      event: "messageerror",
+      listener: (error: Error) => void,
+    ): this;
+    prependListener(event: "online", listener: () => void): this;
+    prependListener(
+      event: string | symbol,
+      listener: (...args: any[]) => void,
+    ): this;
+    prependOnceListener(event: "error", listener: (err: Error) => void): this;
+    prependOnceListener(
+      event: "exit",
+      listener: (exitCode: number) => void,
+    ): this;
+    prependOnceListener(event: "message", listener: (value: any) => void): this;
+    prependOnceListener(
+      event: "messageerror",
+      listener: (error: Error) => void,
+    ): this;
+    prependOnceListener(event: "online", listener: () => void): this;
+    prependOnceListener(
+      event: string | symbol,
+      listener: (...args: any[]) => void,
+    ): this;
+    removeListener(event: "error", listener: (err: Error) => void): this;
+    removeListener(event: "exit", listener: (exitCode: number) => void): this;
+    removeListener(event: "message", listener: (value: any) => void): this;
+    removeListener(
+      event: "messageerror",
+      listener: (error: Error) => void,
+    ): this;
+    removeListener(event: "online", listener: () => void): this;
+    removeListener(
+      event: string | symbol,
+      listener: (...args: any[]) => void,
+    ): this;
+    off(event: "error", listener: (err: Error) => void): this;
+    off(event: "exit", listener: (exitCode: number) => void): this;
+    off(event: "message", listener: (value: any) => void): this;
+    off(event: "messageerror", listener: (error: Error) => void): this;
+    off(event: "online", listener: () => void): this;
+    off(event: string | symbol, listener: (...args: any[]) => void): this;
   }
 
   interface BroadcastChannelEventMap {

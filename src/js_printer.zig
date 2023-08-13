@@ -2194,14 +2194,7 @@ fn NewPrinter(
                     }
                 },
                 .e_require_string => |e| {
-                    if (rewrite_esm_to_cjs and p.importRecord(e.import_record_index).is_legacy_bundled) {
-                        p.printIndent();
-                        p.printBundledRequire(e);
-                        p.printSemicolonIfNeeded();
-                        return;
-                    }
-
-                    if (!rewrite_esm_to_cjs or !p.importRecord(e.import_record_index).is_legacy_bundled) {
+                    if (!rewrite_esm_to_cjs) {
                         p.printRequireOrImportExpr(e.import_record_index, e.unwrapped_id != std.math.maxInt(u32), &([_]G.Comment{}), level, flags);
                     }
                 },
@@ -2734,7 +2727,7 @@ fn NewPrinter(
                     } else if (symbol.namespace_alias) |namespace| {
                         if (namespace.import_record_index < p.import_records.len) {
                             const import_record = p.importRecord(namespace.import_record_index);
-                            if (import_record.is_legacy_bundled or namespace.was_originally_property_access) {
+                            if (namespace.was_originally_property_access) {
                                 var wrap = false;
                                 didPrint = true;
 
@@ -3847,7 +3840,7 @@ fn NewPrinter(
 
                                     if (symbol.namespace_alias) |namespace| {
                                         const import_record = p.importRecord(namespace.import_record_index);
-                                        if (import_record.is_legacy_bundled or namespace.was_originally_property_access) {
+                                        if (namespace.was_originally_property_access) {
                                             p.printIdentifier(name);
                                             p.print(": () => ");
                                             p.printNamespaceAlias(import_record.*, namespace);
@@ -3912,7 +3905,7 @@ fn NewPrinter(
                                 if (p.symbols().get(item.name.ref.?)) |symbol| {
                                     if (symbol.namespace_alias) |namespace| {
                                         const import_record = p.importRecord(namespace.import_record_index);
-                                        if (import_record.is_legacy_bundled or namespace.was_originally_property_access) {
+                                        if (namespace.was_originally_property_access) {
                                             p.print("var ");
                                             p.printSymbol(item.name.ref.?);
                                             p.@"print = "();
@@ -4486,53 +4479,6 @@ fn NewPrinter(
                             }
                         }
 
-                        return;
-                    } else if (record.is_legacy_bundled) {
-                        if (!record.path.is_disabled) {
-                            if (!p.has_printed_bundled_import_statement) {
-                                p.has_printed_bundled_import_statement = true;
-                                p.printWhitespacer(ws("import { "));
-
-                                const last = p.import_records.len - 1;
-                                var needs_comma = false;
-                                // This might be a determinsim issue
-                                // But, it's not random
-                                skip: for (p.import_records, 0..) |_record, i| {
-                                    if (!_record.is_legacy_bundled or _record.module_id == 0) continue;
-
-                                    if (i < last) {
-                                        // Prevent importing the same module ID twice
-                                        // We could use a map but we want to avoid allocating
-                                        // and this should be pretty quick since it's just comparing a uint32
-                                        for (p.import_records[i + 1 ..]) |_record2| {
-                                            if (_record2.is_legacy_bundled and _record2.module_id > 0 and _record2.module_id == _record.module_id) {
-                                                continue :skip;
-                                            }
-                                        }
-                                    }
-
-                                    if (needs_comma) {
-                                        p.print(",");
-                                        p.printSpace();
-                                    }
-                                    p.printLoadFromBundleWithoutCall(@as(u32, @truncate(i)));
-                                    needs_comma = true;
-                                }
-
-                                p.printWhitespacer(ws("} from "));
-
-                                p.printQuotedUTF8(record.path.text, false);
-                                p.printSemicolonAfterStatement();
-                            }
-                        } else {
-                            p.print("var ");
-
-                            p.printLoadFromBundleWithoutCall(s.import_record_index);
-                            p.printWhitespacer(ws("= () => ({ default: {}})"));
-                            p.printSemicolonAfterStatement();
-                        }
-
-                        p.printBundledImport(record.*, s);
                         return;
                     }
 
@@ -6019,101 +5965,4 @@ pub fn printCommonJS(
     try printer.writer.done();
 
     return @as(usize, @intCast(@max(printer.writer.written, 0)));
-}
-
-// pub fn printChunk(
-//     comptime Writer: type,
-//     _writer: Writer,
-//     tree: Ast,
-//     symbols: js_ast.Symbol.Map,
-//     opts: Options,
-// ) PrintResult {
-//     var writer = _writer;
-//     var printer =  PrinterType.init(
-//         writer,
-//         &tree,
-//         source,
-//         symbols,
-//         opts,
-//         undefined,
-//     );
-// }
-
-pub fn printCommonJSThreaded(
-    comptime Writer: type,
-    _writer: Writer,
-    tree: Ast,
-    symbols: js_ast.Symbol.Map,
-    source: *const logger.Source,
-    comptime ascii_only: bool,
-    opts: Options,
-    lock: *Lock,
-    comptime GetPosType: type,
-    getter: GetPosType,
-    comptime getPos: fn (ctx: GetPosType) anyerror!u64,
-    end_off_ptr: *u32,
-) !WriteResult {
-    const PrinterType = NewPrinter(ascii_only, Writer, true, ascii_only, false, false);
-    var writer = _writer;
-    var renamer = rename.NoOpRenamer.init(symbols, source);
-    var printer = PrinterType.init(
-        writer,
-        tree.import_records.slice(),
-        opts,
-        renamer.toRenamer(),
-        undefined,
-    );
-
-    defer {
-        imported_module_ids_list = printer.imported_module_ids;
-    }
-    if (tree.prepend_part) |part| {
-        for (part.stmts) |stmt| {
-            try printer.printStmt(stmt);
-            if (printer.writer.getError()) {} else |err| {
-                return err;
-            }
-            printer.printSemicolonIfNeeded();
-        }
-    }
-
-    for (tree.parts.slice()) |part| {
-        for (part.stmts) |stmt| {
-            try printer.printStmt(stmt);
-            if (printer.writer.getError()) {} else |err| {
-                return err;
-            }
-            printer.printSemicolonIfNeeded();
-        }
-    }
-
-    // Add a couple extra newlines at the end
-    printer.writer.print(@TypeOf("\n\n"), "\n\n");
-
-    var result: WriteResult = .{ .off = 0, .len = 0, .end_off = 0 };
-    {
-        defer lock.unlock();
-        lock.lock();
-        result.off = @as(u32, @truncate(try getPos(getter)));
-        if (comptime Environment.isLinux) {
-            if (printer.writer.written > C.preallocate_length) {
-                // on mac, it's relative to current position in file handle
-                // on linux, it's absolute
-                try C.preallocate_file(
-                    getter.handle,
-                    @as(std.os.off_t, @intCast(if (comptime Environment.isMac) 0 else result.off)),
-                    @as(std.os.off_t, @intCast(printer.writer.written)),
-                );
-            }
-        }
-
-        try printer.writer.done();
-        @fence(.SeqCst);
-        result.end_off = @as(u32, @truncate(try getPos(getter)));
-        @atomicStore(u32, end_off_ptr, result.end_off, .SeqCst);
-    }
-
-    result.len = @as(usize, @intCast(@max(printer.writer.written, 0)));
-
-    return result;
 }

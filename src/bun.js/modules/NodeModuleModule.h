@@ -138,6 +138,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
     out->putDirect(vm, JSC::Identifier::fromString(vm, "parent"_s), parentValue,
                    0);
 
+  out->putDirect(vm, JSC::Identifier::fromString(vm, "exports"_s),
+                 JSC::constructEmptyObject(globalObject,
+                                           globalObject->objectPrototype(), 0),
+                 0);
   return JSValue::encode(out);
 }
 
@@ -292,10 +296,12 @@ DEFINE_NATIVE_MODULE(NodeModule) {
     exportNames.append(name);
     exportValues.append(value);
   };
-  exportNames.reserveCapacity(14);
-  exportValues.ensureCapacity(14);
+  exportNames.reserveCapacity(15);
+  exportValues.ensureCapacity(15);
   exportNames.append(vm.propertyNames->defaultKeyword);
   exportValues.append(defaultObject);
+
+  put(Identifier::fromString(vm, "Module"_s), defaultObject);
 
   putNativeFn(Identifier::fromString(vm, "createRequire"_s),
               jsFunctionNodeModuleCreateRequire);

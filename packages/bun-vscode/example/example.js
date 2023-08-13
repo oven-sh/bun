@@ -4,6 +4,7 @@ const app = express();
 
 app
   .get("/", (req, res) => {
+    console.log("I am logging a request!");
     debugger;
     res.send("hello world");
   })

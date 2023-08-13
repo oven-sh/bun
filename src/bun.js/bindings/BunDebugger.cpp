@@ -55,13 +55,17 @@ public:
         Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(&globalObject);
         auto* connection = reinterpret_cast<BunInspectorConnection*>(inspectorConnections->get(global->scriptExecutionContext()->identifier()));
         while (!isDoneProcessingEvents) {
-            connection->jsWaitForMessageFromInspectorLock.lock();
+            {
+                WTF::LockHolder locker(connection->jsThreadMessagesLock);
+            }
+
             connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global);
         }
     }
 
     void receiveMessagesOnInspectorThread(ScriptExecutionContext& context, Zig::GlobalObject* globalObject)
     {
+        this->jsThreadMessageScheduledCount.store(0);
         WTF::Vector<WTF::String, 12> messages;
 
         {
@@ -94,6 +98,7 @@ public:
 
     void receiveMessagesOnDebuggerThread(ScriptExecutionContext& context, Zig::GlobalObject* debuggerGlobalObject)
     {
+        debuggerThreadMessageScheduledCount.store(0);
         WTF::Vector<WTF::String, 12> messages;
 
         {
@@ -122,9 +127,11 @@ public:
             debuggerThreadMessages.append(inputMessage);
         }
 
-        debuggerScriptExecutionContext->postTaskConcurrently([connection = this](ScriptExecutionContext& context) {
-            connection->receiveMessagesOnDebuggerThread(context, reinterpret_cast<Zig::GlobalObject*>(context.jsGlobalObject()));
-        });
+        if (this->debuggerThreadMessageScheduledCount++ == 0) {
+            debuggerScriptExecutionContext->postTaskConcurrently([connection = this](ScriptExecutionContext& context) {
+                connection->receiveMessagesOnDebuggerThread(context, reinterpret_cast<Zig::GlobalObject*>(context.jsGlobalObject()));
+            });
+        }
     }
 
     void sendMessageToInspectorFromDebuggerThread(WTF::String inputMessage)
@@ -134,9 +141,9 @@ public:
             jsThreadMessages.append(inputMessage);
         }
 
-        if (this->jsWaitForMessageFromInspectorLock.isHeld()) {
+        if (this->jsWaitForMessageFromInspectorLock.isLocked()) {
             this->jsWaitForMessageFromInspectorLock.unlock();
-        } else {
+        } else if (this->jsThreadMessageScheduledCount++ == 0) {
             ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
                 connection->receiveMessagesOnInspectorThread(context, reinterpret_cast<Zig::GlobalObject*>(context.jsGlobalObject()));
             });
@@ -192,6 +199,7 @@ extern "C" void Bun__waitForDebugger(ScriptExecutionContextIdentifier scriptId)
     globalObject->setInspectable(true);
 
     auto& inspector = globalObject->inspectorDebuggable();
+    inspector.setInspectable(true);
 
     inspector.connect(*connection);
 

@@ -166,19 +166,25 @@ export type AttachRequestArguments = DAP.AttachRequestArguments & {
 
 export class DAPAdapter extends LoggingDebugSession implements Context {
   #session: vscode.DebugSession;
+  #pendingSources = new Map<string, Array<{ resolve: Function; reject: Function }>>();
   #client?: JSCClient;
   #process?: ChildProcess;
   #thread?: DAP.Thread;
   #ready: AbortController;
   #sources: Map<string, DAP.Source>;
+  #scriptIds: Map<number, number>;
   #stackFrames: DAP.StackFrame[];
   #scopes: Map<number, DAP.Scope[]>;
+  #frameIds = new Array<string>(64);
+  #callFrames = new Array<JSC.Debugger.CallFrame>(64);
+  #callFramesRange = [0, 0];
 
   public constructor(session: vscode.DebugSession) {
     super();
     this.#ready = new AbortController();
     this.#session = session;
     this.#sources = new Map();
+    this.#scriptIds = new Map();
     this.#stackFrames = [];
     this.#scopes = new Map();
     // 1-based lines and columns
@@ -280,7 +286,7 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
   }
 
   async getProperties(objectId: string): Promise<JSC.Runtime.PropertyDescriptor[]> {
-    const { properties } = await this.#client.fetch("Runtime.getProperties", {
+    const { properties } = await this.#client.fetch("Runtime.getDisplayableProperties", {
       objectId,
     });
     let hasEntries = false;
@@ -329,7 +335,16 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     const source = new Source(name, url, scriptIdNumber);
     source.sourceReference = scriptIdNumber;
     this.#sources.set(scriptId, source);
+    this.#scriptIds.set(hashCode(url), scriptIdNumber);
     this.sendEvent(new LoadedSourceEvent("new", source));
+    const pendingMap = this.#pendingSources;
+    const promises = pendingMap.get(url);
+    if (promises) {
+      pendingMap.delete(url);
+      for (const { resolve } of promises) {
+        resolve();
+      }
+    }
 
     if (!this.#thread) {
       this.#thread = new Thread(0, url);
@@ -343,8 +358,15 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     this.sendEvent(new StoppedEvent(pauseReason(reason), this.#thread?.id ?? 0));
     const stackFrames: DAP.StackFrame[] = [];
     const scopes: Map<number, DAP.Scope[]> = new Map();
+    const frameIds = this.#frameIds;
+    frameIds.length = callFrames.length + (asyncStackTrace?.callFrames?.length || 0);
+    const frames = this.#callFrames;
+    frames.length = callFrames.length;
+    let frameId = 0;
     for (const callFrame of callFrames) {
       const stackFrame = formatStackFrame(this, callFrame);
+      frames[frameId] = callFrame;
+      frameIds[frameId++] = callFrame.callFrameId;
       stackFrames.push(stackFrame);
       const frameScopes: DAP.Scope[] = [];
       for (const scope of callFrame.scopeChain) {
@@ -355,7 +377,8 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
 
     if (asyncStackTrace?.callFrames?.length) {
       for (const callFrame of asyncStackTrace.callFrames) {
-        stackFrames.push(formatStackFrame(this, callFrame));
+        frameIds[frameId++] = "";
+        stackFrames.push(formatAsyncStackFrame(this, callFrame));
       }
     }
     this.#scopes = scopes;
@@ -363,6 +386,8 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
   }
 
   protected ["Debugger.resumed"](event: JSC.Debugger.ResumedEvent): void {
+    this.#frameIds.length = 0;
+    this.#callFrames.length = 0;
     this.sendEvent(new ContinuedEvent(this.#thread?.id));
   }
 
@@ -545,6 +570,33 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     this.#noop(response, "restartRequest");
   }
 
+  getScriptIdFromSource(source: DAP.Source): string {
+    if (source.sourceReference) {
+      return String(source.sourceReference);
+    }
+
+    const { path } = source;
+    const id = this.#scriptIds.get(hashCode(path));
+    if (!id) {
+      return undefined;
+    }
+
+    return String(id);
+  }
+
+  async waitForSourceToBeLoaded(source: DAP.Source): Promise<void> {
+    const pendingMap = this.#pendingSources;
+    let promises = pendingMap.get(source.path);
+    if (!promises) {
+      promises = [];
+      pendingMap.set(source.path, promises);
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      promises.push({ resolve, reject });
+    });
+  }
+
   protected async setBreakPointsRequest(
     response: DAP.SetBreakpointsResponse,
     args: DAP.SetBreakpointsArguments,
@@ -555,25 +607,43 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
       return;
     }
     const { source, breakpoints } = args;
+    let scriptId = this.getScriptIdFromSource(source);
+
+    if (!scriptId) {
+      await this.waitForSourceToBeLoaded(source);
+      scriptId = this.getScriptIdFromSource(source);
+    }
+
     const results: DAP.Breakpoint[] = await Promise.all(
       breakpoints.map(({ line, column }) =>
         this.#client
           .fetch("Debugger.setBreakpoint", {
             location: {
-              scriptId: String(source.sourceReference), // FIXME
+              scriptId,
               lineNumber: line,
               columnNumber: column,
             },
           })
-          .then(({ breakpointId, actualLocation }) => ({
-            id: Number(breakpointId),
-            line: actualLocation.lineNumber,
-            column: actualLocation.columnNumber,
-            verified: true,
-          })),
+          .then(
+            ({ breakpointId, actualLocation }) => {
+              return {
+                id: Number(breakpointId),
+                line: actualLocation.lineNumber,
+                // column: actualLocation.columnNumber,
+                verified: true,
+              };
+            },
+            err => {
+              if (err?.code === -32000) {
+                return undefined;
+              }
+
+              throw err;
+            },
+          ),
       ),
     );
-    this.#ack(response, { breakpoints: results });
+    this.#ack(response, { breakpoints: results.filter(Boolean) });
   }
 
   protected setFunctionBreakPointsRequest(
@@ -667,8 +737,9 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     args: DAP.SourceArguments,
     request?: DAP.Request,
   ): Promise<void> {
-    const { sourceReference } = args;
-    const scriptId = String(sourceReference);
+    const { sourceReference, source } = args;
+    const scriptId = sourceReference ? String(sourceReference) : this.getScriptIdFromSource(source);
+
     await this.#send(response, "Debugger.getScriptSource", { scriptId }, ({ scriptSource }) => ({
       content: scriptSource,
     }));
@@ -697,8 +768,13 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
   ): void {
     const totalFrames = this.#stackFrames.length;
     const { startFrame = 0, levels = totalFrames } = args;
+    const stackFrames = this.#stackFrames.slice(
+      (this.#callFramesRange[0] = startFrame),
+      (this.#callFramesRange[1] = Math.min(totalFrames, startFrame + levels)),
+    );
+
     this.#ack(response, {
-      stackFrames: this.#stackFrames.slice(startFrame, Math.min(totalFrames, startFrame + levels)),
+      stackFrames,
       totalFrames,
     });
   }
@@ -746,22 +822,83 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     request?: DAP.Request,
   ): Promise<void> {
     const { context, expression, frameId } = args;
-    if (frameId) {
+    let callFrame: JSC.Debugger.CallFrame =
+      typeof frameId === "number"
+        ? this.#callFrames.slice(this.#callFramesRange[0], this.#callFramesRange[1])[frameId]
+        : frameId;
+
+    if (callFrame) {
+      if (context === "hover") {
+        for (let scope of callFrame.scopeChain) {
+          if (scope.empty || scope.type === "with" || scope.type === "global") {
+            continue;
+          }
+
+          // For the rest of the scopes, it is artificial transient object enumerating scope variables as its properties.
+          const { properties } = await this.#client.fetch("Runtime.getDisplayableProperties", {
+            "objectId": scope.object.objectId,
+            "fetchStart": 0,
+            "fetchCount": 100,
+          });
+
+          for (let i = 0; i < properties.length; i++) {
+            const prop = properties[i];
+            const { name, value } = prop;
+            if (name === expression) {
+              if (value) {
+                const { objectId } = value;
+                response.body = {
+                  result: value?.value || value?.description || "",
+                  variablesReference: objectId ? this.getReferenceId(objectId) : 0,
+                  type: value?.type || "undefined",
+                  presentationHint: presentationHintForProperty(prop, !!value.classPrototype),
+                };
+              } else {
+                response.body = {
+                  result: "undefined",
+                  variablesReference: 0,
+                  type: "undefined",
+                };
+              }
+              response.success = true;
+              this.sendResponse(response);
+              return;
+            }
+          }
+        }
+      } else {
+        await this.#send(
+          response,
+          "Debugger.evaluateOnCallFrame",
+          {
+            expression,
+            callFrameId: callFrame.callFrameId,
+            "includeCommandLineAPI": false,
+          },
+          ({ result: { objectId, value, description }, wasThrown }) => {
+            return {
+              result: value ?? description,
+              variablesReference: objectId ? this.getReferenceId(objectId) : 0,
+            };
+          },
+        );
+      }
+    } else {
+      await this.#send(
+        response,
+        "Runtime.evaluate",
+        {
+          expression,
+          includeCommandLineAPI: true,
+        },
+        ({ result: { objectId, value, description }, wasThrown }) => {
+          return {
+            result: value ?? description,
+            variablesReference: objectId ? this.getReferenceId(objectId) : 0,
+          };
+        },
+      );
     }
-    await this.#send(
-      response,
-      "Runtime.evaluate",
-      {
-        expression,
-        includeCommandLineAPI: true,
-      },
-      ({ result: { objectId, value, description }, wasThrown }) => {
-        return {
-          result: value ?? description,
-          variablesReference: objectId ? this.getReferenceId(objectId) : 0,
-        };
-      },
-    );
   }
 
   protected stepInTargetsRequest(
@@ -853,28 +990,19 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     args: DAP.BreakpointLocationsArguments,
     request?: DAP.Request,
   ): Promise<void> {
-    const {
-      line,
-      endLine,
-      column,
-      endColumn,
-      source: { path, sourceReference },
-    } = args;
-    let scriptId: string;
-    if (sourceReference) {
-      scriptId = String(sourceReference);
-    } else if (path) {
-      for (const [id, source] of this.#sources) {
-        if (source.path === path) {
-          scriptId = id;
-          break;
-        }
-      }
+    const { line, endLine, column, endColumn, source } = args;
+    console.log(source);
+    let scriptId: string = this.getScriptIdFromSource(source);
+    if (!scriptId) {
+      await this.waitForSourceToBeLoaded(source);
+      scriptId = this.getScriptIdFromSource(source);
     }
+
     if (!scriptId) {
       this.#nack(response, new Error("Either source.path or source.sourceReference must be specified"));
       return;
     }
+
     await this.#send(
       response,
       "Debugger.getBreakpointLocations",
@@ -894,7 +1022,7 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
         return {
           breakpoints: locations.map(({ lineNumber, columnNumber }) => ({
             line: lineNumber,
-            //column: columnNumber,
+            column: columnNumber,
           })),
         };
       },
@@ -964,13 +1092,15 @@ interface Context {
 function formatStackFrame(ctx: Context, callFrame: JSC.Debugger.CallFrame): DAP.StackFrame {
   const { callFrameId, functionName, location } = callFrame;
   const { scriptId, lineNumber, columnNumber = 0 } = location;
+  const source = ctx.getSource(scriptId);
   return {
     id: ctx.getStackFrameId(callFrameId),
     name: functionName,
     line: lineNumber,
     column: columnNumber,
-    source: ctx.getSource(scriptId),
+    source,
     moduleId: ctx.getModuleId(scriptId),
+    presentationHint: source?.presentationHint || !source?.path ? "subtle" : "normal",
   };
 }
 
@@ -1030,27 +1160,38 @@ async function formatObject(ctx: Context, objectId: JSC.Runtime.RemoteObjectId):
 }
 
 function formatProperty(ctx: Context, propertyDescriptor: JSC.Runtime.PropertyDescriptor): DAP.Variable[] {
-  const { name, value, get, set, symbol } = propertyDescriptor;
+  const { name, value, get, set, symbol, isOwn } = propertyDescriptor;
   const variables: DAP.Variable[] = [];
   if (value) {
-    variables.push(formatPropertyValue(ctx, name, value));
+    variables.push(formatPropertyValue(ctx, name, value, propertyDescriptor));
   }
   return variables;
 }
 
-function formatPropertyValue(ctx: Context, name: string, remoteObject: JSC.Runtime.RemoteObject): DAP.Variable {
+function formatPropertyValue(
+  ctx: Context,
+  name: string,
+  remoteObject: JSC.Runtime.RemoteObject,
+  descriptor: JSC.Runtime.PropertyDescriptor,
+): DAP.Variable {
   const { type, subtype, value, description, objectId } = remoteObject;
   return {
     name,
     value: description ?? "",
     type: subtype ?? type,
     variablesReference: objectId ? ctx.getReferenceId(objectId) : 0,
-    presentationHint: value && formatPropertyHint(value),
+    presentationHint:
+      value && typeof value !== "object" && typeof value !== "undefined"
+        ? formatPropertyHint(descriptor, typeof value)
+        : formatPropertyHint(value || descriptor, ""),
   };
 }
 
-function formatPropertyHint(propertyDescriptor: JSC.Runtime.PropertyDescriptor): DAP.VariablePresentationHint {
-  const { value, get, set, configurable, enumerable, writable } = propertyDescriptor;
+function formatPropertyHint(
+  propertyDescriptor: JSC.Runtime.PropertyDescriptor,
+  valueType: string,
+): DAP.VariablePresentationHint {
+  const { value, get, set, configurable, enumerable, writable, isOwn } = propertyDescriptor;
   const hasGetter = get?.type !== "undefined";
   const hasSetter = set?.type !== "undefined";
   const hint: DAP.VariablePresentationHint = {
@@ -1064,11 +1205,16 @@ function formatPropertyHint(propertyDescriptor: JSC.Runtime.PropertyDescriptor):
   if (!enumerable && !hasGetter) {
     hint.visibility = "internal";
   }
+
+  if (valueType) {
+    hint.kind = "data";
+  }
+
   return hint;
 }
 
 function formatPropertyKind(remoteObject: JSC.Runtime.RemoteObject): DAP.VariablePresentationHint["kind"] {
-  const { type, subtype, className } = remoteObject;
+  const { type, subtype, className, value } = remoteObject;
   if (type === "function") {
     return "method";
   }
@@ -1078,6 +1224,10 @@ function formatPropertyKind(remoteObject: JSC.Runtime.RemoteObject): DAP.Variabl
   if (className?.endsWith("Event")) {
     return "event";
   }
+  if (value) {
+    return "data";
+  }
+
   return "property";
 }
 
@@ -1088,24 +1238,31 @@ function scriptIdFromLocation(location: JSC.Debugger.Location): number {
 }
 
 function pauseReason(reason: JSC.EventMap["Debugger.paused"]["reason"]): DAP.StoppedEvent["body"]["reason"] {
-  switch (reason) {
-    case "DebuggerStatement":
-    case "PauseOnNextStatement": {
-      return "pause";
-    }
-
-    case "exception": {
-      return "exception";
-    }
-
-    default: {
-      return "step";
-    }
-  }
+  return reason;
 }
 
 function scriptIdFromEvent(scriptId: JSC.Debugger.ScriptParsedEvent["scriptId"]): number {
-  const id = Number(scriptId);
-  console.log({ id });
-  return id;
+  return Number(scriptId);
+}
+
+function presentationHintForProperty(property: JSC.Runtime.PropertyDescriptor, isClass): DAP.VariablePresentationHint {
+  const attributes = [];
+  if (!property.writable) {
+    attributes.push("readOnly");
+  }
+
+  let kind = "";
+  if (isClass) {
+    kind = "class";
+  } else if (property.get || property.set) {
+    kind = "property";
+  } else if (property.value) {
+    kind = "data";
+  }
+
+  return {
+    attributes,
+    visibility: property.isPrivate || property.symbol || !property.enumerable ? "private" : "public",
+    kind,
+  };
 }

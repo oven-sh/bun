@@ -248,6 +248,7 @@ export class JSCClient {
             if ("error" in received) {
               const { message, code = "?" } = received.error;
               const error = new Error(`${message} [code: ${code}]`);
+              error.code = code;
               onError?.(error);
               this.#pendingRequests.get(received.id)?.(error);
             } else {

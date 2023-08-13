@@ -219,7 +219,7 @@ pub const Expect = struct {
     }
 
     pub fn getSnapshotName(this: *Expect, allocator: std.mem.Allocator, hint: string) ![]const u8 {
-        var test_name = this.scope.tests.items[this.test_id].label;
+        const test_name = this.scope.tests.items[this.test_id].label;
         var name_builder = MutableString.initEmpty(allocator);
         
         for (test_name) | value | { 

@@ -824,11 +824,30 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     const { context, expression, frameId } = args;
     let callFrame: JSC.Debugger.CallFrame =
       typeof frameId === "number"
-        ? this.#callFrames.slice(this.#callFramesRange[0], this.#callFramesRange[1])[frameId]
-        : frameId;
+        ? this.#callFrames[this.#stackFrames.findIndex(frame => frame.id === frameId)]
+        : undefined;
 
-    if (callFrame) {
-      if (context === "hover") {
+    console.log({ callFrame, frameId });
+    if (callFrame && context === "hover") {
+      if (expression.includes(".")) {
+        // TODO: use getDisplayableProperties to make this side-effect free.
+        // for each ".", call Runtime.getProperties on the previous result and find the specific property
+        await this.#send(
+          response,
+          "Debugger.evaluateOnCallFrame",
+          {
+            expression,
+            callFrameId: callFrame.callFrameId,
+            "includeCommandLineAPI": false,
+          },
+          ({ result: { objectId, value, description }, wasThrown }) => {
+            return {
+              result: value ?? description,
+              variablesReference: objectId ? this.getReferenceId(objectId) : 0,
+            };
+          },
+        );
+      } else {
         for (let scope of callFrame.scopeChain) {
           if (scope.empty || scope.type === "with" || scope.type === "global") {
             continue;
@@ -866,22 +885,6 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
             }
           }
         }
-      } else {
-        await this.#send(
-          response,
-          "Debugger.evaluateOnCallFrame",
-          {
-            expression,
-            callFrameId: callFrame.callFrameId,
-            "includeCommandLineAPI": false,
-          },
-          ({ result: { objectId, value, description }, wasThrown }) => {
-            return {
-              result: value ?? description,
-              variablesReference: objectId ? this.getReferenceId(objectId) : 0,
-            };
-          },
-        );
       }
     } else {
       await this.#send(
@@ -1095,7 +1098,7 @@ function formatStackFrame(ctx: Context, callFrame: JSC.Debugger.CallFrame): DAP.
   const source = ctx.getSource(scriptId);
   return {
     id: ctx.getStackFrameId(callFrameId),
-    name: functionName,
+    name: functionName || "<anonymous>",
     line: lineNumber,
     column: columnNumber,
     source,
@@ -1108,7 +1111,7 @@ function formatAsyncStackFrame(ctx: Context, callFrame: JSC.Console.CallFrame): 
   const { functionName, scriptId, lineNumber, columnNumber } = callFrame;
   return {
     id: hashCode(functionName + "-" + scriptId + "-" + lineNumber + "-" + columnNumber),
-    name: functionName,
+    name: functionName || "<anonymous>",
     line: lineNumber,
     column: columnNumber,
     source: ctx.getSource(scriptId),

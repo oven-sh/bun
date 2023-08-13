@@ -4,11 +4,7 @@ const app = express();
 
 app
   .get("/", (req, res) => {
-    new Promise((resolve, reject) => {
-      setTimeout(() => resolve(), 1);
-    }).then(() => {
-      debugger;
-    });
+    debugger;
     res.send("hello world");
   })
   .listen(3000);
@@ -16,10 +12,6 @@ app
 const va = 1;
 let vb = 2;
 var vc = 3;
-
-setInterval(() => {
-  debugger;
-}, 10);
 
 function fa() {
   fb();

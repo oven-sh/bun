@@ -44,95 +44,117 @@ public:
 
     void sendMessageToFrontend(const String& message) override
     {
+        if (message.length() == 0)
+            return;
+
         this->sendMessageToDebuggerThread(message.isolatedCopy());
+    }
+
+    static void runWhilePaused(JSGlobalObject& globalObject, bool& isDoneProcessingEvents)
+    {
+        Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(&globalObject);
+        auto* connection = reinterpret_cast<BunInspectorConnection*>(inspectorConnections->get(global->scriptExecutionContext()->identifier()));
+        while (!isDoneProcessingEvents) {
+            connection->jsWaitForMessageFromInspectorLock.lock();
+            connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global);
+        }
     }
 
     void receiveMessagesOnInspectorThread(ScriptExecutionContext& context, Zig::GlobalObject* globalObject)
     {
-        jsThreadMessageScheduledCount = 0;
-        WTF::Vector<WTF::String, 12> jsThreadMessages;
+        WTF::Vector<WTF::String, 12> messages;
 
         {
             WTF::LockHolder locker(jsThreadMessagesLock);
-            this->jsThreadMessages.swap(jsThreadMessages);
+            this->jsThreadMessages.swap(messages);
         }
 
-        auto& debugger = globalObject->inspectorDebuggable();
+        auto& dispatcher = globalObject->inspectorDebuggable();
+        Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
 
-        for (auto message : jsThreadMessages) {
-            debugger.dispatchMessageFromRemote(WTFMove(message));
+        if (!debugger) {
+            for (auto message : messages) {
+                dispatcher.dispatchMessageFromRemote(WTFMove(message));
+
+                debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
+                if (debugger) {
+                    debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& isDoneProcessingEvents) -> void {
+                        runWhilePaused(globalObject, isDoneProcessingEvents);
+                    };
+                }
+            }
+        } else {
+            for (auto message : messages) {
+                dispatcher.dispatchMessageFromRemote(WTFMove(message));
+            }
         }
-        jsThreadMessages.clear();
+
+        messages.clear();
     }
 
     void receiveMessagesOnDebuggerThread(ScriptExecutionContext& context, Zig::GlobalObject* debuggerGlobalObject)
     {
-        debuggerThreadMessageScheduledCount = 0;
-        WTF::Vector<WTF::String, 12> debuggerThreadMessages;
+        WTF::Vector<WTF::String, 12> messages;
 
         {
             WTF::LockHolder locker(debuggerThreadMessagesLock);
-            this->debuggerThreadMessages.swap(debuggerThreadMessages);
+            this->debuggerThreadMessages.swap(messages);
         }
 
         JSFunction* onMessageFn = jsCast<JSFunction*>(jsBunDebuggerOnMessageFunction->m_cell.get());
         MarkedArgumentBuffer arguments;
-        arguments.ensureCapacity(debuggerThreadMessages.size() + 1);
-        arguments.append(jsNumber(static_cast<unsigned>(this->scriptExecutionContextIdentifier)));
+        arguments.ensureCapacity(messages.size());
         auto& vm = debuggerGlobalObject->vm();
 
-        for (auto& message : debuggerThreadMessages) {
+        for (auto& message : messages) {
             arguments.append(jsString(vm, message));
         }
 
-        debuggerThreadMessages.clear();
+        messages.clear();
 
         JSC::call(debuggerGlobalObject, onMessageFn, arguments, "BunInspectorConnection::receiveMessagesOnDebuggerThread - onMessageFn"_s);
     }
 
     void sendMessageToDebuggerThread(WTF::String&& inputMessage)
     {
-
-        WTF::Locker locker(debuggerThreadMessagesLock);
-        debuggerThreadMessages.append(inputMessage);
-        if (debuggerThreadMessageScheduledCount++ == 0) {
-            debuggerScriptExecutionContext->postTaskConcurrently([connection = this](ScriptExecutionContext& context) {
-                connection->receiveMessagesOnDebuggerThread(context, reinterpret_cast<Zig::GlobalObject*>(context.jsGlobalObject()));
-            });
+        {
+            WTF::LockHolder locker(debuggerThreadMessagesLock);
+            debuggerThreadMessages.append(inputMessage);
         }
+
+        debuggerScriptExecutionContext->postTaskConcurrently([connection = this](ScriptExecutionContext& context) {
+            connection->receiveMessagesOnDebuggerThread(context, reinterpret_cast<Zig::GlobalObject*>(context.jsGlobalObject()));
+        });
     }
 
     void sendMessageToInspectorFromDebuggerThread(WTF::String inputMessage)
     {
         {
-            WTF::Locker locker(jsThreadMessagesLock);
+            WTF::LockHolder locker(jsThreadMessagesLock);
             jsThreadMessages.append(inputMessage);
         }
 
-        if (!this->jsWaitForMessageFromInspectorLock.isHeld()) {
-            if (this->jsThreadMessageScheduledCount++ == 0) {
-                ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
-                    connection->receiveMessagesOnInspectorThread(context, reinterpret_cast<Zig::GlobalObject*>(context.jsGlobalObject()));
-                });
-            }
+        if (this->jsWaitForMessageFromInspectorLock.isHeld()) {
+            this->jsWaitForMessageFromInspectorLock.unlock();
         } else {
-            this->jsWaitForMessageFromInspectorLock.unlockFairly();
+            ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
+                connection->receiveMessagesOnInspectorThread(context, reinterpret_cast<Zig::GlobalObject*>(context.jsGlobalObject()));
+            });
         }
     }
 
-    WTF::Vector<WTF::String, 12> debuggerThreadMessages;
-    WTF::Lock debuggerThreadMessagesLock;
+    WTF::Vector<WTF::String, 12> debuggerThreadMessages = WTF::Vector<WTF::String, 12>();
+    WTF::Lock debuggerThreadMessagesLock = WTF::Lock();
     std::atomic<uint32_t> debuggerThreadMessageScheduledCount { 0 };
 
-    WTF::Vector<WTF::String, 12> jsThreadMessages;
-    WTF::Lock jsThreadMessagesLock;
+    WTF::Vector<WTF::String, 12> jsThreadMessages = WTF::Vector<WTF::String, 12>();
+    WTF::Lock jsThreadMessagesLock = WTF::Lock();
     std::atomic<uint32_t> jsThreadMessageScheduledCount { 0 };
 
     JSC::JSGlobalObject* globalObject;
     ScriptExecutionContextIdentifier scriptExecutionContextIdentifier;
     Bun::StrongRef* jsBunDebuggerOnMessageFunction = nullptr;
 
-    WTF::Lock jsWaitForDebuggerThreadToStartLock;
     WTF::Lock jsWaitForMessageFromInspectorLock;
 };
 
@@ -140,12 +162,14 @@ WTF_MAKE_ISO_ALLOCATED_IMPL(BunInspectorConnection);
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSendMessageToFrontend, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    BunInspectorConnection* connection = reinterpret_cast<BunInspectorConnection*>(inspectorConnections->get(callFrame->uncheckedArgument(0).asUInt32()));
+    BunInspectorConnection* connection = reinterpret_cast<BunInspectorConnection*>(inspectorConnections->get(callFrame->thisValue().asUInt32()));
 #ifdef BUN_DEBUG
     RELEASE_ASSERT(connection);
 #endif
 
-    connection->sendMessageToInspectorFromDebuggerThread(callFrame->uncheckedArgument(1).toWTFString(globalObject));
+    auto out = callFrame->uncheckedArgument(0).toWTFString(globalObject);
+    if (out.length() > 0)
+        connection->sendMessageToInspectorFromDebuggerThread(out);
     return JSValue::encode(jsUndefined());
 }
 
@@ -163,14 +187,22 @@ extern "C" void Bun__tickWhilePaused(bool*);
 extern "C" void Bun__waitForDebugger(ScriptExecutionContextIdentifier scriptId)
 {
     auto* connection = reinterpret_cast<BunInspectorConnection*>(inspectorConnections->get(scriptId));
-    connection->globalObject->setInspectable(true);
-    Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(connection->globalObject->debugger());
+    auto* globalObject = connection->globalObject;
+
+    globalObject->setInspectable(true);
+
+    auto& inspector = globalObject->inspectorDebuggable();
+
+    inspector.connect(*connection);
+
+    Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
     if (debugger) {
-        debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& done) -> void {
-            Bun__tickWhilePaused(&done);
+        debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& isDoneProcessingEvents) -> void {
+            BunInspectorConnection::runWhilePaused(globalObject, isDoneProcessingEvents);
         };
-        connection->globalObject->inspectorDebuggable().connect(*connection, false, true);
     }
+
+    inspector.pauseWaitingForAutomaticInspection();
 }
 
 extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, BunString* portOrPathString)
@@ -194,6 +226,5 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
     }
     RELEASE_ASSERT(onMessageFunction.isCallable());
     connection->jsBunDebuggerOnMessageFunction = new Bun::StrongRef(vm, onMessageFunction);
-    connection->jsWaitForDebuggerThreadToStartLock.unlockFairly();
 }
 }

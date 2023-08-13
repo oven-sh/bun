@@ -133,12 +133,12 @@
       "type": "lldb",
       "request": "launch",
       "name": "bun run [file]",
-      "program": "/Users/ashcon/Desktop/code/bun/packages/debug-bun-darwin-aarch64/bun-debug",
-      "args": ["run", "${file}"],
-      "cwd": "${fileDirname}",
+      "program": "bun-debug",
+      "args": ["--inspect=127.0.0.1:9232", "run", "/Users/jarred/Code/bun/packages/bun-vscode/example/example.js"],
+      "cwd": "/Users/jarred/Code/bun/packages/bun-vscode/example",
       "env": {
         "FORCE_COLOR": "1",
-        "NODE_ENV": "development",
+        "NODE_ENV": "development"
       },
       "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"

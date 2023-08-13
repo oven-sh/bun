@@ -323,23 +323,24 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     if (!url) {
       return; // If the script has no URL, it is an `eval` command.
     }
-    const threadId = Number(scriptId);
+
     const name = vscode.workspace.asRelativePath(url);
-    const source = new Source(name, url, threadId);
-    source.sourceReference = threadId;
+    const scriptIdNumber = scriptIdFromEvent(scriptId);
+    const source = new Source(name, url, scriptIdNumber);
+    source.sourceReference = scriptIdNumber;
     this.#sources.set(scriptId, source);
     this.sendEvent(new LoadedSourceEvent("new", source));
-    if (threadId !== this.#thread?.id) {
-      this.#thread = new Thread(threadId, url);
-      // this.sendEvent(new ThreadEvent("started", threadId));
+
+    if (!this.#thread) {
+      this.#thread = new Thread(0, url);
+      this.sendEvent(new ThreadEvent("started", 0));
     }
   }
 
   protected ["Debugger.paused"](event: JSC.Debugger.PausedEvent): void {
     const { reason, callFrames, asyncStackTrace } = event;
-    const [{ location }] = callFrames;
-    const { scriptId } = location;
-    this.sendEvent(new StoppedEvent(reason === "PauseOnNextStatement" ? "pause" : "breakpoint", Number(scriptId)));
+
+    this.sendEvent(new StoppedEvent(pauseReason(reason), this.#thread?.id ?? 0));
     const stackFrames: DAP.StackFrame[] = [];
     const scopes: Map<number, DAP.Scope[]> = new Map();
     for (const callFrame of callFrames) {
@@ -350,6 +351,12 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
         frameScopes.push(...formatScope(this, scope));
       }
       scopes.set(stackFrame.id, frameScopes);
+    }
+
+    if (asyncStackTrace?.callFrames?.length) {
+      for (const callFrame of asyncStackTrace.callFrames) {
+        stackFrames.push(formatStackFrame(this, callFrame));
+      }
     }
     this.#scopes = scopes;
     this.#stackFrames = stackFrames;
@@ -402,35 +409,50 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
 
   async #launch(path: string): Promise<void> {
     this.#process?.kill();
-    // TODO: Change to "bun" before merging, or make it configurable
-    const process = spawn("bun-debug", ["run", path], {
-      cwd: this.#session.workspaceFolder?.uri?.fsPath,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        ...globalThis.process.env,
-        NODE_ENV: "development",
-        BUN_DEBUG_QUIET_LOGS: "1",
-        FORCE_COLOR: "1",
-      },
-    });
-    process.on("error", error => {
-      console.error(error);
-      vscode.window.showErrorMessage(`Failed to start Bun: ${error.message}`);
-      this.sendEvent(new ExitedEvent(-1));
-      this.#process = undefined;
-    });
-    process.on("exit", exitCode => {
-      this.sendEvent(new ExitedEvent(exitCode));
-      this.#process = undefined;
-    });
-    process.stdout.on("data", (data: Buffer) => {
-      this.sendEvent(new OutputEvent(data.toString(), "stdout"));
-    });
-    process.stderr.on("data", (data: Buffer) => {
-      this.sendEvent(new OutputEvent(data.toString(), "stderr"));
-    });
-    this.#process = process;
-    await this.#attach("ws://localhost:9229/bun:inspect");
+    const url = "localhost:9232";
+    // // TODO: Change to "bun" before merging, or make it configurable
+    // const process = spawn("bun-debug", ["--inspect=" + url, "run", path], {
+    //   cwd: this.#session.workspaceFolder?.uri?.fsPath,
+    //   stdio: ["ignore", "pipe", "pipe"],
+    //   env: {
+    //     ...globalThis.process.env,
+    //     NODE_ENV: "development",
+    //     BUN_DEBUG_QUIET_LOGS: "1",
+    //     FORCE_COLOR: "1",
+    //   },
+    // });
+    // let resolve,
+    //   reject,
+    //   promise = new Promise<void>((res, rej) => {
+    //     resolve = res;
+    //     reject = rej;
+    //   });
+    // process.on("error", error => {
+    //   console.error(error);
+
+    //   vscode.window.showErrorMessage(`Failed to start Bun: ${error.message}`);
+    //   this.sendEvent(new ExitedEvent(-1));
+    //   this.#process = undefined;
+    //   reject(error);
+    // });
+    // process.on("exit", exitCode => {
+    //   this.sendEvent(new ExitedEvent(exitCode));
+    //   this.#process = undefined;
+    // });
+    // process.stdout.on("data", (data: Buffer) => {
+    //   console.log(data);
+    //   this.sendEvent(new OutputEvent(data.toString(), "stdout"));
+    // });
+    // process.stderr.on("data", (data: Buffer) => {
+    //   console.error(data);
+    //   this.sendEvent(new OutputEvent(data.toString(), "stderr"));
+    // });
+    // this.#process = process;
+
+    // process.once("spawn", () => {
+    // this.#attach(url).then(resolve, reject);
+    // });
+    return this.#attach(url);
   }
 
   async #attach(url: string): Promise<void> {
@@ -454,6 +476,7 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     });
     this.#client = client;
     globalThis.jsc = client;
+    await client.ready;
     await Promise.all([
       client.fetch("Runtime.enable"),
       client.fetch("Console.enable"),
@@ -492,14 +515,15 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     args: AttachRequestArguments,
     request?: DAP.Request,
   ): Promise<void> {
+    console.log("Attach!");
     const { url, port } = args;
     try {
       if (url) {
         await this.#attach(url);
       } else if (port) {
-        await this.#attach(`ws://localhost:${port}/bun:inspect`);
+        await this.#attach(`localhost:${port}`);
       } else {
-        await this.#attach("ws://localhost:9229/bun:inspect");
+        await this.#attach("localhost:9229");
       }
       this.#ack(response);
     } catch (error) {
@@ -950,6 +974,18 @@ function formatStackFrame(ctx: Context, callFrame: JSC.Debugger.CallFrame): DAP.
   };
 }
 
+function formatAsyncStackFrame(ctx: Context, callFrame: JSC.Console.CallFrame): DAP.StackFrame {
+  const { functionName, scriptId, lineNumber, columnNumber } = callFrame;
+  return {
+    id: hashCode(functionName + "-" + scriptId + "-" + lineNumber + "-" + columnNumber),
+    name: functionName,
+    line: lineNumber,
+    column: columnNumber,
+    source: ctx.getSource(scriptId),
+    moduleId: scriptId,
+  };
+}
+
 function formatScope(ctx: Context, scope: JSC.Debugger.Scope): DAP.Scope[] {
   const { name, type, location, object, empty } = scope;
   if (empty) {
@@ -1043,4 +1079,33 @@ function formatPropertyKind(remoteObject: JSC.Runtime.RemoteObject): DAP.Variabl
     return "event";
   }
   return "property";
+}
+
+function scriptIdFromLocation(location: JSC.Debugger.Location): number {
+  const id = Number(location.scriptId);
+  console.log({ id });
+  return id;
+}
+
+function pauseReason(reason: JSC.EventMap["Debugger.paused"]["reason"]): DAP.StoppedEvent["body"]["reason"] {
+  switch (reason) {
+    case "DebuggerStatement":
+    case "PauseOnNextStatement": {
+      return "pause";
+    }
+
+    case "exception": {
+      return "exception";
+    }
+
+    default: {
+      return "step";
+    }
+  }
+}
+
+function scriptIdFromEvent(scriptId: JSC.Debugger.ScriptParsedEvent["scriptId"]): number {
+  const id = Number(scriptId);
+  console.log({ id });
+  return id;
 }

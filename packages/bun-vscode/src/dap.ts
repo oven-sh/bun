@@ -181,6 +181,10 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
 
   public constructor(session: vscode.DebugSession) {
     super();
+    this.#resumePromise = new Promise(resolve => {
+      this.#resume = resolve;
+    });
+
     this.#ready = new AbortController();
     this.#session = session;
     this.#sources = new Map();
@@ -535,6 +539,9 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     }
   }
 
+  #resume = undefined;
+  #resumePromise = undefined;
+
   protected async attachRequest(
     response: DAP.AttachResponse,
     args: AttachRequestArguments,
@@ -550,6 +557,7 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
       } else {
         await this.#attach("localhost:9229");
       }
+      this.#resume();
       this.#ack(response);
     } catch (error) {
       this.#nack(response, error);
@@ -606,6 +614,10 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
       this.#nack(response, "No breakpoints");
       return;
     }
+    if (!this.#client) {
+      await this.#resumePromise;
+    }
+
     const { source, breakpoints } = args;
     let scriptId = this.getScriptIdFromSource(source);
 

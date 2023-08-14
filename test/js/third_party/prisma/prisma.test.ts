@@ -13,7 +13,7 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
   try {
     await prisma.post.deleteMany({ where: { testId } });
     await prisma.user.deleteMany({ where: { testId } });
-  } catch {}
+  } catch {} 
 }
 ["sqlite", "postgres" /*"mssql", "mongodb"*/].forEach(async type => {
   let Client: typeof PrismaClient;

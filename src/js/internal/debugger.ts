@@ -294,11 +294,11 @@ class WebSocketListener {
       process.exit(1);
     }
 
-    const server = (this.server = Bun.serve({
+    const server = Bun.serve({
       hostname,
       port: Number(port),
       websocket: {
-        idleTimeout: 16 * 1024,
+        idleTimeout: 960,
         open: socket => {
           socket.subscribe("clients");
 
@@ -353,7 +353,7 @@ class WebSocketListener {
           status: 404,
         });
       },
-    }));
+    });
 
     console.log("");
     console.log("");
@@ -369,7 +369,7 @@ class WebSocketListener {
 class Debugger {
   listener: SocketListener | WebSocketListener;
   constructor(public sendMessageToInspector: (msg: string) => void, hostOrPort: string) {
-    if (hostOrPort.startsWith("ws:") || !hostOrPort.startsWith("wss:")) {
+    if (hostOrPort.startsWith("ws:") || hostOrPort.startsWith("wss:")) {
       this.listener = new WebSocketListener(this, hostOrPort);
     } else {
       this.listener = new SocketListener(this, hostOrPort);
@@ -398,6 +398,11 @@ class Debugger {
 }
 
 export default function start(debuggerId, hostOrPort, sendMessageToInspector) {
-  var instance = new Debugger(sendMessageToInspector.bind(debuggerId), hostOrPort);
-  return instance.onReceiveMessageFromWebKit.bind(instance);
+  try {
+    var instance = new Debugger(sendMessageToInspector.bind(debuggerId), hostOrPort);
+    return instance.onReceiveMessageFromWebKit.bind(instance);
+  } catch (e) {
+    console.error("Bun Inspector threw an exception\n", e);
+    process.exit(1);
+  }
 }

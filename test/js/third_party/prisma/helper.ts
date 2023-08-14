@@ -45,7 +45,12 @@ export function generate(type: string) {
   const content = fs
     .readFileSync(schema)
     .toString("utf8")
-    .replace("%binaryTargets%", 'binaryTargets = ["native", "debian-openssl-3.0.x"]');
+    // only affect linux
+    .replace(
+      "%binaryTargets%",
+      process.platform === "win32" || process.platform === "darwin" ? "" : 'binaryTargets = ["debian-openssl-3.0.x"]',
+    );
+
   fs.writeFileSync(schema, content);
 
   const result = Bun.spawnSync([bunExe(), "prisma", "generate", "--schema", schema], {

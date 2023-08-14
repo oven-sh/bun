@@ -1934,7 +1934,7 @@ dev: # combo of `make cpp` and `make zig`
 
 .PHONY: setup
 setup: vendor-dev identifier-cache clean-bindings
-	make jsc-check cpp zig link
+	make jsc-check dev
 	@echo ""
 	@echo "First build complete!"
 	@echo "\"bun-debug\" is available at $(DEBUG_BIN)/bun-debug"

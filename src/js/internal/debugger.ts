@@ -263,10 +263,101 @@ class SocketListener {
   }
 }
 
+class WebSocketListener {
+  debugger: Debugger;
+  server: BunType.Server;
+  url: string = "";
+  queuedMessages = new Array<string>();
+  constructor(d: Debugger, url: string) {
+    this.debugger = d;
+
+    this.server = this.start(url);
+  }
+
+  write(msg: string) {
+    if (this.server.pendingWebSockets === 0) {
+      this.queuedMessages.push(msg);
+      return;
+    }
+
+    this.server.publish("clients", msg);
+  }
+
+  start(url: string): BunType.Server {
+    try {
+      var { hostname, port, pathname } = new URL("/" + crypto.randomUUID(), url);
+      this.url = pathname.toLowerCase();
+    } catch (e) {
+      console.error("Bun inspector failed to parse url", url);
+      process.exit(1);
+    }
+
+    const server = (this.server = Bun.serve({
+      hostname,
+      port: Number(port),
+      websocket: {
+        open: socket => {
+          socket.subscribe("clients");
+
+          for (let msg of this.queuedMessages) {
+            server.publish("clients", msg);
+          }
+          this.queuedMessages.length = 0;
+        },
+        message: (socket, message) => {
+          if (typeof message !== "string") {
+            console.warn("Bun inspector received non-string message", message, "ignoring it.");
+            return;
+          }
+
+          this.debugger.onReceiveMessageFromRemote(message as string);
+        },
+        close: () => {
+          console.error("Inspector connection closed", new Date().toString());
+        },
+      },
+      fetch: (req, server) => {
+        const { pathname } = new URL(req.url);
+        if (pathname.toLowerCase() === this.url) {
+          if (server.upgrade(req)) {
+            return new Response();
+          }
+
+          return new Response("WebSocket expected", {
+            status: 400,
+          });
+        }
+
+        if (pathname === "/") {
+          // show the welcome to bun page
+          return;
+        }
+
+        return new Response("Not found", {
+          status: 404,
+        });
+      },
+    }));
+
+    console.log("");
+    console.log("");
+    console.log("Bun inspector listening on");
+    console.log("");
+    console.log(`ws://${hostname}:${port}${this.url}`);
+    console.log("");
+
+    return server;
+  }
+}
+
 class Debugger {
-  listener: SocketListener;
+  listener: SocketListener | WebSocketListener;
   constructor(public sendMessageToInspector: (msg: string) => void, hostOrPort: string) {
-    this.listener = new SocketListener(this, hostOrPort);
+    if (hostOrPort.startsWith("ws:") || !hostOrPort.startsWith("wss:")) {
+      this.listener = new WebSocketListener(this, hostOrPort);
+    } else {
+      this.listener = new SocketListener(this, hostOrPort);
+    }
   }
 
   send(msg: string) {

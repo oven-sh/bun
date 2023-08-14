@@ -5538,7 +5538,6 @@ pub const WTF = struct {
         // This is any alignment
         WTF__copyLCharsFromUCharSource(destination, source.ptr, source.len);
     }
-
 };
 
 pub const Callback = struct {

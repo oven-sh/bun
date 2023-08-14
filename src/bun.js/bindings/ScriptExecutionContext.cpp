@@ -114,6 +114,11 @@ void ScriptExecutionContext::willDestroyDestructionObserver(ContextDestructionOb
     m_destructionObservers.remove(&observer);
 }
 
+bool ScriptExecutionContext::isJSExecutionForbidden()
+{
+    return !m_vm || m_vm->executionForbidden();
+}
+
 extern "C" void* Bun__getVM();
 
 bool ScriptExecutionContext::isContextThread()

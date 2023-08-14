@@ -7,6 +7,7 @@
 #include <JavaScriptCore/Debugger.h>
 #include "ScriptExecutionContext.h"
 #include "Strong.h"
+#include "debug-helpers.h"
 
 extern "C" void Bun__tickWhilePaused(bool*);
 
@@ -54,11 +55,10 @@ public:
     {
         Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(&globalObject);
         auto* connection = reinterpret_cast<BunInspectorConnection*>(inspectorConnections->get(global->scriptExecutionContext()->identifier()));
-        while (!isDoneProcessingEvents) {
-            {
-                WTF::LockHolder locker(connection->jsThreadMessagesLock);
-            }
+        connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global);
 
+        while (!isDoneProcessingEvents) {
+            connection->jsWaitForMessageFromInspectorLock.lock();
             connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global);
         }
     }
@@ -234,5 +234,68 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
     }
     RELEASE_ASSERT(onMessageFunction.isCallable());
     connection->jsBunDebuggerOnMessageFunction = new Bun::StrongRef(vm, onMessageFunction);
+}
+
+enum class AsyncCallTypeUint8 : uint8_t {
+    DOMTimer = 1,
+    EventListener = 2,
+    PostMessage = 3,
+    RequestAnimationFrame = 4,
+    Microtask = 5,
+};
+
+static Inspector::InspectorDebuggerAgent::AsyncCallType getCallType(AsyncCallTypeUint8 callType)
+{
+    Inspector::InspectorDebuggerAgent::AsyncCallType type;
+    switch (callType) {
+    case AsyncCallTypeUint8::DOMTimer:
+        return Inspector::InspectorDebuggerAgent::AsyncCallType::DOMTimer;
+    case AsyncCallTypeUint8::EventListener:
+        return Inspector::InspectorDebuggerAgent::AsyncCallType::EventListener;
+    case AsyncCallTypeUint8::PostMessage:
+        return Inspector::InspectorDebuggerAgent::AsyncCallType::PostMessage;
+    case AsyncCallTypeUint8::RequestAnimationFrame:
+        return Inspector::InspectorDebuggerAgent::AsyncCallType::RequestAnimationFrame;
+    case AsyncCallTypeUint8::Microtask:
+        return Inspector::InspectorDebuggerAgent::AsyncCallType::Microtask;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+extern "C" void Debugger__didScheduleAsyncCall(JSGlobalObject* globalObject, AsyncCallTypeUint8 callType, uint64_t callbackId, bool singleShot)
+{
+    auto* agent = debuggerAgent(globalObject);
+    if (!agent)
+        return;
+
+    agent->didScheduleAsyncCall(globalObject, getCallType(callType), callbackId, singleShot);
+}
+
+extern "C" void Debugger__didCancelAsyncCall(JSGlobalObject* globalObject, AsyncCallTypeUint8 callType, uint64_t callbackId)
+{
+    auto* agent = debuggerAgent(globalObject);
+    if (!agent)
+        return;
+
+    agent->didCancelAsyncCall(getCallType(callType), callbackId);
+}
+
+extern "C" void Debugger__didDispatchAsyncCall(JSGlobalObject* globalObject, AsyncCallTypeUint8 callType, uint64_t callbackId)
+{
+    auto* agent = debuggerAgent(globalObject);
+    if (!agent)
+        return;
+
+    agent->didDispatchAsyncCall(getCallType(callType), callbackId);
+}
+
+extern "C" void Debugger__willDispatchAsyncCall(JSGlobalObject* globalObject, AsyncCallTypeUint8 callType, uint64_t callbackId)
+{
+    auto* agent = debuggerAgent(globalObject);
+    if (!agent)
+        return;
+
+    agent->willDispatchAsyncCall(getCallType(callType), callbackId);
 }
 }

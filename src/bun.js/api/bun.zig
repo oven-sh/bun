@@ -3498,6 +3498,8 @@ pub const TOML = struct {
     }
 };
 
+const Debugger = JSC.Debugger;
+
 pub const Timer = struct {
     last_id: i32 = 1,
     warned: bool = false,
@@ -3612,6 +3614,9 @@ pub const Timer = struct {
             };
 
             if (should_cancel_job) {
+                if (vm.isInspectorEnabled()) {
+                    Debugger.didCancelAsyncCall(globalThis, .DOMTimer, Timeout.ID.asyncID(.{ .id = this.id, .kind = kind }));
+                }
                 this.deinit();
                 return;
             } else if (kind != .setInterval) {
@@ -3624,6 +3629,7 @@ pub const Timer = struct {
             defer if (args_needs_deinit) bun.default_allocator.free(args);
 
             const callback = this.callback.get() orelse @panic("Expected CallbackJob to have a callback function");
+
             if (this.arguments.trySwap()) |arguments| {
                 // Bun.sleep passes a Promise
                 if (arguments.jsType() == .JSPromise) {
@@ -3648,10 +3654,18 @@ pub const Timer = struct {
                 }
             }
 
+            if (vm.isInspectorEnabled()) {
+                Debugger.willDispatchAsyncCall(globalThis, .DOMTimer, Timeout.ID.asyncID(.{ .id = this.id, .kind = kind }));
+            }
+
             const result = callback.callWithGlobalThis(
                 globalThis,
                 args,
             );
+
+            if (vm.isInspectorEnabled()) {
+                Debugger.didDispatchAsyncCall(globalThis, .DOMTimer, Timeout.ID.asyncID(.{ .id = this.id, .kind = kind }));
+            }
 
             if (result.isEmptyOrUndefinedOrNull() or !result.isCell()) {
                 this.deinit();
@@ -3787,6 +3801,9 @@ pub const Timer = struct {
                     }
 
                     vm.enqueueTask(JSC.Task.init(&job.task));
+                    if (vm.isInspectorEnabled()) {
+                        Debugger.didScheduleAsyncCall(globalThis, .DOMTimer, id.asyncID(), true);
+                    }
 
                     map.put(vm.allocator, this.id, null) catch unreachable;
                     return this_value;
@@ -3888,6 +3905,10 @@ pub const Timer = struct {
 
             kind: Kind = Kind.setTimeout,
 
+            pub inline fn asyncID(this: ID) u64 {
+                return @bitCast(this);
+            }
+
             pub fn repeats(this: ID) bool {
                 return this.kind == .setInterval;
             }
@@ -3976,6 +3997,9 @@ pub const Timer = struct {
             job.ref.ref(vm);
 
             vm.enqueueTask(JSC.Task.init(&job.task));
+            if (vm.isInspectorEnabled()) {
+                Debugger.didScheduleAsyncCall(globalThis, .DOMTimer, timer_id.asyncID(), !repeats);
+            }
         }
 
         pub fn deinit(this: *Timeout) void {
@@ -4033,6 +4057,9 @@ pub const Timer = struct {
             job.ref.ref(vm);
 
             vm.enqueueTask(JSC.Task.init(&job.task));
+            if (vm.isInspectorEnabled()) {
+                Debugger.didScheduleAsyncCall(globalThis, .DOMTimer, Timeout.ID.asyncID(.{ .id = id, .kind = kind }), !repeat);
+            }
             map.put(vm.allocator, id, null) catch unreachable;
             return;
         }
@@ -4055,6 +4082,10 @@ pub const Timer = struct {
 
         timeout.poll_ref.ref(vm);
         map.put(vm.allocator, id, timeout) catch unreachable;
+
+        if (vm.isInspectorEnabled()) {
+            Debugger.didScheduleAsyncCall(globalThis, .DOMTimer, Timeout.ID.asyncID(.{ .id = id, .kind = kind }), !repeat);
+        }
 
         timeout.timer.set(
             Timeout.ID{
@@ -4117,8 +4148,8 @@ pub const Timer = struct {
         JSC.markBinding(@src());
 
         const kind: Timeout.Kind = if (repeats) .setInterval else .setTimeout;
-
-        var map = globalThis.bunVM().timer.maps.get(kind);
+        var vm = globalThis.bunVM();
+        var map = vm.timer.maps.get(kind);
 
         const id: Timeout.ID = .{
             .id = brk: {
@@ -4137,6 +4168,10 @@ pub const Timer = struct {
         };
 
         var timer = map.fetchSwapRemove(id.id) orelse return;
+        if (vm.isInspectorEnabled()) {
+            Debugger.didCancelAsyncCall(globalThis, .DOMTimer, id.asyncID());
+        }
+
         if (timer.value == null) {
             // this timer was scheduled to run but was cancelled before it was run
             // so long as the callback isn't already in progress, fetchSwapRemove will handle invalidating it

@@ -506,6 +506,10 @@ pub const VirtualMachine = struct {
         return this.worker == null;
     }
 
+    pub fn isInspectorEnabled(this: *const VirtualMachine) bool {
+        return this.debugger != null;
+    }
+
     pub fn setOnException(this: *VirtualMachine, callback: *const OnException) void {
         this.on_exception = callback;
     }
@@ -708,9 +712,16 @@ pub const VirtualMachine = struct {
         }
     }
 
+    pub fn nextAsyncTaskID(this: *VirtualMachine) u64 {
+        var debugger: *Debugger = &(this.debugger orelse return 0);
+        debugger.next_debugger_id +%= 1;
+        return debugger.next_debugger_id;
+    }
+
     pub const Debugger = struct {
         path_or_port: []const u8 = "",
         script_execution_context_id: u32 = 0,
+        next_debugger_id: u64 = 1,
         poll_ref: JSC.PollRef = .{},
         const debug = Output.scoped(.DEBUGGER, false);
 

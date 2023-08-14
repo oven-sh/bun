@@ -13,9 +13,11 @@ import {
   TerminatedEvent,
   Source,
   BreakpointEvent,
+  DebugSession,
 } from "@vscode/debugadapter";
 import type { DebugProtocol as DAP } from "@vscode/debugprotocol";
 import { JSCClient, type JSC } from "./jsc";
+import { isAbsolute } from "node:path";
 
 const capabilities: Required<DAP.Capabilities> = {
   /** The debug adapter supports the `configurationDone` request. */
@@ -329,7 +331,12 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
   }
 
   protected ["Debugger.scriptParsed"](event: JSC.Debugger.ScriptParsedEvent): void {
-    const { url, scriptId } = event;
+    let { sourceURL, url, scriptId } = event;
+
+    if (!url) {
+      url = sourceURL;
+    }
+
     if (!url) {
       return; // If the script has no URL, it is an `eval` command.
     }
@@ -363,7 +370,10 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
     const stackFrames: DAP.StackFrame[] = [];
     const scopes: Map<number, DAP.Scope[]> = new Map();
     const frameIds = this.#frameIds;
-    frameIds.length = callFrames.length + (asyncStackTrace?.callFrames?.length || 0);
+    frameIds.length =
+      callFrames.length +
+      (asyncStackTrace?.callFrames?.length || 0) +
+      (asyncStackTrace?.parentStackTrace?.callFrames?.length || 0);
     const frames = this.#callFrames;
     frames.length = callFrames.length;
     let frameId = 0;
@@ -381,6 +391,13 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
 
     if (asyncStackTrace?.callFrames?.length) {
       for (const callFrame of asyncStackTrace.callFrames) {
+        frameIds[frameId++] = "";
+        stackFrames.push(formatAsyncStackFrame(this, callFrame));
+      }
+    }
+
+    if (asyncStackTrace?.parentStackTrace?.callFrames?.length) {
+      for (const callFrame of asyncStackTrace.parentStackTrace.callFrames) {
         frameIds[frameId++] = "";
         stackFrames.push(formatAsyncStackFrame(this, callFrame));
       }
@@ -581,6 +598,12 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
   getScriptIdFromSource(source: DAP.Source): string {
     if (source.sourceReference) {
       return String(source.sourceReference);
+    }
+
+    // @ts-expect-error
+    if (source.sourceReferenceInternal) {
+      // @ts-expect-error
+      return String(source.sourceReferenceInternal);
     }
 
     const { path } = source;
@@ -839,7 +862,6 @@ export class DAPAdapter extends LoggingDebugSession implements Context {
         ? this.#callFrames[this.#stackFrames.findIndex(frame => frame.id === frameId)]
         : undefined;
 
-    console.log({ callFrame, frameId });
     if (callFrame && context === "hover") {
       if (expression.includes(".")) {
         // TODO: use getDisplayableProperties to make this side-effect free.

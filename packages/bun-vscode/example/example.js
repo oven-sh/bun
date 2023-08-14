@@ -1,12 +1,16 @@
 // @bun
 const express = import.meta.require("express");
 const app = express();
+import { readFile } from "node:fs/promises";
 
 app
   .get("/", (req, res) => {
     console.log("I am logging a request!");
-    debugger;
-    res.send("hello world");
+    readFile(import.meta.path, "utf-8").then(data => {
+      console.log(data.length);
+      debugger;
+      res.send("hello world");
+    });
   })
   .listen(3000);
 

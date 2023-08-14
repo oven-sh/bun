@@ -1,6 +1,6 @@
 // Top-level so it can access all files
 pub const is_bindgen = @import("std").meta.globalOption("bindgen", bool) orelse false;
-
+pub const Debugger = @import("./bun.js/bindings/Debugger.zig").Debugger;
 pub const napi = @import("./napi/napi.zig");
 pub usingnamespace @import("./bun.js/bindings/exports.zig");
 pub usingnamespace @import("./bun.js/bindings/bindings.zig");

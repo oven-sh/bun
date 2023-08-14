@@ -48,7 +48,7 @@ export function generate(type: string) {
     // only affect linux
     .replace(
       "%binaryTargets%",
-      process.platform === "win32" || process.platform === "darwin" ? "" : 'binaryTargets = ["debian-openssl-3.0.x"]',
+      process.platform === "win32" || process.platform === "darwin" ? "" : 'binaryTargets = ["native", "debian-openssl-1.1.x", "debian-openssl-3.0.x"]',
     );
 
   fs.writeFileSync(schema, content);

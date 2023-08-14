@@ -50,8 +50,9 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
     RETURN_IF_EXCEPTION(throwScope, {});                                            \
                                                                                     \
     JSC::MarkedArgumentBuffer argList;                                              \
-    JSValue result = JSC::call(                                                     \
+    JSValue result = JSC::profiledCall(                                             \
         globalObject,                                                               \
+        ProfilingReason::API,                                                       \
         func,                                                                       \
         JSC::getCallData(func),                                                     \
         globalObject, JSC::MarkedArgumentBuffer());                                 \

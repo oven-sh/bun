@@ -1812,7 +1812,7 @@ JSC__JSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef ctx, J
         return JSC::JSValue::encode(JSC::JSValue());
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::call(globalObject, jsObject, callData, jsThisObject, argList, returnedException);
+    auto result = call(globalObject, jsObject, callData, jsThisObject, argList, returnedException);
 
     if (returnedException.get()) {
         return JSC::JSValue::encode(JSC::JSValue(returnedException.get()));

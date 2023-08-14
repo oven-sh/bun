@@ -38,7 +38,7 @@ static bool callRead(JSValue stream, JSFunction* read, JSC::MarkedArgumentBuffer
 {
     WTF::NakedPtr<JSC::Exception> exceptionPtr;
     JSC::CallData callData = JSC::getCallData(read);
-    JSValue ret = JSC::call(lexicalGlobalObject, read, callData, JSValue(stream), WTFMove(args), exceptionPtr);
+    JSValue ret = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, read, callData, JSValue(stream), WTFMove(args), exceptionPtr);
     if (auto* exception = exceptionPtr.get()) {
         JSC::Identifier errorEventName = JSC::Identifier::fromString(vm, "error"_s);
         if (emitter.hasEventListeners(errorEventName)) {

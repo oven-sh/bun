@@ -124,7 +124,7 @@ extern "C" void* Bun__getVM();
 bool ScriptExecutionContext::isContextThread()
 {
     auto clientData = WebCore::clientData(vm());
-    return clientData->bunVM == Bun__getVM();
+    return clientData && clientData->bunVM == Bun__getVM();
 }
 
 bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task)

@@ -1,5 +1,6 @@
 import path from "path";
 import { bunExe, bunEnv } from "harness";
+import fs from "fs";
 const cwd = import.meta.dir;
 
 export async function generateClient(type: string) {
@@ -39,15 +40,20 @@ export function migrate(type: string) {
 }
 
 export function generate(type: string) {
-  const result = Bun.spawnSync(
-    [bunExe(), "prisma", "generate", "--schema", path.join(cwd, "prisma", type, "schema.prisma")],
-    {
-      cwd,
-      env: {
-        ...bunEnv,
-        NODE_ENV: undefined,
-      },
+  const schema = path.join(cwd, "prisma", type, "schema.prisma");
+
+  const content = fs
+    .readFileSync(schema)
+    .toString("utf8")
+    .replace("%binaryTargets%", 'binaryTargets = ["native", "debian-openssl-3.0.x"]');
+  fs.writeFileSync(schema, content);
+
+  const result = Bun.spawnSync([bunExe(), "prisma", "generate", "--schema", schema], {
+    cwd,
+    env: {
+      ...bunEnv,
+      NODE_ENV: undefined,
     },
-  );
+  });
   if (!result.success) throw new Error(result.stderr.toString("utf8"));
 }

@@ -280,7 +280,9 @@ class WebSocketListener {
       return;
     }
 
-    this.server.publish("clients", msg);
+    if (this.server.publish("clients", msg) === 0) {
+      this.queuedMessages.push(msg);
+    }
   }
 
   start(url: string): BunType.Server {
@@ -296,12 +298,26 @@ class WebSocketListener {
       hostname,
       port: Number(port),
       websocket: {
+        idleTimeout: 16 * 1024,
         open: socket => {
           socket.subscribe("clients");
 
-          for (let msg of this.queuedMessages) {
-            server.publish("clients", msg);
+          for (let i = 0; i < this.queuedMessages.length; i++) {
+            if (server.publish("clients", this.queuedMessages[i]) === 0) {
+              this.queuedMessages = this.queuedMessages.slice(i);
+              return;
+            }
           }
+          this.queuedMessages.length = 0;
+        },
+        drain: socket => {
+          for (let i = 0; i < this.queuedMessages.length; i++) {
+            if (server.publish("clients", this.queuedMessages[i]) === 0) {
+              this.queuedMessages = this.queuedMessages.slice(i);
+              return;
+            }
+          }
+
           this.queuedMessages.length = 0;
         },
         message: (socket, message) => {

@@ -588,7 +588,7 @@ pub const Resolver = struct {
                 return true;
             }
 
-            if (bun.JSC.HardcodedModule.Aliases.has(import_path)) {
+            if (bun.JSC.HardcodedModule.Aliases.has(import_path, r.opts.target)) {
                 return true;
             }
         }
@@ -1273,7 +1273,7 @@ pub const Resolver = struct {
                     // "fs"
                     // "fs/*"
                     // These are disabled!
-                } else if (had_node_prefix and !JSC.HardcodedModule.Aliases.has(import_path_without_node_prefix)) {
+                } else if (had_node_prefix and !JSC.HardcodedModule.Aliases.has(import_path_without_node_prefix, r.opts.target)) {
                     return .{ .not_found = {} };
                 } else if (had_node_prefix or
                     (strings.hasPrefixComptime(import_path_without_node_prefix, "fs") and

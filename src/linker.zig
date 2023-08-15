@@ -247,7 +247,7 @@ pub const Linker = struct {
                     }
 
                     if (comptime is_bun) {
-                        if (JSC.HardcodedModule.Aliases.get(import_record.path.text)) |replacement| {
+                        if (JSC.HardcodedModule.Aliases.get(import_record.path.text, linker.options.target)) |replacement| {
                             import_record.path.text = replacement.path;
                             import_record.tag = replacement.tag;
                             if (replacement.tag != .none) {

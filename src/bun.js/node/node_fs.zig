@@ -4316,11 +4316,13 @@ pub const NodeFS = struct {
                         },
                         else => if (args.path == .slice_with_underlying_string and
                             strings.eqlLong(args.path.slice_with_underlying_string.slice(), outbuf[0..len], true))
-                        .{
-                            .BunString = args.path.slice_with_underlying_string.underlying.dupeRef(),
-                        } else .{
-                            .BunString = bun.String.create(outbuf[0..len]),
-                        },
+                            .{
+                                .BunString = args.path.slice_with_underlying_string.underlying.dupeRef(),
+                            }
+                        else
+                            .{
+                                .BunString = bun.String.create(outbuf[0..len]),
+                            },
                     },
                 };
             },
@@ -4374,11 +4376,13 @@ pub const NodeFS = struct {
                         },
                         else => if (args.path == .slice_with_underlying_string and
                             strings.eqlLong(args.path.slice_with_underlying_string.slice(), buf, true))
-                        .{
-                            .BunString = args.path.slice_with_underlying_string.underlying.dupeRef(),
-                        } else .{
-                            .BunString = bun.String.create(buf),
-                        },
+                            .{
+                                .BunString = args.path.slice_with_underlying_string.underlying.dupeRef(),
+                            }
+                        else
+                            .{
+                                .BunString = bun.String.create(buf),
+                            },
                     },
                 };
             },

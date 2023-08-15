@@ -1438,6 +1438,28 @@ pub const VirtualMachine = struct {
         is_esm: bool,
         comptime is_a_file_path: bool,
     ) void {
+        if (is_a_file_path and specifier.length() > comptime @as(u32, @intFromFloat(@trunc(@as(f64, @floatFromInt(bun.MAX_PATH_BYTES)) * 1.5)))) {
+            const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
+            defer specifier_utf8.deinit();
+            const source_utf8 = source.toUTF8(bun.default_allocator);
+            defer source_utf8.deinit();
+            const printed = ResolveMessage.fmt(
+                bun.default_allocator,
+                specifier_utf8.slice(),
+                source_utf8.slice(),
+                error.NameTooLong,
+            ) catch @panic("Out of Memory");
+            const msg = logger.Msg{
+                .data = logger.rangeData(
+                    null,
+                    logger.Range.None,
+                    printed,
+                ),
+            };
+            res.* = ErrorableString.err(error.NameTooLong, ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source.utf8()).asVoid());
+            return;
+        }
+
         var result = ResolveFunctionResult{ .path = "", .result = null };
         var jsc_vm = VirtualMachine.get();
         const specifier_utf8 = specifier.toUTF8(bun.default_allocator);

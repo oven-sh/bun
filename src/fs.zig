@@ -255,9 +255,8 @@ pub const FileSystem = struct {
         }
 
         pub fn get(entry: *const DirEntry, _query: string) ?Entry.Lookup {
-            if (_query.len == 0) return null;
-            var scratch_lookup_buffer: [256]u8 = undefined;
-            std.debug.assert(scratch_lookup_buffer.len >= _query.len);
+            if (_query.len == 0 or _query.len > bun.MAX_PATH_BYTES) return null;
+            var scratch_lookup_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
 
             const query = strings.copyLowercaseIfNeeded(_query, &scratch_lookup_buffer);
             const result = entry.data.get(query) orelse return null;

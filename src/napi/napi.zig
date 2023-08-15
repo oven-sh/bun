@@ -1210,7 +1210,7 @@ pub const ThreadSafeFunction = struct {
     /// Neither does napi_unref_threadsafe_function mark the thread-safe
     /// functions as able to be destroyed nor does napi_ref_threadsafe_function
     /// prevent it from being destroyed.
-    ref_for_process_exit: bool = false,
+    poll_ref: JSC.PollRef,
 
     owning_threads: std.AutoArrayHashMapUnmanaged(u64, void) = .{},
     owning_thread_lock: Lock = Lock.init(),
@@ -1345,11 +1345,11 @@ pub const ThreadSafeFunction = struct {
     }
 
     pub fn ref(this: *ThreadSafeFunction) void {
-        this.ref_for_process_exit = true;
+        this.poll_ref.ref(this.env.bunVM());
     }
 
     pub fn unref(this: *ThreadSafeFunction) void {
-        this.ref_for_process_exit = false;
+        this.poll_ref.unref(this.env.bunVM());
     }
 
     pub fn acquire(this: *ThreadSafeFunction) !void {
@@ -1415,6 +1415,7 @@ pub export fn napi_create_threadsafe_function(
         .ctx = context,
         .channel = ThreadSafeFunction.Queue.init(max_queue_size, bun.default_allocator),
         .owning_threads = .{},
+        .poll_ref = JSC.PollRef.init(),
     };
     function.owning_threads.ensureTotalCapacity(bun.default_allocator, initial_thread_count) catch return genericFailure();
     function.finalizer = .{ .ctx = thread_finalize_data, .fun = thread_finalize_cb };

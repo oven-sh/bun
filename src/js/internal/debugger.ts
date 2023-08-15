@@ -65,7 +65,7 @@ class WebSocketListener {
         reusePort: false,
 
         websocket: {
-          idleTimeout: 960,
+          idleTimeout: 0,
           open: socket => {
             var connection = new DebuggerWithMessageQueue();
             socket.data = connection;

@@ -985,6 +985,7 @@ pub const Listener = struct {
                 exception.* = ZigString.static("Failed to connect").toErrorInstance(globalObject).asObjectRef();
                 return .zero;
             };
+            tls.poll_ref.ref(handlers.vm);
 
             return promise_value;
         } else {
@@ -998,6 +999,7 @@ pub const Listener = struct {
                 .protos = null,
                 .server_name = null,
             };
+            tcp.poll_ref.ref(handlers.vm);
 
             TCPSocket.dataSetCached(tcp.getThisValue(globalObject), globalObject, default_data);
 
@@ -1280,7 +1282,6 @@ fn NewSocket(comptime ssl: bool) type {
                 }
             }
 
-            this.poll_ref.ref(this.handlers.vm);
             this.detached = false;
             this.socket = socket;
 

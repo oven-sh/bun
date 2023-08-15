@@ -734,9 +734,20 @@ describe("node:http", () => {
     expect(() => validateHeaderValue("Foo", "Bar\r")).toThrow();
   });
 
-  test("req.req = req", () => {
-    validateHeaderValue("Foo", "Bar");
-    expect(() => validateHeaderValue("Foo", undefined as any)).toThrow();
-    expect(() => validateHeaderValue("Foo", "Bar\r")).toThrow();
+  test("req.req = req", done => {
+    const server = createServer((req, res) => {
+      req.req = req;
+      res.write(req.req === req ? "ok" : "fail");
+      res.end();
+    });
+    server.listen({ port: 0 }, async (_err, host, port) => {
+      try {
+        const x = await fetch(`http://${host}:${port}`).then(res => res.text());
+        expect(x).toBe("ok");
+        done();
+      } catch (error) {
+        done(error);
+      }
+    });
   });
 });

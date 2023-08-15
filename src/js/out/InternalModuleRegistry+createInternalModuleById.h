@@ -10,7 +10,7 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "bun:sqlite"_s, "bun/sqlite.js"_s, InternalModuleRegistryConstants::BunSqliteCode, "builtin://bun/sqlite"_s);
     }
     case Field::InternalDebugger: {
-      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "internal:debugger"_s, "internal/debugger.js"_s, InternalModuleRegistryConstants::InternalDebuggerCode);
+      INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "internal:debugger"_s, "internal/debugger.js"_s, InternalModuleRegistryConstants::InternalDebuggerCode, "builtin://internal/debugger"_s);
     }
     case Field::InternalShared: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "internal:shared"_s, "internal/shared.js"_s, InternalModuleRegistryConstants::InternalSharedCode, "builtin://internal/shared"_s);

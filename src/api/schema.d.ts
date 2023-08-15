@@ -547,9 +547,6 @@ export interface TransformOptions {
   target?: Target;
   serve?: boolean;
   extension_order?: string[];
-  generate_node_module_bundle?: boolean;
-  node_modules_bundle_path?: string;
-  node_modules_bundle_path_server?: string;
   framework?: FrameworkConfig;
   router?: RouteConfig;
   no_summary?: boolean;

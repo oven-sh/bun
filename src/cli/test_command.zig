@@ -27,8 +27,7 @@ const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
-const bundler = bun.bundler;
-const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
+
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
@@ -625,18 +624,19 @@ pub const TestCommand = struct {
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);
         var vm = try JSC.VirtualMachine.init(
-            ctx.allocator,
-            ctx.args,
-            null,
-            ctx.log,
-            env_loader,
-            // we must store file descriptors because we reuse them for
-            // iterating through the directory tree recursively
-            //
-            // in the future we should investigate if refactoring this to not
-            // rely on the dir fd yields a performance improvement
-            true,
-            ctx.runtime_options.smol,
+            .{
+                .allocator = ctx.allocator,
+                .args = ctx.args,
+                .log = ctx.log,
+                .env_loader = env_loader,
+                // we must store file descriptors because we reuse them for
+                // iterating through the directory tree recursively
+                //
+                // in the future we should investigate if refactoring this to not
+                // rely on the dir fd yields a performance improvement
+                .store_fd = true,
+                .smol = ctx.runtime_options.smol,
+            },
         );
         vm.argv = ctx.passthrough;
         vm.preload = ctx.preloads;

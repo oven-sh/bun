@@ -88,7 +88,7 @@ worker.addEventListener("message", event => {
 
 ## Terminating a worker
 
-A `Worker` instance terminate automatically when Bun's process exits. To terminate a `Worker` sooner, call `worker.terminate()`.
+A `Worker` instance terminates automatically once it's event loop has no work left to do. Attaching a `"message"` listener on the global or any `MessagePort`s will keep the event loop alive. To forcefully terminate a `Worker`, call `worker.terminate()`.
 
 ```ts
 const worker = new Worker(new URL("worker.ts", import.meta.url).href);
@@ -97,18 +97,20 @@ const worker = new Worker(new URL("worker.ts", import.meta.url).href);
 worker.terminate();
 ```
 
+This will cause the worker's to exit as soon as possible.
+
 ### `process.exit()`
 
-A worker can terminate itself with `process.exit()`. This does not terminate the main process. Like in Node.js, `process.on('beforeExit', callback)` and `process.on('exit', callback)` are emitted on the worker thread (and not on the main thread).
+A worker can terminate itself with `process.exit()`. This does not terminate the main process. Like in Node.js, `process.on('beforeExit', callback)` and `process.on('exit', callback)` are emitted on the worker thread (and not on the main thread), and the exit code is passed to the `"close"` event.
 
 ### `"close"`
 
-The `"close"` event is emitted when a worker has been terminated. It can take some time for the worker to actually terminate, so this event is emitted when the worker has been marked as terminated.
+The `"close"` event is emitted when a worker has been terminated. It can take some time for the worker to actually terminate, so this event is emitted when the worker has been marked as terminated. The `CloseEvent` will contain the exit code passed to `process.exit()`, or 0 if closed for other reasons.
 
 ```ts
 const worker = new Worker(new URL("worker.ts", import.meta.url).href);
 
-worker.addEventListener("close", () => {
+worker.addEventListener("close", event => {
   console.log("worker is being closed");
 });
 ```
@@ -117,14 +119,27 @@ This event does not exist in browsers.
 
 ## Managing lifetime
 
-By default, an active `Worker` will _not_ keep the main (spawning) process alive. Once the main script finishes, the main thread will terminate, shutting down any workers it created.
+By default, an active `Worker` will keep the main (spawning) process alive, so async tasks like `setTimeout` and promises will keep the process alive. Attaching `message` listeners will also keep the `Worker` alive.
 
-### `worker.ref`
+### `worker.unref()`
 
-To keep the process alive until the `Worker` terminates, call `worker.ref()`. This couples the lifetime of the worker to the lifetime of the main process.
+To stop a running worker from keeping the process alive, call `worker.unref()`. This decouples the lifetime of the worker to the lifetime of the main process, and is equivlent to what Node.js' `worker_threads` does.
 
 ```ts
 const worker = new Worker(new URL("worker.ts", import.meta.url).href);
+worker.unref();
+```
+
+Note: `worker.unref()` is not available in browers.
+
+### `worker.ref()`
+
+To keep the process alive until the `Worker` terminates, call `worker.ref()`. A ref'd worker is the default behavior, and still needs something going on in the event loop (such as a `"message"` listener) for the worker to continue running.
+
+```ts
+const worker = new Worker(new URL("worker.ts", import.meta.url).href);
+worker.unref();
+// later...
 worker.ref();
 ```
 
@@ -132,22 +147,11 @@ Alternatively, you can also pass an `options` object to `Worker`:
 
 ```ts
 const worker = new Worker(new URL("worker.ts", import.meta.url).href, {
-  ref: true,
+  ref: false,
 });
 ```
 
-### `worker.unref`
-
-To stop keeping the process alive, call `worker.unref()`.
-
-```ts
-const worker = new Worker(new URL("worker.ts", import.meta.url).href);
-worker.ref();
-// ...later on
-worker.unref();
-```
-
-Note: `worker.ref()` and `worker.unref()` do not exist in browsers.
+Note: `worker.ref()` is not available in browers.
 
 ## Memory usage with `smol`
 

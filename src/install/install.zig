@@ -26,7 +26,7 @@ const configureTransformOptionsForBun = @import("../bun.js/config.zig").configur
 const Command = @import("../cli.zig").Command;
 const BunArguments = @import("../cli.zig").Arguments;
 const bundler = bun.bundler;
-const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
+
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;

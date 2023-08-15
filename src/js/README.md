@@ -34,9 +34,9 @@ console.log($getInternalField)
 
 V8 has a [similar feature](https://v8.dev/blog/embedded-builtins) to this syntax (they use `%` instead)
 
-On top of this, we have some special functions that are handled by the bundle preprocessor:
+On top of this, we have some special functions that are handled by the builtin preprocessor:
 
-- `require` works, but it must be a string literal that resolves to a module within src/js. This call gets replaced with `$requireId(id)`, which is a special function that skips the module resolver and directly loads the module by it's generated numerical ID.
+- `require` works, but it must be passed a **string literal** that resolves to a module within `src/js`. This call gets replaced with `$getInternalField($internalModuleRegistery, <number>)`, which directly loads the module by it's generated numerical ID, skipping the resolver for inter-internal modules.
 
 - `$debug` is exactly like console.log, but is stripped in release builds. It is disabled by default, requiring you to pass one of: `BUN_DEBUG_MODULE_NAME=1`, `BUN_DEBUG_JS=1`, or `BUN_DEBUG_ALL=1`. You can also do `if($debug) {}` to check if debug env var is set.
 
@@ -78,10 +78,6 @@ object->putDirectBuiltinFunction(
   JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0
 );
 ```
-
-## Extra Features
-
-`require` is replaced with `$requireId(id)` which allows these modules to import each other in a way that skips the module resolver. Being written in a syncronous format also makes this faster than ESM. All calls to `require` must be statically known or else this transformation is not possible.
 
 ## Building
 

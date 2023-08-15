@@ -2,6 +2,7 @@
 
 #include "root.h"
 
+#include "EventNames.h"
 #include "EventTarget.h"
 #include "ContextDestructionObserver.h"
 #include "ExceptionOr.h"
@@ -17,12 +18,18 @@ class MessagePortChannelProviderImpl;
 class GlobalScope : public RefCounted<GlobalScope>, public EventTargetWithInlineData {
     WTF_MAKE_ISO_ALLOCATED(GlobalScope);
 
+    uint32_t m_messageEventCount;
+
+    static void onDidChangeListenerImpl(EventTarget&, const AtomString&, OnDidChangeListenerKind);
+
 public:
     GlobalScope(ScriptExecutionContext* context)
         : EventTargetWithInlineData()
         , m_context(context)
     {
+        this->onDidChangeListener = &onDidChangeListenerImpl;
     }
+
     using RefCounted::deref;
     using RefCounted::ref;
 

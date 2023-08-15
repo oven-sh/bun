@@ -185,3 +185,21 @@ it("require.resolve with empty options object", () => {
 it("dynamically import bun", async () => {
   expect((await import(eval("'bun'"))).default).toBe(Bun);
 });
+
+it("require.resolve error code", () => {
+  try {
+    require.resolve("node:missing");
+    throw 1;
+  } catch (e) {
+    expect(e.code).toBe("MODULE_NOT_FOUND");
+  }
+});
+
+it("import non exist error code", async () => {
+  try {
+    await import("node:missing");
+    throw 1;
+  } catch (e) {
+    expect(e.code).toBe("ERR_MODULE_NOT_FOUND");
+  }
+});

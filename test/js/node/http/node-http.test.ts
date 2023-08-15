@@ -733,4 +733,10 @@ describe("node:http", () => {
     expect(() => validateHeaderValue("Foo", undefined as any)).toThrow();
     expect(() => validateHeaderValue("Foo", "Bar\r")).toThrow();
   });
+
+  test("req.req = req", () => {
+    validateHeaderValue("Foo", "Bar");
+    expect(() => validateHeaderValue("Foo", undefined as any)).toThrow();
+    expect(() => validateHeaderValue("Foo", "Bar\r")).toThrow();
+  });
 });

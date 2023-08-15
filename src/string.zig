@@ -637,7 +637,7 @@ pub const String = extern struct {
 
     pub fn canBeUTF8(self: String) bool {
         if (self.tag == .WTFStringImpl)
-            return self.value.WTFStringImpl.is8Bit() and bun.strings.isAllASCII(self.value.WTFStringImpl.latin1());
+            return self.value.WTFStringImpl.is8Bit() and bun.strings.isAllASCII(self.value.WTFStringImpl.latin1Slice());
 
         if (self.tag == .ZigString or self.tag == .StaticZigString)
             return self.value.ZigString.isUTF8();

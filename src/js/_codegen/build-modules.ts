@@ -136,7 +136,8 @@ mark("Preprocess modules");
 
 const config = ({ platform, debug }: { platform: string; debug?: boolean }) => ({
   entrypoints: bundledEntryPoints,
-  minify: { syntax: true, whitespace: !debug },
+  // Whitespace and identifiers are not minified to give better error messages when an error happens in our builtins
+  minify: { syntax: true, whitespace: false },
   root: TMP,
   define: {
     IS_BUN_DEVELOPMENT: String(!!debug),
@@ -250,7 +251,8 @@ fs.writeFileSync(
 // This code slice is used in InternalModuleRegistry.cpp. It defines the loading function for modules.
 fs.writeFileSync(
   path.join(BASE, "out/InternalModuleRegistry+createInternalModuleById.h"),
-  `JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalObject, VM& vm, Field id)
+  `// clang-format off
+JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalObject, VM& vm, Field id)
 {
   switch (id) {
     // JS internal modules
@@ -259,7 +261,9 @@ fs.writeFileSync(
         return `case Field::${idToEnumName(id)}: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${idToPublicSpecifierOrEnumName(id)}"_s, ${JSON.stringify(
           id.replace(/\.[mc]?[tj]s$/, ".js"),
-        )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code);
+        )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "builtin://${id
+          .replace(/\.[mc]?[tj]s$/, "")
+          .replace(/[^a-zA-Z0-9]+/g, "/")}"_s);
     }`;
       })
       .join("\n    ")}
@@ -272,12 +276,13 @@ fs.writeFileSync(
 // It inlines all the strings for the module IDs.
 fs.writeFileSync(
   path.join(BASE, "out/InternalModuleRegistryConstants.h"),
-  `#pragma once
+  `// clang-format off
+#pragma once
 
-  namespace Bun {
-  namespace InternalModuleRegistryConstants {
+namespace Bun {
+namespace InternalModuleRegistryConstants {
 
-  #if __APPLE__
+#if __APPLE__
   ${moduleList
     .map(
       (id, n) =>
@@ -308,10 +313,10 @@ static constexpr ASCIILiteral ${idToEnumName(id)}Code = ${fmtCPPString(bundledOu
 `,
     )
     .join("\n")}
-  #endif
+#endif
 
-  }
-  }`,
+}
+}`,
 );
 
 // This is a generated enum for zig code (exports.zig)

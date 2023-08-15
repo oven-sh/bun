@@ -107,7 +107,7 @@ it("Request object", () => {
     `
 Request (0 KB) {
   method: "GET",
-  url: "https://example.com",
+  url: "https://example.com/",
   headers: Headers {}
 }`.trim(),
   );

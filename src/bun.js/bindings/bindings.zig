@@ -102,8 +102,9 @@ pub const ZigString = extern struct {
     };
 
     pub fn fromBytes(slice_: []const u8) ZigString {
-        if (!strings.isAllASCII(slice_))
-            return fromUTF8(slice_);
+        if (!strings.isAllASCII(slice_)) {
+            return initUTF8(slice_);
+        }
 
         return init(slice_);
     }
@@ -4978,12 +4979,17 @@ pub const VM = extern struct {
         SmallHeap = 0,
         LargeHeap = 1,
     };
+
     pub fn create(heap_type: HeapType) *VM {
         return cppFn("create", .{@intFromEnum(heap_type)});
     }
 
     pub fn deinit(vm: *VM, global_object: *JSGlobalObject) void {
         return cppFn("deinit", .{ vm, global_object });
+    }
+
+    pub fn setControlFlowProfiler(vm: *VM, enabled: bool) void {
+        return cppFn("setControlFlowProfiler", .{ vm, enabled });
     }
 
     pub fn isJITEnabled() bool {
@@ -5057,6 +5063,26 @@ pub const VM = extern struct {
         });
     }
 
+    // These four functions fire VM traps. To understand what that means, see VMTraps.h for a giant explainer.
+    // These may be called concurrently from another thread.
+
+    /// Fires NeedTermination Trap. Thread safe. See JSC's "VMTraps.h" for explaination on traps.
+    pub fn notifyNeedTermination(vm: *VM) void {
+        cppFn("notifyNeedTermination", .{vm});
+    }
+    /// Fires NeedWatchdogCheck Trap. Thread safe. See JSC's "VMTraps.h" for explaination on traps.
+    pub fn notifyNeedWatchdogCheck(vm: *VM) void {
+        cppFn("notifyNeedWatchdogCheck", .{vm});
+    }
+    /// Fires NeedDebuggerBreak Trap. Thread safe. See JSC's "VMTraps.h" for explaination on traps.
+    pub fn notifyNeedDebuggerBreak(vm: *VM) void {
+        cppFn("notifyNeedDebuggerBreak", .{vm});
+    }
+    /// Fires NeedShellTimeoutCheck Trap. Thread safe. See JSC's "VMTraps.h" for explaination on traps.
+    pub fn notifyNeedShellTimeoutCheck(vm: *VM) void {
+        cppFn("notifyNeedShellTimeoutCheck", .{vm});
+    }
+
     pub fn isEntered(vm: *VM) bool {
         return cppFn("isEntered", .{
             vm,
@@ -5093,7 +5119,7 @@ pub const VM = extern struct {
         return cppFn("blockBytesAllocated", .{vm});
     }
 
-    pub const Extern = [_][]const u8{ "collectAsync", "externalMemorySize", "blockBytesAllocated", "heapSize", "releaseWeakRefs", "throwError", "deferGC", "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
+    pub const Extern = [_][]const u8{ "setControlFlowProfiler", "collectAsync", "externalMemorySize", "blockBytesAllocated", "heapSize", "releaseWeakRefs", "throwError", "deferGC", "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
 };
 
 pub const ThrowScope = extern struct {
@@ -5508,7 +5534,6 @@ pub const URLSearchParams = opaque {
 
 pub const WTF = struct {
     extern fn WTF__copyLCharsFromUCharSource(dest: [*]u8, source: *const anyopaque, len: usize) void;
-    extern fn WTF__toBase64URLStringValue(bytes: [*]const u8, length: usize, globalObject: *JSGlobalObject) JSValue;
     extern fn WTF__parseDouble(bytes: [*]const u8, length: usize, counted: *usize) f64;
 
     pub fn parseDouble(buf: []const u8) !f64 {
@@ -5532,14 +5557,6 @@ pub const WTF = struct {
 
         // This is any alignment
         WTF__copyLCharsFromUCharSource(destination, source.ptr, source.len);
-    }
-
-    /// Encode a byte array to a URL-safe base64 string for use with JS
-    /// Memory is managed by JavaScriptCore instead of us
-    pub fn toBase64URLStringValue(bytes: []const u8, globalObject: *JSGlobalObject) JSValue {
-        JSC.markBinding(@src());
-
-        return WTF__toBase64URLStringValue(bytes.ptr, bytes.len, globalObject);
     }
 };
 

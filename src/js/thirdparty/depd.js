@@ -1,4 +1,4 @@
-function depd2(namespace) {
+export default function depd(namespace) {
   if (!namespace) {
     throw new TypeError("argument namespace is required");
   }
@@ -30,6 +30,3 @@ function wrapproperty(obj, prop, message) {
     throw new TypeError("property must be configurable");
   }
 }
-
-export default depd2;
-depd2[Symbol.for("CommonJS")] = 0;

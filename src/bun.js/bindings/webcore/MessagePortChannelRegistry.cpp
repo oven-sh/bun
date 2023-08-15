@@ -154,6 +154,20 @@ void MessagePortChannelRegistry::takeAllMessagesForPort(const MessagePortIdentif
     channel->takeAllMessagesForPort(port, WTFMove(callback));
 }
 
+std::optional<MessageWithMessagePorts> MessagePortChannelRegistry::tryTakeMessageForPort(const MessagePortIdentifier& port)
+{
+    ASSERT(isMainThread());
+
+    LOG(MessagePorts, "Registry: Trying to take a message for MessagePort %s", port.logString().utf8().data());
+
+    // The channel might be gone if the remote side was closed.
+    auto* channel = m_openChannels.get(port);
+    if (!channel)
+        return std::nullopt;
+
+    return channel->tryTakeMessageForPort(port);
+}
+
 MessagePortChannel* MessagePortChannelRegistry::existingChannelContainingPort(const MessagePortIdentifier& port)
 {
     ASSERT(isMainThread());

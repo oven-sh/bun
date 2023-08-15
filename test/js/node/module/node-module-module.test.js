@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
-import { _nodeModulePaths, builtinModules, isBuiltin } from "module";
+import { _nodeModulePaths, builtinModules, isBuiltin, wrap } from "module";
 import Module from "module";
 
 test("builtinModules exists", () => {
   expect(Array.isArray(builtinModules)).toBe(true);
-  expect(builtinModules).toHaveLength(77);
+  expect(builtinModules).toHaveLength(76);
 });
 
 test("isBuiltin() works", () => {
@@ -26,6 +26,13 @@ test("Module exists", () => {
   expect(Module).toBeDefined();
 });
 
+test("module.Module works", () => {
+  expect(Module.Module === Module).toBeTrue();
+
+  const m = new Module("asdf");
+  expect(m.exports).toEqual({});
+});
+
 test("_nodeModulePaths() works", () => {
   expect(() => {
     _nodeModulePaths();
@@ -42,4 +49,11 @@ test("_nodeModulePaths() works", () => {
     "/node_modules",
   ]);
   expect(_nodeModulePaths("/a/b/../d")).toEqual(["/a/d/node_modules", "/a/node_modules", "/node_modules"]);
+});
+
+test("Module.wrap", () => {
+  var mod = { exports: {} };
+  expect(eval(wrap("exports.foo = 1; return 42"))(mod.exports, mod)).toBe(42);
+  expect(mod.exports.foo).toBe(1);
+  expect(wrap()).toBe("(function (exports, require, module, __filename, __dirname) { undefined\n});");
 });

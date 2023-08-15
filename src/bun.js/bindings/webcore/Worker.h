@@ -76,6 +76,7 @@ public:
     const String& name() const { return m_options.name; }
 
     void dispatchEvent(Event&);
+    void dispatchCloseEvent(Event&);
     void setKeepAlive(bool);
 
 #if ENABLE(WEB_RTC)
@@ -94,8 +95,10 @@ public:
     void drainEvents();
     void dispatchOnline(Zig::GlobalObject* workerGlobalObject);
     void dispatchError(WTF::String message);
-    void dispatchExit();
+    void dispatchExit(int32_t exitCode);
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
+    ScriptExecutionContextIdentifier clientIdentifier() const { return m_clientIdentifier; }
+    WorkerOptions& options() { return m_options; }
 
 private:
     Worker(ScriptExecutionContext&, WorkerOptions&&);
@@ -118,7 +121,7 @@ private:
     static void networkStateChanged(bool isOnLine);
 
     // RefPtr<WorkerScriptLoader> m_scriptLoader;
-    const WorkerOptions m_options;
+    WorkerOptions m_options;
     String m_identifier;
     // WorkerGlobalScopeProxy& m_contextProxy; // The proxy outlives the worker to perform thread shutdown.
     // std::optional<ContentSecurityPolicyResponseHeaders> m_contentSecurityPolicyResponseHeaders;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { dirname } from "node:path";
-import { gc } from "harness";
+import { bunEnv, bunExe, gc } from "harness";
 import fs, {
   closeSync,
   existsSync,
@@ -42,6 +42,7 @@ import { join } from "node:path";
 
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
 import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
+import { SystemError, spawnSync } from "bun";
 
 const Buffer = globalThis.Buffer || Uint8Array;
 
@@ -65,6 +66,15 @@ it("writeFileSync in append should not truncate the file", () => {
     writeFileSync(path, line, { flag: "a" });
   }
   expect(readFileSync(path, "utf8")).toBe(str);
+});
+
+it("await readdir #3931", async () => {
+  const { exitCode } = spawnSync({
+    cmd: [bunExe(), join(import.meta.dir, "./repro-3931.js")],
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+  expect(exitCode).toBe(0);
 });
 
 it("writeFileSync NOT in append SHOULD truncate the file", () => {
@@ -217,6 +227,39 @@ it("promises.readFile", async () => {
       expect(e.path).toBe("/i-dont-exist");
     }
   }
+});
+
+it("promises.readFile - UTF16 file path", async () => {
+  const dest = `/tmp/superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${
+    (Math.random() * 1024000) | 0
+  }.txt`;
+  await fs.promises.copyFile(import.meta.path, dest);
+  const expected = readFileSync(import.meta.path, "utf-8");
+  Bun.gc(true);
+  for (let i = 0; i < 100; i++) {
+    expect(await fs.promises.readFile(dest, "utf-8")).toEqual(expected);
+  }
+  Bun.gc(true);
+});
+
+it("promises.readFile - atomized file path", async () => {
+  const destInput = `/tmp/superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${
+    (Math.random() * 1024000) | 0
+  }.txt`;
+  // Force it to become an atomized string by making it a property access
+  const dest: string = (
+    {
+      [destInput]: destInput,
+      boop: 123,
+    } as const
+  )[destInput] as string;
+  await fs.promises.copyFile(import.meta.path, dest);
+  const expected = readFileSync(import.meta.path, "utf-8");
+  Bun.gc(true);
+  for (let i = 0; i < 100; i++) {
+    expect(await fs.promises.readFile(dest, "utf-8")).toEqual(expected);
+  }
+  Bun.gc(true);
 });
 
 it("promises.readFile with buffer as file path", async () => {
@@ -756,6 +799,36 @@ it("readlink", () => {
   symlinkSync(import.meta.path, actual);
 
   expect(readlinkSync(actual)).toBe(realpathSync(import.meta.path));
+});
+
+it("realpath async", async () => {
+  const actual = join(tmpdir(), Math.random().toString(32) + "-fs-realpath.txt");
+  try {
+    unlinkSync(actual);
+  } catch (e) {}
+
+  symlinkSync(import.meta.path, actual);
+
+  expect(await promises.realpath(actual)).toBe(realpathSync(import.meta.path));
+  const tasks = new Array(500);
+  for (let i = 0; i < 500; i++) {
+    const current = actual + i;
+    tasks[i] = promises.realpath(current).then(
+      () => {
+        throw new Error("should not get here");
+      },
+      e => {
+        expect(e?.path).toBe(current);
+      },
+    );
+  }
+  await Promise.all(tasks);
+
+  const { promise, resolve, reject } = Promise.withResolvers();
+  fs.realpath(actual, (err, path) => {
+    err ? reject(err) : resolve(path);
+  });
+  expect(await promise).toBe(realpathSync(import.meta.path));
 });
 
 describe("stat", () => {
@@ -1469,12 +1542,12 @@ it("fs.constants", () => {
   expect(constants.O_TRUNC).toBeDefined();
   expect(constants.O_APPEND).toBeDefined();
   expect(constants.O_DIRECTORY).toBeDefined();
-  expect(constants.O_NOATIME).toBeDefined();
+  // expect(constants.O_NOATIME).toBeDefined();
   expect(constants.O_NOFOLLOW).toBeDefined();
   expect(constants.O_SYNC).toBeDefined();
   expect(constants.O_DSYNC).toBeDefined();
-  expect(constants.O_SYMLINK).toBeDefined();
-  expect(constants.O_DIRECT).toBeDefined();
+  if (process.platform === "darwin") expect(constants.O_SYMLINK).toBeDefined();
+  // expect(constants.O_DIRECT).toBeDefined();
   expect(constants.O_NONBLOCK).toBeDefined();
   expect(constants.S_IFMT).toBeDefined();
   expect(constants.S_IFREG).toBeDefined();

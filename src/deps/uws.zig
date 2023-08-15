@@ -207,7 +207,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             );
         }
         pub fn write(this: ThisSocket, data: []const u8, msg_more: bool) i32 {
-            return us_socket_write(
+            const result = us_socket_write(
                 comptime ssl_int,
                 this.socket,
                 data.ptr,
@@ -215,6 +215,12 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 @as(i32, @intCast(@as(u31, @truncate(data.len)))),
                 @as(i32, @intFromBool(msg_more)),
             );
+
+            if (comptime Environment.allow_assert) {
+                debug("us_socket_write({*}, {d}) = {d}", .{ this.getNativeHandle(), data.len, result });
+            }
+
+            return result;
         }
 
         pub fn rawWrite(this: ThisSocket, data: []const u8, msg_more: bool) i32 {
@@ -765,15 +771,14 @@ pub const Loop = extern struct {
         this.active += 1;
     }
     pub fn refConcurrently(this: *Loop) void {
-        log("ref", .{});
         _ = @atomicRmw(@TypeOf(this.num_polls), &this.num_polls, .Add, 1, .Monotonic);
         _ = @atomicRmw(@TypeOf(this.active), &this.active, .Add, 1, .Monotonic);
+        log("refConcurrently ({d}, {d})", .{ this.num_polls, this.active });
     }
-
     pub fn unrefConcurrently(this: *Loop) void {
-        log("unref", .{});
         _ = @atomicRmw(@TypeOf(this.num_polls), &this.num_polls, .Sub, 1, .Monotonic);
         _ = @atomicRmw(@TypeOf(this.active), &this.active, .Sub, 1, .Monotonic);
+        log("unrefConcurrently ({d}, {d})", .{ this.num_polls, this.active });
     }
 
     pub fn unref(this: *Loop) void {

@@ -14,7 +14,7 @@ const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const Fs = @import("../../fs.zig");
 const Resolver = @import("../../resolver/resolver.zig");
 const ast = @import("../../import_record.zig");
-const NodeModuleBundle = @import("../../node_module_bundle.zig").NodeModuleBundle;
+
 const MacroEntryPoint = bun.bundler.MacroEntryPoint;
 const logger = @import("root").bun.logger;
 const Api = @import("../../api/schema.zig").Api;
@@ -582,88 +582,6 @@ pub fn newPath(
     return Node.Path.create(ctx.ptr(), is_windows).asObjectRef();
 }
 
-pub fn readFileAsStringCallback(
-    ctx: js.JSContextRef,
-    buf_z: [:0]const u8,
-    exception: js.ExceptionRef,
-) js.JSValueRef {
-    const path = buf_z.ptr[0..buf_z.len];
-    var file = std.fs.cwd().openFileZ(buf_z, .{ .mode = .read_only }) catch |err| {
-        JSError(getAllocator(ctx), "Opening file {s} for path: \"{s}\"", .{ @errorName(err), path }, ctx, exception);
-        return js.JSValueMakeUndefined(ctx);
-    };
-
-    defer file.close();
-
-    const stat = file.stat() catch |err| {
-        JSError(getAllocator(ctx), "Getting file size {s} for \"{s}\"", .{ @errorName(err), path }, ctx, exception);
-        return js.JSValueMakeUndefined(ctx);
-    };
-
-    if (stat.kind != .file) {
-        JSError(getAllocator(ctx), "Can't read a {s} as a string (\"{s}\")", .{ @tagName(stat.kind), path }, ctx, exception);
-        return js.JSValueMakeUndefined(ctx);
-    }
-
-    var contents_buf = VirtualMachine.get().allocator.alloc(u8, stat.size + 2) catch unreachable; // OOM
-    defer VirtualMachine.get().allocator.free(contents_buf);
-    const contents_len = file.readAll(contents_buf) catch |err| {
-        JSError(getAllocator(ctx), "{s} reading file (\"{s}\")", .{ @errorName(err), path }, ctx, exception);
-        return js.JSValueMakeUndefined(ctx);
-    };
-
-    contents_buf[contents_len] = 0;
-
-    // Very slow to do it this way. We're copying the string twice.
-    // But it's important that this string is garbage collected instead of manually managed.
-    // We can't really recycle this one.
-    // TODO: use external string
-    return js.JSValueMakeString(ctx, js.JSStringCreateWithUTF8CString(contents_buf.ptr));
-}
-
-pub fn readFileAsBytesCallback(
-    ctx: js.JSContextRef,
-    buf_z: [:0]const u8,
-    exception: js.ExceptionRef,
-) js.JSValueRef {
-    const path = buf_z.ptr[0..buf_z.len];
-    const allocator = VirtualMachine.get().allocator;
-
-    var file = std.fs.cwd().openFileZ(buf_z, .{ .mode = .read_only }) catch |err| {
-        JSError(allocator, "Opening file {s} for path: \"{s}\"", .{ @errorName(err), path }, ctx, exception);
-        return js.JSValueMakeUndefined(ctx);
-    };
-
-    defer file.close();
-
-    const stat = file.stat() catch |err| {
-        JSError(allocator, "Getting file size {s} for \"{s}\"", .{ @errorName(err), path }, ctx, exception);
-        return js.JSValueMakeUndefined(ctx);
-    };
-
-    if (stat.kind != .file) {
-        JSError(allocator, "Can't read a {s} as a string (\"{s}\")", .{ @tagName(stat.kind), path }, ctx, exception);
-        return js.JSValueMakeUndefined(ctx);
-    }
-
-    var contents_buf = allocator.alloc(u8, stat.size + 2) catch unreachable; // OOM
-    const contents_len = file.readAll(contents_buf) catch |err| {
-        JSError(allocator, "{s} reading file (\"{s}\")", .{ @errorName(err), path }, ctx, exception);
-        return js.JSValueMakeUndefined(ctx);
-    };
-
-    contents_buf[contents_len] = 0;
-
-    var marked_array_buffer = allocator.create(MarkedArrayBuffer) catch unreachable;
-    marked_array_buffer.* = MarkedArrayBuffer.fromBytes(
-        contents_buf[0..contents_len],
-        allocator,
-        .Uint8Array,
-    );
-
-    return marked_array_buffer.toJSObjectRef(ctx, exception);
-}
-
 pub fn getRouteFiles(
     _: void,
     ctx: js.JSContextRef,
@@ -781,40 +699,6 @@ pub fn openInEditor(
     };
 
     return JSC.JSValue.jsUndefined().asObjectRef();
-}
-
-pub fn readFileAsBytes(
-    _: void,
-    ctx: js.JSContextRef,
-    _: js.JSObjectRef,
-    _: js.JSObjectRef,
-    arguments: []const js.JSValueRef,
-    exception: js.ExceptionRef,
-) js.JSValueRef {
-    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    const path = getFilePath(ctx, arguments, &buf, exception) orelse return null;
-    buf[path.len] = 0;
-
-    const buf_z: [:0]const u8 = buf[0..path.len :0];
-    const result = readFileAsBytesCallback(ctx, buf_z, exception);
-    return result;
-}
-
-pub fn readFileAsString(
-    _: void,
-    ctx: js.JSContextRef,
-    _: js.JSObjectRef,
-    _: js.JSObjectRef,
-    arguments: []const js.JSValueRef,
-    exception: js.ExceptionRef,
-) js.JSValueRef {
-    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    const path = getFilePath(ctx, arguments, &buf, exception) orelse return null;
-    buf[path.len] = 0;
-
-    const buf_z: [:0]const u8 = buf[0..path.len :0];
-    const result = readFileAsStringCallback(ctx, buf_z, exception);
-    return result;
 }
 
 pub fn getPublicPath(to: string, origin: URL, comptime Writer: type, writer: Writer) void {
@@ -1108,27 +992,6 @@ comptime {
     }
 }
 
-pub fn readAllStdinSync(
-    _: void,
-    ctx: js.JSContextRef,
-    _: js.JSObjectRef,
-    _: js.JSObjectRef,
-    _: []const js.JSValueRef,
-    exception: js.ExceptionRef,
-) js.JSValueRef {
-    var stack = std.heap.stackFallback(2048, getAllocator(ctx));
-    var allocator = stack.get();
-
-    var stdin = std.io.getStdIn();
-    var result = stdin.readToEndAlloc(allocator, std.math.maxInt(u32)) catch |err| {
-        JSError(undefined, "{s} reading stdin", .{@errorName(err)}, ctx, exception);
-        return null;
-    };
-    var out = ZigString.init(result);
-    out.detectEncoding();
-    return out.toValueGC(ctx.ptr()).asObjectRef();
-}
-
 var public_path_temp_str: [bun.MAX_PATH_BYTES]u8 = undefined;
 
 pub fn getPublicPathJS(
@@ -1158,47 +1021,19 @@ pub const Class = NewClass(
         .read_only = true,
     },
     .{
-        .match = .{
-            .rfn = &Router.deprecatedBunGlobalMatch,
-        },
-        .sleepSync = .{
-            .rfn = &sleepSync,
-        },
-        // .fetch = .{
-        //     .rfn = &Fetch.call,
-        // },
-        .getImportedStyles = .{
-            .rfn = &Bun.getImportedStyles,
-        },
-        .inspect = .{
-            .rfn = &Bun.inspect,
-        },
-        .getRouteFiles = .{
-            .rfn = &Bun.getRouteFiles,
+        // Private
+        // TODO: We should remove _Os, _Path, and make registerMacro and fs be private builtins
+        .DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump = .{
+            .rfn = &dump_mimalloc,
+            .enumerable = false,
         },
         ._Os = .{
             .rfn = &Bun.newOs,
+            .enumerable = false,
         },
         ._Path = .{
             .rfn = &Bun.newPath,
-        },
-        .getRouteNames = .{
-            .rfn = &Bun.getRouteNames,
-        },
-        .readFile = .{
-            .rfn = &Bun.readFileAsString,
-        },
-        .resolveSync = .{
-            .rfn = &Bun.resolveSync,
-        },
-        .resolve = .{
-            .rfn = &Bun.resolve,
-        },
-        .readFileBytes = .{
-            .rfn = &Bun.readFileAsBytes,
-        },
-        .getPublicPath = .{
-            .rfn = &Bun.getPublicPathJS,
+            .enumerable = false,
         },
         .registerMacro = .{
             .rfn = &Bun.registerMacro,
@@ -1211,6 +1046,44 @@ pub const Class = NewClass(
         .jest = .{
             .rfn = &@import("../test/jest.zig").Jest.call,
             .enumerable = false,
+        },
+
+        // TODO: remove these deprecated methods before 1.0
+        .getImportedStyles = .{
+            .rfn = &Bun.getImportedStyles,
+            .enumerable = false,
+        },
+        .getRouteFiles = .{
+            .rfn = &Bun.getRouteFiles,
+            .enumerable = false,
+        },
+        .match = .{
+            .rfn = &Router.deprecatedBunGlobalMatch,
+            .enumerable = false,
+        },
+        .getRouteNames = .{
+            .rfn = &Bun.getRouteNames,
+            .enumerable = false,
+        },
+
+        // Public API
+        .sleepSync = .{
+            .rfn = &sleepSync,
+        },
+        // .fetch = .{
+        //     .rfn = &Fetch.call,
+        // },
+        .inspect = .{
+            .rfn = &Bun.inspect,
+        },
+        .resolveSync = .{
+            .rfn = &Bun.resolveSync,
+        },
+        .resolve = .{
+            .rfn = &Bun.resolve,
+        },
+        .getPublicPath = .{
+            .rfn = &Bun.getPublicPathJS,
         },
         .indexOfLine = .{
             .rfn = &Bun.indexOfLine,
@@ -1233,9 +1106,6 @@ pub const Class = NewClass(
         .openInEditor = .{
             .rfn = &Bun.openInEditor,
         },
-        .readAllStdinSync = .{
-            .rfn = &Bun.readAllStdinSync,
-        },
         .serve = .{
             .rfn = &Bun.serve,
         },
@@ -1251,9 +1121,6 @@ pub const Class = NewClass(
         .nanoseconds = .{
             .rfn = &nanoseconds,
         },
-        .DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump = .{
-            .rfn = &dump_mimalloc,
-        },
         .gzipSync = .{
             .rfn = &JSC.wrapWithHasContainer(JSZlib, "gzipSync", false, false, true),
         },
@@ -1266,7 +1133,6 @@ pub const Class = NewClass(
         .inflateSync = .{
             .rfn = &JSC.wrapWithHasContainer(JSZlib, "inflateSync", false, false, true),
         },
-
         .which = .{
             .rfn = &which,
         },
@@ -1279,11 +1145,9 @@ pub const Class = NewClass(
         .build = .{
             .rfn = &Bun.JSBundler.buildFn,
         },
-
         .listen = .{
             .rfn = &JSC.wrapWithHasContainer(JSC.API.Listener, "listen", false, false, false),
         },
-
         .connect = .{
             .rfn = &JSC.wrapWithHasContainer(JSC.API.Listener, "connect", false, false, false),
         },
@@ -1292,8 +1156,10 @@ pub const Class = NewClass(
         .main = .{
             .get = getMain,
         },
+        // TODO: decide what we want to do
         .cwd = .{
             .get = getCWD,
+            .enumerable = false,
         },
         .origin = .{
             .get = getOrigin,
@@ -1307,11 +1173,15 @@ pub const Class = NewClass(
         .stderr = .{
             .get = getStderr,
         },
+        // TODO: remove this before 1.0
         .routesDir = .{
             .get = getRoutesDir,
+            .enumerable = false,
         },
+        // TODO: remove this before 1.0
         .assetPrefix = .{
             .get = getAssetPrefix,
+            .enumerable = false,
         },
         .argv = .{
             .get = getArgv,
@@ -3322,24 +3192,24 @@ pub const Hash = struct {
                 } else {
                     var seed: u64 = 0;
                     if (args.nextEat()) |arg| {
-                        if (arg.isNumber()) {
-                            seed = arg.toU32();
+                        if (arg.isNumber() or arg.isBigInt()) {
+                            seed = arg.toUInt64NoTruncate();
                         }
                     }
                     if (comptime std.meta.trait.isNumber(@TypeOf(function_args[0]))) {
-                        function_args[0] = @as(@TypeOf(function_args[0]), @intCast(seed));
+                        function_args[0] = @as(@TypeOf(function_args[0]), @truncate(seed));
                         function_args[1] = input;
                     } else {
-                        function_args[1] = @as(@TypeOf(function_args[1]), @intCast(seed));
                         function_args[0] = input;
+                        function_args[1] = @as(@TypeOf(function_args[1]), @truncate(seed));
                     }
 
                     const value = @call(.auto, Function, function_args);
 
                     if (@TypeOf(value) == u32) {
-                        return JSC.JSValue.jsNumber(@as(i32, @bitCast(value))).asObjectRef();
+                        return JSC.JSValue.jsNumber(@as(u32, @bitCast(value))).asObjectRef();
                     }
-                    return JSC.JSValue.jsNumber(value).asObjectRef();
+                    return JSC.JSValue.fromUInt64NoTruncate(ctx.ptr(), value).asObjectRef();
                 }
             }
         };
@@ -3727,9 +3597,14 @@ pub const Timer = struct {
                         break :brk true;
                     }
                 } else {
-                    if (map.get(this.id)) |tombstone_or_timer| {
+                    if (map.getPtr(this.id)) |tombstone_or_timer| {
+                        // Disable thundering herd of setInterval() calls
+                        if (tombstone_or_timer.* != null) {
+                            tombstone_or_timer.*.?.has_scheduled_job = false;
+                        }
+
                         // .refresh() was called after CallbackJob enqueued
-                        break :brk tombstone_or_timer == null;
+                        break :brk tombstone_or_timer.* == null;
                     }
                 }
 
@@ -3999,6 +3874,7 @@ pub const Timer = struct {
         did_unref_timer: bool = false,
         poll_ref: JSC.PollRef = JSC.PollRef.init(),
         arguments: JSC.Strong = .{},
+        has_scheduled_job: bool = false,
 
         pub const Kind = enum(u32) {
             setTimeout,
@@ -4035,6 +3911,12 @@ pub const Timer = struct {
                 return;
 
             var globalThis = this.globalThis;
+
+            // Disable thundering herd of setInterval() calls
+            // Skip setInterval() calls when the previous one has not been run yet.
+            if (repeats and this.has_scheduled_job) {
+                return;
+            }
 
             var cb: CallbackJob = .{
                 .callback = if (repeats)
@@ -4080,6 +3962,9 @@ pub const Timer = struct {
                 this.arguments = .{};
                 map.put(vm.allocator, timer_id.id, null) catch unreachable;
                 this.deinit();
+            } else {
+                this.has_scheduled_job = true;
+                map.put(vm.allocator, timer_id.id, this) catch {};
             }
 
             var job = vm.allocator.create(CallbackJob) catch @panic(

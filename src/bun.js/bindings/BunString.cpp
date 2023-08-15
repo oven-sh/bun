@@ -6,6 +6,7 @@
 #include "wtf/text/ExternalStringImpl.h"
 #include "GCDefferalContext.h"
 #include <JavaScriptCore/JSONObject.h>
+#include <wtf/text/AtomString.h>
 
 using namespace JSC;
 
@@ -25,9 +26,21 @@ extern "C" void Bun__WTFStringImpl__ref(WTF::StringImpl* impl)
 
 extern "C" bool BunString__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, BunString* bunString)
 {
+
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
     *bunString = Bun::toString(globalObject, value);
     return bunString->tag != BunStringTag::Dead;
+}
+
+extern "C" BunString BunString__createAtom(const char* bytes, size_t length)
+{
+    if (simdutf::validate_ascii(bytes, length)) {
+        auto atom = makeAtomString(String(StringImpl::createWithoutCopying(bytes, length)));
+        atom.impl()->ref();
+        return { BunStringTag::WTFStringImpl, { .wtf = atom.impl() } };
+    }
+
+    return { BunStringTag::Dead, {} };
 }
 
 namespace Bun {
@@ -45,6 +58,11 @@ JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
     }
 
     return JSValue(Zig::toJSStringGC(bunString.impl.zig, globalObject));
+}
+
+JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, BunString bunString, size_t length)
+{
+    return jsSubstring(globalObject, jsUndefined(), Bun::toWTFString(bunString), 0, length);
 }
 
 WTF::String toWTFString(const BunString& bunString)
@@ -81,6 +99,17 @@ BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
     auto wtfString = str->value(globalObject);
 
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString.impl() } };
+}
+
+extern "C" void BunString__toThreadSafe(BunString* str)
+{
+    if (str->tag == BunStringTag::WTFStringImpl) {
+        auto impl = str->impl.wtf->isolatedCopy();
+        if (impl.ptr() != str->impl.wtf) {
+            impl->ref();
+            str->impl.wtf = &impl.leakRef();
+        }
+    }
 }
 
 BunString toString(JSC::JSGlobalObject* globalObject, JSValue value)
@@ -171,6 +200,11 @@ extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject
     return JSValue::encode(Bun::toJS(globalObject, *bunString));
 }
 
+extern "C" JSC::EncodedJSValue BunString__toJSWithLength(JSC::JSGlobalObject* globalObject, BunString* bunString, size_t length)
+{
+    return JSValue::encode(Bun::toJS(globalObject, *bunString, length));
+}
+
 extern "C" BunString BunString__fromUTF16Unitialized(size_t length)
 {
     unsigned utf16Length = length;
@@ -179,7 +213,6 @@ extern "C" BunString BunString__fromUTF16Unitialized(size_t length)
     if (UNLIKELY(!ptr))
         return { BunStringTag::Dead };
 
-    impl->ref();
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
 
@@ -190,7 +223,6 @@ extern "C" BunString BunString__fromLatin1Unitialized(size_t length)
     auto impl = WTF::StringImpl::createUninitialized(latin1Length, ptr);
     if (UNLIKELY(!ptr))
         return { BunStringTag::Dead };
-    impl->ref();
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
 
@@ -256,56 +288,28 @@ extern "C" EncodedJSValue BunString__createArray(
     auto& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    if (length < 64) {
-        // We must do this or Bun.gc(true) in a loop creating large arrays of strings will crash due to GC'ing.
-        MarkedArgumentBuffer arguments;
-
-        arguments.fill(length, [&](JSC::JSValue* value) {
-            const BunString* end = ptr + length;
-            while (ptr != end) {
-                *value++ = Bun::toJS(globalObject, *ptr++);
-            }
-        });
-
-        JSC::ObjectInitializationScope scope(vm);
-        GCDeferralContext context(vm);
-
-        JSC::JSArray* array = JSC::JSArray::tryCreateUninitializedRestricted(
-            scope,
-            globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
-            length);
-
-        if (array) {
-            for (size_t i = 0; i < length; ++i) {
-                array->initializeIndex(scope, i, arguments.at(i));
-            }
-            return JSValue::encode(array);
-        }
-
+    // Using tryCreateUninitialized here breaks stuff..
+    // https://github.com/oven-sh/bun/issues/3931
+    JSC::JSArray* array = constructEmptyArray(globalObject, nullptr, length);
+    if (!array) {
         JSC::throwOutOfMemoryError(globalObject, throwScope);
         RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSValue()));
-    } else {
-        JSC::JSArray* array = constructEmptyArray(globalObject, nullptr, length);
-        if (!array) {
-            JSC::throwOutOfMemoryError(globalObject, throwScope);
-            RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSValue()));
-        }
-
-        for (size_t i = 0; i < length; ++i) {
-            array->putDirectIndex(globalObject, i, Bun::toJS(globalObject, *ptr++));
-        }
-
-        return JSValue::encode(array);
     }
+
+    for (size_t i = 0; i < length; ++i) {
+        array->putDirectIndex(globalObject, i, Bun::toJS(globalObject, *ptr++));
+    }
+
+    return JSValue::encode(array);
 }
 
 extern "C" void BunString__toWTFString(BunString* bunString)
 {
     if (bunString->tag == BunStringTag::ZigString) {
-        if (Zig::isTaggedUTF8Ptr(bunString->impl.zig.ptr)) {
-            bunString->impl.wtf = Zig::toStringCopy(bunString->impl.zig).impl();
-        } else {
+        if (Zig::isTaggedExternalPtr(bunString->impl.zig.ptr)) {
             bunString->impl.wtf = Zig::toString(bunString->impl.zig).impl();
+        } else {
+            bunString->impl.wtf = Zig::toStringCopy(bunString->impl.zig).impl();
         }
 
         bunString->tag = BunStringTag::WTFStringImpl;
@@ -356,7 +360,7 @@ extern "C" BunString URL__getHrefFromJS(EncodedJSValue encodedValue, JSC::JSGlob
 
 extern "C" BunString URL__getHref(BunString* input)
 {
-    auto str = Bun::toWTFString(*input);
+    auto&& str = Bun::toWTFString(*input);
     auto url = WTF::URL(str);
     if (!url.isValid() || url.isEmpty())
         return { BunStringTag::Dead };
@@ -366,7 +370,7 @@ extern "C" BunString URL__getHref(BunString* input)
 
 extern "C" WTF::URL* URL__fromString(BunString* input)
 {
-    auto str = Bun::toWTFString(*input);
+    auto&& str = Bun::toWTFString(*input);
     auto url = WTF::URL(str);
     if (!url.isValid())
         return nullptr;

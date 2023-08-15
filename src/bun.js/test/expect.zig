@@ -28,6 +28,17 @@ pub const Counter = struct {
     actual: u32 = 0,
 };
 
+const JSTypeOfMap = bun.ComptimeStringMap([]const u8, .{
+    .{ "function", "function" },
+    .{ "object", "object" },
+    .{ "bigint", "bigint" },
+    .{ "boolean", "boolean" },
+    .{ "number", "number" },
+    .{ "string", "string" },
+    .{ "symbol", "symbol" },
+    .{ "undefined", "undefined" },
+});
+
 pub var active_test_expectation_counter: Counter = .{};
 
 /// https://jestjs.io/docs/expect
@@ -316,7 +327,7 @@ pub const Expect = struct {
         } else {
             _msg = ZigString.fromBytes("passes by .pass() assertion");
         }
-            
+
         active_test_expectation_counter.actual += 1;
 
         const not = this.flags.not;
@@ -364,12 +375,12 @@ pub const Expect = struct {
                 globalObject.throwInvalidArgumentType("fail", "message", "string");
                 return .zero;
             }
-   
+
             value.toZigString(&_msg, globalObject);
         } else {
             _msg = ZigString.fromBytes("fails by .fail() assertion");
         }
-            
+
         active_test_expectation_counter.actual += 1;
 
         const not = this.flags.not;
@@ -2317,15 +2328,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        if (!std.mem.eql(u8, expectedAsStr, "function") and
-            !std.mem.eql(u8, expectedAsStr, "object") and
-            !std.mem.eql(u8, expectedAsStr, "bigint") and
-            !std.mem.eql(u8, expectedAsStr, "boolean") and
-            !std.mem.eql(u8, expectedAsStr, "number") and
-            !std.mem.eql(u8, expectedAsStr, "string") and
-            !std.mem.eql(u8, expectedAsStr, "symbol") and
-            !std.mem.eql(u8, expectedAsStr, "undefined"))
-        {
+        if (!JSTypeOfMap.has(expectedAsStr)) {
             globalThis.throwInvalidArguments("toBeTypeOf() requires a valid type string argument ('function', 'object', 'bigint', 'boolean', 'number', 'string', 'symbol', 'undefined')", .{});
             return .zero;
         }
@@ -2356,7 +2359,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        pass = std.mem.eql(u8, expectedAsStr, whatIsTheType);
+        pass = strings.eql(expectedAsStr, whatIsTheType);
 
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -2806,6 +2809,206 @@ pub const Expect = struct {
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toInclude", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
         globalThis.throwPretty(fmt, .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
+    pub fn toIncludeRepeated(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(2);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 2) {
+            globalThis.throwInvalidArguments("toIncludeRepeated() requires 2 arguments", .{});
+            return .zero;
+        }
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toIncludeRepeated() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const substring = arguments[0];
+        substring.ensureStillAlive();
+
+        if (!substring.isString()) {
+            globalThis.throw("toIncludeRepeated() requires the first argument to be a string", .{});
+            return .zero;
+        }
+
+        const count = arguments[1];
+        count.ensureStillAlive();
+
+        if (!count.isAnyInt()) {
+            globalThis.throw("toIncludeRepeated() requires the second argument to be a number", .{});
+            return .zero;
+        }
+
+        const countAsNum = count.toU32();
+
+        const expect_string = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+
+        if (!expect_string.isString()) {
+            globalThis.throw("toIncludeRepeated() requires the expect(value) to be a string", .{});
+            return .zero;
+        }
+
+        const not = this.flags.not;
+        var pass = false;
+
+        const _expectStringAsStr = expect_string.toSliceOrNull(globalThis) orelse return .zero;
+        const _subStringAsStr = substring.toSliceOrNull(globalThis) orelse return .zero;
+
+        defer {
+            _expectStringAsStr.deinit();
+            _subStringAsStr.deinit();
+        }
+
+        var expectStringAsStr = _expectStringAsStr.slice();
+        var subStringAsStr = _subStringAsStr.slice();
+
+        if (subStringAsStr.len == 0) {
+            globalThis.throw("toIncludeRepeated() requires the first argument to be a non-empty string", .{});
+            return .zero;
+        }
+
+        if (countAsNum == 0)
+            pass = !strings.contains(expectStringAsStr, subStringAsStr)
+        else
+            pass = std.mem.containsAtLeast(u8, expectStringAsStr, countAsNum, subStringAsStr);
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+        const expect_string_fmt = expect_string.toFmt(globalThis, &formatter);
+        const substring_fmt = substring.toFmt(globalThis, &formatter);
+        const times_fmt = count.toFmt(globalThis, &formatter);
+
+        const received_line = "Received: <red>{any}<r>\n";
+
+        if (not) {
+            if (countAsNum == 0) {
+                const expected_line = "Expected to include: <green>{any}<r> \n";
+                const fmt = comptime getSignature("toIncludeRepeated", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
+                globalThis.throwPretty(fmt, .{ substring_fmt, expect_string_fmt });
+            } else if (countAsNum == 1) {
+                const expected_line = "Expected not to include: <green>{any}<r> \n";
+                const fmt = comptime getSignature("toIncludeRepeated", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
+                globalThis.throwPretty(fmt, .{ substring_fmt, expect_string_fmt });
+            } else {
+                const expected_line = "Expected not to include: <green>{any}<r> <green>{any}<r> times \n";
+                const fmt = comptime getSignature("toIncludeRepeated", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
+                globalThis.throwPretty(fmt, .{ substring_fmt, times_fmt, expect_string_fmt });
+            }
+
+            return .zero;
+        }
+
+        if (countAsNum == 0) {
+            const expected_line = "Expected to not include: <green>{any}<r>\n";
+            const fmt = comptime getSignature("toIncludeRepeated", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+            globalThis.throwPretty(fmt, .{ substring_fmt, expect_string_fmt });
+        } else if (countAsNum == 1) {
+            const expected_line = "Expected to include: <green>{any}<r>\n";
+            const fmt = comptime getSignature("toIncludeRepeated", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+            globalThis.throwPretty(fmt, .{ substring_fmt, expect_string_fmt });
+        } else {
+            const expected_line = "Expected to include: <green>{any}<r> <green>{any}<r> times \n";
+            const fmt = comptime getSignature("toIncludeRepeated", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+            globalThis.throwPretty(fmt, .{ substring_fmt, times_fmt, expect_string_fmt });
+        }
+
+        return .zero;
+    }
+
+    pub fn toSatisfy(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalThis);
+
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalThis.throwInvalidArguments("toSatisfy() requires 1 argument", .{});
+            return .zero;
+        }
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalThis.throw("toSatisfy() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const predicate = arguments[0];
+        predicate.ensureStillAlive();
+
+        if (!predicate.isCallable(globalThis.vm())) {
+            globalThis.throw("toSatisfy() argument must be a function", .{});
+            return .zero;
+        }
+
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalThis.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        const result = predicate.call(globalThis, &.{value});
+
+        if (result.toError()) |err| {
+            var errors: [1]*anyopaque = undefined;
+            var _err = errors[0..errors.len];
+
+            _err[0] = err.asVoid();
+
+            const fmt = ZigString.init("toSatisfy() predicate threw an exception");
+            globalThis.vm().throwError(globalThis, globalThis.createAggregateError(_err.ptr, _err.len, &fmt));
+            return .zero;
+        }
+
+        const not = this.flags.not;
+        const pass = (result.isBoolean() and result.toBoolean()) != not;
+
+        if (pass) return thisValue;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalThis, .quote_strings = true };
+
+        if (not) {
+            const signature = comptime getSignature("toSatisfy", "<green>expected<r>", true);
+            const fmt = signature ++ "\n\nExpected: not <green>{any}<r>\n";
+            if (Output.enable_ansi_colors) {
+                globalThis.throw(Output.prettyFmt(fmt, true), .{predicate.toFmt(globalThis, &formatter)});
+                return .zero;
+            }
+            globalThis.throw(Output.prettyFmt(fmt, false), .{predicate.toFmt(globalThis, &formatter)});
+            return .zero;
+        }
+
+        const signature = comptime getSignature("toSatisfy", "<green>expected<r>", false);
+
+        const fmt = signature ++ "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>\n";
+
+        if (Output.enable_ansi_colors) {
+            globalThis.throw(Output.prettyFmt(fmt, true), .{
+                predicate.toFmt(globalThis, &formatter),
+                value.toFmt(globalThis, &formatter),
+            });
+            return .zero;
+        }
+
+        globalThis.throw(Output.prettyFmt(fmt, false), .{
+            predicate.toFmt(globalThis, &formatter),
+            value.toFmt(globalThis, &formatter),
+        });
+
         return .zero;
     }
 

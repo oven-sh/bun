@@ -255,9 +255,8 @@ pub const FileSystem = struct {
         }
 
         pub fn get(entry: *const DirEntry, _query: string) ?Entry.Lookup {
-            if (_query.len == 0) return null;
-            var scratch_lookup_buffer: [256]u8 = undefined;
-            std.debug.assert(scratch_lookup_buffer.len >= _query.len);
+            if (_query.len == 0 or _query.len > bun.MAX_PATH_BYTES) return null;
+            var scratch_lookup_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
 
             const query = strings.copyLowercaseIfNeeded(_query, &scratch_lookup_buffer);
             const result = entry.data.get(query) orelse return null;
@@ -627,7 +626,7 @@ pub const FileSystem = struct {
 
                 const flags = std.os.O.CREAT | std.os.O.RDWR | std.os.O.CLOEXEC;
                 this.dir_fd = tmpdir_.fd;
-                this.fd = try std.os.openatZ(tmpdir_.fd, name, flags, std.os.S.IRWXO);
+                this.fd = try std.os.openatZ(tmpdir_.fd, name, flags, std.os.S.IRWXU);
             }
 
             pub fn promote(this: *Tmpfile, from_name: [*:0]const u8, destination_fd: std.os.fd_t, name: [*:0]const u8) !void {

@@ -271,6 +271,10 @@ pub inline fn lastIndexOf(self: string, str: string) ?usize {
 }
 
 pub inline fn indexOf(self: string, str: string) ?usize {
+    if (comptime !bun.Environment.isNative) {
+        return std.mem.indexOf(u8, self, str);
+    }
+
     const self_len = self.len;
     const str_len = str.len;
 
@@ -921,7 +925,7 @@ inline fn eqlComptimeCheckLenWithKnownType(comptime Type: type, a: []const Type,
     }
 
     const len = comptime b.len;
-    comptime var dword_length = b.len >> 3;
+    comptime var dword_length = b.len >> if (Environment.isNative) 3 else 2;
     const slice = b;
     const divisor = comptime @sizeOf(Type);
 
@@ -1476,8 +1480,8 @@ pub fn convertUTF16ToUTF8(list_: std.ArrayList(u8), comptime Type: type, utf16: 
 pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, utf16: Type) ![]u8 {
     if (bun.FeatureFlags.use_simdutf and comptime Type == []const u16) {
         const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
-        // add 4 bytes of padding for SIMDUTF
-        var list = try std.ArrayList(u8).initCapacity(allocator, length + 4);
+        // add 16 bytes of padding for SIMDUTF
+        var list = try std.ArrayList(u8).initCapacity(allocator, length + 16);
         list = try convertUTF16ToUTF8(list, Type, utf16);
         return list.items;
     }
@@ -1492,7 +1496,11 @@ pub fn toUTF8ListWithType(list_: std.ArrayList(u8), comptime Type: type, utf16: 
         var list = list_;
         const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
         try list.ensureTotalCapacityPrecise(length + 16);
-        return convertUTF16ToUTF8(list, Type, utf16);
+        const buf = try convertUTF16ToUTF8(list, Type, utf16);
+        if (Environment.allow_assert) {
+            std.debug.assert(buf.items.len == length);
+        }
+        return buf;
     }
 
     return toUTF8ListWithTypeBun(list_, Type, utf16);
@@ -1521,7 +1529,11 @@ pub fn toUTF8ListWithTypeBun(list_: std.ArrayList(u8), comptime Type: type, utf1
         utf16_remaining = utf16_remaining[replacement.len..];
 
         const count: usize = replacement.utf8Width();
-        try list.ensureTotalCapacityPrecise(i + count + list.items.len + @as(usize, @intFromFloat((@as(f64, @floatFromInt(@as(u52, @truncate(utf16_remaining.len)))) * 1.2))));
+        if (comptime Environment.isNative) {
+            try list.ensureTotalCapacityPrecise(i + count + list.items.len + @as(usize, @intFromFloat((@as(f64, @floatFromInt(@as(u52, @truncate(utf16_remaining.len)))) * 1.2))));
+        } else {
+            try list.ensureTotalCapacityPrecise(i + count + list.items.len + utf16_remaining.len + 4);
+        }
         list.items.len += i;
 
         copyU16IntoU8(
@@ -3445,6 +3457,10 @@ pub fn indexOfCharUsize(slice: []const u8, char: u8) ?usize {
     if (slice.len == 0)
         return null;
 
+    if (comptime !Environment.isNative) {
+        return std.mem.indexOfScalar(u8, slice, char);
+    }
+
     const ptr = bun.C.memchr(slice.ptr, char, slice.len) orelse return null;
     const i = @intFromPtr(ptr) - @intFromPtr(slice.ptr);
     std.debug.assert(i < slice.len);
@@ -3704,7 +3720,7 @@ pub fn getLinesInText(text: []const u8, line: u32, comptime line_range_count: us
 pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime check_min: bool) ?u32 {
     var remaining = slice;
 
-    if (comptime Environment.enableSIMD) {
+    if (comptime Environment.enableSIMD and Environment.isNative) {
         const end_ptr = remaining.ptr + remaining.len - (remaining.len % ascii_u16_vector_size);
         if (remaining.len > ascii_u16_vector_size) {
             const remaining_start = remaining.ptr;
@@ -3780,7 +3796,7 @@ pub fn @"nextUTF16NonASCIIOr$`\\"(
 ) ?u32 {
     var remaining = slice;
 
-    if (comptime Environment.enableSIMD) {
+    if (comptime Environment.enableSIMD and Environment.isNative) {
         while (remaining.len >= ascii_u16_vector_size) {
             const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
 
@@ -4054,7 +4070,8 @@ pub fn join(slices: []const string, delimiter: string, allocator: std.mem.Alloca
 
 pub fn order(a: []const u8, b: []const u8) std.math.Order {
     const len = @min(a.len, b.len);
-    const cmp = bun.C.memcmp(a.ptr, b.ptr, len);
+
+    const cmp = if (comptime Environment.isNative) bun.C.memcmp(a.ptr, b.ptr, len) else return std.mem.order(u8, a, b);
     return switch (std.math.sign(cmp)) {
         0 => std.math.order(a.len, b.len),
         1 => .gt,

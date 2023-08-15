@@ -27,6 +27,7 @@
 #include "config.h"
 #include "MessagePort.h"
 
+#include "BunClientData.h"
 // #include "Document.h"
 #include "EventNames.h"
 // #include "Logging.h"
@@ -43,6 +44,8 @@
 #include <wtf/IsoMallocInlines.h>
 #include <wtf/Lock.h>
 #include <wtf/Scope.h>
+
+extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 
 namespace WebCore {
 
@@ -106,7 +109,6 @@ ScriptExecutionContextIdentifier MessagePort::contextIdForMessagePortId(MessageP
 
 void MessagePort::notifyMessageAvailable(const MessagePortIdentifier& identifier)
 {
-    ASSERT(isMainThread());
     ScriptExecutionContextIdentifier scriptExecutionContextIdentifier;
     {
         Locker locker { allMessagePortsLock };
@@ -168,9 +170,7 @@ MessagePort::~MessagePort()
 
 void MessagePort::entangle()
 {
-    ScriptExecutionContext::ensureOnMainThread([identifier = m_identifier, remoteIdentifier = m_remoteIdentifier](ScriptExecutionContext& context) {
-        MessagePortChannelProvider::fromContext(context).entangleLocalPortInThisProcessToRemote(identifier, remoteIdentifier);
-    });
+    MessagePortChannelProvider::fromContext(*scriptExecutionContext()).entangleLocalPortInThisProcessToRemote(m_identifier, m_remoteIdentifier);
 }
 
 ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
@@ -262,9 +262,7 @@ void MessagePort::close()
         return;
     m_isDetached = true;
 
-    ScriptExecutionContext::ensureOnMainThread([identifier = m_identifier, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-        MessagePortChannelProvider::singleton().messagePortClosed(identifier);
-    });
+    MessagePortChannelProvider::singleton().messagePortClosed(m_identifier);
 
     removeAllEventListeners();
 }
@@ -311,6 +309,22 @@ void MessagePort::dispatchMessages()
     };
 
     MessagePortChannelProvider::fromContext(*context).takeAllMessagesForPort(m_identifier, WTFMove(messagesTakenHandler));
+}
+
+JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject)
+{
+    auto* context = scriptExecutionContext();
+    if (!context || context->activeDOMObjectsAreSuspended() || !isEntangled())
+        return jsUndefined();
+
+    std::optional<MessageWithMessagePorts> messageWithPorts = MessagePortChannelProvider::fromContext(*context).tryTakeMessageForPort(m_identifier);
+
+    if (!messageWithPorts)
+        return jsUndefined();
+
+    auto ports = MessagePort::entanglePorts(*context, WTFMove(messageWithPorts->transferredPorts));
+    auto message = messageWithPorts->message.releaseNonNull();
+    return message->deserialize(*lexicalGlobalObject, lexicalGlobalObject, WTFMove(ports), SerializationErrorMode::NonThrowing);
 }
 
 void MessagePort::dispatchEvent(Event& event)
@@ -378,10 +392,38 @@ Vector<RefPtr<MessagePort>> MessagePort::entanglePorts(ScriptExecutionContext& c
     });
 }
 
+void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind)
+{
+    if (eventType == eventNames().messageEvent) {
+        auto& port = static_cast<MessagePort&>(self);
+        switch (kind) {
+        case Add:
+            if (port.m_messageEventCount == 0) {
+                port.scriptExecutionContext()->refEventLoop();
+            }
+            port.m_messageEventCount++;
+            break;
+        case Remove:
+            port.m_messageEventCount--;
+            if (port.m_messageEventCount == 0) {
+                port.scriptExecutionContext()->unrefEventLoop();
+            }
+            break;
+        case Clear:
+            if (port.m_messageEventCount > 0) {
+                port.scriptExecutionContext()->unrefEventLoop();
+            }
+            port.m_messageEventCount = 0;
+            break;
+        }
+    }
+};
+
 Ref<MessagePort> MessagePort::entangle(ScriptExecutionContext& context, TransferredMessagePort&& transferredPort)
 {
     auto port = MessagePort::create(context, transferredPort.first, transferredPort.second);
     port->entangle();
+    port->onDidChangeListener = &MessagePort::onDidChangeListenerImpl;
     return port;
 }
 
@@ -392,7 +434,6 @@ bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListene
             start();
         m_hasMessageEventListener = true;
     }
-
     return EventTarget::addEventListener(eventType, WTFMove(listener), options);
 }
 
@@ -414,6 +455,22 @@ bool MessagePort::removeEventListener(const AtomString& eventType, EventListener
 WebCoreOpaqueRoot root(MessagePort* port)
 {
     return WebCoreOpaqueRoot { port };
+}
+
+void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
+{
+    if (!m_hasRef) {
+        m_hasRef = true;
+        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
+    }
+}
+
+void MessagePort::jsUnref(JSGlobalObject* lexicalGlobalObject)
+{
+    if (m_hasRef) {
+        m_hasRef = false;
+        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
+    }
 }
 
 } // namespace WebCore

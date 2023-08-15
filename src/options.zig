@@ -9,7 +9,6 @@ const api = @import("./api/schema.zig");
 const Api = api.Api;
 const defines = @import("./defines.zig");
 const resolve_path = @import("./resolver/resolve_path.zig");
-const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 const URL = @import("./url.zig").URL;
 const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
 const bun = @import("root").bun;
@@ -594,37 +593,22 @@ pub const Target = enum {
 
         array.set(Target.node, &[_]string{
             "node",
-            "module",
         });
-
-        var listc = [_]string{
+        array.set(Target.browser, &[_]string{
             "browser",
             "module",
-        };
-        array.set(Target.browser, &listc);
-        array.set(
-            Target.bun,
-            &[_]string{
-                "bun",
-                "worker",
-                "module",
-                "node",
-                "default",
-                "browser",
-            },
-        );
-        array.set(
-            Target.bun_macro,
-            &[_]string{
-                "macro",
-                "bun",
-                "worker",
-                "module",
-                "node",
-                "default",
-                "browser",
-            },
-        );
+        });
+        array.set(Target.bun, &[_]string{
+            "bun",
+            "worker",
+            "node",
+        });
+        array.set(Target.bun_macro, &[_]string{
+            "macro",
+            "bun",
+            "worker",
+            "node",
+        });
 
         break :brk array;
     };
@@ -1392,7 +1376,6 @@ pub const BundleOptions = struct {
     preserve_symlinks: bool = false,
     preserve_extensions: bool = false,
     timings: Timings = Timings{},
-    node_modules_bundle: ?*NodeModuleBundle = null,
     production: bool = false,
     serve: bool = false,
 
@@ -1449,6 +1432,8 @@ pub const BundleOptions = struct {
     minify_whitespace: bool = false,
     minify_syntax: bool = false,
     minify_identifiers: bool = false,
+
+    code_coverage: bool = false,
 
     compile: bool = false,
 
@@ -1589,7 +1574,6 @@ pub const BundleOptions = struct {
         fs: *Fs.FileSystem,
         log: *logger.Log,
         transform: Api.TransformOptions,
-        node_modules_bundle_existing: ?*NodeModuleBundle,
     ) !BundleOptions {
         var opts: BundleOptions = BundleOptions{
             .log = log,
@@ -1669,72 +1653,6 @@ pub const BundleOptions = struct {
             else => {},
         }
 
-        const is_generating_bundle = (transform.generate_node_module_bundle orelse false);
-
-        if (!is_generating_bundle) {
-            if (node_modules_bundle_existing) |node_mods| {
-                opts.node_modules_bundle = node_mods;
-                const pretty_path = fs.relativeTo(transform.node_modules_bundle_path.?);
-                opts.node_modules_bundle_url = try std.fmt.allocPrint(allocator, "{s}{s}", .{
-                    opts.origin.href,
-                    pretty_path,
-                });
-            } else if (transform.node_modules_bundle_path) |bundle_path| {
-                if (bundle_path.len > 0) {
-                    load_bundle: {
-                        const pretty_path = fs.relativeTo(bundle_path);
-                        var bundle_file = std.fs.openFileAbsolute(bundle_path, .{ .mode = .read_write }) catch |err| {
-                            Output.disableBuffering();
-                            defer Output.enableBuffering();
-                            Output.prettyErrorln("<r>error opening <d>\"<r><b>{s}<r><d>\":<r> <b><red>{s}<r>", .{ pretty_path, @errorName(err) });
-                            break :load_bundle;
-                        };
-
-                        const time_start = std.time.nanoTimestamp();
-                        if (NodeModuleBundle.loadBundle(allocator, bundle_file)) |bundle| {
-                            var node_module_bundle = try allocator.create(NodeModuleBundle);
-                            node_module_bundle.* = bundle;
-                            opts.node_modules_bundle = node_module_bundle;
-
-                            if (opts.origin.isAbsolute()) {
-                                opts.node_modules_bundle_url = try opts.origin.joinAlloc(
-                                    allocator,
-                                    "",
-                                    "",
-                                    node_module_bundle.bundle.import_from_name,
-                                    "",
-                                    "",
-                                );
-                                opts.node_modules_bundle_pretty_path = opts.node_modules_bundle_url[opts.node_modules_bundle_url.len - node_module_bundle.bundle.import_from_name.len - 1 ..];
-                            } else {
-                                opts.node_modules_bundle_pretty_path = try allocator.dupe(u8, pretty_path);
-                            }
-
-                            const elapsed = @as(f64, @floatFromInt((std.time.nanoTimestamp() - time_start))) / std.time.ns_per_ms;
-                            Output.printElapsed(elapsed);
-                            Output.prettyErrorln(
-                                " <b><d>\"{s}\"<r><d> - {d} modules, {d} packages<r>",
-                                .{
-                                    pretty_path,
-                                    bundle.bundle.modules.len,
-                                    bundle.bundle.packages.len,
-                                },
-                            );
-                            Output.flush();
-                        } else |err| {
-                            Output.disableBuffering();
-                            Output.prettyErrorln(
-                                "<r>error reading <d>\"<r><b>{s}<r><d>\":<r> <b><red>{s}<r>, <b>deleting it<r> so you don't keep seeing this message.",
-                                .{ pretty_path, @errorName(err) },
-                            );
-                            bundle_file.close();
-                        }
-                    }
-                }
-            }
-        }
-        // }
-
         if (transform.framework) |_framework| {
             opts.framework = try Framework.fromApi(_framework, allocator);
         }
@@ -1746,9 +1664,6 @@ pub const BundleOptions = struct {
         if (transform.main_fields.len > 0) {
             opts.main_fields = transform.main_fields;
         }
-
-        if (opts.framework == null and is_generating_bundle)
-            opts.env.behavior = .load_all;
 
         opts.external = ExternalModules.init(allocator, &fs.fs, fs.top_level_dir, transform.external, log, opts.target);
         opts.out_extensions = opts.target.outExtensions(allocator);
@@ -1904,7 +1819,7 @@ pub const BundleOptions = struct {
             opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode._none);
         }
 
-        opts.tree_shaking = opts.serve or opts.target.isBun() or opts.production or is_generating_bundle;
+        opts.tree_shaking = opts.serve or opts.target.isBun() or opts.production;
         opts.inlining = opts.tree_shaking;
         if (opts.inlining)
             opts.minify_syntax = true;
@@ -1924,8 +1839,6 @@ pub const BundleOptions = struct {
         Analytics.Features.filesystem_router = Analytics.Features.filesystem_router or opts.routes.routes_enabled;
         Analytics.Features.origin = Analytics.Features.origin or transform.origin != null;
         Analytics.Features.public_folder = Analytics.Features.public_folder or opts.routes.static_dir_enabled;
-        Analytics.Features.bun_bun = Analytics.Features.bun_bun or transform.node_modules_bundle_path != null;
-        Analytics.Features.bunjs = Analytics.Features.bunjs or transform.node_modules_bundle_path_server != null;
         Analytics.Features.macros = Analytics.Features.macros or opts.target == .bun_macro;
         Analytics.Features.external = Analytics.Features.external or transform.external.len > 0;
         Analytics.Features.single_page_app_routing = Analytics.Features.single_page_app_routing or opts.routes.single_page_app_routing;

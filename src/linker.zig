@@ -203,26 +203,9 @@ pub const Linker = struct {
         comptime ignore_runtime: bool,
         comptime is_bun: bool,
     ) !void {
-        return linkAllowImportingFromBundle(linker, file_path, result, origin, import_path_format, ignore_runtime, true, is_bun);
-    }
-
-    pub fn linkAllowImportingFromBundle(
-        linker: *ThisLinker,
-        file_path: Fs.Path,
-        result: *_bundler.ParseResult,
-        origin: URL,
-        comptime import_path_format: Options.BundleOptions.ImportPathFormat,
-        comptime ignore_runtime: bool,
-        comptime allow_import_from_bundle: bool,
-        comptime is_bun: bool,
-    ) !void {
         const source_dir = file_path.sourceDir();
         var externals = std.ArrayList(u32).init(linker.allocator);
-        var needs_bundle = false;
         var had_resolve_errors = false;
-        var needs_require = false;
-        _ = needs_require;
-        var node_module_bundle_import_path: ?string = null;
 
         const is_deferred = result.pending_imports.len > 0;
 
@@ -244,29 +227,21 @@ pub const Linker = struct {
                     const record_index = record_i;
                     if (comptime !ignore_runtime) {
                         if (strings.eqlComptime(import_record.path.namespace, "runtime")) {
-                            // runtime is included in the bundle, so we don't need to dynamically import it
-                            if (linker.options.node_modules_bundle != null) {
-                                node_module_bundle_import_path = node_module_bundle_import_path orelse
-                                    linker.nodeModuleBundleImportPath(origin);
-                                import_record.path.text = node_module_bundle_import_path.?;
-                                result.ast.runtime_import_record_id = record_index;
+                            if (import_path_format == .absolute_url) {
+                                import_record.path = Fs.Path.initWithNamespace(try origin.joinAlloc(linker.allocator, "", "", "bun:wrap", "", ""), "bun");
                             } else {
-                                if (import_path_format == .absolute_url) {
-                                    import_record.path = Fs.Path.initWithNamespace(try origin.joinAlloc(linker.allocator, "", "", "bun:wrap", "", ""), "bun");
-                                } else {
-                                    import_record.path = try linker.generateImportPath(
-                                        source_dir,
-                                        Linker.runtime_source_path,
-                                        false,
-                                        "bun",
-                                        origin,
-                                        import_path_format,
-                                    );
-                                }
-
-                                result.ast.runtime_import_record_id = record_index;
-                                result.ast.needs_runtime = true;
+                                import_record.path = try linker.generateImportPath(
+                                    source_dir,
+                                    Linker.runtime_source_path,
+                                    false,
+                                    "bun",
+                                    origin,
+                                    import_path_format,
+                                );
                             }
+
+                            result.ast.runtime_import_record_id = record_index;
+                            result.ast.needs_runtime = true;
                             continue;
                         }
                     }
@@ -280,10 +255,12 @@ pub const Linker = struct {
                                 continue;
                             }
                         }
+                        if (strings.startsWith(import_record.path.text, "node:")) {
+                            // if a module is not found here, it is not found at all
+                            // so we can just disable it
+                            had_resolve_errors = try whenModuleNotFound(linker, import_record, result, is_bun);
 
-                        if (JSC.DisabledModule.has(import_record.path.text)) {
-                            import_record.path.is_disabled = true;
-                            import_record.do_commonjs_transform_in_printer = true;
+                            if (had_resolve_errors) return error.ResolveMessage;
                             continue;
                         }
 
@@ -355,66 +332,11 @@ pub const Linker = struct {
                         }
                     }
 
-                    if (comptime allow_import_from_bundle) {
-                        if (linker.options.node_modules_bundle) |node_modules_bundle| {
-                            if (Resolver.isPackagePath(import_record.path.text)) {
-                                const text = import_record.path.text;
-
-                                var package_name = text;
-                                if (text[0] == '@') {
-                                    if (std.mem.indexOfScalar(u8, text, '/')) |i| {
-                                        if (std.mem.indexOfScalar(u8, text[i + 1 ..], '/')) |j| {
-                                            package_name = text[0 .. i + 1 + j];
-                                        }
-                                    }
-                                } else {
-                                    if (std.mem.indexOfScalar(u8, text, '/')) |i| {
-                                        package_name = text[0..i];
-                                    }
-                                }
-                                if (package_name.len != text.len) {
-                                    if (node_modules_bundle.getPackage(package_name)) |pkg| {
-                                        const import_path = text[@min(text.len, package_name.len + 1)..];
-                                        if (node_modules_bundle.findModuleIDInPackageIgnoringExtension(pkg, import_path)) |found_module| {
-                                            node_module_bundle_import_path = node_module_bundle_import_path orelse
-                                                linker.nodeModuleBundleImportPath(origin);
-
-                                            import_record.path.text = node_module_bundle_import_path.?;
-                                            import_record.module_id = node_modules_bundle.bundle.modules[found_module].id;
-                                            needs_bundle = true;
-                                            continue :outer;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
                     var resolved_import_: anyerror!Resolver.Result = brk: {
                         switch (import_record.tag) {
                             else => {},
                             // for fast refresh, attempt to read the version directly from the bundle instead of resolving it
                             .react_refresh => {
-                                if (comptime allow_import_from_bundle) {
-                                    if (linker.options.node_modules_bundle) |node_modules_bundle| {
-                                        const runtime = linker.options.jsx.refresh_runtime;
-                                        const package_name = runtime[0 .. strings.indexOfChar(runtime, '/') orelse runtime.len];
-
-                                        if (node_modules_bundle.getPackage(package_name)) |pkg| {
-                                            const import_path = runtime[@min(runtime.len, package_name.len + 1)..];
-                                            if (node_modules_bundle.findModuleInPackage(pkg, import_path)) |found_module| {
-                                                node_module_bundle_import_path = node_module_bundle_import_path orelse
-                                                    linker.nodeModuleBundleImportPath(origin);
-
-                                                import_record.path.text = node_module_bundle_import_path.?;
-                                                import_record.module_id = found_module.id;
-                                                needs_bundle = true;
-                                                continue :outer;
-                                            }
-                                        }
-                                    }
-                                }
-
                                 if (linker.options.jsx.use_embedded_refresh_runtime) {
                                     import_record.path = Fs.Path.initWithNamespace(try origin.joinAlloc(linker.allocator, "", "", linker.options.jsx.refresh_runtime, "", ""), "bun");
                                     continue :outer;
@@ -490,60 +412,6 @@ pub const Linker = struct {
                         };
 
                         const loader = linker.options.loader(path.name.ext);
-                        if (loader.isJavaScriptLikeOrJSON()) {
-                            if (comptime allow_import_from_bundle) {
-                                bundled: {
-                                    if (linker.options.node_modules_bundle) |node_modules_bundle| {
-                                        const package_json = resolved_import.package_json orelse break :bundled;
-                                        const package_base_dir = package_json.source.path.sourceDir();
-                                        if (node_modules_bundle.getPackageIDByHash(package_json.hash)) |pkg_id| {
-                                            const package = node_modules_bundle.bundle.packages[pkg_id];
-
-                                            if (comptime Environment.isDebug) {
-                                                std.debug.assert(strings.eql(node_modules_bundle.str(package.name), package_json.name));
-                                                std.debug.assert(strings.eql(node_modules_bundle.str(package.version), package_json.version));
-                                            }
-
-                                            const package_relative_path = linker.fs.relative(
-                                                package_base_dir,
-                                                if (!strings.eqlComptime(path.namespace, "node")) path.pretty else path.text,
-                                            );
-
-                                            const found_module = node_modules_bundle.findModuleInPackage(&package, package_relative_path) orelse {
-                                                // linker.log.addErrorFmt(
-                                                //     null,
-                                                //     logger.Loc.Empty,
-                                                //     linker.allocator,
-                                                //     "New dependency import: \"{s}/{s}\"\nPlease run `bun bun` to update the .bun.",
-                                                //     .{
-                                                //         package_json.name,
-                                                //         package_relative_path,
-                                                //     },
-                                                // ) catch {};
-                                                break :bundled;
-                                            };
-
-                                            if (comptime Environment.isDebug) {
-                                                const module_path = node_modules_bundle.str(found_module.path);
-                                                std.debug.assert(
-                                                    strings.eql(
-                                                        module_path,
-                                                        package_relative_path,
-                                                    ),
-                                                );
-                                            }
-
-                                            node_module_bundle_import_path = node_module_bundle_import_path orelse
-                                                linker.nodeModuleBundleImportPath(origin);
-                                            import_record.path.text = node_module_bundle_import_path.?;
-                                            import_record.module_id = found_module.id;
-                                            needs_bundle = true;
-                                            continue;
-                                        }
-                                    }
-                                }
-                            }
-                        }
 
                         linker.processImportRecord(
                             loader,
@@ -719,58 +587,7 @@ pub const Linker = struct {
                                 continue;
                             },
                             error.ModuleNotFound => {
-                                if (import_record.handles_import_errors) {
-                                    import_record.path.is_disabled = true;
-                                    continue;
-                                }
-
-                                if (comptime is_bun) {
-                                    // make these happen at runtime
-                                    if (import_record.kind == .require or import_record.kind == .require_resolve) {
-                                        continue;
-                                    }
-                                }
-
-                                had_resolve_errors = true;
-
-                                if (import_record.path.text.len > 0 and Resolver.isPackagePath(import_record.path.text)) {
-                                    if (linker.options.target.isWebLike() and Options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
-                                        try linker.log.addResolveError(
-                                            &result.source,
-                                            import_record.range,
-                                            linker.allocator,
-                                            "Could not resolve: \"{s}\". Try setting --target=\"node\"",
-                                            .{import_record.path.text},
-                                            import_record.kind,
-                                            err,
-                                        );
-                                        continue;
-                                    } else {
-                                        try linker.log.addResolveError(
-                                            &result.source,
-                                            import_record.range,
-                                            linker.allocator,
-                                            "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
-                                            .{import_record.path.text},
-                                            import_record.kind,
-                                            err,
-                                        );
-                                        continue;
-                                    }
-                                } else {
-                                    try linker.log.addResolveError(
-                                        &result.source,
-                                        import_record.range,
-                                        linker.allocator,
-                                        "Could not resolve: \"{s}\"",
-                                        .{
-                                            import_record.path.text,
-                                        },
-                                        import_record.kind,
-                                        err,
-                                    );
-                                    continue;
-                                }
+                                had_resolve_errors = try whenModuleNotFound(linker, import_record, result, is_bun);
                             },
                             else => {
                                 had_resolve_errors = true;
@@ -798,68 +615,62 @@ pub const Linker = struct {
         }
         if (had_resolve_errors) return error.ResolveMessage;
         result.ast.externals = try externals.toOwnedSlice();
+    }
 
-        //     if (result.ast.needs_runtime and (result.ast.runtime_import_record_id == null or import_records.items.len == 0)) {
-        //         var new_import_records = try linker.allocator.alloc(ImportRecord, import_records.items.len + 1);
-        //         bun.copy(ImportRecord, new_import_records, import_records.items);
+    fn whenModuleNotFound(
+        linker: *ThisLinker,
+        import_record: *ImportRecord,
+        result: *_bundler.ParseResult,
+        comptime is_bun: bool,
+    ) !bool {
+        if (import_record.handles_import_errors) {
+            import_record.path.is_disabled = true;
+            return false;
+        }
 
-        //         new_import_records[new_import_records.len - 1] = ImportRecord{
-        //             .kind = .stmt,
-        //             .path = if (linker.options.node_modules_bundle != null)
-        //                 Fs.Path.init(node_module_bundle_import_path orelse linker.nodeModuleBundleImportPath(origin))
-        //             else if (import_path_format == .absolute_url)
-        //                 Fs.Path.initWithNamespace(try origin.joinAlloc(linker.allocator, "", "", "bun:wrap", "", ""), "bun")
-        //             else
-        //                 try linker.generateImportPath(source_dir, Linker.runtime_source_path, false, "bun", origin, import_path_format),
+        if (comptime is_bun) {
+            // make these happen at runtime
+            if (import_record.kind == .require or import_record.kind == .require_resolve) {
+                return false;
+            }
+        }
 
-        //             .range = logger.Range{ .loc = logger.Loc{ .start = 0 }, .len = 0 },
-        //         };
-        //         result.ast.runtime_import_record_id = @truncate(u32, import_records.items.len - 1);
-        //         import_records.items = new_import_records;
-        //         import_records.capacity = new_import_records.len;
-        //     }
-
-        //     // We _assume_ you're importing ESM.
-        //     // But, that assumption can be wrong without parsing code of the imports.
-        //     // That's where in here, we inject
-        //     // > import {require} from 'bun:wrap';
-        //     // Since they definitely aren't using require, we don't have to worry about the symbol being renamed.
-        //     if (needs_require and !result.ast.uses_require_ref) {
-        //         result.ast.uses_require_ref = true;
-        //         const PrependPart = struct {
-        //             stmts: [1]js_ast.Stmt,
-        //             import_statement: js_ast.S.Import,
-        //             clause_items: [1]js_ast.ClauseItem,
-        //         };
-        //         var prepend = linker.allocator.create(PrependPart) catch unreachable;
-
-        //         prepend.* = .{
-        //             .clause_items = .{
-        //                 .{
-        //                     .alias = require_alias,
-        //                     .original_name = "",
-        //                     .alias_loc = logger.Loc.Empty,
-        //                     .name = js_ast.LocRef{
-        //                         .loc = logger.Loc.Empty,
-        //                         .ref = result.ast.require_ref,
-        //                     },
-        //                 },
-        //             },
-        //             .import_statement = .{
-        //                 .namespace_ref = Ref.None,
-        //                 .items = &prepend.clause_items,
-        //                 .import_record_index = result.ast.runtime_import_record_id.?,
-        //             },
-        //             .stmts = undefined,
-        //         };
-
-        //         prepend.stmts[0] = .{
-        //             .data = .{ .s_import = &prepend.import_statement },
-        //             .loc = logger.Loc.Empty,
-        //         };
-
-        //         result.ast.prepend_part = js_ast.Part{ .stmts = &prepend.stmts };
-        //     }
+        if (import_record.path.text.len > 0 and Resolver.isPackagePath(import_record.path.text)) {
+            if (linker.options.target.isWebLike() and Options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                try linker.log.addResolveError(
+                    &result.source,
+                    import_record.range,
+                    linker.allocator,
+                    "Could not resolve: \"{s}\". Try setting --target=\"node\"",
+                    .{import_record.path.text},
+                    import_record.kind,
+                    error.ModuleNotFound,
+                );
+            } else {
+                try linker.log.addResolveError(
+                    &result.source,
+                    import_record.range,
+                    linker.allocator,
+                    "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
+                    .{import_record.path.text},
+                    import_record.kind,
+                    error.ModuleNotFound,
+                );
+            }
+        } else {
+            try linker.log.addResolveError(
+                &result.source,
+                import_record.range,
+                linker.allocator,
+                "Could not resolve: \"{s}\"",
+                .{
+                    import_record.path.text,
+                },
+                import_record.kind,
+                error.ModuleNotFound,
+            );
+        }
+        return true;
     }
 
     const ImportPathsList = allocators.BSSStringList(512, 128);

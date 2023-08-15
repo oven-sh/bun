@@ -494,7 +494,5 @@ export function getEventSource() {
     value: 2,
   });
 
-  EventSource[Symbol.for("CommonJS")] = 0;
-
   return EventSource;
 }

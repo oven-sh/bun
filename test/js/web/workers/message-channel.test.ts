@@ -46,8 +46,7 @@ test("tranfer array buffer", done => {
 test("non-transferable", () => {
   var channel = new MessageChannel();
   channel.port2.onmessage = function (e) {
-    // not reached
-    expect(1).toBe(2);
+    expect().fail("should not be reached");
   };
   expect(() => {
     channel.port1.postMessage("hello", [channel.port1]);
@@ -87,8 +86,7 @@ test("transfer message ports and post messages", done => {
   };
 
   c2.port2.onmessage = e => {
-    // should not be reached. onmessage defined in c1.port1 should be called instead
-    expect(1).toBe(2);
+    expect().fail("onmessage defined on c1.port1 should be called instead");
   };
 
   c1.port2.postMessage("hello from channel 1 port 2", [c2.port2]);
@@ -97,7 +95,7 @@ test("transfer message ports and post messages", done => {
 test("message channel created on main thread", done => {
   var worker = new Worker(new URL("receive-port-worker.js", import.meta.url).href);
   worker.onerror = e => {
-    expect(1).toBe(2);
+    expect().fail();
     done();
   };
   var channel = new MessageChannel();
@@ -112,7 +110,7 @@ test("message channel created on main thread", done => {
 test("message channel created on other thread", done => {
   var worker = new Worker(new URL("create-port-worker.js", import.meta.url).href);
   worker.onerror = e => {
-    expect(1).toBe(2);
+    expect().fail();
     done();
   };
   worker.onmessage = e => {
@@ -202,10 +200,10 @@ test("many message channels", done => {
     }).toThrow();
 
     // Sending Error object should not throw
-    // expect(() => {
-    //   var err = new Error();
-    //   channel0.port1.postMessage({ id: "error-object", error: err, port: c4.port1 }, [c4.port1]);
-    // }).not.toThrow();
+    expect(() => {
+      var err = new Error();
+      channel0.port1.postMessage({ id: "error-object", error: err, port: c4.port1 }, [c4.port1]);
+    }).not.toThrow();
 
     c4.port1.postMessage("Should succeed");
     channel0.port1.postMessage({ id: "done" });
@@ -229,8 +227,7 @@ test("many message channels", done => {
       } else if (event.data.id == "done") {
         done();
       } else {
-        // should not be reached
-        expect(1).toBe(2);
+        expect().fail("branch should not be reached");
       }
     };
   }
@@ -251,8 +248,7 @@ test("many message channels", done => {
     } else if (event.data == "done") {
       testTransfers(done);
     } else {
-      // should not be reached
-      expect(1).toBe(2);
+      expect().fail("branch should not be reached");
     }
   };
 });

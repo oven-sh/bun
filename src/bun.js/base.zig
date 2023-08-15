@@ -2122,6 +2122,11 @@ pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) v
     // zig's memory allocator interface won't work here
     // mimalloc knows the size of things
     // but we don't
+    // if (comptime Environment.allow_assert) {
+    //     std.debug.assert(mimalloc.mi_check_owned(bytes_) or
+    //         mimalloc.mi_heap_check_owned(JSC.VirtualMachine.get().arena.heap.?, bytes_));
+    // }
+
     mimalloc.mi_free(bytes_);
 }
 
@@ -3285,6 +3290,15 @@ pub const PollRef = struct {
         this.status = .inactive;
         vm.uws_event_loop.?.unref();
     }
+
+    /// From another thread, Prevent a poll from keeping the process alive.
+    pub fn unrefConcurrently(this: *PollRef, vm: *JSC.VirtualMachine) void {
+        if (this.status != .active)
+            return;
+        this.status = .inactive;
+        vm.uws_event_loop.?.unrefConcurrently();
+    }
+
     /// Prevent a poll from keeping the process alive on the next tick.
     pub fn unrefOnNextTick(this: *PollRef, vm: *JSC.VirtualMachine) void {
         if (this.status != .active)
@@ -3293,12 +3307,28 @@ pub const PollRef = struct {
         vm.pending_unref_counter +|= 1;
     }
 
+    /// From another thread, prevent a poll from keeping the process alive on the next tick.
+    pub fn unrefOnNextTickConcurrently(this: *PollRef, vm: *JSC.VirtualMachine) void {
+        if (this.status != .active)
+            return;
+        this.status = .inactive;
+        _ = @atomicRmw(@TypeOf(vm.pending_unref_counter), &vm.pending_unref_counter, .Add, 1, .Monotonic);
+    }
+
     /// Allow a poll to keep the process alive.
     pub fn ref(this: *PollRef, vm: *JSC.VirtualMachine) void {
         if (this.status != .inactive)
             return;
         this.status = .active;
         vm.uws_event_loop.?.ref();
+    }
+
+    /// Allow a poll to keep the process alive.
+    pub fn refConcurrently(this: *PollRef, vm: *JSC.VirtualMachine) void {
+        if (this.status != .inactive)
+            return;
+        this.status = .active;
+        vm.uws_event_loop.?.refConcurrently();
     }
 };
 
@@ -3967,78 +3997,7 @@ pub const FilePoll = struct {
     }
 };
 
-pub const Strong = extern struct {
-    ref: ?*JSC.napi.Ref = null,
-
-    pub fn init() Strong {
-        return .{};
-    }
-
-    pub fn create(
-        value: JSC.JSValue,
-        globalThis: *JSC.JSGlobalObject,
-    ) Strong {
-        var str = Strong.init();
-        if (value != .zero)
-            str.set(globalThis, value);
-        return str;
-    }
-
-    pub fn get(this: *Strong) ?JSValue {
-        var ref = this.ref orelse return null;
-        const result = ref.get();
-        if (result == .zero) {
-            return null;
-        }
-
-        return result;
-    }
-
-    pub fn swap(this: *Strong) JSValue {
-        var ref = this.ref orelse return .zero;
-        const result = ref.get();
-        if (result == .zero) {
-            return .zero;
-        }
-
-        ref.set(.zero);
-        return result;
-    }
-
-    pub fn has(this: *Strong) bool {
-        var ref = this.ref orelse return false;
-        return ref.get() != .zero;
-    }
-
-    pub fn trySwap(this: *Strong) ?JSValue {
-        const result = this.swap();
-        if (result == .zero) {
-            return null;
-        }
-
-        return result;
-    }
-
-    pub fn set(this: *Strong, globalThis: *JSC.JSGlobalObject, value: JSValue) void {
-        var ref: *JSC.napi.Ref = this.ref orelse {
-            if (value == .zero) return;
-            this.ref = JSC.napi.Ref.create(globalThis, value);
-            return;
-        };
-        ref.set(value);
-    }
-
-    pub fn clear(this: *Strong) void {
-        var ref: *JSC.napi.Ref = this.ref orelse return;
-        ref.set(JSC.JSValue.zero);
-    }
-
-    pub fn deinit(this: *Strong) void {
-        var ref: *JSC.napi.Ref = this.ref orelse return;
-        this.ref = null;
-        ref.destroy();
-    }
-};
+pub const Strong = @import("./Strong.zig").Strong;
 
 pub const BinaryType = enum {
     Buffer,

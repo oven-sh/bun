@@ -25,7 +25,6 @@ const resolve_path = @import("./resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("./bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("cli.zig").Command;
 const bundler = bun.bundler;
-const NodeModuleBundle = @import("node_module_bundle.zig").NodeModuleBundle;
 const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
 const JSC = @import("root").bun.JSC;
@@ -60,7 +59,11 @@ pub const Run = struct {
         }
 
         run = .{
-            .vm = try VirtualMachine.initWithModuleGraph(arena.allocator(), ctx.log, graph_ptr),
+            .vm = try VirtualMachine.initWithModuleGraph(.{
+                .allocator = arena.allocator(),
+                .log = ctx.log,
+                .graph = graph_ptr,
+            }),
             .arena = arena,
             .ctx = ctx,
             .entry_path = entry_path,
@@ -129,8 +132,7 @@ pub const Run = struct {
         vm.global.vm().holdAPILock(&run, callback);
     }
 
-    pub fn boot(ctx_: Command.Context, file: std.fs.File, entry_path: string) !void {
-        _ = file;
+    pub fn boot(ctx_: Command.Context, entry_path: string) !void {
         var ctx = ctx_;
         JSC.markBinding(@src());
         bun.JSC.initialize();
@@ -145,13 +147,13 @@ pub const Run = struct {
 
         run = .{
             .vm = try VirtualMachine.init(
-                arena.allocator(),
-                ctx.args,
-                null,
-                ctx.log,
-                null,
-                ctx.debug.hot_reload != .none,
-                ctx.runtime_options.smol,
+                .{
+                    .allocator = arena.allocator(),
+                    .log = ctx.log,
+                    .args = ctx.args,
+                    .store_fd = ctx.debug.hot_reload != .none,
+                    .smol = ctx.runtime_options.smol,
+                },
             ),
             .arena = arena,
             .ctx = ctx,
@@ -241,6 +243,11 @@ pub const Run = struct {
         if (this.ctx.debug.hot_reload != .none) {
             JSC.HotReloader.enableHotModuleReloading(vm);
         }
+
+        if (strings.eqlComptime(this.entry_path, ".") and vm.bundler.fs.top_level_dir.len > 0) {
+            this.entry_path = vm.bundler.fs.top_level_dir;
+        }
+
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
             if (promise.status(vm.global.vm()) == .Rejected) {
                 vm.runErrorHandler(promise.result(vm.global.vm()), null);

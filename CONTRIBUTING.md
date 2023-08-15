@@ -47,33 +47,17 @@ TODO: document this (see [`bindings.zig`](src/bun.js/bindings/bindings.zig) and 
 
 Copy from examples like `Subprocess` or `Response`.
 
-### ESM modules
+### ESM Modules and Builtins JS
 
 Bun implements ESM modules in a mix of native code and JavaScript.
 
 Several Node.js modules are implemented in JavaScript and loosely based on browserify polyfills.
 
-The ESM modules in Bun are located in [`src/bun.js/*.exports.js`](src/bun.js/). Unlike other code in Bun, these files are NOT transpiled. They are loaded directly into the JavaScriptCore VM. That means `require` does not work in these files. Instead, you must use `import.meta.require`, or ideally, not use require/import other files at all.
+Builtin modules in Bun are located in [`src/js`](src/js/). These files are transpiled and support a JavaScriptCore-only syntax for internal slots, which is explained further in [`src/js/README.md`](src/js/README.md).
+
+Native C++ modules are in `src/bun.js/modules/`.
 
 The module loader is in [`src/bun.js/module_loader.zig`](src/bun.js/module_loader.zig).
-
-### JavaScript Builtins
-
-TODO: update this with the new build process that uses TypeScript and `$` instead of `@`.
-
-JavaScript builtins are located in [`src/js/builtins/*.ts`](src/js/builtins).
-
-These files support a JavaScriptCore-only syntax for internal slots. `@` is used to access an internal slot. For example: `new @Array(123)` will create a new `Array` similar to `new Array(123)`, except if a library modifies the `Array` global, it will not affect the internal slot (`@Array`). These names must be allow-listed in `BunBuiltinNames.h` (though JavaScriptCore allowlists some names by default).
-
-They can not use or reference ESM-modules. The files that end with `*Internals.js` are automatically loaded globally. Most usage of internals right now are the stream implementations (which share a lot of code from Safari/WebKit) and ImportMetaObject (which is how `require` is implemented in the runtime)
-
-To regenerate the builtins:
-
-```sh
-make clean-bindings && make generate-builtins && make bindings -j10
-```
-
-It is recommended that you have ccache installed or else you will spend a lot of time waiting for the bindings to compile.
 
 ### Memory management in Bun's JavaScript runtime
 

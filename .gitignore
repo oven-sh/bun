@@ -96,6 +96,8 @@ packages/bun-wasm/*.cjs
 packages/bun-wasm/*.map
 packages/bun-wasm/*.js
 packages/bun-wasm/*.d.ts
+packages/bun-wasm/*.d.cts
+packages/bun-wasm/*.d.mts
 *.bc
 
 src/fallback.version
@@ -122,6 +124,9 @@ cold-jsc-start.d
 
 /test.ts
 
-src/js/out/modules_dev
+src/js/out/modules*
+src/js/out/functions*
+src/js/out/tmp
+src/js/out/DebugPath.h
 
 make-dev-stats.csv

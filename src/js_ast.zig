@@ -25,6 +25,7 @@ const JSONParser = bun.JSON;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const JSPrinter = @import("./js_printer.zig");
+const js_lexer = @import("./js_lexer.zig");
 const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
 
 /// This is the index to the automatically-generated part containing code that
@@ -1703,17 +1704,19 @@ pub const E = struct {
         }
 
         pub fn toStringFromF64Safe(value: f64, allocator: std.mem.Allocator) ?string {
-            if (value == @trunc(value) and (value < std.math.maxInt(i32) and value > std.math.minInt(i32))) {
-                const int_value = @as(i64, @intFromFloat(value));
-                const abs = @as(u64, @intCast(std.math.absInt(int_value) catch return null));
-                if (abs < double_digit.len) {
-                    return if (int_value < 0)
-                        neg_double_digit[abs]
-                    else
-                        double_digit[abs];
-                }
+            if (comptime !Environment.isWasm) {
+                if (value == @trunc(value) and (value < std.math.maxInt(i32) and value > std.math.minInt(i32))) {
+                    const int_value = @as(i64, @intFromFloat(value));
+                    const abs = @as(u64, @intCast(std.math.absInt(int_value) catch return null));
+                    if (abs < double_digit.len) {
+                        return if (int_value < 0)
+                            neg_double_digit[abs]
+                        else
+                            double_digit[abs];
+                    }
 
-                return std.fmt.allocPrint(allocator, "{d}", .{@as(i32, @intCast(int_value))}) catch return null;
+                    return std.fmt.allocPrint(allocator, "{d}", .{@as(i32, @intCast(int_value))}) catch return null;
+                }
             }
 
             if (std.math.isNan(value)) {
@@ -2249,6 +2252,11 @@ pub const E = struct {
             }
 
             if (s.isUTF8()) {
+                if (comptime !Environment.isNative) {
+                    var allocated = (strings.toUTF16Alloc(bun.default_allocator, s.data, false) catch return 0) orelse return s.data.len;
+                    defer bun.default_allocator.free(allocated);
+                    return @as(u32, @truncate(allocated.len));
+                }
                 return @as(u32, @truncate(bun.simdutf.length.utf16.from.utf8.le(s.data)));
             }
 
@@ -2359,7 +2367,6 @@ pub const E = struct {
         }
 
         pub fn toJS(s: *String, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-            s.resolveRopeIfNeeded(allocator);
             if (!s.isPresent()) {
                 var emp = bun.String.empty;
                 return emp.toJS(globalObject);
@@ -2367,14 +2374,20 @@ pub const E = struct {
 
             if (s.is_utf16) {
                 var out = bun.String.createUninitializedUTF16(s.len());
-                defer out.deref();
                 @memcpy(@constCast(out.utf16()), s.slice16());
                 return out.toJS(globalObject);
             }
 
             {
-                var out = bun.String.create(s.slice(allocator));
+                s.resolveRopeIfNeeded(allocator);
+
+                const decoded = js_lexer.decodeUTF8(s.slice(allocator), allocator) catch unreachable;
+                defer allocator.free(decoded);
+
+                var out = bun.String.createUninitializedUTF16(decoded.len);
                 defer out.deref();
+                @memcpy(@constCast(out.utf16()), decoded);
+
                 return out.toJS(globalObject);
             }
         }
@@ -3063,7 +3076,7 @@ pub const Expr = struct {
     ) !Expr {
         var bytes = blob.sharedView();
 
-        const mime_type = mime_type_ orelse HTTP.MimeType.init(blob.content_type);
+        const mime_type = mime_type_ orelse HTTP.MimeType.init(blob.content_type, null, null);
 
         if (mime_type.category == .json) {
             var source = logger.Source.initPathString("fetch.json", bytes);
@@ -4126,6 +4139,14 @@ pub const Expr = struct {
 
     pub fn isPrimitiveLiteral(this: Expr) bool {
         return @as(Tag, this.data).isPrimitiveLiteral();
+    }
+
+    pub fn isRef(this: Expr, ref: Ref) bool {
+        return switch (this.data) {
+            .e_import_identifier => |import_identifier| import_identifier.ref.eql(ref),
+            .e_identifier => |ident| ident.ref.eql(ref),
+            else => false,
+        };
     }
 
     pub const Tag = enum(u6) {
@@ -5941,8 +5962,6 @@ pub const Ast = struct {
     wrapper_ref: Ref = Ref.None,
     require_ref: Ref = Ref.None,
 
-    bun_plugin: BunPlugin = .{},
-
     prepend_part: ?Part = null,
 
     // These are used when bundling. They are filled in during the parser pass
@@ -6414,7 +6433,6 @@ pub const Part = struct {
         cjs_imports,
         react_fast_refresh,
         dirname_filename,
-        bun_plugin,
         bun_test,
         dead_due_to_inlining,
         commonjs_named_export,
@@ -6681,11 +6699,6 @@ pub fn printmem(comptime format: string, args: anytype) void {
     Output.initTest();
     Output.print(format, args);
 }
-
-pub const BunPlugin = struct {
-    ref: Ref = Ref.None,
-    hoisted_stmts: std.ArrayListUnmanaged(Stmt) = .{},
-};
 
 pub const Macro = struct {
     const JavaScript = @import("root").bun.JSC;
@@ -9617,18 +9630,13 @@ pub const Macro = struct {
             JavaScript.VirtualMachine.get()
         else brk: {
             var old_transform_options = resolver.opts.transform_options;
-            resolver.opts.transform_options.node_modules_bundle_path = null;
-            resolver.opts.transform_options.node_modules_bundle_path_server = null;
             defer resolver.opts.transform_options = old_transform_options;
-            var _vm = try JavaScript.VirtualMachine.init(
-                default_allocator,
-                resolver.opts.transform_options,
-                null,
-                log,
-                env,
-                false,
-                false,
-            );
+            var _vm = try JavaScript.VirtualMachine.init(.{
+                .allocator = default_allocator,
+                .args = resolver.opts.transform_options,
+                .log = log,
+                .env_loader = env,
+            });
 
             _vm.enableMacroMode();
             _vm.eventLoop().ensureWaker();
@@ -9781,10 +9789,10 @@ pub const Macro = struct {
 
                             if (value.jsType() == .DOMWrapper) {
                                 if (value.as(JSC.WebCore.Response)) |resp| {
-                                    mime_type = HTTP.MimeType.init(resp.mimeType(null));
+                                    mime_type = HTTP.MimeType.init(resp.mimeType(null), null, null);
                                     blob_ = resp.body.use();
                                 } else if (value.as(JSC.WebCore.Request)) |resp| {
-                                    mime_type = HTTP.MimeType.init(resp.mimeType());
+                                    mime_type = HTTP.MimeType.init(resp.mimeType(), null, null);
                                     blob_ = resp.body.value.use();
                                 } else if (value.as(JSC.WebCore.Blob)) |resp| {
                                     blob_ = resp.*;
@@ -9952,12 +9960,8 @@ pub const Macro = struct {
                         },
                         .String => {
                             var bun_str = value.toBunString(this.global);
-                            if (bun_str.is8Bit()) {
-                                if (strings.isAllASCII(bun_str.latin1())) {
-                                    return Expr.init(E.String, E.String.init(this.allocator.dupe(u8, bun_str.latin1()) catch unreachable), this.caller.loc);
-                                }
-                            }
 
+                            // encode into utf16 so the printer escapes the string correctly
                             var utf16_bytes = this.allocator.alloc(u16, bun_str.length()) catch unreachable;
                             var out_slice = utf16_bytes[0 .. (bun_str.encodeInto(std.mem.sliceAsBytes(utf16_bytes), .utf16le) catch 0) / 2];
                             return Expr.init(E.String, E.String.init(out_slice), this.caller.loc);

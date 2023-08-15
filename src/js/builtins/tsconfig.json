@@ -6,8 +6,9 @@
   "include": [
     ".",
     "../private.d.ts",
-    "builtins.d.ts",
+    "../builtins.d.ts",
     "../out/WebCoreJSBuiltins.d.ts",
-    "../../../packages/bun-types/index.d.ts"
+    "../../../packages/bun-types/index.d.ts",
+    "../_codegen/builtin-parser.ts"
   ]
 }

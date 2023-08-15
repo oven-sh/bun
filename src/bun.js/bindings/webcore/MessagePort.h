@@ -96,12 +96,18 @@ public:
 
     void dispatchEvent(Event&) final;
 
+    JSValue tryTakeMessage(JSGlobalObject*);
+
     TransferredMessagePort disentangle();
     static Ref<MessagePort> entangle(ScriptExecutionContext&, TransferredMessagePort&&);
 
     bool hasPendingActivity() const;
 
     static ScriptExecutionContextIdentifier contextIdForMessagePortId(MessagePortIdentifier);
+
+    void jsRef(JSGlobalObject*);
+    void jsUnref(JSGlobalObject*);
+    bool jsHasRef() { return m_hasRef; }
 
 private:
     explicit MessagePort(ScriptExecutionContext&, const MessagePortIdentifier& local, const MessagePortIdentifier& remote);
@@ -133,6 +139,11 @@ private:
     MessagePortIdentifier m_remoteIdentifier;
 
     mutable std::atomic<unsigned> m_refCount { 1 };
+
+    bool m_hasRef { false };
+
+    uint32_t m_messageEventCount { 0 };
+    static void onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind);
 };
 
 WebCoreOpaqueRoot root(MessagePort*);

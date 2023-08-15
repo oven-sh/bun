@@ -24,7 +24,7 @@ pub const huge_allocator_threshold: comptime_int = @import("./memory_allocator.z
 /// FileSystem is a singleton.
 pub const fs_allocator = default_allocator;
 
-pub const C = @import("c.zig");
+pub const C = @import("root").C;
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
 pub const meta = @import("./meta.zig");
@@ -486,8 +486,12 @@ pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
 
     if (!does_input_or_output_overlap) {
         @memcpy(output[0..input.len], input);
-    } else {
+    } else if (comptime Environment.isNative) {
         C.memmove(output.ptr, input.ptr, input.len);
+    } else {
+        for (input, output) |input_byte, *out| {
+            out.* = input_byte;
+        }
     }
 }
 
@@ -700,7 +704,7 @@ pub const invalid_fd = std.math.maxInt(FileDescriptor);
 
 pub const simdutf = @import("./bun.js/bindings/bun-simdutf.zig");
 
-pub const JSC = @import("./jsc.zig");
+pub const JSC = @import("root").JavaScriptCore;
 pub const AsyncIO = @import("async_io");
 
 pub const logger = @import("./logger.zig");
@@ -725,6 +729,10 @@ pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
 /// This wrapper exists to avoid the call to sliceTo(0)
 /// Zig's sliceTo(0) is scalar
 pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
+    if (comptime !Environment.isNative) {
+        return null;
+    }
+
     const ptr = std.c.getenv(path_.ptr) orelse return null;
     return sliceTo(ptr, 0);
 }
@@ -868,6 +876,9 @@ pub const copyFileRange = CopyFile.copyFileRange;
 pub const copyFile = CopyFile.copyFile;
 
 pub fn parseDouble(input: []const u8) !f64 {
+    if (comptime Environment.isWasm) {
+        return try std.fmt.parseFloat(f64, input);
+    }
     return JSC.WTF.parseDouble(input);
 }
 
@@ -1187,7 +1198,10 @@ pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;
 
 pub const Joiner = @import("./string_joiner.zig");
 pub const renamer = @import("./renamer.zig");
-pub const sourcemap = @import("./sourcemap/sourcemap.zig");
+pub const sourcemap = struct {
+    pub usingnamespace @import("./sourcemap/sourcemap.zig");
+    pub usingnamespace @import("./sourcemap/CodeCoverage.zig");
+};
 
 pub fn asByteSlice(buffer: anytype) []const u8 {
     return switch (@TypeOf(buffer)) {
@@ -1571,3 +1585,5 @@ pub const WTF = struct {
 pub const ArenaAllocator = @import("./ArenaAllocator.zig").ArenaAllocator;
 
 pub const Wyhash = @import("./wyhash.zig").Wyhash;
+
+pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;

@@ -629,6 +629,12 @@ pub const PathLike = union(Tag) {
         }
     }
 
+    pub fn toThreadSafe(this: *PathLike) void {
+        if (this.* == .slice_with_underlying_string) {
+            this.slice_with_underlying_string.toThreadSafe();
+        }
+    }
+
     pub fn deinitAndUnprotect(this: *const PathLike) void {
         switch (this.*) {
             .slice_with_underlying_string => |val| {
@@ -1047,6 +1053,12 @@ pub const PathOrFileDescriptor = union(Tag) {
     pub fn deinit(this: PathOrFileDescriptor) void {
         if (this == .path) {
             this.path.deinit();
+        }
+    }
+
+    pub fn toThreadSafe(this: *PathOrFileDescriptor) void {
+        if (this.* == .path) {
+            this.path.toThreadSafe();
         }
     }
 
@@ -1826,7 +1838,7 @@ pub const Path = struct {
 
         const base_slice = path.slice();
 
-        return JSC.ZigString.init(std.fs.path.extension(base_slice)).toValueGC(globalThis);
+        return JSC.ZigString.init(std.fs.path.extension(base_slice)).withEncoding().toValueGC(globalThis);
     }
     pub fn format(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
@@ -1849,14 +1861,17 @@ pub const Path = struct {
         var insert_separator = true;
         if (path_object.getTruthy(globalThis, "dir")) |prop| {
             prop.toZigString(&dir, globalThis);
-            insert_separator = !dir.isEmpty();
-        } else if (path_object.getTruthy(globalThis, "root")) |prop| {
-            prop.toZigString(&dir, globalThis);
+        }
+        if (dir.isEmpty()) {
+            if (path_object.getTruthy(globalThis, "root")) |prop| {
+                prop.toZigString(&dir, globalThis);
+            }
         }
 
         if (path_object.getTruthy(globalThis, "base")) |prop| {
             prop.toZigString(&name_with_ext, globalThis);
-        } else {
+        }
+        if (name_with_ext.isEmpty()) {
             var had_ext = false;
             if (path_object.getTruthy(globalThis, "ext")) |prop| {
                 prop.toZigString(&ext, globalThis);
@@ -1885,6 +1900,16 @@ pub const Path = struct {
             defer allocator.free(out);
 
             return JSC.ZigString.init(out).withEncoding().toValueGC(globalThis);
+        } else {
+            if (!isWindows) {
+                if (dir.eqlComptime("/")) {
+                    insert_separator = false;
+                }
+            } else {
+                if (dir.eqlComptime("\\")) {
+                    insert_separator = false;
+                }
+            }
         }
 
         if (insert_separator) {
@@ -1996,7 +2021,7 @@ pub const Path = struct {
         if (args_len == 0) return JSC.ZigString.init("").toValue(globalThis);
 
         var zig_str: JSC.ZigString = args_ptr[0].getZigString(globalThis);
-        if (zig_str.len == 0) return JSC.ZigString.init("").toValue(globalThis);
+        if (zig_str.len == 0) return JSC.ZigString.init(".").toValue(globalThis);
 
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var str_slice = zig_str.toSlice(heap_allocator);
@@ -2321,7 +2346,7 @@ pub const Process = struct {
         var vm = globalObject.bunVM();
         if (vm.worker) |worker| {
             vm.exit_handler.exit_code = code;
-            worker.terminate();
+            worker.requestTerminate();
             return;
         }
 

@@ -561,7 +561,7 @@ pub const Msg = struct {
             try writer.print("{s}: {s}\n{s}\n{s}:{}:{} ({d})", .{
                 msg.kind.string(),
                 msg.data.text,
-                location.line_text,
+                location.line_text orelse "",
                 location.file,
                 location.line,
                 location.column,

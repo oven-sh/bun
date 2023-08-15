@@ -14,7 +14,7 @@ const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const Fs = @import("../../fs.zig");
 const Resolver = @import("../../resolver/resolver.zig");
 const ast = @import("../../import_record.zig");
-const NodeModuleBundle = @import("../../node_module_bundle.zig").NodeModuleBundle;
+
 const MacroEntryPoint = bun.bundler.MacroEntryPoint;
 const logger = @import("root").bun.logger;
 const Api = @import("../../api/schema.zig").Api;
@@ -169,8 +169,7 @@ pub const ServerConfig = struct {
         const log = Output.scoped(.SSLConfig, false);
 
         pub fn asUSockets(this_: ?SSLConfig) uws.us_bun_socket_context_options_t {
-            var ctx_opts: uws.us_bun_socket_context_options_t = undefined;
-            @memset(@as([*]u8, @ptrCast(&ctx_opts))[0..@sizeOf(uws.us_bun_socket_context_options_t)], 0);
+            var ctx_opts: uws.us_bun_socket_context_options_t = .{};
 
             if (this_) |ssl_config| {
                 if (ssl_config.key_file_name != null)
@@ -1069,7 +1068,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         byte_stream: ?*JSC.WebCore.ByteStream = null,
 
         /// Used in errors
-        pathname: []const u8 = "",
+        pathname: bun.String = bun.String.empty,
 
         /// Used either for temporary blob data or fallback
         /// When the response body is a temporary value
@@ -1550,10 +1549,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 stream.unpipe();
             }
 
-            if (this.pathname.len > 0) {
-                ctxLog("finalizeWithoutDeinit: this.pathname.len > 0 null", .{});
-                this.allocator.free(bun.constStrToU8(this.pathname));
-                this.pathname = "";
+            if (!this.pathname.isEmpty()) {
+                this.pathname.deref();
+                this.pathname = bun.String.empty;
             }
 
             // if we are waiting for the body yet and the request was not aborted we can safely clear the onData callback
@@ -2235,7 +2233,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 request_object.uws_request = req;
 
                 request_object.ensureURL() catch {
-                    request_object.url = "";
+                    request_object.url = bun.String.empty;
                 };
 
                 // we have to clone the request headers here since they will soon belong to a different request
@@ -2244,7 +2242,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
 
                 if (comptime debug_mode) {
-                    ctx.pathname = bun.default_allocator.dupe(u8, request_object.url) catch unreachable;
+                    ctx.pathname = request_object.url.clone();
                 }
 
                 // This object dies after the stack frame is popped
@@ -2596,15 +2594,28 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             runErrorHandlerWithStatusCode(this, value, 500);
         }
 
-        fn ensurePathname(this: *RequestContext) []const u8 {
-            if (this.pathname.len > 0)
-                return this.pathname;
+        const PathnameFormatter = struct {
+            ctx: *RequestContext,
 
-            if (!this.flags.has_abort_handler) {
-                return this.req.url();
+            pub fn format(formatter: @This(), comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+                var this = formatter.ctx;
+
+                if (!this.pathname.isEmpty()) {
+                    try this.pathname.format(fmt, opts, writer);
+                    return;
+                }
+
+                if (!this.flags.has_abort_handler) {
+                    try writer.writeAll(this.req.url());
+                    return;
+                }
+
+                try writer.writeAll("/");
             }
+        };
 
-            return "/";
+        fn ensurePathname(this: *RequestContext) PathnameFormatter {
+            return .{ .ctx = this };
         }
 
         pub inline fn shouldCloseConnection(this: *const RequestContext) bool {
@@ -2625,7 +2636,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     vm.log,
                     error.ExceptionOcurred,
                     exception_list.toOwnedSlice() catch @panic("TODO"),
-                    "<r><red>{s}<r> - <b>{s}<r> failed",
+                    "<r><red>{s}<r> - <b>{}<r> failed",
                     .{ @as(string, @tagName(this.method)), this.ensurePathname() },
                 );
             } else {
@@ -4900,8 +4911,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 }
 
                 existing_request = Request{
-                    .url = url.href,
-                    .url_was_allocated = true,
+                    .url = bun.String.create(url.href),
                     .headers = headers,
                     .body = JSC.WebCore.InitRequestBodyValue(body) catch unreachable,
                     .method = method,
@@ -4943,7 +4953,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
 
             if (response_value.as(JSC.WebCore.Response)) |resp| {
-                resp.url = this.allocator.dupe(u8, existing_request.url) catch unreachable;
+                resp.url = existing_request.url.clone();
             }
             return JSC.JSPromise.resolvedPromiseValue(ctx, response_value).asObjectRef();
         }
@@ -5295,7 +5305,6 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
 
             request_object.* = .{
-                .url = "",
                 .method = ctx.method,
                 .uws_request = req,
                 .https = ssl_enabled,
@@ -5398,7 +5407,6 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
 
             request_object.* = .{
-                .url = "",
                 .method = ctx.method,
                 .uws_request = req,
                 .upgrader = ctx,

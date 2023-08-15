@@ -77,7 +77,7 @@ The standard `Bun.hash` functions uses [Wyhash](https://github.com/wangyi-fudan/
 
 ```ts
 Bun.hash("some data here");
-// 976213160445840
+// 11562320457524636935n
 ```
 
 The input can be a string, `TypedArray`, `DataView`, `ArrayBuffer`, or `SharedArrayBuffer`.
@@ -91,14 +91,14 @@ Bun.hash(arr.buffer);
 Bun.hash(new DataView(arr.buffer));
 ```
 
-Optionally, an integer seed can be specified as the second parameter.
+Optionally, an integer seed can be specified as the second parameter. For 64-bit hashes seeds above `Number.MAX_SAFE_INTEGER` should be given as BigInt to avoid loss of precision.
 
 ```ts
 Bun.hash("some data here", 1234);
-// 1173484059023252
+// 15724820720172937558n
 ```
 
-Additional hashing algorithms are available as properties on `Bun.hash`. The API is the same for each.
+Additional hashing algorithms are available as properties on `Bun.hash`. The API is the same for each, only changing the return type from number for 32-bit hashes to bigint for 64-bit hashes.
 
 ```ts
 Bun.hash.wyhash("data", 1234); // equivalent to Bun.hash()
@@ -107,6 +107,7 @@ Bun.hash.adler32("data", 1234);
 Bun.hash.cityHash32("data", 1234);
 Bun.hash.cityHash64("data", 1234);
 Bun.hash.murmur32v3("data", 1234);
+Bun.hash.murmur32v2("data", 1234);
 Bun.hash.murmur64v2("data", 1234);
 ```
 

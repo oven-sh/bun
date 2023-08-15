@@ -40,7 +40,7 @@ On Linux, `bun install` tends to install packages 20-100x faster than `npm insta
 Running `bun install` will:
 
 - **Install** all `dependencies`, `devDependencies`, and `optionalDependencies`. Bun does not install `peerDependencies` by default.
-- **Run** your project's `{pre|post}install` scripts at the appropriate time. For security reasons Bun _does not execute_ lifecycle scripts of installed dependencies.
+- **Run** your project's `{pre|post}install` and `{pre|post}prepare` scripts at the appropriate time. For security reasons Bun _does not execute_ lifecycle scripts of installed dependencies.
 - **Write** a `bun.lockb` lockfile to the project root.
 
 To install in production mode (i.e. without `devDependencies`):
@@ -114,7 +114,7 @@ $ bun add zod@latest
 To add a package as a dev dependency (`"devDependencies"`):
 
 ```bash
-$ bun add --development @types/react
+$ bun add --dev @types/react
 $ bun add -d @types/react
 ```
 

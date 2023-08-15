@@ -89,7 +89,7 @@ const Timer = @import("../system_timer.zig");
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
 const DebugLogs = _resolver.DebugLogs;
-const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
+
 const Router = @import("../router.zig");
 const isPackagePath = _resolver.isPackagePath;
 const Lock = @import("../lock.zig").Lock;
@@ -1609,7 +1609,6 @@ pub const BundleV2 = struct {
                 .main_fields = &.{},
                 .extension_order = &.{},
             },
-            null,
             completion.env,
         );
         bundler.options.jsx = config.jsx;
@@ -1858,13 +1857,6 @@ pub const BundleV2 = struct {
                 if (JSC.HardcodedModule.Aliases.get(import_record.path.text)) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
-                    import_record.source_index = Index.invalid;
-                    continue;
-                }
-
-                if (JSC.DisabledModule.has(import_record.path.text)) {
-                    import_record.path.is_disabled = true;
-                    import_record.do_commonjs_transform_in_printer = true;
                     import_record.source_index = Index.invalid;
                     continue;
                 }
@@ -2593,7 +2585,6 @@ pub const ParseTask = struct {
 
         var opts = js_parser.Parser.Options.init(task.jsx, loader);
         opts.legacy_transform_require_to_import = false;
-        opts.can_import_from_bundle = false;
         opts.features.allow_runtime = !source.index.isRuntime();
         opts.features.dynamic_require = target.isBun();
         opts.warn_about_unbundled_modules = false;

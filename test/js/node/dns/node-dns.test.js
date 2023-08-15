@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
+import * as fs from "node:fs";
+import * as os from "node:os";
 
 // TODO:
 test("it exists", () => {
@@ -189,4 +191,35 @@ test("dns.lookup (localhost)", done => {
 
     done(err);
   });
+});
+
+test("dns.getServers", done => {
+  function parseResolvConf() {
+    let servers = [];
+    try {
+      const content = fs.readFileSync("/etc/resolv.conf", "utf-8");
+      const lines = content.split(os.EOL);
+
+      for (const line of lines) {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length >= 2 && parts[0] === "nameserver") {
+          servers.push(parts[1]);
+        }
+      }
+    } catch (err) {
+      done(err);
+    }
+    return servers;
+  }
+
+  const expectServers = parseResolvConf();
+  const actualServers = dns.getServers();
+  try {
+    for (const server of expectServers) {
+      expect(actualServers).toContain(server);
+    }
+  } catch (err) {
+    return done(err);
+  }
+  done();
 });

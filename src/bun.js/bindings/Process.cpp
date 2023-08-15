@@ -397,7 +397,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
 
     Process__dispatchOnExit(zigGlobal, exitCode);
     Bun__Process__exit(zigGlobal, exitCode);
-    __builtin_unreachable();
+    return JSC::JSValue::encode(jsUndefined());
 }
 
 extern "C" uint64_t Bun__readOriginTimer(void*);
@@ -882,7 +882,10 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
     auto* release = JSC::constructEmptyObject(globalObject);
-    release->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, WTF::String("bun"_s)), 0);
+
+    // SvelteKit compatibility hack
+    release->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, WTF::String("node"_s)), 0);
+
     release->putDirect(vm, Identifier::fromString(vm, "lts"_s), jsBoolean(false), 0);
     release->putDirect(vm, Identifier::fromString(vm, "sourceUrl"_s), jsString(vm, WTF::String(Bun__githubURL, strlen(Bun__githubURL))), 0);
     release->putDirect(vm, Identifier::fromString(vm, "headersUrl"_s), jsEmptyString(vm), 0);
@@ -1153,7 +1156,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
         zigGlobal = Bun__getDefaultGlobal();
     }
     Bun__Process__exit(zigGlobal, exitCode);
-    __builtin_unreachable();
+    return JSC::JSValue::encode(jsUndefined());
 }
 
 template<typename Visitor>

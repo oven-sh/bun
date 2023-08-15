@@ -428,7 +428,12 @@ CPP_DECL bool JSC__VM__isEntered(JSC__VM* arg0);
 CPP_DECL bool JSC__VM__isJITEnabled();
 CPP_DECL void JSC__VM__releaseWeakRefs(JSC__VM* arg0);
 CPP_DECL JSC__JSValue JSC__VM__runGC(JSC__VM* arg0, bool arg1);
+CPP_DECL void JSC__VM__setControlFlowProfiler(JSC__VM* arg0, bool arg1);
 CPP_DECL void JSC__VM__setExecutionForbidden(JSC__VM* arg0, bool arg1);
+CPP_DECL void JSC__VM__notifyNeedTermination(JSC__VM* arg0);
+CPP_DECL void JSC__VM__notifyNeedDebuggerBreak(JSC__VM* arg0);
+CPP_DECL void JSC__VM__notifyNeedShellTimeoutCheck(JSC__VM* arg0);
+CPP_DECL void JSC__VM__notifyNeedWatchdogCheck(JSC__VM* arg0);
 CPP_DECL void JSC__VM__setExecutionTimeLimit(JSC__VM* arg0, double arg1);
 CPP_DECL void JSC__VM__shrinkFootprint(JSC__VM* arg0);
 CPP_DECL void JSC__VM__throwError(JSC__VM* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
@@ -578,7 +583,7 @@ ZIG_DECL JSC__JSValue Crypto__timingSafeEqual__slowpath(JSC__JSGlobalObject* arg
 
 #pragma mark - Zig::GlobalObject
 
-CPP_DECL JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* arg0, int32_t arg1, void* arg2, int32_t arg3, bool arg4);
+CPP_DECL JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* arg0, int32_t arg1, void* arg2, int32_t arg3, bool arg4, void* arg5);
 CPP_DECL void* Zig__GlobalObject__getModuleRegistryMap(JSC__JSGlobalObject* arg0);
 CPP_DECL bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* arg0, void* arg1);
 

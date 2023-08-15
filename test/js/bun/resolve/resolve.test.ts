@@ -133,3 +133,24 @@ it("file url in require resolves", async () => {
   expect(exitCode).toBe(0);
   expect(stdout.toString("utf8")).toBe("1\n");
 });
+
+it("import long string should not segfault", async () => {
+  try {
+    await import("a".repeat(10000));
+  } catch {}
+});
+it("import long string should not segfault", async () => {
+  try {
+    import.meta.require("a".repeat(10000));
+  } catch {}
+});
+it("import long string should not segfault", async () => {
+  try {
+    await import.meta.resolve!("a".repeat(10000));
+  } catch {}
+});
+it("import long string should not segfault", async () => {
+  try {
+    await import.meta.require.resolve("a".repeat(10000));
+  } catch {}
+});

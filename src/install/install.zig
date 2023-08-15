@@ -26,7 +26,7 @@ const configureTransformOptionsForBun = @import("../bun.js/config.zig").configur
 const Command = @import("../cli.zig").Command;
 const BunArguments = @import("../cli.zig").Arguments;
 const bundler = bun.bundler;
-const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
+
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
@@ -1641,6 +1641,7 @@ pub const PackageManager = struct {
     root_download_node: std.Progress.Node = undefined,
 
     to_remove: []const UpdateRequest = &[_]UpdateRequest{},
+    to_update: bool = false,
 
     root_package_json_file: std.fs.File,
     root_dependency_list: Lockfile.DependencySlice = .{},
@@ -3821,9 +3822,9 @@ pub const PackageManager = struct {
                                 },
                             }
                         }
-                        for (manager.package_json_updates) |*update| {
-                            if (strings.eql(update.name, name.slice())) {
-                                update.failed = true;
+                        for (manager.package_json_updates) |*request| {
+                            if (strings.eql(request.name, name.slice())) {
+                                request.failed = true;
                                 manager.options.do.save_lockfile = false;
                                 manager.options.do.save_yarn_lock = false;
                                 manager.options.do.install_packages = false;
@@ -4320,6 +4321,7 @@ pub const PackageManager = struct {
         },
         local_package_features: Features = .{
             .dev_dependencies = true,
+            .workspaces = true,
         },
         // The idea here is:
         // 1. package has a platform-specific binary to install
@@ -4475,23 +4477,7 @@ pub const PackageManager = struct {
                     for (scoped.scopes, 0..) |name, i| {
                         var registry = scoped.registries[i];
                         if (registry.url.len == 0) registry.url = base.url;
-                        try this.registries.put(allocator, Npm.Registry.Scope.hash(name), Npm.Registry.Scope.fromAPI(name, registry, allocator, env) catch |err| {
-                            if (err == error.InvalidURL) {
-                                log.addErrorFmt(
-                                    null,
-                                    logger.Loc.Empty,
-                                    allocator,
-                                    "{} is not a valid registry URL",
-                                    .{
-                                        strings.QuotedFormatter{
-                                            .text = registry.url,
-                                        },
-                                    },
-                                ) catch unreachable;
-                            }
-
-                            return err;
-                        });
+                        try this.registries.put(allocator, Npm.Registry.Scope.hash(name), try Npm.Registry.Scope.fromAPI(name, registry, allocator, env));
                     }
                 }
 
@@ -4604,21 +4590,10 @@ pub const PackageManager = struct {
                             {
                                 const prev_scope = this.scope;
                                 var api_registry = std.mem.zeroes(Api.NpmRegistry);
-                                var href = bun.JSC.URL.hrefFromString(bun.String.fromUTF8(registry_));
-                                if (href.tag == .Dead) {
-                                    try log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "${s} has invalid URL {}", .{
-                                        registry_key, strings.QuotedFormatter{
-                                            .text = registry_,
-                                        },
-                                    });
-                                } else {
-                                    defer href.deref();
-
-                                    api_registry.token = prev_scope.token;
-                                    this.scope = try Npm.Registry.Scope.fromAPI("", api_registry, allocator, env);
-                                    api_registry.url = try href.toOwnedSlice(bun.default_allocator);
-                                    did_set = true;
-                                }
+                                api_registry.url = registry_;
+                                api_registry.token = prev_scope.token;
+                                this.scope = try Npm.Registry.Scope.fromAPI("", api_registry, allocator, env);
+                                did_set = true;
                             }
                         }
                     }
@@ -4651,15 +4626,7 @@ pub const PackageManager = struct {
                 if (cli.registry.len > 0 and strings.startsWith(cli.registry, "https://") or
                     strings.startsWith(cli.registry, "http://"))
                 {
-                    if (URL.fromUTF8(instance.allocator, cli.registry)) |url| {
-                        this.scope.url = url;
-                    } else |_| {
-                        try log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "--registry has invalid URL {}", .{
-                            strings.QuotedFormatter{
-                                .text = cli.registry,
-                            },
-                        });
-                    }
+                    this.scope.url = URL.parse(cli.registry);
                 }
 
                 if (cli.exact) {
@@ -4914,21 +4881,21 @@ pub const PackageManager = struct {
             // 3. There is a "dependencies" (or equivalent list), and the package name exists in multiple lists
             ast_modifier: {
                 // Try to use the existing spot in the dependencies list if possible
-                for (updates) |*update| {
-                    for (dependency_lists_to_check) |list| {
+                for (updates) |*request| {
+                    inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies" }) |list| {
                         if (current_package_json.asProperty(list)) |query| {
                             if (query.expr.data == .e_object) {
                                 if (query.expr.asProperty(
-                                    if (update.is_aliased)
-                                        update.name
+                                    if (request.is_aliased)
+                                        request.name
                                     else
-                                        update.version.literal.slice(update.version_buf),
+                                        request.version.literal.slice(request.version_buf),
                                 )) |value| {
                                     if (value.expr.data == .e_string) {
-                                        if (!update.resolved_name.isEmpty() and strings.eql(list, dependency_list)) {
+                                        if (!request.resolved_name.isEmpty() and strings.eql(list, dependency_list)) {
                                             replacing += 1;
                                         } else {
-                                            update.e_string = value.expr.data.e_string;
+                                            request.e_string = value.expr.data.e_string;
                                             remaining -= 1;
                                         }
                                     }
@@ -4953,16 +4920,16 @@ pub const PackageManager = struct {
                 bun.copy(G.Property, new_dependencies, dependencies);
                 @memset(new_dependencies[dependencies.len..], G.Property{});
 
-                outer: for (updates) |*update| {
-                    if (update.e_string != null) continue;
-                    defer if (comptime Environment.allow_assert) std.debug.assert(update.e_string != null);
+                outer: for (updates) |*request| {
+                    if (request.e_string != null) continue;
+                    defer if (comptime Environment.allow_assert) std.debug.assert(request.e_string != null);
 
                     var k: usize = 0;
                     while (k < new_dependencies.len) : (k += 1) {
                         if (new_dependencies[k].key) |key| {
-                            if (!update.is_aliased and !update.resolved_name.isEmpty() and key.data.e_string.eql(
+                            if (!request.is_aliased and !request.resolved_name.isEmpty() and key.data.e_string.eql(
                                 string,
-                                update.resolved_name.slice(update.version_buf),
+                                request.resolved_name.slice(request.version_buf),
                             )) {
                                 // This actually is a duplicate which we did not
                                 // pick up before dependency resolution.
@@ -4977,12 +4944,12 @@ pub const PackageManager = struct {
                             }
                             if (key.data.e_string.eql(
                                 string,
-                                if (update.is_aliased)
-                                    update.name
+                                if (request.is_aliased)
+                                    request.name
                                 else
-                                    update.version.literal.slice(update.version_buf),
+                                    request.version.literal.slice(request.version_buf),
                             )) {
-                                if (update.resolved_name.isEmpty()) {
+                                if (request.resolved_name.isEmpty()) {
                                     // This actually is a duplicate like "react"
                                     // appearing in both "dependencies" and "optionalDependencies".
                                     // For this case, we'll just swap remove it
@@ -5002,12 +4969,12 @@ pub const PackageManager = struct {
                             new_dependencies[k].key = try JSAst.Expr.init(
                                 JSAst.E.String,
                                 JSAst.E.String{
-                                    .data = try allocator.dupe(u8, if (update.is_aliased)
-                                        update.name
-                                    else if (update.resolved_name.isEmpty())
-                                        update.version.literal.slice(update.version_buf)
+                                    .data = try allocator.dupe(u8, if (request.is_aliased)
+                                        request.name
+                                    else if (request.resolved_name.isEmpty())
+                                        request.version.literal.slice(request.version_buf)
                                     else
-                                        update.resolved_name.slice(update.version_buf)),
+                                        request.resolved_name.slice(request.version_buf)),
                                 },
                                 logger.Loc.Empty,
                             ).clone(allocator);
@@ -5020,8 +4987,8 @@ pub const PackageManager = struct {
                                 },
                                 logger.Loc.Empty,
                             ).clone(allocator);
-                            update.e_string = new_dependencies[k].value.?.data.e_string;
-                            if (update.is_aliased) continue :outer;
+                            request.e_string = new_dependencies[k].value.?.data.e_string;
+                            if (request.is_aliased) continue :outer;
                         }
                     }
                 }
@@ -5085,26 +5052,26 @@ pub const PackageManager = struct {
                 }
             }
 
-            for (updates) |*update| {
-                if (update.e_string) |e_string| {
-                    e_string.data = switch (update.resolution.tag) {
-                        .npm => if (update.version.tag == .dist_tag and update.version.literal.isEmpty())
+            for (updates) |*request| {
+                if (request.e_string) |e_string| {
+                    e_string.data = switch (request.resolution.tag) {
+                        .npm => if (request.version.tag == .dist_tag and request.version.literal.isEmpty())
                             switch (exact_versions) {
                                 false => std.fmt.allocPrint(allocator, "^{}", .{
-                                    update.resolution.value.npm.version.fmt(update.version_buf),
+                                    request.resolution.value.npm.version.fmt(request.version_buf),
                                 }) catch unreachable,
                                 true => std.fmt.allocPrint(allocator, "{}", .{
-                                    update.resolution.value.npm.version.fmt(update.version_buf),
+                                    request.resolution.value.npm.version.fmt(request.version_buf),
                                 }) catch unreachable,
                             }
                         else
                             null,
-                        .uninitialized => switch (update.version.tag) {
+                        .uninitialized => switch (request.version.tag) {
                             .uninitialized => try allocator.dupe(u8, latest),
                             else => null,
                         },
                         else => null,
-                    } orelse try allocator.dupe(u8, update.version.literal.slice(update.version_buf));
+                    } orelse try allocator.dupe(u8, request.version.literal.slice(request.version_buf));
                 }
             }
         }
@@ -5113,6 +5080,7 @@ pub const PackageManager = struct {
     // Corresponds to possible commands from the CLI.
     pub const Subcommand = enum {
         install,
+        update,
         pm,
         add,
         remove,
@@ -5120,19 +5088,7 @@ pub const PackageManager = struct {
         unlink,
     };
 
-    pub fn init(
-        ctx: Command.Context,
-        package_json_file_: ?std.fs.File,
-        comptime subcommand: Subcommand,
-    ) !*PackageManager {
-        return initMaybeInstall(ctx, package_json_file_, subcommand);
-    }
-
-    fn initMaybeInstall(
-        ctx: Command.Context,
-        package_json_file_: ?std.fs.File,
-        comptime subcommand: Subcommand,
-    ) !*PackageManager {
+    pub fn init(ctx: Command.Context, comptime subcommand: Subcommand) !*PackageManager {
         const cli = try CommandLineArguments.parse(ctx.allocator, subcommand);
 
         if (comptime subcommand == .install) {
@@ -5142,12 +5098,11 @@ pub const PackageManager = struct {
         }
 
         var _ctx = ctx;
-        return initWithCLI(&_ctx, package_json_file_, cli, subcommand);
+        return initWithCLI(&_ctx, cli, subcommand);
     }
 
     fn initWithCLI(
         ctx: *Command.Context,
-        package_json_file_: ?std.fs.File,
         cli: CommandLineArguments,
         comptime subcommand: Subcommand,
     ) !*PackageManager {
@@ -5172,7 +5127,7 @@ pub const PackageManager = struct {
         //
         // We will walk up from the cwd, calling chdir on each directory until we find a package.json
         // If we fail to find one, we will report an error saying no packages to install
-        const package_json_file = package_json_file_ orelse brk: {
+        const package_json_file = brk: {
             var this_cwd = original_cwd;
             const child_json = child: {
                 while (true) {
@@ -5471,40 +5426,35 @@ pub const PackageManager = struct {
         return manager;
     }
 
-    fn attemptToCreatePackageJSON() !std.fs.File {
-        var package_json_file = std.fs.cwd().createFileZ("package.json", .{ .read = true }) catch |err| {
+    fn attemptToCreatePackageJSON() !void {
+        const package_json_file = std.fs.cwd().createFileZ("package.json", .{ .read = true }) catch |err| {
             Output.prettyErrorln("<r><red>error:<r> {s} create package.json", .{@errorName(err)});
             Global.crash();
         };
+        defer package_json_file.close();
         try package_json_file.pwriteAll("{\"dependencies\": {}}", 0);
-        return package_json_file;
     }
 
-    pub inline fn add(
-        ctx: Command.Context,
-    ) !void {
+    pub inline fn update(ctx: Command.Context) !void {
+        try updatePackageJSONAndInstall(ctx, .update, .update);
+    }
+
+    pub inline fn add(ctx: Command.Context) !void {
         try updatePackageJSONAndInstall(ctx, .add, .add);
     }
 
-    pub inline fn remove(
-        ctx: Command.Context,
-    ) !void {
+    pub inline fn remove(ctx: Command.Context) !void {
         try updatePackageJSONAndInstall(ctx, .remove, .remove);
     }
 
-    pub inline fn link(
-        ctx: Command.Context,
-    ) !void {
-        var manager = PackageManager.init(ctx, null, .link) catch |err| brk: {
-            switch (err) {
-                error.MissingPackageJSON => {
-                    var package_json_file = try attemptToCreatePackageJSON();
-                    break :brk try PackageManager.init(ctx, package_json_file, .link);
-                },
-                else => return err,
+    pub inline fn link(ctx: Command.Context) !void {
+        var manager = PackageManager.init(ctx, .link) catch |err| brk: {
+            if (err == error.MissingPackageJSON) {
+                try attemptToCreatePackageJSON();
+                break :brk try PackageManager.init(ctx, .link);
             }
 
-            unreachable;
+            return err;
         };
 
         if (manager.options.shouldPrintCommandName()) {
@@ -5642,24 +5592,19 @@ pub const PackageManager = struct {
         } else {
             // bun link lodash
             switch (manager.options.log_level) {
-                inline else => |log_level| try updatePackageJSONAndInstallWithManager(ctx, manager, .link, log_level),
+                inline else => |log_level| try manager.updatePackageJSONAndInstallWithManager(ctx, .link, log_level),
             }
         }
     }
 
-    pub inline fn unlink(
-        ctx: Command.Context,
-    ) !void {
-        var manager = PackageManager.init(ctx, null, .unlink) catch |err| brk: {
-            switch (err) {
-                error.MissingPackageJSON => {
-                    var package_json_file = try attemptToCreatePackageJSON();
-                    break :brk try PackageManager.init(ctx, package_json_file, .unlink);
-                },
-                else => return err,
+    pub inline fn unlink(ctx: Command.Context) !void {
+        var manager = PackageManager.init(ctx, .unlink) catch |err| brk: {
+            if (err == error.MissingPackageJSON) {
+                try attemptToCreatePackageJSON();
+                break :brk try PackageManager.init(ctx, .unlink);
             }
 
-            unreachable;
+            return err;
         };
 
         if (manager.options.shouldPrintCommandName()) {
@@ -5806,7 +5751,15 @@ pub const PackageManager = struct {
     };
 
     const install_params = install_params_ ++ [_]ParamType{
+        clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
+        clap.parseParam("-D, --development") catch unreachable,
+        clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
+        clap.parseParam("--exact                      Add the exact version instead of the ^range") catch unreachable,
         clap.parseParam("<POS> ...                         ") catch unreachable,
+    };
+
+    const update_params = install_params_ ++ [_]ParamType{
+        clap.parseParam("<POS> ...                         \"name\" of packages to update") catch unreachable,
     };
 
     const pm_params = install_params_ ++ [_]ParamType{
@@ -5814,7 +5767,8 @@ pub const PackageManager = struct {
     };
 
     const add_params = install_params_ ++ [_]ParamType{
-        clap.parseParam("-d, --development                 Add dependency to \"devDependencies\"") catch unreachable,
+        clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
+        clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
         clap.parseParam("--exact                      Add the exact version instead of the ^range") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of packages to install") catch unreachable,
@@ -5886,6 +5840,7 @@ pub const PackageManager = struct {
         pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !CommandLineArguments {
             comptime var params: []const ParamType = &switch (subcommand) {
                 .install => install_params,
+                .update => update_params,
                 .pm => pm_params,
                 .add => add_params,
                 .remove => remove_params,
@@ -5944,8 +5899,8 @@ pub const PackageManager = struct {
 
             cli.link_native_bins = args.options("--link-native-bins");
 
-            if (comptime subcommand == .add) {
-                cli.development = args.flag("--development");
+            if (comptime subcommand == .add or subcommand == .install) {
+                cli.development = args.flag("--development") or args.flag("--dev");
                 cli.optional = args.flag("--optional");
                 cli.exact = args.flag("--exact");
             }
@@ -6125,21 +6080,25 @@ pub const PackageManager = struct {
         comptime op: Lockfile.Package.Diff.Op,
         comptime subcommand: Subcommand,
     ) !void {
-        var manager = PackageManager.init(ctx, null, subcommand) catch |err| brk: {
-            switch (err) {
-                error.MissingPackageJSON => {
-                    if (op == .add or op == .update) {
-                        var package_json_file = try attemptToCreatePackageJSON();
-                        break :brk try PackageManager.init(ctx, package_json_file, subcommand);
-                    }
-
-                    Output.prettyErrorln("<r>No package.json, so nothing to remove\n", .{});
-                    Global.crash();
-                },
-                else => return err,
+        var manager = init(ctx, subcommand) catch |err| brk: {
+            if (err == error.MissingPackageJSON) {
+                switch (op) {
+                    .update => {
+                        Output.prettyErrorln("<r>No package.json, so nothing to update\n", .{});
+                        Global.crash();
+                    },
+                    .remove => {
+                        Output.prettyErrorln("<r>No package.json, so nothing to remove\n", .{});
+                        Global.crash();
+                    },
+                    else => {
+                        try attemptToCreatePackageJSON();
+                        break :brk try PackageManager.init(ctx, subcommand);
+                    },
+                }
             }
 
-            unreachable;
+            return err;
         };
 
         if (manager.options.shouldPrintCommandName()) {
@@ -6148,20 +6107,13 @@ pub const PackageManager = struct {
         }
 
         switch (manager.options.log_level) {
-            inline else => |log_level| try updatePackageJSONAndInstallWithManager(ctx, manager, op, log_level),
+            inline else => |log_level| try manager.updatePackageJSONAndInstallWithManager(ctx, op, log_level),
         }
     }
 
-    const dependency_lists_to_check = [_]string{
-        "dependencies",
-        "devDependencies",
-        "optionalDependencies",
-        "peerDependencies",
-    };
-
     fn updatePackageJSONAndInstallWithManager(
-        ctx: Command.Context,
         manager: *PackageManager,
+        ctx: Command.Context,
         comptime op: Lockfile.Package.Diff.Op,
         comptime log_level: Options.LogLevel,
     ) !void {
@@ -6173,7 +6125,7 @@ pub const PackageManager = struct {
             const off = @as(u64, @intCast(std.time.milliTimestamp()));
 
             switch (op) {
-                .update, .add => {
+                .add => {
                     const filler = @import("../cli.zig").HelpCommand.packages_to_add_filler;
 
                     examples_to_print[0] = filler[@as(usize, @intCast((off) % filler.len))];
@@ -6258,9 +6210,8 @@ pub const PackageManager = struct {
         }
 
         var updates = UpdateRequest.parse(ctx.allocator, ctx.log, manager.options.positionals[1..], &update_requests, op);
-        try updatePackageJSONAndInstallWithManagerWithUpdates(
+        try manager.updatePackageJSONAndInstallWithManagerWithUpdates(
             ctx,
-            manager,
             updates,
             false,
             op,
@@ -6269,8 +6220,8 @@ pub const PackageManager = struct {
     }
 
     fn updatePackageJSONAndInstallWithManagerWithUpdates(
-        ctx: Command.Context,
         manager: *PackageManager,
+        ctx: Command.Context,
         updates: []UpdateRequest,
         auto_free: bool,
         comptime op: Lockfile.Package.Diff.Op,
@@ -6340,21 +6291,20 @@ pub const PackageManager = struct {
             }
         }
 
+        const dependency_list = if (manager.options.update.development)
+            "devDependencies"
+        else if (manager.options.update.optional)
+            "optionalDependencies"
+        else
+            "dependencies";
         var any_changes = false;
-
-        var dependency_list: string = "dependencies";
-        if (manager.options.update.development) {
-            dependency_list = "devDependencies";
-        } else if (manager.options.update.optional) {
-            dependency_list = "optionalDependencies";
-        }
 
         switch (op) {
             .remove => {
                 // if we're removing, they don't have to specify where it is installed in the dependencies list
                 // they can even put it multiple times and we will just remove all of them
-                for (updates) |update| {
-                    inline for (dependency_lists_to_check) |list| {
+                for (updates) |request| {
+                    inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" }) |list| {
                         if (current_package_json.asProperty(list)) |query| {
                             if (query.expr.data == .e_object) {
                                 var dependencies = query.expr.data.e_object.properties.slice();
@@ -6362,7 +6312,7 @@ pub const PackageManager = struct {
                                 var new_len = dependencies.len;
                                 while (i < dependencies.len) : (i += 1) {
                                     if (dependencies[i].key.?.data == .e_string) {
-                                        if (dependencies[i].key.?.data.e_string.eql(string, update.name)) {
+                                        if (dependencies[i].key.?.data.e_string.eql(string, request.name)) {
                                             if (new_len > 1) {
                                                 dependencies[i] = dependencies[new_len - 1];
                                                 new_len -= 1;
@@ -6403,7 +6353,7 @@ pub const PackageManager = struct {
                 }
                 manager.to_remove = updates;
             },
-            .link, .add, .update => {
+            .link, .add => {
                 try PackageJSONEditor.edit(
                     ctx.allocator,
                     updates,
@@ -6412,6 +6362,10 @@ pub const PackageManager = struct {
                     manager.options.enable.exact_versions,
                 );
                 manager.package_json_updates = updates;
+            },
+            .update => {
+                manager.package_json_updates = updates;
+                manager.to_update = true;
             },
             else => {},
         }
@@ -6446,8 +6400,8 @@ pub const PackageManager = struct {
         try manager.installWithManager(ctx, new_package_json_source, log_level);
 
         if (op == .update or op == .add or op == .link) {
-            for (manager.package_json_updates) |update| {
-                if (update.failed) {
+            for (manager.package_json_updates) |request| {
+                if (request.failed) {
                     Global.exit(1);
                     return;
                 }
@@ -6503,14 +6457,14 @@ pub const PackageManager = struct {
                 bun.copy(u8, &node_modules_buf, "node_modules" ++ std.fs.path.sep_str);
                 var offset_buf = node_modules_buf["node_modules/".len..];
                 const name_hashes = manager.lockfile.packages.items(.name_hash);
-                for (updates) |update| {
+                for (updates) |request| {
                     // If the package no longer exists in the updated lockfile, delete the directory
                     // This is not thorough.
                     // It does not handle nested dependencies
                     // This is a quick & dirty cleanup intended for when deleting top-level dependencies
-                    if (std.mem.indexOfScalar(PackageNameHash, name_hashes, String.Builder.stringHash(update.name)) == null) {
-                        bun.copy(u8, offset_buf, update.name);
-                        cwd.deleteTree(node_modules_buf[0 .. "node_modules/".len + update.name.len]) catch {};
+                    if (std.mem.indexOfScalar(PackageNameHash, name_hashes, String.Builder.stringHash(request.name)) == null) {
+                        bun.copy(u8, offset_buf, request.name);
+                        cwd.deleteTree(node_modules_buf[0 .. "node_modules/".len + request.name.len]) catch {};
                     }
                 }
 
@@ -6549,7 +6503,7 @@ pub const PackageManager = struct {
     var package_json_cwd: string = "";
 
     pub inline fn install(ctx: Command.Context) !void {
-        var manager = initMaybeInstall(ctx, null, .install) catch |err| {
+        var manager = init(ctx, .install) catch |err| {
             if (err == error.SwitchToBunAdd) {
                 return add(ctx);
             }
@@ -7537,15 +7491,16 @@ pub const PackageManager = struct {
 
                     manager.summary = try Package.Diff.generate(
                         ctx.allocator,
+                        ctx.log,
                         manager.lockfile,
                         &lockfile,
                         &root,
                         &maybe_root,
+                        if (manager.to_update) manager.package_json_updates else null,
                         mapping,
                     );
 
-                    const sum = manager.summary.add + manager.summary.remove + manager.summary.update;
-                    had_any_diffs = had_any_diffs or sum > 0;
+                    had_any_diffs = had_any_diffs or manager.summary.hasDiffs();
 
                     if (manager.options.enable.frozen_lockfile and had_any_diffs) {
                         if (comptime log_level != .silent) {
@@ -7554,13 +7509,12 @@ pub const PackageManager = struct {
                         Global.crash();
                     }
 
-                    // If you changed packages, we will copy over the new package from the new lockfile
-                    const new_dependencies = maybe_root.dependencies.get(lockfile.buffers.dependencies.items);
-
                     if (had_any_diffs) {
                         var builder_ = manager.lockfile.stringBuilder();
                         // ensure we use one pointer to reference it instead of creating new ones and potentially aliasing
                         var builder = &builder_;
+                        // If you changed packages, we will copy over the new package from the new lockfile
+                        const new_dependencies = maybe_root.dependencies.get(lockfile.buffers.dependencies.items);
 
                         for (new_dependencies) |new_dep| {
                             new_dep.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
@@ -7716,9 +7670,9 @@ pub const PackageManager = struct {
         }
 
         if (manager.lockfile.packages.len > 0) {
-            for (manager.package_json_updates) |update| {
+            for (manager.package_json_updates) |request| {
                 // prevent redundant errors
-                if (update.failed) {
+                if (request.failed) {
                     return error.InstallFailed;
                 }
             }
@@ -7895,8 +7849,8 @@ pub const PackageManager = struct {
                     }
                 } else if (manager.summary.remove > 0) {
                     if (manager.to_remove.len > 0) {
-                        for (manager.to_remove) |update| {
-                            Output.prettyln(" <r><red>-<r> {s}", .{update.name});
+                        for (manager.to_remove) |request| {
+                            Output.prettyln(" <r><red>-<r> {s}", .{request.name});
                         }
                     }
 

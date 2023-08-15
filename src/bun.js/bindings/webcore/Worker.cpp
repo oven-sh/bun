@@ -61,12 +61,12 @@
 #include "MessageEvent.h"
 #include <JavaScriptCore/HashMapImplInlines.h>
 #include "BunWorkerGlobalScope.h"
-
+#include "CloseEvent.h"
 namespace WebCore {
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(Worker);
 
-extern "C" void WebWorker__terminate(
+extern "C" void WebWorker__requestTerminate(
     void* worker);
 
 static Lock allWorkersLock;
@@ -186,7 +186,7 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
         return Exception { InvalidStateError, "Worker has been terminated"_s };
 
     Vector<RefPtr<MessagePort>> ports;
-    auto serialized = SerializedScriptValue::create(state, messageValue, WTFMove(options.transfer), ports);
+    auto serialized = SerializedScriptValue::create(state, messageValue, WTFMove(options.transfer), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (serialized.hasException())
         return serialized.releaseException();
 
@@ -212,7 +212,7 @@ void Worker::terminate()
 {
     // m_contextProxy.terminateWorkerGlobalScope();
     m_wasTerminated = true;
-    WebWorker__terminate(impl_);
+    WebWorker__requestTerminate(impl_);
 }
 
 // const char* Worker::activeDOMObjectName() const
@@ -256,9 +256,14 @@ bool Worker::hasPendingActivity() const
 
 void Worker::dispatchEvent(Event& event)
 {
-    if (m_wasTerminated)
-        return;
+    if (!m_wasTerminated)
+        EventTargetWithInlineData::dispatchEvent(event);
+}
 
+// The close event gets dispatched even if m_wasTerminated is true.
+// This allows new wt.Worker().terminate() to actually resolve
+void Worker::dispatchCloseEvent(Event& event)
+{
     EventTargetWithInlineData::dispatchEvent(event);
 }
 
@@ -285,7 +290,6 @@ void Worker::drainEvents()
 
 void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
 {
-
     auto* ctx = scriptExecutionContext();
     if (ctx) {
         ScriptExecutionContext::postTaskTo(ctx->identifier(), [protectedThis = Ref { *this }](ScriptExecutionContext& context) -> void {
@@ -339,20 +343,19 @@ void Worker::dispatchError(WTF::String message)
         protectedThis->dispatchEvent(event);
     });
 }
-void Worker::dispatchExit()
+void Worker::dispatchExit(int32_t exitCode)
 {
     auto* ctx = scriptExecutionContext();
     if (!ctx)
         return;
 
-    ScriptExecutionContext::postTaskTo(ctx->identifier(), [protectedThis = Ref { *this }](ScriptExecutionContext& context) -> void {
+    ScriptExecutionContext::postTaskTo(ctx->identifier(), [exitCode, protectedThis = Ref { *this }](ScriptExecutionContext& context) -> void {
         protectedThis->m_isOnline = false;
         protectedThis->m_isClosing = true;
-        protectedThis->setKeepAlive(false);
 
         if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
-            auto event = Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No);
-            protectedThis->dispatchEvent(event);
+            auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
+            protectedThis->dispatchCloseEvent(event);
         }
     });
 }
@@ -377,6 +380,8 @@ void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)
 
 extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker* worker, int32_t exitCode)
 {
+    worker->dispatchExit(exitCode);
+
     if (globalObject) {
         auto* ctx = globalObject->scriptExecutionContext();
         if (ctx) {
@@ -384,22 +389,22 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
         }
 
         auto& vm = globalObject->vm();
-
+        vm.notifyNeedTermination();
         if (JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(globalObject->moduleLoader())) {
             auto id = JSC::Identifier::fromString(globalObject->vm(), "registry"_s);
-            if (auto* registry = JSC::jsDynamicCast<JSC::JSMap*>(obj->getIfPropertyExists(globalObject, id))) {
-                registry->clear(vm);
+            auto registryValue = obj->getIfPropertyExists(globalObject, id);
+            if (registryValue) {
+                if (auto* registry = JSC::jsDynamicCast<JSC::JSMap*>(registryValue)) {
+                    registry->clear(vm);
+                }
             }
         }
         gcUnprotect(globalObject);
         vm.deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
         vm.heap.reportAbandonedObjectGraph();
         WTF::releaseFastMallocFreeMemoryForThisThread();
-        vm.notifyNeedTermination();
         vm.deferredWorkTimer->doWork(vm);
     }
-
-    worker->dispatchExit();
 }
 extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)
 {

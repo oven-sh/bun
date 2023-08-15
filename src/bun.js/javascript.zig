@@ -21,7 +21,6 @@ const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const Fs = @import("../fs.zig");
 const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
-const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const MacroEntryPoint = bun.bundler.MacroEntryPoint;
 const ParseResult = bun.bundler.ParseResult;
 const logger = @import("root").bun.logger;
@@ -128,6 +127,7 @@ pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context)
 pub const bun_file_import_path = "/node_modules.server.bun";
 
 const SourceMap = @import("../sourcemap/sourcemap.zig");
+const ParsedSourceMap = SourceMap.Mapping.ParsedSourceMap;
 const MappingList = SourceMap.Mapping.List;
 
 pub const SavedSourceMap = struct {
@@ -138,7 +138,7 @@ pub const SavedSourceMap = struct {
         data: [*]u8,
 
         pub fn vlq(this: SavedMappings) []u8 {
-            return this.data[16..this.len()];
+            return this.data[24..this.len()];
         }
 
         pub inline fn len(this: SavedMappings) usize {
@@ -149,12 +149,13 @@ pub const SavedSourceMap = struct {
             default_allocator.free(this.data[0..this.len()]);
         }
 
-        pub fn toMapping(this: SavedMappings, allocator: Allocator, path: string) anyerror!MappingList {
+        pub fn toMapping(this: SavedMappings, allocator: Allocator, path: string) anyerror!ParsedSourceMap {
             const result = SourceMap.Mapping.parse(
                 allocator,
-                this.data[16..this.len()],
+                this.data[24..this.len()],
                 @as(usize, @bitCast(this.data[8..16].*)),
                 1,
+                @as(usize, @bitCast(this.data[16..24].*)),
             );
             switch (result) {
                 .fail => |fail| {
@@ -183,7 +184,7 @@ pub const SavedSourceMap = struct {
         }
     };
 
-    pub const Value = TaggedPointerUnion(.{ MappingList, SavedMappings });
+    pub const Value = TaggedPointerUnion(.{ ParsedSourceMap, SavedMappings });
     pub const HashTable = std.HashMap(u64, *anyopaque, IdentityContext(u64), 80);
 
     /// This is a pointer to the map located on the VirtualMachine struct
@@ -203,8 +204,8 @@ pub const SavedSourceMap = struct {
         var entry = try this.map.getOrPut(bun.hash(source.path.text));
         if (entry.found_existing) {
             var value = Value.from(entry.value_ptr.*);
-            if (value.get(MappingList)) |source_map_| {
-                var source_map: *MappingList = source_map_;
+            if (value.get(ParsedSourceMap)) |source_map_| {
+                var source_map: *ParsedSourceMap = source_map_;
                 source_map.deinit(default_allocator);
             } else if (value.get(SavedMappings)) |saved_mappings| {
                 var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
@@ -216,16 +217,16 @@ pub const SavedSourceMap = struct {
         entry.value_ptr.* = Value.init(bun.cast(*SavedMappings, mappings.list.items.ptr)).ptr();
     }
 
-    pub fn get(this: *SavedSourceMap, path: string) ?MappingList {
+    pub fn get(this: *SavedSourceMap, path: string) ?ParsedSourceMap {
         var mapping = this.map.getEntry(bun.hash(path)) orelse return null;
         switch (Value.from(mapping.value_ptr.*).tag()) {
-            (@field(Value.Tag, @typeName(MappingList))) => {
-                return Value.from(mapping.value_ptr.*).as(MappingList).*;
+            Value.Tag.ParsedSourceMap => {
+                return Value.from(mapping.value_ptr.*).as(ParsedSourceMap).*;
             },
             Value.Tag.SavedMappings => {
-                var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(MappingList))) };
+                var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(ParsedSourceMap))) };
                 defer saved.deinit();
-                var result = default_allocator.create(MappingList) catch unreachable;
+                var result = default_allocator.create(ParsedSourceMap) catch unreachable;
                 result.* = saved.toMapping(default_allocator, path) catch {
                     _ = this.map.remove(mapping.key_ptr.*);
                     return null;
@@ -246,8 +247,8 @@ pub const SavedSourceMap = struct {
         this.mutex.lock();
         defer this.mutex.unlock();
 
-        var mappings = this.get(path) orelse return null;
-        return SourceMap.Mapping.find(mappings, line, column);
+        const parsed_mappings = this.get(path) orelse return null;
+        return SourceMap.Mapping.find(parsed_mappings.mappings, line, column);
     }
 };
 const uws = @import("root").bun.uws;
@@ -381,7 +382,6 @@ pub const VirtualMachine = struct {
     global: *JSGlobalObject,
     allocator: std.mem.Allocator,
     has_loaded_constructors: bool = false,
-    node_modules: ?*NodeModuleBundle = null,
     bundler: Bundler,
     bun_dev_watcher: ?*http.Watcher = null,
     bun_watcher: ?*JSC.Watcher = null,
@@ -396,7 +396,6 @@ pub const VirtualMachine = struct {
     entry_point: ServerEntryPoint = undefined,
     origin: URL = URL{},
     node_fs: ?*Node.NodeFS = null,
-    has_loaded_node_modules: bool = false,
     timer: Bun.Timer = Bun.Timer{},
     uws_event_loop: ?*uws.Loop = null,
     pending_unref_counter: i32 = 0,
@@ -626,6 +625,13 @@ pub const VirtualMachine = struct {
             bun.reloadProcess(bun.default_allocator, !strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true"));
         }
 
+        if (!strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true")) {
+            Output.flush();
+            Output.disableBuffering();
+            Output.resetTerminalAll();
+            Output.enableBuffering();
+        }
+
         this.global.reload();
         this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
     }
@@ -824,18 +830,17 @@ pub const VirtualMachine = struct {
     }
     const RuntimeTranspilerStore = JSC.RuntimeTranspilerStore;
     pub fn initWithModuleGraph(
-        allocator: std.mem.Allocator,
-        log: *logger.Log,
-        graph: *bun.StandaloneModuleGraph,
+        opts: Options,
     ) !*VirtualMachine {
+        const allocator = opts.allocator;
         VMHolder.vm = try allocator.create(VirtualMachine);
         var console = try allocator.create(ZigConsoleClient);
         console.* = ZigConsoleClient.init(Output.errorWriter(), Output.writer());
+        var log = opts.log.?;
         const bundler = try Bundler.init(
             allocator,
             log,
-            std.mem.zeroes(Api.TransformOptions),
-            null,
+            opts.args,
             null,
         );
         var vm = VMHolder.vm.?;
@@ -848,7 +853,6 @@ pub const VirtualMachine = struct {
             .event_listeners = EventListenerMixin.Map.init(allocator),
             .bundler = bundler,
             .console = console,
-            .node_modules = bundler.options.node_modules_bundle,
             .log = log,
             .flush_list = std.ArrayList(string).init(allocator),
             .blobs = null,
@@ -862,7 +866,7 @@ pub const VirtualMachine = struct {
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
-            .standalone_module_graph = graph,
+            .standalone_module_graph = opts.graph.?,
             .parser_arena = @import("root").bun.ArenaAllocator.init(allocator),
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
@@ -883,7 +887,7 @@ pub const VirtualMachine = struct {
             .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
         };
 
-        vm.bundler.resolver.standalone_module_graph = graph;
+        vm.bundler.resolver.standalone_module_graph = opts.graph.?;
 
         // Avoid reading from tsconfig.json & package.json when we're in standalone mode
         vm.bundler.configureLinkerWithAutoJSX(false);
@@ -901,6 +905,7 @@ pub const VirtualMachine = struct {
             vm.console,
             -1,
             false,
+            null,
         );
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;
@@ -915,17 +920,20 @@ pub const VirtualMachine = struct {
         return vm;
     }
 
-    pub fn init(
+    pub const Options = struct {
         allocator: std.mem.Allocator,
-        _args: Api.TransformOptions,
-        existing_bundle: ?*NodeModuleBundle,
-        _log: ?*logger.Log,
-        env_loader: ?*DotEnv.Loader,
-        store_fd: bool,
-        smol: bool,
-    ) !*VirtualMachine {
+        args: Api.TransformOptions = std.mem.zeroes(Api.TransformOptions),
+        log: ?*logger.Log = null,
+        env_loader: ?*DotEnv.Loader = null,
+        store_fd: bool = false,
+        smol: bool = false,
+        graph: ?*bun.StandaloneModuleGraph = null,
+    };
+
+    pub fn init(opts: Options) !*VirtualMachine {
+        const allocator = opts.allocator;
         var log: *logger.Log = undefined;
-        if (_log) |__log| {
+        if (opts.log) |__log| {
             log = __log;
         } else {
             log = try allocator.create(logger.Log);
@@ -938,9 +946,8 @@ pub const VirtualMachine = struct {
         const bundler = try Bundler.init(
             allocator,
             log,
-            try Config.configureTransformOptionsForBunVM(allocator, _args),
-            existing_bundle,
-            env_loader,
+            try Config.configureTransformOptionsForBunVM(allocator, opts.args),
+            opts.env_loader,
         );
         var vm = VMHolder.vm.?;
 
@@ -952,10 +959,9 @@ pub const VirtualMachine = struct {
             .event_listeners = EventListenerMixin.Map.init(allocator),
             .bundler = bundler,
             .console = console,
-            .node_modules = bundler.options.node_modules_bundle,
             .log = log,
             .flush_list = std.ArrayList(string).init(allocator),
-            .blobs = if (_args.serve orelse false) try Blob.Group.init(allocator) else null,
+            .blobs = if (opts.args.serve orelse false) try Blob.Group.init(allocator) else null,
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(allocator),
             .source_mappings = undefined,
@@ -977,7 +983,7 @@ pub const VirtualMachine = struct {
         vm.event_loop = &vm.regular_event_loop;
 
         vm.bundler.macro_context = null;
-        vm.bundler.resolver.store_fd = store_fd;
+        vm.bundler.resolver.store_fd = opts.store_fd;
         vm.bundler.resolver.prefer_module_field = false;
 
         vm.bundler.resolver.onWakePackageManager = .{
@@ -991,7 +997,7 @@ pub const VirtualMachine = struct {
 
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
 
-        if (_args.serve orelse false) {
+        if (opts.args.serve orelse false) {
             vm.bundler.linker.onImportCSS = Bun.onImportCSS;
         }
 
@@ -1004,7 +1010,8 @@ pub const VirtualMachine = struct {
             @as(i32, @intCast(global_classes.len)),
             vm.console,
             -1,
-            smol,
+            opts.smol,
+            null,
         );
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;
@@ -1020,15 +1027,12 @@ pub const VirtualMachine = struct {
     }
 
     pub fn initWorker(
-        allocator: std.mem.Allocator,
-        _args: Api.TransformOptions,
-        _log: ?*logger.Log,
-        env_loader: ?*DotEnv.Loader,
-        store_fd: bool,
         worker: *WebWorker,
+        opts: Options,
     ) anyerror!*VirtualMachine {
         var log: *logger.Log = undefined;
-        if (_log) |__log| {
+        const allocator = opts.allocator;
+        if (opts.log) |__log| {
             log = __log;
         } else {
             log = try allocator.create(logger.Log);
@@ -1041,9 +1045,8 @@ pub const VirtualMachine = struct {
         const bundler = try Bundler.init(
             allocator,
             log,
-            try Config.configureTransformOptionsForBunVM(allocator, _args),
-            null,
-            env_loader,
+            try Config.configureTransformOptionsForBunVM(allocator, opts.args),
+            opts.env_loader,
         );
         var vm = VMHolder.vm.?;
 
@@ -1055,10 +1058,9 @@ pub const VirtualMachine = struct {
             .event_listeners = EventListenerMixin.Map.init(allocator),
             .bundler = bundler,
             .console = console,
-            .node_modules = bundler.options.node_modules_bundle,
             .log = log,
             .flush_list = std.ArrayList(string).init(allocator),
-            .blobs = if (_args.serve orelse false) try Blob.Group.init(allocator) else null,
+            .blobs = if (opts.args.serve orelse false) try Blob.Group.init(allocator) else null,
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(allocator),
             .source_mappings = undefined,
@@ -1082,7 +1084,7 @@ pub const VirtualMachine = struct {
         vm.event_loop = &vm.regular_event_loop;
         vm.hot_reload = worker.parent.hot_reload;
         vm.bundler.macro_context = null;
-        vm.bundler.resolver.store_fd = store_fd;
+        vm.bundler.resolver.store_fd = opts.store_fd;
         vm.bundler.resolver.prefer_module_field = false;
         vm.bundler.resolver.onWakePackageManager = .{
             .context = &vm.modules,
@@ -1095,7 +1097,7 @@ pub const VirtualMachine = struct {
 
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
 
-        if (_args.serve orelse false) {
+        if (opts.args.serve orelse false) {
             vm.bundler.linker.onImportCSS = Bun.onImportCSS;
         }
 
@@ -1109,6 +1111,7 @@ pub const VirtualMachine = struct {
             vm.console,
             @as(i32, @intCast(worker.execution_context_id)),
             worker.mini,
+            worker.cpp_worker,
         );
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;
@@ -1210,7 +1213,7 @@ pub const VirtualMachine = struct {
     ) anyerror!ResolvedSource {
         std.debug.assert(VirtualMachine.isLoaded());
 
-        if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier, log, comptime flags.disableTranspiling())) |builtin| {
+        if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier)) |builtin| {
             return builtin;
         }
         var display_specifier = _specifier.toUTF8(bun.default_allocator);
@@ -1274,7 +1277,6 @@ pub const VirtualMachine = struct {
         source: string,
         is_esm: bool,
         comptime is_a_file_path: bool,
-        comptime realpath: bool,
     ) !void {
         std.debug.assert(VirtualMachine.isLoaded());
         // macOS threadlocal vars are very slow
@@ -1282,11 +1284,8 @@ pub const VirtualMachine = struct {
         // so we can copy it here
         var jsc_vm = VirtualMachine.get();
 
-        if (jsc_vm.node_modules == null and strings.eqlComptime(std.fs.path.basename(specifier), Runtime.Runtime.Imports.alt_name)) {
+        if (strings.eqlComptime(std.fs.path.basename(specifier), Runtime.Runtime.Imports.alt_name)) {
             ret.path = Runtime.Runtime.Imports.Name;
-            return;
-        } else if (jsc_vm.node_modules != null and strings.eqlComptime(specifier, bun_file_import_path)) {
-            ret.path = bun_file_import_path;
             return;
         } else if (strings.eqlComptime(specifier, main_file_name)) {
             ret.result = null;
@@ -1371,49 +1370,6 @@ pub const VirtualMachine = struct {
         ret.query_string = query_string;
         const result_path = result.pathConst() orelse return error.ModuleNotFound;
         jsc_vm.resolved_count += 1;
-        if (comptime !realpath) {
-            if (jsc_vm.node_modules != null and !strings.eqlComptime(result_path.namespace, "node") and result.isLikelyNodeModule()) {
-                const node_modules_bundle = jsc_vm.node_modules.?;
-
-                node_module_checker: {
-                    const package_json = result.package_json orelse brk: {
-                        if (jsc_vm.bundler.resolver.packageJSONForResolvedNodeModule(&result)) |pkg| {
-                            break :brk pkg;
-                        } else {
-                            break :node_module_checker;
-                        }
-                    };
-
-                    if (node_modules_bundle.getPackageIDByName(package_json.name)) |possible_pkg_ids| {
-                        const pkg_id: u32 = brk: {
-                            for (possible_pkg_ids) |pkg_id| {
-                                const pkg = node_modules_bundle.bundle.packages[pkg_id];
-                                if (pkg.hash == package_json.hash) {
-                                    break :brk pkg_id;
-                                }
-                            }
-                            break :node_module_checker;
-                        };
-
-                        const package = &node_modules_bundle.bundle.packages[pkg_id];
-
-                        if (Environment.isDebug) {
-                            std.debug.assert(strings.eql(node_modules_bundle.str(package.name), package_json.name));
-                        }
-
-                        const package_relative_path = jsc_vm.bundler.fs.relative(
-                            package_json.source.path.name.dirWithTrailingSlash(),
-                            result_path.text,
-                        );
-
-                        if (node_modules_bundle.findModuleIDInPackage(package, package_relative_path) == null) break :node_module_checker;
-
-                        ret.path = bun_file_import_path;
-                        return;
-                    }
-                }
-            }
-        }
 
         ret.path = result_path.text;
     }
@@ -1440,7 +1396,7 @@ pub const VirtualMachine = struct {
         query_string: *ZigString,
         is_esm: bool,
     ) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, false, true);
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, false);
     }
 
     pub fn resolveFilePathForAPI(
@@ -1451,7 +1407,7 @@ pub const VirtualMachine = struct {
         query_string: *ZigString,
         is_esm: bool,
     ) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true, true);
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true);
     }
 
     pub fn resolve(
@@ -1462,7 +1418,7 @@ pub const VirtualMachine = struct {
         query_string: *ZigString,
         is_esm: bool,
     ) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true, false);
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true);
     }
 
     fn normalizeSource(source: []const u8) []const u8 {
@@ -1481,8 +1437,29 @@ pub const VirtualMachine = struct {
         query_string: ?*ZigString,
         is_esm: bool,
         comptime is_a_file_path: bool,
-        comptime realpath: bool,
     ) void {
+        if (is_a_file_path and specifier.length() > comptime @as(u32, @intFromFloat(@trunc(@as(f64, @floatFromInt(bun.MAX_PATH_BYTES)) * 1.5)))) {
+            const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
+            defer specifier_utf8.deinit();
+            const source_utf8 = source.toUTF8(bun.default_allocator);
+            defer source_utf8.deinit();
+            const printed = ResolveMessage.fmt(
+                bun.default_allocator,
+                specifier_utf8.slice(),
+                source_utf8.slice(),
+                error.NameTooLong,
+            ) catch @panic("Out of Memory");
+            const msg = logger.Msg{
+                .data = logger.rangeData(
+                    null,
+                    logger.Range.None,
+                    printed,
+                ),
+            };
+            res.* = ErrorableString.err(error.NameTooLong, ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source.utf8()).asVoid());
+            return;
+        }
+
         var result = ResolveFunctionResult{ .path = "", .result = null };
         var jsc_vm = VirtualMachine.get();
         const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
@@ -1515,7 +1492,6 @@ pub const VirtualMachine = struct {
                     query_string,
                     is_esm,
                     is_a_file_path,
-                    realpath,
                 );
                 return;
             }
@@ -1535,7 +1511,7 @@ pub const VirtualMachine = struct {
             jsc_vm.bundler.linker.log = old_log;
             jsc_vm.bundler.resolver.log = old_log;
         }
-        _resolve(&result, global, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path, realpath) catch |err_| {
+        _resolve(&result, global, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path) catch |err_| {
             var err = err_;
             const msg: logger.Msg = brk: {
                 var msgs: []logger.Msg = log.msgs.items;
@@ -1782,6 +1758,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
+        this.has_loaded = false;
         this.main = entry_path;
 
         try this.entry_point.generate(
@@ -1795,19 +1772,6 @@ pub const VirtualMachine = struct {
         var promise: *JSInternalPromise = undefined;
 
         if (!this.bundler.options.disable_transpilation) {
-
-            // We first import the node_modules bundle. This prevents any potential TDZ issues.
-            // The contents of the node_modules bundle are lazy, so hopefully this should be pretty quick.
-            if (this.node_modules != null and !this.has_loaded_node_modules) {
-                this.has_loaded_node_modules = true;
-                promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.static(bun_file_import_path));
-                this.waitForPromise(JSC.AnyPromise{
-                    .Internal = promise,
-                });
-                if (promise.status(this.global.vm()) == .Rejected)
-                    return promise;
-            }
-
             {
                 this.is_in_preload = true;
                 defer this.is_in_preload = false;

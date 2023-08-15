@@ -331,6 +331,16 @@ export const WebsocketCommandKindKeys: {
   3: "build_with_file_path";
   build_with_file_path: "build_with_file_path";
 };
+export const enum TestKind {
+  test_fn = 1,
+  describe_fn = 2,
+}
+export const TestKindKeys: {
+  1: "test_fn";
+  test_fn: "test_fn";
+  2: "describe_fn";
+  describe_fn: "describe_fn";
+};
 export interface StackFrame {
   function_name: string;
   file: string;
@@ -537,9 +547,6 @@ export interface TransformOptions {
   target?: Target;
   serve?: boolean;
   extension_order?: string[];
-  generate_node_module_bundle?: boolean;
-  node_modules_bundle_path?: string;
-  node_modules_bundle_path_server?: string;
   framework?: FrameworkConfig;
   router?: RouteConfig;
   no_summary?: boolean;
@@ -729,6 +736,22 @@ export interface ClientServerModuleManifest {
   contents: Uint8Array;
 }
 
+export interface GetTestsRequest {
+  path: string;
+  contents: Uint8Array;
+}
+
+export interface TestResponseItem {
+  byteOffset: int32;
+  label: StringPointer;
+  kind: TestKind;
+}
+
+export interface GetTestsResponse {
+  tests: TestResponseItem[];
+  contents: Uint8Array;
+}
+
 export declare function encodeStackFrame(message: StackFrame, bb: ByteBuffer): void;
 export declare function decodeStackFrame(buffer: ByteBuffer): StackFrame;
 export declare function encodeStackFramePosition(message: StackFramePosition, bb: ByteBuffer): void;
@@ -847,3 +870,9 @@ export declare function encodeClientServerModule(message: ClientServerModule, bb
 export declare function decodeClientServerModule(buffer: ByteBuffer): ClientServerModule;
 export declare function encodeClientServerModuleManifest(message: ClientServerModuleManifest, bb: ByteBuffer): void;
 export declare function decodeClientServerModuleManifest(buffer: ByteBuffer): ClientServerModuleManifest;
+export declare function encodeGetTestsRequest(message: GetTestsRequest, bb: ByteBuffer): void;
+export declare function decodeGetTestsRequest(buffer: ByteBuffer): GetTestsRequest;
+export declare function encodeTestResponseItem(message: TestResponseItem, bb: ByteBuffer): void;
+export declare function decodeTestResponseItem(buffer: ByteBuffer): TestResponseItem;
+export declare function encodeGetTestsResponse(message: GetTestsResponse, bb: ByteBuffer): void;
+export declare function decodeGetTestsResponse(buffer: ByteBuffer): GetTestsResponse;

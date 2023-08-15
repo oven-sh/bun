@@ -1669,42 +1669,30 @@ function decodeTransformOptions(bb) {
         break;
 
       case 18:
-        result["generate_node_module_bundle"] = !!bb.readByte();
-        break;
-
-      case 19:
-        result["node_modules_bundle_path"] = bb.readString();
-        break;
-
-      case 20:
-        result["node_modules_bundle_path_server"] = bb.readString();
-        break;
-
-      case 21:
         result["framework"] = decodeFrameworkConfig(bb);
         break;
 
-      case 22:
+      case 19:
         result["router"] = decodeRouteConfig(bb);
         break;
 
-      case 23:
+      case 20:
         result["no_summary"] = !!bb.readByte();
         break;
 
-      case 24:
+      case 21:
         result["disable_hmr"] = !!bb.readByte();
         break;
 
-      case 25:
+      case 22:
         result["port"] = bb.readUint16();
         break;
 
-      case 26:
+      case 23:
         result["logLevel"] = MessageLevel[bb.readVarUint()];
         break;
 
-      case 27:
+      case 24:
         result["source_map"] = SourceMapMode[bb.readByte()];
         break;
 
@@ -1851,57 +1839,39 @@ function encodeTransformOptions(message, bb) {
     }
   }
 
-  var value = message["generate_node_module_bundle"];
-  if (value != null) {
-    bb.writeByte(18);
-    bb.writeByte(value);
-  }
-
-  var value = message["node_modules_bundle_path"];
-  if (value != null) {
-    bb.writeByte(19);
-    bb.writeString(value);
-  }
-
-  var value = message["node_modules_bundle_path_server"];
-  if (value != null) {
-    bb.writeByte(20);
-    bb.writeString(value);
-  }
-
   var value = message["framework"];
   if (value != null) {
-    bb.writeByte(21);
+    bb.writeByte(18);
     encodeFrameworkConfig(value, bb);
   }
 
   var value = message["router"];
   if (value != null) {
-    bb.writeByte(22);
+    bb.writeByte(19);
     encodeRouteConfig(value, bb);
   }
 
   var value = message["no_summary"];
   if (value != null) {
-    bb.writeByte(23);
+    bb.writeByte(20);
     bb.writeByte(value);
   }
 
   var value = message["disable_hmr"];
   if (value != null) {
-    bb.writeByte(24);
+    bb.writeByte(21);
     bb.writeByte(value);
   }
 
   var value = message["port"];
   if (value != null) {
-    bb.writeByte(25);
+    bb.writeByte(22);
     bb.writeUint16(value);
   }
 
   var value = message["logLevel"];
   if (value != null) {
-    bb.writeByte(26);
+    bb.writeByte(23);
     var encoded = MessageLevel[value];
     if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "MessageLevel"');
     bb.writeVarUint(encoded);
@@ -1909,7 +1879,7 @@ function encodeTransformOptions(message, bb) {
 
   var value = message["source_map"];
   if (value != null) {
-    bb.writeByte(27);
+    bb.writeByte(24);
     var encoded = SourceMapMode[value];
     if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "SourceMapMode"');
     bb.writeByte(encoded);
@@ -3315,6 +3285,108 @@ function encodeClientServerModuleManifest(message, bb) {
   }
 }
 
+function decodeGetTestsRequest(bb) {
+  var result = {};
+
+  result["path"] = bb.readString();
+  result["contents"] = bb.readByteArray();
+  return result;
+}
+
+function encodeGetTestsRequest(message, bb) {
+  var value = message["path"];
+  if (value != null) {
+    bb.writeString(value);
+  } else {
+    throw new Error('Missing required field "path"');
+  }
+
+  var value = message["contents"];
+  if (value != null) {
+    bb.writeByteArray(value);
+  } else {
+    throw new Error('Missing required field "contents"');
+  }
+}
+const TestKind = {
+  "1": 1,
+  "2": 2,
+  "test_fn": 1,
+  "describe_fn": 2,
+};
+const TestKindKeys = {
+  "1": "test_fn",
+  "2": "describe_fn",
+  "test_fn": "test_fn",
+  "describe_fn": "describe_fn",
+};
+
+function decodeTestResponseItem(bb) {
+  var result = {};
+
+  result["byteOffset"] = bb.readInt32();
+  result["label"] = decodeStringPointer(bb);
+  result["kind"] = TestKind[bb.readByte()];
+  return result;
+}
+
+function encodeTestResponseItem(message, bb) {
+  var value = message["byteOffset"];
+  if (value != null) {
+    bb.writeInt32(value);
+  } else {
+    throw new Error('Missing required field "byteOffset"');
+  }
+
+  var value = message["label"];
+  if (value != null) {
+    encodeStringPointer(value, bb);
+  } else {
+    throw new Error('Missing required field "label"');
+  }
+
+  var value = message["kind"];
+  if (value != null) {
+    var encoded = TestKind[value];
+    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "TestKind"');
+    bb.writeByte(encoded);
+  } else {
+    throw new Error('Missing required field "kind"');
+  }
+}
+
+function decodeGetTestsResponse(bb) {
+  var result = {};
+
+  var length = bb.readVarUint();
+  var values = (result["tests"] = Array(length));
+  for (var i = 0; i < length; i++) values[i] = decodeTestResponseItem(bb);
+  result["contents"] = bb.readByteArray();
+  return result;
+}
+
+function encodeGetTestsResponse(message, bb) {
+  var value = message["tests"];
+  if (value != null) {
+    var values = value,
+      n = values.length;
+    bb.writeVarUint(n);
+    for (var i = 0; i < n; i++) {
+      value = values[i];
+      encodeTestResponseItem(value, bb);
+    }
+  } else {
+    throw new Error('Missing required field "tests"');
+  }
+
+  var value = message["contents"];
+  if (value != null) {
+    bb.writeByteArray(value);
+  } else {
+    throw new Error('Missing required field "contents"');
+  }
+}
+
 export { Loader };
 export { LoaderKeys };
 export { FrameworkEntryPointType };
@@ -3461,3 +3533,11 @@ export { decodeClientServerModule };
 export { encodeClientServerModule };
 export { decodeClientServerModuleManifest };
 export { encodeClientServerModuleManifest };
+export { decodeGetTestsRequest };
+export { encodeGetTestsRequest };
+export { TestKind };
+export { TestKindKeys };
+export { decodeTestResponseItem };
+export { encodeTestResponseItem };
+export { decodeGetTestsResponse };
+export { encodeGetTestsResponse };

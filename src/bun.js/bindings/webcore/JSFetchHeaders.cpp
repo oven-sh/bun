@@ -258,28 +258,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getSetCookie, (JSGlobal
         return JSValue::encode(JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0));
     }
 
-    JSC::JSArray* array = nullptr;
-    GCDeferralContext deferralContext(lexicalGlobalObject->vm());
-    JSC::ObjectInitializationScope initializationScope(lexicalGlobalObject->vm());
-    if ((array = JSC::JSArray::tryCreateUninitializedRestricted(
-             initializationScope, &deferralContext,
-             lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
-             count))) {
-        for (unsigned i = 0; i < count; ++i) {
-            array->initializeIndex(initializationScope, i, jsString(vm, values[i]));
-            RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
-        }
-    } else {
-        array = constructEmptyArray(lexicalGlobalObject, nullptr, count);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
-        if (!array) {
-            throwOutOfMemoryError(lexicalGlobalObject, scope);
-            return JSValue::encode(jsUndefined());
-        }
-        for (unsigned i = 0; i < count; ++i) {
-            array->putDirectIndex(lexicalGlobalObject, i, jsString(vm, values[i]));
-            RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
-        }
+    JSC::JSArray* array = constructEmptyArray(lexicalGlobalObject, nullptr, count);
+    RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
+    if (UNLIKELY(!array)) {
+        throwOutOfMemoryError(lexicalGlobalObject, scope);
+        return JSValue::encode(jsUndefined());
+    }
+
+    for (unsigned i = 0; i < count; ++i) {
+        array->putDirectIndex(lexicalGlobalObject, i, jsString(vm, values[i]));
         RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
     }
 
@@ -302,7 +289,7 @@ static const HashTableValue JSFetchHeadersPrototypeTableValues[] = {
     { "forEach"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_forEach, 1 } },
     { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_toJSON, 0 } },
     { "count"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsFetchHeadersGetterCount, 0 } },
-    // { "getSetCookie"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_getSetCookie, 0 } },
+    { "getSetCookie"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_getSetCookie, 0 } },
 };
 
 const ClassInfo JSFetchHeadersPrototype::s_info = { "Headers"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFetchHeadersPrototype) };
@@ -434,7 +421,7 @@ static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_toJSONBody(JSC
         for (auto it = vec.begin(); it != vec.end(); ++it) {
             auto& name = it->key;
             auto& value = it->value;
-            obj->putDirect(vm, Identifier::fromString(vm, WTFMove(name.convertToASCIILowercase())), jsString(vm, value), 0);
+            obj->putDirect(vm, Identifier::fromString(vm, name.convertToASCIILowercase()), jsString(vm, value), 0);
         }
     }
 

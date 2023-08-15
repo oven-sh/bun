@@ -1,6 +1,8 @@
 import { describe, test, expect } from "bun:test";
 import { spawnSync } from "bun";
 import { bunExe } from "harness";
+import { tmpdir } from "node:os";
+import fs from "node:fs";
 
 describe("bun", () => {
   describe("NO_COLOR", () => {
@@ -31,5 +33,50 @@ describe("bun", () => {
         expect(stdout.toString()).toMatch(/\u001b\[\d+m/);
       });
     }
+  });
+
+  describe("revision", () => {
+    test("revision generates version numbers correctly", () => {
+      var { stdout, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), "--version"],
+        env: {},
+        stderr: "inherit",
+      });
+      var version = stdout.toString().trim();
+
+      var { stdout, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), "--revision"],
+        env: {},
+        stderr: "inherit",
+      });
+      var revision = stdout.toString().trim();
+
+      expect(exitCode).toBe(0);
+      expect(revision).toStartWith(version.replaceAll("_", "-"));
+      // https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string
+      expect(revision).toMatch(
+        new RegExp(
+          "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$",
+        ),
+      );
+    });
+  });
+
+  describe("test command line arguments", () => {
+    test("test --config, issue #4128", () => {
+      const path = `${tmpdir()}/bunfig-${Date.now()}.toml`;
+      fs.writeFileSync(path, "[debug]");
+
+      const p = Bun.spawnSync({
+        cmd: [bunExe(), "--config", path],
+        env: {},
+        stderr: "inherit",
+      });
+      try {
+        expect(p.exitCode).toBe(0);
+      } finally {
+        fs.unlinkSync(path);
+      }
+    });
   });
 });

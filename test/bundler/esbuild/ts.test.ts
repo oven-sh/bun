@@ -1049,6 +1049,18 @@ describe("bundler", () => {
       ]);
     },
   });
+  itBundled("ts/ExportType*", {
+    files: {
+      "/entry.ts": /* ts */ `
+        export type * as Foo from "foo";
+        export type * from "foo";
+        console.log("hi");
+    `,
+    },
+    run: {
+      stdout: "hi\n",
+    },
+  });
   itBundled("ts/ExportDefaultTypeESBuildIssue316", {
     files: {
       "/entry.ts": /* ts */ `

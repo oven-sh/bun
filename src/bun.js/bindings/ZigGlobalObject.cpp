@@ -3863,7 +3863,7 @@ EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
     arguments.append(stream);
     arguments.append(controller);
 
-    auto result = JSC::call(this, function, callData, JSC::jsUndefined(), arguments);
+    auto result = call(this, function, callData, JSC::jsUndefined(), arguments);
     if (scope.exception())
         return JSC::JSValue::encode(scope.exception());
 

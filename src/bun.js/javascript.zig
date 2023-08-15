@@ -723,10 +723,11 @@ pub const VirtualMachine = struct {
         script_execution_context_id: u32 = 0,
         next_debugger_id: u64 = 1,
         poll_ref: JSC.PollRef = .{},
+        auto_pause: bool = false,
         const debug = Output.scoped(.DEBUGGER, false);
 
         extern "C" fn Bun__createJSDebugger(*JSC.JSGlobalObject) u32;
-        extern "C" fn Bun__waitForDebugger(u32) void;
+        extern "C" fn Bun__ensureDebugger(u32, bool) void;
         extern "C" fn Bun__startJSDebuggerThread(*JSC.JSGlobalObject, u32, *bun.String) void;
         var has_started_debugger_thread: bool = false;
         var futex_atomic: std.atomic.Atomic(u32) = undefined;
@@ -741,9 +742,9 @@ pub const VirtualMachine = struct {
                 thread.detach();
             }
             this.eventLoop().ensureWaker();
-
-            this.debugger.?.poll_ref.ref(this);
-
+            if (this.debugger.?.auto_pause) {
+                this.debugger.?.poll_ref.ref(this);
+            }
             debug("spin", .{});
             while (futex_atomic.load(.Monotonic) > 0) std.Thread.Futex.wait(&futex_atomic, 1);
             if (comptime Environment.allow_assert)
@@ -752,7 +753,7 @@ pub const VirtualMachine = struct {
                     .duration_ns = @truncate(@as(u128, @intCast(std.time.nanoTimestamp() - bun.CLI.start_time))),
                 }});
 
-            Bun__waitForDebugger(this.debugger.?.script_execution_context_id);
+            Bun__ensureDebugger(this.debugger.?.script_execution_context_id, this.debugger.?.auto_pause);
         }
 
         pub fn startJSDebuggerThread(other_vm: *VirtualMachine) void {

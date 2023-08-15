@@ -137,6 +137,7 @@ pub const ServerConfig = struct {
     websocket: ?WebSocketServer = null,
 
     inspector: bool = false,
+    reuse_port: bool = false,
 
     pub const SSLConfig = struct {
         server_name: [*c]const u8 = null,
@@ -744,6 +745,11 @@ pub const ServerConfig = struct {
 
             if (arg.get(global, "development")) |dev| {
                 args.development = dev.coerce(bool, global);
+                args.reuse_port = !args.development;
+            }
+
+            if (arg.get(global, "reusePort")) |dev| {
+                args.reuse_port = dev.coerce(bool, global);
             }
 
             if (arg.get(global, "inspector")) |inspector| {
@@ -5500,7 +5506,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             this.app.listenWithConfig(*ThisServer, this, onListen, .{
                 .port = this.config.port,
                 .host = host,
-                .options = 0,
+                .options = if (this.config.reuse_port) 1 else 0,
             });
         }
     };

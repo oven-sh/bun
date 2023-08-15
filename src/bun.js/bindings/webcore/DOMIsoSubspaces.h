@@ -41,6 +41,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForMockWithImplementationCleanupData;
     std::unique_ptr<IsoSubspace> m_subspaceForProcessObject;
     std::unique_ptr<IsoSubspace> m_subspaceForInternalModuleRegistry;
+    std::unique_ptr<IsoSubspace> m_subspaceForBunInspectorConnection;
 
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/

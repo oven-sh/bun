@@ -160,7 +160,8 @@ pub const Arguments = struct {
         clap.parseParam("--minify-identifiers              Minify identifiers") catch unreachable,
         clap.parseParam("--no-macros                       Disable macros from being executed in the bundler, transpiler and runtime") catch unreachable,
         clap.parseParam("--target <STR>                    The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
-        clap.parseParam("--inspect <STR>?                  Enable Bun's Debugger, optionally on a port or filepath") catch unreachable,
+        clap.parseParam("--inspect <STR>?                  Activate Bun's Debugger") catch unreachable,
+        clap.parseParam("--inspect-brk <STR>?              Activate Bun's Debugger and pause immediately") catch unreachable,
         clap.parseParam("<POS>...                          ") catch unreachable,
     };
 

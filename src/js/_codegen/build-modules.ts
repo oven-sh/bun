@@ -136,7 +136,8 @@ mark("Preprocess modules");
 
 const config = ({ platform, debug }: { platform: string; debug?: boolean }) => ({
   entrypoints: bundledEntryPoints,
-  minify: { syntax: true, whitespace: !debug },
+  // Whitespace and identifiers are not minified to give better error messages when an error happens in our builtins
+  minify: { syntax: true, whitespace: false },
   root: TMP,
   define: {
     IS_BUN_DEVELOPMENT: String(!!debug),

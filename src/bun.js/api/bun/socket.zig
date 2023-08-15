@@ -999,7 +999,6 @@ pub const Listener = struct {
                 .protos = null,
                 .server_name = null,
             };
-            tcp.poll_ref.ref(handlers.vm);
 
             TCPSocket.dataSetCached(tcp.getThisValue(globalObject), globalObject, default_data);
 
@@ -1012,6 +1011,7 @@ pub const Listener = struct {
                 exception.* = ZigString.static("Failed to connect").toErrorInstance(globalObject).asObjectRef();
                 return .zero;
             };
+            tcp.poll_ref.ref(handlers.vm);
 
             return promise_value;
         }

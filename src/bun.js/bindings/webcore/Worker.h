@@ -76,6 +76,7 @@ public:
     const String& name() const { return m_options.name; }
 
     void dispatchEvent(Event&);
+    void dispatchCloseEvent(Event&);
     void setKeepAlive(bool);
 
 #if ENABLE(WEB_RTC)

@@ -98,9 +98,37 @@ test("sending 50 messages should just work", done => {
   });
 });
 
-test("worker by default will not close the event loop", done => {
+test("worker with event listeners doesnt close event loop", done => {
   const x = Bun.spawn({
-    cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.js")],
+    cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.mjs"), "worker-fixture-many-messages.js"],
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "inherit"],
+  });
+
+  const timer = setTimeout(() => {
+    x.kill();
+    done(new Error("timeout"));
+  }, 1000);
+
+  x.exited.then(async code => {
+    clearTimeout(timer);
+    if (code !== 0) {
+      done(new Error("exited with non-zero code"));
+    } else {
+      const text = await new Response(x.stdout).text();
+      if (!text.includes("done")) {
+        console.log({ text });
+        done(new Error("event loop killed early"));
+      } else {
+        done();
+      }
+    }
+  });
+});
+
+test("worker with event listeners doesnt close event loop 2", done => {
+  const x = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.mjs"), "worker-fixture-many-messages2.js"],
     env: bunEnv,
     stdio: ["inherit", "pipe", "inherit"],
   });
@@ -146,7 +174,6 @@ test("worker_threads with process.exit", done => {
   });
   worker.on("exit", event => {
     try {
-      console.log({ event });
       expect(event).toBe(2);
     } catch (e) {
       done(e);
@@ -155,19 +182,28 @@ test("worker_threads with process.exit", done => {
   });
 });
 
-test.skip("worker_threads with process.exit and terminate", async () => {
-  const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
+test("worker_threads terminate", async () => {
+  const worker = new wt.Worker(new URL("worker-fixture-hang.js", import.meta.url).href, {
     smol: true,
   });
   const code = await worker.terminate();
-  expect(code).toBe(2);
+  expect(code).toBe(0);
 });
 
-test.skip("worker_threads with process.exit (delay) and terminate", async () => {
+test("worker_threads with process.exit (delay) and terminate", async () => {
   const worker2 = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
     smol: true,
   });
-  await Bun.sleep(100);
+  await Bun.sleep(200);
   const code2 = await worker2.terminate();
   expect(code2).toBe(2);
+});
+
+test.skip("terminating forcefully properly interrupts", async () => {
+  const worker2 = new wt.Worker(new URL("worker-fixture-while-true.js", import.meta.url).href, {});
+  await new Promise<void>(done => {
+    worker2.on("message", () => done());
+  });
+  const code2 = await worker2.terminate();
+  expect(code2).toBe(0);
 });

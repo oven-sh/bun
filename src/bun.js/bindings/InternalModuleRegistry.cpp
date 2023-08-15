@@ -30,35 +30,35 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 // JS builtin that acts as a module. In debug mode, we use a different implementation that reads
 // from the developer's filesystem. This allows reloading code without recompiling bindings.
 
-#define INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, SOURCE, moduleName)    \
-    auto throwScope = DECLARE_THROW_SCOPE(vm);                                      \
-    auto&& origin = SourceOrigin(WTF::URL(makeString("builtin://"_s, moduleName))); \
-    SourceCode source = JSC::makeSource(SOURCE, origin, moduleName);                \
-    maybeAddCodeCoverage(vm, source);                                               \
-    JSFunction* func                                                                \
-        = JSFunction::create(                                                       \
-            vm,                                                                     \
-            createBuiltinExecutable(                                                \
-                vm, source,                                                         \
-                Identifier(),                                                       \
-                ImplementationVisibility::Public,                                   \
-                ConstructorKind::None,                                              \
-                ConstructAbility::CannotConstruct)                                  \
-                ->link(vm, nullptr, source),                                        \
-            static_cast<JSC::JSGlobalObject*>(globalObject));                       \
-                                                                                    \
-    RETURN_IF_EXCEPTION(throwScope, {});                                            \
-                                                                                    \
-    JSC::MarkedArgumentBuffer argList;                                              \
-    JSValue result = JSC::profiledCall(                                             \
-        globalObject,                                                               \
-        ProfilingReason::API,                                                       \
-        func,                                                                       \
-        JSC::getCallData(func),                                                     \
-        globalObject, JSC::MarkedArgumentBuffer());                                 \
-                                                                                    \
-    RETURN_IF_EXCEPTION(throwScope, {});                                            \
-    ASSERT_INTERNAL_MODULE(result, moduleName);                                     \
+#define INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, SOURCE, moduleName, urlString) \
+    auto throwScope = DECLARE_THROW_SCOPE(vm);                                              \
+    auto&& origin = SourceOrigin(WTF::URL(urlString));                                      \
+    SourceCode source = JSC::makeSource(SOURCE, origin, moduleName);                        \
+    maybeAddCodeCoverage(vm, source);                                                       \
+    JSFunction* func                                                                        \
+        = JSFunction::create(                                                               \
+            vm,                                                                             \
+            createBuiltinExecutable(                                                        \
+                vm, source,                                                                 \
+                Identifier(),                                                               \
+                ImplementationVisibility::Public,                                           \
+                ConstructorKind::None,                                                      \
+                ConstructAbility::CannotConstruct)                                          \
+                ->link(vm, nullptr, source),                                                \
+            static_cast<JSC::JSGlobalObject*>(globalObject));                               \
+                                                                                            \
+    RETURN_IF_EXCEPTION(throwScope, {});                                                    \
+                                                                                            \
+    JSC::MarkedArgumentBuffer argList;                                                      \
+    JSValue result = JSC::profiledCall(                                                     \
+        globalObject,                                                                       \
+        ProfilingReason::Other,                                                             \
+        func,                                                                               \
+        JSC::getCallData(func),                                                             \
+        globalObject, JSC::MarkedArgumentBuffer());                                         \
+                                                                                            \
+    RETURN_IF_EXCEPTION(throwScope, {});                                                    \
+    ASSERT_INTERNAL_MODULE(result, moduleName);                                             \
     return result;
 
 #if BUN_DEBUG
@@ -72,29 +72,30 @@ JSValue initializeInternalModuleFromDisk(
     VM& vm,
     WTF::String moduleName,
     WTF::String fileBase,
-    WTF::String fallback)
+    WTF::String fallback,
+    WTF::String urlString)
 {
     WTF::String file = makeString(BUN_DYNAMIC_JS_LOAD_PATH, "modules_dev/"_s, fileBase);
     if (auto contents = WTF::FileSystemImpl::readEntireFile(file)) {
         auto string = WTF::String::fromUTF8(contents.value());
-        INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, string, moduleName);
+        INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, string, moduleName, urlString);
     } else {
         printf("bun-debug failed to load bundled version of \"%s\" at \"%s\" (was it deleted?)\n"
                "Please run `make js` to rebundle these builtins.\n",
             moduleName.utf8().data(), file.utf8().data());
         // Fallback to embedded source
-        INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, fallback, moduleName);
+        INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, fallback, moduleName, urlString);
     }
 }
-#define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, SOURCE) \
-    return initializeInternalModuleFromDisk(globalObject, vm, moduleId, filename, SOURCE)
+#define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, SOURCE, urlString) \
+    return initializeInternalModuleFromDisk(globalObject, vm, moduleId, filename, SOURCE, urlString)
 #else
 
 #define ASSERT_INTERNAL_MODULE(result, moduleName) \
     {                                              \
     }
-#define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, SOURCE) \
-    INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, SOURCE, moduleId)
+#define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, SOURCE, urlString) \
+    INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, SOURCE, moduleId, urlString)
 #endif
 
 const ClassInfo InternalModuleRegistry::s_info = { "InternalModuleRegistry"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(InternalModuleRegistry) };

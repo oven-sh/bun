@@ -636,7 +636,6 @@ pub const TestCommand = struct {
                 // rely on the dir fd yields a performance improvement
                 .store_fd = true,
                 .smol = ctx.runtime_options.smol,
-
                 .debugger = ctx.runtime_options.debugger,
             },
         );

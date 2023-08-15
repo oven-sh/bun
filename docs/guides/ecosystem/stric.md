@@ -16,7 +16,7 @@ Use `bun init` to create an empty project.
 $ mkdir myapp
 $ cd myapp
 $ bun init
-$ bun add @stricjs/router
+$ bun add @stricjs/router @stricjs/utils
 ```
 
 ---
@@ -32,12 +32,14 @@ export default new Router()
 
 ---
 
-To serve static files from `/public/*`:
+To serve static files from `/public`:
 
 ```ts#index.ts
+import { dir } from '@stricjs/utils';
+
 export default new Router()
   .get('/', () => new Response('Hi'))
-  .get('/public/*', stream('.'));
+  .get('/*', dir('./public'));
 ```
 
 ---
@@ -50,4 +52,4 @@ $ bun --watch run index.ts
 
 ---
 
-For more info, see Stric's [documentation](https://stricjs.gitbook.io/docs).
+For more info, see Stric's [documentation](https://stricjs.netlify.app).

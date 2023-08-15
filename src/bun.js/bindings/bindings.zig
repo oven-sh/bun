@@ -5063,6 +5063,26 @@ pub const VM = extern struct {
         });
     }
 
+    // These four functions fire VM traps. To understand what that means, see VMTraps.h for a giant explainer.
+    // These may be called concurrently from another thread.
+
+    /// Fires NeedTermination Trap. Thread safe. See JSC's "VMTraps.h" for explaination on traps.
+    pub fn notifyNeedTermination(vm: *VM) void {
+        cppFn("notifyNeedTermination", .{vm});
+    }
+    /// Fires NeedWatchdogCheck Trap. Thread safe. See JSC's "VMTraps.h" for explaination on traps.
+    pub fn notifyNeedWatchdogCheck(vm: *VM) void {
+        cppFn("notifyNeedWatchdogCheck", .{vm});
+    }
+    /// Fires NeedDebuggerBreak Trap. Thread safe. See JSC's "VMTraps.h" for explaination on traps.
+    pub fn notifyNeedDebuggerBreak(vm: *VM) void {
+        cppFn("notifyNeedDebuggerBreak", .{vm});
+    }
+    /// Fires NeedShellTimeoutCheck Trap. Thread safe. See JSC's "VMTraps.h" for explaination on traps.
+    pub fn notifyNeedShellTimeoutCheck(vm: *VM) void {
+        cppFn("notifyNeedShellTimeoutCheck", .{vm});
+    }
+
     pub fn isEntered(vm: *VM) bool {
         return cppFn("isEntered", .{
             vm,

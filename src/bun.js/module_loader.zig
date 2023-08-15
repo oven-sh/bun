@@ -2004,12 +2004,6 @@ pub const ModuleLoader = struct {
         } else if (HardcodedModule.Map.getWithEql(specifier, bun.String.eqlComptime)) |hardcoded| {
             switch (hardcoded) {
                 .@"bun:main" => {
-                    defer {
-                        if (jsc_vm.worker) |worker| {
-                            worker.queueInitialTask();
-                        }
-                    }
-
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = bun.String.create(jsc_vm.entry_point.source.contents),

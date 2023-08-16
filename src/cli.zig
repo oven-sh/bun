@@ -299,18 +299,6 @@ pub const Arguments = struct {
         if (comptime cmd.readGlobalConfig()) brk: {
             if (ctx.has_loaded_global_config) break :brk;
 
-            if (getRootBunfigPath(&config_buf)) |path| {
-                Output.debug("trying to load {s}\n", .{path});
-                const success = loadConfigPath(allocator, true, path, ctx, comptime cmd) catch false;
-                if (success) {
-                    Output.debug("successfully loaded global bunfig\n", .{});
-                    ctx.has_loaded_global_config = true;
-                    break :brk;
-                } else {
-                    Output.debug("failed to load global bunfig\n", .{});
-                }
-            }
-
             if (getRootBunJSONPath(&config_buf)) |path| {
                 Output.debug("trying to load {s}\n", .{path});
                 const success = loadConfigPath(allocator, true, path, ctx, comptime cmd) catch false;
@@ -320,6 +308,18 @@ pub const Arguments = struct {
                     break :brk;
                 } else {
                     Output.debug("failed to load global bun.json\n", .{});
+                }
+            }
+
+            if (getRootBunfigPath(&config_buf)) |path| {
+                Output.debug("trying to load {s}\n", .{path});
+                const success = loadConfigPath(allocator, true, path, ctx, comptime cmd) catch false;
+                if (success) {
+                    Output.debug("successfully loaded global bunfig\n", .{});
+                    ctx.has_loaded_global_config = true;
+                    break :brk;
+                } else {
+                    Output.debug("failed to load global bunfig\n", .{});
                 }
             }
         }

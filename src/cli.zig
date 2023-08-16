@@ -1074,7 +1074,7 @@ pub const Command = struct {
             RootCommandMatcher.case("pm") => .PackageManagerCommand,
 
             RootCommandMatcher.case("add"), RootCommandMatcher.case("a") => .AddCommand,
-            RootCommandMatcher.case("update") => .UpdateCommand,
+            RootCommandMatcher.case("up"), RootCommandMatcher.case("update") => .UpdateCommand,
             RootCommandMatcher.case("r"), RootCommandMatcher.case("remove"), RootCommandMatcher.case("rm"), RootCommandMatcher.case("uninstall") => .RemoveCommand,
 
             RootCommandMatcher.case("run") => .RunCommand,

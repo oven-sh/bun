@@ -133,10 +133,10 @@ pub const Arguments = struct {
     pub const ParamType = clap.Param(clap.Help);
 
     const shared_public_params = [_]ParamType{
-        clap.parseParam("-h, --help                        Display this help and exit.") catch unreachable,
+        clap.parseParam("-h, --help                        Display this help and exit") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun.js instead of Node.js (via symlinking node)") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
-        clap.parseParam("-c, --config <PATH>               Config file to load bun from (e.g. -c bun.json") catch unreachable,
+        clap.parseParam("-c, --config <PATH>               Specify path to config file (e.g. -c bun.json)") catch unreachable,
         clap.parseParam("--extension-order <STR>...        Defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
         clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
         clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments") catch unreachable,

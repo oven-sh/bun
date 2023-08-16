@@ -2,6 +2,8 @@ const fs = require("node:fs");
 const { ttySetMode, isatty, getWindowSize: _getWindowSize } = $lazy("tty");
 
 function ReadStream(fd) {
+  if (!(this instanceof ReadStream)) return new ReadStream(fd);
+
   const stream = fs.ReadStream.call(this, `/dev/fd/${fd}`);
 
   stream.isRaw = false;
@@ -20,6 +22,8 @@ function ReadStream(fd) {
 
   return stream;
 }
+
+ReadStream.prototype = fs.ReadStream.prototype;
 
 let OSRelease;
 
@@ -77,6 +81,8 @@ function warnOnDeactivatedColors(env) {
 }
 
 function WriteStream(fd) {
+  if (!(this instanceof WriteStream)) return new WriteStream(fd);
+
   const stream = fs.WriteStream.call(this, `/dev/fd/${fd}`);
 
   stream.columns = undefined;
@@ -246,6 +252,8 @@ function WriteStream(fd) {
 
   return stream;
 }
+
+WriteStream.prototype = fs.WriteStream.prototype;
 
 var validateInteger = (value, name, min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAFE_INTEGER) => {
   if (typeof value !== "number") throw new ERR_INVALID_ARG_TYPE(name, "number", value);

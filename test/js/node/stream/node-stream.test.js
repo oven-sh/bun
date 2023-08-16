@@ -3,6 +3,7 @@ import { Readable, Writable, Duplex, Transform, PassThrough } from "node:stream"
 import { createReadStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { writeFileSync } from "node:fs";
+import tty from "tty";
 
 describe("Readable", () => {
   it("should be able to be created without _construct method defined", done => {
@@ -190,5 +191,51 @@ describe("PassThrough", () => {
 
     const subclass = new Subclass();
     expect(subclass instanceof PassThrough).toBe(true);
+  });
+});
+
+describe("TTY", () => {
+  it("ReadStream stdin", () => {
+    const rs = new tty.ReadStream(0);
+    const rs1 = tty.ReadStream(0);
+    expect(rs1 instanceof tty.ReadStream).toBe(true);
+    expect(rs instanceof tty.ReadStream).toBe(true);
+    expect(tty.isatty(rs.fd)).toBe(true);
+    expect(rs.isRaw).toBe(false);
+    expect(rs.isTTY).toBe(true);
+    expect(rs.setRawMode).toBeInstanceOf(Function);
+    expect(rs.setRawMode(true)).toBe(rs);
+    expect(rs.isRaw).toBe(true);
+    expect(rs.setRawMode(false)).toBe(rs);
+    expect(rs.isRaw).toBe(false);
+  });
+
+  it("ReadStream not a tty", () => {
+    const rs = new tty.ReadStream(6);
+    expect(rs instanceof tty.ReadStream).toBe(true);
+    expect(rs.isTTY).toBe(false);
+    expect(tty.isatty(rs.fd)).toBe(false);
+  });
+
+  it("WriteStream stdout", () => {
+    const ws = new tty.WriteStream(1);
+    const ws1 = tty.WriteStream(1);
+    expect(ws1 instanceof tty.WriteStream).toBe(true);
+    expect(ws instanceof tty.WriteStream).toBe(true);
+    expect(tty.isatty(ws.fd)).toBe(true);
+    expect(ws.isTTY).toBe(true);
+    expect(ws.columns).toBeGreaterThan(0);
+    expect(ws.rows).toBeGreaterThan(0);
+    expect(ws.getColorDepth()).toBeGreaterThanOrEqual(0);
+    expect(ws.hasColors(2)).toBe(true);
+  });
+
+  it("process.stdio tty", () => {
+    expect(process.stdin instanceof tty.ReadStream).toBe(true);
+    expect(process.stdout instanceof tty.WriteStream).toBe(true);
+    expect(process.stderr instanceof tty.WriteStream).toBe(true);
+    expect(process.stdin.isTTY).toBe(true);
+    expect(process.stdout.isTTY).toBe(true);
+    expect(process.stderr.isTTY).toBe(true);
   });
 });

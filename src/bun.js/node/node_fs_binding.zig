@@ -147,7 +147,7 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
                 return JSC.Node.AsyncReadFileTask.create(globalObject, args, slice.vm, slice.arena);
             }
 
-             if (comptime FunctionEnum == .realpath) {
+            if (comptime FunctionEnum == .realpath) {
                 return JSC.Node.AsyncRealpathTask.create(globalObject, args, slice.vm, slice.arena);
             }
 

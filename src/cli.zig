@@ -1583,9 +1583,6 @@ pub const Command = struct {
 
                     if (extension.len > 0) {
                         if (!ctx.debug.loaded_bunfig) {
-                            // get absolute path to bunfig.toml
-                            // var config_path
-
                             var success = Arguments.loadConfigPath(ctx.allocator, true, "bun.json", &ctx, .RunCommand) catch false;
                             if (!success) {
                                 _ = Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand) catch false;

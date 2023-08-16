@@ -9,7 +9,6 @@ describe("config", () => {
         "index.ts": "console.log(caterpillar);",
       });
       const { stdout } = bunRun(`${dir}/index.ts`);
-      // should be "a\n but console.log adds a newline
       expect(stdout).toBe("butterfly");
     }
   });
@@ -21,7 +20,6 @@ describe("config", () => {
         "index.ts": "console.log(caterpillar);",
       });
       const { stdout } = bunRun(`${dir}/index.ts`);
-      // should be "a\n but console.log adds a newline
       expect(stdout).toBe("butterfly");
     }
   });
@@ -34,7 +32,6 @@ describe("config", () => {
         "index.ts": "console.log(caterpillar);",
       });
       const { stdout } = bunRun(`${dir}/index.ts`);
-      // should be "a\n but console.log adds a newline
       expect(stdout).toBe("correct");
     }
   });
@@ -46,7 +43,6 @@ describe("config", () => {
         "index.ts": "console.log(caterpillar);",
       });
       const { stdout } = bunRun(`${dir}/index.ts`, {}, { flags: ["--config", "bun2.json"] });
-      // should be "a\n but console.log adds a newline
       expect(stdout).toBe("butterfly");
     }
   });
@@ -58,7 +54,6 @@ describe("config", () => {
         "index.ts": "console.log(caterpillar);",
       });
       const { stdout } = bunRun(`${dir}/index.ts`, {}, { flags: ["-c", "bun2.json"] });
-      // should be "a\n but console.log adds a newline
       expect(stdout).toBe("butterfly");
     }
   });
@@ -70,7 +65,6 @@ describe("config", () => {
         "index.ts": "console.log(caterpillar);",
       });
       const { stdout } = bunRun(`${dir}/index.ts`, {}, { flags: ["--config", "bun2.toml"] });
-      // should be "a\n but console.log adds a newline
       expect(stdout).toBe("butterfly");
     }
   });
@@ -81,7 +75,6 @@ describe("config", () => {
         "index.ts": "console.log(caterpillar);",
       });
       const { stdout } = bunRun(`${dir}/index.ts`, {}, { flags: ["-c", "bun2.toml"] });
-      // should be "a\n but console.log adds a newline
       expect(stdout).toBe("butterfly");
     }
   });

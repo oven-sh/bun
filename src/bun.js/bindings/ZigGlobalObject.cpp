@@ -2435,7 +2435,7 @@ private:
             globalObject(),
             0,
             String("noopNotImplemented"_s),
-            functionNoop, ImplementationVisibility::Public, NoIntrinsic, functionPerformanceNow,
+            functionNoop, ImplementationVisibility::Public, NoIntrinsic, functionNoop,
             &DOMJITSignatureForPerformanceNow);
         this->putDirect(vm, JSC::Identifier::fromString(vm, "mark"_s), noopNotImplemented, JSC::PropertyAttribute::DOMJITFunction | JSC::PropertyAttribute::Function);
         this->putDirect(vm, JSC::Identifier::fromString(vm, "measure"_s), noopNotImplemented, JSC::PropertyAttribute::DOMJITFunction | JSC::PropertyAttribute::Function);

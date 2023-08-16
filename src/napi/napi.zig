@@ -1345,11 +1345,11 @@ pub const ThreadSafeFunction = struct {
     }
 
     pub fn ref(this: *ThreadSafeFunction) void {
-        this.poll_ref.ref(this.env.bunVM());
+        this.poll_ref.refConcurrentlyFromEventLoop(this.event_loop);
     }
 
     pub fn unref(this: *ThreadSafeFunction) void {
-        this.poll_ref.unref(this.env.bunVM());
+        this.poll_ref.unrefConcurrentlyFromEventLoop(this.event_loop);
     }
 
     pub fn acquire(this: *ThreadSafeFunction) !void {

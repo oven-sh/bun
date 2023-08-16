@@ -1763,7 +1763,10 @@ extern "C" napi_status napi_create_external(napi_env env, void* data,
 
     auto* structure = Bun::NapiExternal::createStructure(vm, globalObject, globalObject->objectPrototype());
     JSValue value = JSValue(Bun::NapiExternal::create(vm, structure, data, finalize_hint, finalize_cb));
-    JSC::EnsureStillAliveScope ensureStillAlive(value);
+
+    JSC::Strong<JSC::Unknown> strongRef(vm, value);
+    // TODO: ???
+
     *result = toNapi(value);
     return napi_ok;
 }

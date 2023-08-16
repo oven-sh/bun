@@ -167,6 +167,7 @@ inspect.styles = {
   date: "magenta",
   regexp: "red",
 };
+inspect.custom = Symbol.for('nodejs.util.inspect.custom');
 function stylizeWithColor(str, styleType) {
   var style = inspect.styles[styleType];
   if (style) {

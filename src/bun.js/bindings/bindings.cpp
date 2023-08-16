@@ -3957,6 +3957,7 @@ enum class BuiltinNamesMap : uint8_t {
     data,
     toString,
     redirect,
+    inspectCustom,
 };
 
 static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
@@ -3988,7 +3989,39 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     case BuiltinNamesMap::redirect: {
         return clientData->builtinNames().redirectPublicName();
     }
+    case BuiltinNamesMap::inspectCustom: {
+        return Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s));
     }
+    }
+}
+
+extern "C" EncodedJSValue JSC__JSValue__callCustomInspectFunction(
+    JSC::JSGlobalObject* lexicalGlobalObject,
+    JSC__JSValue encodedFunctionValue,
+    JSC__JSValue encodedThisValue,
+    unsigned depth
+) {
+    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSValue functionToCall = JSValue::decode(encodedFunctionValue);
+    JSValue thisValue = JSValue::decode(encodedThisValue);
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue nodeUtilValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::Field::NodeUtil);
+    if (!nodeUtilValue.isObject()) {
+        return {};
+    }
+    JSFunction* inspectFn =  jsCast<JSFunction*>(nodeUtilValue.getObject()->getIfPropertyExists(globalObject, Identifier::fromString(vm, "inspect"_s)));
+    JSObject* options = JSC::constructEmptyObject(globalObject);
+    
+    auto callData = JSC::getCallData(functionToCall);
+    MarkedArgumentBuffer arguments;
+    arguments.append(jsNumber(depth));
+    arguments.append(options);
+    arguments.append(inspectFn);
+
+    auto inspectRet = JSC::call(globalObject, functionToCall, callData, thisValue, arguments);
+    return JSValue::encode(inspectRet);
 }
 
 JSC__JSValue JSC__JSValue__fastGetDirect_(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)
@@ -4009,8 +4042,11 @@ JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* 
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    return JSValue::encode(
-        value.getObject()->getIfPropertyExists(globalObject, builtinNameMap(globalObject, arg2)));
+    auto identifier = builtinNameMap(globalObject, arg2);
+    auto *object = value.getObject();
+    auto result = object->getIfPropertyExists(globalObject, identifier);
+
+    return JSValue::encode(result);
 }
 
 bool JSC__JSValue__toBooleanSlow(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject)

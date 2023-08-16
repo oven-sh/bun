@@ -601,7 +601,7 @@ ReadStream = (function (InternalReadStream) {
       if ($isPromise(res)) {
         var then = res?.then;
         if (then && $isCallable(then)) {
-          then(
+          res.then(
             () => {
               this[kIoDone] = true;
               // Tell ._destroy() that it's safe to close the fd now.

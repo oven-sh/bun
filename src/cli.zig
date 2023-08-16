@@ -294,7 +294,6 @@ pub const Arguments = struct {
         return null;
     }
     pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
-        Output.debug("loadConfig\n", .{});
         var config_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         if (comptime cmd.readGlobalConfig()) brk: {
             if (ctx.has_loaded_global_config) break :brk;
@@ -327,10 +326,9 @@ pub const Arguments = struct {
         var config_path: [:0]u8 = undefined;
         var config_path_: []const u8 = user_config_path_ orelse "";
 
+        // read user-specified config file if path is absolute
         if (config_path_.len > 0 and config_path_[0] == '/') {
             Output.debug("loading config from user-specified abs path\n", .{});
-            // config file is absolute path (user-specified)
-            // if (config_path_[0] == '/') {
             Output.debug("config_path_: {s}\n", .{config_path_});
             @memcpy(config_buf[0..config_path_.len], config_path_);
             config_buf[config_path_.len] = 0;
@@ -346,22 +344,14 @@ pub const Arguments = struct {
             }
         }
 
-        // var config_path_: []const u8 = user_config_path_ orelse "";
-        // var config_path: [:0]u8 = undefined;
-        // var auto_loaded: bool = false;
-
-        Output.debug("cmd: {any}\n", .{cmd});
-        Output.debug("config: {any}\n", .{ctx.positionals});
         var should_load_config = Command.Tag.always_loads_config.get(cmd) or
             (cmd == .AutoCommand and
             (ctx.positionals.len == 0 or ctx.positionals.len > 0 and options.defaultLoaders.has(std.fs.path.extension(ctx.positionals[0])))) or (cmd == .RunCommand and
             (ctx.positionals.len == 2 and options.defaultLoaders.has(std.fs.path.extension(ctx.positionals[1]))));
 
-        // if (config_path_.len == 0) return;
-
         // skip reading config
         if (!should_load_config) {
-            Output.debug("not loading config\n", .{});
+            Output.debug("skipping loading config\n", .{});
             return;
         }
 
@@ -397,7 +387,7 @@ pub const Arguments = struct {
 
         var parts: [2]string = undefined;
 
-        // load bun.json
+        // load bun.json if exists
         parts = .{ ctx.args.absolute_working_dir.?, "bun.json" };
         config_path_ = resolve_path.joinAbsStringBuf(
             ctx.args.absolute_working_dir.?,
@@ -418,7 +408,7 @@ pub const Arguments = struct {
             Output.debug("failed to load bun.json\n", .{});
         }
 
-        // load bunfig.toml
+        // load bunfig.toml if exists
         parts = .{ ctx.args.absolute_working_dir.?, "bunfig.toml" };
         config_path_ = resolve_path.joinAbsStringBuf(
             ctx.args.absolute_working_dir.?,
@@ -428,7 +418,6 @@ pub const Arguments = struct {
         );
         config_buf[config_path_.len] = 0;
         config_path = config_buf[0..config_path_.len :0];
-        // try to load bunfig.toml
         Output.debug("loading local bunfig.toml\n", .{});
         var bunfig_loaded = loadConfigPath(allocator, true, config_path, ctx, comptime cmd) catch false;
         if (bunfig_loaded) {

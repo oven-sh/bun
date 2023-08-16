@@ -1181,7 +1181,7 @@ extern const JSC::ImplementationVisibility s_processObjectInternalsGetStdinStrea
 
 #define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_DATA(macro) \
     macro(binding, processObjectInternalsBinding, 1) \
-    macro(getStdioWriteStream, processObjectInternalsGetStdioWriteStream, 2) \
+    macro(getStdioWriteStream, processObjectInternalsGetStdioWriteStream, 1) \
     macro(getStdinStream, processObjectInternalsGetStdinStream, 1) \
 
 #define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(macro) \

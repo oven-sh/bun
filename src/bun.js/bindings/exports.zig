@@ -1036,7 +1036,7 @@ pub const ZigConsoleClient = struct {
 
         if (message_type == .Trace) {
             writeTrace(Writer, writer, global);
-            buffered_writer.flush() catch unreachable;
+            buffered_writer.flush() catch {};
         }
     }
 

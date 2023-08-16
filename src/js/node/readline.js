@@ -1604,15 +1604,13 @@ var _Interface = class Interface extends InterfaceConstructor {
     return this[kPrompt];
   }
 
-  [kSetRawMode](mode) {
-    var input = this.input;
-    var { setRawMode, wasInRawMode } = input;
+  [kSetRawMode](flag) {
+    const mode = flag ? 1 : 0;
+    const wasInRawMode = this.input.isRaw;
 
-    // TODO: Make this work, for now just stub this and print debug
-    debug("setRawMode", mode, "set!");
-    // if (typeof setRawMode === "function") {
-    //   setRawMode(mode);
-    // }
+    if (typeof this.input.setRawMode === "function") {
+      this.input.setRawMode(mode);
+    }
 
     return wasInRawMode;
   }

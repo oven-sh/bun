@@ -37,6 +37,8 @@ EventEmitterPrototype.setMaxListeners = function setMaxListeners(n) {
   return this;
 };
 
+EventEmitterPrototype.constructor = EventEmitter;
+
 EventEmitterPrototype.getMaxListeners = function getMaxListeners() {
   return this._maxListeners ?? defaultMaxListeners;
 };

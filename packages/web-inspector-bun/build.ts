@@ -37,6 +37,11 @@ const html = new HTMLRewriter()
 
       element.append(
         `
+        <style>
+            body {
+                --undocked-title-area-height: 0px !important;
+            }
+        </style>
         <script src="${jsReplacementId}"></script>
 
         <script>

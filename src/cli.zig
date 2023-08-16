@@ -136,7 +136,7 @@ pub const Arguments = struct {
         clap.parseParam("-h, --help                        Display this help and exit.") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun.js instead of Node.js (via symlinking node)") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
-        clap.parseParam("-c, --config <PATH>?              Config file to load bun from (e.g. -c bunfig.toml") catch unreachable,
+        clap.parseParam("-c, --config <PATH>               Config file to load bun from (e.g. -c bun.json") catch unreachable,
         clap.parseParam("--extension-order <STR>...        Defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
         clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
         clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments") catch unreachable,
@@ -240,10 +240,10 @@ pub const Arguments = struct {
         Global.exit(0);
     }
 
-    pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
+    pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: *Command.Context, comptime cmd: Command.Tag) !bool {
         var config_file = std.fs.File{
             .handle = std.os.openZ(config_path, std.os.O.RDONLY, 0) catch |err| {
-                if (auto_loaded) return;
+                if (auto_loaded) return false;
                 Output.prettyErrorln("<r><red>error<r>: {s} opening config \"{s}\"", .{
                     @errorName(err),
                     config_path,
@@ -253,7 +253,7 @@ pub const Arguments = struct {
         };
         defer config_file.close();
         var contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
-            if (auto_loaded) return;
+            if (auto_loaded) return false;
             Output.prettyErrorln("<r><red>error<r>: {s} reading config \"{s}\"", .{
                 @errorName(err),
                 config_path,
@@ -273,9 +273,10 @@ pub const Arguments = struct {
         }
         ctx.log.level = logger.Log.Level.warn;
         try Bunfig.parse(allocator, logger.Source.initPathString(bun.asByteSlice(config_path), contents), ctx, cmd);
+        return true;
     }
 
-    fn getHomeConfigPath(buf: *[bun.MAX_PATH_BYTES]u8) ?[:0]const u8 {
+    fn getRootBunfigPath(buf: *[bun.MAX_PATH_BYTES]u8) ?[:0]const u8 {
         if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ("HOME")) |data_dir| {
             var paths = [_]string{".bunfig.toml"};
             return resolve_path.joinAbsStringBufZ(data_dir, buf, &paths, .auto);
@@ -283,48 +284,98 @@ pub const Arguments = struct {
 
         return null;
     }
-    pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
-        var config_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        if (comptime cmd.readGlobalConfig()) {
-            if (!ctx.has_loaded_global_config) {
-                ctx.has_loaded_global_config = true;
 
-                if (getHomeConfigPath(&config_buf)) |path| {
-                    try loadConfigPath(allocator, true, path, ctx, comptime cmd);
+    fn getRootBunJSONPath(buf: *[bun.MAX_PATH_BYTES]u8) ?[:0]const u8 {
+        if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ("HOME")) |data_dir| {
+            var paths = [_]string{"bun.json"};
+            return resolve_path.joinAbsStringBufZ(data_dir, buf, &paths, .auto);
+        }
+
+        return null;
+    }
+    pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
+        Output.debug("loadConfig\n", .{});
+        var config_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        if (comptime cmd.readGlobalConfig()) brk: {
+            if (ctx.has_loaded_global_config) break :brk;
+
+            if (getRootBunfigPath(&config_buf)) |path| {
+                Output.debug("trying to load {s}\n", .{path});
+                const success = loadConfigPath(allocator, true, path, ctx, comptime cmd) catch false;
+                if (success) {
+                    Output.debug("successfully loaded global bunfig\n", .{});
+                    ctx.has_loaded_global_config = true;
+                    break :brk;
+                } else {
+                    Output.debug("failed to load global bunfig\n", .{});
+                }
+            }
+
+            if (getRootBunJSONPath(&config_buf)) |path| {
+                Output.debug("trying to load {s}\n", .{path});
+                const success = loadConfigPath(allocator, true, path, ctx, comptime cmd) catch false;
+                if (success) {
+                    Output.debug("successfully loaded global bun.json\n", .{});
+                    ctx.has_loaded_global_config = true;
+                    break :brk;
+                } else {
+                    Output.debug("failed to load global bun.json\n", .{});
                 }
             }
         }
 
+        var config_path: [:0]u8 = undefined;
         var config_path_: []const u8 = user_config_path_ orelse "";
 
-        var auto_loaded: bool = false;
-        if (config_path_.len == 0 and (user_config_path_ != null or
-            Command.Tag.always_loads_config.get(cmd) or
-            (cmd == .AutoCommand and
-            // "bun"
-            (ctx.positionals.len == 0 or
-            // "bun file.js"
-            ctx.positionals.len > 0 and options.defaultLoaders.has(std.fs.path.extension(ctx.positionals[0]))))))
-        {
-            config_path_ = "bunfig.toml";
-            auto_loaded = true;
-        }
-
-        if (config_path_.len == 0) {
-            return;
-        }
-        defer ctx.debug.loaded_bunfig = true;
-        var config_path: [:0]u8 = undefined;
-        if (config_path_[0] == '/') {
+        if (config_path_.len > 0 and config_path_[0] == '/') {
+            Output.debug("loading config from user-specified abs path\n", .{});
+            // config file is absolute path (user-specified)
+            // if (config_path_[0] == '/') {
+            Output.debug("config_path_: {s}\n", .{config_path_});
             @memcpy(config_buf[0..config_path_.len], config_path_);
             config_buf[config_path_.len] = 0;
             config_path = config_buf[0..config_path_.len :0];
-        } else {
-            if (ctx.args.absolute_working_dir == null) {
-                var secondbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var cwd = std.os.getcwd(&secondbuf) catch return;
-                ctx.args.absolute_working_dir = try allocator.dupe(u8, cwd);
+
+            var success = loadConfigPath(allocator, false, config_path, ctx, comptime cmd) catch false;
+            if (success) {
+                Output.debug("loaded user-specified file\n", .{});
+                defer ctx.debug.loaded_bunfig = true;
+                return;
+            } else {
+                Output.debug("failed to load user-specified file\n", .{});
             }
+        }
+
+        // var config_path_: []const u8 = user_config_path_ orelse "";
+        // var config_path: [:0]u8 = undefined;
+        // var auto_loaded: bool = false;
+
+        Output.debug("cmd: {any}\n", .{cmd});
+        Output.debug("config: {any}\n", .{ctx.positionals});
+        var should_load_config = Command.Tag.always_loads_config.get(cmd) or
+            (cmd == .AutoCommand and
+            (ctx.positionals.len == 0 or ctx.positionals.len > 0 and options.defaultLoaders.has(std.fs.path.extension(ctx.positionals[0])))) or (cmd == .RunCommand and
+            (ctx.positionals.len == 2 and options.defaultLoaders.has(std.fs.path.extension(ctx.positionals[1]))));
+
+        // if (config_path_.len == 0) return;
+
+        // skip reading config
+        if (!should_load_config) {
+            Output.debug("not loading config\n", .{});
+            return;
+        }
+
+        // set absolute_working_dir
+        if (ctx.args.absolute_working_dir == null) {
+            var secondbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var cwd = std.os.getcwd(&secondbuf) catch return;
+            ctx.args.absolute_working_dir = try allocator.dupe(u8, cwd);
+        }
+
+        // load from user-specified path
+        Output.debug("config_path_: {s}\n", .{config_path_});
+        if (config_path_.len != 0) {
+            Output.debug("loading from path: {s}\n", .{config_path_});
             var parts = [_]string{ ctx.args.absolute_working_dir.?, config_path_ };
             config_path_ = resolve_path.joinAbsStringBuf(
                 ctx.args.absolute_working_dir.?,
@@ -334,9 +385,61 @@ pub const Arguments = struct {
             );
             config_buf[config_path_.len] = 0;
             config_path = config_buf[0..config_path_.len :0];
+            var success = loadConfigPath(allocator, true, config_path, ctx, comptime cmd) catch false;
+            if (success) {
+                Output.debug("loaded user-specified file\n", .{});
+                defer ctx.debug.loaded_bunfig = true;
+                return;
+            } else {
+                Output.debug("failed to load user-specified file\n", .{});
+            }
         }
 
-        try loadConfigPath(allocator, auto_loaded, config_path, ctx, comptime cmd);
+        var parts: [2]string = undefined;
+
+        // load bun.json
+        parts = .{ ctx.args.absolute_working_dir.?, "bun.json" };
+        config_path_ = resolve_path.joinAbsStringBuf(
+            ctx.args.absolute_working_dir.?,
+            &config_buf,
+            &parts,
+            .auto,
+        );
+        config_buf[config_path_.len] = 0;
+        config_path = config_buf[0..config_path_.len :0];
+        Output.debug("loading local bun.json\n", .{});
+        var bun_json_loaded = loadConfigPath(allocator, true, config_path, ctx, comptime cmd) catch false;
+
+        if (bun_json_loaded) {
+            Output.debug("loaded local bun.json\n", .{});
+            defer ctx.debug.loaded_bunfig = true;
+            return;
+        } else {
+            Output.debug("failed to load bun.json\n", .{});
+        }
+
+        // load bunfig.toml
+        parts = .{ ctx.args.absolute_working_dir.?, "bunfig.toml" };
+        config_path_ = resolve_path.joinAbsStringBuf(
+            ctx.args.absolute_working_dir.?,
+            &config_buf,
+            &parts,
+            .auto,
+        );
+        config_buf[config_path_.len] = 0;
+        config_path = config_buf[0..config_path_.len :0];
+        // try to load bunfig.toml
+        Output.debug("loading local bunfig.toml\n", .{});
+        var bunfig_loaded = loadConfigPath(allocator, true, config_path, ctx, comptime cmd) catch false;
+        if (bunfig_loaded) {
+            Output.debug("loaded local bunfig.toml\n", .{});
+            defer ctx.debug.loaded_bunfig = true;
+            return;
+        } else {
+            Output.debug("failed to load bunfig\n", .{});
+        }
+
+        return;
     }
 
     pub fn loadConfigWithCmdArgs(
@@ -1491,7 +1594,13 @@ pub const Command = struct {
 
                     if (extension.len > 0) {
                         if (!ctx.debug.loaded_bunfig) {
-                            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+                            // get absolute path to bunfig.toml
+                            // var config_path
+
+                            var success = Arguments.loadConfigPath(ctx.allocator, true, "bun.json", &ctx, .RunCommand) catch false;
+                            if (!success) {
+                                _ = Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand) catch false;
+                            }
                         }
 
                         if (ctx.preloads.len > 0)
@@ -1600,7 +1709,8 @@ pub const Command = struct {
         var absolute_script_path = bun.getFdPath(file.handle, &script_name_buf) catch return false;
 
         if (!ctx.debug.loaded_bunfig) {
-            bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
+            var success = Arguments.loadConfigPath(ctx.allocator, true, "bun.json", ctx, .RunCommand) catch false;
+            if (!success) _ = Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch false;
         }
 
         BunJS.Run.boot(

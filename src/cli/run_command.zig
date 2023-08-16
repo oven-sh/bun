@@ -933,7 +933,9 @@ pub const RunCommand = struct {
                         // once we know it's a file, check if they have any preloads
                         if (ext.len > 0 and !has_loader) {
                             if (!ctx.debug.loaded_bunfig) {
-                                try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+                                _ = bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bun.json", &ctx, .RunCommand) catch brk: {
+                                    break :brk bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand) catch false;
+                                };
                             }
 
                             if (ctx.preloads.len == 0)

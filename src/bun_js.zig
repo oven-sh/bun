@@ -55,7 +55,10 @@ pub const Run = struct {
         var arena = try Arena.init();
 
         if (!ctx.debug.loaded_bunfig) {
-            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+            // _ = try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+            _ = bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bun.json", &ctx, .RunCommand) catch blk: {
+                break :blk bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand) catch false;
+            };
         }
 
         run = .{
@@ -142,7 +145,9 @@ pub const Run = struct {
         var arena = try Arena.init();
 
         if (!ctx.debug.loaded_bunfig) {
-            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+            _ = bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bun.json", &ctx, .RunCommand) catch blk: {
+                break :blk bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand) catch false;
+            };
         }
 
         run = .{

@@ -5722,7 +5722,7 @@ pub const PackageManager = struct {
         "Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\"";
 
     const install_params_ = [_]ParamType{
-        clap.parseParam("-c, --config <STR>?               Load config (bunfig.toml)") catch unreachable,
+        clap.parseParam("-c, --config <STR>                Load config (bun.json)") catch unreachable,
         clap.parseParam("-y, --yarn                        Write a yarn.lock file (yarn v1)") catch unreachable,
         clap.parseParam("-p, --production                  Don't install devDependencies") catch unreachable,
         clap.parseParam("--no-save                         Don't save a lockfile") catch unreachable,

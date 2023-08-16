@@ -5260,7 +5260,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 editor.open(ctx.path, url, line, column, this.allocator) catch Output.prettyErrorln("Failed to open editor", .{});
             } else {
                 resp.writeStatus("500 Missing Editor :(");
-                resp.end("Please set your editor in bunfig.toml", false);
+                resp.end("Please set your editor in bun.json", false);
             }
         }
 

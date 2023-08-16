@@ -174,4 +174,6 @@ export default function start(debuggerId, hostOrPort, createInspectorConnection,
     console.error("Bun Inspector threw an exception\n", e);
     process.exit(1);
   }
+
+  return `http://${listener.server.hostname}:${listener.server.port}${listener.url}`;
 }

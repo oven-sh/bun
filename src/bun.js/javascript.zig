@@ -728,7 +728,7 @@ pub const VirtualMachine = struct {
 
         extern "C" fn Bun__createJSDebugger(*JSC.JSGlobalObject) u32;
         extern "C" fn Bun__ensureDebugger(u32, bool) void;
-        extern "C" fn Bun__startJSDebuggerThread(*JSC.JSGlobalObject, u32, *bun.String) void;
+        extern "C" fn Bun__startJSDebuggerThread(*JSC.JSGlobalObject, u32, *bun.String) bun.String;
         var has_started_debugger_thread: bool = false;
         var futex_atomic: std.atomic.Atomic(u32) = undefined;
 
@@ -776,10 +776,14 @@ pub const VirtualMachine = struct {
             vm.global.vm().holdAPILock(other_vm, @ptrCast(&start));
         }
 
+        pub export var Bun__debugger_server_url: bun.String = undefined;
+
         fn start(other_vm: *VirtualMachine) void {
             var this = VirtualMachine.get();
             var str = bun.String.create(other_vm.debugger.?.path_or_port);
-            Bun__startJSDebuggerThread(this.global, other_vm.debugger.?.script_execution_context_id, &str);
+            Bun__debugger_server_url = Bun__startJSDebuggerThread(this.global, other_vm.debugger.?.script_execution_context_id, &str);
+            Bun__debugger_server_url.toThreadSafe();
+
             this.global.handleRejectedPromises();
 
             if (this.log.msgs.items.len > 0) {

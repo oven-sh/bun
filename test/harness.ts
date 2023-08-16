@@ -119,6 +119,7 @@ export function bunRun(
   });
   if (!result.success) throw new Error(result.stderr.toString("utf8"));
   return {
+    code: result.exitCode,
     stdout: result.stdout.toString("utf8").trim(),
     stderr: result.stderr.toString("utf8").trim(),
   };
@@ -154,6 +155,7 @@ export function bunRunAsScript(dir: string, script: string, env?: Record<string,
   if (!result.success) throw new Error(result.stderr.toString("utf8"));
 
   return {
+    code: result.exitCode,
     stdout: result.stdout.toString("utf8").trim(),
     stderr: result.stderr.toString("utf8").trim(),
   };

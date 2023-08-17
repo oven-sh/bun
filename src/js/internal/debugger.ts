@@ -19,7 +19,7 @@ class DebuggerWithMessageQueue {
   }
 }
 
-let defaultPort = 9230;
+let defaultPort = 6499;
 
 let generatedPath: string = "";
 function generatePath() {

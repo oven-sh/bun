@@ -3301,12 +3301,19 @@ pub const ByteStream = struct {
 
             if (is_really_done) {
                 this.done = true;
-                this.pending.result = .{
-                    .into_array_and_done = .{
-                        .value = this.value(),
-                        .len = @as(Blob.SizeType, @truncate(to_copy.len)),
-                    },
-                };
+
+                if (to_copy.len == 0) {
+                    this.pending.result = .{
+                        .done = {},
+                    };
+                } else {
+                    this.pending.result = .{
+                        .into_array_and_done = .{
+                            .value = this.value(),
+                            .len = @as(Blob.SizeType, @truncate(to_copy.len)),
+                        },
+                    };
+                }
             } else {
                 this.pending.result = .{
                     .into_array = .{

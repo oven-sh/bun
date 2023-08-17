@@ -806,7 +806,7 @@ void JSReadableArrayBufferSinkController::detach()
         JSC::MarkedArgumentBuffer arguments;
         arguments.append(readableStream);
         arguments.append(jsUndefined());
-        JSC::call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
+        call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
     }
 
     m_weakReadableStream.clear();
@@ -1060,7 +1060,7 @@ void JSReadableFileSinkController::detach()
         JSC::MarkedArgumentBuffer arguments;
         arguments.append(readableStream);
         arguments.append(jsUndefined());
-        JSC::call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
+        call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
     }
 
     m_weakReadableStream.clear();
@@ -1314,7 +1314,7 @@ void JSReadableHTTPResponseSinkController::detach()
         JSC::MarkedArgumentBuffer arguments;
         arguments.append(readableStream);
         arguments.append(jsUndefined());
-        JSC::call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
+        call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
     }
 
     m_weakReadableStream.clear();
@@ -1568,7 +1568,7 @@ void JSReadableHTTPSResponseSinkController::detach()
         JSC::MarkedArgumentBuffer arguments;
         arguments.append(readableStream);
         arguments.append(jsUndefined());
-        JSC::call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
+        call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
     }
 
     m_weakReadableStream.clear();

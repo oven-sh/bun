@@ -253,12 +253,6 @@ export fn Zig__getAPIGlobals(count: *usize) [*]JSC.C.JSClassRef {
     return globals.ptr;
 }
 
-export fn Zig__getAPIConstructors(count: *usize, ctx: *JSGlobalObject) [*]const JSValue {
-    var globals = JSC.VirtualMachine.getAPIConstructors(ctx);
-    count.* = globals.len;
-    return globals.ptr;
-}
-
 pub const JSErrorCode = enum(u8) {
     Error = 0,
     EvalError = 1,
@@ -3385,7 +3379,6 @@ comptime {
         _ = Process.getTitle;
         _ = Process.setTitle;
         _ = Zig__getAPIGlobals;
-        _ = Zig__getAPIConstructors;
         Bun.Timer.shim.ref();
         NodePath.shim.ref();
         JSReadableStreamBlob.shim.ref();

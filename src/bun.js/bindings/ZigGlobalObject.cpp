@@ -664,7 +664,6 @@ const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, n
     CREATE_METHOD_TABLE(GlobalObject) };
 
 extern "C" JSClassRef* Zig__getAPIGlobals(size_t* count);
-extern "C" const JSC__JSValue* Zig__getAPIConstructors(size_t* count, JSC__JSGlobalObject*);
 
 static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
 {
@@ -908,6 +907,9 @@ GENERATED_CONSTRUCTOR_SETTER(JSRequest);
 GENERATED_CONSTRUCTOR_GETTER(JSBlob);
 GENERATED_CONSTRUCTOR_SETTER(JSBlob);
 
+GENERATED_CONSTRUCTOR_GETTER(JSHTMLRewriter);
+GENERATED_CONSTRUCTOR_SETTER(JSHTMLRewriter);
+
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSMessageEvent);
 WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSMessageEvent);
 
@@ -940,6 +942,8 @@ WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSBroadcastChannel);
 
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSEvent);
 WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSEvent);
+
+JSC_DECLARE_CUSTOM_GETTER(JSEvent_getter);
 
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSDOMException);
 WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSDOMException);
@@ -4133,6 +4137,18 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Blob"_s), JSC::CustomGetterSetter::create(vm, JSBlob_getter, JSBlob_setter),
         JSC::PropertyAttribute::DontDelete | 0);
 
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "HTMLRewriter"_s), JSC::CustomGetterSetter::create(vm, JSHTMLRewriter_getter, JSHTMLRewriter_setter),
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "DOMException"_s), JSC::CustomGetterSetter::create(vm, JSDOMException_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Event"_s), JSC::CustomGetterSetter::create(vm, JSEvent_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "EventTarget"_s), JSC::CustomGetterSetter::create(vm, JSEventTarget_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "AbortController"_s), JSC::CustomGetterSetter::create(vm, JSDOMAbortController_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
@@ -4253,19 +4269,10 @@ DEFINE_BUN_LAZY_GETTER(BUN_LAZY_GETTER_FN_NAME(password), passwordObject)
 void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm)
 {
     auto clientData = WebCore::clientData(vm);
-    size_t constructor_count = 0;
     auto& builtinNames = clientData->builtinNames();
-    JSC__JSValue const* constructors = Zig__getAPIConstructors(&constructor_count, this);
     WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-    extraStaticGlobals.reserveCapacity((size_t)count + constructor_count + 3 + 1 + 1);
-    int i = 0;
-    for (; i < constructor_count; i++) {
-        auto* object = JSC::jsDynamicCast<JSC::JSCallbackConstructor*>(JSC::JSValue::decode(constructors[i]).asCell()->getObject());
+    extraStaticGlobals.reserveCapacity((size_t)count + 3 + 1 + 1);
 
-        extraStaticGlobals.uncheckedAppend(
-            GlobalPropertyInfo { JSC::Identifier::fromString(vm, object->get(this, vm.propertyNames->name).toWTFString(this)),
-                JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0 });
-    }
     int j = 0;
     {
         // first one is Bun object

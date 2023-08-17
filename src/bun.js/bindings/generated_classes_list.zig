@@ -2,6 +2,14 @@ const JSC = @import("root").bun.JSC;
 
 pub const Classes = struct {
     pub const Blob = JSC.WebCore.Blob;
+    pub const HTMLRewriter = JSC.Cloudflare.HTMLRewriter;
+    pub const Element = JSC.Cloudflare.Element;
+    pub const Comment = JSC.Cloudflare.Comment;
+    pub const TextChunk = JSC.Cloudflare.TextChunk;
+    pub const DocType = JSC.Cloudflare.DocType;
+    pub const DocEnd = JSC.Cloudflare.DocEnd;
+    pub const EndTag = JSC.Cloudflare.EndTag;
+    pub const AttributeIterator = JSC.Cloudflare.AttributeIterator;
     pub const CryptoHasher = JSC.API.Bun.Crypto.CryptoHasher;
     pub const Dirent = JSC.Node.Dirent;
     pub const Expect = JSC.Expect.Expect;

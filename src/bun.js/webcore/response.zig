@@ -123,8 +123,8 @@ pub const Response = struct {
 
     pub fn writeFormat(this: *Response, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
-        // TODO: fix size print to use the content_length if not finish streaming/buffering yet
         try writer.print("Response ({}) {{\n", .{bun.fmt.size(this.body.len())});
+
         {
             formatter.indent += 1;
             defer formatter.indent -|= 1;
@@ -919,6 +919,7 @@ pub const Fetch = struct {
             if (this.is_waiting_body) {
                 const response = Body.Value{
                     .Locked = .{
+                        .size_hint = @as(u52, @intCast(this.body_size)),
                         .task = this,
                         .global = this.global_this,
                         .onStartStreaming = FetchTasklet.onStartStreamingRequestBodyCallback,

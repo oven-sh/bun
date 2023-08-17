@@ -210,6 +210,7 @@ pub const Body = struct {
         /// used in HTTP server to ignore request bodies unless asked for it
         onStartBuffering: ?*const fn (ctx: *anyopaque) void = null,
         onStartStreaming: ?*const fn (ctx: *anyopaque) JSC.WebCore.DrainResult = null,
+        size_hint: Blob.SizeType = 0,
 
         deinit: bool = false,
         action: Action = Action{ .none = {} },
@@ -375,6 +376,14 @@ pub const Body = struct {
                 .Blob => this.Blob.size,
                 .InternalBlob => @as(Blob.SizeType, @truncate(this.InternalBlob.sliceConst().len)),
                 .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.utf8ByteLength())),
+                .Locked => {
+                    if (this.Locked.readable) |readable| {
+                        if (readable.ptr == .Bytes) {
+                            return readable.ptr.Bytes.size_hint;
+                        }
+                    }
+                    return this.Locked.size_hint;
+                },
                 // .InlineBlob => @truncate(Blob.SizeType, this.InlineBlob.sliceConst().len),
                 else => 0,
             };

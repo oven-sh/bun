@@ -11,7 +11,7 @@ While Vite currently works with Bun, it has not been heavily optimized, nor has 
 Vite works out of the box with Bun (v0.7 and later). Get started with one of Vite's templates.
 
 ```bash
-$ bunx create-vite my-app
+$ bun x create-vite my-app
 ✔ Select a framework: › React
 ✔ Select a variant: › TypeScript + SWC
 Scaffolding project in /path/to/my-app...
@@ -28,12 +28,12 @@ bun install
 
 ---
 
-Start the development server with the `vite` CLI using `bunx`.
+Start the development server with the `vite` CLI using `bun x`.
 
 The `--bun` flag tells Bun to run Vite's CLI using `bun` instead of `node`; by default Bun respects Vite's `#!/usr/bin/env node` [shebang line](<https://en.wikipedia.org/wiki/Shebang_(Unix)>). After Bun 1.0 this flag will no longer be necessary.
 
 ```bash
-bunx --bun vite
+bun x --bun vite
 ```
 
 ---
@@ -43,7 +43,7 @@ To simplify this command, update the `"dev"` script in `package.json` to the fol
 ```json-diff#package.json
   "scripts": {
 -   "dev": "vite",
-+   "dev": "bunx --bun vite",
++   "dev": "bun x --bun vite",
     "build": "vite build",
     "serve": "vite preview"
   },
@@ -63,7 +63,7 @@ bun run dev
 The following command will build your app for production.
 
 ```sh
-$ bunx --bun vite build
+$ bun x --bun vite build
 ```
 
 ---

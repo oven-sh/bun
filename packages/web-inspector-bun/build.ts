@@ -33,7 +33,7 @@ const html = new HTMLRewriter()
   })
   .on("head", {
     element(element) {
-      element.prepend(` <base href="/inspect/" /> `, { html: true });
+      element.prepend(` <base href="/" /> `, { html: true });
 
       element.append(
         `
@@ -64,7 +64,7 @@ const html = new HTMLRewriter()
   .transform(new Response(Bun.file(htmlPath)));
 let htmlText = await html.text();
 rmSync(join(import.meta.dir, "out"), { recursive: true, force: true });
-mkdirSync(join(import.meta.dir, "out", "inspect", "Protocol"), { recursive: true });
+mkdirSync(join(import.meta.dir, "out", "Protocol"), { recursive: true });
 
 const javascript = scriptsToBundle.map(a => `import '${join(basePath, a)}';`).join("\n") + "\n";
 // const css = stylesToBundle.map(a => `@import "${join(basePath, a)}";`).join("\n") + "\n";
@@ -100,16 +100,13 @@ const jsFilename = "manifest-" + jsBundle.outputs[0].hash + ".js";
 // });
 
 // const cssFilename = "manifest-" + cssBundle.outputFiles[0].hash.replaceAll("/", "_") + ".css";
-htmlText = htmlText.replace(jsReplacementId, "/inspect/" + jsFilename);
+htmlText = htmlText.replace(jsReplacementId, jsFilename);
 // htmlText = htmlText.replace(cssReplacementId, cssFilename);
-await Bun.write(join(import.meta.dir, "out", "inspect", jsFilename), jsBundle.outputs[0]);
+await Bun.write(join(import.meta.dir, "out", jsFilename), jsBundle.outputs[0]);
 // await Bun.write(join(import.meta.dir, "out", cssFilename), cssBundle.outputFiles[0].text);
-await Bun.write(join(import.meta.dir, "out", "inspect", "index.html"), htmlText);
 await Bun.write(join(import.meta.dir, "out", "index.html"), htmlText);
-await Bun.write(
-  join(import.meta.dir, "out", "inspect", "Protocol", "InspectorBackendCommands.js"),
-  Bun.file(backendCommands),
-);
+await Bun.write(join(import.meta.dir, "out", "index.html"), htmlText);
+await Bun.write(join(import.meta.dir, "out", "Protocol", "InspectorBackendCommands.js"), Bun.file(backendCommands));
 
 function recursiveCopy(src, dest) {
   readdirSync(src).forEach(file => {
@@ -125,4 +122,4 @@ function recursiveCopy(src, dest) {
   });
 }
 
-recursiveCopy(basePath, join(import.meta.dir, "out/inspect"));
+recursiveCopy(basePath, join(import.meta.dir, "out"));

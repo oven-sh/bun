@@ -5506,7 +5506,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             this.app.listenWithConfig(*ThisServer, this, onListen, .{
                 .port = this.config.port,
                 .host = host,
-                .options = if (this.config.reuse_port) 1 else 0,
+                .options = if (this.config.reuse_port) 0 else 1,
             });
         }
     };

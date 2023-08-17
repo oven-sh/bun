@@ -27,6 +27,29 @@ it("should keep process alive only when active", async () => {
   ).toEqual(["[Client] OPENED", "[Client] GOT response", "[Client] CLOSED"]);
 });
 
+it("connect without top level await should keep process alive", async () => {
+  const server = Bun.listen({
+    socket: {
+      open(socket) {},
+      data(socket, data) {},
+    },
+    hostname: "localhost",
+    port: 0,
+  });
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "keep-event-loop-alive.js", String(server.port)],
+    cwd: import.meta.dir,
+    env: bunEnv,
+  });
+  await proc.exited;
+  try {
+    expect(proc.exitCode).toBe(0);
+    expect(await new Response(proc.stdout).text()).toContain("event loop was not killed");
+  } finally {
+    server.stop();
+  }
+});
+
 it("connect() should return the socket object", async () => {
   const { exited, stdout, stderr } = spawn({
     cmd: [bunExe(), "connect-returns-socket.js"],

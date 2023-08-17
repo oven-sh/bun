@@ -97,17 +97,20 @@ pub fn WorkTask(comptime Context: type, comptime async_io: bool) type {
         allocator: std.mem.Allocator,
         globalThis: *JSGlobalObject,
         concurrent_task: ConcurrentTask = .{},
+        async_task_tracker: JSC.AsyncTaskTracker,
 
         // This is a poll because we want it to enter the uSockets loop
         ref: JSC.PollRef = .{},
 
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
             var this = try allocator.create(This);
+            var vm = globalThis.bunVM();
             this.* = .{
-                .event_loop = globalThis.bunVM().eventLoop(),
+                .event_loop = vm.eventLoop(),
                 .ctx = value,
                 .allocator = allocator,
                 .globalThis = globalThis,
+                .async_task_tracker = JSC.AsyncTaskTracker.init(vm),
             };
             this.ref.ref(this.event_loop.virtual_machine);
 
@@ -121,12 +124,20 @@ pub fn WorkTask(comptime Context: type, comptime async_io: bool) type {
 
         pub fn runFromJS(this: *This) void {
             var ctx = this.ctx;
-            this.ref.unref(this.event_loop.virtual_machine);
-            ctx.then(this.globalThis);
+            const tracker = this.async_task_tracker;
+            var vm = this.event_loop.virtual_machine;
+            var globalThis = this.globalThis;
+            this.ref.unref(vm);
+
+            tracker.willDispatch(globalThis);
+            ctx.then(globalThis);
+            tracker.didDispatch(globalThis);
         }
 
         pub fn schedule(this: *This) void {
-            this.ref.ref(this.event_loop.virtual_machine);
+            var vm = this.event_loop.virtual_machine;
+            this.ref.ref(vm);
+            this.async_task_tracker.didSchedule(this.globalThis);
             if (comptime async_io) {
                 NetworkThread.init() catch return;
                 NetworkThread.global.schedule(NetworkThread.Batch.from(&this.task));
@@ -487,6 +498,17 @@ pub const GarbageCollectionController = struct {
     };
 };
 
+export fn Bun__tickWhilePaused(paused: *bool) void {
+    JSC.markBinding(@src());
+    JSC.VirtualMachine.get().eventLoop().tickWhilePaused(paused);
+}
+
+comptime {
+    if (!JSC.is_bindgen) {
+        _ = Bun__tickWhilePaused;
+    }
+}
+
 pub const EventLoop = struct {
     tasks: Queue = undefined,
     concurrent_tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
@@ -499,6 +521,12 @@ pub const EventLoop = struct {
 
     pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
     const log = bun.Output.scoped(.EventLoop, false);
+
+    pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
+        while (!done.*) {
+            this.virtual_machine.uws_event_loop.?.tick();
+        }
+    }
 
     pub fn tickWithCount(this: *EventLoop) u32 {
         var global = this.global;

@@ -897,7 +897,7 @@ const myPlugin: BunPlugin = {
 };
 ```
 
-The `builder` object provides some methods for hooking into parts of the bundling process. Bun implements `onResolve` and `onLoad`; it does not yet implement the esbuild hooks `onStart`, `onEnd`, and `onDispose`, and `resolve` utilities. `initialOptions` is partially implemented, being read-only and only having a subset of esbuild's options; use [`config`](/docs/bundler/plugins#reading-the-config) (same thing but with Bun's `BuildConfig` format) instead.
+The `builder` object provides some methods for hooking into parts of the bundling process. Bun implements `onResolve` and `onLoad`; it does not yet implement the esbuild hooks `onStart`, `onEnd`, and `onDispose`, and `resolve` utilities. `initialOptions` is partially implemented, being read-only and only having a subset of esbuild's options; use [`config`](/docs/bundler/plugins) (same thing but with Bun's `BuildConfig` format) instead.
 
 ```ts
 import type { BunPlugin } from "bun";

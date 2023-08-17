@@ -359,7 +359,7 @@ static JSValue handleVirtualModuleResult(
         arguments.append(jsUndefined());
         arguments.append(pendingModule);
         ASSERT(!arguments.hasOverflowed());
-        JSC::call(globalObject, performPromiseThenFunction, callData, jsUndefined(), arguments);
+        JSC::profiledCall(globalObject, ProfilingReason::Microtask, performPromiseThenFunction, callData, jsUndefined(), arguments);
         return internalPromise;
     }
     default: {

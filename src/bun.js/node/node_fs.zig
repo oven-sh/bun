@@ -63,6 +63,7 @@ pub const AsyncReaddirTask = struct {
     result: JSC.Maybe(Return.Readdir),
     ref: JSC.PollRef = .{},
     arena: bun.ArenaAllocator,
+    tracker: JSC.AsyncTaskTracker,
 
     pub fn create(globalObject: *JSC.JSGlobalObject, readdir_args: Arguments.Readdir, vm: *JSC.VirtualMachine, arena: bun.ArenaAllocator) JSC.JSValue {
         var task = bun.default_allocator.create(AsyncReaddirTask) catch @panic("out of memory");
@@ -72,10 +73,11 @@ pub const AsyncReaddirTask = struct {
             .result = undefined,
             .globalObject = globalObject,
             .arena = arena,
+            .tracker = JSC.AsyncTaskTracker.init(vm),
         };
         task.ref.ref(vm);
         task.args.path.toThreadSafe();
-
+        task.tracker.didSchedule(globalObject);
         JSC.WorkPool.schedule(&task.task);
 
         return task.promise.value();
@@ -92,6 +94,7 @@ pub const AsyncReaddirTask = struct {
 
     fn runFromJSThread(this: *AsyncReaddirTask) void {
         var globalObject = this.globalObject;
+
         var success = @as(JSC.Maybe(Return.Readdir).Tag, this.result) == .result;
         const result = switch (this.result) {
             .err => |err| err.toJSC(globalObject),
@@ -111,7 +114,11 @@ pub const AsyncReaddirTask = struct {
         var promise = this.promise.get();
         promise_value.ensureStillAlive();
 
+        const tracker = this.tracker;
         this.deinit();
+
+        tracker.willDispatch(globalObject);
+        defer tracker.didDispatch(globalObject);
         switch (success) {
             false => {
                 promise.reject(globalObject, result);
@@ -140,6 +147,7 @@ pub const AsyncStatTask = struct {
     ref: JSC.PollRef = .{},
     is_lstat: bool = false,
     arena: bun.ArenaAllocator,
+    tracker: JSC.AsyncTaskTracker,
 
     pub fn create(
         globalObject: *JSC.JSGlobalObject,
@@ -155,10 +163,12 @@ pub const AsyncStatTask = struct {
             .result = undefined,
             .globalObject = globalObject,
             .is_lstat = is_lstat,
+            .tracker = JSC.AsyncTaskTracker.init(vm),
             .arena = arena,
         };
         task.ref.ref(vm);
         task.args.path.toThreadSafe();
+        task.tracker.didSchedule(globalObject);
 
         JSC.WorkPool.schedule(&task.task);
 
@@ -198,6 +208,10 @@ pub const AsyncStatTask = struct {
         var promise = this.promise.get();
         promise_value.ensureStillAlive();
 
+        const tracker = this.tracker;
+        tracker.willDispatch(globalObject);
+        defer tracker.didDispatch(globalObject);
+
         this.deinit();
         switch (success) {
             false => {
@@ -226,6 +240,7 @@ pub const AsyncRealpathTask = struct {
     result: JSC.Maybe(Return.Realpath),
     ref: JSC.PollRef = .{},
     arena: bun.ArenaAllocator,
+    tracker: JSC.AsyncTaskTracker,
 
     pub fn create(
         globalObject: *JSC.JSGlobalObject,
@@ -240,10 +255,11 @@ pub const AsyncRealpathTask = struct {
             .result = undefined,
             .globalObject = globalObject,
             .arena = arena,
+            .tracker = JSC.AsyncTaskTracker.init(vm),
         };
         task.ref.ref(vm);
         task.args.path.toThreadSafe();
-
+        task.tracker.didSchedule(globalObject);
         JSC.WorkPool.schedule(&task.task);
 
         return task.promise.value();
@@ -283,6 +299,10 @@ pub const AsyncRealpathTask = struct {
         var promise = this.promise.get();
         promise_value.ensureStillAlive();
 
+        const tracker = this.tracker;
+        tracker.willDispatch(globalObject);
+        defer tracker.didDispatch(globalObject);
+
         this.deinit();
         switch (success) {
             false => {
@@ -315,6 +335,7 @@ pub const AsyncReadFileTask = struct {
     result: JSC.Maybe(Return.ReadFile),
     ref: JSC.PollRef = .{},
     arena: bun.ArenaAllocator,
+    tracker: JSC.AsyncTaskTracker,
 
     pub fn create(
         globalObject: *JSC.JSGlobalObject,
@@ -329,10 +350,11 @@ pub const AsyncReadFileTask = struct {
             .result = undefined,
             .globalObject = globalObject,
             .arena = arena,
+            .tracker = JSC.AsyncTaskTracker.init(vm),
         };
         task.ref.ref(vm);
         task.args.path.toThreadSafe();
-
+        task.tracker.didSchedule(globalObject);
         JSC.WorkPool.schedule(&task.task);
 
         return task.promise.value();
@@ -349,6 +371,7 @@ pub const AsyncReadFileTask = struct {
 
     fn runFromJSThread(this: *AsyncReadFileTask) void {
         var globalObject = this.globalObject;
+
         var success = @as(JSC.Maybe(Return.ReadFile).Tag, this.result) == .result;
         const result = switch (this.result) {
             .err => |err| err.toJSC(globalObject),
@@ -367,6 +390,10 @@ pub const AsyncReadFileTask = struct {
         var promise_value = this.promise.value();
         var promise = this.promise.get();
         promise_value.ensureStillAlive();
+
+        const tracker = this.tracker;
+        tracker.willDispatch(globalObject);
+        defer tracker.didDispatch(globalObject);
 
         this.deinit();
         switch (success) {

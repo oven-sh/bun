@@ -134,11 +134,11 @@
       "request": "launch",
       "name": "bun run [file]",
       "program": "bun-debug",
-      "args": ["run", "${file}"],
-      "cwd": "${fileDirname}",
+      "args": ["--inspect=127.0.0.1:9232", "run", "/Users/jarred/Code/bun/packages/bun-vscode/example/example.js"],
+      "cwd": "/Users/jarred/Code/bun/packages/bun-vscode/example",
       "env": {
         "FORCE_COLOR": "1",
-        "BUN_DEBUG_QUIET_LOGS": "1"
+        "NODE_ENV": "development"
       },
       "initCommands": ["process handle -p false -s false -n false SIGHUP"],
       "console": "internalConsole"

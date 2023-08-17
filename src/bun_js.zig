@@ -153,6 +153,7 @@ pub const Run = struct {
                     .args = ctx.args,
                     .store_fd = ctx.debug.hot_reload != .none,
                     .smol = ctx.runtime_options.smol,
+                    .debugger = ctx.runtime_options.debugger,
                 },
             ),
             .arena = arena,

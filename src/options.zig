@@ -1150,7 +1150,9 @@ pub fn definesFromTransformOptions(
     loader: ?*DotEnv.Loader,
     framework_env: ?*const Env,
     NODE_ENV: ?string,
+    debugger: bool,
 ) !*defines.Define {
+    _ = debugger;
     var input_user_define = _input_define orelse std.mem.zeroes(Api.StringMap);
 
     var user_defines = try stringHashMapFromArrays(
@@ -1434,6 +1436,7 @@ pub const BundleOptions = struct {
     minify_identifiers: bool = false,
 
     code_coverage: bool = false,
+    debugger: bool = false,
 
     compile: bool = false,
 
@@ -1508,6 +1511,7 @@ pub const BundleOptions = struct {
 
                 break :node_env "\"development\"";
             },
+            this.debugger,
         );
         this.defines_loaded = true;
     }

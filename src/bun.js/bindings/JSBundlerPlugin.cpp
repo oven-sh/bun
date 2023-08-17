@@ -404,7 +404,7 @@ extern "C" EncodedJSValue JSBundlerPlugin__runSetupFunction(
     arguments.append(JSValue::decode(encodedConfig));
     auto* lexicalGlobalObject = jsCast<JSFunction*>(JSValue::decode(encodedSetupFunction))->globalObject();
 
-    auto result = JSC::call(lexicalGlobalObject, setupFunction, callData, plugin, arguments);
+    auto result = call(lexicalGlobalObject, setupFunction, callData, plugin, arguments);
     if (UNLIKELY(scope.exception())) {
         auto exception = scope.exception();
         scope.clearException();

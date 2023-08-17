@@ -234,7 +234,7 @@ void EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
             continue;
 
         WTF::NakedPtr<JSC::Exception> exceptionPtr;
-        JSC::call(lexicalGlobalObject, jsFunction, callData, thisValue, arguments, exceptionPtr);
+        call(lexicalGlobalObject, jsFunction, callData, thisValue, arguments, exceptionPtr);
         auto* exception = exceptionPtr.get();
 
         if (UNLIKELY(exception)) {

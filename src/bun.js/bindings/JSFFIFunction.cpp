@@ -113,10 +113,17 @@ extern "C" void Bun__untrackFFIFunction(Zig::GlobalObject* globalObject, JSC::En
 {
     globalObject->untrackFFIFunction(JSC::jsCast<JSC::JSFunction*>(JSC::JSValue::decode(function)));
 }
-extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Zig::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, bool strong);
-extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Zig::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, bool strong)
+extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Zig::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, bool strong, bool addPtrField)
 {
-    return JSC::JSValue::encode(JSC::JSValue(Bun__CreateFFIFunction(globalObject, symbolName, argCount, functionPointer, strong)));
+    auto* function = Bun__CreateFFIFunction(globalObject, symbolName, argCount, functionPointer, strong);
+    if (addPtrField) {
+        auto& vm = globalObject->vm();
+        // We should only expose the "ptr" field when it's a JSCallback for bun:ffi.
+        // Not for internal usages of this function type.
+        // We should also consider a separate JSFunction type for our usage to not have this branch in the first place...
+        function->putDirect(vm, JSC::Identifier::fromString(vm, String(MAKE_STATIC_STRING_IMPL("ptr"))), JSC::jsNumber(bitwise_cast<double>(functionPointer)), JSC::PropertyAttribute::ReadOnly | 0);
+    }
+    return JSC::JSValue::encode(function);
 }
 
 namespace Zig {
@@ -145,7 +152,6 @@ DEFINE_VISIT_CHILDREN(JSFFIFunction);
 void JSFFIFunction::finishCreation(VM& vm, NativeExecutable* executable, unsigned length, const String& name)
 {
     Base::finishCreation(vm, executable, length, name);
-    this->putDirect(vm, JSC::Identifier::fromString(vm, String(MAKE_STATIC_STRING_IMPL("ptr"))), jsNumber(bitwise_cast<double>(this->m_function)), JSC::PropertyAttribute::ReadOnly | 0);
     ASSERT(inherits(info()));
 }
 

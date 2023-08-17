@@ -1809,7 +1809,7 @@ describe("fs.read", () => {
   });
 });
 
-test("new Stats", () => {
+it("new Stats", () => {
   // @ts-expect-error
   const stats = new Stats(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14);
   expect(stats).toBeDefined();
@@ -1828,4 +1828,8 @@ test("new Stats", () => {
   expect(stats.mtimeMs).toBe(12);
   expect(stats.ctimeMs).toBe(13);
   expect(stats.birthtimeMs).toBe(14);
+  expect(stats.atime).toEqual(new Date(11));
+  expect(stats.mtime).toEqual(new Date(12));
+  expect(stats.ctime).toEqual(new Date(13));
+  expect(stats.birthtime).toEqual(new Date(14));
 });

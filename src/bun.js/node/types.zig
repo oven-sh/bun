@@ -1274,7 +1274,7 @@ pub const Date = enum(u64) {
     _,
 
     pub fn toJS(this: Date, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        const seconds = @as(f64, @floatCast(@as(f64, @floatFromInt(@intFromEnum(this))) * 1000.0));
+        const seconds = @as(f64, @floatCast(@as(f64, @floatFromInt(@intFromEnum(this)))));
         const unix_timestamp = JSC.JSValue.jsNumber(seconds);
         const array: [1]JSC.C.JSValueRef = .{unix_timestamp.asObjectRef()};
         const obj = JSC.C.JSObjectMakeDate(ctx, 1, &array, exception);
@@ -1325,9 +1325,9 @@ fn StatsDataType(comptime T: type) type {
                 .atime_ms = (@as(f64, @floatFromInt(@max(atime.tv_sec, 0))) * std.time.ms_per_s) + (@as(f64, @floatFromInt(@as(usize, @intCast(@max(atime.tv_nsec, 0))))) / std.time.ns_per_ms),
                 .mtime_ms = (@as(f64, @floatFromInt(@max(mtime.tv_sec, 0))) * std.time.ms_per_s) + (@as(f64, @floatFromInt(@as(usize, @intCast(@max(mtime.tv_nsec, 0))))) / std.time.ns_per_ms),
                 .ctime_ms = (@as(f64, @floatFromInt(@max(ctime.tv_sec, 0))) * std.time.ms_per_s) + (@as(f64, @floatFromInt(@as(usize, @intCast(@max(ctime.tv_nsec, 0))))) / std.time.ns_per_ms),
-                .atime = @as(Date, @enumFromInt(@as(u64, @intCast(@max(atime.tv_sec, 0))))),
-                .mtime = @as(Date, @enumFromInt(@as(u64, @intCast(@max(mtime.tv_sec, 0))))),
-                .ctime = @as(Date, @enumFromInt(@as(u64, @intCast(@max(ctime.tv_sec, 0))))),
+                .atime = @as(Date, @enumFromInt(@as(u64, @intCast(@max(atime.tv_sec * std.time.ms_per_s, 0))))),
+                .mtime = @as(Date, @enumFromInt(@as(u64, @intCast(@max(mtime.tv_sec * std.time.ms_per_s, 0))))),
+                .ctime = @as(Date, @enumFromInt(@as(u64, @intCast(@max(ctime.tv_sec * std.time.ms_per_s, 0))))),
 
                 // Linux doesn't include this info in stat
                 // maybe it does in statx, but do you really need birthtime? If you do please file an issue.
@@ -1480,10 +1480,10 @@ pub const Stats = union(enum) {
             return null;
         };
 
-        var atime_ms = if (args.len > 10 and args[10].isNumber()) args[10].asInt52() else 0;
-        var mtime_ms = if (args.len > 11 and args[11].isNumber()) args[11].asInt52() else 0;
-        var ctime_ms = if (args.len > 12 and args[12].isNumber()) args[12].asInt52() else 0;
-        var birthtime_ms = if (args.len > 13 and args[13].isNumber()) args[13].asInt32() else 0;
+        var atime_ms = if (args.len > 10 and args[10].isNumber()) args[10].asNumber() else 0;
+        var mtime_ms = if (args.len > 11 and args[11].isNumber()) args[11].asNumber() else 0;
+        var ctime_ms = if (args.len > 12 and args[12].isNumber()) args[12].asNumber() else 0;
+        var birthtime_ms = if (args.len > 13 and args[13].isNumber()) args[13].toInt32() else 0;
         this.* = .{
             .small = StatsDataType(i32){
                 .dev = if (args.len > 0 and args[0].isNumber()) args[0].toInt32() else 0,
@@ -1496,14 +1496,14 @@ pub const Stats = union(enum) {
                 .ino = if (args.len > 7 and args[7].isNumber()) args[7].toInt32() else 0,
                 .size = if (args.len > 8 and args[8].isNumber()) args[8].toInt32() else 0,
                 .blocks = if (args.len > 9 and args[9].isNumber()) args[9].toInt32() else 0,
-                .atime_ms = @floatFromInt(atime_ms),
-                .mtime_ms = @floatFromInt(mtime_ms),
-                .ctime_ms = @floatFromInt(ctime_ms),
+                .atime_ms = (atime_ms),
+                .mtime_ms = (mtime_ms),
+                .ctime_ms = (ctime_ms),
                 .birthtime_ms = birthtime_ms,
-                .atime = @enumFromInt(atime_ms),
-                .mtime = @enumFromInt(mtime_ms),
-                .ctime = @enumFromInt(ctime_ms),
-                .birthtime = @enumFromInt(birthtime_ms),
+                .atime = @enumFromInt(@as(u64, @intFromFloat(atime_ms))),
+                .mtime = @enumFromInt(@as(u64, @intFromFloat(mtime_ms))),
+                .ctime = @enumFromInt(@as(u64, @intFromFloat(ctime_ms))),
+                .birthtime = @enumFromInt(@as(u64, @intCast(birthtime_ms))),
             },
         };
         return this;

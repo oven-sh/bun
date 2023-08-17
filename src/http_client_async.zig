@@ -483,6 +483,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 ptr: *anyopaque,
                 socket: HTTPSocket,
             ) void {
+                log("onEnd", .{});
                 var tagged = ActiveSocket.from(@as(**anyopaque, @ptrCast(@alignCast(ptr))).*);
                 {
                     @setRuntimeSafety(false);
@@ -1137,10 +1138,20 @@ proxy_tunnel: ?ProxyTunnel = null,
 aborted: ?*std.atomic.Atomic(bool) = null,
 async_http_id: u32 = 0,
 hostname: ?[]u8 = null,
-signal_header_progress: std.atomic.Atomic(bool),
-enable_body_stream: std.atomic.Atomic(bool),
+signal_header_progress: *std.atomic.Atomic(bool),
+enable_body_stream: *std.atomic.Atomic(bool),
 
-pub fn init(allocator: std.mem.Allocator, method: Method, url: URL, header_entries: Headers.Entries, header_buf: string, signal: ?*std.atomic.Atomic(bool), hostname: ?[]u8) HTTPClient {
+pub fn init(
+    allocator: std.mem.Allocator,
+    method: Method,
+    url: URL,
+    header_entries: Headers.Entries,
+    header_buf: string,
+    signal: ?*std.atomic.Atomic(bool),
+    hostname: ?[]u8,
+    signal_header_progress: *std.atomic.Atomic(bool),
+    enable_body_stream: *std.atomic.Atomic(bool),
+) HTTPClient {
     return HTTPClient{
         .allocator = allocator,
         .method = method,
@@ -1149,8 +1160,8 @@ pub fn init(allocator: std.mem.Allocator, method: Method, url: URL, header_entri
         .header_buf = header_buf,
         .aborted = signal,
         .hostname = hostname,
-        .signal_header_progress = std.atomic.Atomic(bool).init(false),
-        .enable_body_stream = std.atomic.Atomic(bool).init(false),
+        .signal_header_progress = signal_header_progress,
+        .enable_body_stream = enable_body_stream,
     };
 }
 
@@ -1309,6 +1320,10 @@ pub const AsyncHTTP = struct {
     state: AtomicState = AtomicState.init(State.pending),
     elapsed: u64 = 0,
     gzip_elapsed: u64 = 0,
+
+    signal_header_progress: std.atomic.Atomic(bool),
+    enable_body_stream: std.atomic.Atomic(bool),
+
     pub var active_requests_count = std.atomic.Atomic(usize).init(0);
     pub var max_simultaneous_requests = std.atomic.Atomic(usize).init(256);
 
@@ -1339,11 +1354,13 @@ pub const AsyncHTTP = struct {
     }
 
     pub fn signalHeaderProgress(this: *AsyncHTTP) void {
-        this.client.signal_header_progress.store(true, .Monotonic);
+        @fence(.Release);
+        this.client.signal_header_progress.store(true, .Release);
     }
 
     pub fn enableBodyStreaming(this: *AsyncHTTP) void {
-        this.client.enable_body_stream.store(true, .Monotonic);
+        @fence(.Release);
+        this.client.enable_body_stream.store(true, .Release);
     }
 
     pub fn clearData(this: *AsyncHTTP) void {
@@ -1388,9 +1405,11 @@ pub const AsyncHTTP = struct {
             .result_callback = callback,
             .http_proxy = http_proxy,
             .async_http_id = if (signal != null) async_http_id.fetchAdd(1, .Monotonic) else 0,
+            .signal_header_progress = std.atomic.Atomic(bool).init(false),
+            .enable_body_stream = std.atomic.Atomic(bool).init(false),
         };
 
-        this.client = HTTPClient.init(allocator, method, url, headers, headers_buf, signal, hostname);
+        this.client = HTTPClient.init(allocator, method, url, headers, headers_buf, signal, hostname, &this.signal_header_progress, &this.enable_body_stream);
         this.client.async_http_id = this.async_http_id;
         this.client.timeout = timeout;
         this.client.http_proxy = this.http_proxy;
@@ -1828,6 +1847,7 @@ fn printResponse(response: picohttp.Response) void {
 }
 
 pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    log("onWritable", .{});
     if (this.hasSignalAborted()) {
         this.closeAndAbort(is_ssl, socket);
         return;
@@ -2171,6 +2191,7 @@ fn startProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTP
 }
 
 pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u8, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    log("onData {}", .{incoming_data.len});
     if (this.hasSignalAborted()) {
         this.closeAndAbort(is_ssl, socket);
         return;
@@ -2274,12 +2295,12 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
 
             if (this.state.response_stage == .body) {
                 {
-                    const is_done = this.handleResponseBody(body_buf, true) catch |err| {
+                    const report_progress = this.handleResponseBody(body_buf, true) catch |err| {
                         this.closeAndFail(err, is_ssl, socket);
                         return;
                     };
 
-                    if (is_done) {
+                    if (report_progress) {
                         this.progressUpdate(is_ssl, ctx, socket);
                         return;
                     }
@@ -2287,12 +2308,12 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             } else if (this.state.response_stage == .body_chunk) {
                 this.setTimeout(socket, 500);
                 {
-                    const is_done = this.handleResponseBodyChunkedEncoding(body_buf) catch |err| {
+                    const report_progress = this.handleResponseBodyChunkedEncoding(body_buf) catch |err| {
                         this.closeAndFail(err, is_ssl, socket);
                         return;
                     };
 
-                    if (is_done) {
+                    if (report_progress) {
                         this.progressUpdate(is_ssl, ctx, socket);
                         return;
                     }
@@ -2313,22 +2334,22 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 defer data.deinit();
                 const decoded_data = data.slice();
                 if (decoded_data.len == 0) return;
-                const is_done = this.handleResponseBody(decoded_data, false) catch |err| {
+                const report_progress = this.handleResponseBody(decoded_data, false) catch |err| {
                     this.closeAndFail(err, is_ssl, socket);
                     return;
                 };
 
-                if (is_done) {
+                if (report_progress) {
                     this.progressUpdate(is_ssl, ctx, socket);
                     return;
                 }
             } else {
-                const is_done = this.handleResponseBody(incoming_data, false) catch |err| {
+                const report_progress = this.handleResponseBody(incoming_data, false) catch |err| {
                     this.closeAndFail(err, is_ssl, socket);
                     return;
                 };
 
-                if (is_done) {
+                if (report_progress) {
                     this.progressUpdate(is_ssl, ctx, socket);
                     return;
                 }
@@ -2349,22 +2370,22 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 const decoded_data = data.slice();
                 if (decoded_data.len == 0) return;
 
-                const is_done = this.handleResponseBodyChunkedEncoding(decoded_data) catch |err| {
+                const report_progress = this.handleResponseBodyChunkedEncoding(decoded_data) catch |err| {
                     this.closeAndFail(err, is_ssl, socket);
                     return;
                 };
 
-                if (is_done) {
+                if (report_progress) {
                     this.progressUpdate(is_ssl, ctx, socket);
                     return;
                 }
             } else {
-                const is_done = this.handleResponseBodyChunkedEncoding(incoming_data) catch |err| {
+                const report_progress = this.handleResponseBodyChunkedEncoding(incoming_data) catch |err| {
                     this.closeAndFail(err, is_ssl, socket);
                     return;
                 };
 
-                if (is_done) {
+                if (report_progress) {
                     this.progressUpdate(is_ssl, ctx, socket);
                     return;
                 }
@@ -2590,6 +2611,7 @@ const preallocate_max = 1024 * 1024 * 256;
 
 pub fn handleResponseBody(this: *HTTPClient, incoming_data: []const u8, is_only_buffer: bool) !bool {
     std.debug.assert(this.state.transfer_encoding == .identity);
+    log("handleResponseBody {} {}", .{ incoming_data.len, is_only_buffer });
     // is it exactly as much as we need?
     if (is_only_buffer and incoming_data.len >= this.state.body_size) {
         try handleResponseBodyFromSinglePacket(this, incoming_data[0..this.state.body_size]);
@@ -2645,7 +2667,7 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
     {
         // TODO: allow streaming for gzip and deflate
         if (this.state.encoding == Encoding.gzip or this.state.encoding == Encoding.deflate) {
-            this.enable_body_stream.store(false, .Monotonic);
+            this.enable_body_stream.store(false, .Release);
             // if we are not streaming we preallocate everything
             buffer.list.ensureTotalCapacityPrecise(buffer.allocator, this.state.body_size) catch {};
         } else {
@@ -2656,9 +2678,10 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
 
     const remaining_content_length = this.state.body_size -| this.state.total_body_received;
     var remainder = incoming_data[0..@min(incoming_data.len, remaining_content_length)];
-    this.state.total_body_received += remainder.len;
 
     _ = try buffer.write(remainder);
+
+    this.state.total_body_received += remainder.len;
 
     if (this.progress_node) |progress| {
         progress.activate();
@@ -2677,7 +2700,7 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
         }
         return true;
     }
-
+    log("handleResponseBodyFromMultiplePackets: false {} {} {} {} {}", .{ this.enable_body_stream.load(.Acquire), remainder.len, this.state.body_size - this.state.total_body_received, this.state.total_body_received, this.state.body_size });
     return false;
 }
 

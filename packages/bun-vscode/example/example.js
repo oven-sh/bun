@@ -1,5 +1,4 @@
-// @bun
-const express = import.meta.require("express");
+const express = require("express");
 const app = express();
 import { readFile } from "node:fs/promises";
 

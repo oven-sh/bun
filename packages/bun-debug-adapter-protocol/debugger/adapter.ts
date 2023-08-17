@@ -149,9 +149,23 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
   async #send<M extends keyof JSC.RequestMap & keyof JSC.ResponseMap>(
     method: M,
-    params?: JSC.RequestMap[M],
+    params?: JSC.RequestMap[M] & { errorsToIgnore?: string[] },
   ): Promise<JSC.ResponseMap[M]> {
-    return this.#inspector.send(method, params);
+    const { errorsToIgnore, ...options } = params ?? {};
+    try {
+      // @ts-ignore
+      return await this.#inspector.send(method, options);
+    } catch (cause) {
+      const { message } = unknownToError(cause);
+      for (const error of errorsToIgnore ?? []) {
+        if (message.includes(error)) {
+          console.warn("Ignored error:", message);
+          // @ts-ignore
+          return {};
+        }
+      }
+      throw cause;
+    }
   }
 
   /**
@@ -263,7 +277,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
         this.#url = url;
         this.#mode = "launch";
-        this.#inspector.start(url);
+        this.#inspector.start(this.#url);
         return {};
       }
 
@@ -306,7 +320,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
 
     this.#url = parseUrl(url);
     this.#mode = "attach";
-    this.#inspector.start(url);
+    this.#inspector.start(this.#url);
 
     return {};
   }
@@ -353,31 +367,41 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   }
 
   async pause(request: DAP.PauseRequest): Promise<DAP.PauseResponse> {
-    await this.#send("Debugger.pause");
+    await this.#send("Debugger.pause", {
+      errorsToIgnore: ["Must be paused or waiting to pause"],
+    });
     this.#stopped = "pause";
     return {};
   }
 
   async continue(request: DAP.ContinueRequest): Promise<DAP.ContinueResponse> {
-    await this.#send("Debugger.resume");
+    await this.#send("Debugger.resume", {
+      errorsToIgnore: ["Must be paused or waiting to pause"],
+    });
     this.#stopped = undefined;
     return {};
   }
 
   async next(request: DAP.NextRequest): Promise<DAP.NextResponse> {
-    await this.#send("Debugger.stepNext");
+    await this.#send("Debugger.stepNext", {
+      errorsToIgnore: ["Must be paused or waiting to pause"],
+    });
     this.#stopped = "step";
     return {};
   }
 
   async stepIn(request: DAP.StepInRequest): Promise<DAP.StepInResponse> {
-    await this.#send("Debugger.stepInto");
+    await this.#send("Debugger.stepInto", {
+      errorsToIgnore: ["Must be paused or waiting to pause"],
+    });
     this.#stopped = "step";
     return {};
   }
 
   async stepOut(request: DAP.StepOutRequest): Promise<DAP.StepOutResponse> {
-    await this.#send("Debugger.stepOut");
+    await this.#send("Debugger.stepOut", {
+      errorsToIgnore: ["Must be paused or waiting to pause"],
+    });
     this.#stopped = "step";
     return {};
   }
@@ -811,6 +835,9 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       columnNumber: column,
       options: breakpointOptions(options),
     });
+    if (!locations.length) {
+      throw new Error("Breakpoint has no locations");
+    }
     if (locations.length > 1) {
       console.warn("Breakpoint has multiple locations:", breakpoint);
     }
@@ -1231,17 +1258,23 @@ function isJavaScript(path: string): boolean {
 function parseUrl(hostname?: string, port?: number): URL {
   hostname ||= "localhost";
   port ||= 6499;
+  let url: URL;
   try {
     if (hostname.includes("://")) {
-      return new URL(hostname);
+      url = new URL(hostname);
+    } else if (hostname.includes(":") && !hostname.startsWith("[")) {
+      url = new URL(`ws://[${hostname}]:${port}/`);
+    } else {
+      url = new URL(`ws://${hostname}:${port}/`);
     }
-    if (hostname.includes(":") && !hostname.startsWith("[")) {
-      return new URL(`ws://[${hostname}]:${port}/`);
-    }
-    return new URL(`ws://${hostname}:${port}/`);
   } catch {
     throw new Error(`Invalid URL or hostname/port: ${hostname}`);
   }
+  // HACK: Bun sometimes has issues connecting through "127.0.0.1"
+  if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+    url.hostname = "[::1]";
+  }
+  return url;
 }
 
 function lookForUrl(messages?: string[]): URL | undefined {
@@ -1252,12 +1285,7 @@ function lookForUrl(messages?: string[]): URL | undefined {
     }
     const [_, href] = match;
     try {
-      const url = new URL(href);
-      // HACK: Bun is not listening to "localhost"
-      if (url.hostname === "localhost") {
-        url.hostname = "[::1]";
-      }
-      return url;
+      return parseUrl(href);
     } catch {
       throw new Error(`Invalid URL: ${href}`);
     }

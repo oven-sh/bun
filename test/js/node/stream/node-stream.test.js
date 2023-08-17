@@ -238,4 +238,16 @@ describe("TTY", () => {
     expect(process.stdout.isTTY).toBe(true);
     expect(process.stderr.isTTY).toBe(true);
   });
+
+  it("read and write stream prototypes", () => {
+    expect(tty.ReadStream.prototype.setRawMode).toBeInstanceOf(Function);
+    expect(tty.WriteStream.prototype.clearLine).toBeInstanceOf(Function);
+    expect(tty.WriteStream.prototype.clearScreenDown).toBeInstanceOf(Function);
+    expect(tty.WriteStream.prototype.cursorTo).toBeInstanceOf(Function);
+    expect(tty.WriteStream.prototype.getColorDepth).toBeInstanceOf(Function);
+    expect(tty.WriteStream.prototype.getWindowSize).toBeInstanceOf(Function);
+    expect(tty.WriteStream.prototype.hasColors).toBeInstanceOf(Function);
+    expect(tty.WriteStream.prototype.hasColors).toBeInstanceOf(Function);
+    expect(tty.WriteStream.prototype.moveCursor).toBeInstanceOf(Function);
+  });
 });

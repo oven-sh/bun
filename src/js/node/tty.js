@@ -1,29 +1,37 @@
-const fs = require("node:fs");
 const { ttySetMode, isatty, getWindowSize: _getWindowSize } = $lazy("tty");
 
 function ReadStream(fd) {
   if (!(this instanceof ReadStream)) return new ReadStream(fd);
 
-  const stream = fs.ReadStream.call(this, `/dev/fd/${fd}`);
+  const stream = require("node:fs").ReadStream.call(this, `/dev/fd/${fd}`);
 
   stream.isRaw = false;
   stream.isTTY = isatty(fd);
 
-  stream.setRawMode = function (flag) {
-    const mode = flag ? 1 : 0;
-    const err = ttySetMode(fd, mode);
-    if (err) {
-      this.emit("error", new Error("setRawMode failed with errno:", err));
-      return this;
-    }
-    this.isRaw = flag;
-    return this;
-  };
-
   return stream;
 }
 
-ReadStream.prototype = fs.ReadStream.prototype;
+Object.defineProperty(ReadStream, "prototype", {
+  get() {
+    const Real = require("node:fs").ReadStream.prototype;
+
+    Object.defineProperty(ReadStream, "prototype", { value: Real });
+    ReadStream.prototype.setRawMode = function (flag) {
+      const mode = flag ? 1 : 0;
+      const err = ttySetMode(this.fd, mode);
+      if (err) {
+        this.emit("error", new Error("setRawMode failed with errno:", err));
+        return this;
+      }
+      this.isRaw = flag;
+      return this;
+    };
+
+    return Real;
+  },
+  enumerable: true,
+  configurable: true,
+});
 
 let OSRelease;
 
@@ -83,177 +91,192 @@ function warnOnDeactivatedColors(env) {
 function WriteStream(fd) {
   if (!(this instanceof WriteStream)) return new WriteStream(fd);
 
-  const stream = fs.WriteStream.call(this, `/dev/fd/${fd}`);
+  const stream = require("node:fs").WriteStream.call(this, `/dev/fd/${fd}`);
 
   stream.columns = undefined;
   stream.rows = undefined;
   stream.isTTY = isatty(fd);
 
-  stream._refreshSize = function () {
-    const oldCols = this.columns;
-    const oldRows = this.rows;
+  if (stream.isTTY) {
     const windowSizeArray = [0, 0];
     if (_getWindowSize(fd, windowSizeArray) === true) {
-      if (oldCols !== windowSizeArray[0] || oldRows !== windowSizeArray[1]) {
-        this.columns = windowSizeArray[0];
-        this.rows = windowSizeArray[1];
-        this.emit("resize");
-      }
+      stream.columns = windowSizeArray[0];
+      stream.rows = windowSizeArray[1];
     }
-  };
-
-  if (stream.isTTY) {
-    stream._refreshSize();
   }
-
-  var readline = undefined;
-  stream.clearLine = function (dir, cb) {
-    return (readline ??= require("node:readline")).clearLine(this, dir, cb);
-  };
-
-  stream.clearScreenDown = function (cb) {
-    return (readline ??= require("node:readline")).clearScreenDown(this, cb);
-  };
-
-  stream.cursorTo = function (x, y, cb) {
-    return (readline ??= require("node:readline")).cursorTo(this, x, y, cb);
-  };
-
-  // The `getColorDepth` API got inspired by multiple sources such as
-  // https://github.com/chalk/supports-color,
-  // https://github.com/isaacs/color-support.
-  stream.getColorDepth = function (env = process.env) {
-    // Use level 0-3 to support the same levels as `chalk` does. This is done for
-    // consistency throughout the ecosystem.
-    if (env.FORCE_COLOR !== undefined) {
-      switch (env.FORCE_COLOR) {
-        case "":
-        case "1":
-        case "true":
-          warnOnDeactivatedColors(env);
-          return COLORS_16;
-        case "2":
-          warnOnDeactivatedColors(env);
-          return COLORS_256;
-        case "3":
-          warnOnDeactivatedColors(env);
-          return COLORS_16m;
-        default:
-          return COLORS_2;
-      }
-    }
-
-    if (
-      env.NODE_DISABLE_COLORS !== undefined ||
-      // See https://no-color.org/
-      env.NO_COLOR !== undefined ||
-      // The "dumb" special terminal, as defined by terminfo, doesn't support
-      // ANSI color control codes.
-      // See https://invisible-island.net/ncurses/terminfo.ti.html#toc-_Specials
-      env.TERM === "dumb"
-    ) {
-      return COLORS_2;
-    }
-
-    if (process.platform === "win32") {
-      // Lazy load for startup performance.
-      if (OSRelease === undefined) {
-        const { release } = require("node:os");
-        OSRelease = StringPrototypeSplit(release(), ".");
-      }
-      // Windows 10 build 10586 is the first Windows release that supports 256
-      // colors. Windows 10 build 14931 is the first release that supports
-      // 16m/TrueColor.
-      if (+OSRelease[0] >= 10) {
-        const build = +OSRelease[2];
-        if (build >= 14931) return COLORS_16m;
-        if (build >= 10586) return COLORS_256;
-      }
-
-      return COLORS_16;
-    }
-
-    if (env.TMUX) {
-      return COLORS_256;
-    }
-
-    if (env.CI) {
-      if (
-        ["APPVEYOR", "BUILDKITE", "CIRCLECI", "DRONE", "GITHUB_ACTIONS", "GITLAB_CI", "TRAVIS"].some(
-          sign => sign in env,
-        ) ||
-        env.CI_NAME === "codeship"
-      ) {
-        return COLORS_256;
-      }
-      return COLORS_2;
-    }
-
-    if ("TEAMCITY_VERSION" in env) {
-      return RegExpPrototypeExec(/^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/, env.TEAMCITY_VERSION) !== null ? COLORS_16 : COLORS_2;
-    }
-
-    switch (env.TERM_PROGRAM) {
-      case "iTerm.app":
-        if (!env.TERM_PROGRAM_VERSION || RegExpPrototypeExec(/^[0-2]\./, env.TERM_PROGRAM_VERSION) !== null) {
-          return COLORS_256;
-        }
-        return COLORS_16m;
-      case "HyperTerm":
-      case "MacTerm":
-        return COLORS_16m;
-      case "Apple_Terminal":
-        return COLORS_256;
-    }
-
-    if (env.COLORTERM === "truecolor" || env.COLORTERM === "24bit") {
-      return COLORS_16m;
-    }
-
-    if (env.TERM) {
-      if (RegExpPrototypeExec(/^xterm-256/, env.TERM) !== null) {
-        return COLORS_256;
-      }
-
-      const termEnv = StringPrototypeToLowerCase(env.TERM);
-
-      if (TERM_ENVS[termEnv]) {
-        return TERM_ENVS[termEnv];
-      }
-      if (ArrayPrototypeSome(TERM_ENVS_REG_EXP, term => RegExpPrototypeExec(term, termEnv) !== null)) {
-        return COLORS_16;
-      }
-    }
-    // Move 16 color COLORTERM below 16m and 256
-    if (env.COLORTERM) {
-      return COLORS_16;
-    }
-    return COLORS_2;
-  };
-
-  stream.getWindowSize = function () {
-    return [this.columns, this.rows];
-  };
-
-  stream.hasColors = function (count, env) {
-    if (env === undefined && (count === undefined || (typeof count === "object" && count !== null))) {
-      env = count;
-      count = 16;
-    } else {
-      validateInteger(count, "count", 2);
-    }
-
-    return count <= 2 ** this.getColorDepth(env);
-  };
-
-  stream.moveCursor = function (dx, dy, cb) {
-    return (readline ??= require("node:readline")).moveCursor(this, dx, dy, cb);
-  };
 
   return stream;
 }
 
-WriteStream.prototype = fs.WriteStream.prototype;
+Object.defineProperty(WriteStream, "prototype", {
+  get() {
+    const Real = require("node:fs").WriteStream.prototype;
+    Object.defineProperty(WriteStream, "prototype", { value: Real });
+
+    WriteStream.prototype._refreshSize = function () {
+      const oldCols = this.columns;
+      const oldRows = this.rows;
+      const windowSizeArray = [0, 0];
+      if (_getWindowSize(this.fd, windowSizeArray) === true) {
+        if (oldCols !== windowSizeArray[0] || oldRows !== windowSizeArray[1]) {
+          this.columns = windowSizeArray[0];
+          this.rows = windowSizeArray[1];
+          this.emit("resize");
+        }
+      }
+    };
+
+    var readline = undefined;
+    WriteStream.prototype.clearLine = function (dir, cb) {
+      return (readline ??= require("node:readline")).clearLine(this, dir, cb);
+    };
+
+    WriteStream.prototype.clearScreenDown = function (cb) {
+      return (readline ??= require("node:readline")).clearScreenDown(this, cb);
+    };
+
+    WriteStream.prototype.cursorTo = function (x, y, cb) {
+      return (readline ??= require("node:readline")).cursorTo(this, x, y, cb);
+    };
+
+    // The `getColorDepth` API got inspired by multiple sources such as
+    // https://github.com/chalk/supports-color,
+    // https://github.com/isaacs/color-support.
+    WriteStream.prototype.getColorDepth = function (env = process.env) {
+      // Use level 0-3 to support the same levels as `chalk` does. This is done for
+      // consistency throughout the ecosystem.
+      if (env.FORCE_COLOR !== undefined) {
+        switch (env.FORCE_COLOR) {
+          case "":
+          case "1":
+          case "true":
+            warnOnDeactivatedColors(env);
+            return COLORS_16;
+          case "2":
+            warnOnDeactivatedColors(env);
+            return COLORS_256;
+          case "3":
+            warnOnDeactivatedColors(env);
+            return COLORS_16m;
+          default:
+            return COLORS_2;
+        }
+      }
+
+      if (
+        env.NODE_DISABLE_COLORS !== undefined ||
+        // See https://no-color.org/
+        env.NO_COLOR !== undefined ||
+        // The "dumb" special terminal, as defined by terminfo, doesn't support
+        // ANSI color control codes.
+        // See https://invisible-island.net/ncurses/terminfo.ti.html#toc-_Specials
+        env.TERM === "dumb"
+      ) {
+        return COLORS_2;
+      }
+
+      if (process.platform === "win32") {
+        // Lazy load for startup performance.
+        if (OSRelease === undefined) {
+          const { release } = require("node:os");
+          OSRelease = StringPrototypeSplit(release(), ".");
+        }
+        // Windows 10 build 10586 is the first Windows release that supports 256
+        // colors. Windows 10 build 14931 is the first release that supports
+        // 16m/TrueColor.
+        if (+OSRelease[0] >= 10) {
+          const build = +OSRelease[2];
+          if (build >= 14931) return COLORS_16m;
+          if (build >= 10586) return COLORS_256;
+        }
+
+        return COLORS_16;
+      }
+
+      if (env.TMUX) {
+        return COLORS_256;
+      }
+
+      if (env.CI) {
+        if (
+          ["APPVEYOR", "BUILDKITE", "CIRCLECI", "DRONE", "GITHUB_ACTIONS", "GITLAB_CI", "TRAVIS"].some(
+            sign => sign in env,
+          ) ||
+          env.CI_NAME === "codeship"
+        ) {
+          return COLORS_256;
+        }
+        return COLORS_2;
+      }
+
+      if ("TEAMCITY_VERSION" in env) {
+        return RegExpPrototypeExec(/^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/, env.TEAMCITY_VERSION) !== null
+          ? COLORS_16
+          : COLORS_2;
+      }
+
+      switch (env.TERM_PROGRAM) {
+        case "iTerm.app":
+          if (!env.TERM_PROGRAM_VERSION || RegExpPrototypeExec(/^[0-2]\./, env.TERM_PROGRAM_VERSION) !== null) {
+            return COLORS_256;
+          }
+          return COLORS_16m;
+        case "HyperTerm":
+        case "MacTerm":
+          return COLORS_16m;
+        case "Apple_Terminal":
+          return COLORS_256;
+      }
+
+      if (env.COLORTERM === "truecolor" || env.COLORTERM === "24bit") {
+        return COLORS_16m;
+      }
+
+      if (env.TERM) {
+        if (RegExpPrototypeExec(/^xterm-256/, env.TERM) !== null) {
+          return COLORS_256;
+        }
+
+        const termEnv = StringPrototypeToLowerCase(env.TERM);
+
+        if (TERM_ENVS[termEnv]) {
+          return TERM_ENVS[termEnv];
+        }
+        if (ArrayPrototypeSome(TERM_ENVS_REG_EXP, term => RegExpPrototypeExec(term, termEnv) !== null)) {
+          return COLORS_16;
+        }
+      }
+      // Move 16 color COLORTERM below 16m and 256
+      if (env.COLORTERM) {
+        return COLORS_16;
+      }
+      return COLORS_2;
+    };
+
+    WriteStream.prototype.getWindowSize = function () {
+      return [this.columns, this.rows];
+    };
+
+    WriteStream.prototype.hasColors = function (count, env) {
+      if (env === undefined && (count === undefined || (typeof count === "object" && count !== null))) {
+        env = count;
+        count = 16;
+      } else {
+        validateInteger(count, "count", 2);
+      }
+
+      return count <= 2 ** this.getColorDepth(env);
+    };
+
+    WriteStream.prototype.moveCursor = function (dx, dy, cb) {
+      return (readline ??= require("node:readline")).moveCursor(this, dx, dy, cb);
+    };
+
+    return Real;
+  },
+  enumerable: true,
+  configurable: true,
+});
 
 var validateInteger = (value, name, min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAFE_INTEGER) => {
   if (typeof value !== "number") throw new ERR_INVALID_ARG_TYPE(name, "number", value);

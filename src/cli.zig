@@ -160,6 +160,8 @@ pub const Arguments = struct {
         clap.parseParam("--minify-identifiers              Minify identifiers") catch unreachable,
         clap.parseParam("--no-macros                       Disable macros from being executed in the bundler, transpiler and runtime") catch unreachable,
         clap.parseParam("--target <STR>                    The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
+        clap.parseParam("--inspect <STR>?                  Activate Bun's Debugger") catch unreachable,
+        clap.parseParam("--inspect-brk <STR>?              Activate Bun's Debugger and pause immediately") catch unreachable,
         clap.parseParam("<POS>...                          ") catch unreachable,
     };
 
@@ -511,6 +513,14 @@ pub const Arguments = struct {
             }
 
             ctx.runtime_options.smol = args.flag("--smol");
+            if (args.option("--inspect")) |inspect_flag| {
+                ctx.runtime_options.debugger = if (inspect_flag.len == 0)
+                    Command.Debugger{ .enable = {} }
+                else
+                    Command.Debugger{
+                        .path_or_port = inspect_flag,
+                    };
+            }
         }
 
         if (opts.port != null and opts.origin == null) {
@@ -944,6 +954,17 @@ pub const Command = struct {
         test_filter_regex: ?*RegularExpression = null,
     };
 
+    pub const Debugger = union(enum) {
+        unspecified: void,
+        enable: void,
+        path_or_port: []const u8,
+    };
+
+    pub const RuntimeOptions = struct {
+        smol: bool = false,
+        debugger: Debugger = .{ .unspecified = {} },
+    };
+
     pub const Context = struct {
         start_time: i128,
         args: Api.TransformOptions,
@@ -960,10 +981,6 @@ pub const Command = struct {
 
         preloads: []const string = &[_]string{},
         has_loaded_global_config: bool = false,
-
-        pub const RuntimeOptions = struct {
-            smol: bool = false,
-        };
 
         pub const BundlerOptions = struct {
             compile: bool = false,

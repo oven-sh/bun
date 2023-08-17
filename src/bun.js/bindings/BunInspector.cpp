@@ -3,6 +3,10 @@
 
 #include <JavaScriptCore/InspectorFrontendChannel.h>
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
+#include <JavaScriptCore/JSGlobalObjectDebugger.h>
+#include <JavaScriptCore/Debugger.h>
+
+extern "C" void Bun__tickWhilePaused(bool*);
 
 namespace Bun {
 using namespace JSC;
@@ -31,6 +35,13 @@ public:
     {
         this->globalObject = globalObject;
         this->globalObject->inspectorDebuggable().connect(*this);
+
+       Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(this->globalObject->debugger());
+       if (debugger) {
+            debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& isPaused) -> void {
+                Bun__tickWhilePaused(&isPaused);
+            };
+       }
     }
 
     void onClose()
@@ -57,6 +68,13 @@ public:
     void onMessage(std::string_view message)
     {
         WTF::String messageString = WTF::String::fromUTF8(message.data(), message.length());
+        Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(this->globalObject->debugger());
+        if (debugger) {
+            debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& done) -> void {
+                Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject.debugger());
+                Bun__tickWhilePaused(&done);
+            };
+        }
         this->globalObject->inspectorDebuggable().dispatchMessageFromRemote(WTFMove(messageString));
     }
 
@@ -83,6 +101,7 @@ public:
 
 using BunInspectorConnectionNoSSL = BunInspectorConnection<false>;
 using SSLBunInspectorConnection = BunInspectorConnection<true>;
+
 
 template<bool isSSL>
 static void addInspector(void* app, JSC::JSGlobalObject* globalObject)

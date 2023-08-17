@@ -252,7 +252,8 @@ static void handlePromise(PromiseType* promise, JSC__JSGlobalObject* globalObjec
         arguments.append(jsUndefined());
         arguments.append(JSValue::decode(ctx));
         ASSERT(!arguments.hasOverflowed());
-        JSC::call(globalThis, performPromiseThenFunction, callData, jsUndefined(), arguments);
+        // async context tracking is handled by performPromiseThenFunction internally.
+        JSC::profiledCall(globalThis, JSC::ProfilingReason::Microtask, performPromiseThenFunction, callData, jsUndefined(), arguments);
     } else {
         promise->then(globalThis, resolverFunction, rejecterFunction);
     }
@@ -1770,7 +1771,7 @@ extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSC_
         return JSC::JSValue::encode(JSC::JSValue());
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::call(globalObject, jsObject, callData, jsThisObject, argList, returnedException);
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, jsObject, callData, jsThisObject, argList, returnedException);
 
     if (asyncContextData) {
         asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
@@ -1811,7 +1812,7 @@ JSC__JSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef ctx, J
         return JSC::JSValue::encode(JSC::JSValue());
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::call(globalObject, jsObject, callData, jsThisObject, argList, returnedException);
+    auto result = call(globalObject, jsObject, callData, jsThisObject, argList, returnedException);
 
     if (returnedException.get()) {
         return JSC::JSValue::encode(JSC::JSValue(returnedException.get()));

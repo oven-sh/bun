@@ -1,0 +1,11 @@
+{
+  "dependencies": {
+    "elysia": "^0.6.3",
+    "express": "^4.18.2",
+    "mime": "^3.0.0",
+    "mime-db": "^1.52.0"
+  },
+  "trustedDependencies": [
+    "mime"
+  ]
+}

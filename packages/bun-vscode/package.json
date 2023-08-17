@@ -1,0 +1,214 @@
+{
+  "name": "bun-vscode",
+  "version": "0.0.1",
+  "main": "./dist/extension.js",
+  "devDependencies": {
+    "@types/vscode": "^1.81.0",
+    "@vscode/debugadapter": "^1.56.0",
+    "@vscode/debugadapter-testsupport": "^1.56.0",
+    "bun-types": "^0.7.3",
+    "typescript": "^5.0.0"
+  },
+  "activationEvents": [
+    "onDebugResolve:bun",
+    "onDebugDynamicConfigurations:bun",
+    "onCommand:extension.bun.getProgramName"
+  ],
+  "browser": "./dist/web-extension.js",
+  "categories": [
+    "Programming Languages",
+    "Debuggers"
+  ],
+  "contributes": {
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "extension.bun.runEditorContents",
+          "when": "resourceLangId == javascript",
+          "group": "navigation@1"
+        },
+        {
+          "command": "extension.bun.debugEditorContents",
+          "when": "resourceLangId == javascript",
+          "group": "navigation@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "extension.bun.debugEditorContents",
+          "when": "resourceLangId == javascript"
+        },
+        {
+          "command": "extension.bun.runEditorContents",
+          "when": "resourceLangId == javascript"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "extension.bun.debugEditorContents",
+        "title": "Debug File",
+        "category": "Bun Debug",
+        "enablement": "!inDebugMode",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "extension.bun.runEditorContents",
+        "title": "Run File",
+        "category": "Bun Debug",
+        "enablement": "!inDebugMode",
+        "icon": "$(play)"
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "javascript"
+      },
+      {
+        "language": "javascriptreact"
+      },
+      {
+        "language": "typescript"
+      },
+      {
+        "language": "typescriptreact"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "bun",
+        "label": "Bun",
+        "languages": [
+          "javascript",
+          "javascriptreact",
+          "typescript",
+          "typescriptreact"
+        ],
+        "runtime": "node",
+        "program": "./dist/adapter.js",
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "The file to run and debug.",
+                "default": "${workspaceFolder}/${command:AskForProgramName}"
+              }
+            }
+          },
+          "attach": {
+            "properties": {
+              "port": {
+                "type": "integer",
+                "description": "The port to attach and debug.",
+                "default": 6499
+              },
+              "hostname": {
+                "type": "string",
+                "description": "The hostname to attach and debug.",
+                "default": "localhost"
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "bun",
+            "request": "launch",
+            "name": "Bun: Debug",
+            "program": "${workspaceFolder}/${command:AskForProgramName}"
+          },
+          {
+            "type": "bun",
+            "request": "attach",
+            "name": "Bun: Attach"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Bun: Debug",
+            "description": "A new configuration for 'debugging' a Bun process.",
+            "body": {
+              "type": "bun",
+              "request": "launch",
+              "name": "Ask for file name",
+              "program": "^\"\\${workspaceFolder}/\\${command:AskForProgramName}\""
+            }
+          },
+          {
+            "label": "Bun: Attach",
+            "description": "A new configuration for 'attaching' to a running Bun process.",
+            "body": {
+              "type": "bun",
+              "request": "attach",
+              "name": "Attach to Bun",
+              "port": 6499,
+              "hostname": "localhost"
+            }
+          }
+        ],
+        "variables": {
+          "AskForProgramName": "extension.bun.getProgramName"
+        }
+      }
+    ],
+    "languages": [
+      {
+        "id": "bun.lockb",
+        "aliases": [
+          "bun.lockb"
+        ],
+        "extensions": [
+          ".lockb"
+        ],
+        "icon": {
+          "dark": "./src/assets/icon-small.png",
+          "light": "./src/assets/icon-small.png"
+        }
+      }
+    ],
+    "jsonValidation": [
+      {
+        "fileMatch": "package.json",
+        "url": "./src/resources/package.json"
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "bun.lockb",
+        "displayName": "bun.lockb",
+        "selector": [
+          {
+            "filenamePattern": "*.lockb"
+          }
+        ],
+        "priority": "default"
+      }
+    ]
+  },
+  "description": "Visual Studio Code extension for Bun.",
+  "engines": {
+    "vscode": "^1.66.0"
+  },
+  "galleryBanner": {
+    "color": "#C80000",
+    "theme": "dark"
+  },
+  "icon": "./src/assets/icon.png",
+  "license": "MIT",
+  "private": true,
+  "publisher": "oven",
+  "scripts": {
+    "build": "bunx esbuild src/extension.ts src/web-extension.ts --bundle --external:vscode --outdir=dist --platform=node --format=cjs",
+    "build:watch": "bunx esbuild --watch src/extension.ts src/web-extension.ts --bundle --external:vscode --outdir=dist --platform=node --format=cjs"
+  },
+  "workspaceTrust": {
+    "request": "never"
+  },
+  "dependencies": {
+    "ws": "^8.13.0"
+  }
+}

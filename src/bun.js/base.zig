@@ -4088,3 +4088,39 @@ pub const BinaryType = enum {
         }
     }
 };
+
+pub const AsyncTaskTracker = struct {
+    id: u64,
+
+    pub fn init(vm: *JSC.VirtualMachine) AsyncTaskTracker {
+        return .{ .id = vm.nextAsyncTaskID() };
+    }
+
+    pub fn didSchedule(this: AsyncTaskTracker, globalObject: *JSC.JSGlobalObject) void {
+        if (this.id == 0) return;
+
+        bun.JSC.Debugger.didScheduleAsyncCall(globalObject, bun.JSC.Debugger.AsyncCallType.EventListener, this.id, true);
+    }
+
+    pub fn didCancel(this: AsyncTaskTracker, globalObject: *JSC.JSGlobalObject) void {
+        if (this.id == 0) return;
+
+        bun.JSC.Debugger.didCancelAsyncCall(globalObject, bun.JSC.Debugger.AsyncCallType.EventListener, this.id);
+    }
+
+    pub fn willDispatch(this: AsyncTaskTracker, globalObject: *JSC.JSGlobalObject) void {
+        if (this.id == 0) {
+            return;
+        }
+
+        bun.JSC.Debugger.willDispatchAsyncCall(globalObject, bun.JSC.Debugger.AsyncCallType.EventListener, this.id);
+    }
+
+    pub fn didDispatch(this: AsyncTaskTracker, globalObject: *JSC.JSGlobalObject) void {
+        if (this.id == 0) {
+            return;
+        }
+
+        bun.JSC.Debugger.didDispatchAsyncCall(globalObject, bun.JSC.Debugger.AsyncCallType.EventListener, this.id);
+    }
+};

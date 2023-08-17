@@ -637,6 +637,8 @@ pub const Fetch = struct {
         // Custom Hostname
         hostname: ?[]u8 = null,
 
+        tracker: JSC.AsyncTaskTracker,
+
         pub const HTTPRequestBody = union(enum) {
             AnyBlob: AnyBlob,
             Sendfile: HTTPClient.Sendfile,
@@ -725,7 +727,9 @@ pub const Fetch = struct {
             }
 
             const promise = promise_value.asAnyPromise().?;
-
+            const tracker = this.tracker;
+            tracker.willDispatch(globalThis);
+            defer tracker.didDispatch(globalThis);
             const success = this.result.isSuccess();
             const result = switch (success) {
                 true => this.onResolve(),
@@ -856,7 +860,10 @@ pub const Fetch = struct {
                 .url_proxy_buffer = fetch_options.url_proxy_buffer,
                 .signal = fetch_options.signal,
                 .hostname = fetch_options.hostname,
+                .tracker = JSC.AsyncTaskTracker.init(jsc_vm),
             };
+
+            fetch_tasklet.tracker.didSchedule(globalThis);
 
             if (fetch_tasklet.request_body.store()) |store| {
                 store.ref();
@@ -918,6 +925,7 @@ pub const Fetch = struct {
             this.abort_reason = reason;
             reason.protect();
             this.aborted.store(true, .Monotonic);
+            this.tracker.didCancel(this.global_this);
 
             if (this.http != null) {
                 HTTPClient.http_thread.scheduleShutdown(this.http.?);

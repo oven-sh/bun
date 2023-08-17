@@ -129,7 +129,7 @@ public:
     bool isContextThread();
     bool isDocument() { return false; }
     bool isWorkerGlobalScope() { return true; }
-    bool isJSExecutionForbidden() { return false; }
+    bool isJSExecutionForbidden();
     void reportException(const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL, JSC::Exception* exception, RefPtr<void*>&&, CachedScript* = nullptr, bool = false)
     {
     }

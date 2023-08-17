@@ -1137,10 +1137,10 @@ pub const InternalState = struct {
             },
         }
 
-        this.postProcessBody(body_out_str);
+        this.postProcessBody();
     }
 
-    pub fn postProcessBody(this: *InternalState, _: *MutableString) void {
+    pub fn postProcessBody(this: *InternalState) void {
         var response = &this.pending_response;
         // if it compressed with this header, it is no longer
         if (this.content_encoding_i < response.headers.len) {
@@ -1149,8 +1149,6 @@ pub const InternalState = struct {
             response.headers = mutable_headers.items;
             this.content_encoding_i = std.math.maxInt(@TypeOf(this.content_encoding_i));
         }
-
-        // this.body_size = @as(usize, @truncate(body_out_str.list.items.len));
     }
 };
 
@@ -2543,7 +2541,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
             _ = socket_async_http_tracker.swapRemove(this.async_http_id);
         }
 
-        log("progressUpdate", .{});
+        log("progressUpdate {}", .{is_done});
 
         var out_str = this.state.body_out_str.?;
         var body = out_str.*;
@@ -2708,7 +2706,7 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
         progress.context.maybeRefresh();
     }
 
-    this.state.postProcessBody(this.state.getBodyBuffer());
+    this.state.postProcessBody();
 }
 
 fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []const u8) !bool {

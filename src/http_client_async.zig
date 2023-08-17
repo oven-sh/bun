@@ -725,6 +725,11 @@ pub const HTTPThread = struct {
             this.loop.wakeup();
     }
 
+    pub fn wakeup(this: *@This()) void {
+        if (this.has_awoken.load(.Monotonic))
+            this.loop.wakeup();
+    }
+
     pub fn schedule(this: *@This(), batch: Batch) void {
         if (batch.len == 0)
             return;
@@ -990,6 +995,7 @@ pub const InternalState = struct {
     response_message_buffer: MutableString = undefined,
     pending_response: picohttp.Response = undefined,
     allow_keepalive: bool = true,
+    received_last_chunk: bool = false,
     transfer_encoding: Encoding = Encoding.identity,
     encoding: Encoding = Encoding.identity,
     content_encoding_i: u8 = std.math.maxInt(u8),
@@ -1016,6 +1022,10 @@ pub const InternalState = struct {
             .stage = Stage.pending,
             .pending_response = picohttp.Response{},
         };
+    }
+
+    pub fn isChunkedEncoding(this: *InternalState) bool {
+        return this.transfer_encoding == Encoding.chunked;
     }
 
     pub fn reset(this: *InternalState) void {
@@ -2279,9 +2289,13 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
 
             this.cloneMetadata();
 
-            if (!can_continue or this.signal_header_progress.load(.Acquire)) {
+            if (!can_continue) {
                 this.progressUpdate(is_ssl, ctx, socket);
                 return;
+            }
+
+            if (this.signal_header_progress.load(.Acquire)) {
+                this.progressUpdate(is_ssl, ctx, socket);
             }
 
             if (this.proxy_tunneling and this.proxy_tunnel == null) {
@@ -2656,7 +2670,10 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
 }
 
 fn isDone(this: *HTTPClient) bool {
-    return this.state.total_body_received == this.state.body_size;
+    if (this.state.isChunkedEncoding()) {
+        return this.state.received_last_chunk;
+    }
+    return this.state.total_body_received >= this.state.body_size;
 }
 
 fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []const u8) !bool {
@@ -2738,6 +2755,8 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
     buffer.list.items.len -|= incoming_data.len - bytes_decoded;
     buffer_.* = buffer;
 
+    this.state.body_size += buffer.list.items.len;
+
     switch (pret) {
         // Invalid HTTP response body
         -1 => {
@@ -2755,6 +2774,7 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
         },
         // Done
         else => {
+            this.state.received_last_chunk = true;
             try this.state.processBodyBuffer(
                 buffer,
             );
@@ -2807,6 +2827,8 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
     );
     buffer.len -|= incoming_data.len - bytes_decoded;
 
+    this.state.body_size += buffer.len;
+
     switch (pret) {
         // Invalid HTTP response body
         -1 => {
@@ -2825,6 +2847,8 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
         },
         // Done
         else => {
+            this.state.received_last_chunk = true;
+
             try this.handleResponseBodyFromSinglePacket(buffer);
             std.debug.assert(this.state.body_out_str.?.list.items.ptr != buffer.ptr);
             if (this.progress_node) |progress| {

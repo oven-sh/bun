@@ -227,6 +227,45 @@ pub fn inspect(
         }
     }
 
+    var formatOptions = ZigConsoleClient.FormatOptions{
+        .enable_colors = false,
+        .add_newline = false,
+        .flush = false,
+        .max_depth = 8,
+        .quote_strings = true,
+        .ordered_properties = false,
+    };
+    var value = JSC.JSValue.fromRef(arguments[0]);
+
+    if (arguments.len > 1) {
+        var arg1: JSC.JSValue = JSC.JSValue.fromRef(arguments[1]);
+
+        if (arg1.isObject()) {
+            if (arg1.getTruthy(ctx, "depth")) |opt| {
+                if (opt.isNumber()) {
+                    formatOptions.max_depth = @as(u16, @intCast(opt.toInt32()));
+                }
+            }
+            if (arg1.getOptional(ctx, "colors", bool) catch return null) |opt| {
+                formatOptions.enable_colors = opt;
+            }
+            if (arg1.getOptional(ctx, "sorted", bool) catch return null) |opt| {
+                formatOptions.ordered_properties = opt;
+            }
+        } else {
+            // formatOptions.show_hidden = arg1.toBoolean();
+            if (arguments.len > 2) {
+                var depthArg = JSC.JSValue.fromRef(arguments[1]);
+                if (depthArg.isNumber()) {
+                    formatOptions.max_depth = @as(u16, @intCast(depthArg.toInt32()));
+                }
+                if (arguments.len > 3) {
+                    formatOptions.enable_colors = JSC.JSValue.fromRef(arguments[2]).toBoolean();
+                }
+            }
+        }
+    }
+
     // very stable memory address
     var array = MutableString.init(getAllocator(ctx), 0) catch unreachable;
     var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
@@ -239,17 +278,12 @@ pub fn inspect(
     ZigConsoleClient.format(
         .Debug,
         ctx.ptr(),
-        @as([*]const JSValue, @ptrCast(arguments.ptr)),
-        arguments.len,
+        @as([*]const JSValue, @ptrCast(&value)),
+        1,
         Writer,
         Writer,
         writer,
-        .{
-            .enable_colors = false,
-            .add_newline = false,
-            .flush = false,
-            .max_depth = 32,
-        },
+        formatOptions,
     );
     buffered_writer.flush() catch {
         return JSC.C.JSValueMakeUndefined(ctx);

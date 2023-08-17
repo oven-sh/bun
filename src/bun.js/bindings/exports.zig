@@ -2146,7 +2146,11 @@ pub const ZigConsoleClient = struct {
                         this.max_depth,
                         enable_ansi_colors,
                     );
-                    this.printAs(.String, Writer, writer_, result, result.jsType(), enable_ansi_colors);
+                    if (result.isString()) {
+                        writer.print("{s}", .{result.toBunString(this.globalThis)});
+                    } else {
+                        this.format(ZigConsoleClient.Formatter.Tag.get(result, this.globalThis), Writer, writer_, result, this.globalThis, enable_ansi_colors);
+                    }
                 },
                 .Symbol => {
                     const description = value.getDescription(this.globalThis);

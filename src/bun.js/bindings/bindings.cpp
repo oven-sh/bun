@@ -4024,7 +4024,11 @@ extern "C" EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     arguments.append(inspectFn);
 
     auto inspectRet = JSC::call(globalObject, functionToCall, callData, thisValue, arguments);
-    return JSValue::encode(inspectRet);
+    if (auto exe = scope.exception()) {
+        scope.clearException();
+        return JSValue::encode(exe);
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(inspectRet));
 }
 
 JSC__JSValue JSC__JSValue__fastGetDirect_(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)

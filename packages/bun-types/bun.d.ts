@@ -2295,6 +2295,12 @@ declare module "bun" {
    */
   export function allocUnsafe(size: number): Uint8Array;
 
+  export interface BunInspectOptions {
+    colors: boolean;
+    depth: number;
+    sorted: boolean;
+  }
+
   /**
    * Pretty-print an object the same as {@link console.log} to a `string`
    *
@@ -2302,7 +2308,7 @@ declare module "bun" {
    *
    * @param args
    */
-  export function inspect(...args: any): string;
+  export function inspect(arg: any, options: BunInspectOptions): string;
 
   interface MMapOptions {
     /**
@@ -3623,16 +3629,16 @@ declare module "bun" {
           >
         : SyncSubprocess<Readable, Readable>;
 
-    type ReadableIO = ReadableStream<Buffer> | number | undefined;
+    type ReadableIO = ReadableStream<Uint8Array> | number | undefined;
 
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
-      ? ReadableStream<Buffer>
+      ? ReadableStream<Uint8Array>
       : X extends BunFile | ArrayBufferView | number
       ? number
       : undefined;
 
     type ReadableToSyncIO<X extends Readable> = X extends "pipe" | undefined
-      ? Buffer
+      ? Uint8Array
       : undefined;
 
     type WritableIO = FileSink | number | undefined;

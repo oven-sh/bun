@@ -386,6 +386,7 @@ pub const FFI = struct {
                         @as(u32, @intCast(function.arg_types.items.len)),
                         bun.cast(JSC.JSHostFunctionPtr, compiled.ptr),
                         false,
+                        true,
                     );
                     compiled.js_function = cb;
                     obj.put(global, &str, cb);
@@ -482,6 +483,7 @@ pub const FFI = struct {
                         @as(u32, @intCast(function.arg_types.items.len)),
                         bun.cast(JSC.JSHostFunctionPtr, compiled.ptr),
                         false,
+                        true,
                     );
                     compiled.js_function = cb;
 

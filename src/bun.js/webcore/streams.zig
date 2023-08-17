@@ -511,7 +511,6 @@ pub const DrainResult = union(enum) {
     owned: struct {
         list: std.ArrayList(u8),
         size_hint: usize,
-        done: bool,
     },
     estimated_size: usize,
     empty: void,

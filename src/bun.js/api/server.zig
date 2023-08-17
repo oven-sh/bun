@@ -2928,7 +2928,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     .owned = .{ .list = emptied.toManaged(this.allocator), .size_hint = if (emptied.capacity < max_request_body_preallocate_length)
                         emptied.capacity
                     else
-                        0, .done = false },
+                        0 },
                 };
             }
 

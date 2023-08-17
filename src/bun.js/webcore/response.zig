@@ -918,7 +918,6 @@ pub const Fetch = struct {
                     .owned = .{
                         .list = scheduled_response_buffer.toManaged(bun.default_allocator),
                         .size_hint = this.body_size,
-                        .done = this.result.has_more,
                     },
                 };
             }

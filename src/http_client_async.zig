@@ -2769,6 +2769,11 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
                 progress.setCompletedItems(buffer.list.items.len);
                 progress.context.maybeRefresh();
             }
+            // streaming chunks
+            if (this.enable_body_stream.load(.Acquire)) {
+                try this.state.processBodyBuffer(buffer);
+                return true;
+            }
 
             return false;
         },
@@ -2841,8 +2846,14 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
                 progress.setCompletedItems(buffer.len);
                 progress.context.maybeRefresh();
             }
-            try this.state.getBodyBuffer().appendSliceExact(buffer);
+            const body_buffer = this.state.getBodyBuffer();
+            try body_buffer.appendSliceExact(buffer);
 
+            // streaming
+            if (this.enable_body_stream.load(.Acquire)) {
+                try this.state.processBodyBuffer(body_buffer.*);
+                return true;
+            }
             return false;
         },
         // Done

@@ -185,12 +185,12 @@ inspect.defaultOptions = {
   numericSeparator: false,
 };
 function stylizeWithColor(str, styleType) {
-  var style = inspect.styles[styleType];
-  if (style) {
-    return "\x1B[" + inspect.colors[style][0] + "m" + str + "\x1B[" + inspect.colors[style][1] + "m";
-  } else {
-    return str;
+  const style = inspect.styles[styleType];
+  if (style !== undefined) {
+    const color = inspect.colors[style];
+    if (color !== undefined) return `\u001b[${color[0]}m${str}\u001b[${color[1]}m`;
   }
+  return str;
 }
 function stylizeNoColor(str, styleType) {
   return str;

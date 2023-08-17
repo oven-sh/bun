@@ -1960,7 +1960,9 @@ pub const ZigConsoleClient = struct {
             *JSC.JSGlobalObject,
             JSValue,
             JSValue,
-            u32,
+            depth: u32,
+            max_depth: u32,
+            colors: bool,
         ) JSValue;
 
         pub fn printAs(
@@ -2136,7 +2138,14 @@ pub const ZigConsoleClient = struct {
 
                     // Call custom inspect function, checking exception
                     // we'll need to pass the callback through to the "this" value in here
-                    const result = JSC__JSValue__callCustomInspectFunction(this.globalThis, this.custom_formatted_object.function, this.custom_formatted_object.this, this.depth);
+                    const result = JSC__JSValue__callCustomInspectFunction(
+                        this.globalThis,
+                        this.custom_formatted_object.function,
+                        this.custom_formatted_object.this,
+                        this.max_depth - this.depth,
+                        this.max_depth,
+                        enable_ansi_colors,
+                    );
                     this.printAs(.String, Writer, writer_, result, result.jsType(), enable_ansi_colors);
                 },
                 .Symbol => {

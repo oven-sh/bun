@@ -4000,6 +4000,7 @@ extern "C" EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     JSC__JSValue encodedFunctionValue,
     JSC__JSValue encodedThisValue,
     unsigned depth,
+    unsigned max_depth,
     bool colors)
 {
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -4012,7 +4013,10 @@ extern "C" EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     JSFunction* stylizeFn = colors ? globalObject->utilInspectStylizeColorFunction() : globalObject->utilInspectStylizeNoColorFunction();
 
     JSObject* options = JSC::constructEmptyObject(globalObject);
-// left off here
+    options->putDirect(vm, Identifier::fromString(vm, "stylize"_s), stylizeFn);
+    options->putDirect(vm, Identifier::fromString(vm, "depth"_s), jsNumber(max_depth));
+    options->putDirect(vm, Identifier::fromString(vm, "colors"_s), jsBoolean(colors));
+
     auto callData = JSC::getCallData(functionToCall);
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(depth));

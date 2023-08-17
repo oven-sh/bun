@@ -1692,3 +1692,119 @@ it("createReadStream on a large file emits readable event correctly", () => {
     });
   });
 });
+
+describe("fs.read", () => {
+  it("should work with (fd, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-read-1-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    fs.read(fd, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(3);
+        expect(buffer).toStrictEqual(Buffer.concat([Buffer.from("bun"), Buffer.alloc(16381)]));
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+  it("should work with (fd, options, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-read-2-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(16);
+    fs.read(fd, { buffer: buffer }, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(3);
+        expect(buffer.slice(0, bytesRead).toString()).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+  it("should work with (fd, buffer, offset, length, position, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-read-3-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(16);
+    fs.read(fd, buffer, 0, buffer.length, 0, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(3);
+        expect(buffer.slice(0, bytesRead).toString()).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+  it("should work with offset", done => {
+    const path = `${tmpdir()}/bun-fs-read-4-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(16);
+    fs.read(fd, buffer, 1, buffer.length - 1, 0, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(3);
+        expect(buffer.slice(1, bytesRead + 1).toString()).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+  it("should work with position", done => {
+    const path = `${tmpdir()}/bun-fs-read-5-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(16);
+    fs.read(fd, buffer, 0, buffer.length, 1, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(2);
+        expect(buffer.slice(0, bytesRead).toString()).toStrictEqual("un");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+  it("should work with both position and offset", done => {
+    const path = `${tmpdir()}/bun-fs-read-6-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(16);
+    fs.read(fd, buffer, 1, buffer.length - 1, 1, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(2);
+        expect(buffer.slice(1, bytesRead + 1).toString()).toStrictEqual("un");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+});

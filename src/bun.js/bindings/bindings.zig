@@ -5119,7 +5119,36 @@ pub const VM = extern struct {
         return cppFn("blockBytesAllocated", .{vm});
     }
 
-    pub const Extern = [_][]const u8{ "setControlFlowProfiler", "collectAsync", "externalMemorySize", "blockBytesAllocated", "heapSize", "releaseWeakRefs", "throwError", "deferGC", "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
+    pub const Extern = [_][]const u8{
+        "setControlFlowProfiler",
+        "collectAsync",
+        "externalMemorySize",
+        "blockBytesAllocated",
+        "heapSize",
+        "releaseWeakRefs",
+        "throwError",
+        "deferGC",
+        "holdAPILock",
+        "runGC",
+        "generateHeapSnapshot",
+        "isJITEnabled",
+        "deleteAllCode",
+        "create",
+        "deinit",
+        "setExecutionForbidden",
+        "executionForbidden",
+        "isEntered",
+        "throwError",
+        "drainMicrotasks",
+        "whenIdle",
+        "shrinkFootprint",
+        "setExecutionTimeLimit",
+        "clearExecutionTimeLimit",
+        "notifyNeedTermination",
+        "notifyNeedWatchdogCheck",
+        "notifyNeedDebuggerBreak",
+        "notifyNeedShellTimeoutCheck",
+    };
 };
 
 pub const ThrowScope = extern struct {

@@ -1,4 +1,5 @@
 const std = @import("std");
+const bun = @import("root").bun;
 
 pub const DecodeResult = struct {
     written: usize,
@@ -76,6 +77,7 @@ pub fn urlSafeEncodeLen(source: anytype) usize {
 }
 extern fn WTF__base64URLEncode(input: [*]const u8, input_len: usize, output: [*]u8, output_len: usize) usize;
 pub fn encodeURLSafe(dest: []u8, source: []const u8) usize {
+    bun.JSC.markBinding(@src());
     return WTF__base64URLEncode(source.ptr, source.len, dest.ptr, dest.len);
 }
 

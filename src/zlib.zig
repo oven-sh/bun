@@ -525,7 +525,11 @@ pub const ZlibReaderArrayList = struct {
 
     pub fn readAll(this: *ZlibReader) ZlibError!void {
         defer {
-            this.list.shrinkRetainingCapacity(this.zlib.total_out);
+            if (this.list.items.len > this.zlib.total_out) {
+                this.list.shrinkRetainingCapacity(this.zlib.total_out);
+            } else if (this.zlib.total_out < this.list.capacity) {
+                this.list.items.len = this.zlib.total_out;
+            }
             this.list_ptr.* = this.list;
         }
 

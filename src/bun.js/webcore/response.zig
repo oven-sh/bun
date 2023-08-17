@@ -738,7 +738,6 @@ pub const Fetch = struct {
                 globalThis.throwValue(err);
                 return;
             }
-            log("onBodyReceived bytes:{} done:{}", .{ this.scheduled_response_buffer.list.items.len, !this.result.has_more });
 
             if (this.response) |response| {
                 const body = response.body;
@@ -911,7 +910,6 @@ pub const Fetch = struct {
             defer this.scheduled_response_buffer.reset();
             defer this.mutex.unlock();
             var scheduled_response_buffer = this.scheduled_response_buffer.list;
-            log("onStartStreamingRequestBodyCallback bytes:{} done:{}", .{ scheduled_response_buffer.items.len, !this.result.has_more });
             // This means we have received part of the body but not the whole thing
             if (scheduled_response_buffer.items.len > 0) {
                 return .{
@@ -1140,7 +1138,6 @@ pub const Fetch = struct {
 
             const success = result.isSuccess();
             task.response_buffer = result.body.?.*;
-            log("callback bytes:{} done:{}", .{ task.response_buffer.list.items.len, !task.result.has_more });
 
             if (success) {
                 _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch @panic("OOM");

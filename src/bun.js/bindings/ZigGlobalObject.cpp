@@ -3260,6 +3260,41 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(JSFunction::create(init.vm, init.owner, 4, "performMicrotaskVariadic"_s, jsFunctionPerformMicrotaskVariadic, ImplementationVisibility::Public));
         });
 
+    m_utilInspectFunction.initLater(
+        [](const Initializer<JSFunction>& init) {
+            JSValue nodeUtilValue = static_cast<Zig::GlobalObject*>(init.owner)->internalModuleRegistry()->requireId(init.owner, init.vm, Bun::InternalModuleRegistry::Field::NodeUtil);
+            ASSERT(nodeUtilValue.isObject());
+            init.set(jsCast<JSFunction*>(nodeUtilValue.getObject()->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "inspect"_s))));
+        });
+
+    m_utilInspectStylizeColorFunction.initLater(
+        [](const Initializer<JSFunction>& init) {
+            auto scope = DECLARE_THROW_SCOPE(init.vm);
+            JSC::JSFunction* getStylize = JSC::JSFunction::create(init.vm, utilInspectGetStylizeWithColorCodeGenerator(init.vm), init.owner);
+            // RETURN_IF_EXCEPTION(scope, {});
+
+            JSC::MarkedArgumentBuffer args;
+            args.append(static_cast<Zig::GlobalObject*>(init.owner)->utilInspectFunction());
+
+            auto clientData = WebCore::clientData(init.vm);
+            JSC::CallData callData = JSC::getCallData(getStylize);
+
+            NakedPtr<JSC::Exception> returnedException = nullptr;
+            auto result = JSC::call(init.owner, getStylize, callData, jsNull(), args, returnedException);
+            // RETURN_IF_EXCEPTION(scope, {});
+
+            if (returnedException) {
+                throwException(init.owner, scope, returnedException.get());
+            }
+            // RETURN_IF_EXCEPTION(scope, {});
+            init.set(jsCast<JSFunction*>(result));
+        });
+
+    m_utilInspectStylizeNoColorFunction.initLater(
+        [](const Initializer<JSFunction>& init) {
+            init.set(JSC::JSFunction::create(init.vm, utilInspectStylizeWithNoColorCodeGenerator(init.vm), init.owner));
+        });
+
     m_nativeMicrotaskTrampoline.initLater(
         [](const Initializer<JSFunction>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, functionNativeMicrotaskTrampoline, ImplementationVisibility::Public));
@@ -4596,6 +4631,9 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_pendingVirtualModuleResultStructure.visit(visitor);
     thisObject->m_performMicrotaskFunction.visit(visitor);
     thisObject->m_performMicrotaskVariadicFunction.visit(visitor);
+    thisObject->m_utilInspectFunction.visit(visitor);
+    thisObject->m_utilInspectStylizeColorFunction.visit(visitor);
+    thisObject->m_utilInspectStylizeNoColorFunction.visit(visitor);
     thisObject->m_lazyReadableStreamPrototypeMap.visit(visitor);
     thisObject->m_requireMap.visit(visitor);
     thisObject->m_encodeIntoObjectStructure.visit(visitor);

@@ -123,6 +123,7 @@ function debuglog(set) {
   }
   return debugs[set];
 }
+var kInspectCustom = Symbol.for("nodejs.util.inspect.custom");
 function inspect(obj, opts) {
   var ctx = {
     seen: [],
@@ -167,7 +168,22 @@ inspect.styles = {
   date: "magenta",
   regexp: "red",
 };
-inspect.custom = Symbol.for('nodejs.util.inspect.custom');
+inspect.custom = kInspectCustom;
+// JS polyfill doesnt support all these options
+inspect.defaultOptions = {
+  showHidden: false,
+  depth: 2,
+  colors: false,
+  customInspect: true,
+  showProxy: false,
+  maxArrayLength: 100,
+  maxStringLength: 10000,
+  breakLength: 80,
+  compact: 3,
+  sorted: false,
+  getters: false,
+  numericSeparator: false,
+};
 function stylizeWithColor(str, styleType) {
   var style = inspect.styles[styleType];
   if (style) {
@@ -187,18 +203,15 @@ function arrayToHash(array) {
   return hash;
 }
 function formatValue(ctx, value, recurseTimes) {
-  if (
-    ctx.customInspect &&
-    value &&
-    isFunction(value.inspect) &&
-    value.inspect !== inspect &&
-    !(value.constructor && value.constructor.prototype === value)
-  ) {
-    var ret = value.inspect(recurseTimes, ctx);
-    if (!isString(ret)) {
-      ret = formatValue(ctx, ret, recurseTimes);
+  if (ctx.customInspect && value) {
+    const customInspect = value[kInspectCustom];
+    if (isFunction(customInspect)) {
+      var ret = customInspect.call(value, recurseTimes, ctx, inspect);
+      if (!isString(ret)) {
+        ret = formatValue(ctx, ret, recurseTimes);
+      }
+      return ret;
     }
-    return ret;
   }
   var primitive = formatPrimitive(ctx, value);
   if (primitive) {

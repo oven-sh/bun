@@ -3999,21 +3999,20 @@ extern "C" EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     JSC::JSGlobalObject* lexicalGlobalObject,
     JSC__JSValue encodedFunctionValue,
     JSC__JSValue encodedThisValue,
-    unsigned depth
-) {
+    unsigned depth,
+    bool colors)
+{
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     JSValue functionToCall = JSValue::decode(encodedFunctionValue);
     JSValue thisValue = JSValue::decode(encodedThisValue);
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue nodeUtilValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::Field::NodeUtil);
-    if (!nodeUtilValue.isObject()) {
-        return {};
-    }
-    JSFunction* inspectFn =  jsCast<JSFunction*>(nodeUtilValue.getObject()->getIfPropertyExists(globalObject, Identifier::fromString(vm, "inspect"_s)));
+    JSFunction* inspectFn = globalObject->utilInspectFunction();
+    JSFunction* stylizeFn = colors ? globalObject->utilInspectStylizeColorFunction() : globalObject->utilInspectStylizeNoColorFunction();
+
     JSObject* options = JSC::constructEmptyObject(globalObject);
-    
+// left off here
     auto callData = JSC::getCallData(functionToCall);
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(depth));
@@ -4043,7 +4042,7 @@ JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* 
     }
 
     auto identifier = builtinNameMap(globalObject, arg2);
-    auto *object = value.getObject();
+    auto* object = value.getObject();
     auto result = object->getIfPropertyExists(globalObject, identifier);
 
     return JSValue::encode(result);

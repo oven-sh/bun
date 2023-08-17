@@ -396,14 +396,11 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_toString, (JSGlobalO
     return IDLOperation<JSURLSearchParams>::call<jsURLSearchParamsPrototypeFunction_toStringBody>(*lexicalGlobalObject, *callFrame, "toString");
 }
 
-static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_toJSONBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSURLSearchParams>::ClassParameter castedThis)
+JSC::JSValue WebCore::getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSURLSearchParams* castedThis)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(throwScope);
-    UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
     auto iter = impl.createIterator();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* obj;
     if (impl.size() + 1 < 64) {
@@ -414,7 +411,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_toJSONBody(
 
     obj->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(lexicalGlobalObject->vm(), "URLSearchParams"_s), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | 0);
 
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     WTF::HashSet<String> seenKeys;
     for (auto entry = iter.next(); entry.has_value(); entry = iter.next()) {
         auto& key = entry.value().key;
@@ -440,7 +437,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_toJSONBody(
             } else if (jsValue.isCell() && jsValue.asCell()->type() == ArrayType) {
                 JSC::JSArray* array = jsCast<JSC::JSArray*>(jsValue.getObject());
                 array->push(lexicalGlobalObject, jsString(vm, value));
-                RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+                RETURN_IF_EXCEPTION(throwScope, {});
             } else {
                 RELEASE_ASSERT_NOT_REACHED();
             }
@@ -450,7 +447,15 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_toJSONBody(
         }
     }
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(obj));
+    RELEASE_AND_RETURN(throwScope, obj);
+}
+
+static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_toJSONBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSURLSearchParams>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    UNUSED_PARAM(callFrame);
+
+    return JSValue::encode(getInternalProperties(vm, lexicalGlobalObject, castedThis));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_toJSON, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

@@ -993,20 +993,25 @@ pub fn NewClassWithInstanceType(
                 def.className = options.name.ptr;
                 // def.getProperty = getPropertyCallback;
 
-                if (def.callAsConstructor == null) {
-                    def.callAsConstructor = &throwInvalidConstructorError;
+                if (!(def.callAsConstructor == null and def.callAsFunction == null)) {
+                    if (def.callAsConstructor == null) {
+                        def.callAsConstructor = &throwInvalidConstructorError;
+                    }
+
+                    if (def.callAsFunction == null) {
+                        def.callAsFunction = &throwInvalidFunctionError;
+                    }
+
+                    if (!singleton and def.hasInstance == null)
+                        def.hasInstance = &customHasInstance;
+
+                    if (def.getPropertyNames == null) {
+                        def.getPropertyNames = &getPropertyNames;
+                    }
+                } else {
+                    def.attributes = JSC.C.JSClassAttributes.kJSClassAttributeNoAutomaticPrototype;
                 }
 
-                if (def.callAsFunction == null) {
-                    def.callAsFunction = &throwInvalidFunctionError;
-                }
-
-                if (def.getPropertyNames == null) {
-                    def.getPropertyNames = &getPropertyNames;
-                }
-
-                if (!singleton and def.hasInstance == null)
-                    def.hasInstance = &customHasInstance;
                 break :brk def;
             };
         }

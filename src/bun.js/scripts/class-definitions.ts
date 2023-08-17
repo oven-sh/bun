@@ -37,6 +37,8 @@ export interface ClassDefinition {
   hasPendingActivity?: boolean;
   isEventEmitter?: boolean;
 
+  getInternalProperties?: boolean;
+
   custom?: Record<string, CustomField>;
 
   configurable?: boolean;

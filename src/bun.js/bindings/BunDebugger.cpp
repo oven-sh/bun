@@ -1,5 +1,4 @@
 #include "root.h"
-#include <uws/src/App.h>
 
 #include <JavaScriptCore/InspectorFrontendChannel.h>
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
@@ -8,6 +7,8 @@
 #include "ScriptExecutionContext.h"
 #include "Strong.h"
 #include "debug-helpers.h"
+#include "BunInjectedScriptHost.h"
+#include <JavaScriptCore/JSGlobalObjectInspectorController.h>
 
 extern "C" void Bun__tickWhilePaused(bool*);
 
@@ -396,6 +397,7 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
 {
 
     auto* globalObject = ScriptExecutionContext::getScriptExecutionContext(scriptId)->jsGlobalObject();
+    globalObject->m_inspectorController = makeUnique<Inspector::JSGlobalObjectInspectorController>(*globalObject, Bun::BunInjectedScriptHost::create());
     globalObject->setInspectable(true);
 
     auto& inspector = globalObject->inspectorDebuggable();

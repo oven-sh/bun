@@ -57,7 +57,7 @@ Bun.serve({
   inspector: true,
   development: true,
   fetch(request, server) {
-    console.log(request);
+    // console.log(request);
     return new Response(request.url);
   },
 });

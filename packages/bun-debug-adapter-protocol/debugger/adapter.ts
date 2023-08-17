@@ -1,7 +1,7 @@
 import type { DAP } from "..";
-import type { JSC, InspectorListener } from "../../bun-devtools";
-import { WebSocketInspector } from "../../bun-devtools";
-import type { ChildProcess, SpawnOptions } from "node:child_process";
+import type { JSC, InspectorListener } from "../../bun-inspector-protocol";
+import { WebSocketInspector } from "../../bun-inspector-protocol";
+import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
 import capabilities from "./capabilities";
 
@@ -15,8 +15,7 @@ type LaunchRequest = DAP.LaunchRequest & {
 };
 
 type AttachRequest = DAP.AttachRequest & {
-  hostname?: string;
-  port?: number;
+  url?: string;
 };
 
 type Source = DAP.Source & {
@@ -57,7 +56,9 @@ type IDebugAdapter = {
 
 export class DebugAdapter implements IDebugAdapter, InspectorListener {
   #sendToAdapter: DebugAdapterOptions["sendToAdapter"];
+  #url?: URL;
   #inspector: WebSocketInspector;
+  #mode?: "launch" | "attach";
   #thread?: Thread;
   #pendingSources: Map<string, ((source: Source) => void)[]>;
   #sources: Map<string, Source>;
@@ -83,6 +84,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   }
 
   #reset(): void {
+    this.#mode = undefined;
     this.#thread = undefined;
     this.#pendingSources.clear();
     this.#sources.clear();
@@ -145,7 +147,10 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     this.#reset();
   }
 
-  async #send<M extends keyof JSC.RequestMap>(method: M, params?: JSC.RequestMap[M]): Promise<JSC.ResponseMap[M]> {
+  async #send<M extends keyof JSC.RequestMap & keyof JSC.ResponseMap>(
+    method: M,
+    params?: JSC.RequestMap[M],
+  ): Promise<JSC.ResponseMap[M]> {
     return this.#inspector.send(method, params);
   }
 
@@ -162,114 +167,163 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   }
 
   async initialize(request: DAP.InitializeRequest): Promise<DAP.InitializeResponse> {
+    this.#send("Inspector.enable");
     this.#send("Runtime.enable");
     this.#send("Console.enable");
     this.#send("Debugger.enable");
-    this.#send("Debugger.setAsyncStackTraceDepth", { depth: 100 });
+    this.#send("Debugger.setAsyncStackTraceDepth", { depth: 200 });
     this.#send("Debugger.setPauseOnDebuggerStatements", { enabled: true });
+    this.#send("Debugger.setBlackboxBreakpointEvaluations", { blackboxBreakpointEvaluations: true });
     this.#send("Debugger.setBreakpointsActive", { active: true });
+
     return capabilities;
   }
 
   async configurationDone(request: DAP.ConfigurationDoneRequest): Promise<DAP.ConfigurationDoneResponse> {
+    // @ts-ignore: FIXME does not work with attach only mode
+    //const { scriptId } = await this.#getSource(this.#request.program ?? "");
+    this.#setThread("2");
+
     return {};
   }
 
-  async launch(request: DAP.LaunchRequest): Promise<DAP.LaunchResponse> {
+  async launch(request: LaunchRequest): Promise<DAP.LaunchResponse> {
     if (this.#process?.exitCode === null) {
-      return {};
+      throw new Error("Already running, terminate the previous session first.");
     }
-    const { program, runtime = "bun", args = [], env = {}, inheritEnv = true } = request as LaunchRequest;
+
+    const { program, runtime = "bun", args = [], cwd, env = {}, inheritEnv = true } = request;
     if (!program) {
       throw new Error("Missing program.");
     }
-    let url: URL | undefined;
-    let stderr = "";
-    await runInTerminal({
-      command: runtime,
-      args: ["--inspect", ...args, program],
+
+    if (!isJavaScript(program)) {
+      throw new Error("Program must be a JavaScript or TypeScript file.");
+    }
+
+    const subprocess = spawn(runtime, ["--inspect=0", ...args, program], {
       stdio: ["ignore", "pipe", "pipe", "pipe"],
+      cwd,
       env: inheritEnv ? { ...process.env, ...env } : env,
-      start: process => {
-        this.#process = process;
-        this.#emit("process", {
-          name: program,
-          systemProcessId: process.pid,
-          isLocalProcess: true,
-          startMethod: "launch",
-        });
-      },
-      exit: exitCode => {
-        this.#process = undefined;
-        if (stderr) {
-          this.#emit("output", {
-            category: "stderr",
-            output: stderr,
-            source: {
-              path: program,
-            },
-          });
-        }
-        this.#emit("exited", {
-          exitCode,
-        });
-        this.#inspector.close();
-      },
-      stderr: data => {
-        if (url) {
-          return;
-        }
-        stderr += data;
-      },
-      stdout: data => {
-        if (url) {
-          return;
-        }
-        const match = /^\[Inspector\] Listening at: (wss?:\/\/.*)/i.exec(data);
-        if (!match) {
-          return;
-        }
-        const [_, href] = match;
-        try {
-          url = new URL(href);
-          // HACK: Bun is not listening on 127.0.0.1
-          if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
-            url.hostname = "[::1]";
-          }
-        } catch {
-          console.warn("Invalid URL:", href);
-        }
-        if (url) {
-          this.#inspector.connect(url);
-        }
-      },
     });
-    const { scriptId } = await this.#getSource(program);
-    this.#setThread(scriptId);
-    return {};
+
+    subprocess.on("spawn", () => {
+      this.#process = subprocess;
+      this.#emit("process", {
+        name: program,
+        systemProcessId: subprocess.pid,
+        isLocalProcess: true,
+        startMethod: "launch",
+      });
+    });
+
+    subprocess.on("exit", code => {
+      this.#emit("exited", {
+        exitCode: code ?? -1,
+      });
+      this.#process = undefined;
+    });
+
+    let stdout: string[] | undefined = [];
+    subprocess.stdout!.on("data", data => {
+      if (stdout) {
+        stdout.push(data.toString());
+      }
+    });
+
+    let stderr: string[] | undefined = [];
+    subprocess.stderr!.on("data", data => {
+      if (stderr) {
+        stderr.push(data.toString());
+      }
+    });
+
+    const started = new Promise<undefined>(resolve => {
+      subprocess.on("spawn", () => resolve(undefined));
+    });
+
+    const exited = new Promise<number | string | Error>(resolve => {
+      subprocess.on("exit", (code, signal) => resolve(code ?? signal ?? -1));
+      subprocess.on("error", resolve);
+    });
+
+    const exitReason = await Promise.race([started, exited]);
+
+    if (exitReason === undefined) {
+      let retries = 0;
+      while (retries++ < 10) {
+        const url = lookForUrl(stdout);
+        if (!url) {
+          await new Promise(resolve => setTimeout(resolve, 100 * retries));
+          continue;
+        }
+
+        stdout = undefined;
+        stderr = undefined;
+
+        this.#url = url;
+        this.#mode = "launch";
+        this.#inspector.start(url);
+        return {};
+      }
+
+      this.#emit("output", {
+        category: "debug console",
+        output: `Failed to attach to ${program}\n`,
+      });
+    }
+
+    if (!subprocess.killed && !subprocess.kill() && !subprocess.kill("SIGKILL")) {
+      this.#emit("output", {
+        category: "debug console",
+        output: `Failed to kill process ${subprocess.pid}\n`,
+      });
+    }
+
+    this.#emit("terminated");
+
+    for (const message of stderr) {
+      this.#emit("output", {
+        category: "stderr",
+        output: message,
+        source: {
+          path: program,
+        },
+      });
+    }
+
+    if (exitReason instanceof Error) {
+      const { message } = exitReason;
+      throw new Error(`Failed to launch program: ${message}`);
+    }
+
+    const { exitCode } = subprocess;
+    throw new Error(`Program exited with code: ${exitCode}`);
   }
 
-  async attach(request: DAP.AttachRequest): Promise<DAP.AttachResponse> {
-    const { hostname, port } = request as AttachRequest;
-    const { href } = hostnameAndPortToUrl(hostname, port);
-    this.#emit("output", {
-      category: "debug console",
-      output: `Attaching to ${href}\n`,
-    });
-    this.#inspector.connect(href);
+  async attach(request: AttachRequest): Promise<DAP.AttachResponse> {
+    const { url } = request;
+
+    this.#url = parseUrl(url);
+    this.#mode = "attach";
+    this.#inspector.start(url);
+
     return {};
   }
 
   async terminate(request: DAP.TerminateRequest): Promise<DAP.TerminateResponse> {
     this.#process?.kill();
+
     return {};
   }
 
   async disconnect(request: DAP.DisconnectRequest): Promise<DAP.DisconnectResponse> {
     const { terminateDebuggee } = request;
+
     if (terminateDebuggee) {
       await this.terminate(request);
     }
+
     this.close();
     return {};
   }
@@ -392,7 +446,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     const { variablesReference, start, count } = request;
     const variables = await this.#listVariables(variablesReference, start, count);
     return {
-      variables,
+      variables: variables.sort(variablesSortBy),
     };
   }
 
@@ -453,12 +507,32 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   }
 
   ["Inspector.connected"](): void {
+    const { href } = this.#url!;
+    this.#emit("output", {
+      category: "debug console",
+      output: `Attached to ${href}\n`,
+    });
+
     this.#emit("initialized");
   }
 
   ["Inspector.disconnected"](error?: Error): void {
+    const { href } = this.#url!;
+    this.#emit("output", {
+      category: "debug console",
+      output: `Disconnected from ${href}\n`,
+    });
+
+    if (error) {
+      const { message } = error;
+      this.#emit("output", {
+        category: "stderr",
+        output: `${message}\n`,
+      });
+    }
+
     this.#emit("terminated", {
-      restart: this.#process?.killed === false,
+      restart: this.#process?.exitCode === null,
     });
     this.#reset();
   }
@@ -764,7 +838,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   }
 
   #addVariable(remoteObject: JSC.Runtime.RemoteObject): number {
-    const { objectId } = remoteObject;
+    const objectId = remoteObjectToObjectId(remoteObject);
     if (!objectId) {
       return 0;
     }
@@ -786,7 +860,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       variablesReference,
       indexedVariables: isIndexed(subtype) ? size : undefined,
       namedVariables: isNamedIndexed(subtype) ? size : undefined,
-      presentationHint: remoteObjectToVariablePresentationHint(remoteObject),
+      presentationHint: remoteObjectToVariablePresentationHint(remoteObject, propertyDescriptor),
     };
   }
 
@@ -823,9 +897,8 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     if (!objectId) {
       return [];
     }
-    const { properties } = await this.#send("Runtime.getProperties", {
+    const { properties } = await this.#send("Runtime.getDisplayableProperties", {
       objectId,
-      ownProperties: true,
       generatePreview: true,
     });
     const variables: DAP.Variable[] = [];
@@ -953,18 +1026,6 @@ function consoleMessageGroup(type: JSC.Console.ConsoleMessage["type"]): DAP.Outp
   return undefined;
 }
 
-function remoteObjectToVariable(remoteObject: JSC.Runtime.RemoteObject, name?: string): DAP.Variable {
-  const { objectId, type, subtype, value, description, size } = remoteObject;
-  return {
-    name: name || "",
-    type: subtype || type,
-    value: String(value || description) || "<unknown>",
-    variablesReference: 0,
-    namedVariables: size,
-    indexedVariables: size,
-  };
-}
-
 function sourceToPath(source?: DAP.Source): string {
   const { path } = source ?? {};
   if (!path) {
@@ -978,44 +1039,6 @@ function callFrameToId(callFrame: JSC.Console.CallFrame): string {
   return `${url}:${lineNumber}:${columnNumber}`;
 }
 
-type RunInTerminalOptions = SpawnOptions & {
-  command: string;
-  args?: string[];
-  start?(process: ChildProcess): void;
-  exit?(exitCode: number, error?: Error): void;
-  stdout?(data: string): void;
-  stderr?(data: string): void;
-  ipc?(data: string): void;
-};
-
-function runInTerminal(options: RunInTerminalOptions): Promise<void> {
-  const { command, args, start, exit, stdout, stderr, ipc, ...spawnOptions } = options;
-  const process = spawn(command, args ?? [], spawnOptions);
-  process.once("spawn", () => {
-    start?.(process);
-  });
-  process.once("error", (error: Error) => {
-    exit?.(-1, error);
-  });
-  process.once("exit", (exitCode: number) => {
-    exit?.(exitCode);
-  });
-  process.stdout?.on("data", (data: Buffer) => {
-    stdout?.(data.toString());
-  });
-  process.stderr?.on("data", (data: Buffer) => {
-    stderr?.(data.toString());
-  });
-  process.stdio[3]?.on("data", (data: Buffer) => {
-    ipc?.(data.toString());
-  });
-  return new Promise((resolve, reject) => {
-    process.once("spawn", resolve);
-    process.once("error", reject);
-    process.once("exit", exitCode => reject(new Error(`Process exited with code: ${exitCode}`)));
-  });
-}
-
 function remoteObjectToString(remoteObject: JSC.Runtime.RemoteObject): string {
   const { type, subtype, value, description, className, preview } = remoteObject;
   switch (type) {
@@ -1023,9 +1046,9 @@ function remoteObjectToString(remoteObject: JSC.Runtime.RemoteObject): string {
       return "undefined";
     case "boolean":
     case "string":
-      return JSON.stringify(value || description);
+      return JSON.stringify(value ?? description);
     case "number":
-      return description || JSON.stringify(value);
+      return description ?? JSON.stringify(value);
     case "symbol":
     case "bigint":
       return description!;
@@ -1078,7 +1101,7 @@ function objectPreviewToString(objectPreview: JSC.Runtime.ObjectPreview): string
     label = `${description}(${size})`;
   }
   if (!items.length) {
-    return label;
+    return label || "{}";
   }
   if (label) {
     label += " ";
@@ -1106,12 +1129,11 @@ function entryPreviewToString(entryPreview: JSC.Runtime.EntryPreview): string {
 }
 
 function namedPropertyPreviewToString(propertyPreview: JSC.Runtime.PropertyPreview): string {
-  const { name, valuePreview, isPrivate } = propertyPreview;
-  const label = isPrivate ? `#${name}` : name;
+  const { name, valuePreview } = propertyPreview;
   if (valuePreview) {
-    return `${label}: ${objectPreviewToString(valuePreview)}`;
+    return `${name}: ${objectPreviewToString(valuePreview)}`;
   }
-  return `${label}: ${propertyPreviewToString(propertyPreview)}`;
+  return `${name}: ${propertyPreviewToString(propertyPreview)}`;
 }
 
 function indexedPropertyPreviewToString(propertyPreview: JSC.Runtime.PropertyPreview): string {
@@ -1141,7 +1163,7 @@ function remoteObjectToVariablePresentationHint(
   propertyDescriptor?: JSC.Runtime.PropertyDescriptor,
 ): DAP.VariablePresentationHint {
   const { type, subtype } = remoteObject;
-  const { name, configurable, writable, enumerable, isPrivate, get, set, symbol } = propertyDescriptor ?? {};
+  const { name, configurable, writable, isPrivate, symbol, get, set, wasThrown } = propertyDescriptor ?? {};
   const hasGetter = get?.type === "function";
   const hasSetter = set?.type === "function";
   const hasSymbol = symbol?.type === "symbol";
@@ -1155,10 +1177,7 @@ function remoteObjectToVariablePresentationHint(
   if (subtype === "class") {
     kind = "class";
   }
-  if (isPrivate || !configurable || hasSymbol) {
-    visibility = "private";
-  }
-  if (!enumerable && !hasGetter) {
+  if (isPrivate || !configurable || hasSymbol || name === "__proto__") {
     visibility = "internal";
   }
   if (type === "string") {
@@ -1167,12 +1186,9 @@ function remoteObjectToVariablePresentationHint(
   if (!writable || (hasGetter && !hasSetter)) {
     attributes.push("readOnly");
   }
-  if (hasGetter) {
+  if (wasThrown || hasGetter) {
     lazy = true;
     attributes.push("hasSideEffects");
-  }
-  if (name === "__proto__") {
-    visibility = "internal";
   }
   return {
     kind,
@@ -1180,6 +1196,14 @@ function remoteObjectToVariablePresentationHint(
     lazy,
     attributes,
   };
+}
+
+function remoteObjectToObjectId(remoteObject: JSC.Runtime.RemoteObject): string | undefined {
+  const { objectId, type } = remoteObject;
+  if (!objectId || type === "symbol") {
+    return undefined;
+  }
+  return objectId;
 }
 
 function propertyDescriptorToName(propertyDescriptor?: JSC.Runtime.PropertyDescriptor): string {
@@ -1200,9 +1224,81 @@ function unknownToError(input: unknown): Error {
   return new Error(String(input));
 }
 
-function hostnameAndPortToUrl(hostname = "localhost", port = 6499): URL {
-  if (hostname.includes(":")) {
-    return new URL(`ws://[${hostname}]:${port}/`);
+function isJavaScript(path: string): boolean {
+  return /\.(c|m)?(j|t)sx?$/.test(path);
+}
+
+function parseUrl(hostname?: string, port?: number): URL {
+  hostname ||= "localhost";
+  port ||= 6499;
+  try {
+    if (hostname.includes("://")) {
+      return new URL(hostname);
+    }
+    if (hostname.includes(":") && !hostname.startsWith("[")) {
+      return new URL(`ws://[${hostname}]:${port}/`);
+    }
+    return new URL(`ws://${hostname}:${port}/`);
+  } catch {
+    throw new Error(`Invalid URL or hostname/port: ${hostname}`);
   }
-  return new URL(`ws://${hostname}:${port}/`);
+}
+
+function lookForUrl(messages?: string[]): URL | undefined {
+  for (const message of messages ?? []) {
+    const match = /(wss?:\/\/.*)/im.exec(message);
+    if (!match) {
+      continue;
+    }
+    const [_, href] = match;
+    try {
+      const url = new URL(href);
+      // HACK: Bun is not listening to "localhost"
+      if (url.hostname === "localhost") {
+        url.hostname = "[::1]";
+      }
+      return url;
+    } catch {
+      throw new Error(`Invalid URL: ${href}`);
+    }
+  }
+  return undefined;
+}
+
+function variablesSortBy(a: DAP.Variable, b: DAP.Variable): number {
+  const visibility = (variable: DAP.Variable): number => {
+    const { presentationHint } = variable;
+    switch (presentationHint?.visibility) {
+      case "protected":
+        return 1;
+      case "private":
+        return 2;
+      case "internal":
+        return 3;
+    }
+    return 0;
+  };
+  const index = (variable: DAP.Variable): number => {
+    const { name } = variable;
+    switch (name) {
+      case "[[Prototype]]":
+      case "prototype":
+      case "__proto__":
+        return Number.MAX_VALUE;
+    }
+    const index = parseInt(name);
+    if (isFinite(index)) {
+      return index;
+    }
+    return 0;
+  };
+  const av = visibility(a);
+  const bv = visibility(b);
+  if (av > bv) return 1;
+  if (av < bv) return -1;
+  const ai = index(a);
+  const bi = index(b);
+  if (ai > bi) return 1;
+  if (ai < bi) return -1;
+  return 0;
 }

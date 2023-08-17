@@ -11,8 +11,7 @@
       "type": "bun",
       "request": "attach",
       "name": "Attach to Bun",
-      "port": 6499,
-      "hostname": "localhost"
+      "url": "ws://localhost:6499/",
     }
   ]
 }

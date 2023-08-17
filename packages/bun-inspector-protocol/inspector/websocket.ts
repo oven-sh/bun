@@ -1,34 +1,24 @@
-import type {
-  Inspector,
-  InspectorListener,
-  AnyEventMap,
-  AnyRequestMap,
-  AnyResponseMap,
-  AnyEvent,
-  AnyResponse,
-} from ".";
+import type { Inspector, InspectorListener } from ".";
 import { JSC } from "..";
 import { WebSocket } from "ws";
 
-export type WebSocketInspectorOptions<EventMap extends AnyEventMap = JSC.EventMap> = {
+export type WebSocketInspectorOptions = {
   url?: string | URL;
-  listener?: InspectorListener<EventMap>;
+  listener?: InspectorListener;
 };
 
-export class WebSocketInspector<
-  RequestMap extends AnyRequestMap = JSC.RequestMap,
-  ResponseMap extends AnyResponseMap = JSC.ResponseMap,
-  EventMap extends AnyEventMap = JSC.EventMap,
-> implements Inspector<RequestMap, ResponseMap, EventMap>
-{
+/**
+ * An inspector that communicates with a debugger over a WebSocket.
+ */
+export class WebSocketInspector implements Inspector {
   #url?: URL;
   #webSocket?: WebSocket;
   #requestId: number;
   #pendingRequests: Map<number, (result: unknown) => void>;
   #pendingMessages: string[];
-  #listener: InspectorListener<EventMap>;
+  #listener: InspectorListener;
 
-  constructor({ url, listener }: WebSocketInspectorOptions<EventMap>) {
+  constructor({ url, listener }: WebSocketInspectorOptions) {
     this.#url = url ? new URL(url) : undefined;
     this.#listener = listener ?? {};
     this.#requestId = 1;
@@ -36,7 +26,7 @@ export class WebSocketInspector<
     this.#pendingMessages = [];
   }
 
-  connect(url?: string | URL): void {
+  start(url?: string | URL): void {
     if (url) {
       this.#url = new URL(url);
     }
@@ -49,17 +39,17 @@ export class WebSocketInspector<
     if (!this.#url) {
       return;
     }
-    if (this.#webSocket) {
-      this.#webSocket.close();
-    }
+    this.#webSocket?.close();
     let webSocket: WebSocket;
     try {
+      console.log("[jsc] connecting", this.#url.href);
       webSocket = new WebSocket(this.#url);
     } catch (error) {
       this.#close(unknownToError(error));
       return;
     }
     webSocket.addEventListener("open", () => {
+      console.log("[jsc] connected");
       for (const message of this.#pendingMessages) {
         this.#send(message);
       }
@@ -72,21 +62,28 @@ export class WebSocketInspector<
       }
     });
     webSocket.addEventListener("error", event => {
+      console.log("[jsc] error", event);
       this.#close(unknownToError(event));
     });
     webSocket.addEventListener("unexpected-response", () => {
+      console.log("[jsc] unexpected-response");
       this.#close(new Error("WebSocket upgrade failed"));
     });
     webSocket.addEventListener("close", ({ code, reason }) => {
-      this.#close(new Error(`WebSocket closed: ${code} ${reason}`.trimEnd()));
+      console.log("[jsc] closed", code, reason);
+      if (code === 1001) {
+        this.#close();
+      } else {
+        this.#close(new Error(`WebSocket closed: ${code} ${reason}`.trimEnd()));
+      }
     });
     this.#webSocket = webSocket;
   }
 
-  send<M extends keyof RequestMap & keyof ResponseMap>(
+  send<M extends keyof JSC.RequestMap & keyof JSC.ResponseMap>(
     method: M,
-    params?: RequestMap[M] | undefined,
-  ): Promise<ResponseMap[M]> {
+    params?: JSC.RequestMap[M] | undefined,
+  ): Promise<JSC.ResponseMap[M]> {
     const id = this.#requestId++;
     const request = { id, method, params };
     console.log("[jsc] -->", request);
@@ -118,7 +115,7 @@ export class WebSocketInspector<
   }
 
   accept(message: string): void {
-    let event: AnyEvent | AnyResponse;
+    let event: JSC.Event | JSC.Response;
     try {
       event = JSON.parse(message);
     } catch (error) {
@@ -168,11 +165,10 @@ export class WebSocketInspector<
   }
 
   close(code?: number, reason?: string): void {
-    this.#webSocket?.close(code, reason);
+    this.#webSocket?.close(code ?? 1001, reason);
   }
 
-  #close(error: Error): void {
-    console.log("[jsc]", error);
+  #close(error?: Error): void {
     try {
       this.#listener["Inspector.disconnected"]?.(error);
     } finally {

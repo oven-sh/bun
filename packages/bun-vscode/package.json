@@ -129,15 +129,10 @@
           },
           "attach": {
             "properties": {
-              "port": {
-                "type": "integer",
-                "description": "The port to attach and debug.",
-                "default": 6499
-              },
-              "hostname": {
+              "url": {
                 "type": "string",
-                "description": "The hostname to attach and debug.",
-                "default": "localhost"
+                "description": "The URL of the Bun process to attach to.",
+                "default": "ws://localhost:6499/"
               }
             }
           }

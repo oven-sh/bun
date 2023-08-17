@@ -623,14 +623,27 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     case JSDOMWrapperType: {
         if (c2Type == JSDOMWrapperType) {
             // https://github.com/oven-sh/bun/issues/4089
-            if (auto* url1 = jsDynamicCast<JSDOMURL*>(v1)) {
+            auto* url2 = jsDynamicCast<JSDOMURL*>(v2);
+            auto* url1 = jsDynamicCast<JSDOMURL*>(v1);
 
-                if (auto* url2 = jsDynamicCast<JSDOMURL*>(v2)) {
-                    return url1->wrapped().href() == url2->wrapped().href();
+            if constexpr (isStrict) {
+                // if one is a URL and the other is not a URL, toStrictEqual returns false.
+                if ((url2 == nullptr) != (url1 == nullptr)) {
+                    return false;
                 }
 
-                if constexpr (isStrict) {
-                    return false;
+                if (url2 && url1) {
+                    return url1->wrapped().href() != url2->wrapped().href();
+                }
+            } else {
+                if (url2 && url1) {
+                    // toEqual should return false when the URLs' href is not equal
+                    // But you could have added additional properties onto the
+                    // url object itself, so we must check those as well
+                    // But it's definitely not equal if the href() is not the same
+                    if (url1->wrapped().href() != url2->wrapped().href()) {
+                        return false;
+                    }
                 }
             }
         }

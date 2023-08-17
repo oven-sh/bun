@@ -646,17 +646,17 @@ const char* const s_processObjectInternalsBindingCode = "(function (bindingName)
 const JSC::ConstructAbility s_processObjectInternalsGetStdioWriteStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_processObjectInternalsGetStdioWriteStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_processObjectInternalsGetStdioWriteStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_processObjectInternalsGetStdioWriteStreamCodeLength = 203;
+const int s_processObjectInternalsGetStdioWriteStreamCodeLength = 621;
 static const JSC::Intrinsic s_processObjectInternalsGetStdioWriteStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_processObjectInternalsGetStdioWriteStreamCode = "(function (fd){\"use strict\";const stream=(@getInternalField(@internalModuleRegistry,41)||@createInternalModuleById(41)).WriteStream(fd);return process.on(\"SIGWINCH\",()=>{stream._refreshSize()}),stream})\n";
+const char* const s_processObjectInternalsGetStdioWriteStreamCode = "(function (fd){\"use strict\";const stream=(@getInternalField(@internalModuleRegistry,41)||@createInternalModuleById(41)).WriteStream(fd);if(process.on(\"SIGWINCH\",()=>{stream._refreshSize()}),fd===1)stream.destroySoon=stream.destroy,stream._destroy=function(err,cb){if(cb(err),this._undestroy(),!this._writableState.emitClose)process.nextTick(()=>{this.emit(\"close\")})};else if(fd===2)stream.destroySoon=stream.destroy,stream._destroy=function(err,cb){if(cb(err),this._undestroy(),!this._writableState.emitClose)process.nextTick(()=>{this.emit(\"close\")})};return stream._type=\"tty\",stream._isStdio=!0,stream.fd=fd,stream})\n";
 
 // getStdinStream
 const JSC::ConstructAbility s_processObjectInternalsGetStdinStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_processObjectInternalsGetStdinStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_processObjectInternalsGetStdinStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_processObjectInternalsGetStdinStreamCodeLength = 326;
+const int s_processObjectInternalsGetStdinStreamCodeLength = 1155;
 static const JSC::Intrinsic s_processObjectInternalsGetStdinStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_processObjectInternalsGetStdinStreamCode = "(function (fd){\"use strict\";var{destroy}=@getInternalField(@internalModuleRegistry,34)||@createInternalModuleById(34);const stream=new((@getInternalField(@internalModuleRegistry,41))||(@createInternalModuleById(41))).ReadStream(fd);return stream.fd=fd,stream.on(\"pause\",()=>{process.nextTick(()=>{destroy(stream)})}),stream})\n";
+const char* const s_processObjectInternalsGetStdinStreamCode = "(function (fd){\"use strict\";var{destroy}=@getInternalField(@internalModuleRegistry,34)||@createInternalModuleById(34),reader,readerRef;function ref(){reader\?\?=@Bun.stdin.stream().getReader(),readerRef\?\?=setInterval(()=>{},1<<30)}function unref(){if(readerRef)clearInterval(readerRef),readerRef=@undefined}const stream=new((@getInternalField(@internalModuleRegistry,41))||(@createInternalModuleById(41))).ReadStream(fd);stream.fd=fd;const originalPause=stream.pause;stream.pause=function(){return unref(),originalPause.call(this)};const originalResume=stream.resume;stream.resume=function(){return ref(),originalResume.call(this)};async function internalRead(stream2){try{var done,value;const read=reader.readMany();if(!read\?.then)({done,value}=read);else({done,value}=await read);if(!done){stream2.push(value[0]);const length=value.length;for(let i=1;i<length;i++)stream2.push(value[i])}else stream2.push(null),stream2.pause()}catch(err){stream2.destroy(err)}}return stream._read=function(size){internalRead(this)},stream._readableState.reading=!1,stream.on(\"pause\",()=>{process.nextTick(()=>{stream._readableState.reading=!1,destroy(stream)})}),stream})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \

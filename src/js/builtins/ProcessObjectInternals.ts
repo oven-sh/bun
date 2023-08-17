@@ -53,19 +53,111 @@ export function getStdioWriteStream(fd) {
     stream._refreshSize();
   });
 
+  if (fd === 1) {
+    stream.destroySoon = stream.destroy;
+    stream._destroy = function (err, cb) {
+      cb(err);
+      this._undestroy();
+
+      if (!this._writableState.emitClose) {
+        process.nextTick(() => {
+          this.emit("close");
+        });
+      }
+    };
+  } else if (fd === 2) {
+    stream.destroySoon = stream.destroy;
+    stream._destroy = function (err, cb) {
+      cb(err);
+      this._undestroy();
+
+      if (!this._writableState.emitClose) {
+        process.nextTick(() => {
+          this.emit("close");
+        });
+      }
+    };
+  }
+
+  stream._type = "tty";
+  stream._isStdio = true;
+  stream.fd = fd;
+
   return stream;
 }
 
 export function getStdinStream(fd) {
   var { destroy } = require("node:stream");
+
+  var reader;
+  var readerRef;
+  function ref() {
+    reader ??= Bun.stdin.stream().getReader();
+    readerRef ??= setInterval(() => {}, 1 << 30);
+  }
+
+  function unref() {
+    if (readerRef) {
+      clearInterval(readerRef);
+      readerRef = undefined;
+    }
+  }
+
   const tty = require("node:tty");
 
   const stream = new tty.ReadStream(fd);
 
   stream.fd = fd;
 
+  const originalPause = stream.pause;
+  stream.pause = function () {
+    unref();
+    return originalPause.call(this);
+  };
+
+  const originalResume = stream.resume;
+  stream.resume = function () {
+    ref();
+    return originalResume.call(this);
+  };
+
+  async function internalRead(stream) {
+    try {
+      var done: any, value: any;
+      const read = reader.readMany();
+
+      if (!read?.then) {
+        ({ done, value } = read);
+      } else {
+        ({ done, value } = await read);
+      }
+
+      if (!done) {
+        stream.push(value[0]);
+
+        // shouldn't actually happen, but just in case
+        const length = value.length;
+        for (let i = 1; i < length; i++) {
+          stream.push(value[i]);
+        }
+      } else {
+        stream.push(null);
+        stream.pause();
+      }
+    } catch (err) {
+      stream.destroy(err);
+    }
+  }
+
+  stream._read = function (size) {
+    internalRead(this);
+  };
+
+  stream._readableState.reading = false;
+
   stream.on("pause", () => {
     process.nextTick(() => {
+      stream._readableState.reading = false;
       destroy(stream);
     });
   });

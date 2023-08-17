@@ -182,21 +182,21 @@ describe("bun test", () => {
   describe("--bail", () => {
     test("must provide a number bail", () => {
       const stderr = runTest({
-        args: ["--bail", "foo"],
+        args: ["--bail=foo"],
       });
       expect(stderr).toContain("expects a number");
     });
 
     test("must provide non-negative bail", () => {
       const stderr = runTest({
-        args: ["--bail", "-1"],
+        args: ["--bail=-1"],
       });
       expect(stderr).toContain("expects a number");
     });
 
     test("should not be 0", () => {
       const stderr = runTest({
-        args: ["--bail", "0"],
+        args: ["--bail=0"],
       });
       expect(stderr).toContain("expects a number");
     });
@@ -220,7 +220,7 @@ describe("bun test", () => {
 
     test("should bail out after 3 failures", () => {
       const stderr = runTest({
-        args: ["--bail", "3"],
+        args: ["--bail=3"],
         input: `
           import { test, expect } from "bun:test";
           test("test #1", () => {

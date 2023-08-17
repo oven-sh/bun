@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 
 app
   .get("/", (req, res) => {
-    console.log("I am logging a request!");
+    console.log("I am logging a request!??");
     readFile(import.meta.path, "utf-8").then(data => {
       console.log(data.length);
       debugger;

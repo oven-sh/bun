@@ -1,7 +1,31 @@
 import * as vscode from "vscode";
 import { CancellationToken, DebugConfiguration, ProviderResult, WorkspaceFolder } from "vscode";
-import { DAPAdapter } from "./dap";
 import lockfile from "./lockfile";
+import { VSCodeAdapter } from "./adapter";
+
+const debugConfiguration: vscode.DebugConfiguration = {
+  type: "bun",
+  request: "launch",
+  name: "Debug Bun",
+  program: "${file}",
+};
+
+const runConfiguration: vscode.DebugConfiguration = {
+  type: "bun",
+  request: "launch",
+  name: "Run Bun",
+  program: "${file}",
+};
+
+const attachConfiguration: vscode.DebugConfiguration = {
+  type: "bun",
+  request: "attach",
+  name: "Attach to Bun",
+  hostname: "localhost",
+  port: 6499,
+};
+
+const debugConfigurations: vscode.DebugConfiguration[] = [debugConfiguration, attachConfiguration];
 
 export function activateBunDebug(context: vscode.ExtensionContext, factory?: vscode.DebugAdapterDescriptorFactory) {
   lockfile(context);
@@ -13,16 +37,9 @@ export function activateBunDebug(context: vscode.ExtensionContext, factory?: vsc
         targetResource = vscode.window.activeTextEditor.document.uri;
       }
       if (targetResource) {
-        vscode.debug.startDebugging(
-          undefined,
-          {
-            type: "bun",
-            name: "Run File",
-            request: "launch",
-            program: targetResource.fsPath,
-          },
-          { noDebug: true },
-        );
+        vscode.debug.startDebugging(undefined, runConfiguration, {
+          noDebug: true,
+        });
       }
     }),
     vscode.commands.registerCommand("extension.bun.debugEditorContents", (resource: vscode.Uri) => {
@@ -32,11 +49,8 @@ export function activateBunDebug(context: vscode.ExtensionContext, factory?: vsc
       }
       if (targetResource) {
         vscode.debug.startDebugging(undefined, {
-          type: "bun",
-          name: "Debug File",
-          request: "launch",
+          ...debugConfiguration,
           program: targetResource.fsPath,
-          stopOnEntry: true,
         });
       }
     }),
@@ -59,14 +73,7 @@ export function activateBunDebug(context: vscode.ExtensionContext, factory?: vsc
       "bun",
       {
         provideDebugConfigurations(folder: WorkspaceFolder | undefined): ProviderResult<DebugConfiguration[]> {
-          return [
-            {
-              name: "Launch",
-              request: "launch",
-              type: "bun",
-              program: "${file}",
-            },
-          ];
+          return debugConfigurations;
         },
       },
       vscode.DebugConfigurationProviderTriggerKind.Dynamic,
@@ -77,8 +84,8 @@ export function activateBunDebug(context: vscode.ExtensionContext, factory?: vsc
     factory = new InlineDebugAdapterFactory();
   }
   context.subscriptions.push(vscode.debug.registerDebugAdapterDescriptorFactory("bun", factory));
-  if ("dispose" in factory) {
-    // @ts-expect-error ???
+  if ("dispose" in factory && typeof factory.dispose === "function") {
+    // @ts-ignore
     context.subscriptions.push(factory);
   }
 }
@@ -89,30 +96,28 @@ class BunConfigurationProvider implements vscode.DebugConfigurationProvider {
     config: DebugConfiguration,
     token?: CancellationToken,
   ): ProviderResult<DebugConfiguration> {
-    // if launch.json is missing or empty
     if (!config.type && !config.request && !config.name) {
       const editor = vscode.window.activeTextEditor;
-      if (editor && editor.document.languageId === "javascript") {
-        config.type = "bun";
-        config.name = "Launch";
-        config.request = "launch";
-        config.program = "${file}";
-        config.stopOnEntry = true;
+      if (editor && isJavaScript(editor.document.languageId)) {
+        Object.assign(config, debugConfiguration);
       }
     }
-
-    if (!config.program) {
-      return vscode.window.showInformationMessage("Cannot find a program to debug").then(_ => {
-        return undefined; // abort launch
-      });
-    }
-
     return config;
   }
 }
 
 class InlineDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
   createDebugAdapterDescriptor(_session: vscode.DebugSession): ProviderResult<vscode.DebugAdapterDescriptor> {
-    return new vscode.DebugAdapterInlineImplementation(new DAPAdapter(_session));
+    const adapter = new VSCodeAdapter(_session);
+    return new vscode.DebugAdapterInlineImplementation(adapter);
   }
+}
+
+function isJavaScript(languageId: string): boolean {
+  return (
+    languageId === "javascript" ||
+    languageId === "javascriptreact" ||
+    languageId === "typescript" ||
+    languageId === "typescriptreact"
+  );
 }

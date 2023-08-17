@@ -5,6 +5,4 @@ export function activate(context: vscode.ExtensionContext) {
   activateBunDebug(context);
 }
 
-export function deactivate() {
-  // No-op
-}
+export function deactivate() {}

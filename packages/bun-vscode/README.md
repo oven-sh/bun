@@ -1,1 +1,1 @@
-# Debug Adapter Protocol for Bun
+# bun-vscode

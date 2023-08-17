@@ -48,14 +48,14 @@
       {
         "command": "extension.bun.debugEditorContents",
         "title": "Debug File",
-        "category": "Bun Debug",
+        "category": "Bun",
         "enablement": "!inDebugMode",
         "icon": "$(debug-alt)"
       },
       {
         "command": "extension.bun.runEditorContents",
         "title": "Run File",
-        "category": "Bun Debug",
+        "category": "Bun",
         "enablement": "!inDebugMode",
         "icon": "$(play)"
       }
@@ -92,10 +92,38 @@
               "program"
             ],
             "properties": {
+              "runtime": {
+                "type": "string",
+                "description": "The path to Bun.",
+                "default": "bun"
+              },
               "program": {
                 "type": "string",
-                "description": "The file to run and debug.",
+                "description": "The file to debug.",
                 "default": "${workspaceFolder}/${command:AskForProgramName}"
+              },
+              "cwd": {
+                "type": "string",
+                "description": "The working directory.",
+                "default": "${workspaceFolder}"
+              },
+              "args": {
+                "type": "array",
+                "description": "The arguments passed to Bun.",
+                "items": {
+                  "type": "string"
+                },
+                "default": []
+              },
+              "env": {
+                "type": "object",
+                "description": "The environment variables passed to Bun.",
+                "default": {}
+              },
+              "inheritEnv": {
+                "type": "boolean",
+                "description": "Whether environment variables should be inherited from the parent process.",
+                "default": true
               }
             }
           },

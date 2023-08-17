@@ -494,6 +494,14 @@ pub const Body = struct {
                     } else if (drain_result == .owned) {
                         reader.context.buffer = drain_result.owned.list;
                         reader.context.size_hint = @as(Blob.SizeType, @truncate(drain_result.owned.size_hint));
+                        if (drain_result.owned.done) {
+                            reader.context.onData(
+                                .{
+                                    .done = {},
+                                },
+                                bun.default_allocator,
+                            );
+                        }
                     }
 
                     locked.readable = .{

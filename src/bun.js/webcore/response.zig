@@ -123,6 +123,7 @@ pub const Response = struct {
 
     pub fn writeFormat(this: *Response, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
+        // TODO: fix size print to use the content_length if not finish streaming/buffering yet
         try writer.print("Response ({}) {{\n", .{bun.fmt.size(this.body.len())});
         {
             formatter.indent += 1;
@@ -719,12 +720,10 @@ pub const Fetch = struct {
         }
 
         pub fn onBodyReceived(this: *FetchTasklet) void {
-            // const globalThis = this.global_this;
-            if (this.aborted.load(.Acquire) or this.http == null) return;
+            if (this.aborted.load(.Acquire)) return;
 
             const success = this.result.isSuccess();
             const globalThis = this.global_this;
-
             defer {
                 if (!success or !this.result.has_more) {
                     var vm = globalThis.bunVM();
@@ -739,6 +738,7 @@ pub const Fetch = struct {
                 globalThis.throwValue(err);
                 return;
             }
+            log("onBodyReceived bytes:{} done:{}", .{ this.scheduled_response_buffer.list.items.len, !this.result.has_more });
 
             if (this.response) |response| {
                 const body = response.body;
@@ -756,6 +756,9 @@ pub const Fetch = struct {
                                     },
                                     bun.default_allocator,
                                 );
+
+                                // clean for reuse later
+                                this.scheduled_response_buffer.reset();
                             } else {
                                 readable.ptr.Bytes.onData(
                                     .{
@@ -765,22 +768,22 @@ pub const Fetch = struct {
                                 );
                             }
 
-                            if (this.response_buffer.list.capacity == 0) {
-                                this.scheduled_response_buffer.reset();
-                                this.response_buffer = this.scheduled_response_buffer;
-                                this.scheduled_response_buffer = .{
-                                    .allocator = bun.default_allocator,
-                                    .list = .{
-                                        .items = &.{},
-                                        .capacity = 0,
-                                    },
-                                };
-                            } else {
-                                // clean for reuse later
-                                this.scheduled_response_buffer.reset();
-                            }
-
                             return;
+                        }
+                    }
+                    // we will reach here when not streaming
+                    if (!this.result.has_more) {
+                        var scheduled_response_buffer = this.scheduled_response_buffer.list;
+
+                        // done resolve body
+                        var old = body.value;
+                        response.body.value = Body.Value{
+                            .InternalBlob = .{
+                                .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
+                            },
+                        };
+                        if (old == .Locked) {
+                            old.resolve(&response.body.value, this.global_this);
                         }
                     }
                 }
@@ -880,40 +883,29 @@ pub const Fetch = struct {
             return fetch_error.toErrorInstance(this.global_this);
         }
 
-        pub fn onStartBufferingCallback(ctx: *anyopaque) void {
+        pub fn onStartStreamingRequestBodyCallback(ctx: *anyopaque) JSC.WebCore.DrainResult {
             const this = bun.cast(*FetchTasklet, ctx);
-            //TODO: check why this is not being called
             if (this.http) |http| {
                 http.enableBodyStreaming();
             }
-        }
-
-        pub fn onStartStreamingRequestBodyCallback(ctx: *anyopaque) JSC.WebCore.DrainResult {
-            const this = bun.cast(*FetchTasklet, ctx);
-            if (this.aborted.load(.Acquire) or this.http == null) {
+            if (this.aborted.load(.Acquire)) {
                 return JSC.WebCore.DrainResult{
                     .aborted = {},
                 };
             }
 
             this.mutex.lock();
+            defer this.scheduled_response_buffer.reset();
             defer this.mutex.unlock();
             var scheduled_response_buffer = this.scheduled_response_buffer.list;
-
+            log("onStartStreamingRequestBodyCallback bytes:{} done:{}", .{ scheduled_response_buffer.items.len, !this.result.has_more });
             // This means we have received part of the body but not the whole thing
             if (scheduled_response_buffer.items.len > 0) {
-                this.scheduled_response_buffer = .{
-                    .allocator = bun.default_allocator,
-                    .list = .{
-                        .items = &.{},
-                        .capacity = 0,
-                    },
-                };
-
                 return .{
                     .owned = .{
                         .list = scheduled_response_buffer.toManaged(bun.default_allocator),
                         .size_hint = this.body_size,
+                        .done = this.result.has_more,
                     },
                 };
             }
@@ -929,7 +921,6 @@ pub const Fetch = struct {
                     .Locked = .{
                         .task = this,
                         .global = this.global_this,
-                        .onStartBuffering = FetchTasklet.onStartBufferingCallback,
                         .onStartStreaming = FetchTasklet.onStartStreamingRequestBodyCallback,
                     },
                 };
@@ -1132,45 +1123,22 @@ pub const Fetch = struct {
         pub fn callback(task: *FetchTasklet, result: HTTPClient.HTTPClientResult) void {
             task.mutex.lock();
             defer task.mutex.unlock();
-            //TODO: dont use 2 buffers no need of this
-            if (task.scheduled_response_buffer.list.capacity > 0) {
-                //reuse schedule buffer
-                task.result = result;
+            task.result = result;
 
-                const success = result.isSuccess();
+            const success = result.isSuccess();
+            task.response_buffer = result.body.?.*;
+            log("callback bytes:{} done:{}", .{ task.response_buffer.list.items.len, !task.result.has_more });
 
-                var buffer = result.body.?.*;
-                defer buffer.deinit();
-                if (success) {
-                    _ = task.scheduled_response_buffer.write(buffer.list.items) catch @panic("OOM");
-                }
+            if (success) {
+                _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch @panic("OOM");
+            }
 
-                if (!task.has_schedule_callback) {
-                    task.has_schedule_callback = true;
-                    task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
-                }
-
-                task.response_buffer = MutableString{
-                    .allocator = bun.default_allocator,
-                    .list = .{
-                        .items = &.{},
-                        .capacity = 0,
-                    },
-                };
-            } else {
-                // if capacity is 0 we just replace the buffers
-                task.scheduled_response_buffer = result.body.?.*;
-                task.response_buffer = MutableString{
-                    .allocator = bun.default_allocator,
-                    .list = .{
-                        .items = &.{},
-                        .capacity = 0,
-                    },
-                };
-                task.result = result;
+            if (!task.has_schedule_callback) {
                 task.has_schedule_callback = true;
                 task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
             }
+            // reset for reuse
+            task.response_buffer.reset();
         }
     };
 

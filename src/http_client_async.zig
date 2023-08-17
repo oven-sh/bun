@@ -1085,7 +1085,7 @@ pub const InternalState = struct {
         this.postProcessBody(body_out_str);
     }
 
-    pub fn postProcessBody(this: *InternalState, body_out_str: *MutableString) void {
+    pub fn postProcessBody(this: *InternalState, _: *MutableString) void {
         var response = &this.pending_response;
         // if it compressed with this header, it is no longer
         if (this.content_encoding_i < response.headers.len) {
@@ -1095,7 +1095,7 @@ pub const InternalState = struct {
             this.content_encoding_i = std.math.maxInt(@TypeOf(this.content_encoding_i));
         }
 
-        this.body_size = @as(usize, @truncate(body_out_str.list.items.len));
+        // this.body_size = @as(usize, @truncate(body_out_str.list.items.len));
     }
 };
 
@@ -1121,7 +1121,7 @@ disable_keepalive: bool = false,
 
 state: InternalState = .{},
 
-completion_callback: HTTPClientResult.Callback = undefined,
+result_callback: HTTPClientResult.Callback = undefined,
 
 /// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.
 /// This is a workaround for that.
@@ -1293,7 +1293,7 @@ pub const AsyncHTTP = struct {
     next: ?*AsyncHTTP = null,
 
     task: ThreadPool.Task = ThreadPool.Task{ .callback = &startAsyncHTTP },
-    completion_callback: HTTPClientResult.Callback = undefined,
+    result_callback: HTTPClientResult.Callback = undefined,
 
     /// Timeout in nanoseconds
     timeout: usize = 0,
@@ -1385,7 +1385,7 @@ pub const AsyncHTTP = struct {
             .request_header_buf = headers_buf,
             .request_body = .{ .bytes = request_body },
             .response_buffer = response_buffer,
-            .completion_callback = callback,
+            .result_callback = callback,
             .http_proxy = http_proxy,
             .async_http_id = if (signal != null) async_http_id.fetchAdd(1, .Monotonic) else 0,
         };
@@ -1551,7 +1551,7 @@ pub const AsyncHTTP = struct {
 
         var ctx = try bun.default_allocator.create(SingleHTTPChannel);
         ctx.* = SingleHTTPChannel.init();
-        this.completion_callback = HTTPClientResult.Callback.New(
+        this.result_callback = HTTPClientResult.Callback.New(
             *SingleHTTPChannel,
             sendSyncCallback,
         ).init(ctx);
@@ -1571,12 +1571,10 @@ pub const AsyncHTTP = struct {
         unreachable;
     }
 
-    pub fn onAsyncHTTPComplete(this: *AsyncHTTP, result: HTTPClientResult) void {
+    pub fn onAsyncHTTPCallback(this: *AsyncHTTP, result: HTTPClientResult) void {
         std.debug.assert(this.real != null);
-        const active_requests = AsyncHTTP.active_requests_count.fetchSub(1, .Monotonic);
-        std.debug.assert(active_requests > 0);
 
-        var completion = this.completion_callback;
+        var completion = this.result_callback;
         this.elapsed = http_thread.timer.read() -| this.elapsed;
         this.redirected = this.client.remaining_redirect_count != default_redirect_count;
         if (!result.isSuccess()) {
@@ -1588,20 +1586,26 @@ pub const AsyncHTTP = struct {
             this.response = result.response;
             this.state.store(.success, .Monotonic);
         }
-        this.client.deinit();
 
-        this.real.?.* = this.*;
-        this.real.?.response_buffer = this.response_buffer;
+        if (!result.has_more) {
+            this.client.deinit();
 
-        log("onAsyncHTTPComplete: {any}", .{bun.fmt.fmtDuration(this.elapsed)});
+            this.real.?.* = this.*;
+            this.real.?.response_buffer = this.response_buffer;
 
-        default_allocator.destroy(this);
+            log("onAsyncHTTPCallback: {any}", .{bun.fmt.fmtDuration(this.elapsed)});
+
+            default_allocator.destroy(this);
+
+            const active_requests = AsyncHTTP.active_requests_count.fetchSub(1, .Monotonic);
+            std.debug.assert(active_requests > 0);
+
+            if (active_requests >= AsyncHTTP.max_simultaneous_requests.load(.Monotonic)) {
+                http_thread.drainEvents();
+            }
+        }
 
         completion.function(completion.ctx, result);
-
-        if (active_requests >= AsyncHTTP.max_simultaneous_requests.load(.Monotonic)) {
-            http_thread.drainEvents();
-        }
     }
 
     pub fn startAsyncHTTP(task: *Task) void {
@@ -1613,7 +1617,7 @@ pub const AsyncHTTP = struct {
         _ = active_requests_count.fetchAdd(1, .Monotonic);
         this.err = null;
         this.state.store(.sending, .Monotonic);
-        this.client.completion_callback = HTTPClientResult.Callback.New(*AsyncHTTP, onAsyncHTTPComplete).init(
+        this.client.result_callback = HTTPClientResult.Callback.New(*AsyncHTTP, onAsyncHTTPCallback).init(
             this,
         );
 
@@ -2417,7 +2421,7 @@ fn fail(this: *HTTPClient, err: anyerror) void {
     this.state.fail = err;
     this.state.stage = .fail;
 
-    const callback = this.completion_callback;
+    const callback = this.result_callback;
     const result = this.toResult(this.cloned_metadata);
     this.state.reset();
     this.proxy_tunneling = false;
@@ -2467,7 +2471,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
         var body = out_str.*;
         this.cloned_metadata.response = this.state.pending_response;
         const result = this.toResult(this.cloned_metadata);
-        const callback = this.completion_callback;
+        const callback = this.result_callback;
 
         if (is_done) {
             socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
@@ -2573,7 +2577,7 @@ pub fn toResult(this: *HTTPClient, metadata: HTTPResponseMetadata) HTTPClientRes
         .href = metadata.url,
         .fail = this.state.fail,
         .headers_buf = metadata.response.headers,
-        .has_more = !this.isDone(),
+        .has_more = this.state.fail == error.NoError and !this.isDone(),
         .body_size = this.state.body_size,
     };
 }
@@ -2586,8 +2590,6 @@ const preallocate_max = 1024 * 1024 * 256;
 
 pub fn handleResponseBody(this: *HTTPClient, incoming_data: []const u8, is_only_buffer: bool) !bool {
     std.debug.assert(this.state.transfer_encoding == .identity);
-    this.state.total_body_received += incoming_data.len;
-
     // is it exactly as much as we need?
     if (is_only_buffer and incoming_data.len >= this.state.body_size) {
         try handleResponseBodyFromSinglePacket(this, incoming_data[0..this.state.body_size]);
@@ -2598,6 +2600,8 @@ pub fn handleResponseBody(this: *HTTPClient, incoming_data: []const u8, is_only_
 }
 
 fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const u8) !void {
+    this.state.total_body_received += incoming_data.len;
+
     if (this.state.encoding.isCompressed()) {
         var body_buffer = this.state.body_out_str.?;
         if (body_buffer.list.capacity == 0) {
@@ -2640,7 +2644,7 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
         this.state.body_size > 0 and this.state.body_size < preallocate_max)
     {
         // TODO: allow streaming for gzip and deflate
-        if (this.enable_body_stream.load(.Acquire) == false or this.state.encoding == Encoding.gzip or this.state.encoding == Encoding.deflate) {
+        if (this.state.encoding == Encoding.gzip or this.state.encoding == Encoding.deflate) {
             this.enable_body_stream.store(false, .Monotonic);
             // if we are not streaming we preallocate everything
             buffer.list.ensureTotalCapacityPrecise(buffer.allocator, this.state.body_size) catch {};
@@ -2652,6 +2656,7 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
 
     const remaining_content_length = this.state.body_size -| this.state.total_body_received;
     var remainder = incoming_data[0..@min(incoming_data.len, remaining_content_length)];
+    this.state.total_body_received += remainder.len;
 
     _ = try buffer.write(remainder);
 
@@ -2661,8 +2666,8 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
         progress.context.maybeRefresh();
     }
 
-    // done
-    if (this.state.total_body_received >= this.state.body_size) {
+    // done or streaming
+    if (this.state.total_body_received >= this.state.body_size or this.enable_body_stream.load(.Acquire)) {
         try this.state.processBodyBuffer(buffer.*);
 
         if (this.progress_node) |progress| {
@@ -2670,11 +2675,6 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
             progress.setCompletedItems(this.state.total_body_received);
             progress.context.maybeRefresh();
         }
-        return true;
-    }
-
-    if (this.enable_body_stream.load(.Acquire)) {
-        try this.state.processBodyBuffer(buffer.*);
         return true;
     }
 

@@ -669,10 +669,18 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
+    void finishCreation(JSC::VM& vm)
+    {
+        Base::finishCreation(vm);
+
+        JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    }
+
     static JSBunObject* create(JSC::VM& vm, JSGlobalObject* globalObject)
     {
         auto* object = new (NotNull, JSC::allocateCell<JSBunObject>(vm)) JSBunObject(vm, createStructure(vm, globalObject, globalObject->objectPrototype()));
         object->finishCreation(vm);
+
         return object;
     }
 };

@@ -34,6 +34,49 @@ const named = names.map(name => {
 });
 
 export default [
+  define({
+    name: "Crypto",
+    construct: true,
+    finalize: false,
+
+    proto: {
+      getRandomValues: {
+        fn: "getRandomValues",
+        DOMJIT: {
+          returns: "JSValue",
+          "pure": false,
+          args: ["JSUint8Array"],
+        },
+      },
+      randomUUID: {
+        fn: "randomUUID",
+        length: 1,
+        DOMJIT: {
+          returns: "JSString",
+          "pure": false,
+          args: [],
+        },
+      },
+      timingSafeEqual: {
+        fn: "timingSafeEqual",
+        DOMJIT: {
+          returns: "JSValue",
+          "pure": false,
+          args: ["JSUint8Array", "JSUint8Array"],
+        },
+        length: 2,
+      },
+      randomInt: {
+        fn: "randomInt",
+        length: 2,
+      },
+      scryptSync: {
+        fn: "scryptSync",
+        length: 2,
+      },
+    },
+    klass: {},
+  }),
   ...named,
   define({
     name: "CryptoHasher",

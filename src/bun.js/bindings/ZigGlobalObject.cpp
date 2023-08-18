@@ -2421,15 +2421,25 @@ private:
             JSC::DOMJIT::Effect::forWriteKinds(DFG::AbstractHeapKind::SideState),
             SpecBytecodeDouble);
 
-        JSFunction* function = JSFunction::create(
+        JSFunction* now = JSFunction::create(
             vm,
             globalObject(),
             0,
             String("now"_s),
             functionPerformanceNow, ImplementationVisibility::Public, NoIntrinsic, functionPerformanceNow,
             &DOMJITSignatureForPerformanceNow);
+        this->putDirect(vm, JSC::Identifier::fromString(vm, "now"_s), now, JSC::PropertyAttribute::DOMJITFunction | JSC::PropertyAttribute::Function);
 
-        this->putDirect(vm, JSC::Identifier::fromString(vm, "now"_s), function, JSC::PropertyAttribute::DOMJITFunction | JSC::PropertyAttribute::Function);
+        JSFunction* noopNotImplemented = JSFunction::create(
+            vm,
+            globalObject(),
+            0,
+            String("noopNotImplemented"_s),
+            functionNoop, ImplementationVisibility::Public, NoIntrinsic, functionNoop,
+            &DOMJITSignatureForPerformanceNow);
+        this->putDirect(vm, JSC::Identifier::fromString(vm, "mark"_s), noopNotImplemented, JSC::PropertyAttribute::DOMJITFunction | JSC::PropertyAttribute::Function);
+        this->putDirect(vm, JSC::Identifier::fromString(vm, "measure"_s), noopNotImplemented, JSC::PropertyAttribute::DOMJITFunction | JSC::PropertyAttribute::Function);
+
         this->putDirect(
             vm,
             JSC::Identifier::fromString(vm, "timeOrigin"_s),

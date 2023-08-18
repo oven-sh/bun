@@ -1808,3 +1808,28 @@ describe("fs.read", () => {
     });
   });
 });
+
+it("new Stats", () => {
+  // @ts-expect-error
+  const stats = new Stats(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14);
+  expect(stats).toBeDefined();
+  // dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeMs, mtimeMs, ctimeMs, birthtimeMs
+  expect(stats.dev).toBe(1);
+  expect(stats.mode).toBe(2);
+  expect(stats.nlink).toBe(3);
+  expect(stats.uid).toBe(4);
+  expect(stats.gid).toBe(5);
+  expect(stats.rdev).toBe(6);
+  expect(stats.blksize).toBe(7);
+  expect(stats.ino).toBe(8);
+  expect(stats.size).toBe(9);
+  expect(stats.blocks).toBe(10);
+  expect(stats.atimeMs).toBe(11);
+  expect(stats.mtimeMs).toBe(12);
+  expect(stats.ctimeMs).toBe(13);
+  expect(stats.birthtimeMs).toBe(14);
+  expect(stats.atime).toEqual(new Date(11));
+  expect(stats.mtime).toEqual(new Date(12));
+  expect(stats.ctime).toEqual(new Date(13));
+  expect(stats.birthtime).toEqual(new Date(14));
+});

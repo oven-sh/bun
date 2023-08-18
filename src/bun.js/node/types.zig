@@ -1274,7 +1274,7 @@ pub const Date = enum(u64) {
     _,
 
     pub fn toJS(this: Date, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        const seconds = @as(f64, @floatCast(@as(f64, @floatFromInt(@intFromEnum(this))) * 1000.0));
+        const seconds = @as(f64, @floatCast(@as(f64, @floatFromInt(@intFromEnum(this)))));
         const unix_timestamp = JSC.JSValue.jsNumber(seconds);
         const array: [1]JSC.C.JSValueRef = .{unix_timestamp.asObjectRef()};
         const obj = JSC.C.JSObjectMakeDate(ctx, 1, &array, exception);
@@ -1325,9 +1325,9 @@ fn StatsDataType(comptime T: type) type {
                 .atime_ms = (@as(f64, @floatFromInt(@max(atime.tv_sec, 0))) * std.time.ms_per_s) + (@as(f64, @floatFromInt(@as(usize, @intCast(@max(atime.tv_nsec, 0))))) / std.time.ns_per_ms),
                 .mtime_ms = (@as(f64, @floatFromInt(@max(mtime.tv_sec, 0))) * std.time.ms_per_s) + (@as(f64, @floatFromInt(@as(usize, @intCast(@max(mtime.tv_nsec, 0))))) / std.time.ns_per_ms),
                 .ctime_ms = (@as(f64, @floatFromInt(@max(ctime.tv_sec, 0))) * std.time.ms_per_s) + (@as(f64, @floatFromInt(@as(usize, @intCast(@max(ctime.tv_nsec, 0))))) / std.time.ns_per_ms),
-                .atime = @as(Date, @enumFromInt(@as(u64, @intCast(@max(atime.tv_sec, 0))))),
-                .mtime = @as(Date, @enumFromInt(@as(u64, @intCast(@max(mtime.tv_sec, 0))))),
-                .ctime = @as(Date, @enumFromInt(@as(u64, @intCast(@max(ctime.tv_sec, 0))))),
+                .atime = @as(Date, @enumFromInt(@as(u64, @intCast(@max(atime.tv_sec * std.time.ms_per_s, 0))))),
+                .mtime = @as(Date, @enumFromInt(@as(u64, @intCast(@max(mtime.tv_sec * std.time.ms_per_s, 0))))),
+                .ctime = @as(Date, @enumFromInt(@as(u64, @intCast(@max(ctime.tv_sec * std.time.ms_per_s, 0))))),
 
                 // Linux doesn't include this info in stat
                 // maybe it does in statx, but do you really need birthtime? If you do please file an issue.
@@ -1471,10 +1471,42 @@ pub const Stats = union(enum) {
         return this;
     }
 
-    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*Stats {
-        globalThis.throw("Stats is not constructable. use fs.stat()", .{});
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) ?*Stats {
+        // dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeMs, mtimeMs, ctimeMs, birthtimeMs
+        var args = callFrame.argumentsPtr()[0..@min(callFrame.argumentsCount(), 14)];
 
-        return null;
+        var this = globalThis.allocator().create(Stats) catch {
+            globalThis.throwOutOfMemory();
+            return null;
+        };
+
+        var atime_ms = if (args.len > 10 and args[10].isNumber()) args[10].asNumber() else 0;
+        var mtime_ms = if (args.len > 11 and args[11].isNumber()) args[11].asNumber() else 0;
+        var ctime_ms = if (args.len > 12 and args[12].isNumber()) args[12].asNumber() else 0;
+        var birthtime_ms = if (args.len > 13 and args[13].isNumber()) args[13].toInt32() else 0;
+        this.* = .{
+            .small = StatsDataType(i32){
+                .dev = if (args.len > 0 and args[0].isNumber()) args[0].toInt32() else 0,
+                .mode = if (args.len > 1 and args[1].isNumber()) args[1].toInt32() else 0,
+                .nlink = if (args.len > 2 and args[2].isNumber()) args[2].toInt32() else 0,
+                .uid = if (args.len > 3 and args[3].isNumber()) args[3].toInt32() else 0,
+                .gid = if (args.len > 4 and args[4].isNumber()) args[4].toInt32() else 0,
+                .rdev = if (args.len > 5 and args[5].isNumber()) args[5].toInt32() else 0,
+                .blksize = if (args.len > 6 and args[6].isNumber()) args[6].toInt32() else 0,
+                .ino = if (args.len > 7 and args[7].isNumber()) args[7].toInt32() else 0,
+                .size = if (args.len > 8 and args[8].isNumber()) args[8].toInt32() else 0,
+                .blocks = if (args.len > 9 and args[9].isNumber()) args[9].toInt32() else 0,
+                .atime_ms = (atime_ms),
+                .mtime_ms = (mtime_ms),
+                .ctime_ms = (ctime_ms),
+                .birthtime_ms = birthtime_ms,
+                .atime = @enumFromInt(@as(u64, @intFromFloat(atime_ms))),
+                .mtime = @enumFromInt(@as(u64, @intFromFloat(mtime_ms))),
+                .ctime = @enumFromInt(@as(u64, @intFromFloat(ctime_ms))),
+                .birthtime = @enumFromInt(@as(u64, @intCast(birthtime_ms))),
+            },
+        };
+        return this;
     }
 
     comptime {

@@ -909,11 +909,18 @@ pub const Fetch = struct {
             }
 
             this.mutex.lock();
-            defer this.scheduled_response_buffer.reset();
             defer this.mutex.unlock();
             var scheduled_response_buffer = this.scheduled_response_buffer.list;
             // This means we have received part of the body but not the whole thing
             if (scheduled_response_buffer.items.len > 0) {
+                this.scheduled_response_buffer = .{
+                    .allocator = default_allocator,
+                    .list = .{
+                        .items = &.{},
+                        .capacity = 0,
+                    },
+                };
+
                 return .{
                     .owned = .{
                         .list = scheduled_response_buffer.toManaged(bun.default_allocator),

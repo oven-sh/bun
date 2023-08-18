@@ -654,6 +654,7 @@ public:
     DECLARE_INFO;
 
     static constexpr bool needsDestruction = false;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -673,11 +674,6 @@ public:
     }
 };
 
-JSValue createBunObject(Zig::GlobalObject* globalObject)
-{
-    return JSBunObject::create(globalObject->vm(), globalObject);
-}
-
 #define bunObjectReadableStreamToArrayCodeGenerator WebCore::readableStreamReadableStreamToArrayCodeGenerator
 #define bunObjectReadableStreamToArrayBufferCodeGenerator WebCore::readableStreamReadableStreamToArrayBufferCodeGenerator
 #define bunObjectReadableStreamToBlobCodeGenerator WebCore::readableStreamReadableStreamToBlobCodeGenerator
@@ -695,5 +691,10 @@ JSValue createBunObject(Zig::GlobalObject* globalObject)
 #undef bunObjectReadableStreamToTextCodeGenerator
 
 const JSC::ClassInfo JSBunObject::s_info = { "Bun"_s, &JSNonFinalObject::s_info, &bunObjectTable, nullptr, CREATE_METHOD_TABLE(JSBunObject) };
+
+JSValue createBunObject(Zig::GlobalObject* globalObject)
+{
+    return JSBunObject::create(globalObject->vm(), globalObject);
+}
 
 }

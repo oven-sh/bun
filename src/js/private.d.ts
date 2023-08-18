@@ -200,7 +200,7 @@ interface BunLazyModules {
     _receiveMessageOnPort: (port: MessagePort) => any,
   ];
   "tty": {
-    ttySetMode: (fd: number, mode: number) => void;
+    ttySetMode: (fd: number, mode: number) => number;
     isatty: (fd: number) => boolean;
     getWindowSize: (fd: number, out: number[2]) => boolean;
   };

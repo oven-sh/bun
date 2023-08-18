@@ -89,10 +89,12 @@ export function getStdioWriteStream(fd) {
 export function getStdinStream(fd) {
   var { destroy } = require("node:stream");
 
-  var reader;
+  var reader: ReadableStreamDefaultReader | undefined;
   var readerRef;
   function ref() {
     reader ??= Bun.stdin.stream().getReader();
+    // TODO: remove this. likely we are dereferencing the stream
+    // when there is still more data to be read.
     readerRef ??= setInterval(() => {}, 1 << 30);
   }
 
@@ -124,12 +126,13 @@ export function getStdinStream(fd) {
   async function internalRead(stream) {
     try {
       var done: any, value: any;
-      const read = reader.readMany();
+      const read = reader?.readMany();
 
-      if (!read?.then) {
-        ({ done, value } = read);
-      } else {
+      if ($isPromise(read)) {
         ({ done, value } = await read);
+      } else {
+        // @ts-expect-error
+        ({ done, value } = read);
       }
 
       if (!done) {
@@ -153,12 +156,15 @@ export function getStdinStream(fd) {
     internalRead(this);
   };
 
-  stream._readableState.reading = false;
-
   stream.on("pause", () => {
     process.nextTick(() => {
-      stream._readableState.reading = false;
       destroy(stream);
+    });
+  });
+
+  stream.on("close", () => {
+    process.nextTick(() => {
+      reader?.cancel();
     });
   });
 

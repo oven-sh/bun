@@ -91,6 +91,7 @@ export function getStdinStream(fd) {
 
   var reader: ReadableStreamDefaultReader | undefined;
   var readerRef;
+  var unrefOnRead = false;
   function ref() {
     reader ??= Bun.stdin.stream().getReader();
     // TODO: remove this. likely we are dereferencing the stream
@@ -108,6 +109,24 @@ export function getStdinStream(fd) {
   const tty = require("node:tty");
 
   const stream = new tty.ReadStream(fd);
+
+  const originalOn = stream.on;
+  stream.on = function (event, listener) {
+    // Streams don't generally required to present any data when only
+    // `readable` events are present, i.e. `readableFlowing === false`
+    //
+    // However, Node.js has a this quirk whereby `process.stdin.read()`
+    // blocks under TTY mode, thus looping `.read()` in this particular
+    // case would not result in truncation.
+    //
+    // Therefore the following hack is only specific to `process.stdin`
+    // and does not apply to the underlying Stream implementation.
+    if (event === "readable") {
+      ref();
+      unrefOnRead = true;
+    }
+    return originalOn.call(this, event, listener);
+  };
 
   stream.fd = fd;
 
@@ -153,6 +172,10 @@ export function getStdinStream(fd) {
   }
 
   stream._read = function (size) {
+    if (unrefOnRead) {
+      unref();
+      unrefOnRead = false;
+    }
     internalRead(this);
   };
 

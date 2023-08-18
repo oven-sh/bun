@@ -731,8 +731,6 @@ pub const Fetch = struct {
                     this.poll_ref.unref(vm);
                     this.clearData();
                     this.deinit();
-                } else {
-                    this.result.deinitMetadata();
                 }
             }
 

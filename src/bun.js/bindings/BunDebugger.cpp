@@ -125,7 +125,7 @@ public:
             connection->inspector().disconnect(*connection);
             if (connection->unrefOnDisconnect) {
                 connection->unrefOnDisconnect = false;
-                Bun__eventLoop__incrementRefConcurrently(reinterpret_cast<Zig::GlobalObject*>(context.jsGlobalObject())->bunVM(), 1);
+                Bun__eventLoop__incrementRefConcurrently(reinterpret_cast<Zig::GlobalObject*>(context.jsGlobalObject())->bunVM(), -1);
             }
         });
     }
@@ -432,7 +432,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
         return JSValue::encode(jsUndefined());
 
     ScriptExecutionContext* targetContext = ScriptExecutionContext::getScriptExecutionContext(static_cast<ScriptExecutionContextIdentifier>(callFrame->argument(0).toUInt32(globalObject)));
-    bool shouldRef = callFrame->argument(1).toBoolean(globalObject);
+    bool shouldRef = !callFrame->argument(1).toBoolean(globalObject);
     JSFunction* onMessageFn = jsCast<JSFunction*>(callFrame->argument(2).toObject(globalObject));
 
     if (!targetContext || !onMessageFn)

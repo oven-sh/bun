@@ -2296,9 +2296,9 @@ declare module "bun" {
   export function allocUnsafe(size: number): Uint8Array;
 
   export interface BunInspectOptions {
-    colors: boolean;
-    depth: number;
-    sorted: boolean;
+    colors?: boolean;
+    depth?: number;
+    sorted?: boolean;
   }
 
   /**

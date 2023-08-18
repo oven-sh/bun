@@ -217,7 +217,7 @@ function formatValue(ctx, value, recurseTimes) {
   if (primitive) {
     return primitive;
   }
-  var keys = Object.keys(value);
+  var keys = Object.keys(value).concat(Object.getOwnPropertySymbols(value));
   var visibleKeys = arrayToHash(keys);
   if (ctx.showHidden) {
     keys = Object.getOwnPropertyNames(value);
@@ -328,7 +328,10 @@ function formatProperty(ctx, value, recurseTimes, visibleKeys, key, array) {
     }
   }
   if (!hasOwnProperty(visibleKeys, key)) {
-    name = "[" + key + "]";
+    name = "[" + (typeof key === "symbol" ? key.description : key) + "]";
+  }
+  if (typeof key === "symbol") {
+    name = "[" + ctx.stylize(`Symbol(${key.description})`, "string") + "]";
   }
   if (!str) {
     if (ctx.seen.indexOf(desc.value) < 0) {

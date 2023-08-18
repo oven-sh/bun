@@ -3263,7 +3263,7 @@ void GlobalObject::finishCreation(VM& vm)
     m_utilInspectFunction.initLater(
         [](const Initializer<JSFunction>& init) {
             JSValue nodeUtilValue = static_cast<Zig::GlobalObject*>(init.owner)->internalModuleRegistry()->requireId(init.owner, init.vm, Bun::InternalModuleRegistry::Field::NodeUtil);
-            ASSERT(nodeUtilValue.isObject());
+            RELEASE_ASSERT(nodeUtilValue.isObject());
             init.set(jsCast<JSFunction*>(nodeUtilValue.getObject()->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "inspect"_s))));
         });
 

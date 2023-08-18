@@ -129,6 +129,12 @@ for (const [name, inspect] of process.versions.bun
     };
     expect(inspect(obj, { depth: 3 }).replace(/\s/g, "")).toBe("{prop:[2,3]}");
   });
+  test(name + " non-callable does not get called", () => {
+    const obj = {
+      [customSymbol]: 512,
+    };
+    expect(inspect(obj, { depth: 3 }).replace(/\s/g, "")).toBe("{[Symbol(nodejs.util.inspect.custom)]:512}");
+  });
 
   const exceptions = [new Error("don't crash!"), 42];
 

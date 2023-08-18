@@ -242,8 +242,21 @@ pub fn inspect(
 
         if (arg1.isObject()) {
             if (arg1.getTruthy(ctx, "depth")) |opt| {
-                if (opt.isNumber()) {
-                    formatOptions.max_depth = @as(u16, @intCast(opt.toInt32()));
+                if (opt.isInt32()) {
+                    const arg = opt.toInt32();
+                    if (arg < 0) {
+                        ctx.throwInvalidArguments("expected depth to be greater than or equal to 0, got {d}", .{arg});
+                        return null;
+                    }
+                    formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
+                } else if (opt.isNumber()) {
+                    const v = opt.asDouble();
+                    if (std.math.isInf(v)) {
+                        formatOptions.max_depth = std.math.maxInt(u16);
+                    } else {
+                        ctx.throwInvalidArguments("expected depth to be an integer, got {d}", .{v});
+                        return null;
+                    }
                 }
             }
             if (arg1.getOptional(ctx, "colors", bool) catch return null) |opt| {
@@ -256,8 +269,21 @@ pub fn inspect(
             // formatOptions.show_hidden = arg1.toBoolean();
             if (arguments.len > 2) {
                 var depthArg = JSC.JSValue.fromRef(arguments[1]);
-                if (depthArg.isNumber()) {
-                    formatOptions.max_depth = @as(u16, @intCast(depthArg.toInt32()));
+                if (depthArg.isInt32()) {
+                    const arg = depthArg.toInt32();
+                    if (arg < 0) {
+                        ctx.throwInvalidArguments("expected depth to be greater than or equal to 0, got {d}", .{arg});
+                        return null;
+                    }
+                    formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
+                } else if (depthArg.isNumber()) {
+                    const v = depthArg.asDouble();
+                    if (std.math.isInf(v)) {
+                        formatOptions.max_depth = std.math.maxInt(u16);
+                    } else {
+                        ctx.throwInvalidArguments("expected depth to be an integer, got {d}", .{v});
+                        return null;
+                    }
                 }
                 if (arguments.len > 3) {
                     formatOptions.enable_colors = JSC.JSValue.fromRef(arguments[2]).toBoolean();

@@ -1452,15 +1452,17 @@ pub const ZigConsoleClient = struct {
                 if (js_type.canGet()) {
                     // Attempt to get custom formatter
                     if (value.fastGet(globalThis, .inspectCustom)) |callback_value| {
-                        return .{
-                            .tag = .{
-                                .CustomFormattedObject = .{
-                                    .function = callback_value,
-                                    .this = value,
+                        if (callback_value.isCallable(globalThis.vm())) {
+                            return .{
+                                .tag = .{
+                                    .CustomFormattedObject = .{
+                                        .function = callback_value,
+                                        .this = value,
+                                    },
                                 },
-                            },
-                            .cell = js_type,
-                        };
+                                .cell = js_type,
+                            };
+                        }
                     }
                 }
 
@@ -1733,11 +1735,10 @@ pub const ZigConsoleClient = struct {
             comptime Writer: type,
             writer: Writer,
         ) !void {
-            const indent = @min(this.indent, 32);
             var buf = [_]u8{' '} ** 64;
-            var total_remain: usize = indent;
+            var total_remain: u32 = this.indent;
             while (total_remain > 0) {
-                const written = @min(32, total_remain);
+                const written: u8 = @min(32, total_remain);
                 try writer.writeAll(buf[0 .. written * 2]);
                 total_remain -|= written;
             }

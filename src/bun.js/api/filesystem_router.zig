@@ -21,7 +21,7 @@ const JSError = Base.JSError;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const strings = @import("root").bun.strings;
-const NewClass = Base.NewClass;
+
 const To = Base.To;
 const Request = WebCore.Request;
 

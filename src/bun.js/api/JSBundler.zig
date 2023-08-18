@@ -23,7 +23,7 @@ const JSError = Base.JSError;
 const JSValue = bun.JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const strings = bun.strings;
-const NewClass = Base.NewClass;
+
 const To = Base.To;
 const Request = WebCore.Request;
 const String = bun.String;

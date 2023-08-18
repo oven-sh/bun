@@ -48,7 +48,7 @@ const JSError = @import("../base.zig").JSError;
 const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
 const getAllocator = @import("../base.zig").getAllocator;
 const JSValue = @import("root").bun.JSC.JSValue;
-const NewClass = @import("../base.zig").NewClass;
+
 const Microtask = @import("root").bun.JSC.Microtask;
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;

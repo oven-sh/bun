@@ -1187,7 +1187,7 @@ pub const ZigConsoleClient = struct {
 
                 tag = ZigConsoleClient.Formatter.Tag.get(this_value, global);
                 if (tag.tag == .String and fmt.remaining_values.len > 0) {
-                    tag.tag = .StringPossiblyFormatted;
+                    tag.tag = .{ .StringPossiblyFormatted = {} };
                 }
 
                 fmt.format(tag, Writer, writer, this_value, global, true);
@@ -1209,7 +1209,7 @@ pub const ZigConsoleClient = struct {
                 any = true;
                 tag = ZigConsoleClient.Formatter.Tag.get(this_value, global);
                 if (tag.tag == .String and fmt.remaining_values.len > 0) {
-                    tag.tag = .StringPossiblyFormatted;
+                    tag.tag = .{ .StringPossiblyFormatted = {} };
                 }
 
                 fmt.format(tag, Writer, writer, this_value, global, false);
@@ -1223,6 +1223,11 @@ pub const ZigConsoleClient = struct {
 
         if (options.add_newline) _ = writer.write("\n") catch 0;
     }
+
+    const CustomFormattedObject = struct {
+        function: JSValue = .zero,
+        this: JSValue = .zero,
+    };
 
     pub const Formatter = struct {
         remaining_values: []const JSValue = &[_]JSValue{},
@@ -1239,6 +1244,7 @@ pub const ZigConsoleClient = struct {
         estimated_line_length: usize = 0,
         always_newline_scope: bool = false,
         ordered_properties: bool = false,
+        custom_formatted_object: CustomFormattedObject = .{},
 
         pub fn goodTimeForANewLine(this: *@This()) bool {
             if (this.estimated_line_length > 80) {
@@ -1311,8 +1317,10 @@ pub const ZigConsoleClient = struct {
             TypedArray,
             Map,
             Set,
-            Symbol,
             BigInt,
+            Symbol,
+
+            CustomFormattedObject,
 
             GlobalObject,
             Private,
@@ -1349,7 +1357,41 @@ pub const ZigConsoleClient = struct {
             }
 
             const Result = struct {
-                tag: Tag,
+                tag: union(Tag) {
+                    StringPossiblyFormatted: void,
+                    String: void,
+                    Undefined: void,
+                    Double: void,
+                    Integer: void,
+                    Null: void,
+                    Boolean: void,
+                    Array: void,
+                    Object: void,
+                    Function: void,
+                    Class: void,
+                    Error: void,
+                    TypedArray: void,
+                    Map: void,
+                    Set: void,
+                    BigInt: void,
+                    Symbol: void,
+                    GlobalObject: void,
+                    Private: void,
+                    Promise: void,
+                    JSON: void,
+                    toJSON: void,
+                    NativeCode: void,
+                    ArrayBuffer: void,
+                    JSX: void,
+                    Event: void,
+                    Getter: void,
+
+                    CustomFormattedObject: CustomFormattedObject,
+
+                    pub fn isPrimitive(this: @This()) bool {
+                        return @as(Tag, this).isPrimitive();
+                    }
+                },
                 cell: JSValue.JSType = JSValue.JSType.Cell,
             };
 
@@ -1364,37 +1406,37 @@ pub const ZigConsoleClient = struct {
             pub fn getAdvanced(value: JSValue, globalThis: *JSGlobalObject, opts: Options) Result {
                 switch (@intFromEnum(value)) {
                     0, 0xa => return Result{
-                        .tag = .Undefined,
+                        .tag = .{ .Undefined = {} },
                     },
                     0x2 => return Result{
-                        .tag = .Null,
+                        .tag = .{ .Null = {} },
                     },
                     else => {},
                 }
 
                 if (value.isInt32()) {
                     return .{
-                        .tag = .Integer,
+                        .tag = .{ .Integer = {} },
                     };
                 } else if (value.isNumber()) {
                     return .{
-                        .tag = .Double,
+                        .tag = .{ .Double = {} },
                     };
                 } else if (value.isBoolean()) {
                     return .{
-                        .tag = .Boolean,
+                        .tag = .{ .Boolean = {} },
                     };
                 }
 
                 if (!value.isCell())
                     return .{
-                        .tag = .NativeCode,
+                        .tag = .{ .NativeCode = {} },
                     };
 
                 const js_type = value.jsType();
 
                 if (js_type.isHidden()) return .{
-                    .tag = .NativeCode,
+                    .tag = .{ .NativeCode = {} },
                     .cell = js_type,
                 };
 
@@ -1402,21 +1444,38 @@ pub const ZigConsoleClient = struct {
                 // if we call JSObjectGetPrivate, it can segfault
                 if (js_type == .Cell) {
                     return .{
-                        .tag = .NativeCode,
+                        .tag = .{ .NativeCode = {} },
                         .cell = js_type,
                     };
                 }
 
+                if (js_type.canGet()) {
+                    // Attempt to get custom formatter
+                    if (value.fastGet(globalThis, .inspectCustom)) |callback_value| {
+                        if (callback_value.isCallable(globalThis.vm())) {
+                            return .{
+                                .tag = .{
+                                    .CustomFormattedObject = .{
+                                        .function = callback_value,
+                                        .this = value,
+                                    },
+                                },
+                                .cell = js_type,
+                            };
+                        }
+                    }
+                }
+
                 if (js_type == .DOMWrapper) {
                     return .{
-                        .tag = .Private,
+                        .tag = .{ .Private = {} },
                         .cell = js_type,
                     };
                 }
 
                 if (CAPI.JSObjectGetPrivate(value.asObjectRef()) != null)
                     return .{
-                        .tag = .Private,
+                        .tag = .{ .Private = {} },
                         .cell = js_type,
                     };
 
@@ -1425,7 +1484,7 @@ pub const ZigConsoleClient = struct {
                 if (js_type != .Object and value.isCallable(globalThis.vm())) {
                     if (value.isClass(globalThis)) {
                         return .{
-                            .tag = .Class,
+                            .tag = .{ .Class = {} },
                             .cell = js_type,
                         };
                     }
@@ -1448,7 +1507,7 @@ pub const ZigConsoleClient = struct {
                         );
                     }
                     return .{
-                        .tag = .GlobalObject,
+                        .tag = .{ .GlobalObject = {} },
                         .cell = js_type,
                     };
                 }
@@ -1460,7 +1519,7 @@ pub const ZigConsoleClient = struct {
                         var react_fragment = ZigString.init("react.fragment");
 
                         if (JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &reactElement), globalThis) or JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &react_fragment), globalThis)) {
-                            return .{ .tag = .JSX, .cell = js_type };
+                            return .{ .tag = .{ .JSX = {} }, .cell = js_type };
                         }
                     }
                 }
@@ -1676,11 +1735,10 @@ pub const ZigConsoleClient = struct {
             comptime Writer: type,
             writer: Writer,
         ) !void {
-            const indent = @min(this.indent, 32);
             var buf = [_]u8{' '} ** 64;
-            var total_remain: usize = indent;
+            var total_remain: u32 = this.indent;
             while (total_remain > 0) {
-                const written = @min(32, total_remain);
+                const written: u8 = @min(32, total_remain);
                 try writer.writeAll(buf[0 .. written * 2]);
                 total_remain -|= written;
             }
@@ -1899,6 +1957,15 @@ pub const ZigConsoleClient = struct {
             };
         }
 
+        extern fn JSC__JSValue__callCustomInspectFunction(
+            *JSC.JSGlobalObject,
+            JSValue,
+            JSValue,
+            depth: u32,
+            max_depth: u32,
+            colors: bool,
+        ) JSValue;
+
         pub fn printAs(
             this: *ZigConsoleClient.Formatter,
             comptime Format: ZigConsoleClient.Formatter.Tag,
@@ -2067,6 +2134,24 @@ pub const ZigConsoleClient = struct {
                 .Null => {
                     this.addForNewLine(4);
                     writer.print(comptime Output.prettyFmt("<r><yellow>null<r>", enable_ansi_colors), .{});
+                },
+                .CustomFormattedObject => {
+                    // Call custom inspect function. Will return the error if there is one
+                    // we'll need to pass the callback through to the "this" value in here
+                    const result = JSC__JSValue__callCustomInspectFunction(
+                        this.globalThis,
+                        this.custom_formatted_object.function,
+                        this.custom_formatted_object.this,
+                        this.max_depth - this.depth,
+                        this.max_depth,
+                        enable_ansi_colors,
+                    );
+                    // Strings are printed directly, otherwise we recurse. It is possible to end up in an infinite loop.
+                    if (result.isString()) {
+                        writer.print("{}", .{result.toBunString(this.globalThis)});
+                    } else {
+                        this.format(ZigConsoleClient.Formatter.Tag.get(result, this.globalThis), Writer, writer_, result, this.globalThis, enable_ansi_colors);
+                    }
                 },
                 .Symbol => {
                     const description = value.getDescription(this.globalThis);
@@ -2973,7 +3058,7 @@ pub const ZigConsoleClient = struct {
             // comptime var so we have to repeat it here. The rationale there is
             // it _should_ limit the stack usage because each version of the
             // function will be relatively small
-            return switch (result.tag) {
+            switch (result.tag) {
                 .StringPossiblyFormatted => this.printAs(.StringPossiblyFormatted, Writer, writer, value, result.cell, enable_ansi_colors),
                 .String => this.printAs(.String, Writer, writer, value, result.cell, enable_ansi_colors),
                 .Undefined => this.printAs(.Undefined, Writer, writer, value, result.cell, enable_ansi_colors),
@@ -3005,7 +3090,12 @@ pub const ZigConsoleClient = struct {
                 .JSX => this.printAs(.JSX, Writer, writer, value, result.cell, enable_ansi_colors),
                 .Event => this.printAs(.Event, Writer, writer, value, result.cell, enable_ansi_colors),
                 .Getter => this.printAs(.Getter, Writer, writer, value, result.cell, enable_ansi_colors),
-            };
+
+                .CustomFormattedObject => |callback| {
+                    this.custom_formatted_object = callback;
+                    this.printAs(.CustomFormattedObject, Writer, writer, value, result.cell, enable_ansi_colors);
+                },
+            }
         }
     };
 

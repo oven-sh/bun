@@ -4240,6 +4240,7 @@ pub const JSValue = enum(JSValueReprInt) {
         data,
         toString,
         redirect,
+        inspectCustom,
     };
 
     // intended to be more lightweight than ZigString

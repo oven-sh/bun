@@ -94,12 +94,12 @@ it("utf16 property name", () => {
 });
 
 it("latin1", () => {
-  expect(Bun.inspect("English")).toBe("English");
-  expect(Bun.inspect("Français")).toBe("Français");
-  expect(Bun.inspect("Ελληνική")).toBe("Ελληνική");
-  expect(Bun.inspect("日本語")).toBe("日本語");
-  expect(Bun.inspect("Emoji😎")).toBe("Emoji😎");
-  expect(Bun.inspect("Français / Ελληνική")).toBe("Français / Ελληνική");
+  expect(Bun.inspect("English")).toBe('"English"');
+  expect(Bun.inspect("Français")).toBe('"Français"');
+  expect(Bun.inspect("Ελληνική")).toBe('"Ελληνική"');
+  expect(Bun.inspect("日本語")).toBe('"日本語"');
+  expect(Bun.inspect("Emoji😎")).toBe('"Emoji😎"');
+  expect(Bun.inspect("Français / Ελληνική")).toBe('"Français / Ελληνική"');
 });
 
 it("Request object", () => {
@@ -213,12 +213,11 @@ it("jsx with fragment", () => {
 
 it("inspect", () => {
   expect(Bun.inspect(new TypeError("what")).includes("TypeError: what")).toBe(true);
-  expect("hi").toBe("hi");
+  expect(Bun.inspect("hi")).toBe('"hi"');
   expect(Bun.inspect(1)).toBe("1");
   expect(Bun.inspect(NaN)).toBe("NaN");
   expect(Bun.inspect(Infinity)).toBe("Infinity");
   expect(Bun.inspect(-Infinity)).toBe("-Infinity");
-  expect(Bun.inspect(1, "hi")).toBe("1 hi");
   expect(Bun.inspect([])).toBe("[]");
   expect(Bun.inspect({})).toBe("{}");
   expect(Bun.inspect({ hello: 1 })).toBe("{\n  hello: 1\n}");
@@ -229,7 +228,7 @@ it("inspect", () => {
   while (str.length < 4096) {
     str += "123";
   }
-  expect(Bun.inspect(str)).toBe(str);
+  expect(Bun.inspect(str)).toBe('"' + str + '"');
   // expect(Bun.inspect(new Headers())).toBe("Headers (0 KB) {}");
   expect(Bun.inspect(new Response()).length > 0).toBe(true);
   // expect(
@@ -277,18 +276,15 @@ describe("latin1 supplemental", () => {
     it(`latin1 (input) \"${input}\" ${output}`, () => {
       expect(Bun.inspect(input)).toBe(output);
     });
-    it(`latin1 (output) \"${output}\"`, () => {
-      expect(Bun.inspect(output)).toBe(output);
-    });
-    // this test is failing:
-    // it(`latin1 (property key)`, () => {
-    //   expect(
-    //     Object.keys({
-    //       ä: 1,
-    //     })[0].codePointAt(0),
-    //   ).toBe(228);
-    // });
   }
+  // this test is failing:
+  it(`latin1 (property key)`, () => {
+    expect(
+      Object.keys({
+        ä: 1,
+      })[0].codePointAt(0),
+    ).toBe(228);
+  });
 });
 
 const fixture = [
@@ -329,7 +325,9 @@ describe("crash testing", () => {
   for (let input of fixture) {
     it(`inspecting "${input.toString().slice(0, 20).replaceAll("\n", "\\n")}" doesn't crash`, async () => {
       try {
+        console.log("asked" + input.toString().slice(0, 20).replaceAll("\n", "\\n"));
         Bun.inspect(await input());
+        console.log("who");
       } catch (e) {
         // this can throw its fine
       }
@@ -338,7 +336,7 @@ describe("crash testing", () => {
 });
 
 it("possibly formatted emojis log", () => {
-  expect(Bun.inspect("✔", "hey")).toBe("✔ hey");
+  expect(Bun.inspect("✔")).toBe('"✔"');
 });
 
 it("new Date(..)", () => {
@@ -352,8 +350,8 @@ it("new Date(..)", () => {
   }
   expect(Bun.inspect(new Date("March 27, 2023 " + hour + ":54:00"))).toBe("2023-03-27T09:54:00.000Z");
   expect(Bun.inspect(new Date("2023-03-27T" + hour + ":54:00"))).toBe("2023-03-27T09:54:00.000Z");
-  expect(Bun.inspect(new Date(2023, 02, 27, -offset))).toBe("2023-03-27T00:00:00.000Z");
-  expect(Bun.inspect(new Date(2023, 02, 27, 09 - offset, 54, 0))).toBe("2023-03-27T09:54:00.000Z");
+  expect(Bun.inspect(new Date(2023, 2, 27, -offset))).toBe("2023-03-27T00:00:00.000Z");
+  expect(Bun.inspect(new Date(2023, 2, 27, 9 - offset, 54, 0))).toBe("2023-03-27T09:54:00.000Z");
 
   expect(Bun.inspect(new Date("1679911059000"))).toBe("Invalid Date");
   expect(Bun.inspect(new Date("hello world"))).toBe("Invalid Date");

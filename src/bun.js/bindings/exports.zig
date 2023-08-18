@@ -2147,7 +2147,7 @@ pub const ZigConsoleClient = struct {
                     );
                     // Strings are printed directly, otherwise we recurse. It is possible to end up in an infinite loop.
                     if (result.isString()) {
-                        writer.print("{s}", .{result.toBunString(this.globalThis)});
+                        writer.print("{}", .{result.toBunString(this.globalThis)});
                     } else {
                         this.format(ZigConsoleClient.Formatter.Tag.get(result, this.globalThis), Writer, writer_, result, this.globalThis, enable_ansi_colors);
                     }

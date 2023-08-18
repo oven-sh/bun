@@ -9,6 +9,7 @@
     "prettier": "^2.4.1",
     "react": "next",
     "react-dom": "next",
+    "source-map-js": "^1.0.2",
     "typescript": "^5.0.2"
   },
   "private": true,

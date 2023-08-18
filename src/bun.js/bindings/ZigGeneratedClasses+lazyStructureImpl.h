@@ -29,11 +29,29 @@ void GlobalObject::initGeneratedLazyClasses() {
                  init.setStructure(WebCore::JSComment::createStructure(init.vm, init.global, init.prototype));
                  
               });
+    m_JSCrypto.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSCrypto::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSCrypto::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSCrypto::createConstructor(init.vm, init.global, init.prototype));
+              });
     m_JSCryptoHasher.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSCryptoHasher::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
                  init.setStructure(WebCore::JSCryptoHasher::createStructure(init.vm, init.global, init.prototype));
                  init.setConstructor(WebCore::JSCryptoHasher::createConstructor(init.vm, init.global, init.prototype));
+              });
+    m_JSDebugModeHTTPSServer.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSDebugModeHTTPSServer::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSDebugModeHTTPSServer::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
+    m_JSDebugModeHTTPServer.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSDebugModeHTTPServer::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSDebugModeHTTPServer::createStructure(init.vm, init.global, init.prototype));
+                 
               });
     m_JSDirent.initLater(
               [](LazyClassStructure::Initializer& init) {
@@ -95,6 +113,12 @@ void GlobalObject::initGeneratedLazyClasses() {
                  init.setStructure(WebCore::JSExpectStringMatching::createStructure(init.vm, init.global, init.prototype));
                  
               });
+    m_JSFFI.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSFFI::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSFFI::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
     m_JSFSWatcher.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSFSWatcher::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
@@ -112,6 +136,18 @@ void GlobalObject::initGeneratedLazyClasses() {
                  init.setPrototype(WebCore::JSHTMLRewriter::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
                  init.setStructure(WebCore::JSHTMLRewriter::createStructure(init.vm, init.global, init.prototype));
                  init.setConstructor(WebCore::JSHTMLRewriter::createConstructor(init.vm, init.global, init.prototype));
+              });
+    m_JSHTTPSServer.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSHTTPSServer::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSHTTPSServer::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
+    m_JSHTTPServer.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSHTTPServer::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSHTTPServer::createStructure(init.vm, init.global, init.prototype));
+                 
               });
     m_JSListener.initLater(
               [](LazyClassStructure::Initializer& init) {
@@ -260,7 +296,10 @@ void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& 
       thisObject->m_JSBuildArtifact.visit(visitor);  visitor.append(thisObject->m_JSBuildArtifactSetterValue);
       thisObject->m_JSBuildMessage.visit(visitor);  visitor.append(thisObject->m_JSBuildMessageSetterValue);
       thisObject->m_JSComment.visit(visitor);  visitor.append(thisObject->m_JSCommentSetterValue);
+      thisObject->m_JSCrypto.visit(visitor);  visitor.append(thisObject->m_JSCryptoSetterValue);
       thisObject->m_JSCryptoHasher.visit(visitor);  visitor.append(thisObject->m_JSCryptoHasherSetterValue);
+      thisObject->m_JSDebugModeHTTPSServer.visit(visitor);  visitor.append(thisObject->m_JSDebugModeHTTPSServerSetterValue);
+      thisObject->m_JSDebugModeHTTPServer.visit(visitor);  visitor.append(thisObject->m_JSDebugModeHTTPServerSetterValue);
       thisObject->m_JSDirent.visit(visitor);  visitor.append(thisObject->m_JSDirentSetterValue);
       thisObject->m_JSDocEnd.visit(visitor);  visitor.append(thisObject->m_JSDocEndSetterValue);
       thisObject->m_JSDocType.visit(visitor);  visitor.append(thisObject->m_JSDocTypeSetterValue);
@@ -271,9 +310,12 @@ void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& 
       thisObject->m_JSExpectAnything.visit(visitor);  visitor.append(thisObject->m_JSExpectAnythingSetterValue);
       thisObject->m_JSExpectStringContaining.visit(visitor);  visitor.append(thisObject->m_JSExpectStringContainingSetterValue);
       thisObject->m_JSExpectStringMatching.visit(visitor);  visitor.append(thisObject->m_JSExpectStringMatchingSetterValue);
+      thisObject->m_JSFFI.visit(visitor);  visitor.append(thisObject->m_JSFFISetterValue);
       thisObject->m_JSFSWatcher.visit(visitor);  visitor.append(thisObject->m_JSFSWatcherSetterValue);
       thisObject->m_JSFileSystemRouter.visit(visitor);  visitor.append(thisObject->m_JSFileSystemRouterSetterValue);
       thisObject->m_JSHTMLRewriter.visit(visitor);  visitor.append(thisObject->m_JSHTMLRewriterSetterValue);
+      thisObject->m_JSHTTPSServer.visit(visitor);  visitor.append(thisObject->m_JSHTTPSServerSetterValue);
+      thisObject->m_JSHTTPServer.visit(visitor);  visitor.append(thisObject->m_JSHTTPServerSetterValue);
       thisObject->m_JSListener.visit(visitor);  visitor.append(thisObject->m_JSListenerSetterValue);
       thisObject->m_JSMD4.visit(visitor);  visitor.append(thisObject->m_JSMD4SetterValue);
       thisObject->m_JSMD5.visit(visitor);  visitor.append(thisObject->m_JSMD5SetterValue);

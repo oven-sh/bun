@@ -251,6 +251,12 @@ export default [
       removed: {
         getter: "getRemoved",
       },
+      selfClosing: {
+        getter: "getSelfClosing",
+      },
+      canHaveContent: {
+        getter: "getCanHaveContent",
+      },
       namespaceURI: {
         getter: "getNamespaceURI",
         cache: true,

@@ -950,7 +950,7 @@ pub const TextChunk = struct {
 
     pub usingnamespace JSC.Codegen.JSTextChunk;
 
-    fn contentHandler(this: *TextChunk, comptime Callback: (fn (*LOLHTML.TextChunk, []const u8, bool) LOLHTML.Error!void), callFrame: *JSC.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
+    fn contentHandler(this: *TextChunk, comptime Callback: (fn (*LOLHTML.TextChunk, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
         if (this.text_chunk == null)
             return JSC.JSValue.jsUndefined();
         var content_slice = content.toSlice(bun.default_allocator);
@@ -962,7 +962,7 @@ pub const TextChunk = struct {
             contentOptions != null and contentOptions.?.html,
         ) catch return throwLOLHTMLError(globalObject);
 
-        return callFrame.this();
+        return thisObject;
     }
 
     pub fn before_(
@@ -972,7 +972,7 @@ pub const TextChunk = struct {
         content: ZigString,
         contentOptions: ?ContentOptions,
     ) JSValue {
-        return this.contentHandler(LOLHTML.TextChunk.before, callFrame, globalObject, content, contentOptions);
+        return this.contentHandler(LOLHTML.TextChunk.before, callFrame.this(), globalObject, content, contentOptions);
     }
 
     pub fn after_(
@@ -982,7 +982,7 @@ pub const TextChunk = struct {
         content: ZigString,
         contentOptions: ?ContentOptions,
     ) JSValue {
-        return this.contentHandler(LOLHTML.TextChunk.after, callFrame, globalObject, content, contentOptions);
+        return this.contentHandler(LOLHTML.TextChunk.after, callFrame.this(), globalObject, content, contentOptions);
     }
 
     pub fn replace_(
@@ -992,7 +992,7 @@ pub const TextChunk = struct {
         content: ZigString,
         contentOptions: ?ContentOptions,
     ) JSValue {
-        return this.contentHandler(LOLHTML.TextChunk.replace, callFrame, globalObject, content, contentOptions);
+        return this.contentHandler(LOLHTML.TextChunk.replace, callFrame.this(), globalObject, content, contentOptions);
     }
 
     pub const before = JSC.wrapInstanceMethod(TextChunk, "before_", false);
@@ -1093,7 +1093,7 @@ pub const DocEnd = struct {
 
     pub usingnamespace JSC.Codegen.JSDocEnd;
 
-    fn contentHandler(this: *DocEnd, comptime Callback: (fn (*LOLHTML.DocEnd, []const u8, bool) LOLHTML.Error!void), callFrame: *JSC.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
+    fn contentHandler(this: *DocEnd, comptime Callback: (fn (*LOLHTML.DocEnd, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
         if (this.doc_end == null)
             return JSValue.jsNull();
 
@@ -1106,7 +1106,7 @@ pub const DocEnd = struct {
             contentOptions != null and contentOptions.?.html,
         ) catch return throwLOLHTMLError(globalObject);
 
-        return callFrame.this();
+        return thisObject;
     }
 
     pub fn append_(
@@ -1116,7 +1116,7 @@ pub const DocEnd = struct {
         content: ZigString,
         contentOptions: ?ContentOptions,
     ) JSValue {
-        return this.contentHandler(LOLHTML.DocEnd.append, callFrame, globalObject, content, contentOptions);
+        return this.contentHandler(LOLHTML.DocEnd.append, callFrame.this(), globalObject, content, contentOptions);
     }
 
     pub const append = JSC.wrapInstanceMethod(DocEnd, "append_", false);
@@ -1132,7 +1132,7 @@ pub const Comment = struct {
 
     pub usingnamespace JSC.Codegen.JSComment;
 
-    fn contentHandler(this: *Comment, comptime Callback: (fn (*LOLHTML.Comment, []const u8, bool) LOLHTML.Error!void), callFrame: *JSC.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
+    fn contentHandler(this: *Comment, comptime Callback: (fn (*LOLHTML.Comment, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
         if (this.comment == null)
             return JSValue.jsNull();
         var content_slice = content.toSlice(bun.default_allocator);
@@ -1144,7 +1144,7 @@ pub const Comment = struct {
             contentOptions != null and contentOptions.?.html,
         ) catch return throwLOLHTMLError(globalObject);
 
-        return callFrame.this();
+        return thisObject;
     }
 
     pub fn before_(
@@ -1154,7 +1154,7 @@ pub const Comment = struct {
         content: ZigString,
         contentOptions: ?ContentOptions,
     ) JSValue {
-        return this.contentHandler(LOLHTML.Comment.before, callFrame, globalObject, content, contentOptions);
+        return this.contentHandler(LOLHTML.Comment.before, callFrame.this(), globalObject, content, contentOptions);
     }
 
     pub fn after_(
@@ -1164,7 +1164,7 @@ pub const Comment = struct {
         content: ZigString,
         contentOptions: ?ContentOptions,
     ) JSValue {
-        return this.contentHandler(LOLHTML.Comment.after, callFrame, globalObject, content, contentOptions);
+        return this.contentHandler(LOLHTML.Comment.after, callFrame.this(), globalObject, content, contentOptions);
     }
 
     pub fn replace_(
@@ -1174,7 +1174,7 @@ pub const Comment = struct {
         content: ZigString,
         contentOptions: ?ContentOptions,
     ) JSValue {
-        return this.contentHandler(LOLHTML.Comment.replace, callFrame, globalObject, content, contentOptions);
+        return this.contentHandler(LOLHTML.Comment.replace, callFrame.this(), globalObject, content, contentOptions);
     }
 
     pub const before = JSC.wrapInstanceMethod(Comment, "before_", false);
@@ -1253,7 +1253,7 @@ pub const EndTag = struct {
 
     pub usingnamespace JSC.Codegen.JSEndTag;
 
-    fn contentHandler(this: *EndTag, comptime Callback: (fn (*LOLHTML.EndTag, []const u8, bool) LOLHTML.Error!void), callFrame: *JSC.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
+    fn contentHandler(this: *EndTag, comptime Callback: (fn (*LOLHTML.EndTag, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
         if (this.end_tag == null)
             return JSValue.jsNull();
 
@@ -1266,7 +1266,7 @@ pub const EndTag = struct {
             contentOptions != null and contentOptions.?.html,
         ) catch return throwLOLHTMLError(globalObject);
 
-        return callFrame.this();
+        return thisObject;
     }
 
     pub fn before_(
@@ -1276,7 +1276,7 @@ pub const EndTag = struct {
         content: ZigString,
         contentOptions: ?ContentOptions,
     ) JSValue {
-        return this.contentHandler(LOLHTML.EndTag.before, callFrame, globalObject, content, contentOptions);
+        return this.contentHandler(LOLHTML.EndTag.before, callFrame.this(), globalObject, content, contentOptions);
     }
 
     pub fn after_(
@@ -1286,7 +1286,7 @@ pub const EndTag = struct {
         content: ZigString,
         contentOptions: ?ContentOptions,
     ) JSValue {
-        return this.contentHandler(LOLHTML.EndTag.after, callFrame, globalObject, content, contentOptions);
+        return this.contentHandler(LOLHTML.EndTag.after, callFrame.this(), globalObject, content, contentOptions);
     }
 
     pub fn replace_(
@@ -1296,7 +1296,7 @@ pub const EndTag = struct {
         content: ZigString,
         contentOptions: ?ContentOptions,
     ) JSValue {
-        return this.contentHandler(LOLHTML.EndTag.replace, callFrame, globalObject, content, contentOptions);
+        return this.contentHandler(LOLHTML.EndTag.replace, callFrame.this(), globalObject, content, contentOptions);
     }
 
     pub const before = JSC.wrapInstanceMethod(EndTag, "before_", false);
@@ -1481,7 +1481,7 @@ pub const Element = struct {
     pub const setAttribute = JSC.wrapInstanceMethod(Element, "setAttribute_", false);
     pub const removeAttribute = JSC.wrapInstanceMethod(Element, "removeAttribute_", false);
 
-    fn contentHandler(this: *Element, comptime Callback: (fn (*LOLHTML.Element, []const u8, bool) LOLHTML.Error!void), callFrame: *JSC.CallFrame, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
+    fn contentHandler(this: *Element, comptime Callback: (fn (*LOLHTML.Element, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
         if (this.element == null)
             return JSValue.jsUndefined();
 
@@ -1494,7 +1494,7 @@ pub const Element = struct {
             contentOptions != null and contentOptions.?.html,
         ) catch return throwLOLHTMLError(globalObject);
 
-        return callFrame.this();
+        return thisObject;
     }
 
     ///  Inserts content before the element.
@@ -1502,7 +1502,7 @@ pub const Element = struct {
         return contentHandler(
             this,
             LOLHTML.Element.before,
-            callFrame,
+            callFrame.this(),
             globalObject,
             content,
             contentOptions,
@@ -1514,7 +1514,7 @@ pub const Element = struct {
         return contentHandler(
             this,
             LOLHTML.Element.after,
-            callFrame,
+            callFrame.this(),
             globalObject,
             content,
             contentOptions,
@@ -1526,7 +1526,7 @@ pub const Element = struct {
         return contentHandler(
             this,
             LOLHTML.Element.prepend,
-            callFrame,
+            callFrame.this(),
             globalObject,
             content,
             contentOptions,
@@ -1538,7 +1538,7 @@ pub const Element = struct {
         return contentHandler(
             this,
             LOLHTML.Element.append,
-            callFrame,
+            callFrame.this(),
             globalObject,
             content,
             contentOptions,
@@ -1550,7 +1550,7 @@ pub const Element = struct {
         return contentHandler(
             this,
             LOLHTML.Element.replace,
-            callFrame,
+            callFrame.this(),
             globalObject,
             content,
             contentOptions,
@@ -1562,7 +1562,7 @@ pub const Element = struct {
         return contentHandler(
             this,
             LOLHTML.Element.setInnerContent,
-            callFrame,
+            callFrame.this(),
             globalObject,
             content,
             contentOptions,
@@ -1634,6 +1634,24 @@ pub const Element = struct {
         if (this.element == null)
             return JSValue.jsUndefined();
         return JSValue.jsBoolean(this.element.?.isRemoved());
+    }
+
+    pub fn getSelfClosing(
+        this: *Element,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        if (this.element == null)
+            return JSValue.jsUndefined();
+        return JSValue.jsBoolean(this.element.?.isSelfClosing());
+    }
+
+    pub fn getCanHaveContent(
+        this: *Element,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        if (this.element == null)
+            return JSValue.jsUndefined();
+        return JSValue.jsBoolean(this.element.?.canHaveContent());
     }
 
     pub fn getNamespaceURI(

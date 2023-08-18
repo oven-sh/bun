@@ -1193,6 +1193,9 @@ pub const JSElement = struct {
 
         if (@TypeOf(Element.before) != CallbackType)
             @compileLog("Expected Element.before to be a callback but received " ++ @typeName(@TypeOf(Element.before)));
+        if (@TypeOf(Element.getCanHaveContent) != GetterType)
+            @compileLog("Expected Element.getCanHaveContent to be a getter");
+
         if (@TypeOf(Element.getAttribute) != CallbackType)
             @compileLog("Expected Element.getAttribute to be a callback but received " ++ @typeName(@TypeOf(Element.getAttribute)));
         if (@TypeOf(Element.hasAttribute) != CallbackType)
@@ -1215,6 +1218,9 @@ pub const JSElement = struct {
 
         if (@TypeOf(Element.replace) != CallbackType)
             @compileLog("Expected Element.replace to be a callback but received " ++ @typeName(@TypeOf(Element.replace)));
+        if (@TypeOf(Element.getSelfClosing) != GetterType)
+            @compileLog("Expected Element.getSelfClosing to be a getter");
+
         if (@TypeOf(Element.setAttribute) != CallbackType)
             @compileLog("Expected Element.setAttribute to be a callback but received " ++ @typeName(@TypeOf(Element.setAttribute)));
         if (@TypeOf(Element.setInnerContent) != CallbackType)
@@ -1231,8 +1237,10 @@ pub const JSElement = struct {
             @export(Element.finalize, .{ .name = "ElementClass__finalize" });
             @export(Element.getAttribute, .{ .name = "ElementPrototype__getAttribute" });
             @export(Element.getAttributes, .{ .name = "ElementPrototype__getAttributes" });
+            @export(Element.getCanHaveContent, .{ .name = "ElementPrototype__getCanHaveContent" });
             @export(Element.getNamespaceURI, .{ .name = "ElementPrototype__getNamespaceURI" });
             @export(Element.getRemoved, .{ .name = "ElementPrototype__getRemoved" });
+            @export(Element.getSelfClosing, .{ .name = "ElementPrototype__getSelfClosing" });
             @export(Element.getTagName, .{ .name = "ElementPrototype__getTagName" });
             @export(Element.hasAttribute, .{ .name = "ElementPrototype__hasAttribute" });
             @export(Element.onEndTag, .{ .name = "ElementPrototype__onEndTag" });

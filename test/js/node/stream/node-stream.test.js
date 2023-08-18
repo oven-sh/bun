@@ -4,6 +4,7 @@ import { createReadStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { writeFileSync } from "node:fs";
 import tty from "tty";
+import { openpty } from "./create-pty.js";
 
 describe("Readable", () => {
   it("should be able to be created without _construct method defined", done => {
@@ -196,11 +197,13 @@ describe("PassThrough", () => {
 
 describe("TTY", () => {
   it("ReadStream stdin", () => {
-    const rs = new tty.ReadStream(0);
-    const rs1 = tty.ReadStream(0);
+    const { parent_fd, child_fd } = openpty();
+    const rs = new tty.ReadStream(parent_fd);
+    const rs1 = tty.ReadStream(child_fd);
     expect(rs1 instanceof tty.ReadStream).toBe(true);
     expect(rs instanceof tty.ReadStream).toBe(true);
     expect(tty.isatty(rs.fd)).toBe(true);
+    expect(tty.isatty(rs1.fd)).toBe(true);
     expect(rs.isRaw).toBe(false);
     expect(rs.isTTY).toBe(true);
     expect(rs.setRawMode).toBeInstanceOf(Function);
@@ -218,14 +221,18 @@ describe("TTY", () => {
   });
 
   it("WriteStream stdout", () => {
-    const ws = new tty.WriteStream(1);
-    const ws1 = tty.WriteStream(1);
+    const { child_fd, parent_fd } = openpty();
+    const ws = new tty.WriteStream(child_fd);
+    const ws1 = tty.WriteStream(parent_fd);
     expect(ws1 instanceof tty.WriteStream).toBe(true);
     expect(ws instanceof tty.WriteStream).toBe(true);
     expect(tty.isatty(ws.fd)).toBe(true);
     expect(ws.isTTY).toBe(true);
-    expect(ws.columns).toBeGreaterThan(0);
-    expect(ws.rows).toBeGreaterThan(0);
+
+    // pseudo terminal, not the best test because cols and rows can be 0
+    expect(ws.columns).toBeGreaterThanOrEqual(0);
+    expect(ws.rows).toBeGreaterThanOrEqual(0);
+
     expect(ws.getColorDepth()).toBeGreaterThanOrEqual(0);
     expect(ws.hasColors(2)).toBe(true);
   });

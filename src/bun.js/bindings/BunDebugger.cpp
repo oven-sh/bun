@@ -33,10 +33,11 @@ enum class ConnectionStatus : int32_t {
 class BunInspectorConnection : public Inspector::FrontendChannel {
 
 public:
-    BunInspectorConnection(ScriptExecutionContext& scriptExecutionContext, JSC::JSGlobalObject* globalObject)
+    BunInspectorConnection(ScriptExecutionContext& scriptExecutionContext, JSC::JSGlobalObject* globalObject, bool shouldRefEventLoop)
         : Inspector::FrontendChannel()
         , globalObject(globalObject)
         , scriptExecutionContextIdentifier(scriptExecutionContext.identifier())
+        , unrefOnDisconnect(shouldRefEventLoop)
     {
     }
 
@@ -46,11 +47,7 @@ public:
 
     static BunInspectorConnection* create(ScriptExecutionContext& scriptExecutionContext, JSC::JSGlobalObject* globalObject, bool shouldRefEventLoop)
     {
-        auto* inspector = new BunInspectorConnection(scriptExecutionContext, globalObject);
-        if (shouldRefEventLoop) {
-            Bun__eventLoop__incrementRefConcurrently(Bun::clientData(scriptExecutionContext.vm())->bunVM, 1);
-        }
-        inspector->unrefOnDisconnect = shouldRefEventLoop;
+        return new BunInspectorConnection(scriptExecutionContext, globalObject, shouldRefEventLoop);
     }
 
     ConnectionType connectionType() const override
@@ -78,6 +75,9 @@ public:
             case ConnectionStatus::Pending: {
                 connection->status = ConnectionStatus::Connected;
                 auto* globalObject = context.jsGlobalObject();
+                if (connection->unrefOnDisconnect) {
+                    Bun__eventLoop__incrementRefConcurrently(reinterpret_cast<Zig::GlobalObject*>(globalObject)->bunVM(), 1);
+                }
                 globalObject->setInspectable(true);
 
                 auto& inspector = globalObject->inspectorDebuggable();
@@ -125,7 +125,7 @@ public:
             connection->inspector().disconnect(*connection);
             if (connection->unrefOnDisconnect) {
                 connection->unrefOnDisconnect = false;
-                Bun__eventLoop__incrementRefConcurrently(Bun::clientData(context.vm())->bunVM, -1);
+                Bun__eventLoop__incrementRefConcurrently(reinterpret_cast<Zig::GlobalObject*>(context.jsGlobalObject())->bunVM(), 1);
             }
         });
     }
@@ -441,8 +441,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
     auto& vm = globalObject->vm();
     auto connection = BunInspectorConnection::create(
         *targetContext,
-        targetContext->jsGlobalObject(),
-        shouldRef);
+        targetContext->jsGlobalObject(), shouldRef);
 
     {
         WTF::LockHolder locker(inspectorConnectionsLock);
@@ -468,7 +467,7 @@ extern "C" BunString Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGloba
 
     arguments.append(jsNumber(static_cast<unsigned int>(scriptId)));
     arguments.append(Bun::toJS(debuggerGlobalObject, *portOrPathString));
-    arguments.append(JSFunction::create(vm, debuggerGlobalObject, 1, String(), jsFunctionCreateConnection, ImplementationVisibility::Public));
+    arguments.append(JSFunction::create(vm, debuggerGlobalObject, 3, String(), jsFunctionCreateConnection, ImplementationVisibility::Public));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 1, String("send"_s), jsFunctionSend, ImplementationVisibility::Public));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 0, String("disconnect"_s), jsFunctionDisconnect, ImplementationVisibility::Public));
 

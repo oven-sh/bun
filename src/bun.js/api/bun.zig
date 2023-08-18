@@ -1,3 +1,11 @@
+/// How to add a new function or property to the Bun global
+///
+/// - Add a callback or property to the below struct
+/// - @export it in the appropriate place
+/// - Update "@begin bunObjectTable" in BunObject.cpp
+/// - Update "BunObject+exports.h"
+/// - Run "make dev"
+///
 pub const BunObject = struct {
     // --- Callbacks ---
     pub const DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump = dump_mimalloc;
@@ -41,7 +49,7 @@ pub const BunObject = struct {
 
     // --- Getters ---
     pub const CryptoHasher = Crypto.CryptoHasher.getter;
-    pub const FFI = Bun.FFI.getter;
+    pub const FFI = Bun.FFIObject.getter;
     pub const FileSystemRouter = Bun.getFileSystemRouter;
     pub const MD4 = Crypto.MD4.getter;
     pub const MD5 = Crypto.MD5.getter;
@@ -201,11 +209,11 @@ const FetchEvent = WebCore.FetchEvent;
 const js = @import("root").bun.JSC.C;
 const JSC = @import("root").bun.JSC;
 const JSError = @import("../base.zig").JSError;
-const d = @import("../base.zig").d;
+
 const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
 const getAllocator = @import("../base.zig").getAllocator;
 const JSValue = @import("root").bun.JSC.JSValue;
-const NewClass = @import("../base.zig").NewClass;
+
 const Microtask = @import("root").bun.JSC.Microtask;
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
@@ -917,7 +925,10 @@ comptime {
 }
 
 pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    const arguments = callframe.arguments(2).slice();
+    const arguments = callframe.arguments(1).slice();
+    if (arguments.len < 1) {
+        return bun.String.empty.toJSConst(globalObject);
+    }
     var public_path_temp_str: [bun.MAX_PATH_BYTES]u8 = undefined;
 
     const to = arguments[0].toSlice(globalObject, bun.default_allocator);
@@ -3775,65 +3786,79 @@ pub const Timer = struct {
     }
 };
 
-pub const FFI = struct {
-    pub const Class = NewClass(
-        void,
-        .{ .name = "FFI", .has_dom_calls = true },
-        .{
-            .viewSource = .{
-                .rfn = &JSC.wrapWithHasContainer(JSC.FFI, "print", false, false, true),
-            },
-            .dlopen = .{
-                .rfn = &JSC.wrapWithHasContainer(JSC.FFI, "open", false, false, true),
-            },
-            .callback = .{
-                .rfn = &JSC.wrapWithHasContainer(JSC.FFI, "callback", false, false, false),
-            },
-            .linkSymbols = .{
-                .rfn = &JSC.wrapWithHasContainer(JSC.FFI, "linkSymbols", false, false, false),
-            },
-            .ptr = JSC.DOMCall("FFI", @This(), "ptr", f64, JSC.DOMEffect.forRead(.TypedArrayProperties)),
+pub const FFIObject = struct {
+    const fields = .{
+        .viewSource = JSC.wrapStaticMethod(
+            JSC.FFIObject,
+            "print",
+            false,
+        ),
+        .dlopen = JSC.wrapStaticMethod(JSC.FFIObject, "open", false),
+        .callback = JSC.wrapStaticMethod(JSC.FFIObject, "callback", false),
+        .linkSymbols = JSC.wrapStaticMethod(JSC.FFIObject, "linkSymbols", false),
+        .toBuffer = JSC.wrapStaticMethod(@This(), "toBuffer", false),
+        .toArrayBuffer = JSC.wrapStaticMethod(@This(), "toArrayBuffer", false),
+        .closeCallback = JSC.wrapStaticMethod(JSC.FFIObject, "closeCallback", false),
+        .CString = JSC.wrapStaticMethod(JSC.FFIObject, "newCString", false),
+    };
 
-            .toBuffer = .{
-                .rfn = &JSC.wrapWithHasContainer(@This(), "toBuffer", false, false, true),
+    pub fn newCString(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, lengthValue: ?JSValue) JSC.JSValue {
+        switch (FFIObject.getPtrSlice(globalThis, value, byteOffset, lengthValue)) {
+            .err => |err| {
+                return err;
             },
-            .toArrayBuffer = .{
-                .rfn = &JSC.wrapWithHasContainer(@This(), "toArrayBuffer", false, false, true),
+            .slice => |slice| {
+                return WebCore.Encoder.toString(slice.ptr, slice.len, globalThis, .utf8);
             },
-            .closeCallback = .{
-                .rfn = &JSC.wrapWithHasContainer(JSC.FFI, "closeCallback", false, false, false),
-            },
-        },
-        .{
-            .read = .{
-                .get = FFI.Reader.getter,
-            },
-            .CString = .{
-                .get = UnsafeCString.getter,
-            },
-        },
-    );
+        }
+    }
+
+    pub const dom_call = JSC.DOMCall("FFI", @This(), "ptr", f64, JSC.DOMEffect.forRead(.TypedArrayProperties));
+    pub const DOMCalls = .{
+        dom_call,
+    };
+
+    pub fn toJS(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        const object = JSC.JSValue.createEmptyObject(globalObject, comptime std.meta.fieldNames(@TypeOf(fields)).len + 2);
+        inline for (comptime std.meta.fieldNames(@TypeOf(fields))) |field| {
+            object.put(
+                globalObject,
+                comptime ZigString.static(field),
+                JSC.createCallback(globalObject, comptime ZigString.static(field), 1, comptime @field(fields, field)),
+            );
+        }
+
+        dom_call.put(globalObject, object);
+        object.put(globalObject, ZigString.static("read"), Reader.toJS(globalObject));
+
+        return object;
+    }
 
     pub const Reader = struct {
-        pub const Class = NewClass(
-            void,
-            .{ .name = "FFI", .has_dom_calls = true },
-            .{
-                .u8 = JSC.DOMCall("Reader", @This(), "u8", i32, JSC.DOMEffect.forRead(.World)),
-                .u16 = JSC.DOMCall("Reader", @This(), "u16", i32, JSC.DOMEffect.forRead(.World)),
-                .u32 = JSC.DOMCall("Reader", @This(), "u32", i32, JSC.DOMEffect.forRead(.World)),
-                .ptr = JSC.DOMCall("Reader", @This(), "ptr", i52, JSC.DOMEffect.forRead(.World)),
-                .i8 = JSC.DOMCall("Reader", @This(), "i8", i32, JSC.DOMEffect.forRead(.World)),
-                .i16 = JSC.DOMCall("Reader", @This(), "i16", i32, JSC.DOMEffect.forRead(.World)),
-                .i32 = JSC.DOMCall("Reader", @This(), "i32", i32, JSC.DOMEffect.forRead(.World)),
-                .i64 = JSC.DOMCall("Reader", @This(), "i64", i64, JSC.DOMEffect.forRead(.World)),
-                .u64 = JSC.DOMCall("Reader", @This(), "u64", u64, JSC.DOMEffect.forRead(.World)),
-                .intptr = JSC.DOMCall("Reader", @This(), "intptr", i52, JSC.DOMEffect.forRead(.World)),
-                .f32 = JSC.DOMCall("Reader", @This(), "f32", f64, JSC.DOMEffect.forRead(.World)),
-                .f64 = JSC.DOMCall("Reader", @This(), "f64", f64, JSC.DOMEffect.forRead(.World)),
-            },
-            .{},
-        );
+        pub const DOMCalls = .{
+            .u8 = JSC.DOMCall("Reader", @This(), "u8", i32, JSC.DOMEffect.forRead(.World)),
+            .u16 = JSC.DOMCall("Reader", @This(), "u16", i32, JSC.DOMEffect.forRead(.World)),
+            .u32 = JSC.DOMCall("Reader", @This(), "u32", i32, JSC.DOMEffect.forRead(.World)),
+            .ptr = JSC.DOMCall("Reader", @This(), "ptr", i52, JSC.DOMEffect.forRead(.World)),
+            .i8 = JSC.DOMCall("Reader", @This(), "i8", i32, JSC.DOMEffect.forRead(.World)),
+            .i16 = JSC.DOMCall("Reader", @This(), "i16", i32, JSC.DOMEffect.forRead(.World)),
+            .i32 = JSC.DOMCall("Reader", @This(), "i32", i32, JSC.DOMEffect.forRead(.World)),
+            .i64 = JSC.DOMCall("Reader", @This(), "i64", i64, JSC.DOMEffect.forRead(.World)),
+            .u64 = JSC.DOMCall("Reader", @This(), "u64", u64, JSC.DOMEffect.forRead(.World)),
+            .intptr = JSC.DOMCall("Reader", @This(), "intptr", i52, JSC.DOMEffect.forRead(.World)),
+            .f32 = JSC.DOMCall("Reader", @This(), "f32", f64, JSC.DOMEffect.forRead(.World)),
+            .f64 = JSC.DOMCall("Reader", @This(), "f64", f64, JSC.DOMEffect.forRead(.World)),
+        };
+
+        pub fn toJS(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+            const obj = JSC.JSValue.createEmptyObject(globalThis, std.meta.fieldNames(Reader.DOMCalls).len);
+
+            inline for (comptime std.meta.fieldNames(Reader.DOMCalls)) |field| {
+                @field(Reader.DOMCalls, field).put(globalThis, obj);
+            }
+
+            return obj;
+        }
 
         pub fn @"u8"(
             _: *JSGlobalObject,
@@ -4071,28 +4096,6 @@ pub const FFI = struct {
             const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
             const value = @as(*align(1) i64, @ptrFromInt(addr)).*;
             return JSValue.fromInt64NoTruncate(global, value);
-        }
-
-        pub fn getter(
-            _: void,
-            ctx: js.JSContextRef,
-            _: js.JSValueRef,
-            _: js.JSStringRef,
-            _: js.ExceptionRef,
-        ) js.JSValueRef {
-            var existing = ctx.ptr().getCachedObject(ZigString.static("FFIReader"));
-            if (existing.isEmpty()) {
-                var prototype = JSC.C.JSObjectMake(ctx, FFI.Reader.Class.get().?[0], null);
-                var base = JSC.C.JSObjectMake(ctx, null, null);
-                JSC.C.JSObjectSetPrototype(ctx, base, prototype);
-                FFI.Reader.Class.putDOMCalls(ctx, JSC.JSValue.c(base));
-                return ctx.ptr().putCachedObject(
-                    ZigString.static("FFIReader"),
-                    JSValue.fromRef(base),
-                ).asObjectRef();
-            }
-
-            return existing.asObjectRef();
         }
     };
 
@@ -4373,58 +4376,7 @@ pub const FFI = struct {
         globalObject: *JSC.JSGlobalObject,
         _: *JSC.JSObject,
     ) callconv(.C) JSC.JSValue {
-        var prototype = JSC.C.JSObjectMake(globalObject, FFI.Class.get().?[0], null);
-        var base = JSC.C.JSObjectMake(globalObject, null, null);
-        JSC.C.JSObjectSetPrototype(globalObject, base, prototype);
-        FFI.Class.putDOMCalls(globalObject, JSC.JSValue.c(base));
-
-        return base.?.value();
-    }
-};
-
-pub const UnsafeCString = struct {
-    pub fn constructor(
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        len: usize,
-        args: [*c]const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) callconv(.C) js.JSObjectRef {
-        if (len == 0) {
-            JSC.throwInvalidArguments("Expected a ptr", .{}, ctx, exception);
-            return null;
-        }
-
-        return newCString(ctx.ptr(), JSC.JSValue.fromRef(args[0]), if (len > 1) JSC.JSValue.fromRef(args[1]) else null, if (len > 2) JSC.JSValue.fromRef(args[2]) else null).asObjectRef();
-    }
-
-    pub fn newCString(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, lengthValue: ?JSValue) JSC.JSValue {
-        switch (FFI.getPtrSlice(globalThis, value, byteOffset, lengthValue)) {
-            .err => |err| {
-                return err;
-            },
-            .slice => |slice| {
-                return WebCore.Encoder.toString(slice.ptr, slice.len, globalThis, .utf8);
-            },
-        }
-    }
-
-    pub fn getter(
-        _: void,
-        ctx: js.JSContextRef,
-        _: js.JSValueRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        var existing = ctx.ptr().getCachedObject(ZigString.static("UnsafeCString"));
-        if (existing.isEmpty()) {
-            return ctx.ptr().putCachedObject(
-                ZigString.static("UnsafeCString"),
-                JSValue.fromRef(JSC.C.JSObjectMakeConstructor(ctx, null, constructor)),
-            ).asObjectRef();
-        }
-
-        return existing.asObjectRef();
+        return FFIObject.toJS(globalObject);
     }
 };
 

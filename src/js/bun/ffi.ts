@@ -113,8 +113,8 @@ class CString extends String {
     super(
       ptr
         ? typeof byteLength === "number" && Number.isSafeInteger(byteLength)
-          ? new BunCString(ptr, byteOffset || 0, byteLength)
-          : new BunCString(ptr)
+          ? BunCString(ptr, byteOffset || 0, byteLength)
+          : BunCString(ptr)
         : "",
     );
     this.ptr = typeof ptr === "number" ? ptr : 0;

@@ -37,7 +37,7 @@ $ bunx create-astro
   next   Liftoff confirmed. Explore your project!
 
          Enter your project directory using cd ./fumbling-field
-         Run bun run dev to start the dev server. CTRL+C to stop.
+         Run `bun run dev` to start the dev server. CTRL+C to stop.
          Add frameworks like react or tailwind using astro add.
 
          Stuck? Join us at https://astro.build/chat
@@ -70,3 +70,7 @@ $ bunx --bun astro dev
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result. Astro will hot-reload your app as you edit your source files.
 
 {% image src="https://github.com/vitejs/vite/assets/3084745/bb1d5063-32f4-4598-b33e-50b44a1c4e8a" caption="An Astro starter app running on Bun" %}
+
+---
+
+Refer to the [Astro docs](https://docs.astro.build/en/getting-started/) for complete documentation.

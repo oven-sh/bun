@@ -2543,7 +2543,6 @@ pub fn setTimeout(this: *HTTPClient, socket: anytype, amount: c_uint) void {
 pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     if (this.state.stage != .done and this.state.stage != .fail) {
         const is_done = this.state.isDone();
-        defer if (is_done) this.state.reset();
 
         if (this.aborted != null and is_done) {
             _ = socket_async_http_tracker.swapRemove(this.async_http_id);
@@ -2569,7 +2568,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
             } else if (!socket.isClosed()) {
                 socket.close(0, null);
             }
-
+            this.state.reset();
             this.state.response_stage = .done;
             this.state.request_stage = .done;
             this.state.stage = .done;
@@ -2918,7 +2917,12 @@ pub fn handleResponseMetadata(
         switch (hashHeaderName(header.name)) {
             hashHeaderConst("Content-Length") => {
                 const content_length = std.fmt.parseInt(@TypeOf(this.state.body_size), header.value, 10) catch 0;
-                this.state.body_size = content_length;
+                if (this.method.hasBody()) {
+                    this.state.body_size = content_length;
+                } else {
+                    // ignore body size for HEAD requests
+                    this.state.body_size = 0;
+                }
             },
             hashHeaderConst("Content-Encoding") => {
                 if (strings.eqlComptime(header.value, "gzip")) {

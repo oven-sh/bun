@@ -68,7 +68,7 @@ pub const ResolvedSourceTag = enum(u32) {
     @"vercel_fetch" = 568,
     @"ws" = 569,
     // Native modules run through a different system using ESM registry.
-    bun = 1024,
+    @"bun" = 1024,
     @"bun:jsc" = 1025,
     @"node:buffer" = 1026,
     @"node:constants" = 1027,

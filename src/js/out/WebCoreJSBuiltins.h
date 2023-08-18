@@ -1128,103 +1128,6 @@ inline void ReadableByteStreamControllerBuiltinsWrapper::exportNames()
     WEBCORE_FOREACH_READABLEBYTESTREAMCONTROLLER_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
 #undef EXPORT_FUNCTION_NAME
 }
-/* UtilInspect.ts */
-// getStylizeWithColor
-#define WEBCORE_BUILTIN_UTILINSPECT_GETSTYLIZEWITHCOLOR 1
-extern const char* const s_utilInspectGetStylizeWithColorCode;
-extern const int s_utilInspectGetStylizeWithColorCodeLength;
-extern const JSC::ConstructAbility s_utilInspectGetStylizeWithColorCodeConstructAbility;
-extern const JSC::ConstructorKind s_utilInspectGetStylizeWithColorCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_utilInspectGetStylizeWithColorCodeImplementationVisibility;
-
-// stylizeWithNoColor
-#define WEBCORE_BUILTIN_UTILINSPECT_STYLIZEWITHNOCOLOR 1
-extern const char* const s_utilInspectStylizeWithNoColorCode;
-extern const int s_utilInspectStylizeWithNoColorCodeLength;
-extern const JSC::ConstructAbility s_utilInspectStylizeWithNoColorCodeConstructAbility;
-extern const JSC::ConstructorKind s_utilInspectStylizeWithNoColorCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_utilInspectStylizeWithNoColorCodeImplementationVisibility;
-
-#define WEBCORE_FOREACH_UTILINSPECT_BUILTIN_DATA(macro) \
-    macro(getStylizeWithColor, utilInspectGetStylizeWithColor, 1) \
-    macro(stylizeWithNoColor, utilInspectStylizeWithNoColor, 1) \
-
-#define WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(macro) \
-    macro(utilInspectGetStylizeWithColorCode, getStylizeWithColor, ASCIILiteral(), s_utilInspectGetStylizeWithColorCodeLength) \
-    macro(utilInspectStylizeWithNoColorCode, stylizeWithNoColor, ASCIILiteral(), s_utilInspectStylizeWithNoColorCodeLength) \
-
-#define WEBCORE_FOREACH_UTILINSPECT_BUILTIN_FUNCTION_NAME(macro) \
-    macro(getStylizeWithColor) \
-    macro(stylizeWithNoColor) \
-
-#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
-    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
-
-WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
-#undef DECLARE_BUILTIN_GENERATOR
-
-class UtilInspectBuiltinsWrapper : private JSC::WeakHandleOwner {
-public:
-    explicit UtilInspectBuiltinsWrapper(JSC::VM& vm)
-        : m_vm(vm)
-        WEBCORE_FOREACH_UTILINSPECT_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
-        WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
-#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
-    {
-    }
-
-#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-    JSC::UnlinkedFunctionExecutable* name##Executable(); \
-    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
-    WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
-#undef EXPOSE_BUILTIN_EXECUTABLES
-
-    WEBCORE_FOREACH_UTILINSPECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
-
-    void exportNames();
-
-private:
-    JSC::VM& m_vm;
-
-    WEBCORE_FOREACH_UTILINSPECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
-
-#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
-    JSC::SourceCode m_##name##Source;\
-    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
-    WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
-#undef DECLARE_BUILTIN_SOURCE_MEMBERS
-
-};
-
-#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* UtilInspectBuiltinsWrapper::name##Executable() \
-{\
-    if (!m_##name##Executable) {\
-        JSC::Identifier executableName = functionName##PublicName();\
-        if (overriddenName)\
-            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
-    }\
-    return m_##name##Executable.get();\
-}
-WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
-#undef DEFINE_BUILTIN_EXECUTABLES
-
-inline void UtilInspectBuiltinsWrapper::exportNames()
-{
-#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-    WEBCORE_FOREACH_UTILINSPECT_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
-#undef EXPORT_FUNCTION_NAME
-}
-/* ConsoleObject.ts */
-// asyncIterator
-#define WEBCORE_BUILTIN_CONSOLEOBJECT_ASYNCITERATOR 1
-extern const char* const s_consoleObjectAsyncIteratorCode;
-extern const int s_consoleObjectAsyncIteratorCodeLength;
-extern const JSC::ConstructAbility s_consoleObjectAsyncIteratorCodeConstructAbility;
-extern const JSC::ConstructorKind s_consoleObjectAsyncIteratorCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_consoleObjectAsyncIteratorCodeImplementationVisibility;
 /* ReadableStreamDefaultReader.ts */
 // initializeReadableStreamDefaultReader
 #define WEBCORE_BUILTIN_READABLESTREAMDEFAULTREADER_INITIALIZEREADABLESTREAMDEFAULTREADER 1
@@ -3071,7 +2974,96 @@ inline void ReadableByteStreamInternalsBuiltinFunctions::visit(Visitor& visitor)
 
 template void ReadableByteStreamInternalsBuiltinFunctions::visit(JSC::AbstractSlotVisitor&);
 template void ReadableByteStreamInternalsBuiltinFunctions::visit(JSC::SlotVisitor&);
-    /* JSBufferPrototype.ts */
+    /* UtilInspect.ts */
+// getStylizeWithColor
+#define WEBCORE_BUILTIN_UTILINSPECT_GETSTYLIZEWITHCOLOR 1
+extern const char* const s_utilInspectGetStylizeWithColorCode;
+extern const int s_utilInspectGetStylizeWithColorCodeLength;
+extern const JSC::ConstructAbility s_utilInspectGetStylizeWithColorCodeConstructAbility;
+extern const JSC::ConstructorKind s_utilInspectGetStylizeWithColorCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_utilInspectGetStylizeWithColorCodeImplementationVisibility;
+
+// stylizeWithNoColor
+#define WEBCORE_BUILTIN_UTILINSPECT_STYLIZEWITHNOCOLOR 1
+extern const char* const s_utilInspectStylizeWithNoColorCode;
+extern const int s_utilInspectStylizeWithNoColorCodeLength;
+extern const JSC::ConstructAbility s_utilInspectStylizeWithNoColorCodeConstructAbility;
+extern const JSC::ConstructorKind s_utilInspectStylizeWithNoColorCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_utilInspectStylizeWithNoColorCodeImplementationVisibility;
+
+#define WEBCORE_FOREACH_UTILINSPECT_BUILTIN_DATA(macro) \
+    macro(getStylizeWithColor, utilInspectGetStylizeWithColor, 1) \
+    macro(stylizeWithNoColor, utilInspectStylizeWithNoColor, 1) \
+
+#define WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(macro) \
+    macro(utilInspectGetStylizeWithColorCode, getStylizeWithColor, ASCIILiteral(), s_utilInspectGetStylizeWithColorCodeLength) \
+    macro(utilInspectStylizeWithNoColorCode, stylizeWithNoColor, ASCIILiteral(), s_utilInspectStylizeWithNoColorCodeLength) \
+
+#define WEBCORE_FOREACH_UTILINSPECT_BUILTIN_FUNCTION_NAME(macro) \
+    macro(getStylizeWithColor) \
+    macro(stylizeWithNoColor) \
+
+#define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
+    JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
+
+WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+#undef DECLARE_BUILTIN_GENERATOR
+
+class UtilInspectBuiltinsWrapper : private JSC::WeakHandleOwner {
+public:
+    explicit UtilInspectBuiltinsWrapper(JSC::VM& vm)
+        : m_vm(vm)
+        WEBCORE_FOREACH_UTILINSPECT_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
+        WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+#undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
+    {
+    }
+
+#define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+    JSC::UnlinkedFunctionExecutable* name##Executable(); \
+    const JSC::SourceCode& name##Source() const { return m_##name##Source; }
+    WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+#undef EXPOSE_BUILTIN_EXECUTABLES
+
+    WEBCORE_FOREACH_UTILINSPECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+
+    void exportNames();
+
+private:
+    JSC::VM& m_vm;
+
+    WEBCORE_FOREACH_UTILINSPECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+
+#define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
+    JSC::SourceCode m_##name##Source;\
+    JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
+    WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+#undef DECLARE_BUILTIN_SOURCE_MEMBERS
+
+};
+
+#define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
+inline JSC::UnlinkedFunctionExecutable* UtilInspectBuiltinsWrapper::name##Executable() \
+{\
+    if (!m_##name##Executable) {\
+        JSC::Identifier executableName = functionName##PublicName();\
+        if (overriddenName)\
+            executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+    }\
+    return m_##name##Executable.get();\
+}
+WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+#undef DEFINE_BUILTIN_EXECUTABLES
+
+inline void UtilInspectBuiltinsWrapper::exportNames()
+{
+#define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
+    WEBCORE_FOREACH_UTILINSPECT_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+#undef EXPORT_FUNCTION_NAME
+}
+/* JSBufferPrototype.ts */
 // setBigUint64
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_SETBIGUINT64 1
 extern const char* const s_jsBufferPrototypeSetBigUint64Code;
@@ -5705,26 +5697,6 @@ class JSBuiltinFunctions {
 public:
     explicit JSBuiltinFunctions(JSC::VM& vm)
         : m_vm(vm)
-        , m_bundlerPluginBuiltins(m_vm)
-        , m_byteLengthQueuingStrategyBuiltins(m_vm)
-        , m_writableStreamInternalsBuiltins(m_vm)
-        , m_transformStreamInternalsBuiltins(m_vm)
-        , m_processObjectInternalsBuiltins(m_vm)
-        , m_transformStreamBuiltins(m_vm)
-        , m_moduleBuiltins(m_vm)
-        , m_jsBufferPrototypeBuiltins(m_vm)
-        , m_readableByteStreamControllerBuiltins(m_vm)
-        , m_utilInspectBuiltins(m_vm)
-        , m_consoleObjectBuiltins(m_vm)
-        , m_readableStreamInternalsBuiltins(m_vm)
-        , m_transformStreamDefaultControllerBuiltins(m_vm)
-        , m_readableStreamBYOBReaderBuiltins(m_vm)
-        , m_jsBufferConstructorBuiltins(m_vm)
-        , m_readableStreamDefaultReaderBuiltins(m_vm)
-        , m_streamInternalsBuiltins(m_vm)
-        , m_importMetaObjectBuiltins(m_vm)
-        , m_countQueuingStrategyBuiltins(m_vm)
-        , m_readableStreamBYOBRequestBuiltins(m_vm)
         , m_writableStreamDefaultWriterBuiltins(m_vm)
         , m_consoleObjectBuiltins(m_vm)
         , m_transformStreamInternalsBuiltins(m_vm)
@@ -5740,6 +5712,7 @@ public:
         , m_transformStreamBuiltins(m_vm)
         , m_readableStreamInternalsBuiltins(m_vm)
         , m_readableByteStreamInternalsBuiltins(m_vm)
+        , m_utilInspectBuiltins(m_vm)
         , m_jsBufferPrototypeBuiltins(m_vm)
         , m_readableStreamBuiltins(m_vm)
         , m_bundlerPluginBuiltins(m_vm)
@@ -5758,26 +5731,6 @@ public:
         m_streamInternalsBuiltins.exportNames();
         m_writableStreamInternalsBuiltins.exportNames();
     }
-    BundlerPluginBuiltinsWrapper& bundlerPluginBuiltins() { return m_bundlerPluginBuiltins; }
-    ByteLengthQueuingStrategyBuiltinsWrapper& byteLengthQueuingStrategyBuiltins() { return m_byteLengthQueuingStrategyBuiltins; }
-    WritableStreamInternalsBuiltinsWrapper& writableStreamInternalsBuiltins() { return m_writableStreamInternalsBuiltins; }
-    TransformStreamInternalsBuiltinsWrapper& transformStreamInternalsBuiltins() { return m_transformStreamInternalsBuiltins; }
-    ProcessObjectInternalsBuiltinsWrapper& processObjectInternalsBuiltins() { return m_processObjectInternalsBuiltins; }
-    TransformStreamBuiltinsWrapper& transformStreamBuiltins() { return m_transformStreamBuiltins; }
-    ModuleBuiltinsWrapper& moduleBuiltins() { return m_moduleBuiltins; }
-    JSBufferPrototypeBuiltinsWrapper& jsBufferPrototypeBuiltins() { return m_jsBufferPrototypeBuiltins; }
-    ReadableByteStreamControllerBuiltinsWrapper& readableByteStreamControllerBuiltins() { return m_readableByteStreamControllerBuiltins; }
-    UtilInspectBuiltinsWrapper& utilInspectBuiltins() { return m_utilInspectBuiltins; }
-    ConsoleObjectBuiltinsWrapper& consoleObjectBuiltins() { return m_consoleObjectBuiltins; }
-    ReadableStreamInternalsBuiltinsWrapper& readableStreamInternalsBuiltins() { return m_readableStreamInternalsBuiltins; }
-    TransformStreamDefaultControllerBuiltinsWrapper& transformStreamDefaultControllerBuiltins() { return m_transformStreamDefaultControllerBuiltins; }
-    ReadableStreamBYOBReaderBuiltinsWrapper& readableStreamBYOBReaderBuiltins() { return m_readableStreamBYOBReaderBuiltins; }
-    JSBufferConstructorBuiltinsWrapper& jsBufferConstructorBuiltins() { return m_jsBufferConstructorBuiltins; }
-    ReadableStreamDefaultReaderBuiltinsWrapper& readableStreamDefaultReaderBuiltins() { return m_readableStreamDefaultReaderBuiltins; }
-    StreamInternalsBuiltinsWrapper& streamInternalsBuiltins() { return m_streamInternalsBuiltins; }
-    ImportMetaObjectBuiltinsWrapper& importMetaObjectBuiltins() { return m_importMetaObjectBuiltins; }
-    CountQueuingStrategyBuiltinsWrapper& countQueuingStrategyBuiltins() { return m_countQueuingStrategyBuiltins; }
-    ReadableStreamBYOBRequestBuiltinsWrapper& readableStreamBYOBRequestBuiltins() { return m_readableStreamBYOBRequestBuiltins; }
     WritableStreamDefaultWriterBuiltinsWrapper& writableStreamDefaultWriterBuiltins() { return m_writableStreamDefaultWriterBuiltins; }
     ConsoleObjectBuiltinsWrapper& consoleObjectBuiltins() { return m_consoleObjectBuiltins; }
     TransformStreamInternalsBuiltinsWrapper& transformStreamInternalsBuiltins() { return m_transformStreamInternalsBuiltins; }
@@ -5793,6 +5746,7 @@ public:
     TransformStreamBuiltinsWrapper& transformStreamBuiltins() { return m_transformStreamBuiltins; }
     ReadableStreamInternalsBuiltinsWrapper& readableStreamInternalsBuiltins() { return m_readableStreamInternalsBuiltins; }
     ReadableByteStreamInternalsBuiltinsWrapper& readableByteStreamInternalsBuiltins() { return m_readableByteStreamInternalsBuiltins; }
+    UtilInspectBuiltinsWrapper& utilInspectBuiltins() { return m_utilInspectBuiltins; }
     JSBufferPrototypeBuiltinsWrapper& jsBufferPrototypeBuiltins() { return m_jsBufferPrototypeBuiltins; }
     ReadableStreamBuiltinsWrapper& readableStreamBuiltins() { return m_readableStreamBuiltins; }
     BundlerPluginBuiltinsWrapper& bundlerPluginBuiltins() { return m_bundlerPluginBuiltins; }
@@ -5806,26 +5760,6 @@ public:
 
 private:
     JSC::VM& m_vm;
-    BundlerPluginBuiltinsWrapper m_bundlerPluginBuiltins;
-    ByteLengthQueuingStrategyBuiltinsWrapper m_byteLengthQueuingStrategyBuiltins;
-    WritableStreamInternalsBuiltinsWrapper m_writableStreamInternalsBuiltins;
-    TransformStreamInternalsBuiltinsWrapper m_transformStreamInternalsBuiltins;
-    ProcessObjectInternalsBuiltinsWrapper m_processObjectInternalsBuiltins;
-    TransformStreamBuiltinsWrapper m_transformStreamBuiltins;
-    ModuleBuiltinsWrapper m_moduleBuiltins;
-    JSBufferPrototypeBuiltinsWrapper m_jsBufferPrototypeBuiltins;
-    ReadableByteStreamControllerBuiltinsWrapper m_readableByteStreamControllerBuiltins;
-    UtilInspectBuiltinsWrapper m_utilInspectBuiltins;
-    ConsoleObjectBuiltinsWrapper m_consoleObjectBuiltins;
-    ReadableStreamInternalsBuiltinsWrapper m_readableStreamInternalsBuiltins;
-    TransformStreamDefaultControllerBuiltinsWrapper m_transformStreamDefaultControllerBuiltins;
-    ReadableStreamBYOBReaderBuiltinsWrapper m_readableStreamBYOBReaderBuiltins;
-    JSBufferConstructorBuiltinsWrapper m_jsBufferConstructorBuiltins;
-    ReadableStreamDefaultReaderBuiltinsWrapper m_readableStreamDefaultReaderBuiltins;
-    StreamInternalsBuiltinsWrapper m_streamInternalsBuiltins;
-    ImportMetaObjectBuiltinsWrapper m_importMetaObjectBuiltins;
-    CountQueuingStrategyBuiltinsWrapper m_countQueuingStrategyBuiltins;
-    ReadableStreamBYOBRequestBuiltinsWrapper m_readableStreamBYOBRequestBuiltins;
     WritableStreamDefaultWriterBuiltinsWrapper m_writableStreamDefaultWriterBuiltins;
     ConsoleObjectBuiltinsWrapper m_consoleObjectBuiltins;
     TransformStreamInternalsBuiltinsWrapper m_transformStreamInternalsBuiltins;
@@ -5841,6 +5775,7 @@ private:
     TransformStreamBuiltinsWrapper m_transformStreamBuiltins;
     ReadableStreamInternalsBuiltinsWrapper m_readableStreamInternalsBuiltins;
     ReadableByteStreamInternalsBuiltinsWrapper m_readableByteStreamInternalsBuiltins;
+    UtilInspectBuiltinsWrapper m_utilInspectBuiltins;
     JSBufferPrototypeBuiltinsWrapper m_jsBufferPrototypeBuiltins;
     ReadableStreamBuiltinsWrapper m_readableStreamBuiltins;
     BundlerPluginBuiltinsWrapper m_bundlerPluginBuiltins;

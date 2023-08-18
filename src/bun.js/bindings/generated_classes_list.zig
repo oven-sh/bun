@@ -46,4 +46,10 @@ pub const Classes = struct {
     pub const BuildMessage = JSC.BuildMessage;
     pub const ResolveMessage = JSC.ResolveMessage;
     pub const FSWatcher = JSC.Node.FSWatcher;
+    pub const Server = JSC.API.Server;
+    pub const SSLServer = JSC.API.SSLServer;
+    pub const DebugServer = JSC.API.DebugServer;
+    pub const DebugSSLServer = JSC.API.DebugSSLServer;
+    pub const Crypto = JSC.WebCore.Crypto;
+    pub const FFI = JSC.FFI;
 };

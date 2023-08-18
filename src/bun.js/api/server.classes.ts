@@ -5,21 +5,56 @@ function generate(name) {
     name,
     proto: {
       fetch: {
-        fn: "fetch",
+        fn: "doFetch",
         length: 1,
       },
+      upgrade: {
+        fn: "doUpgrade",
+        length: 1,
+      },
+      publish: {
+        fn: "doPublish",
+        length: 3,
+      },
+      reload: {
+        fn: "doReload",
+        length: 2,
+      },
+      stop: {
+        fn: "doStop",
+        length: 1,
+      },
+      port: {
+        getter: "getPort",
+      },
+      pendingRequests: {
+        getter: "getPendingRequests",
+      },
+      pendingWebSockets: {
+        getter: "getPendingWebSockets",
+      },
+      hostname: {
+        getter: "getHostname",
+        cache: true,
+      },
+      protocol: {
+        getter: "getProtocol",
+      },
+      development: {
+        getter: "getDevelopment",
+      },
     },
-    values: ["callback"],
     klass: {},
     finalize: true,
     construct: true,
+    noConstructor: true,
   });
 }
 export default [
-  // generate(`HTTPServer`),
-  // generate(`DebugModeHTTPServer`),
-  // generate(`HTTPSServer`),
-  // generate(`DebugModeHTTPSServer`),
+  generate(`HTTPServer`),
+  generate(`DebugModeHTTPServer`),
+  generate(`HTTPSServer`),
+  generate(`DebugModeHTTPSServer`),
 
   define({
     name: "ServerWebSocket",

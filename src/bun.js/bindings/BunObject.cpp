@@ -18,6 +18,8 @@
 #include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "headers.h"
+#include "BunObject.lut.h"
+#include "JavaScriptCore/JSObject.h"
 
 namespace Bun {
 
@@ -544,96 +546,217 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     return JSC::JSValue::encode(jsNumber(view.hash()));
 }
 
-static const struct HashTableValue JSBunObjectTableValues[]
-    = {
-          { "ArrayBufferSink"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__ArrayBufferSink__property } },
-          { "CryptoHasher"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__CryptoHasher__property } },
-          { "DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump_functionType, 1 } },
-          { "FFI"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__FFI__property } },
-          { "FileSystemRouter"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__FileSystemRouter__property } },
-          { "MD4"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__MD4__property } },
-          { "MD5"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__MD5__property } },
-          { "SHA1"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__SHA1__property } },
-          { "SHA224"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__SHA224__property } },
-          { "SHA256"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__SHA256__property } },
-          { "SHA384"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__SHA384__property } },
-          { "SHA512"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__SHA512__property } },
-          { "SHA512_256"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__SHA512_256__property } },
-          { "TOML"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__TOML__property } },
-          { "Transpiler"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__Transpiler__property } },
-          { "_Os"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject___Os_functionType, 1 } },
-          { "_Path"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject___Path_functionType, 1 } },
-          { "allocUnsafe"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__allocUnsafe_functionType, 1 } },
-          { "argv"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__argv__property } },
-          { "assetPrefix"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__assetPrefix__property } },
-          { "build"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__build_functionType, 1 } },
-          { "concatArrayBuffers"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionConcatTypedArraysType, 1 } },
-          { "connect"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__connect_functionType, 1 } },
-          { "cwd"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__cwd__property } },
-          { "deepEquals"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionBunDeepEqualsType, 2 } },
-          { "deepMatch"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionBunDeepMatchType, 2 } },
-          { "escapeHTML"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionBunEscapeHTMLType, 2 } },
-          { "deflateSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__deflateSync_functionType, 1 } },
-          { "dns"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, constructDNSObject } },
-          { "enableANSIColors"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__enableANSIColors__property } },
-          { "env"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, constructEnvObject } },
-          { "fetch"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, &Bun__fetchType, 1 } },
-          { "file"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__file_functionType, 1 } },
-          { "fileURLToPath"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionFileURLToPathType, 1 } },
-          { "fs"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__fs_functionType, 1 } },
-          { "gc"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__gc_functionType, 1 } },
-          { "generateHeapSnapshot"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__generateHeapSnapshot_functionType, 1 } },
-          { "getImportedStyles"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__getImportedStyles_functionType, 1 } },
-          { "getPublicPath"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__getPublicPath_functionType, 1 } },
-          { "getRouteFiles"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__getRouteFiles_functionType, 1 } },
-          { "getRouteNames"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__getRouteNames_functionType, 1 } },
-          { "gunzipSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__gunzipSync_functionType, 1 } },
-          { "gzipSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__gzipSync_functionType, 1 } },
-          { "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__hash__property } },
-          { "indexOfLine"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__indexOfLine_functionType, 1 } },
-          { "inflateSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__inflateSync_functionType, 1 } },
-          { "inspect"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__inspect_functionType, 1 } },
-          { "isMainThread"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, constructIsMainThread } },
-          { "isMainThread"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, constructIsMainThread } },
-          { "jest"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__jest_functionType, 1 } },
-          { "listen"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__listen_functionType, 1 } },
-          { "main"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__main__property } },
-          { "match"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__match_functionType, 1 } },
-          { "mmap"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__mmap_functionType, 1 } },
-          { "nanoseconds"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionBunNanoseconds, 0 } },
-          { "openInEditor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__openInEditor_functionType, 1 } },
-          { "origin"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__origin__property } },
-          { "password"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, constructPasswordObject } },
-          { "pathToFileURL"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionPathToFileURLType, 1 } },
-          { "plugin"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, constructIsMainThread } },
-          { "readableStreamToArray"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin, JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamReadableStreamToArrayCodeGenerator, 1 } },
-          { "readableStreamToArrayBuffer"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin, JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamReadableStreamToArrayBufferCodeGenerator, 1 } },
-          { "readableStreamToBlob"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin, JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamReadableStreamToBlobCodeGenerator, 1 } },
-          { "readableStreamToFormData"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin, JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamReadableStreamToFormDataCodeGenerator, 1 } },
-          { "readableStreamToJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin, JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamReadableStreamToJSONCodeGenerator, 1 } },
-          { "readableStreamToText"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin, JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamReadableStreamToTextCodeGenerator, 1 } },
-          { "registerMacro"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__registerMacro_functionType, 1 } },
-          { "resolve"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__resolve_functionType, 1 } },
-          { "resolveSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__resolveSync_functionType, 1 } },
-          { "routesDir"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__routesDir__property } },
-          { "serve"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__serve_functionType, 1 } },
-          { "sha"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__sha_functionType, 1 } },
-          { "shrink"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__shrink_functionType, 1 } },
-          { "sleep"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionBunSleepType, 1 } },
-          { "sleepSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__sleepSync_functionType, 1 } },
-          { "spawn"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__spawn_functionType, 1 } },
-          { "spawnSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__spawnSync_functionType, 1 } },
-          { "stderr"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__stderr__property } },
-          { "stdin"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__stdin__property } },
-          { "stdout"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__stdout__property } },
-          { "stringHashCode"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionHashCodeType, 1 } },
-          { "unsafe"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__unsafe__property } },
-          { "which"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__which_functionType, 1 } },
-          { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__write_functionType, 1 } },
-      };
+// static const struct HashTableValue JSBunObjectTableValues[]
+//     = {
+//           { "ArrayBufferSink"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__ArrayBufferSink__property } },
+//           { "CryptoHasher"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__CryptoHasher__property } },
+//           { "DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump_functionType, 1 } },
+//           { "FFI"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__FFI__property } },
+//           { "FileSystemRouter"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__FileSystemRouter__property } },
+//           { "MD4"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__MD4__property } },
+//           { "MD5"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__MD5__property } },
+//           { "SHA1"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__SHA1__property } },
+//           { "SHA224"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__SHA224__property } },
+//           { "SHA256"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__SHA256__property } },
+//           { "SHA384"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__SHA384__property } },
+//           { "SHA512"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__SHA512__property } },
+//           { "SHA512_256"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__SHA512_256__property } },
+//           { "TOML"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__TOML__property } },
+//           { "Transpiler"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__Transpiler__property } },
+//           { "_Os"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject___Os_functionType, 1 } },
+//           { "_Path"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject___Path_functionType, 1 } },
+//           { "allocUnsafe"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__allocUnsafe_functionType, 1 } },
+//           { "argv"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__argv__property } },
+//           { "assetPrefix"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__assetPrefix__property } },
+//           { "build"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__build_functionType, 1 } },
+//           { "concatArrayBuffers"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionConcatTypedArraysType, 1 } },
+//           { "connect"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__connect_functionType, 1 } },
+//           { "cwd"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__cwd__property } },
+//           { "deepEquals"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionBunDeepEqualsType, 2 } },
+//           { "deepMatch"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionBunDeepMatchType, 2 } },
+//           { "escapeHTML"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionBunEscapeHTMLType, 2 } },
+//           { "deflateSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__deflateSync_functionType, 1 } },
+//           { "dns"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, constructDNSObject } },
+//           { "enableANSIColors"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__enableANSIColors__property } },
+//           { "env"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, constructEnvObject } },
+//           { "fetch"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, &Bun__fetchType, 1 } },
+//           { "file"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__file_functionType, 1 } },
+//           { "fileURLToPath"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionFileURLToPathType, 1 } },
+//           { "fs"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__fs_functionType, 1 } },
+//           { "gc"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__gc_functionType, 1 } },
+//           { "generateHeapSnapshot"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__generateHeapSnapshot_functionType, 1 } },
+//           { "getImportedStyles"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__getImportedStyles_functionType, 1 } },
+//           { "getPublicPath"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__getPublicPath_functionType, 1 } },
+//           { "getRouteFiles"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__getRouteFiles_functionType, 1 } },
+//           { "getRouteNames"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__getRouteNames_functionType, 1 } },
+//           { "gunzipSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__gunzipSync_functionType, 1 } },
+//           { "gzipSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__gzipSync_functionType, 1 } },
+//           { "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__hash__property } },
+//           { "indexOfLine"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__indexOfLine_functionType, 1 } },
+//           { "inflateSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__inflateSync_functionType, 1 } },
+//           { "inspect"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__inspect_functionType, 1 } },
+//           { "isMainThread"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, constructIsMainThread } },
+//           { "jest"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__jest_functionType, 1 } },
+//           { "listen"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__listen_functionType, 1 } },
+//           { "main"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__main__property } },
+//           { "match"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__match_functionType, 1 } },
+//           { "mmap"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__mmap_functionType, 1 } },
+//           { "nanoseconds"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionBunNanoseconds, 0 } },
+//           { "openInEditor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__openInEditor_functionType, 1 } },
+//           { "origin"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__origin__property } },
+//           { "password"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, constructPasswordObject } },
+//           { "pathToFileURL"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionPathToFileURLType, 1 } },
+//           { "plugin"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, constructIsMainThread } },
+//           { "readableStreamToArray"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin, JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamReadableStreamToArrayCodeGenerator, 1 } },
+//           { "readableStreamToArrayBuffer"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin, JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamReadableStreamToArrayBufferCodeGenerator, 1 } },
+//           { "readableStreamToBlob"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin, JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamReadableStreamToBlobCodeGenerator, 1 } },
+//           { "readableStreamToFormData"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin, JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamReadableStreamToFormDataCodeGenerator, 1 } },
+//           { "readableStreamToJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin, JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamReadableStreamToJSONCodeGenerator, 1 } },
+//           { "readableStreamToText"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin, JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamReadableStreamToTextCodeGenerator, 1 } },
+//           { "registerMacro"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__registerMacro_functionType, 1 } },
+//           { "resolve"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__resolve_functionType, 1 } },
+//           { "resolveSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__resolveSync_functionType, 1 } },
+//           { "routesDir"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__routesDir__property } },
+//           { "serve"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__serve_functionType, 1 } },
+//           { "sha"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__sha_functionType, 1 } },
+//           { "shrink"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__shrink_functionType, 1 } },
+//           { "sleep"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionBunSleepType, 1 } },
+//           { "sleepSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__sleepSync_functionType, 1 } },
+//           { "spawn"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__spawn_functionType, 1 } },
+//           { "spawnSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__spawnSync_functionType, 1 } },
+//           { "stderr"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__stderr__property } },
+//           { "stdin"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__stdin__property } },
+//           { "stdout"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__stdout__property } },
+//           { "stringHashCode"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionHashCodeType, 1 } },
+//           { "unsafe"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, BunObject__unsafe__property } },
+//           { "which"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__which_functionType, 1 } },
+//           { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, BunObject__write_functionType, 1 } },
+//       };
+
+/* Source for BunObject.lut.h
+@begin bunObjectTable
+    ArrayBufferSink                                BunObject__ArrayBufferSink__property                                      DontDelete|PropertyCallback
+    CryptoHasher                                   BunObject__CryptoHasher__property                                         DontDelete|PropertyCallback
+    DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump  BunObject__DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump_functionType     DontEnum|DontDelete|Function 1
+    FFI                                            BunObject__FFI__property                                                  DontDelete|PropertyCallback
+    FileSystemRouter                               BunObject__FileSystemRouter__property                                     DontDelete|PropertyCallback
+    MD4                                            BunObject__MD4__property                                                  DontDelete|PropertyCallback
+    MD5                                            BunObject__MD5__property                                                  DontDelete|PropertyCallback
+    SHA1                                           BunObject__SHA1__property                                                 DontDelete|PropertyCallback
+    SHA224                                         BunObject__SHA224__property                                               DontDelete|PropertyCallback
+    SHA256                                         BunObject__SHA256__property                                               DontDelete|PropertyCallback
+    SHA384                                         BunObject__SHA384__property                                               DontDelete|PropertyCallback
+    SHA512                                         BunObject__SHA512__property                                               DontDelete|PropertyCallback
+    SHA512_256                                     BunObject__SHA512_256__property                                           DontDelete|PropertyCallback
+    TOML                                           BunObject__TOML__property                                                 DontDelete|PropertyCallback
+    Transpiler                                     BunObject__Transpiler__property                                           DontDelete|PropertyCallback
+    _Os                                            BunObject___Os_functionType                                               DontEnum|DontDelete|Function 1
+    _Path                                          BunObject___Path_functionType                                             DontEnum|DontDelete|Function 1
+    allocUnsafe                                    BunObject__allocUnsafe_functionType                                       DontDelete|Function 1
+    argv                                           BunObject__argv__property                                                 DontDelete|PropertyCallback
+    assetPrefix                                    BunObject__assetPrefix__property                                          DontEnum|DontDelete|PropertyCallback
+    build                                          BunObject__build_functionType                                             DontDelete|Function 1
+    concatArrayBuffers                             functionConcatTypedArraysType                                             DontDelete|Function 1
+    connect                                        BunObject__connect_functionType                                           DontDelete|Function 1
+    cwd                                            BunObject__cwd__property                                                  DontEnum|DontDelete|PropertyCallback
+    deepEquals                                     functionBunDeepEqualsType                                                 DontDelete|Function 2
+    deepMatch                                      functionBunDeepMatchType                                                  DontDelete|Function 2
+    deflateSync                                    BunObject__deflateSync_functionType                                       DontDelete|Function 1
+    dns                                            constructDNSObject                                                        ReadOnly|DontDelete|PropertyCallback
+    enableANSIColors                               BunObject__enableANSIColors__property                                     DontDelete|PropertyCallback
+    env                                            constructEnvObject                                                        ReadOnly|DontDelete|PropertyCallback
+    escapeHTML                                     functionBunEscapeHTMLType                                                 DontDelete|Function 2
+    fetch                                          Bun__fetchType                                                            ReadOnly|DontDelete|Function 1
+    file                                           BunObject__file_functionType                                              DontDelete|Function 1
+    fileURLToPath                                  functionFileURLToPathType                                                 DontDelete|Function 1
+    fs                                             BunObject__fs_functionType                                                DontEnum|DontDelete|Function 1
+    gc                                             BunObject__gc_functionType                                                DontDelete|Function 1
+    generateHeapSnapshot                           BunObject__generateHeapSnapshot_functionType                              DontDelete|Function 1
+    getImportedStyles                              BunObject__getImportedStyles_functionType                                 DontEnum|DontDelete|Function 1
+    getPublicPath                                  BunObject__getPublicPath_functionType                                     DontDelete|Function 1
+    getRouteFiles                                  BunObject__getRouteFiles_functionType                                     DontEnum|DontDelete|Function 1
+    getRouteNames                                  BunObject__getRouteNames_functionType                                     DontEnum|DontDelete|Function 1
+    gunzipSync                                     BunObject__gunzipSync_functionType                                        DontDelete|Function 1
+    gzipSync                                       BunObject__gzipSync_functionType                                          DontDelete|Function 1
+    hash                                           BunObject__hash__property                                                 DontDelete|PropertyCallback
+    indexOfLine                                    BunObject__indexOfLine_functionType                                       DontDelete|Function 1
+    inflateSync                                    BunObject__inflateSync_functionType                                       DontDelete|Function 1
+    inspect                                        BunObject__inspect_functionType                                           DontDelete|Function 1
+    isMainThread                                   constructIsMainThread                                                     ReadOnly|DontDelete|PropertyCallback
+    jest                                           BunObject__jest_functionType                                              DontEnum|DontDelete|Function 1
+    listen                                         BunObject__listen_functionType                                            DontDelete|Function 1
+    main                                           BunObject__main__property                                                 DontDelete|PropertyCallback
+    match                                          BunObject__match_functionType                                             DontEnum|DontDelete|Function 1
+    mmap                                           BunObject__mmap_functionType                                              DontDelete|Function 1
+    nanoseconds                                    functionBunNanoseconds                                                    DontDelete|Function 0
+    openInEditor                                   BunObject__openInEditor_functionType                                      DontDelete|Function 1
+    origin                                         BunObject__origin__property                                               DontDelete|PropertyCallback
+    password                                       constructPasswordObject                                                   DontDelete|PropertyCallback
+    pathToFileURL                                  functionPathToFileURLType                                                 DontDelete|Function 1
+    plugin                                         constructIsMainThread                                                     ReadOnly|DontDelete|PropertyCallback
+    readableStreamToArray                          JSBuiltin                                                                 Builtin|Function 1
+    readableStreamToArrayBuffer                    JSBuiltin                                                                 Builtin|Function 1
+    readableStreamToBlob                           JSBuiltin                                                                 Builtin|Function 1
+    readableStreamToFormData                       JSBuiltin                                                                 Builtin|Function 1
+    readableStreamToJSON                           JSBuiltin                                                                 Builtin|Function 1
+    readableStreamToText                           JSBuiltin                                                                 Builtin|Function 1
+    registerMacro                                  BunObject__registerMacro_functionType                                     DontEnum|DontDelete|Function 1
+    resolve                                        BunObject__resolve_functionType                                           DontDelete|Function 1
+    resolveSync                                    BunObject__resolveSync_functionType                                       DontDelete|Function 1
+    routesDir                                      BunObject__routesDir__property                                            DontEnum|DontDelete|PropertyCallback
+    serve                                          BunObject__serve_functionType                                             DontDelete|Function 1
+    sha                                            BunObject__sha_functionType                                               DontDelete|Function 1
+    shrink                                         BunObject__shrink_functionType                                            DontDelete|Function 1
+    sleep                                          functionBunSleepType                                                      DontDelete|Function 1
+    sleepSync                                      BunObject__sleepSync_functionType                                         DontDelete|Function 1
+    spawn                                          BunObject__spawn_functionType                                             DontDelete|Function 1
+    spawnSync                                      BunObject__spawnSync_functionType                                         DontDelete|Function 1
+    stderr                                         BunObject__stderr__property                                               DontDelete|PropertyCallback
+    stdin                                          BunObject__stdin__property                                                DontDelete|PropertyCallback
+    stdout                                         BunObject__stdout__property                                               DontDelete|PropertyCallback
+    stringHashCode                                 functionHashCodeType                                                      DontDelete|Function 1
+    unsafe                                         BunObject__unsafe__property                                               DontDelete|PropertyCallback
+    which                                          BunObject__which_functionType                                             DontDelete|Function 1
+    write                                          BunObject__write_functionType                                             DontDelete|Function 1
+@end
+*/
+
+class JSBunObject : public JSC::JSNonFinalObject {
+    using Base = JSC::JSNonFinalObject;
+
+public:
+    JSBunObject(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    DECLARE_INFO;
+
+    static constexpr bool needsDestruction = false;
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+    static JSBunObject* create(JSC::VM& vm, JSGlobalObject* globalObject)
+    {
+        auto* object = new (NotNull, JSC::allocateCell<JSBunObject>(vm)) JSBunObject(vm, createStructure(vm, globalObject, globalObject->objectPrototype()));
+        object->finishCreation(vm);
+        return object;
+    }
+};
+
+const JSC::ClassInfo JSBunObject::s_info = { "Bun"_s, &Base::s_info, &bunObjectTable, nullptr, CREATE_METHOD_TABLE(JSBunObject) };
 
 JSValue createBunObject(Zig::GlobalObject* globalObject)
 {
+    return JSBunObject::create(globalObject->vm(), globalObject);
 }
 
 }

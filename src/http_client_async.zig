@@ -1658,6 +1658,8 @@ pub const AsyncHTTP = struct {
             this.state.store(.success, .Monotonic);
         }
 
+        completion.function(completion.ctx, result);
+
         if (!result.has_more) {
             this.client.deinit();
 
@@ -1675,8 +1677,6 @@ pub const AsyncHTTP = struct {
                 http_thread.drainEvents();
             }
         }
-
-        completion.function(completion.ctx, result);
     }
 
     pub fn startAsyncHTTP(task: *Task) void {
@@ -2340,11 +2340,11 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 return;
             }
 
-            if (this.signal_header_progress.load(.Acquire)) {
-                this.progressUpdate(is_ssl, ctx, socket);
-            }
-
             if (body_buf.len == 0) {
+                // no body data yet, but we can report the headers
+                if (this.signal_header_progress.load(.Acquire)) {
+                    this.progressUpdate(is_ssl, ctx, socket);
+                }
                 return;
             }
 
@@ -2373,6 +2373,12 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                         return;
                     }
                 }
+            }
+
+            // if not reported we report partially now
+            if (this.signal_header_progress.load(.Acquire)) {
+                this.progressUpdate(is_ssl, ctx, socket);
+                return;
             }
         },
 
@@ -2537,6 +2543,8 @@ pub fn setTimeout(this: *HTTPClient, socket: anytype, amount: c_uint) void {
 pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     if (this.state.stage != .done and this.state.stage != .fail) {
         const is_done = this.state.isDone();
+        defer if (is_done) this.state.reset();
+
         if (this.aborted != null and is_done) {
             _ = socket_async_http_tracker.swapRemove(this.async_http_id);
         }
@@ -2562,7 +2570,6 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
                 socket.close(0, null);
             }
 
-            this.state.reset();
             this.state.response_stage = .done;
             this.state.request_stage = .done;
             this.state.stage = .done;

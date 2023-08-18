@@ -730,6 +730,8 @@ pub const Fetch = struct {
                     this.poll_ref.unref(vm);
                     this.clearData();
                     this.deinit();
+                } else {
+                    this.result.deinitMetadata();
                 }
             }
 
@@ -938,17 +940,17 @@ pub const Fetch = struct {
                 return response;
             }
 
-            var response_buffer = this.response_buffer.list;
-            this.response_buffer = .{
+            var scheduled_response_buffer = this.scheduled_response_buffer.list;
+            const response = Body.Value{
+                .InternalBlob = .{
+                    .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
+                },
+            };
+            this.scheduled_response_buffer = .{
                 .allocator = default_allocator,
                 .list = .{
                     .items = &.{},
                     .capacity = 0,
-                },
-            };
-            const response = Body.Value{
-                .InternalBlob = .{
-                    .bytes = response_buffer.toManaged(bun.default_allocator),
                 },
             };
 
@@ -1138,6 +1140,7 @@ pub const Fetch = struct {
 
             const success = result.isSuccess();
             task.response_buffer = result.body.?.*;
+            log("callback is_done: {} success: {} bytes: {}", .{ !result.has_more, success, task.response_buffer.list.items.len });
 
             if (success) {
                 _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch @panic("OOM");
@@ -1146,6 +1149,8 @@ pub const Fetch = struct {
             if (!task.has_schedule_callback) {
                 task.has_schedule_callback = true;
                 task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
+            } else {
+                log("callback already scheduled", .{});
             }
             // reset for reuse
             task.response_buffer.reset();

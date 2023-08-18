@@ -543,9 +543,15 @@ pub const Listener = struct {
     pub fn listen(
         globalObject: *JSC.JSGlobalObject,
         opts: JSValue,
-        exception: JSC.C.ExceptionRef,
     ) JSValue {
         log("listen", .{});
+        var exception_ = [1]JSC.JSValueRef{null};
+        var exception: JSC.C.ExceptionRef = &exception_;
+        defer {
+            if (exception_[0] != null) {
+                globalObject.throwValue(exception_[0].?.value());
+            }
+        }
         if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
             exception.* = JSC.toInvalidArguments("Expected object", .{}, globalObject).asObjectRef();
             return .zero;
@@ -877,8 +883,14 @@ pub const Listener = struct {
     pub fn connect(
         globalObject: *JSC.JSGlobalObject,
         opts: JSValue,
-        exception: JSC.C.ExceptionRef,
     ) JSValue {
+        var exception_ = [1]JSC.JSValueRef{null};
+        var exception: JSC.C.ExceptionRef = &exception_;
+        defer {
+            if (exception_[0] != null) {
+                globalObject.throwValue(exception_[0].?.value());
+            }
+        }
         if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
             exception.* = JSC.toInvalidArguments("Expected options object", .{}, globalObject).asObjectRef();
             return .zero;

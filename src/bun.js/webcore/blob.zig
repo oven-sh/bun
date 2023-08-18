@@ -646,12 +646,12 @@ pub const Blob = struct {
                     var blob = value.use();
                     // TODO: this should be one promise not two!
                     const new_promise = writeFileWithSourceDestination(globalThis, &blob, &file_blob);
-                    if (JSC.JSValue.fromRef(new_promise.?).asAnyPromise()) |_promise| {
+                    if (new_promise.asAnyPromise()) |_promise| {
                         switch (_promise.status(globalThis.vm())) {
                             .Pending => {
                                 promise.resolve(
                                     globalThis,
-                                    JSC.JSValue.fromRef(new_promise.?),
+                                    new_promise,
                                 );
                             },
                             .Rejected => {
@@ -755,11 +755,19 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
+        const arguments = callframe.arguments(2).slice();
+        var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
+        var exception_ = [1]JSC.JSValueRef{null};
+        var exception = &exception_;
+
         // accept a path or a blob
-        var path_or_blob = PathOrBlob.fromJSNoCopy(ctx, &args, exception) orelse {
-            globalThis.throwInvalidArguments("Bun.write expects a path, file descriptor or a blob", .{});
+        var path_or_blob = PathOrBlob.fromJSNoCopy(globalThis, &args, exception) orelse {
+            if (exception[0] != null) {
+                globalThis.throwValue(exception[0].?.value());
+            } else {
+                globalThis.throwInvalidArguments("Bun.write expects a path, file descriptor or a blob", .{});
+            }
             return .zero;
         };
 
@@ -796,10 +804,10 @@ pub const Blob = struct {
         if (data.isString()) {
             defer if (!needs_async and path_or_blob == .path) path_or_blob.path.deinit();
 
-            const len = data.getLength(ctx);
+            const len = data.getLength(globalThis);
 
             if (len < 256 * 1024 or bun.isMissingIOUring()) {
-                const str = data.toBunString(ctx);
+                const str = data.toBunString(globalThis);
 
                 const pathlike: JSC.Node.PathOrFileDescriptor = if (path_or_blob == .path)
                     path_or_blob.path
@@ -808,7 +816,7 @@ pub const Blob = struct {
 
                 if (pathlike == .path) {
                     const result = writeStringToFileFast(
-                        ctx,
+                        globalThis,
                         pathlike,
                         str,
                         &needs_async,
@@ -819,7 +827,7 @@ pub const Blob = struct {
                     }
                 } else {
                     const result = writeStringToFileFast(
-                        ctx,
+                        globalThis,
                         pathlike,
                         str,
                         &needs_async,
@@ -830,7 +838,7 @@ pub const Blob = struct {
                     }
                 }
             }
-        } else if (data.asArrayBuffer(ctx)) |buffer_view| {
+        } else if (data.asArrayBuffer(globalThis)) |buffer_view| {
             defer if (!needs_async and path_or_blob == .path) path_or_blob.path.deinit();
 
             if (buffer_view.byte_len < 256 * 1024 or bun.isMissingIOUring()) {
@@ -841,7 +849,7 @@ pub const Blob = struct {
 
                 if (pathlike == .path) {
                     const result = writeBytesToFileFast(
-                        ctx,
+                        globalThis,
                         pathlike,
                         buffer_view.byteSlice(),
                         &needs_async,
@@ -853,7 +861,7 @@ pub const Blob = struct {
                     }
                 } else {
                     const result = writeBytesToFileFast(
-                        ctx,
+                        globalThis,
                         pathlike,
                         buffer_view.byteSlice(),
                         &needs_async,
@@ -869,7 +877,7 @@ pub const Blob = struct {
 
         // if path_or_blob is a path, convert it into a file blob
         var destination_blob: Blob = if (path_or_blob == .path)
-            Blob.findOrCreateFileFromPath(path_or_blob.path, ctx.ptr())
+            Blob.findOrCreateFileFromPath(path_or_blob.path, globalThis)
         else
             path_or_blob.blob.dupe();
 
@@ -894,15 +902,15 @@ pub const Blob = struct {
                     .Error => {
                         destination_blob.detach();
                         const err = response.body.value.Error;
-                        JSC.C.JSValueUnprotect(ctx, err.asObjectRef());
+                        err.unprotect();
                         _ = response.body.value.use();
-                        return JSC.JSPromise.rejectedPromiseValue(ctx.ptr(), err);
+                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err);
                     },
                     .Locked => {
                         var task = bun.default_allocator.create(WriteFileWaitFromLockedValueTask) catch unreachable;
-                        var promise = JSC.JSPromise.create(ctx.ptr());
+                        var promise = JSC.JSPromise.create(globalThis);
                         task.* = WriteFileWaitFromLockedValueTask{
-                            .globalThis = ctx.ptr(),
+                            .globalThis = globalThis,
                             .file_blob = destination_blob,
                             .promise = promise,
                         };
@@ -910,7 +918,7 @@ pub const Blob = struct {
                         response.body.value.Locked.task = task;
                         response.body.value.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
 
-                        return promise.asValue(ctx.ptr());
+                        return promise.asValue(globalThis);
                     },
                 }
             }
@@ -929,15 +937,15 @@ pub const Blob = struct {
                     .Error => {
                         destination_blob.detach();
                         const err = request.body.value.Error;
-                        JSC.C.JSValueUnprotect(ctx, err.asObjectRef());
+                        err.unprotect();
                         _ = request.body.value.use();
-                        return JSC.JSPromise.rejectedPromiseValue(ctx.ptr(), err);
+                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err);
                     },
                     .Locked => {
                         var task = bun.default_allocator.create(WriteFileWaitFromLockedValueTask) catch unreachable;
-                        var promise = JSC.JSPromise.create(ctx.ptr());
+                        var promise = JSC.JSPromise.create(globalThis);
                         task.* = WriteFileWaitFromLockedValueTask{
-                            .globalThis = ctx.ptr(),
+                            .globalThis = globalThis,
                             .file_blob = destination_blob,
                             .promise = promise,
                         };
@@ -945,13 +953,13 @@ pub const Blob = struct {
                         request.body.value.Locked.task = task;
                         request.body.value.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
 
-                        return promise.asValue(ctx.ptr());
+                        return promise.asValue(globalThis);
                     },
                 }
             }
 
             break :brk Blob.get(
-                ctx.ptr(),
+                globalThis,
                 data,
                 false,
                 false,
@@ -960,8 +968,7 @@ pub const Blob = struct {
                     globalThis.throwInvalidArguments(
                         "Expected an Array",
                         .{},
-                        ctx,
-                    ).asObjectRef();
+                    );
                     return .zero;
                 }
 
@@ -981,7 +988,7 @@ pub const Blob = struct {
             }
         }
 
-        return writeFileWithSourceDestination(ctx, &source_blob, &destination_blob);
+        return writeFileWithSourceDestination(globalThis, &source_blob, &destination_blob);
     }
 
     const write_permissions = 0o664;
@@ -1131,10 +1138,12 @@ pub const Blob = struct {
         var exception = &exception_;
 
         const path = JSC.Node.PathOrFileDescriptor.fromJS(globalObject, &args, args.arena.allocator(), exception) orelse {
-            if (exception.* == null) {
-                exception.* = JSC.toInvalidArguments("Expected file path string or file descriptor", .{}, globalObject).asObjectRef();
+            if (exception_[0] == null) {
+                globalObject.throwInvalidArguments("Expected file path string or file descriptor", .{});
+            } else {
+                globalObject.throwValue(exception_[0].?.value());
             }
-            globalObject.throwvalue(exception.*);
+
             return .undefined;
         };
 

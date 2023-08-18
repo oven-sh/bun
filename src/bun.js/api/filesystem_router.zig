@@ -80,7 +80,7 @@ const DeprecatedGlobalRouter = struct {
         }
 
         if (arg.isString()) {
-            var path_string = arg.getZigString(ctx);
+            var path_string = arg.getZigString(globalObject);
             path_ = path_string.toSlice(bun.default_allocator);
             var url = URL.parse(path_.?.slice());
             pathname = url.pathname;
@@ -108,7 +108,7 @@ const DeprecatedGlobalRouter = struct {
         router.routes.allocator = match_params_allocator;
         defer router.routes.allocator = prev_allocator;
         if (router.routes.matchPage("", url_path, &match_params)) |matched| {
-            return createRouteObjectFromMatch(ctx, &matched).?.value();
+            return createRouteObjectFromMatch(globalObject, &matched).?.value();
         }
 
         return .null;

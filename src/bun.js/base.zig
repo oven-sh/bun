@@ -1770,7 +1770,7 @@ pub const ArrayBuffer = extern struct {
     extern "C" fn Bun__createUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize, buffer: bool) JSValue;
     extern "C" fn Bun__createArrayBufferForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize) JSValue;
 
-    pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue, _: JSC.C.ExceptionRef) ArrayBuffer {
+    pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue) ArrayBuffer {
         var out = std.mem.zeroes(ArrayBuffer);
         std.debug.assert(value.asArrayBuffer_(ctx.ptr(), &out));
         out.value = value;
@@ -1932,16 +1932,16 @@ pub const MarkedArrayBuffer = struct {
         return this.buffer.stream();
     }
 
-    pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) MarkedArrayBuffer {
+    pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue) MarkedArrayBuffer {
         return MarkedArrayBuffer{
             .allocator = null,
-            .buffer = ArrayBuffer.fromTypedArray(ctx, value, exception),
+            .buffer = ArrayBuffer.fromTypedArray(ctx, value),
         };
     }
-    pub fn fromArrayBuffer(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) MarkedArrayBuffer {
+    pub fn fromArrayBuffer(ctx: JSC.C.JSContextRef, value: JSC.JSValue) MarkedArrayBuffer {
         return MarkedArrayBuffer{
             .allocator = null,
-            .buffer = ArrayBuffer.fromArrayBuffer(ctx, value, exception),
+            .buffer = ArrayBuffer.fromArrayBuffer(ctx, value),
         };
     }
 
@@ -3176,7 +3176,7 @@ pub fn wrapStaticMethod(
                     ?JSValue => {
                         args[i] = eater(&iter);
                     },
-                    else => @compileError("Unexpected Type " ++ @typeName(ArgType)),
+                    else => @compileError(std.fmt.comptimePrint("Unexpected Type " ++ @typeName(ArgType) ++ " at argument {d} in {s}#{s}", .{ i, @typeName(Container), name })),
                 }
             }
 

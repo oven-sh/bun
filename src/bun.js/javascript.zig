@@ -89,11 +89,7 @@ const ModuleLoader = JSC.ModuleLoader;
 const FetchFlags = JSC.FetchFlags;
 
 pub const GlobalClasses = [_]type{
-    Bun.Class,
     WebCore.Crypto.Class,
-    // EventListenerMixin.addEventListener(VirtualMachine),
-
-    // Fetch.Class,
     js_ast.Macro.JSNode.BunJSXCallbackFunction,
 
     WebCore.Crypto.Prototype,

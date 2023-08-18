@@ -292,11 +292,11 @@ pub fn which(
 ) callconv(.C) JSC.JSValue {
     const arguments_ = callframe.arguments(2);
     var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_);
+    var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
     const path_arg = arguments.nextEat() orelse {
         globalThis.throw("which: expected 1 argument, got 0", .{});
-        return JSC.JSValue.jsUndefined().asObjectRef();
+        return JSC.JSValue.jsUndefined();
     };
 
     var path_str: ZigString.Slice = ZigString.Slice.empty;
@@ -309,18 +309,18 @@ pub fn which(
     }
 
     if (path_arg.isEmptyOrUndefinedOrNull()) {
-        return JSC.JSValue.jsNull().asObjectRef();
+        return JSC.JSValue.jsNull();
     }
 
     bin_str = path_arg.toSlice(globalThis, globalThis.bunVM().allocator);
 
     if (bin_str.len >= bun.MAX_PATH_BYTES) {
         globalThis.throw("bin path is too long", .{});
-        return JSC.JSValue.jsUndefined().asObjectRef();
+        return JSC.JSValue.jsUndefined();
     }
 
     if (bin_str.len == 0) {
-        return JSC.JSValue.jsNull().asObjectRef();
+        return JSC.JSValue.jsNull();
     }
 
     path_str = ZigString.Slice.fromUTF8NeverFree(
@@ -360,7 +360,7 @@ pub fn inspect(
 ) callconv(.C) JSC.JSValue {
     const arguments = callframe.arguments(4).slice();
     if (arguments.len == 0)
-        return bun.String.empty.toJS(globalThis);
+        return bun.String.empty.toJSConst(globalThis);
 
     for (arguments) |arg| {
         arg.protect();
@@ -491,7 +491,7 @@ pub fn registerMacro(
 
     var get_or_put_result = VirtualMachine.get().macros.getOrPut(id) catch unreachable;
     if (get_or_put_result.found_existing) {
-        get_or_put_result.value_ptr.*.value().unprotect();
+        get_or_put_result.value_ptr.*.?.value().unprotect();
     }
 
     arguments[1].protect();
@@ -561,7 +561,7 @@ pub fn getMain(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
 ) callconv(.C) JSC.JSValue {
-    return ZigString.init(VirtualMachine.get().main).toValueGC(globalThis.bunVM().main);
+    return ZigString.init(globalThis.bunVM().main).toValueGC(globalThis);
 }
 
 pub fn getAssetPrefix(
@@ -634,7 +634,7 @@ pub fn openInEditor(
                     if (editor_choice == null) {
                         edit.* = prev;
                         globalThis.throw("Could not find editor \"{s}\"", .{sliced.slice()});
-                        return js.JSValueMakeUndefined(globalThis);
+                        return .undefined;
                     } else if (edit.name.ptr == edit.path.ptr) {
                         edit.name = arguments.arena.allocator().dupe(u8, edit.path) catch unreachable;
                         edit.path = edit.path;
@@ -664,7 +664,7 @@ pub fn openInEditor(
 
     if (path.len == 0) {
         globalThis.throw("No file path specified", .{});
-        return js.JSValueMakeUndefined(globalThis);
+        return .zero;
     }
 
     editor.open(edit.path, path, line, column, arguments.arena.allocator()) catch |err| {
@@ -855,7 +855,7 @@ pub fn resolveSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame)
         globalObject.throwValue(exception_[0].?.value());
     }
 
-    return JSC.JSValue.c(result);
+    return result orelse .zero;
 }
 
 pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -863,9 +863,7 @@ pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) cal
     var exception = &exception_;
     const arguments = callframe.arguments(3);
     const value = doResolve(globalObject, arguments.slice(), exception) orelse {
-        var exception_value = exception.*.?;
-        exception.* = null;
-        return JSC.JSPromise.rejectedPromiseValue(globalObject, JSC.JSValue.c(exception_value));
+        return JSC.JSPromise.rejectedPromiseValue(globalObject, exception_[0].?.value());
     };
     return JSC.JSPromise.resolvedPromiseValue(globalObject, value);
 }
@@ -879,7 +877,7 @@ export fn Bun__resolve(
     var exception_ = [1]JSC.JSValueRef{null};
     var exception = &exception_;
     const value = doResolveWithArgs(global, specifier.toBunString(global), source.toBunString(global), exception, is_esm, true) orelse {
-        return JSC.JSPromise.rejectedPromiseValue(global, JSC.JSValue.fromRef(exception[0]));
+        return JSC.JSPromise.rejectedPromiseValue(global, exception_[0].?.value());
     };
     return JSC.JSPromise.resolvedPromiseValue(global, value);
 }
@@ -919,10 +917,10 @@ comptime {
 }
 
 pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    const arguments = callframe.arguments(2);
+    const arguments = callframe.arguments(2).slice();
     var public_path_temp_str: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-    const to = arguments[0].toSlice(bun.default_allocator);
+    const to = arguments[0].toSlice(globalObject, bun.default_allocator);
     defer to.deinit();
     var stream = std.io.fixedBufferStream(&public_path_temp_str);
     var writer = stream.writer();
@@ -932,7 +930,7 @@ pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 }
 
 fn fs(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    var module = globalObject.create(JSC.Node.NodeJSFS) catch unreachable;
+    var module = globalObject.allocator().create(JSC.Node.NodeJSFS) catch unreachable;
     module.* = .{};
     var vm = globalObject.bunVM();
     if (vm.standalone_module_graph != null)
@@ -1550,22 +1548,22 @@ pub const Crypto = struct {
             object.put(
                 globalObject,
                 ZigString.static("hash"),
-                JSC.NewFunction(globalObject, ZigString.static("hash"), 2, JSPasswordObject__hash, false),
+                JSC.createCallback(globalObject, ZigString.static("hash"), 2, JSPasswordObject__hash),
             );
             object.put(
                 globalObject,
                 ZigString.static("hashSync"),
-                JSC.NewFunction(globalObject, ZigString.static("hashSync"), 2, JSPasswordObject__hashSync, false),
+                JSC.createCallback(globalObject, ZigString.static("hashSync"), 2, JSPasswordObject__hashSync),
             );
             object.put(
                 globalObject,
                 ZigString.static("verify"),
-                JSC.NewFunction(globalObject, ZigString.static("verify"), 2, JSPasswordObject__verify, false),
+                JSC.createCallback(globalObject, ZigString.static("verify"), 2, JSPasswordObject__verify),
             );
             object.put(
                 globalObject,
                 ZigString.static("verifySync"),
-                JSC.NewFunction(globalObject, ZigString.static("verifySync"), 2, JSPasswordObject__verifySync, false),
+                JSC.createCallback(globalObject, ZigString.static("verifySync"), 2, JSPasswordObject__verifySync),
             );
             return object;
         }
@@ -2520,8 +2518,8 @@ pub fn serve(
 
         var args = JSC.Node.ArgumentsSlice.init(globalObject.bunVM(), arguments);
         const config_ = JSC.API.ServerConfig.fromJS(globalObject.ptr(), &args, exception);
-        if (exception.* != null) {
-            globalObject.throwValue(exception.*);
+        if (exception[0] != null) {
+            globalObject.throwValue(exception_[0].?.value());
             return .undefined;
         }
 
@@ -2547,14 +2545,14 @@ pub fn serve(
             var obj = JSC.API.DebugSSLServer.Class.make(globalObject, server);
             JSC.C.JSValueProtect(globalObject, obj);
             server.thisObject = JSValue.c(obj);
-            return obj.*.value();
+            return JSValue.c(obj);
         } else {
             var server = JSC.API.SSLServer.init(config, globalObject.ptr());
             exception_value = &server.thisObject;
             server.listen();
             if (!exception_value.isEmpty()) {
                 exception_value.unprotect();
-                globalObject.throwValue(exception_value);
+                globalObject.throwValue(exception_value.*);
                 server.thisObject = JSC.JSValue.zero;
                 server.deinit();
                 return .zero;
@@ -2562,7 +2560,7 @@ pub fn serve(
             var obj = JSC.API.SSLServer.Class.make(globalObject, server);
             JSC.C.JSValueProtect(globalObject, obj);
             server.thisObject = JSValue.c(obj);
-            return obj.*.value();
+            return JSValue.c(obj);
         }
     } else {
         if (config.development) {
@@ -2571,7 +2569,7 @@ pub fn serve(
             server.listen();
             if (!exception_value.isEmpty()) {
                 exception_value.unprotect();
-                globalObject.throwValue(exception_value);
+                globalObject.throwValue(exception_value.*);
                 server.thisObject = JSC.JSValue.zero;
                 server.deinit();
                 return .zero;
@@ -2579,14 +2577,14 @@ pub fn serve(
             var obj = JSC.API.DebugServer.Class.make(globalObject, server);
             JSC.C.JSValueProtect(globalObject, obj);
             server.thisObject = JSValue.c(obj);
-            return obj.*.value();
+            return JSValue.c(obj);
         } else {
             var server = JSC.API.Server.init(config, globalObject.ptr());
             exception_value = &server.thisObject;
             server.listen();
             if (!exception_value.isEmpty()) {
                 exception_value.unprotect();
-                globalObject.throwValue(exception_value);
+                globalObject.throwValue(exception_value.*);
                 server.thisObject = JSC.JSValue.zero;
                 server.deinit();
                 return .zero;
@@ -2594,7 +2592,7 @@ pub fn serve(
             var obj = JSC.API.Server.Class.make(globalObject, server);
             JSC.C.JSValueProtect(globalObject, obj);
             server.thisObject = JSValue.c(obj);
-            return obj.*.value();
+            return JSValue.c(obj);
         }
     }
 
@@ -2712,7 +2710,7 @@ pub fn mmapFile(
     callframe: *JSC.CallFrame,
 ) callconv(.C) JSC.JSValue {
     const arguments_ = callframe.arguments(2);
-    var args = JSC.Node.ArgumentsSlice.from(globalThis.bunVM(), arguments_.slice());
+    var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer args.deinit();
 
     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -2810,8 +2808,8 @@ const HashObject = struct {
     pub const murmur64v2 = hashWrap(std.hash.murmur.Murmur2_64).hash;
 
     pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        const function = JSC.NewRuntimeFunction(globalThis, &ZigString.static("hash"), 1, &wyhash, false);
-        const fns = .{
+        const function = JSC.createCallback(globalThis, ZigString.static("hash"), 1, &wyhash);
+        const fns = comptime .{
             "wyhash",
             "adler32",
             "crc32",
@@ -2822,8 +2820,13 @@ const HashObject = struct {
             "murmur64v2",
         };
         inline for (fns) |name| {
-            const value = JSC.NewRuntimeFunction(globalThis, &ZigString.static(name), 1, &@field(HashObject, name), false);
-            function.put(globalThis, &ZigString.static(name), value);
+            const value = JSC.createCallback(
+                globalThis,
+                ZigString.static(name),
+                1,
+                &@field(HashObject, name),
+            );
+            function.put(globalThis, comptime ZigString.static(name), value);
         }
 
         return function;
@@ -2927,16 +2930,16 @@ pub fn getUnsafe(
 const UnsafeObject = struct {
     pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         const object = JSValue.createEmptyObject(globalThis, 3);
-        const fields = .{
+        const fields = comptime .{
             .gcAggressionLevel = &gcAggressionLevel,
             .segfault = &__debug__doSegfault,
             .arrayBufferToString = &arrayBufferToString,
         };
-        inline for (std.meta.fieldNames(fields)) |name| {
+        inline for (comptime std.meta.fieldNames(@TypeOf(fields))) |name| {
             object.put(
                 globalThis,
-                &ZigString.static(name),
-                JSC.NewRuntimeFunction(globalThis, &ZigString.static(name), 1, &@field(UnsafeObject, name), false),
+                comptime ZigString.static(name),
+                JSC.createCallback(globalThis, comptime ZigString.static(name), 1, comptime @field(fields, name)),
             );
         }
         return object;
@@ -2997,8 +3000,13 @@ const TOMLObject = struct {
         const object = JSValue.createEmptyObject(globalThis, 1);
         object.put(
             globalThis,
-            &ZigString.static("parse"),
-            JSC.NewRuntimeFunction(globalThis, &ZigString.static("parse"), 1, &parse, false),
+            ZigString.static("parse"),
+            JSC.createCallback(
+                globalThis,
+                ZigString.static("parse"),
+                1,
+                &parse,
+            ),
         );
 
         return object;
@@ -3014,7 +3022,7 @@ const TOMLObject = struct {
         var log = logger.Log.init(default_allocator);
         const arguments = callframe.arguments(1).slice();
 
-        var input_slice = arguments[0].toSlice(bun.default_allocator);
+        var input_slice = arguments[0].toSlice(globalThis, bun.default_allocator);
         defer input_slice.deinit();
         var source = logger.Source.initPathString("input.toml", input_slice.slice());
         var parse_result = TOMLParser.parse(&source, &log, allocator) catch {

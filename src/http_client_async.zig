@@ -656,8 +656,7 @@ pub const HTTPThread = struct {
     }
 
     fn drainEvents(this: *@This()) void {
-        while (!this.queued_shutdowns.isEmpty()) {
-            const http = this.queued_shutdowns.pop() orelse break;
+        while (this.queued_shutdowns.pop()) |http| {
             if (socket_async_http_tracker.fetchSwapRemove(http.async_http_id)) |socket_ptr| {
                 if (http.client.isHTTPS()) {
                     const socket = uws.SocketTLS.from(socket_ptr.value);
@@ -680,8 +679,7 @@ pub const HTTPThread = struct {
             }
         }
 
-        while (!this.queued_tasks.isEmpty()) {
-            const http = this.queued_tasks.pop() orelse break;
+        while (this.queued_tasks.pop()) |http| {
             var cloned = default_allocator.create(AsyncHTTP) catch unreachable;
             cloned.* = http.*;
             cloned.real = http;

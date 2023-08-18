@@ -4049,11 +4049,8 @@ JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* 
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    auto identifier = builtinNameMap(globalObject, arg2);
-    auto* object = value.getObject();
-    auto result = object->getIfPropertyExists(globalObject, identifier);
-
-    return JSValue::encode(result);
+    return JSValue::encode(
+        value.getObject()->getIfPropertyExists(globalObject, builtinNameMap(globalObject, arg2)));
 }
 
 bool JSC__JSValue__toBooleanSlow(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject)

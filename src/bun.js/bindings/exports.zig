@@ -2135,8 +2135,7 @@ pub const ZigConsoleClient = struct {
                     writer.print(comptime Output.prettyFmt("<r><yellow>null<r>", enable_ansi_colors), .{});
                 },
                 .CustomFormattedObject => {
-
-                    // Call custom inspect function, checking exception
+                    // Call custom inspect function. Will return the error if there is one
                     // we'll need to pass the callback through to the "this" value in here
                     const result = JSC__JSValue__callCustomInspectFunction(
                         this.globalThis,
@@ -2146,6 +2145,7 @@ pub const ZigConsoleClient = struct {
                         this.max_depth,
                         enable_ansi_colors,
                     );
+                    // Strings are printed directly, otherwise we recurse. It is possible to end up in an infinite loop.
                     if (result.isString()) {
                         writer.print("{s}", .{result.toBunString(this.globalThis)});
                     } else {

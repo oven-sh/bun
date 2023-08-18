@@ -2335,13 +2335,13 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 return;
             }
 
-            if (this.signal_header_progress.load(.Acquire)) {
-                this.progressUpdate(is_ssl, ctx, socket);
-            }
-
             if (this.proxy_tunneling and this.proxy_tunnel == null) {
                 this.startProxyHandshake(is_ssl, socket);
                 return;
+            }
+
+            if (this.signal_header_progress.load(.Acquire)) {
+                this.progressUpdate(is_ssl, ctx, socket);
             }
 
             if (body_buf.len == 0) {

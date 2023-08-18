@@ -1,5 +1,4 @@
 #pragma once
-#include "root.h"
 
 namespace Bun {
 
@@ -14,5 +13,5 @@ JSC_DECLARE_HOST_FUNCTION(functionBunNanoseconds);
 JSC_DECLARE_HOST_FUNCTION(functionPathToFileURL);
 JSC_DECLARE_HOST_FUNCTION(functionFileURLToPath);
 
-JSValue createBunObject(Zig::GlobalObject* globalObject);
+JSC::JSValue createBunObject(Zig::GlobalObject* globalObject);
 }

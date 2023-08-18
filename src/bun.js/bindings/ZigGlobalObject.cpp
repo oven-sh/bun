@@ -3327,11 +3327,6 @@ JSC_DEFINE_CUSTOM_GETTER(JSModuleLoader_getter, (JSGlobalObject * globalObject, 
     return JSValue::encode(globalObject->moduleLoader());
 }
 
-JSC_DEFINE_CUSTOM_GETTER(bunDns_getter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
-{
-    return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->dnsObject());
-}
-
 JSC_DEFINE_CUSTOM_GETTER(functionResolveMessageGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
 {
     return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSResolveMessageConstructor());
@@ -3483,7 +3478,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     auto& builtinNames = WebCore::builtinNames(vm);
 
     WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-    extraStaticGlobals.reserveCapacity(49);
+    extraStaticGlobals.reserveCapacity(51);
 
     JSC::Identifier queueMicrotaskIdentifier = JSC::Identifier::fromString(vm, "queueMicrotask"_s);
     extraStaticGlobals.uncheckedAppend(
@@ -3569,6 +3564,17 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
                     "postMessage"_s, jsFunctionPostMessage, ImplementationVisibility::Public),
                 JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
     }
+
+    JSValue bunObject = Bun::createBunObject(this);
+    extraStaticGlobals.uncheckedAppend(
+        GlobalPropertyInfo { builtinNames.BunPrivateName(),
+            bunObject,
+            JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0 });
+
+    extraStaticGlobals.uncheckedAppend(
+        GlobalPropertyInfo { builtinNames.BunPublicName(),
+            bunObject,
+            JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0 });
 
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { builtinNames.startDirectStreamPrivateName(),
@@ -3810,25 +3816,8 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
     extraStaticGlobals.reserveCapacity((size_t)count + 3 + 1 + 1);
 
     int j = 0;
+    // First one is Crypto
     {
-        // first one is Bun object
-        auto jsClass = globals[j];
-
-        JSC::JSCallbackObject<JSNonFinalObject>* object = JSC::JSCallbackObject<JSNonFinalObject>::create(this, this->callbackObjectStructure(),
-            jsClass, nullptr);
-        if (JSObject* prototype = object->classRef()->prototype(this))
-            object->setPrototypeDirect(vm, prototype);
-
-        extraStaticGlobals.uncheckedAppend(
-            GlobalPropertyInfo { builtinNames.BunPublicName(),
-                JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0 });
-        extraStaticGlobals.uncheckedAppend(
-            GlobalPropertyInfo { builtinNames.BunPrivateName(),
-                JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0 });
-    }
-
-    {
-        j = 1;
         auto jsClass = globals[j];
 
         JSC::JSCallbackObject<JSNonFinalObject>* object = JSC::JSCallbackObject<JSNonFinalObject>::create(this, this->callbackObjectStructure(),
@@ -3844,7 +3833,7 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         this->putDirect(vm, JSC::Identifier::fromString(vm, "crypto"_s), object, JSC::PropertyAttribute::DontDelete | 0);
     }
 
-    for (j = 2; j < count; j++) {
+    for (j = 1; j < count; j++) {
         auto jsClass = globals[j];
 
         JSC::JSCallbackObject<JSNonFinalObject>* object = JSC::JSCallbackObject<JSNonFinalObject>::create(this, this->callbackObjectStructure(),

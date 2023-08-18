@@ -10,6 +10,7 @@ pub const BunObject = struct {
     pub const file = WebCore.Blob.constructFile;
     pub const fs = Bun.fs;
     pub const gc = Bun.runGC;
+    pub const generateHeapSnapshot = Bun.generateHeapSnapshot;
     pub const getImportedStyles = Bun.getImportedStyles;
     pub const getPublicPath = Bun.getPublicPathJS;
     pub const getRouteFiles = Bun.getRouteFiles;
@@ -24,19 +25,24 @@ pub const BunObject = struct {
     pub const match = Router.deprecatedBunGlobalMatch;
     pub const mmap = Bun.mmapFile;
     pub const nanoseconds = Bun.nanoseconds;
+    pub const openInEditor = Bun.openInEditor;
     pub const registerMacro = Bun.registerMacro;
     pub const resolve = Bun.resolve;
     pub const resolveSync = Bun.resolveSync;
+    pub const serve = Bun.serve;
     pub const sha = JSC.wrapStaticMethod(Crypto.SHA512_256, "hash_", true);
     pub const shrink = Bun.shrink;
+    pub const sleepSync = Bun.sleepSync;
     pub const spawn = JSC.wrapStaticMethod(JSC.Subprocess, "spawn", false);
     pub const spawnSync = JSC.wrapStaticMethod(JSC.Subprocess, "spawnSync", false);
+    pub const which = Bun.which;
     pub const write = JSC.WebCore.Blob.writeFile;
     // --- Callbacks ---
 
     // --- Getters ---
     pub const CryptoHasher = Crypto.CryptoHasher.getter;
     pub const FFI = Bun.FFI.getter;
+    pub const FileSystemRouter = Bun.getFileSystemRouter;
     pub const MD4 = Crypto.MD4.getter;
     pub const MD5 = Crypto.MD5.getter;
     pub const SHA1 = Crypto.SHA1.getter;
@@ -49,8 +55,11 @@ pub const BunObject = struct {
     pub const Transpiler = Bun.getTranspilerConstructor;
     pub const argv = Bun.getArgv;
     pub const assetPrefix = Bun.getAssetPrefix;
+    pub const cwd = Bun.getCWD;
     pub const enableANSIColors = Bun.enableANSIColors;
     pub const hash = Bun.getHashObject;
+    pub const main = Bun.getMain;
+    pub const origin = Bun.getOrigin;
     pub const routesDir = Bun.getRoutesDir;
     pub const stderr = Bun.getStderr;
     pub const stdin = Bun.getStdin;
@@ -59,11 +68,11 @@ pub const BunObject = struct {
     // --- Getters ---
 
     fn getterName(comptime baseName: anytype) [:0]const u8 {
-        return "BunObject__" ++ baseName ++ "__property";
+        return "BunObject_getter_" ++ baseName;
     }
 
     fn callbackName(comptime baseName: anytype) [:0]const u8 {
-        return "BunObject__" ++ baseName ++ "_functionType";
+        return "BunObject_callback_" ++ baseName;
     }
 
     pub fn exportAll() void {
@@ -78,6 +87,7 @@ pub const BunObject = struct {
         // --- Getters ---
         @export(BunObject.CryptoHasher, .{ .name = getterName("CryptoHasher") });
         @export(BunObject.FFI, .{ .name = getterName("FFI") });
+        @export(BunObject.FileSystemRouter, .{ .name = getterName("FileSystemRouter") });
         @export(BunObject.MD4, .{ .name = getterName("MD4") });
         @export(BunObject.MD5, .{ .name = getterName("MD5") });
         @export(BunObject.SHA1, .{ .name = getterName("SHA1") });
@@ -90,8 +100,11 @@ pub const BunObject = struct {
         @export(BunObject.Transpiler, .{ .name = getterName("Transpiler") });
         @export(BunObject.argv, .{ .name = getterName("argv") });
         @export(BunObject.assetPrefix, .{ .name = getterName("assetPrefix") });
+        @export(BunObject.cwd, .{ .name = getterName("cwd") });
         @export(BunObject.enableANSIColors, .{ .name = getterName("enableANSIColors") });
         @export(BunObject.hash, .{ .name = getterName("hash") });
+        @export(BunObject.main, .{ .name = getterName("main") });
+        @export(BunObject.origin, .{ .name = getterName("origin") });
         @export(BunObject.routesDir, .{ .name = getterName("routesDir") });
         @export(BunObject.stderr, .{ .name = getterName("stderr") });
         @export(BunObject.stdin, .{ .name = getterName("stdin") });
@@ -110,6 +123,7 @@ pub const BunObject = struct {
         @export(BunObject.file, .{ .name = callbackName("file") });
         @export(BunObject.fs, .{ .name = callbackName("fs") });
         @export(BunObject.gc, .{ .name = callbackName("gc") });
+        @export(BunObject.generateHeapSnapshot, .{ .name = callbackName("generateHeapSnapshot") });
         @export(BunObject.getImportedStyles, .{ .name = callbackName("getImportedStyles") });
         @export(BunObject.getPublicPath, .{ .name = callbackName("getPublicPath") });
         @export(BunObject.getRouteFiles, .{ .name = callbackName("getRouteFiles") });
@@ -124,13 +138,17 @@ pub const BunObject = struct {
         @export(BunObject.match, .{ .name = callbackName("match") });
         @export(BunObject.mmap, .{ .name = callbackName("mmap") });
         @export(BunObject.nanoseconds, .{ .name = callbackName("nanoseconds") });
+        @export(BunObject.openInEditor, .{ .name = callbackName("openInEditor") });
         @export(BunObject.registerMacro, .{ .name = callbackName("registerMacro") });
         @export(BunObject.resolve, .{ .name = callbackName("resolve") });
         @export(BunObject.resolveSync, .{ .name = callbackName("resolveSync") });
+        @export(BunObject.serve, .{ .name = callbackName("serve") });
         @export(BunObject.sha, .{ .name = callbackName("sha") });
         @export(BunObject.shrink, .{ .name = callbackName("shrink") });
+        @export(BunObject.sleepSync, .{ .name = callbackName("sleepSync") });
         @export(BunObject.spawn, .{ .name = callbackName("spawn") });
         @export(BunObject.spawnSync, .{ .name = callbackName("spawnSync") });
+        @export(BunObject.which, .{ .name = callbackName("which") });
         @export(BunObject.write, .{ .name = callbackName("write") });
         // -- Callbacks --
     }

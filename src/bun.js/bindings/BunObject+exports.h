@@ -1,59 +1,87 @@
+// clang-format off
 
-// -- Callbacks --
-extern "C" JSC::EncodedJSValue BunObject__DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject___Os_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject___Path_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__allocUnsafe_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__build_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__connect_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__deflateSync_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__file_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__fs_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__gc_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__getImportedStyles_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__getPublicPath_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__getRouteFiles_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__getRouteNames_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__gunzipSync_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__gzipSync_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__indexOfLine_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__inflateSync_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__inspect_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__jest_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__listen_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__match_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__mmap_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__nanoseconds_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__registerMacro_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__resolve_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__resolveSync_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__sha_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__shrink_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__spawn_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__spawnSync_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue BunObject__write_functionType(JSC::JSGlobalObject*, JSC::CallFrame*);
-// -- Callbacks --
+#define FOR_EACH_GETTER(macro) \
+    macro(CryptoHasher) \
+    macro(FFI) \
+    macro(FileSystemRouter) \
+    macro(MD4) \
+    macro(MD5) \
+    macro(SHA1) \
+    macro(SHA224) \
+    macro(SHA256) \
+    macro(SHA384) \
+    macro(SHA512) \
+    macro(SHA512_256) \
+    macro(TOML) \
+    macro(Transpiler) \
+    macro(argv) \
+    macro(assetPrefix) \
+    macro(cwd) \
+    macro(enableANSIColors) \
+    macro(hash) \
+    macro(main) \
+    macro(origin) \
+    macro(routesDir) \
+    macro(stderr) \
+    macro(stdin) \
+    macro(stdout) \
+    macro(unsafe) \
+// --- Getters ---
 
-// --- Getters ---
-extern "C" JSC::EncodedJSValue BunObject__CryptoHasher__property(JSC::JSGlobalObject*, JSC::JSObject*);
-extern "C" JSC::EncodedJSValue BunObject__FFI__property(JSC::JSGlobalObject*, JSC::JSObject*);
-extern "C" JSC::EncodedJSValue BunObject__MD4__property(JSC::JSGlobalObject*, JSC::JSObject*);
-extern "C" JSC::EncodedJSValue BunObject__MD5__property(JSC::JSGlobalObject*, JSC::JSObject*);
-extern "C" JSC::EncodedJSValue BunObject__SHA1__property(JSC::JSGlobalObject*, JSC::JSObject*);
-extern "C" JSC::EncodedJSValue BunObject__SHA224__property(JSC::JSGlobalObject*, JSC::JSObject*);
-extern "C" JSC::EncodedJSValue BunObject__SHA256__property(JSC::JSGlobalObject*, JSC::JSObject*);
-extern "C" JSC::EncodedJSValue BunObject__SHA384__property(JSC::JSGlobalObject*, JSC::JSObject*);
-extern "C" JSC::EncodedJSValue BunObject__SHA512__property(JSC::JSGlobalObject*, JSC::JSObject*);
-extern "C" JSC::EncodedJSValue BunObject__SHA512_256__property(JSC::JSGlobalObject*, JSC::JSObject*);
-extern "C" JSC::EncodedJSValue BunObject__TOML__property(JSC::JSGlobalObject*, JSC::JSObject*);
-extern "C" JSC::EncodedJSValue BunObject__Transpiler__property(JSC::JSGlobalObject*, JSC::JSObject*);
-extern "C" JSC::EncodedJSValue BunObject__argv__property(JSC::JSGlobalObject*, JSC::JSObject*);
-extern "C" JSC::EncodedJSValue BunObject__assetPrefix__property(JSC::JSGlobalObject*, JSC::JSObject*);
-extern "C" JSC::EncodedJSValue BunObject__enableANSIColors__property(JSC::JSGlobalObject*, JSC::JSObject*);
-extern "C" JSC::EncodedJSValue BunObject__hash__property(JSC::JSGlobalObject*, JSC::JSObject*);
-extern "C" JSC::EncodedJSValue BunObject__routesDir__property(JSC::JSGlobalObject*, JSC::JSObject*);
-extern "C" JSC::EncodedJSValue BunObject__stderr__property(JSC::JSGlobalObject*, JSC::JSObject*);
-extern "C" JSC::EncodedJSValue BunObject__stdin__property(JSC::JSGlobalObject*, JSC::JSObject*);
-extern "C" JSC::EncodedJSValue BunObject__stdout__property(JSC::JSGlobalObject*, JSC::JSObject*);
-extern "C" JSC::EncodedJSValue BunObject__unsafe__property(JSC::JSGlobalObject*, JSC::JSObject*);
-// --- Getters ---
+#define FOR_EACH_CALLBACK(macro) \
+    macro(DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump) \
+    macro(_Os) \
+    macro(_Path) \
+    macro(allocUnsafe) \
+    macro(build) \
+    macro(connect) \
+    macro(deflateSync) \
+    macro(file) \
+    macro(fs) \
+    macro(gc) \
+    macro(generateHeapSnapshot) \
+    macro(getImportedStyles) \
+    macro(getPublicPath) \
+    macro(getRouteFiles) \
+    macro(getRouteNames) \
+    macro(gunzipSync) \
+    macro(gzipSync) \
+    macro(indexOfLine) \
+    macro(inflateSync) \
+    macro(inspect) \
+    macro(jest) \
+    macro(listen) \
+    macro(match) \
+    macro(mmap) \
+    macro(nanoseconds) \
+    macro(openInEditor) \
+    macro(registerMacro) \
+    macro(resolve) \
+    macro(resolveSync) \
+    macro(serve) \
+    macro(sha) \
+    macro(shrink) \
+    macro(sleepSync) \
+    macro(spawn) \
+    macro(spawnSync) \
+    macro(which) \
+    macro(write) \
+
+
+#define DECLARE_ZIG_BUN_OBJECT_CALLBACK(name) extern "C" JSC::EncodedJSValue BunObject_callback_##name(JSC::JSGlobalObject*, JSC::CallFrame*);
+FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);
+#undef DECLARE_ZIG_BUN_OBJECT_CALLBACK
+
+#define DECLARE_ZIG_BUN_OBJECT_GETTER(name) extern "C" JSC::EncodedJSValue BunObject_getter_##name(JSC::JSGlobalObject*, JSC::JSObject*);
+FOR_EACH_GETTER(DECLARE_ZIG_BUN_OBJECT_GETTER);
+#undef DECLARE_ZIG_BUN_OBJECT_GETTER
+
+#define DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER(name) JSC::JSValue BunObject_getter_wrap_##name(JSC::VM &vm, JSC::JSObject *object) { \
+    return JSC::JSValue::decode(BunObject_getter_##name(object->globalObject(), object)); \
+} \
+
+FOR_EACH_GETTER(DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER);
+#undef DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER
+
+#undef FOR_EACH_GETTER
+#undef FOR_EACH_CALLBACK

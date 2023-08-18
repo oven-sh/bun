@@ -1587,3 +1587,8 @@ pub const ArenaAllocator = @import("./ArenaAllocator.zig").ArenaAllocator;
 pub const Wyhash = @import("./wyhash.zig").Wyhash;
 
 pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
+pub inline fn assertComptime() void {
+    if (comptime !@inComptime()) {
+        @compileError("This function can only be called in comptime.");
+    }
+}

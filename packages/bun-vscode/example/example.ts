@@ -1,7 +1,5 @@
-import type { Server } from "bun";
-
 export default {
-  async fetch(request: Request, server: Server): Promise<Response> {
+  async fetch(request: Request): Promise<Response> {
     a(request);
     const coolThing: CoolThing = new SuperCoolThing();
     coolThing.doCoolThing();

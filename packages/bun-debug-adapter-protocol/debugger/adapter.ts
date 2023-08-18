@@ -3,8 +3,8 @@ import type { JSC, InspectorListener } from "../../bun-inspector-protocol";
 import { WebSocketInspector } from "../../bun-inspector-protocol";
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
-import { SourceMapConsumer as SourceMap } from "source-map-js";
 import capabilities from "./capabilities";
+import { SourceMap } from "./sourcemap";
 
 type LaunchRequest = DAP.LaunchRequest & {
   runtime?: string;
@@ -21,7 +21,7 @@ type AttachRequest = DAP.AttachRequest & {
 
 type Source = DAP.Source & {
   scriptId: string;
-  sourceMap?: SourceMap;
+  sourceMap: SourceMap;
 } & (
     | {
         sourceId: string;
@@ -467,13 +467,15 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     const { source: sourceInfo, sourceModified, breakpoints: requests } = request;
     const sourceId = sourceToId(sourceInfo);
     const source = await this.#getSource(sourceId);
-    const { scriptId } = source;
+    const { scriptId, sourceMap, path } = source;
 
     // If a breakpoint is not included in the request, it must be removed.
     const oldBreakpoints = this.#getBreakpoints(sourceId);
 
     const breakpoints = await Promise.all(
-      requests!.map(async ({ line, column, ...options }) => {
+      requests!.map(async ({ line: ln, column: cl, ...options }) => {
+        const { line, column } = sourceMap.generatedPosition({ line: ln, column: cl, path });
+
         const breakpoint = this.#getBreakpoint(sourceId, line, column);
         if (breakpoint && !sourceModified) {
           return breakpoint;
@@ -535,8 +537,13 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
       }),
     );
 
+    const mappedBreakpoints = breakpoints.map(({ line, column, ...breakpoint }) => ({
+      ...sourceMap.originalPosition({ line, column, path }),
+      ...breakpoint,
+    }));
+
     return {
-      breakpoints,
+      breakpoints: mappedBreakpoints,
     };
   }
 
@@ -653,6 +660,11 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
   }
 
   async ["Debugger.scriptParsed"](event: JSC.Debugger.ScriptParsedEvent): Promise<void> {
+    // START HACK: FOR TESTING PURPOSES, DO NOT MERGE
+    if (event.url.endsWith("/example.ts")) {
+      event.sourceMapURL = "data:application/json;base64,ewogICJ2ZXJzaW9uIjogMywKICAic291cmNlcyI6IFsiZXhhbXBsZS50cyJdLAogICJzb3VyY2VzQ29udGVudCI6IFsiZXhwb3J0IGRlZmF1bHQge1xuICBhc3luYyBmZXRjaChyZXF1ZXN0OiBSZXF1ZXN0KTogUHJvbWlzZTxSZXNwb25zZT4ge1xuICAgIGEocmVxdWVzdCk7XG4gICAgY29uc3QgY29vbFRoaW5nOiBDb29sVGhpbmcgPSBuZXcgU3VwZXJDb29sVGhpbmcoKTtcbiAgICBjb29sVGhpbmcuZG9Db29sVGhpbmcoKTtcbiAgICBkZWJ1Z2dlcjtcbiAgICByZXR1cm4gbmV3IFJlc3BvbnNlKHJlcXVlc3QudXJsKTtcbiAgfSxcbn07XG5cbi8vIGFcbmZ1bmN0aW9uIGEocmVxdWVzdDogUmVxdWVzdCk6IHZvaWQge1xuICBiKHJlcXVlc3QpO1xufVxuXG4vLyBiXG5mdW5jdGlvbiBiKHJlcXVlc3Q6IFJlcXVlc3QpOiB2b2lkIHtcbiAgYyhyZXF1ZXN0KTtcbn1cblxuLy8gY1xuZnVuY3Rpb24gYyhyZXF1ZXN0OiBSZXF1ZXN0KSB7XG4gIGNvbnNvbGUubG9nKHJlcXVlc3QpO1xufVxuXG5pbnRlcmZhY2UgQ29vbFRoaW5nIHtcbiAgZG9Db29sVGhpbmcoKTogdm9pZDtcbn1cblxuY2xhc3MgU3VwZXJDb29sVGhpbmcgaW1wbGVtZW50cyBDb29sVGhpbmcge1xuICBkb0Nvb2xUaGluZygpOiB2b2lkIHtcbiAgICBjb25zb2xlLmxvZyhcInN1cGVyIGNvb2wgdGhpbmchXCIpO1xuICB9XG59XG4iXSwKICAibWFwcGluZ3MiOiAiQUFBQSxlQUFlO0FBQUEsRUFDYixNQUFNLE1BQU0sU0FBcUM7QUFDL0MsTUFBRSxPQUFPO0FBQ1QsVUFBTSxZQUF1QixJQUFJLGVBQWU7QUFDaEQsY0FBVSxZQUFZO0FBQ3RCO0FBQ0EsV0FBTyxJQUFJLFNBQVMsUUFBUSxHQUFHO0FBQUEsRUFDakM7QUFDRjtBQUdBLFNBQVMsRUFBRSxTQUF3QjtBQUNqQyxJQUFFLE9BQU87QUFDWDtBQUdBLFNBQVMsRUFBRSxTQUF3QjtBQUNqQyxJQUFFLE9BQU87QUFDWDtBQUdBLFNBQVMsRUFBRSxTQUFrQjtBQUMzQixVQUFRLElBQUksT0FBTztBQUNyQjtBQU1BLE1BQU0sZUFBb0M7QUFBQSxFQUN4QyxjQUFvQjtBQUNsQixZQUFRLElBQUksbUJBQW1CO0FBQUEsRUFDakM7QUFDRjsiLAogICJuYW1lcyI6IFtdCn0K";
+    }
+    // END HACK
     const { url, scriptId, sourceMapURL } = event;
 
     // If no url is present, the script is from a `evaluate` request.
@@ -665,7 +677,7 @@ export class DebugAdapter implements IDebugAdapter, InspectorListener {
     // 2. If it has a `sourceReference`, the client sends a `source` request.
     //    Moreover, the code is usually shown in a read-only editor.
     const isUserCode = url.startsWith("/");
-    const sourceMap = sourceMapUrlToSourceMap(sourceMapURL);
+    const sourceMap = SourceMap(sourceMapURL);
     const presentationHint = sourcePresentationHint(url);
 
     if (isUserCode) {
@@ -1447,18 +1459,4 @@ function variablesSortBy(a: DAP.Variable, b: DAP.Variable): number {
   if (ai > bi) return 1;
   if (ai < bi) return -1;
   return 0;
-}
-
-function sourceMapUrlToSourceMap(url?: string): SourceMap | undefined {
-  if (!url || !url.startsWith("data:")) {
-    return undefined;
-  }
-  try {
-    const [_, base64] = url.split(",", 2);
-    const decoded = Buffer.from(base64, "base64").toString("utf8");
-    return new SourceMap(JSON.parse(decoded));
-  } catch (error) {
-    console.warn("Failed to parse source map URL", error);
-    return undefined;
-  }
 }

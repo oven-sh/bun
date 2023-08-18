@@ -6,7 +6,7 @@ function ReadStream(fd) {
   const stream = require("node:fs").ReadStream.call(this, `/dev/fd/${fd}`);
 
   stream.isRaw = false;
-  stream.isTTY = isatty(fd);
+  stream.isTTY = true;
 
   return stream;
 }
@@ -95,7 +95,7 @@ function WriteStream(fd) {
 
   stream.columns = undefined;
   stream.rows = undefined;
-  stream.isTTY = isatty(fd);
+  stream.isTTY = true;
 
   if (stream.isTTY) {
     const windowSizeArray = [0, 0];

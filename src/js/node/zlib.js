@@ -4066,6 +4066,10 @@ var require_lib = __commonJS({
     exports.inflateRawSync = function (buffer, opts) {
       return zlibBufferSync(new InflateRaw(opts), buffer);
     };
+    // not implemented, stub
+    exports.brotliCompress = function (buffer, opts, callback) {
+      throw new Error("zlib.brotliCompress is not implemented");
+    };
     function zlibBuffer(engine, buffer, callback) {
       var buffers = [];
       var nread = 0;

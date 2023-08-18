@@ -88,10 +88,6 @@ const PackageManager = @import("../install/install.zig").PackageManager;
 const ModuleLoader = JSC.ModuleLoader;
 const FetchFlags = JSC.FetchFlags;
 
-pub const GlobalConstructors = [_]type{
-    JSC.Cloudflare.HTMLRewriter.Constructor,
-};
-
 pub const GlobalClasses = [_]type{
     Bun.Class,
     WebCore.Crypto.Class,
@@ -458,8 +454,6 @@ pub const VirtualMachine = struct {
     ///     "bun foo
     ///          []
     argv: []const []const u8 = &[_][]const u8{"bun"},
-
-    global_api_constructors: [GlobalConstructors.len]JSC.JSValue = undefined,
 
     origin_timer: std.time.Timer = undefined,
     origin_timestamp: u64 = 0,
@@ -883,31 +877,6 @@ pub const VirtualMachine = struct {
         }
 
         return classes;
-    }
-
-    pub fn getAPIConstructors(globalObject: *JSGlobalObject) []const JSC.JSValue {
-        if (is_bindgen)
-            return &[_]JSC.JSValue{};
-        const is_first = !VirtualMachine.get().has_loaded_constructors;
-        if (is_first) {
-            VirtualMachine.get().global = globalObject;
-            VirtualMachine.get().has_loaded_constructors = true;
-        }
-
-        var slice = if (is_first)
-            @as([]JSC.JSValue, &JSC.VirtualMachine.get().global_api_constructors)
-        else
-            VirtualMachine.get().allocator.alloc(JSC.JSValue, GlobalConstructors.len) catch unreachable;
-
-        inline for (GlobalConstructors, 0..) |Class, i| {
-            var ref = Class.constructor(globalObject.ref()).?;
-            JSC.C.JSValueProtect(globalObject.ref(), ref);
-            slice[i] = JSC.JSValue.fromRef(
-                ref,
-            );
-        }
-
-        return slice;
     }
 
     pub fn isWatcherEnabled(this: *VirtualMachine) bool {

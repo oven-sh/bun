@@ -2180,16 +2180,9 @@ const SHA512_256 = JSC.API.Bun.Crypto.SHA512_256;
 const MD5_SHA1 = JSC.API.Bun.Crypto.MD5_SHA1;
 const FFI = JSC.FFI;
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
-    AttributeIterator,
-    Comment,
     DebugServer,
     DebugSSLServer,
-    DocEnd,
-    DocType,
-    Element,
-    EndTag,
     FetchEvent,
-    HTMLRewriter,
     JSNode,
     LazyPropertiesObject,
 
@@ -2198,7 +2191,6 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     Server,
 
     SSLServer,
-    TextChunk,
     FFI,
 });
 
@@ -2249,25 +2241,6 @@ pub fn getterWrap(comptime Container: type, comptime name: string) GetterType(Co
     }.callback;
 }
 
-pub fn setterWrap(comptime Container: type, comptime name: string) SetterType(Container) {
-    return struct {
-        const FunctionType = @TypeOf(@field(Container, name));
-        const FunctionTypeInfo: std.builtin.Type.Fn = @typeInfo(FunctionType).Fn;
-
-        pub fn callback(
-            this: *Container,
-            ctx: js.JSContextRef,
-            _: js.JSObjectRef,
-            _: js.JSStringRef,
-            value: js.JSValueRef,
-            exception: js.ExceptionRef,
-        ) bool {
-            @call(.auto, @field(Container, name), .{ this, JSC.JSValue.fromRef(value), exception, ctx.ptr() });
-            return exception.* == null;
-        }
-    }.callback;
-}
-
 fn GetterType(comptime Container: type) type {
     return fn (
         this: *Container,
@@ -2276,17 +2249,6 @@ fn GetterType(comptime Container: type) type {
         _: js.JSStringRef,
         exception: js.ExceptionRef,
     ) js.JSObjectRef;
-}
-
-fn SetterType(comptime Container: type) type {
-    return fn (
-        this: *Container,
-        ctx: js.JSContextRef,
-        obj: js.JSObjectRef,
-        prop: js.JSStringRef,
-        value: js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) bool;
 }
 
 fn MethodType(comptime Container: type, comptime has_container: bool) type {
@@ -2922,6 +2884,9 @@ pub fn wrapInstanceMethod(
                     },
                     *JSC.JSGlobalObject => {
                         args[i] = globalThis.ptr();
+                    },
+                    *JSC.CallFrame => {
+                        args[i] = callframe;
                     },
                     JSC.Node.StringOrBuffer => {
                         const arg = iter.nextEat() orelse {

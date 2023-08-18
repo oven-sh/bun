@@ -419,6 +419,11 @@ pub const TSConfigJSON = struct {
             }
         }
 
+        // Absolute unix "/"
+        if (TSConfigJSON.isSlash(c0)) {
+            return true;
+        }
+
         const r = source.rangeOfString(loc);
         log.addRangeWarningFmt(source, r, allocator, "Non-relative path \"{s}\" is not allowed when \"baseUrl\" is not set (did you forget a leading \"./\"?)", .{text}) catch {};
         return false;

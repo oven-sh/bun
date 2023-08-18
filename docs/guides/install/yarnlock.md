@@ -17,7 +17,7 @@ $ bun install --yarn
 To set this as the default behavior, add the following to your `bunfig.toml` file.
 
 ```toml#bunfig.toml
-[install]
+[install.lockfile]
 print = "yarn"
 ```
 

@@ -722,9 +722,9 @@ const char* const s_moduleRequireCode = "(function (id){\"use strict\";const exi
 const JSC::ConstructAbility s_moduleRequireResolveCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_moduleRequireResolveCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_moduleRequireResolveCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_moduleRequireResolveCodeLength = 96;
+const int s_moduleRequireResolveCodeLength = 194;
 static const JSC::Intrinsic s_moduleRequireResolveCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_moduleRequireResolveCode = "(function (id){\"use strict\";return @resolveSync(id,typeof this===\"string\"\?this:this\?.path,!1)})\n";
+const char* const s_moduleRequireResolveCode = "(function (id){\"use strict\";try{return @resolveSync(id,typeof this===\"string\"\?this:this\?.path,!1)}catch(error){var e=new Error(`Cannot find module '${id}'`);throw e.code=\"MODULE_NOT_FOUND\",e}})\n";
 
 // requireNativeModule
 const JSC::ConstructAbility s_moduleRequireNativeModuleCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
@@ -1337,6 +1337,32 @@ JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
     return clientData->builtinFunctions().readableByteStreamControllerBuiltins().codeName##Executable()->link(vm, nullptr, clientData->builtinFunctions().readableByteStreamControllerBuiltins().codeName##Source(), std::nullopt, s_##codeName##Intrinsic); \
 }
 WEBCORE_FOREACH_READABLEBYTESTREAMCONTROLLER_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
+#undef DEFINE_BUILTIN_GENERATOR
+
+/* UtilInspect.ts */
+// getStylizeWithColor
+const JSC::ConstructAbility s_utilInspectGetStylizeWithColorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_utilInspectGetStylizeWithColorCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_utilInspectGetStylizeWithColorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_utilInspectGetStylizeWithColorCodeLength = 261;
+static const JSC::Intrinsic s_utilInspectGetStylizeWithColorCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_utilInspectGetStylizeWithColorCode = "(function (inspect){\"use strict\";return function stylizeWithColor(str,styleType){const style=inspect.styles[styleType];if(style!==@undefined){const color=inspect.colors[style];if(color!==@undefined)return`\\x1B[${color[0]}m${str}\\x1B[${color[1]}m`}return str}})\n";
+
+// stylizeWithNoColor
+const JSC::ConstructAbility s_utilInspectStylizeWithNoColorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_utilInspectStylizeWithNoColorCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_utilInspectStylizeWithNoColorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_utilInspectStylizeWithNoColorCodeLength = 42;
+static const JSC::Intrinsic s_utilInspectStylizeWithNoColorCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_utilInspectStylizeWithNoColorCode = "(function (str){\"use strict\";return str})\n";
+
+#define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
+JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
+{\
+    JSVMClientData* clientData = static_cast<JSVMClientData*>(vm.clientData); \
+    return clientData->builtinFunctions().utilInspectBuiltins().codeName##Executable()->link(vm, nullptr, clientData->builtinFunctions().utilInspectBuiltins().codeName##Source(), std::nullopt, s_##codeName##Intrinsic); \
+}
+WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 #undef DEFINE_BUILTIN_GENERATOR
 
 /* ConsoleObject.ts */

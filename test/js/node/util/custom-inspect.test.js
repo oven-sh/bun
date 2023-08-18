@@ -132,17 +132,18 @@ for (const [name, inspect] of process.versions.bun
 
   const exceptions = [new Error("don't crash!"), 42];
 
-  // test.each(exceptions)(name + " handles exceptions %s", err => {
-  //   const obj = {
-  //     [customSymbol]() {
-  //       throw err;
-  //     },
-  //   };
+  test.each(exceptions)(name + " handles exceptions %s", err => {
+    const obj = {
+      [customSymbol]() {
+        throw err;
+      },
+    };
 
-  //   if (typeof err === "object" && err instanceof Error) {
-  //     expect(() => inspect(obj)).toThrow(err.message);
-  //   } else {
-  //     expect(() => inspect(obj)).toThrow(err + "");
-  //   }
-  // });
+    if (Bun.inspect === inspect) {
+      // make sure this doesnt crash
+      expect(inspect(obj)).toBeString();
+    } else {
+      expect(() => inspect(obj)).toThrow();
+    }
+  });
 }

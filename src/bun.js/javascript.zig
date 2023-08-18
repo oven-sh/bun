@@ -88,10 +88,6 @@ const PackageManager = @import("../install/install.zig").PackageManager;
 const ModuleLoader = JSC.ModuleLoader;
 const FetchFlags = JSC.FetchFlags;
 
-pub const GlobalConstructors = [_]type{
-    JSC.Cloudflare.HTMLRewriter.Constructor,
-};
-
 pub const GlobalClasses = [_]type{
     Bun.Class,
     WebCore.Crypto.Class,
@@ -459,8 +455,6 @@ pub const VirtualMachine = struct {
     ///          []
     argv: []const []const u8 = &[_][]const u8{"bun"},
 
-    global_api_constructors: [GlobalConstructors.len]JSC.JSValue = undefined,
-
     origin_timer: std.time.Timer = undefined,
     origin_timestamp: u64 = 0,
     macro_event_loop: EventLoop = EventLoop{},
@@ -496,12 +490,18 @@ pub const VirtualMachine = struct {
     gc_controller: JSC.GarbageCollectionController = .{},
     worker: ?*JSC.WebWorker = null,
 
+    debugger: ?Debugger = null,
+
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
     pub const OnException = fn (*ZigException) void;
 
     pub fn isMainThread(this: *const VirtualMachine) bool {
         return this.worker == null;
+    }
+
+    pub fn isInspectorEnabled(this: *const VirtualMachine) bool {
+        return this.debugger != null;
     }
 
     pub fn setOnException(this: *VirtualMachine, callback: *const OnException) void {
@@ -706,6 +706,106 @@ pub const VirtualMachine = struct {
         }
     }
 
+    pub fn nextAsyncTaskID(this: *VirtualMachine) u64 {
+        var debugger: *Debugger = &(this.debugger orelse return 0);
+        debugger.next_debugger_id +%= 1;
+        return debugger.next_debugger_id;
+    }
+
+    pub const Debugger = struct {
+        path_or_port: []const u8 = "",
+        script_execution_context_id: u32 = 0,
+        next_debugger_id: u64 = 1,
+        poll_ref: JSC.PollRef = .{},
+        auto_pause: bool = false,
+        const debug = Output.scoped(.DEBUGGER, false);
+
+        extern "C" fn Bun__createJSDebugger(*JSC.JSGlobalObject) u32;
+        extern "C" fn Bun__ensureDebugger(u32, bool) void;
+        extern "C" fn Bun__startJSDebuggerThread(*JSC.JSGlobalObject, u32, *bun.String) bun.String;
+        var has_started_debugger_thread: bool = false;
+        var futex_atomic: std.atomic.Atomic(u32) = undefined;
+
+        pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
+            debug("create", .{});
+            this.debugger.?.script_execution_context_id = Bun__createJSDebugger(globalObject);
+            if (!has_started_debugger_thread) {
+                has_started_debugger_thread = true;
+                futex_atomic = std.atomic.Atomic(u32).init(0);
+                var thread = try std.Thread.spawn(.{}, startJSDebuggerThread, .{this});
+                thread.detach();
+            }
+            this.eventLoop().ensureWaker();
+            if (this.debugger.?.auto_pause) {
+                this.debugger.?.poll_ref.ref(this);
+            }
+            debug("spin", .{});
+            while (futex_atomic.load(.Monotonic) > 0) std.Thread.Futex.wait(&futex_atomic, 1);
+            if (comptime Environment.allow_assert)
+                debug("waitForDebugger: {}", .{Output.ElapsedFormatter{
+                    .colors = Output.enable_ansi_colors_stderr,
+                    .duration_ns = @truncate(@as(u128, @intCast(std.time.nanoTimestamp() - bun.CLI.start_time))),
+                }});
+
+            Bun__ensureDebugger(this.debugger.?.script_execution_context_id, this.debugger.?.auto_pause);
+        }
+
+        pub fn startJSDebuggerThread(other_vm: *VirtualMachine) void {
+            var arena = bun.MimallocArena.init() catch unreachable;
+            Output.Source.configureNamedThread("Debugger");
+            debug("startJSDebuggerThread", .{});
+
+            var vm = JSC.VirtualMachine.init(.{
+                .allocator = arena.allocator(),
+                .args = std.mem.zeroes(Api.TransformOptions),
+                .store_fd = false,
+            }) catch @panic("Failed to create Debugger VM");
+            vm.allocator = arena.allocator();
+            vm.arena = &arena;
+
+            vm.bundler.configureDefines() catch @panic("Failed to configure defines");
+            vm.is_main_thread = false;
+            vm.eventLoop().ensureWaker();
+
+            vm.global.vm().holdAPILock(other_vm, @ptrCast(&start));
+        }
+
+        pub export var Bun__debugger_server_url: bun.String = undefined;
+
+        fn start(other_vm: *VirtualMachine) void {
+            var this = VirtualMachine.get();
+            var str = bun.String.create(other_vm.debugger.?.path_or_port);
+            Bun__debugger_server_url = Bun__startJSDebuggerThread(this.global, other_vm.debugger.?.script_execution_context_id, &str);
+            Bun__debugger_server_url.toThreadSafe();
+
+            this.global.handleRejectedPromises();
+
+            if (this.log.msgs.items.len > 0) {
+                if (Output.enable_ansi_colors) {
+                    this.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                } else {
+                    this.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                }
+                Output.prettyErrorln("\n", .{});
+                Output.flush();
+            }
+
+            futex_atomic.store(0, .Monotonic);
+            std.Thread.Futex.wake(&futex_atomic, 1);
+            debug("wake", .{});
+            this.eventLoop().tick();
+
+            while (true) {
+                while (this.eventLoop().tasks.count > 0 or this.active_tasks > 0 or this.uws_event_loop.?.active > 0) {
+                    this.tick();
+                    this.eventLoop().autoTickActive();
+                }
+
+                this.eventLoop().tickPossiblyForever();
+            }
+        }
+    };
+
     pub inline fn enqueueTask(this: *VirtualMachine, task: Task) void {
         this.eventLoop().enqueueTask(task);
     }
@@ -777,31 +877,6 @@ pub const VirtualMachine = struct {
         }
 
         return classes;
-    }
-
-    pub fn getAPIConstructors(globalObject: *JSGlobalObject) []const JSC.JSValue {
-        if (is_bindgen)
-            return &[_]JSC.JSValue{};
-        const is_first = !VirtualMachine.get().has_loaded_constructors;
-        if (is_first) {
-            VirtualMachine.get().global = globalObject;
-            VirtualMachine.get().has_loaded_constructors = true;
-        }
-
-        var slice = if (is_first)
-            @as([]JSC.JSValue, &JSC.VirtualMachine.get().global_api_constructors)
-        else
-            VirtualMachine.get().allocator.alloc(JSC.JSValue, GlobalConstructors.len) catch unreachable;
-
-        inline for (GlobalConstructors, 0..) |Class, i| {
-            var ref = Class.constructor(globalObject.ref()).?;
-            JSC.C.JSValueProtect(globalObject.ref(), ref);
-            slice[i] = JSC.JSValue.fromRef(
-                ref,
-            );
-        }
-
-        return slice;
     }
 
     pub fn isWatcherEnabled(this: *VirtualMachine) bool {
@@ -917,6 +992,8 @@ pub const VirtualMachine = struct {
             source_code_printer.?.ctx.append_null_byte = false;
         }
 
+        vm.configureDebugger(opts.debugger);
+
         return vm;
     }
 
@@ -928,6 +1005,7 @@ pub const VirtualMachine = struct {
         store_fd: bool = false,
         smol: bool = false,
         graph: ?*bun.StandaloneModuleGraph = null,
+        debugger: bun.CLI.Command.Debugger = .{ .unspecified = {} },
     };
 
     pub fn init(opts: Options) !*VirtualMachine {
@@ -1023,7 +1101,30 @@ pub const VirtualMachine = struct {
             source_code_printer.?.ctx.append_null_byte = false;
         }
 
+        vm.configureDebugger(opts.debugger);
+
         return vm;
+    }
+
+    fn configureDebugger(this: *VirtualMachine, debugger: bun.CLI.Command.Debugger) void {
+        switch (debugger) {
+            .unspecified => {},
+            .enable => {
+                this.debugger = Debugger{};
+            },
+            .path_or_port => {
+                this.debugger = Debugger{
+                    .path_or_port = debugger.path_or_port,
+                };
+            },
+        }
+
+        if (debugger != .unspecified) {
+            this.bundler.options.minify_identifiers = false;
+            this.bundler.options.minify_syntax = false;
+            this.bundler.options.minify_whitespace = false;
+            this.bundler.options.debugger = true;
+        }
     }
 
     pub fn initWorker(
@@ -1125,11 +1226,6 @@ pub const VirtualMachine = struct {
 
         return vm;
     }
-
-    // dynamic import
-    // pub fn import(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableZigString {
-
-    // }
 
     pub threadlocal var source_code_printer: ?*js_printer.BufferPrinter = null;
 
@@ -1770,6 +1866,10 @@ pub const VirtualMachine = struct {
         this.eventLoop().ensureWaker();
 
         var promise: *JSInternalPromise = undefined;
+
+        if (this.debugger != null) {
+            try Debugger.create(this, this.global);
+        }
 
         if (!this.bundler.options.disable_transpilation) {
             {

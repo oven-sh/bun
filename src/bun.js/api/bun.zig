@@ -227,6 +227,71 @@ pub fn inspect(
         }
     }
 
+    var formatOptions = ZigConsoleClient.FormatOptions{
+        .enable_colors = false,
+        .add_newline = false,
+        .flush = false,
+        .max_depth = 8,
+        .quote_strings = true,
+        .ordered_properties = false,
+    };
+    var value = JSC.JSValue.fromRef(arguments[0]);
+
+    if (arguments.len > 1) {
+        var arg1: JSC.JSValue = JSC.JSValue.fromRef(arguments[1]);
+
+        if (arg1.isObject()) {
+            if (arg1.getTruthy(ctx, "depth")) |opt| {
+                if (opt.isInt32()) {
+                    const arg = opt.toInt32();
+                    if (arg < 0) {
+                        ctx.throwInvalidArguments("expected depth to be greater than or equal to 0, got {d}", .{arg});
+                        return null;
+                    }
+                    formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
+                } else if (opt.isNumber()) {
+                    const v = opt.asDouble();
+                    if (std.math.isInf(v)) {
+                        formatOptions.max_depth = std.math.maxInt(u16);
+                    } else {
+                        ctx.throwInvalidArguments("expected depth to be an integer, got {d}", .{v});
+                        return null;
+                    }
+                }
+            }
+            if (arg1.getOptional(ctx, "colors", bool) catch return null) |opt| {
+                formatOptions.enable_colors = opt;
+            }
+            if (arg1.getOptional(ctx, "sorted", bool) catch return null) |opt| {
+                formatOptions.ordered_properties = opt;
+            }
+        } else {
+            // formatOptions.show_hidden = arg1.toBoolean();
+            if (arguments.len > 2) {
+                var depthArg = JSC.JSValue.fromRef(arguments[1]);
+                if (depthArg.isInt32()) {
+                    const arg = depthArg.toInt32();
+                    if (arg < 0) {
+                        ctx.throwInvalidArguments("expected depth to be greater than or equal to 0, got {d}", .{arg});
+                        return null;
+                    }
+                    formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
+                } else if (depthArg.isNumber()) {
+                    const v = depthArg.asDouble();
+                    if (std.math.isInf(v)) {
+                        formatOptions.max_depth = std.math.maxInt(u16);
+                    } else {
+                        ctx.throwInvalidArguments("expected depth to be an integer, got {d}", .{v});
+                        return null;
+                    }
+                }
+                if (arguments.len > 3) {
+                    formatOptions.enable_colors = JSC.JSValue.fromRef(arguments[2]).toBoolean();
+                }
+            }
+        }
+    }
+
     // very stable memory address
     var array = MutableString.init(getAllocator(ctx), 0) catch unreachable;
     var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
@@ -239,17 +304,12 @@ pub fn inspect(
     ZigConsoleClient.format(
         .Debug,
         ctx.ptr(),
-        @as([*]const JSValue, @ptrCast(arguments.ptr)),
-        arguments.len,
+        @as([*]const JSValue, @ptrCast(&value)),
+        1,
         Writer,
         Writer,
         writer,
-        .{
-            .enable_colors = false,
-            .add_newline = false,
-            .flush = false,
-            .max_depth = 32,
-        },
+        formatOptions,
     );
     buffered_writer.flush() catch {
         return JSC.C.JSValueMakeUndefined(ctx);
@@ -3498,6 +3558,8 @@ pub const TOML = struct {
     }
 };
 
+const Debugger = JSC.Debugger;
+
 pub const Timer = struct {
     last_id: i32 = 1,
     warned: bool = false,
@@ -3612,6 +3674,9 @@ pub const Timer = struct {
             };
 
             if (should_cancel_job) {
+                if (vm.isInspectorEnabled()) {
+                    Debugger.didCancelAsyncCall(globalThis, .DOMTimer, Timeout.ID.asyncID(.{ .id = this.id, .kind = kind }));
+                }
                 this.deinit();
                 return;
             } else if (kind != .setInterval) {
@@ -3624,6 +3689,7 @@ pub const Timer = struct {
             defer if (args_needs_deinit) bun.default_allocator.free(args);
 
             const callback = this.callback.get() orelse @panic("Expected CallbackJob to have a callback function");
+
             if (this.arguments.trySwap()) |arguments| {
                 // Bun.sleep passes a Promise
                 if (arguments.jsType() == .JSPromise) {
@@ -3648,10 +3714,18 @@ pub const Timer = struct {
                 }
             }
 
+            if (vm.isInspectorEnabled()) {
+                Debugger.willDispatchAsyncCall(globalThis, .DOMTimer, Timeout.ID.asyncID(.{ .id = this.id, .kind = kind }));
+            }
+
             const result = callback.callWithGlobalThis(
                 globalThis,
                 args,
             );
+
+            if (vm.isInspectorEnabled()) {
+                Debugger.didDispatchAsyncCall(globalThis, .DOMTimer, Timeout.ID.asyncID(.{ .id = this.id, .kind = kind }));
+            }
 
             if (result.isEmptyOrUndefinedOrNull() or !result.isCell()) {
                 this.deinit();
@@ -3787,6 +3861,9 @@ pub const Timer = struct {
                     }
 
                     vm.enqueueTask(JSC.Task.init(&job.task));
+                    if (vm.isInspectorEnabled()) {
+                        Debugger.didScheduleAsyncCall(globalThis, .DOMTimer, id.asyncID(), true);
+                    }
 
                     map.put(vm.allocator, this.id, null) catch unreachable;
                     return this_value;
@@ -3888,6 +3965,10 @@ pub const Timer = struct {
 
             kind: Kind = Kind.setTimeout,
 
+            pub inline fn asyncID(this: ID) u64 {
+                return @bitCast(this);
+            }
+
             pub fn repeats(this: ID) bool {
                 return this.kind == .setInterval;
             }
@@ -3976,6 +4057,9 @@ pub const Timer = struct {
             job.ref.ref(vm);
 
             vm.enqueueTask(JSC.Task.init(&job.task));
+            if (vm.isInspectorEnabled()) {
+                Debugger.didScheduleAsyncCall(globalThis, .DOMTimer, timer_id.asyncID(), !repeats);
+            }
         }
 
         pub fn deinit(this: *Timeout) void {
@@ -4033,6 +4117,9 @@ pub const Timer = struct {
             job.ref.ref(vm);
 
             vm.enqueueTask(JSC.Task.init(&job.task));
+            if (vm.isInspectorEnabled()) {
+                Debugger.didScheduleAsyncCall(globalThis, .DOMTimer, Timeout.ID.asyncID(.{ .id = id, .kind = kind }), !repeat);
+            }
             map.put(vm.allocator, id, null) catch unreachable;
             return;
         }
@@ -4055,6 +4142,10 @@ pub const Timer = struct {
 
         timeout.poll_ref.ref(vm);
         map.put(vm.allocator, id, timeout) catch unreachable;
+
+        if (vm.isInspectorEnabled()) {
+            Debugger.didScheduleAsyncCall(globalThis, .DOMTimer, Timeout.ID.asyncID(.{ .id = id, .kind = kind }), !repeat);
+        }
 
         timeout.timer.set(
             Timeout.ID{
@@ -4117,8 +4208,8 @@ pub const Timer = struct {
         JSC.markBinding(@src());
 
         const kind: Timeout.Kind = if (repeats) .setInterval else .setTimeout;
-
-        var map = globalThis.bunVM().timer.maps.get(kind);
+        var vm = globalThis.bunVM();
+        var map = vm.timer.maps.get(kind);
 
         const id: Timeout.ID = .{
             .id = brk: {
@@ -4137,6 +4228,10 @@ pub const Timer = struct {
         };
 
         var timer = map.fetchSwapRemove(id.id) orelse return;
+        if (vm.isInspectorEnabled()) {
+            Debugger.didCancelAsyncCall(globalThis, .DOMTimer, id.asyncID());
+        }
+
         if (timer.value == null) {
             // this timer was scheduled to run but was cancelled before it was run
             // so long as the callback isn't already in progress, fetchSwapRemove will handle invalidating it

@@ -580,7 +580,8 @@ function ffiRunner(fast) {
 }
 
 it("read", () => {
-  const buffer = new BigInt64Array(16);
+  // The usage of globalThis is a GC thing we should really fix
+  globalThis.buffer = new BigInt64Array(16);
   const dataView = new DataView(buffer.buffer);
   const addr = ptr(buffer);
 
@@ -607,6 +608,8 @@ it("read", () => {
     expect(read.u32(addr, i)).toBe(dataView.getUint32(i, true));
     expect(read.f32(addr, i)).toBe(dataView.getFloat32(i, true));
   }
+
+  delete globalThis.buffer;
 });
 
 if (ok) {
@@ -630,4 +633,11 @@ it("dlopen throws an error instead of returning it", () => {
 
 it('suffix does not start with a "."', () => {
   expect(suffix).not.toMatch(/^\./);
+});
+
+it(".ptr is not leaked", () => {
+  for (let fn of [Bun.password.hash, Bun.password.verify, it]) {
+    expect(fn).not.toHaveProperty("ptr");
+    expect(fn.ptr).toBeUndefined();
+  }
 });

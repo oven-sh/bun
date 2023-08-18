@@ -4,6 +4,7 @@ var WriteStream;
 const EventEmitter = require("node:events");
 const promises = require("node:fs/promises");
 const Stream = require("node:stream");
+const { isArrayBufferView } = require("node:util/types");
 
 var fs = Bun.fs();
 class FSWatcher extends EventEmitter {
@@ -126,8 +127,37 @@ var access = function access(...args) {
   open = function open(...args) {
     callbackify(fs.openSync, args);
   },
-  read = function read(...args) {
-    callbackify(fs.readSync, args);
+  read = function read(fd, buffer, offsetOrOptions, length, position, callback) {
+    let offset = offsetOrOptions;
+    let params = null;
+    if (arguments.length <= 4) {
+      if (arguments.length === 4) {
+        // fs.read(fd, buffer, options, callback)
+        callback = length;
+        params = offsetOrOptions;
+      } else if (arguments.length === 3) {
+        // fs.read(fd, bufferOrParams, callback)
+        if (!isArrayBufferView(buffer)) {
+          // fs.read(fd, params, callback)
+          params = buffer;
+          ({ buffer = Buffer.alloc(16384) } = params ?? {});
+        }
+        callback = offsetOrOptions;
+      } else {
+        // fs.read(fd, callback)
+        callback = buffer;
+        buffer = Buffer.alloc(16384);
+      }
+      ({ offset = 0, length = buffer?.byteLength - offset, position = null } = params ?? {});
+    }
+    queueMicrotask(() => {
+      try {
+        var bytesRead = fs.readSync(fd, buffer, offset, length, position);
+      } catch (e) {
+        callback(e);
+      }
+      callback(null, bytesRead, buffer);
+    });
   },
   write = function write(...args) {
     callbackify(fs.writeSync, args);

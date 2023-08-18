@@ -68,7 +68,7 @@ describe("bun", () => {
       fs.writeFileSync(path, "[debug]");
 
       const p = Bun.spawnSync({
-        cmd: [bunExe(), "--config", path],
+        cmd: [bunExe(), "--config=" + path],
         env: {},
         stderr: "inherit",
       });

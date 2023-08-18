@@ -258,6 +258,10 @@ public:
     JSC::JSFunction* performMicrotaskFunction() { return m_performMicrotaskFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* performMicrotaskVariadicFunction() { return m_performMicrotaskVariadicFunction.getInitializedOnMainThread(this); }
 
+    JSC::JSFunction* utilInspectFunction() { return m_utilInspectFunction.getInitializedOnMainThread(this); }
+    JSC::JSFunction* utilInspectStylizeColorFunction() { return m_utilInspectStylizeColorFunction.getInitializedOnMainThread(this); }
+    JSC::JSFunction* utilInspectStylizeNoColorFunction() { return m_utilInspectStylizeNoColorFunction.getInitializedOnMainThread(this); }
+
     JSC::JSFunction* emitReadableNextTickFunction() { return m_emitReadableNextTickFunction.getInitializedOnMainThread(this); }
 
     JSObject* requireFunctionUnbound() { return m_requireFunctionUnbound.getInitializedOnMainThread(this); }
@@ -398,6 +402,7 @@ public:
     mutable WriteBarrier<Unknown> m_JSWebSocketSetterValue;
     mutable WriteBarrier<Unknown> m_JSWorkerSetterValue;
 
+    mutable WriteBarrier<Unknown> m_JSBunDebuggerValue;
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
 
     Structure* memoryFootprintStructure()
@@ -512,6 +517,9 @@ private:
     LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_nativeMicrotaskTrampoline;
     LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskVariadicFunction;
+    LazyProperty<JSGlobalObject, JSFunction> m_utilInspectFunction;
+    LazyProperty<JSGlobalObject, JSFunction> m_utilInspectStylizeColorFunction;
+    LazyProperty<JSGlobalObject, JSFunction> m_utilInspectStylizeNoColorFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_emitReadableNextTickFunction;
     LazyProperty<JSGlobalObject, JSMap> m_lazyReadableStreamPrototypeMap;
     LazyProperty<JSGlobalObject, JSMap> m_requireMap;

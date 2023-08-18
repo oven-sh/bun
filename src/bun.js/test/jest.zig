@@ -425,22 +425,22 @@ pub const Jest = struct {
         module.put(
             globalObject,
             ZigString.static("beforeAll"),
-            JSC.NewRuntimeFunction(globalObject, ZigString.static("beforeAll"), 1, DescribeScope.beforeAll, false),
+            JSC.NewRuntimeFunction(globalObject, ZigString.static("beforeAll"), 1, DescribeScope.beforeAll, false, false),
         );
         module.put(
             globalObject,
             ZigString.static("beforeEach"),
-            JSC.NewRuntimeFunction(globalObject, ZigString.static("beforeEach"), 1, DescribeScope.beforeEach, false),
+            JSC.NewRuntimeFunction(globalObject, ZigString.static("beforeEach"), 1, DescribeScope.beforeEach, false, false),
         );
         module.put(
             globalObject,
             ZigString.static("afterAll"),
-            JSC.NewRuntimeFunction(globalObject, ZigString.static("afterAll"), 1, DescribeScope.afterAll, false),
+            JSC.NewRuntimeFunction(globalObject, ZigString.static("afterAll"), 1, DescribeScope.afterAll, false, false),
         );
         module.put(
             globalObject,
             ZigString.static("afterEach"),
-            JSC.NewRuntimeFunction(globalObject, ZigString.static("afterEach"), 1, DescribeScope.afterEach, false),
+            JSC.NewRuntimeFunction(globalObject, ZigString.static("afterEach"), 1, DescribeScope.afterEach, false, false),
         );
         module.put(
             globalObject,

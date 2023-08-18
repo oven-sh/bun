@@ -665,7 +665,6 @@ const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, n
     CREATE_METHOD_TABLE(GlobalObject) };
 
 extern "C" JSClassRef* Zig__getAPIGlobals(size_t* count);
-extern "C" const JSC__JSValue* Zig__getAPIConstructors(size_t* count, JSC__JSGlobalObject*);
 
 static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
 {
@@ -909,6 +908,9 @@ GENERATED_CONSTRUCTOR_SETTER(JSRequest);
 GENERATED_CONSTRUCTOR_GETTER(JSBlob);
 GENERATED_CONSTRUCTOR_SETTER(JSBlob);
 
+GENERATED_CONSTRUCTOR_GETTER(JSHTMLRewriter);
+GENERATED_CONSTRUCTOR_SETTER(JSHTMLRewriter);
+
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSMessageEvent);
 WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSMessageEvent);
 
@@ -941,6 +943,8 @@ WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSBroadcastChannel);
 
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSEvent);
 WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSEvent);
+
+JSC_DECLARE_CUSTOM_GETTER(JSEvent_getter);
 
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSDOMException);
 WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSDOMException);
@@ -2461,15 +2465,25 @@ private:
             JSC::DOMJIT::Effect::forWriteKinds(DFG::AbstractHeapKind::SideState),
             SpecBytecodeDouble);
 
-        JSFunction* function = JSFunction::create(
+        JSFunction* now = JSFunction::create(
             vm,
             globalObject(),
             0,
             String("now"_s),
             functionPerformanceNow, ImplementationVisibility::Public, NoIntrinsic, functionPerformanceNow,
             &DOMJITSignatureForPerformanceNow);
+        this->putDirect(vm, JSC::Identifier::fromString(vm, "now"_s), now, JSC::PropertyAttribute::DOMJITFunction | JSC::PropertyAttribute::Function);
 
-        this->putDirect(vm, JSC::Identifier::fromString(vm, "now"_s), function, JSC::PropertyAttribute::DOMJITFunction | JSC::PropertyAttribute::Function);
+        JSFunction* noopNotImplemented = JSFunction::create(
+            vm,
+            globalObject(),
+            0,
+            String("noopNotImplemented"_s),
+            functionNoop, ImplementationVisibility::Public, NoIntrinsic, functionNoop,
+            &DOMJITSignatureForPerformanceNow);
+        this->putDirect(vm, JSC::Identifier::fromString(vm, "mark"_s), noopNotImplemented, JSC::PropertyAttribute::DOMJITFunction | JSC::PropertyAttribute::Function);
+        this->putDirect(vm, JSC::Identifier::fromString(vm, "measure"_s), noopNotImplemented, JSC::PropertyAttribute::DOMJITFunction | JSC::PropertyAttribute::Function);
+
         this->putDirect(
             vm,
             JSC::Identifier::fromString(vm, "timeOrigin"_s),
@@ -3300,6 +3314,41 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(JSFunction::create(init.vm, init.owner, 4, "performMicrotaskVariadic"_s, jsFunctionPerformMicrotaskVariadic, ImplementationVisibility::Public));
         });
 
+    m_utilInspectFunction.initLater(
+        [](const Initializer<JSFunction>& init) {
+            JSValue nodeUtilValue = static_cast<Zig::GlobalObject*>(init.owner)->internalModuleRegistry()->requireId(init.owner, init.vm, Bun::InternalModuleRegistry::Field::NodeUtil);
+            RELEASE_ASSERT(nodeUtilValue.isObject());
+            init.set(jsCast<JSFunction*>(nodeUtilValue.getObject()->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "inspect"_s))));
+        });
+
+    m_utilInspectStylizeColorFunction.initLater(
+        [](const Initializer<JSFunction>& init) {
+            auto scope = DECLARE_THROW_SCOPE(init.vm);
+            JSC::JSFunction* getStylize = JSC::JSFunction::create(init.vm, utilInspectGetStylizeWithColorCodeGenerator(init.vm), init.owner);
+            // RETURN_IF_EXCEPTION(scope, {});
+
+            JSC::MarkedArgumentBuffer args;
+            args.append(static_cast<Zig::GlobalObject*>(init.owner)->utilInspectFunction());
+
+            auto clientData = WebCore::clientData(init.vm);
+            JSC::CallData callData = JSC::getCallData(getStylize);
+
+            NakedPtr<JSC::Exception> returnedException = nullptr;
+            auto result = JSC::call(init.owner, getStylize, callData, jsNull(), args, returnedException);
+            // RETURN_IF_EXCEPTION(scope, {});
+
+            if (returnedException) {
+                throwException(init.owner, scope, returnedException.get());
+            }
+            // RETURN_IF_EXCEPTION(scope, {});
+            init.set(jsCast<JSFunction*>(result));
+        });
+
+    m_utilInspectStylizeNoColorFunction.initLater(
+        [](const Initializer<JSFunction>& init) {
+            init.set(JSC::JSFunction::create(init.vm, utilInspectStylizeWithNoColorCodeGenerator(init.vm), init.owner));
+        });
+
     m_nativeMicrotaskTrampoline.initLater(
         [](const Initializer<JSFunction>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, functionNativeMicrotaskTrampoline, ImplementationVisibility::Public));
@@ -3907,7 +3956,7 @@ EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
     arguments.append(stream);
     arguments.append(controller);
 
-    auto result = JSC::call(this, function, callData, JSC::jsUndefined(), arguments);
+    auto result = call(this, function, callData, JSC::jsUndefined(), arguments);
     if (scope.exception())
         return JSC::JSValue::encode(scope.exception());
 
@@ -4177,6 +4226,18 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Blob"_s), JSC::CustomGetterSetter::create(vm, JSBlob_getter, JSBlob_setter),
         JSC::PropertyAttribute::DontDelete | 0);
 
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "HTMLRewriter"_s), JSC::CustomGetterSetter::create(vm, JSHTMLRewriter_getter, JSHTMLRewriter_setter),
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "DOMException"_s), JSC::CustomGetterSetter::create(vm, JSDOMException_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Event"_s), JSC::CustomGetterSetter::create(vm, JSEvent_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "EventTarget"_s), JSC::CustomGetterSetter::create(vm, JSEventTarget_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "AbortController"_s), JSC::CustomGetterSetter::create(vm, JSDOMAbortController_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
@@ -4297,19 +4358,10 @@ DEFINE_BUN_LAZY_GETTER(BUN_LAZY_GETTER_FN_NAME(password), passwordObject)
 void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm)
 {
     auto clientData = WebCore::clientData(vm);
-    size_t constructor_count = 0;
     auto& builtinNames = clientData->builtinNames();
-    JSC__JSValue const* constructors = Zig__getAPIConstructors(&constructor_count, this);
     WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-    extraStaticGlobals.reserveCapacity((size_t)count + constructor_count + 3 + 1 + 1);
-    int i = 0;
-    for (; i < constructor_count; i++) {
-        auto* object = JSC::jsDynamicCast<JSC::JSCallbackConstructor*>(JSC::JSValue::decode(constructors[i]).asCell()->getObject());
+    extraStaticGlobals.reserveCapacity((size_t)count + 3 + 1 + 1);
 
-        extraStaticGlobals.uncheckedAppend(
-            GlobalPropertyInfo { JSC::Identifier::fromString(vm, object->get(this, vm.propertyNames->name).toWTFString(this)),
-                JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0 });
-    }
     int j = 0;
     {
         // first one is Bun object
@@ -4633,6 +4685,9 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_pendingVirtualModuleResultStructure.visit(visitor);
     thisObject->m_performMicrotaskFunction.visit(visitor);
     thisObject->m_performMicrotaskVariadicFunction.visit(visitor);
+    thisObject->m_utilInspectFunction.visit(visitor);
+    thisObject->m_utilInspectStylizeColorFunction.visit(visitor);
+    thisObject->m_utilInspectStylizeNoColorFunction.visit(visitor);
     thisObject->m_lazyReadableStreamPrototypeMap.visit(visitor);
     thisObject->m_requireMap.visit(visitor);
     thisObject->m_encodeIntoObjectStructure.visit(visitor);

@@ -648,7 +648,7 @@ const JSC::ConstructorKind s_processObjectInternalsGetStdioWriteStreamCodeConstr
 const JSC::ImplementationVisibility s_processObjectInternalsGetStdioWriteStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_processObjectInternalsGetStdioWriteStreamCodeLength = 621;
 static const JSC::Intrinsic s_processObjectInternalsGetStdioWriteStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_processObjectInternalsGetStdioWriteStreamCode = "(function (fd){\"use strict\";const stream=(@getInternalField(@internalModuleRegistry,41)||@createInternalModuleById(41)).WriteStream(fd);if(process.on(\"SIGWINCH\",()=>{stream._refreshSize()}),fd===1)stream.destroySoon=stream.destroy,stream._destroy=function(err,cb){if(cb(err),this._undestroy(),!this._writableState.emitClose)process.nextTick(()=>{this.emit(\"close\")})};else if(fd===2)stream.destroySoon=stream.destroy,stream._destroy=function(err,cb){if(cb(err),this._undestroy(),!this._writableState.emitClose)process.nextTick(()=>{this.emit(\"close\")})};return stream._type=\"tty\",stream._isStdio=!0,stream.fd=fd,stream})\n";
+const char* const s_processObjectInternalsGetStdioWriteStreamCode = "(function (fd){\"use strict\";const stream=(@getInternalField(@internalModuleRegistry,42)||@createInternalModuleById(42)).WriteStream(fd);if(process.on(\"SIGWINCH\",()=>{stream._refreshSize()}),fd===1)stream.destroySoon=stream.destroy,stream._destroy=function(err,cb){if(cb(err),this._undestroy(),!this._writableState.emitClose)process.nextTick(()=>{this.emit(\"close\")})};else if(fd===2)stream.destroySoon=stream.destroy,stream._destroy=function(err,cb){if(cb(err),this._undestroy(),!this._writableState.emitClose)process.nextTick(()=>{this.emit(\"close\")})};return stream._type=\"tty\",stream._isStdio=!0,stream.fd=fd,stream})\n";
 
 // getStdinStream
 const JSC::ConstructAbility s_processObjectInternalsGetStdinStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
@@ -656,7 +656,7 @@ const JSC::ConstructorKind s_processObjectInternalsGetStdinStreamCodeConstructor
 const JSC::ImplementationVisibility s_processObjectInternalsGetStdinStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_processObjectInternalsGetStdinStreamCodeLength = 1161;
 static const JSC::Intrinsic s_processObjectInternalsGetStdinStreamCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_processObjectInternalsGetStdinStreamCode = "(function (fd){\"use strict\";var{destroy}=@getInternalField(@internalModuleRegistry,34)||@createInternalModuleById(34),reader,readerRef;function ref(){reader\?\?=@Bun.stdin.stream().getReader(),readerRef\?\?=setInterval(()=>{},1<<30)}function unref(){if(readerRef)clearInterval(readerRef),readerRef=@undefined}const stream=new((@getInternalField(@internalModuleRegistry,41))||(@createInternalModuleById(41))).ReadStream(fd);stream.fd=fd;const originalPause=stream.pause;stream.pause=function(){return unref(),originalPause.call(this)};const originalResume=stream.resume;stream.resume=function(){return ref(),originalResume.call(this)};async function internalRead(stream2){try{var done,value;const read=reader\?.readMany();if(@isPromise(read))({done,value}=await read);else({done,value}=read);if(!done){stream2.push(value[0]);const length=value.length;for(let i=1;i<length;i++)stream2.push(value[i])}else stream2.push(null),stream2.pause()}catch(err){stream2.destroy(err)}}return stream._read=function(size){internalRead(this)},stream.on(\"pause\",()=>{process.nextTick(()=>{destroy(stream)})}),stream.on(\"close\",()=>{process.nextTick(()=>{reader\?.cancel()})}),stream})\n";
+const char* const s_processObjectInternalsGetStdinStreamCode = "(function (fd){\"use strict\";var{destroy}=@getInternalField(@internalModuleRegistry,35)||@createInternalModuleById(35),reader,readerRef;function ref(){reader\?\?=@Bun.stdin.stream().getReader(),readerRef\?\?=setInterval(()=>{},1<<30)}function unref(){if(readerRef)clearInterval(readerRef),readerRef=@undefined}const stream=new((@getInternalField(@internalModuleRegistry,42))||(@createInternalModuleById(42))).ReadStream(fd);stream.fd=fd;const originalPause=stream.pause;stream.pause=function(){return unref(),originalPause.call(this)};const originalResume=stream.resume;stream.resume=function(){return ref(),originalResume.call(this)};async function internalRead(stream2){try{var done,value;const read=reader\?.readMany();if(@isPromise(read))({done,value}=await read);else({done,value}=read);if(!done){stream2.push(value[0]);const length=value.length;for(let i=1;i<length;i++)stream2.push(value[i])}else stream2.push(null),stream2.pause()}catch(err){stream2.destroy(err)}}return stream._read=function(size){internalRead(this)},stream.on(\"pause\",()=>{process.nextTick(()=>{destroy(stream)})}),stream.on(\"close\",()=>{process.nextTick(()=>{reader\?.cancel()})}),stream})\n";
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
@@ -722,9 +722,9 @@ const char* const s_moduleRequireCode = "(function (id){\"use strict\";const exi
 const JSC::ConstructAbility s_moduleRequireResolveCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_moduleRequireResolveCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_moduleRequireResolveCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_moduleRequireResolveCodeLength = 96;
+const int s_moduleRequireResolveCodeLength = 194;
 static const JSC::Intrinsic s_moduleRequireResolveCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_moduleRequireResolveCode = "(function (id){\"use strict\";return @resolveSync(id,typeof this===\"string\"\?this:this\?.path,!1)})\n";
+const char* const s_moduleRequireResolveCode = "(function (id){\"use strict\";try{return @resolveSync(id,typeof this===\"string\"\?this:this\?.path,!1)}catch(error){var e=new Error(`Cannot find module '${id}'`);throw e.code=\"MODULE_NOT_FOUND\",e}})\n";
 
 // requireNativeModule
 const JSC::ConstructAbility s_moduleRequireNativeModuleCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
@@ -1337,6 +1337,32 @@ JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
     return clientData->builtinFunctions().readableByteStreamControllerBuiltins().codeName##Executable()->link(vm, nullptr, clientData->builtinFunctions().readableByteStreamControllerBuiltins().codeName##Source(), std::nullopt, s_##codeName##Intrinsic); \
 }
 WEBCORE_FOREACH_READABLEBYTESTREAMCONTROLLER_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
+#undef DEFINE_BUILTIN_GENERATOR
+
+/* UtilInspect.ts */
+// getStylizeWithColor
+const JSC::ConstructAbility s_utilInspectGetStylizeWithColorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_utilInspectGetStylizeWithColorCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_utilInspectGetStylizeWithColorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_utilInspectGetStylizeWithColorCodeLength = 261;
+static const JSC::Intrinsic s_utilInspectGetStylizeWithColorCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_utilInspectGetStylizeWithColorCode = "(function (inspect){\"use strict\";return function stylizeWithColor(str,styleType){const style=inspect.styles[styleType];if(style!==@undefined){const color=inspect.colors[style];if(color!==@undefined)return`\\x1B[${color[0]}m${str}\\x1B[${color[1]}m`}return str}})\n";
+
+// stylizeWithNoColor
+const JSC::ConstructAbility s_utilInspectStylizeWithNoColorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_utilInspectStylizeWithNoColorCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_utilInspectStylizeWithNoColorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_utilInspectStylizeWithNoColorCodeLength = 42;
+static const JSC::Intrinsic s_utilInspectStylizeWithNoColorCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_utilInspectStylizeWithNoColorCode = "(function (str){\"use strict\";return str})\n";
+
+#define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
+JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
+{\
+    JSVMClientData* clientData = static_cast<JSVMClientData*>(vm.clientData); \
+    return clientData->builtinFunctions().utilInspectBuiltins().codeName##Executable()->link(vm, nullptr, clientData->builtinFunctions().utilInspectBuiltins().codeName##Source(), std::nullopt, s_##codeName##Intrinsic); \
+}
+WEBCORE_FOREACH_UTILINSPECT_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 #undef DEFINE_BUILTIN_GENERATOR
 
 /* ConsoleObject.ts */

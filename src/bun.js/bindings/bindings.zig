@@ -4240,6 +4240,7 @@ pub const JSValue = enum(JSValueReprInt) {
         data,
         toString,
         redirect,
+        inspectCustom,
     };
 
     // intended to be more lightweight than ZigString
@@ -5357,6 +5358,7 @@ const private = struct {
         argCount: u32,
         functionPointer: JSHostFunctionPtr,
         strong: bool,
+        add_ptr_field: bool,
     ) JSValue;
 
     pub extern fn Bun__untrackFFIFunction(
@@ -5380,7 +5382,7 @@ pub fn NewFunction(
     comptime functionPointer: JSHostFunctionType,
     strong: bool,
 ) JSValue {
-    return NewRuntimeFunction(globalObject, symbolName, argCount, &functionPointer, strong);
+    return NewRuntimeFunction(globalObject, symbolName, argCount, &functionPointer, strong, false);
 }
 
 pub fn NewRuntimeFunction(
@@ -5389,9 +5391,10 @@ pub fn NewRuntimeFunction(
     argCount: u32,
     functionPointer: JSHostFunctionPtr,
     strong: bool,
+    add_ptr_property: bool,
 ) JSValue {
     JSC.markBinding(@src());
-    return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, functionPointer, strong);
+    return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, functionPointer, strong, add_ptr_property);
 }
 
 pub fn getFunctionData(function: JSValue) ?*anyopaque {

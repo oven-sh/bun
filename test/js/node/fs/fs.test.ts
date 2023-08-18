@@ -1692,3 +1692,144 @@ it("createReadStream on a large file emits readable event correctly", () => {
     });
   });
 });
+
+describe("fs.read", () => {
+  it("should work with (fd, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-read-1-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    fs.read(fd, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(3);
+        expect(buffer).toStrictEqual(Buffer.concat([Buffer.from("bun"), Buffer.alloc(16381)]));
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+  it("should work with (fd, options, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-read-2-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(16);
+    fs.read(fd, { buffer: buffer }, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(3);
+        expect(buffer.slice(0, bytesRead).toString()).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+  it("should work with (fd, buffer, offset, length, position, callback)", done => {
+    const path = `${tmpdir()}/bun-fs-read-3-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(16);
+    fs.read(fd, buffer, 0, buffer.length, 0, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(3);
+        expect(buffer.slice(0, bytesRead).toString()).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+  it("should work with offset", done => {
+    const path = `${tmpdir()}/bun-fs-read-4-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(16);
+    fs.read(fd, buffer, 1, buffer.length - 1, 0, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(3);
+        expect(buffer.slice(1, bytesRead + 1).toString()).toStrictEqual("bun");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+  it("should work with position", done => {
+    const path = `${tmpdir()}/bun-fs-read-5-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(16);
+    fs.read(fd, buffer, 0, buffer.length, 1, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(2);
+        expect(buffer.slice(0, bytesRead).toString()).toStrictEqual("un");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+  it("should work with both position and offset", done => {
+    const path = `${tmpdir()}/bun-fs-read-6-${Date.now()}.txt`;
+    fs.writeFileSync(path, "bun");
+
+    const fd = fs.openSync(path, "r");
+    const buffer = Buffer.alloc(16);
+    fs.read(fd, buffer, 1, buffer.length - 1, 1, (err, bytesRead, buffer) => {
+      try {
+        expect(err).toBeNull();
+        expect(bytesRead).toBe(2);
+        expect(buffer.slice(1, bytesRead + 1).toString()).toStrictEqual("un");
+      } catch (e) {
+        return done(e);
+      } finally {
+        unlinkSync(path);
+      }
+      done();
+    });
+  });
+});
+
+it("new Stats", () => {
+  // @ts-expect-error
+  const stats = new Stats(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14);
+  expect(stats).toBeDefined();
+  // dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeMs, mtimeMs, ctimeMs, birthtimeMs
+  expect(stats.dev).toBe(1);
+  expect(stats.mode).toBe(2);
+  expect(stats.nlink).toBe(3);
+  expect(stats.uid).toBe(4);
+  expect(stats.gid).toBe(5);
+  expect(stats.rdev).toBe(6);
+  expect(stats.blksize).toBe(7);
+  expect(stats.ino).toBe(8);
+  expect(stats.size).toBe(9);
+  expect(stats.blocks).toBe(10);
+  expect(stats.atimeMs).toBe(11);
+  expect(stats.mtimeMs).toBe(12);
+  expect(stats.ctimeMs).toBe(13);
+  expect(stats.birthtimeMs).toBe(14);
+  expect(stats.atime).toEqual(new Date(11));
+  expect(stats.mtime).toEqual(new Date(12));
+  expect(stats.ctime).toEqual(new Date(13));
+  expect(stats.birthtime).toEqual(new Date(14));
+});

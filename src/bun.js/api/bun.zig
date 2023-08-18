@@ -1,3 +1,141 @@
+pub const BunObject = struct {
+    // --- Callbacks ---
+    pub const DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump = dump_mimalloc;
+    pub const _Os = Bun._Os;
+    pub const _Path = Bun._Path;
+    pub const allocUnsafe = Bun.allocUnsafe;
+    pub const build = Bun.JSBundler.buildFn;
+    pub const connect = JSC.wrapStaticMethod(JSC.API.Listener, "connect", false);
+    pub const deflateSync = JSC.wrapStaticMethod(JSZlib, "deflateSync", true);
+    pub const file = WebCore.Blob.constructFile;
+    pub const fs = Bun.fs;
+    pub const gc = Bun.runGC;
+    pub const getImportedStyles = Bun.getImportedStyles;
+    pub const getPublicPath = Bun.getPublicPathJS;
+    pub const getRouteFiles = Bun.getRouteFiles;
+    pub const getRouteNames = Bun.getRouteNames;
+    pub const gunzipSync = JSC.wrapStaticMethod(JSZlib, "gunzipSync", true);
+    pub const gzipSync = JSC.wrapStaticMethod(JSZlib, "gzipSync", true);
+    pub const indexOfLine = Bun.indexOfLine;
+    pub const inflateSync = JSC.wrapStaticMethod(JSZlib, "inflateSync", true);
+    pub const inspect = Bun.inspect;
+    pub const jest = @import("../test/jest.zig").Jest.call;
+    pub const listen = JSC.wrapStaticMethod(JSC.API.Listener, "listen", false);
+    pub const match = Router.deprecatedBunGlobalMatch;
+    pub const mmap = Bun.mmapFile;
+    pub const nanoseconds = Bun.nanoseconds;
+    pub const registerMacro = Bun.registerMacro;
+    pub const resolve = Bun.resolve;
+    pub const resolveSync = Bun.resolveSync;
+    pub const sha = JSC.wrapStaticMethod(Crypto.SHA512_256, "hash_", true);
+    pub const shrink = Bun.shrink;
+    pub const spawn = JSC.wrapStaticMethod(JSC.Subprocess, "spawn", false);
+    pub const spawnSync = JSC.wrapStaticMethod(JSC.Subprocess, "spawnSync", false);
+    pub const write = JSC.WebCore.Blob.writeFile;
+    // --- Callbacks ---
+
+    // --- Getters ---
+    pub const CryptoHasher = Crypto.CryptoHasher.getter;
+    pub const FFI = Bun.FFI.getter;
+    pub const MD4 = Crypto.MD4.getter;
+    pub const MD5 = Crypto.MD5.getter;
+    pub const SHA1 = Crypto.SHA1.getter;
+    pub const SHA224 = Crypto.SHA224.getter;
+    pub const SHA256 = Crypto.SHA256.getter;
+    pub const SHA384 = Crypto.SHA384.getter;
+    pub const SHA512 = Crypto.SHA512.getter;
+    pub const SHA512_256 = Crypto.SHA512_256.getter;
+    pub const TOML = Bun.getTOMLObject;
+    pub const Transpiler = Bun.getTranspilerConstructor;
+    pub const argv = Bun.getArgv;
+    pub const assetPrefix = Bun.getAssetPrefix;
+    pub const enableANSIColors = Bun.enableANSIColors;
+    pub const hash = Bun.getHashObject;
+    pub const routesDir = Bun.getRoutesDir;
+    pub const stderr = Bun.getStderr;
+    pub const stdin = Bun.getStdin;
+    pub const stdout = Bun.getStdout;
+    pub const unsafe = Bun.getUnsafe;
+    // --- Getters ---
+
+    fn getterName(comptime baseName: anytype) [:0]const u8 {
+        return "BunObject__" ++ baseName ++ "__property";
+    }
+
+    fn callbackName(comptime baseName: anytype) [:0]const u8 {
+        return "BunObject__" ++ baseName ++ "_functionType";
+    }
+
+    pub fn exportAll() void {
+        if (!@inComptime()) {
+            @compileError("Must be comptime");
+        }
+
+        if (JSC.is_bindgen) {
+            return;
+        }
+
+        // --- Getters ---
+        @export(BunObject.CryptoHasher, .{ .name = getterName("CryptoHasher") });
+        @export(BunObject.FFI, .{ .name = getterName("FFI") });
+        @export(BunObject.MD4, .{ .name = getterName("MD4") });
+        @export(BunObject.MD5, .{ .name = getterName("MD5") });
+        @export(BunObject.SHA1, .{ .name = getterName("SHA1") });
+        @export(BunObject.SHA224, .{ .name = getterName("SHA224") });
+        @export(BunObject.SHA256, .{ .name = getterName("SHA256") });
+        @export(BunObject.SHA384, .{ .name = getterName("SHA384") });
+        @export(BunObject.SHA512, .{ .name = getterName("SHA512") });
+        @export(BunObject.SHA512_256, .{ .name = getterName("SHA512_256") });
+        @export(BunObject.TOML, .{ .name = getterName("TOML") });
+        @export(BunObject.Transpiler, .{ .name = getterName("Transpiler") });
+        @export(BunObject.argv, .{ .name = getterName("argv") });
+        @export(BunObject.assetPrefix, .{ .name = getterName("assetPrefix") });
+        @export(BunObject.enableANSIColors, .{ .name = getterName("enableANSIColors") });
+        @export(BunObject.hash, .{ .name = getterName("hash") });
+        @export(BunObject.routesDir, .{ .name = getterName("routesDir") });
+        @export(BunObject.stderr, .{ .name = getterName("stderr") });
+        @export(BunObject.stdin, .{ .name = getterName("stdin") });
+        @export(BunObject.stdout, .{ .name = getterName("stdout") });
+        @export(BunObject.unsafe, .{ .name = getterName("unsafe") });
+        // --- Getters --
+
+        // -- Callbacks --
+        @export(BunObject.DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump, .{ .name = callbackName("DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump") });
+        @export(BunObject._Os, .{ .name = callbackName("_Os") });
+        @export(BunObject._Path, .{ .name = callbackName("_Path") });
+        @export(BunObject.allocUnsafe, .{ .name = callbackName("allocUnsafe") });
+        @export(BunObject.build, .{ .name = callbackName("build") });
+        @export(BunObject.connect, .{ .name = callbackName("connect") });
+        @export(BunObject.deflateSync, .{ .name = callbackName("deflateSync") });
+        @export(BunObject.file, .{ .name = callbackName("file") });
+        @export(BunObject.fs, .{ .name = callbackName("fs") });
+        @export(BunObject.gc, .{ .name = callbackName("gc") });
+        @export(BunObject.getImportedStyles, .{ .name = callbackName("getImportedStyles") });
+        @export(BunObject.getPublicPath, .{ .name = callbackName("getPublicPath") });
+        @export(BunObject.getRouteFiles, .{ .name = callbackName("getRouteFiles") });
+        @export(BunObject.getRouteNames, .{ .name = callbackName("getRouteNames") });
+        @export(BunObject.gunzipSync, .{ .name = callbackName("gunzipSync") });
+        @export(BunObject.gzipSync, .{ .name = callbackName("gzipSync") });
+        @export(BunObject.indexOfLine, .{ .name = callbackName("indexOfLine") });
+        @export(BunObject.inflateSync, .{ .name = callbackName("inflateSync") });
+        @export(BunObject.inspect, .{ .name = callbackName("inspect") });
+        @export(BunObject.jest, .{ .name = callbackName("jest") });
+        @export(BunObject.listen, .{ .name = callbackName("listen") });
+        @export(BunObject.match, .{ .name = callbackName("match") });
+        @export(BunObject.mmap, .{ .name = callbackName("mmap") });
+        @export(BunObject.nanoseconds, .{ .name = callbackName("nanoseconds") });
+        @export(BunObject.registerMacro, .{ .name = callbackName("registerMacro") });
+        @export(BunObject.resolve, .{ .name = callbackName("resolve") });
+        @export(BunObject.resolveSync, .{ .name = callbackName("resolveSync") });
+        @export(BunObject.sha, .{ .name = callbackName("sha") });
+        @export(BunObject.shrink, .{ .name = callbackName("shrink") });
+        @export(BunObject.spawn, .{ .name = callbackName("spawn") });
+        @export(BunObject.spawnSync, .{ .name = callbackName("spawnSync") });
+        @export(BunObject.write, .{ .name = callbackName("write") });
+        // -- Callbacks --
+    }
+};
+
 const Bun = @This();
 const default_allocator = @import("root").bun.default_allocator;
 const bun = @import("root").bun;
@@ -199,25 +337,19 @@ pub fn which(
 }
 
 pub fn inspect(
-    // this
-    _: void,
-    ctx: js.JSContextRef,
-    // function
-    _: js.JSObjectRef,
-    // thisObject
-    _: js.JSObjectRef,
-    arguments: []const js.JSValueRef,
-    _: js.ExceptionRef,
-) js.JSValueRef {
+    globalThis: *JSC.JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) callconv(.C) JSC.JSValue {
+    const arguments = callframe.arguments(4).slice();
     if (arguments.len == 0)
-        return ZigString.Empty.toValue(ctx.ptr()).asObjectRef();
+        return bun.String.empty.toJS(globalThis);
 
     for (arguments) |arg| {
-        JSC.C.JSValueProtect(ctx, arg);
+        arg.protect();
     }
     defer {
         for (arguments) |arg| {
-            JSC.C.JSValueUnprotect(ctx, arg);
+            arg.unprotect();
         }
     }
 
@@ -229,18 +361,18 @@ pub fn inspect(
         .quote_strings = true,
         .ordered_properties = false,
     };
-    var value = JSC.JSValue.fromRef(arguments[0]);
+    const value = arguments[0];
 
     if (arguments.len > 1) {
-        var arg1: JSC.JSValue = JSC.JSValue.fromRef(arguments[1]);
+        const arg1 = arguments[1];
 
         if (arg1.isObject()) {
-            if (arg1.getTruthy(ctx, "depth")) |opt| {
+            if (arg1.getTruthy(globalThis, "depth")) |opt| {
                 if (opt.isInt32()) {
                     const arg = opt.toInt32();
                     if (arg < 0) {
-                        ctx.throwInvalidArguments("expected depth to be greater than or equal to 0, got {d}", .{arg});
-                        return null;
+                        globalThis.throwInvalidArguments("expected depth to be greater than or equal to 0, got {d}", .{arg});
+                        return .zero;
                     }
                     formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
                 } else if (opt.isNumber()) {
@@ -248,26 +380,26 @@ pub fn inspect(
                     if (std.math.isInf(v)) {
                         formatOptions.max_depth = std.math.maxInt(u16);
                     } else {
-                        ctx.throwInvalidArguments("expected depth to be an integer, got {d}", .{v});
-                        return null;
+                        globalThis.throwInvalidArguments("expected depth to be an integer, got {d}", .{v});
+                        return .zero;
                     }
                 }
             }
-            if (arg1.getOptional(ctx, "colors", bool) catch return null) |opt| {
+            if (arg1.getOptional(globalThis, "colors", bool) catch return .zero) |opt| {
                 formatOptions.enable_colors = opt;
             }
-            if (arg1.getOptional(ctx, "sorted", bool) catch return null) |opt| {
+            if (arg1.getOptional(globalThis, "sorted", bool) catch return .zero) |opt| {
                 formatOptions.ordered_properties = opt;
             }
         } else {
             // formatOptions.show_hidden = arg1.toBoolean();
             if (arguments.len > 2) {
-                var depthArg = JSC.JSValue.fromRef(arguments[1]);
+                var depthArg = arguments[1];
                 if (depthArg.isInt32()) {
                     const arg = depthArg.toInt32();
                     if (arg < 0) {
-                        ctx.throwInvalidArguments("expected depth to be greater than or equal to 0, got {d}", .{arg});
-                        return null;
+                        globalThis.throwInvalidArguments("expected depth to be greater than or equal to 0, got {d}", .{arg});
+                        return .zero;
                     }
                     formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
                 } else if (depthArg.isNumber()) {
@@ -275,19 +407,19 @@ pub fn inspect(
                     if (std.math.isInf(v)) {
                         formatOptions.max_depth = std.math.maxInt(u16);
                     } else {
-                        ctx.throwInvalidArguments("expected depth to be an integer, got {d}", .{v});
-                        return null;
+                        globalThis.throwInvalidArguments("expected depth to be an integer, got {d}", .{v});
+                        return .zero;
                     }
                 }
                 if (arguments.len > 3) {
-                    formatOptions.enable_colors = JSC.JSValue.fromRef(arguments[2]).toBoolean();
+                    formatOptions.enable_colors = arguments[2].toBoolean();
                 }
             }
         }
     }
 
     // very stable memory address
-    var array = MutableString.init(getAllocator(ctx), 0) catch unreachable;
+    var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
     var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
     var buffered_writer = &buffered_writer_;
 
@@ -297,7 +429,7 @@ pub fn inspect(
     // when it's under 4096, we want to avoid the dynamic allocation
     ZigConsoleClient.format(
         .Debug,
-        ctx.ptr(),
+        globalThis,
         @as([*]const JSValue, @ptrCast(&value)),
         1,
         Writer,
@@ -306,39 +438,15 @@ pub fn inspect(
         formatOptions,
     );
     buffered_writer.flush() catch {
-        return JSC.C.JSValueMakeUndefined(ctx);
+        return .undefined;
     };
 
     // we are going to always clone to keep things simple for now
     // the common case here will be stack-allocated, so it should be fine
     var out = ZigString.init(array.toOwnedSliceLeaky()).withEncoding();
-    const ret = out.toValueGC(ctx);
+    const ret = out.toValueGC(globalThis);
     array.deinit();
-    return ret.asObjectRef();
-
-    // // when it's a small thing, rely on GC to manage the memory
-    // if (writer.context.pos < 2048 and array.list.items.len == 0) {
-    //     var slice = writer.context.buffer[0..writer.context.pos];
-    //     if (slice.len == 0) {
-    //         return ZigString.Empty.toValue(ctx.ptr()).asObjectRef();
-    //     }
-
-    //     var zig_str =
-    //     return zig_str.toValueGC(ctx.ptr()).asObjectRef();
-    // }
-
-    // // when it's a big thing, we will manage it
-    // {
-    //     writer.context.flush() catch {};
-    //     var slice =try writer.context.context.toOwnedSlice();
-
-    //     var zig_str = ZigString.init(slice).withEncoding();
-    //     if (!zig_str.isUTF8()) {
-    //         return zig_str.toExternalValue(ctx.ptr()).asObjectRef();
-    //     } else {
-    //         return zig_str.toValueGC(ctx.ptr()).asObjectRef();
-    //     }
-    // }
+    return ret;
 }
 
 pub fn registerMacro(
@@ -805,132 +913,61 @@ pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     return ZigString.init(stream.buffer[0..stream.pos]).toValueGC(globalObject);
 }
 
-pub const Class = NewClass(
-    void,
-    .{
-        .name = "Bun",
-        .read_only = true,
-    },
-    .{
-        .inspect = .{
-            .rfn = &Bun.inspect,
-        },
-    },
-    .{},
-);
-pub const BunObject = struct {
-    pub const write = JSC.WebCore.Blob.writeFile;
-    pub const listen = JSC.wrapStaticMethod(JSC.API.Listener, "listen", false);
-    pub const connect = JSC.wrapStaticMethod(JSC.API.Listener, "connect", false);
-    pub const build = Bun.JSBundler.buildFn;
-    pub const spawn = JSC.wrapStaticMethod(JSC.Subprocess, "spawn", false);
-    pub const spawnSync = JSC.wrapStaticMethod(JSC.Subprocess, "spawnSync", false);
-    pub const gzipSync = JSC.wrapStaticMethod(JSZlib, "gzipSync", true);
-    pub const deflateSync = JSC.wrapStaticMethod(JSZlib, "deflateSync", true);
-    pub const gunzipSync = JSC.wrapStaticMethod(JSZlib, "gunzipSync", true);
-    pub const inflateSync = JSC.wrapStaticMethod(JSZlib, "inflateSync", true);
-    pub const sha = JSC.wrapStaticMethod(Crypto.SHA512_256, "hash_", true);
+fn fs(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    var module = globalObject.create(JSC.Node.NodeJSFS) catch unreachable;
+    module.* = .{};
+    var vm = globalObject.bunVM();
+    if (vm.standalone_module_graph != null)
+        module.node_fs.vm = vm;
 
-    pub fn fs(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        var module = globalObject.create(JSC.Node.NodeJSFS) catch unreachable;
-        module.* = .{};
-        var vm = globalObject.bunVM();
-        if (vm.standalone_module_graph != null)
-            module.node_fs.vm = vm;
+    return module.toJS(globalObject);
+}
 
-        return module.toJS(globalObject);
+fn _Os(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    return Node.Os.create(globalObject);
+}
+
+fn _Path(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    const arguments = callframe.arguments(1);
+    const args = arguments.slice();
+    const is_windows = args.len == 1 and args[0].toBoolean();
+    return Node.Path.create(globalObject, is_windows);
+}
+
+/// @deprecated
+fn getImportedStyles(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    defer flushCSSImports();
+    const styles = getCSSImports();
+    if (styles.len == 0) {
+        return JSC.JSValue.createEmptyArray(globalObject, 0);
     }
 
-    pub fn _Os(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        return Node.Os.create(globalObject);
+    return JSValue.createStringArray(globalObject, styles.ptr, styles.len, true);
+}
+
+fn getRouteNames(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    if (VirtualMachine.get().bundler.router == null) {
+        return JSC.JSValue.createEmptyArray(globalObject, 0);
     }
 
-    pub fn _Path(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        const arguments = callframe.arguments(1);
-        const args = arguments.slice();
-        const is_windows = args.len == 1 and args[0].toBoolean();
-        return Node.Path.create(globalObject, is_windows);
+    const router = &VirtualMachine.get().bundler.router.?;
+    const list = router.getNames() catch unreachable;
+
+    for (routes_list_strings[0..@min(list.len, routes_list_strings.len)], 0..) |_, i| {
+        routes_list_strings[i] = ZigString.init(list[i]);
     }
 
-    /// @deprecated
-    pub fn getImportedStyles(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        defer flushCSSImports();
-        const styles = getCSSImports();
-        if (styles.len == 0) {
-            return JSC.JSValue.createEmptyArray(globalObject, 0);
-        }
-
-        return JSValue.createStringArray(globalObject, styles.ptr, styles.len, true);
-    }
-
-    pub fn getRouteNames(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        if (VirtualMachine.get().bundler.router == null) {
-            return JSC.JSValue.createEmptyArray(globalObject, 0);
-        }
-
-        const router = &VirtualMachine.get().bundler.router.?;
-        const list = router.getNames() catch unreachable;
-
-        for (routes_list_strings[0..@min(list.len, routes_list_strings.len)], 0..) |_, i| {
-            routes_list_strings[i] = ZigString.init(list[i]);
-        }
-
-        return JSValue.createStringArray(globalObject, &routes_list_strings, list.len, true);
-    }
-
-    pub fn indexOfLine(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        const arguments = callframe.arguments(2);
-
-        return Bun.indexOfLine(globalObject, arguments.slice());
-    }
-
-    pub const resolve = Bun.resolve;
-    pub const resolveSync = Bun.resolveSync;
-    pub const getRouteFiles = Bun.getRouteFiles;
-    pub const gc = Bun.runGC;
-    pub const allocUnsafe = Bun.allocUnsafe;
-    pub const shrink = Bun.shrink;
-    pub const getPublicPath = Bun.getPublicPathJS;
-    pub const DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump = dump_mimalloc;
-    pub const nanoseconds = Bun.nanoseconds;
-    pub const mmap = Bun.mmapFile;
-    pub const registerMacro = Bun.registerMacro;
-    pub const file = WebCore.Blob.constructFile;
-    pub const match = Router.deprecatedBunGlobalMatch;
-    pub const jest = @import("../test/jest.zig").Jest.call;
-
-    pub const stdin = Bun.getStdin;
-    pub const stdout = Bun.getStdout;
-    pub const stderr = Bun.getStderr;
-    pub const routesDir = Bun.getRoutesDir;
-    pub const assetPrefix = Bun.getAssetPrefix;
-    pub const argv = Bun.getArgv;
-    pub const enableANSIColors = Bun.enableANSIColors;
-    pub const hash = Bun.getHashObject;
-    pub const unsafe = Bun.getUnsafe;
-    pub const TOML = Bun.getTOMLObject;
-    pub const Transpiler = Bun.getTranspilerConstructor;
-    pub const SHA1 = Crypto.SHA1.getter;
-    pub const MD5 = Crypto.MD5.getter;
-    pub const MD4 = Crypto.MD4.getter;
-    pub const SHA224 = Crypto.SHA224.getter;
-    pub const SHA512 = Crypto.SHA512.getter;
-    pub const SHA384 = Crypto.SHA384.getter;
-    pub const SHA256 = Crypto.SHA256.getter;
-    pub const SHA512_256 = Crypto.SHA512_256.getter;
-    pub const CryptoHasher = Crypto.CryptoHasher.getter;
-    pub const FFI = Bun.FFI.getter;
-};
+    return JSValue.createStringArray(globalObject, &routes_list_strings, list.len, true);
+}
 
 pub fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     globalObject.bunVM().arena.dumpStats();
     return .undefined;
 }
 
-pub inline fn indexOfLine(
-    globalThis: *JSC.JSGlobalObject,
-    arguments: []const JSC.JSValue,
-) JSValue {
+pub fn indexOfLine(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    const arguments_ = callframe.arguments(2);
+    const arguments = arguments_.slice();
     if (arguments.len == 0) {
         return JSC.JSValue.jsNumberFromInt32(-1);
     }
@@ -4562,5 +4599,6 @@ pub usingnamespace @import("./bun/subprocess.zig");
 comptime {
     if (!JSC.is_bindgen) {
         _ = Crypto.JSPasswordObject.JSPasswordObject__create;
+        BunObject.exportAll();
     }
 }

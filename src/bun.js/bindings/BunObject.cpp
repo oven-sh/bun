@@ -21,6 +21,8 @@
 #include "BunObject.lut.h"
 #include "JavaScriptCore/JSObject.h"
 
+#include "BunObject+exports.h"
+
 namespace Bun {
 
 using namespace JSC;

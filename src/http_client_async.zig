@@ -818,6 +818,7 @@ pub fn onClose(
         if (picohttp.phr_decode_chunked_is_in_data(&client.state.chunked_decoder) == 0) {
             var buf = client.state.getBodyBuffer();
             if (buf.list.items.len > 0) {
+                client.state.received_last_chunk = true;
                 client.progressUpdate(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
                 return;
             }
@@ -1230,9 +1231,6 @@ pub fn deinit(this: *HTTPClient) void {
         tunnel.deinit();
         this.proxy_tunnel = null;
     }
-
-    this.state.compressed_body.deinit();
-    this.state.response_message_buffer.deinit();
 }
 
 const Stage = enum(u8) {
@@ -2331,6 +2329,10 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             this.cloneMetadata();
 
             if (!can_continue) {
+                // if is chuncked but no body is expected we mark the last chunk
+                if (this.state.isChunkedEncoding()) {
+                    this.state.received_last_chunk = true;
+                }
                 this.progressUpdate(is_ssl, ctx, socket);
                 return;
             }

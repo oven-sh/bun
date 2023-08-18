@@ -638,7 +638,7 @@ pub const Fetch = struct {
 
         signal: ?*JSC.WebCore.AbortSignal = null,
         aborted: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
-        has_schedule_callback: bool = false,
+        has_schedule_callback: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
 
         // must be stored because AbortSignal stores reason weakly
         abort_reason: JSValue = JSValue.zero,
@@ -685,6 +685,7 @@ pub const Fetch = struct {
         }
 
         fn clearData(this: *FetchTasklet) void {
+            log("clearData", .{});
             if (this.url_proxy_buffer.len > 0) {
                 bun.default_allocator.free(this.url_proxy_buffer);
                 this.url_proxy_buffer.len = 0;
@@ -808,7 +809,7 @@ pub const Fetch = struct {
             JSC.markBinding(@src());
             this.mutex.lock();
             defer {
-                this.has_schedule_callback = false;
+                this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
             }
 
@@ -1153,15 +1154,15 @@ pub const Fetch = struct {
                 _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch @panic("OOM");
             }
 
-            if (!task.has_schedule_callback) {
-                task.has_schedule_callback = true;
+            if (!task.has_schedule_callback.load(.Acquire)) {
+                log("callback task scheduled", .{});
+                task.has_schedule_callback.store(true, .Monotonic);
                 task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
             } else {
                 log("callback already scheduled", .{});
             }
             // reset for reuse
             task.response_buffer.reset();
-            HTTPClient.http_thread.wakeup();
         }
     };
 

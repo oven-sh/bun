@@ -614,7 +614,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     origin                                         BunObject_getter_wrap_origin                                        DontDelete|PropertyCallback
     password                                       constructPasswordObject                                             DontDelete|PropertyCallback
     pathToFileURL                                  functionPathToFileURL                                               DontDelete|Function 1
-    plugin                                         constructIsMainThread                                               ReadOnly|DontDelete|PropertyCallback
+    plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
     readableStreamToArray                          JSBuiltin                                                           Builtin|Function 1
     readableStreamToArrayBuffer                    JSBuiltin                                                           Builtin|Function 1
     readableStreamToBlob                           JSBuiltin                                                           Builtin|Function 1

@@ -11,6 +11,7 @@
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
 
 extern "C" void Bun__tickWhilePaused(bool*);
+extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 
 namespace Bun {
 using namespace JSC;
@@ -43,9 +44,13 @@ public:
     {
     }
 
-    static BunInspectorConnection* create(ScriptExecutionContext& scriptExecutionContext, JSC::JSGlobalObject* globalObject)
+    static BunInspectorConnection* create(ScriptExecutionContext& scriptExecutionContext, JSC::JSGlobalObject* globalObject, bool shouldRefEventLoop)
     {
-        return new BunInspectorConnection(scriptExecutionContext, globalObject);
+        auto* inspector = new BunInspectorConnection(scriptExecutionContext, globalObject);
+        if (shouldRefEventLoop) {
+            Bun__eventLoop__incrementRefConcurrently(Bun::clientData(scriptExecutionContext.vm())->bunVM, 1);
+        }
+        inspector->unrefOnDisconnect = shouldRefEventLoop;
     }
 
     ConnectionType connectionType() const override
@@ -118,6 +123,10 @@ public:
 
             connection->status = ConnectionStatus::Disconnected;
             connection->inspector().disconnect(*connection);
+            if (connection->unrefOnDisconnect) {
+                connection->unrefOnDisconnect = false;
+                Bun__eventLoop__incrementRefConcurrently(Bun::clientData(context.vm())->bunVM, -1);
+            }
         });
     }
 
@@ -289,6 +298,8 @@ public:
 
     WTF::Lock jsWaitForMessageFromInspectorLock;
     std::atomic<ConnectionStatus> status = ConnectionStatus::Pending;
+
+    bool unrefOnDisconnect = false;
 };
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSend);
@@ -421,7 +432,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
         return JSValue::encode(jsUndefined());
 
     ScriptExecutionContext* targetContext = ScriptExecutionContext::getScriptExecutionContext(static_cast<ScriptExecutionContextIdentifier>(callFrame->argument(0).toUInt32(globalObject)));
-    JSFunction* onMessageFn = jsCast<JSFunction*>(callFrame->argument(1).toObject(globalObject));
+    bool shouldRef = callFrame->argument(1).toBoolean(globalObject);
+    JSFunction* onMessageFn = jsCast<JSFunction*>(callFrame->argument(2).toObject(globalObject));
 
     if (!targetContext || !onMessageFn)
         return JSValue::encode(jsUndefined());
@@ -429,7 +441,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
     auto& vm = globalObject->vm();
     auto connection = BunInspectorConnection::create(
         *targetContext,
-        targetContext->jsGlobalObject());
+        targetContext->jsGlobalObject(),
+        shouldRef);
 
     {
         WTF::LockHolder locker(inspectorConnectionsLock);

@@ -602,9 +602,9 @@ interface Process {
   getgroups: () => number[];
   // setgroups?: (groups: ReadonlyArray<string | number>) => void;
   dlopen(module: { exports: any }, filename: string, flags?: number): void;
-  stdin: import("stream").Duplex & { isTTY: boolean };
-  stdout: import("stream").Writable & { isTTY: boolean };
-  stderr: import("stream").Writable & { isTTY: boolean };
+  stdin: import("tty").ReadStream;
+  stdout: import("tty").WriteStream;
+  stderr: import("tty").WriteStream;
 
   /**
    *

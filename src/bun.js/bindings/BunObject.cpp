@@ -170,12 +170,12 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObje
 
 JSC_DECLARE_HOST_FUNCTION(functionConcatTypedArrays);
 
-static JSValue constructVersion(VM& vm, JSObject*)
+static JSValue constructBunVersion(VM& vm, JSObject*)
 {
     return JSC::jsString(vm, makeString(Bun__version + 1));
 }
 
-static JSValue constructRevision(VM& vm, JSObject*)
+static JSValue constructBunRevision(VM& vm, JSObject*)
 {
     return JSC::jsString(vm, makeString(Bun__version_sha));
 }
@@ -246,9 +246,9 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
     return dnsObject;
 }
 
-static JSValue constructBunPeekObject(JSGlobalObject* globalObject, JSObject* bunObject)
+static JSValue constructBunPeekObject(VM& vm, JSObject* bunObject)
 {
-    JSC::VM& vm = globalObject->vm();
+    JSGlobalObject* globalObject = bunObject->globalObject();
     JSC::Identifier identifier = JSC::Identifier::fromString(vm, "peek"_s);
     JSFunction* peekFunction = JSFunction::create(vm, globalObject, 2, WTF::String("peek"_s), functionBunPeek, ImplementationVisibility::Public, NoIntrinsic);
     JSFunction* peekStatus = JSFunction::create(vm, globalObject, 1, WTF::String("status"_s), functionBunPeekStatus, ImplementationVisibility::Public, NoIntrinsic);
@@ -614,6 +614,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     origin                                         BunObject_getter_wrap_origin                                        DontDelete|PropertyCallback
     password                                       constructPasswordObject                                             DontDelete|PropertyCallback
     pathToFileURL                                  functionPathToFileURL                                               DontDelete|Function 1
+    peek                                           constructBunPeekObject                                              DontDelete|PropertyCallback
     plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
     readableStreamToArray                          JSBuiltin                                                           Builtin|Function 1
     readableStreamToArrayBuffer                    JSBuiltin                                                           Builtin|Function 1
@@ -624,6 +625,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     registerMacro                                  BunObject_callback_registerMacro                                    DontEnum|DontDelete|Function 1
     resolve                                        BunObject_callback_resolve                                          DontDelete|Function 1
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
+    revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback
     routesDir                                      BunObject_getter_wrap_routesDir                                     DontEnum|DontDelete|PropertyCallback
     serve                                          BunObject_callback_serve                                            DontDelete|Function 1
     sha                                            BunObject_callback_sha                                              DontDelete|Function 1
@@ -637,6 +639,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     stdout                                         BunObject_getter_wrap_stdout                                        DontDelete|PropertyCallback
     stringHashCode                                 functionHashCode                                                    DontDelete|Function 1
     unsafe                                         BunObject_getter_wrap_unsafe                                        DontDelete|PropertyCallback
+    version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1
     write                                          BunObject_callback_write                                            DontDelete|Function 1
 @end

@@ -2950,7 +2950,7 @@ const UnsafeObject = struct {
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
         const ret = JSValue.jsNumber(@as(i32, @intFromEnum(globalThis.bunVM().aggressive_garbage_collection)));
-        const value = callframe.argument(0);
+        const value = callframe.arguments(0).ptr[0];
 
         if (!value.isEmptyOrUndefinedOrNull()) {
             switch (value.coerce(i32, globalThis)) {

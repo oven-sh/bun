@@ -138,7 +138,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:tty`](https://nodejs.org/api/tty.html)
 
-🟡 Missing `tty.ReadStream` and `tty.WriteStream`.
+🟢 Fully implemented.
 
 ### [`node:url`](https://nodejs.org/api/url.html)
 

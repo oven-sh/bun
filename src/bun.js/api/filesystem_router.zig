@@ -42,36 +42,31 @@ const default_extensions = &[_][]const u8{
 };
 
 const DeprecatedGlobalRouter = struct {
-    pub fn deprecatedBunGlobalMatch(
-        _: void,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSObjectRef {
+    pub fn deprecatedBunGlobalMatch(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(2).slice();
+
         if (arguments.len == 0) {
-            JSError(getAllocator(ctx), "Expected string, FetchEvent, or Request but there were no arguments", .{}, ctx, exception);
-            return null;
+            globalObject.throwInvalidArguments("Expected string, FetchEvent, or Request but there were no arguments", .{});
+            return .zero;
         }
 
         const arg: JSC.JSValue = brk: {
             if (FetchEvent.Class.isLoaded()) {
-                if (JSValue.as(JSValue.fromRef(arguments[0]), FetchEvent)) |fetch_event| {
+                if (JSValue.as(arguments[0], FetchEvent)) |fetch_event| {
                     if (fetch_event.request_context != null) {
-                        return deprecatedMatchFetchEvent(ctx, fetch_event, exception);
+                        return deprecatedMatchFetchEvent(globalObject, fetch_event).?.value();
                     }
 
                     // When disconencted, we still have a copy of the request data in here
-                    break :brk JSC.JSValue.fromRef(fetch_event.getRequest(ctx, null, undefined, null));
+                    break :brk JSC.JSValue.fromRef(fetch_event.getRequest(globalObject, null, undefined, null));
                 }
             }
-            break :brk JSC.JSValue.fromRef(arguments[0]);
+            break :brk arguments[0];
         };
 
         var router = JavaScript.VirtualMachine.get().bundler.router orelse {
-            JSError(getAllocator(ctx), "Bun.match needs a framework configured with routes", .{}, ctx, exception);
-            return null;
+            globalObject.throw("Bun.match needs a framework configured with routes", .{});
+            return .zero;
         };
 
         var path_: ?ZigString.Slice = null;
@@ -96,13 +91,13 @@ const DeprecatedGlobalRouter = struct {
         }
 
         if (path_ == null) {
-            JSError(getAllocator(ctx), "Expected string, FetchEvent, or Request", .{}, ctx, exception);
-            return null;
+            globalObject.throw("Expected string, FetchEvent, or Request", .{});
+            return .zero;
         }
 
         const url_path = URLPath.parse(path_.?.slice()) catch {
-            JSError(getAllocator(ctx), "Could not parse URL path", .{}, ctx, exception);
-            return null;
+            globalObject.throw("Could not parse URL path", .{});
+            return .zero;
         };
 
         var match_params_fallback = std.heap.stackFallback(1024, bun.default_allocator);
@@ -113,17 +108,15 @@ const DeprecatedGlobalRouter = struct {
         router.routes.allocator = match_params_allocator;
         defer router.routes.allocator = prev_allocator;
         if (router.routes.matchPage("", url_path, &match_params)) |matched| {
-            return createRouteObjectFromMatch(ctx, &matched);
+            return createRouteObjectFromMatch(ctx, &matched).?.value();
         }
-        //    router.routes.matchPage
 
-        return JSC.JSValue.jsNull().asObjectRef();
+        return .null;
     }
 
     fn deprecatedMatchFetchEvent(
         ctx: js.JSContextRef,
         fetch_event: *const FetchEvent,
-        _: js.ExceptionRef,
     ) js.JSObjectRef {
         return createRouteObject(ctx, fetch_event.request_context.?);
     }

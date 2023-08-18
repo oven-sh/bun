@@ -752,67 +752,18 @@ pub const Class = NewClass(
         .read_only = true,
     },
     .{
-        .jest = .{
-            .rfn = &@import("../test/jest.zig").Jest.call,
-            .enumerable = false,
-        },
-
-        .match = .{
-            .rfn = &Router.deprecatedBunGlobalMatch,
-            .enumerable = false,
-        },
-
         .inspect = .{
             .rfn = &Bun.inspect,
         },
-        .serve = .{
-            .rfn = &Bun.serve,
-        },
-        .file = .{
-            .rfn = &JSC.WebCore.Blob.constructFile,
-        },
-        .write = .{
-            .rfn = &JSC.WebCore.Blob.writeFile,
-        },
     },
-    .{
-        .SHA1 = .{
-            .get = Crypto.SHA1.getter,
-        },
-        .MD5 = .{
-            .get = Crypto.MD5.getter,
-        },
-        .MD4 = .{
-            .get = Crypto.MD4.getter,
-        },
-        .SHA224 = .{
-            .get = Crypto.SHA224.getter,
-        },
-        .SHA512 = .{
-            .get = Crypto.SHA512.getter,
-        },
-        .SHA384 = .{
-            .get = Crypto.SHA384.getter,
-        },
-        .SHA256 = .{
-            .get = Crypto.SHA256.getter,
-        },
-        .SHA512_256 = .{
-            .get = Crypto.SHA512_256.getter,
-        },
-        .CryptoHasher = .{
-            .get = Crypto.CryptoHasher.getter,
-        },
-        .FFI = .{
-            .get = FFI.getter,
-        },
-    },
+    .{},
 );
 pub const BunObject = struct {
+    pub const write = JSC.WebCore.Blob.writeFile;
     pub const listen = JSC.wrapStaticMethod(JSC.API.Listener, "listen", false);
     pub const connect = JSC.wrapStaticMethod(JSC.API.Listener, "connect", false);
     pub const build = Bun.JSBundler.buildFn;
-    pub const spawn = JSC.wrapWithHasContainer(JSC.Subprocess, "spawn", false);
+    pub const spawn = JSC.wrapStaticMethod(JSC.Subprocess, "spawn", false);
     pub const spawnSync = JSC.wrapStaticMethod(JSC.Subprocess, "spawnSync", false);
     pub const gzipSync = JSC.wrapStaticMethod(JSZlib, "gzipSync", true);
     pub const deflateSync = JSC.wrapStaticMethod(JSZlib, "deflateSync", true);
@@ -884,6 +835,9 @@ pub const BunObject = struct {
     pub const nanoseconds = Bun.nanoseconds;
     pub const mmap = Bun.mmapFile;
     pub const registerMacro = Bun.registerMacro;
+    pub const file = WebCore.Blob.constructFile;
+    pub const match = Router.deprecatedBunGlobalMatch;
+    pub const jest = @import("../test/jest.zig").Jest.call;
 
     pub const stdin = Bun.getStdin;
     pub const stdout = Bun.getStdout;
@@ -896,6 +850,16 @@ pub const BunObject = struct {
     pub const unsafe = Bun.getUnsafe;
     pub const TOML = Bun.getTOMLObject;
     pub const Transpiler = Bun.getTranspilerConstructor;
+    pub const SHA1 = Crypto.SHA1.getter;
+    pub const MD5 = Crypto.MD5.getter;
+    pub const MD4 = Crypto.MD4.getter;
+    pub const SHA224 = Crypto.SHA224.getter;
+    pub const SHA512 = Crypto.SHA512.getter;
+    pub const SHA384 = Crypto.SHA384.getter;
+    pub const SHA256 = Crypto.SHA256.getter;
+    pub const SHA512_256 = Crypto.SHA512_256.getter;
+    pub const CryptoHasher = Crypto.CryptoHasher.getter;
+    pub const FFI = Bun.FFI.getter;
 };
 
 pub fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -2435,73 +2399,87 @@ pub fn serve(
     callframe: *JSC.CallFrame,
 ) callconv(.C) JSC.JSValue {
     const arguments = callframe.arguments(2).slice();
-    var exception_ = [1]JSC.JSValueRef{null};
-    var exception = &exception_;
+    const config: JSC.API.ServerConfig = brk: {
+        var exception_ = [1]JSC.JSValueRef{null};
+        var exception = &exception_;
 
-    var args = JSC.Node.ArgumentsSlice.init(globalObject.bunVM(), arguments);
-    const config = JSC.API.ServerConfig.fromJS(globalObject.ptr(), &args, exception);
-    if (exception.* != null) {
-        globalObject.throwValue(exception.*);
-        return .undefined;
-    }
+        var args = JSC.Node.ArgumentsSlice.init(globalObject.bunVM(), arguments);
+        const config_ = JSC.API.ServerConfig.fromJS(globalObject.ptr(), &args, exception);
+        if (exception.* != null) {
+            globalObject.throwValue(exception.*);
+            return .undefined;
+        }
+
+        break :brk config_;
+    };
+
+    var exception_value: *JSC.JSValue = undefined;
 
     // Listen happens on the next tick!
     // This is so we can return a Server object
     if (config.ssl_config != null) {
         if (config.development) {
             var server = JSC.API.DebugSSLServer.init(config, globalObject.ptr());
+            exception_value = &server.thisObject;
             server.listen();
             if (!server.thisObject.isEmpty()) {
-                exception.* = server.thisObject.asObjectRef();
+                exception_value.unprotect();
+                globalObject.throwValue(server.thisObject);
                 server.thisObject = JSC.JSValue.zero;
                 server.deinit();
-                return null;
+                return .zero;
             }
             var obj = JSC.API.DebugSSLServer.Class.make(globalObject, server);
             JSC.C.JSValueProtect(globalObject, obj);
             server.thisObject = JSValue.c(obj);
-            return obj;
+            return obj.*.value();
         } else {
             var server = JSC.API.SSLServer.init(config, globalObject.ptr());
+            exception_value = &server.thisObject;
             server.listen();
-            if (!server.thisObject.isEmpty()) {
-                exception.* = server.thisObject.asObjectRef();
+            if (!exception_value.isEmpty()) {
+                exception_value.unprotect();
+                globalObject.throwValue(exception_value);
                 server.thisObject = JSC.JSValue.zero;
                 server.deinit();
-                return null;
+                return .zero;
             }
             var obj = JSC.API.SSLServer.Class.make(globalObject, server);
             JSC.C.JSValueProtect(globalObject, obj);
             server.thisObject = JSValue.c(obj);
-            return obj;
+            return obj.*.value();
         }
     } else {
         if (config.development) {
             var server = JSC.API.DebugServer.init(config, globalObject.ptr());
+            exception_value = &server.thisObject;
             server.listen();
-            if (!server.thisObject.isEmpty()) {
-                exception.* = server.thisObject.asObjectRef();
+            if (!exception_value.isEmpty()) {
+                exception_value.unprotect();
+                globalObject.throwValue(exception_value);
                 server.thisObject = JSC.JSValue.zero;
                 server.deinit();
-                return null;
+                return .zero;
             }
             var obj = JSC.API.DebugServer.Class.make(globalObject, server);
             JSC.C.JSValueProtect(globalObject, obj);
             server.thisObject = JSValue.c(obj);
-            return obj;
+            return obj.*.value();
         } else {
             var server = JSC.API.Server.init(config, globalObject.ptr());
+            exception_value = &server.thisObject;
             server.listen();
-            if (!server.thisObject.isEmpty()) {
-                exception.* = server.thisObject.asObjectRef();
+            if (!exception_value.isEmpty()) {
+                exception_value.unprotect();
+                globalObject.throwValue(exception_value);
                 server.thisObject = JSC.JSValue.zero;
                 server.deinit();
-                return null;
+                return .zero;
             }
             var obj = JSC.API.Server.Class.make(globalObject, server);
             JSC.C.JSValueProtect(globalObject, obj);
             server.thisObject = JSValue.c(obj);
-            return obj;
+            return obj.*.value();
         }
     }
 

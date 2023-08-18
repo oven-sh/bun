@@ -5137,7 +5137,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             httplog("onListenFailed", .{});
             this.unref();
 
-            var zig_str: ZigString = ZigString.init("");
+            var error_instance = JSC.JSValue.zero;
             var output_buf: [4096]u8 = undefined;
 
             if (comptime ssl_enabled) {
@@ -5188,22 +5188,20 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
                 if (written > 0) {
                     var message = output_buf[0..written];
-                    zig_str = ZigString.init(std.fmt.allocPrint(bun.default_allocator, "OpenSSL {s}", .{message}) catch unreachable);
-                    var encoded_str = zig_str.withEncoding();
-                    encoded_str.mark();
-
-                    // We shouldn't *need* to do this but it's not entirely clear.
+                    error_instance = this.globalThis.createErrorInstance("OpenSSL {s}", .{message});
                     BoringSSL.ERR_clear_error();
                 }
             }
 
-            if (zig_str.len == 0) {
-                zig_str = ZigString.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{this.config.port}) catch "Failed to start server");
+            if (error_instance == .zero) {
+                error_instance = ZigString.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{this.config.port}) catch "Failed to start server").toErrorInstance(this.globalThis);
             }
 
             // store the exception in here
             // toErrorInstance clones the string
-            this.thisObject = zig_str.toErrorInstance(this.globalThis);
+            error_instance.ensureStillAlive();
+            error_instance.protect();
+            this.thisObject = error_instance;
 
             // reference it in stack memory
             this.thisObject.ensureStillAlive();

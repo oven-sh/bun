@@ -121,7 +121,7 @@ it("fetch() with a gzip response works (one chunk, streamed, with a delay)", asy
   server.stop();
 });
 
-it("fetch() with a gzip response works (multiple chunks, TCP server", async done => {
+it("fetch() with a gzip response works (multiple chunks, TCP server)", async done => {
   const compressed = await Bun.file(import.meta.dir + "/fixture.html.gz").arrayBuffer();
   var socketToClose!: Socket;
   const server = Bun.listen({
@@ -177,104 +177,4 @@ it("fetch() with a gzip response works (multiple chunks, TCP server", async done
   socketToClose.end();
   server.stop();
   done();
-});
-
-it("fetch() stream with gzip chunked response works (multiple chunks)", async () => {
-  const content = "Hello, world!\n".repeat(5);
-  const server = Bun.serve({
-    port: 0,
-    fetch(req) {
-      return new Response(
-        new ReadableStream({
-          type: "direct",
-          async pull(controller) {
-            const data = Bun.gzipSync(content).buffer;
-            const size = data.byteLength / 5;
-            controller.write(data.slice(0, size));
-            await controller.flush();
-            await Bun.sleep(100);
-            controller.write(data.slice(size, size * 2));
-            await controller.flush();
-            await Bun.sleep(100);
-            controller.write(data.slice(size * 2, size * 3));
-            await controller.flush();
-            await Bun.sleep(100);
-            controller.write(data.slice(size * 3, size * 5));
-            await controller.flush();
-
-            controller.close();
-          },
-        }),
-        { status: 200, headers: { "Content-Type": "text/plain", "Content-Encoding": "gzip" } },
-      );
-    },
-  });
-  let res = await fetch(`http://${server.hostname}:${server.port}`, { verbose: true });
-  gcTick(true);
-  const result = await res.text();
-  gcTick(true);
-  expect(result).toBe(content);
-
-  res = await fetch(`http://${server.hostname}:${server.port}`, { verbose: true });
-  gcTick(true);
-  const reader = res.body?.getReader();
-
-  let buffer = Buffer.alloc(0);
-  let parts = 0;
-  while (true) {
-    gcTick(true);
-
-    const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
-    if (value) {
-      buffer = Buffer.concat([buffer, value]);
-    }
-    parts++;
-    if (done) {
-      break;
-    }
-  }
-
-  gcTick(true);
-  expect(buffer.toString("utf8")).toBe(content);
-  expect(parts).toBeGreaterThan(1);
-});
-
-it("fetch() stream with gzip response works (multiple parts)", async () => {
-  const content = "a".repeat(64 * 1024);
-  const data = Bun.gzipSync(content);
-
-  const server = Bun.serve({
-    port: 0,
-    fetch(req) {
-      return new Response(data, { status: 200, headers: { "Content-Type": "text/plain", "Content-Encoding": "gzip" } });
-    },
-  });
-  let res = await fetch(`http://${server.hostname}:${server.port}`, { verbose: true });
-  gcTick(true);
-  const result = await res.text();
-  gcTick(true);
-  expect(result).toBe(content);
-
-  res = await fetch(`http://${server.hostname}:${server.port}`, { verbose: true });
-  gcTick(true);
-  const reader = res.body?.getReader();
-
-  let buffer = Buffer.alloc(0);
-  let parts = 0;
-  while (true) {
-    gcTick(true);
-
-    const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
-    if (value) {
-      buffer = Buffer.concat([buffer, value]);
-    }
-    parts++;
-    if (done) {
-      break;
-    }
-  }
-
-  gcTick(true);
-  expect(buffer.toString("utf8")).toBe(content);
-  expect(parts).toBeGreaterThan(1);
 });

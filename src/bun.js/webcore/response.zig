@@ -721,8 +721,6 @@ pub const Fetch = struct {
         }
 
         pub fn onBodyReceived(this: *FetchTasklet) void {
-            if (this.aborted.load(.Acquire)) return;
-
             const success = this.result.isSuccess();
             const globalThis = this.global_this;
             defer {
@@ -736,6 +734,27 @@ pub const Fetch = struct {
 
             if (!success) {
                 const err = this.onReject();
+
+                if (this.response.get()) |response_js| {
+                    if (response_js.as(Response)) |response| {
+                        const body = response.body;
+                        if (body.value == .Locked) {
+                            if (body.value.Locked.readable) |readable| {
+                                readable.ptr.Bytes.onData(
+                                    .{
+                                        .err = .{ .js_err = err },
+                                    },
+                                    bun.default_allocator,
+                                );
+                                return;
+                            }
+                        }
+
+                        response.body.value.toErrorInstance(err, globalThis);
+                        return;
+                    }
+                }
+
                 globalThis.throwValue(err);
                 return;
             }

@@ -525,8 +525,18 @@ pub const StreamResult = union(Tag) {
     into_array: IntoArray,
     into_array_and_done: IntoArray,
     pending: *Pending,
-    err: Syscall.Error,
+
+    err: union(Err) {
+        err: Syscall.Error,
+        js_err: JSC.JSValue,
+    },
+
     done: void,
+
+    pub const Err = enum {
+        err,
+        js_err,
+    };
 
     pub const Tag = enum {
         owned,
@@ -757,7 +767,11 @@ pub const StreamResult = union(Tag) {
         promise.asValue(globalThis).unprotect();
         switch (result) {
             .err => |err| {
-                promise.reject(globalThis, err.toJSC(globalThis));
+                if (err == .err) {
+                    promise.reject(globalThis, err.err.toJSC(globalThis));
+                } else {
+                    promise.reject(globalThis, err.js_err);
+                }
             },
             .done => {
                 promise.resolve(globalThis, JSValue.jsBoolean(false));
@@ -803,7 +817,10 @@ pub const StreamResult = union(Tag) {
             },
 
             .err => |err| {
-                return JSC.JSPromise.rejectedPromise(globalThis, JSValue.c(err.toJS(globalThis))).asValue(globalThis);
+                if (err == .err) {
+                    return JSC.JSPromise.rejectedPromise(globalThis, JSValue.c(err.err.toJS(globalThis))).asValue(globalThis);
+                }
+                return JSC.JSPromise.rejectedPromise(globalThis, err.js_err).asValue(globalThis);
             },
 
             // false == controller.close()
@@ -2986,7 +3003,11 @@ pub fn ReadableStreamSource(
             pub fn processResult(globalThis: *JSGlobalObject, flags: JSValue, result: StreamResult) JSC.JSValue {
                 switch (result) {
                     .err => |err| {
-                        globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
+                        if (err == .err) {
+                            globalThis.vm().throwError(globalThis, err.err.toJSC(globalThis));
+                        } else {
+                            globalThis.vm().throwError(globalThis, err.js_err);
+                        }
                         return JSValue.jsUndefined();
                     },
                     .temporary_and_done, .owned_and_done, .into_array_and_done => {
@@ -3303,9 +3324,13 @@ pub const ByteStream = struct {
                 this.done = true;
 
                 if (to_copy.len == 0) {
-                    this.pending.result = .{
-                        .done = {},
-                    };
+                    if (stream == .err) {
+                        this.pending.result = stream;
+                    } else {
+                        this.pending.result = .{
+                            .done = {},
+                        };
+                    }
                 } else {
                     this.pending.result = .{
                         .into_array_and_done = .{
@@ -3495,7 +3520,7 @@ pub const ReadResult = union(enum) {
     pub fn toStreamWithIsDone(this: ReadResult, pending: *StreamResult.Pending, buf: []u8, view: JSValue, close_on_empty: bool, is_done: bool) StreamResult {
         return switch (this) {
             .pending => .{ .pending = pending },
-            .err => .{ .err = this.err },
+            .err => .{ .err = .{ .err = this.err } },
             .done => .{ .done = {} },
             .read => |slice| brk: {
                 const owned = slice.ptr != buf.ptr;
@@ -4071,17 +4096,21 @@ pub const File = struct {
             this.concurrent.read = @as(Blob.SizeType, @truncate(result catch |err| {
                 if (@hasField(HTTPClient.NetworkThread.Completion, "result")) {
                     this.pending.result = .{
-                        .err = Syscall.Error{
-                            .errno = @as(Syscall.Error.Int, @intCast(-completion.result)),
-                            .syscall = .read,
+                        .err = .{
+                            .err = Syscall.Error{
+                                .errno = @as(Syscall.Error.Int, @intCast(-completion.result)),
+                                .syscall = .read,
+                            },
                         },
                     };
                 } else {
                     this.pending.result = .{
-                        .err = Syscall.Error{
-                            // this is too hacky
-                            .errno = @as(Syscall.Error.Int, @truncate(@as(u16, @intCast(@max(1, @intFromError(err)))))),
-                            .syscall = .read,
+                        .err = .{
+                            .err = Syscall.Error{
+                                // this is too hacky
+                                .errno = @as(Syscall.Error.Int, @truncate(@as(u16, @intCast(@max(1, @intFromError(err)))))),
+                                .syscall = .read,
+                            },
                         },
                     };
                 }

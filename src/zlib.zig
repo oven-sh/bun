@@ -3,6 +3,8 @@
 const std = @import("std");
 const bun = @import("root").bun;
 
+pub const MAX_WBITS = 15;
+
 test "Zlib Read" {
     const expected_text = @embedFile("./zlib.test.txt");
     const input = bun.asByteSlice(@embedFile("./zlib.test.gz"));

@@ -1098,7 +1098,12 @@ pub const InternalState = struct {
                 body_out_str.allocator,
                 default_allocator,
                 .{
-                    .windowBits = 15 + 32,
+                    // TODO: add br support today we support gzip and deflate only
+                    // zlib.MAX_WBITS = 15
+                    // to (de-)compress deflate format, use wbits = -zlib.MAX_WBITS
+                    // to (de-)compress zlib format, use wbits = zlib.MAX_WBITS
+                    // to (de-)compress gzip format, use wbits = zlib.MAX_WBITS | 16
+                    .windowBits = if (this.encoding == Encoding.gzip) Zlib.MAX_WBITS | 16 else -Zlib.MAX_WBITS,
                 },
             );
             this.zlib_reader = reader;

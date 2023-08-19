@@ -685,7 +685,6 @@ pub const Fetch = struct {
         }
 
         fn clearData(this: *FetchTasklet) void {
-            log("clearData", .{});
             if (this.url_proxy_buffer.len > 0) {
                 bun.default_allocator.free(this.url_proxy_buffer);
                 this.url_proxy_buffer.len = 0;
@@ -1146,18 +1145,14 @@ pub const Fetch = struct {
 
             const success = result.isSuccess();
             task.response_buffer = result.body.?.*;
-            log("callback is_done: {} success: {} bytes: {}", .{ !result.has_more, success, task.response_buffer.list.items.len });
 
             if (success) {
                 _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch @panic("OOM");
             }
 
             if (!task.has_schedule_callback.load(.Acquire)) {
-                log("callback task scheduled", .{});
                 task.has_schedule_callback.store(true, .Monotonic);
                 task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
-            } else {
-                log("callback already scheduled", .{});
             }
             // reset for reuse
             task.response_buffer.reset();

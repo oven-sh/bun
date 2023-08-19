@@ -583,10 +583,6 @@ extern const JSC::ConstructAbility s_readableStreamBYOBRequestRespondWithNewView
 extern const JSC::ConstructorKind s_readableStreamBYOBRequestRespondWithNewViewCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_readableStreamBYOBRequestRespondWithNewViewCodeImplementationVisibility;
 
-#define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_DATA(macro) \
-    macro(binding, processObjectInternalsBinding, 1) \
-    macro(getStdioWriteStream, processObjectInternalsGetStdioWriteStream, 1) \
-    macro(getStdinStream, processObjectInternalsGetStdinStream, 1) \
 // view
 #define WEBCORE_BUILTIN_READABLESTREAMBYOBREQUEST_VIEW 1
 extern const char* const s_readableStreamBYOBRequestViewCode;
@@ -5620,7 +5616,7 @@ extern const JSC::ImplementationVisibility s_processObjectInternalsGetStdinStrea
 
 #define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_DATA(macro) \
     macro(binding, processObjectInternalsBinding, 1) \
-    macro(getStdioWriteStream, processObjectInternalsGetStdioWriteStream, 2) \
+    macro(getStdioWriteStream, processObjectInternalsGetStdioWriteStream, 1) \
     macro(getStdinStream, processObjectInternalsGetStdinStream, 1) \
 
 #define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(macro) \

@@ -1,5 +1,4 @@
 import assert from "assert";
-import dedent from "dedent";
 import path from "path";
 import { itBundled, testForFile } from "./expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);

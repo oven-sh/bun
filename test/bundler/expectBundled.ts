@@ -3,7 +3,6 @@
  */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import path from "path";
-import dedent from "dedent";
 import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
 import { callerSourceOrigin } from "bun:jsc";
@@ -11,6 +10,7 @@ import { BuildConfig, BunPlugin, fileURLToPath } from "bun";
 import type { Expect } from "bun:test";
 import { PluginBuilder } from "bun";
 import * as esbuild from "esbuild";
+import dedent from "./dedent";
 
 let currentFile: string | undefined;
 
@@ -22,6 +22,7 @@ export function testForFile(file: string): BunTestExports {
 
   var testFile = testFiles.get(file);
   if (!testFile) {
+    // @ts-ignore
     testFile = Bun.jest(file);
     testFiles.set(file, testFile);
   }

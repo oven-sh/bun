@@ -1,5 +1,5 @@
 import assert from "assert";
-import dedent from "dedent";
+import dedent from "./dedent";
 import { itBundled, testForFile } from "./expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
@@ -194,24 +194,26 @@ describe("bundler", () => {
     },
     bundling: false,
     run: {
-      stdout: `hello
-      hello
-      hello world hello
-      hellohellohello world hello
-      👋🌎
-      👋🌎 🌍 hello
-      hellohellohello world hellohellohellohello world hello👋🌎👋🌎 🌍 hello
-      a-f\d
-      #?[a-f\d]{3}[a-f\d]?
-      #?[a-f\d]{6}([a-f\d]{2})?
-      /[^#a-f\d]/gi
-      /^#?[a-f\d]{3}[a-f\d]?$|^#?[a-f\d]{6}([a-f\d]{2})?$/i
-      kNAME=OOPSj
-      dOOPS
-      OOPSl
-      dOOPSl
-      CONST_VALUE
-      true`,
+      stdout: `
+        hello
+        hello
+        hello world hello
+        hellohellohello world hello
+        👋🌎
+        👋🌎 🌍 hello
+        hellohellohello world hellohellohellohello world hello👋🌎👋🌎 🌍 hello
+        a-f\d
+        #?[a-f\d]{3}[a-f\d]?
+        #?[a-f\d]{6}([a-f\d]{2})?
+        /[^#a-f\d]/gi
+        /^#?[a-f\d]{3}[a-f\d]?$|^#?[a-f\d]{6}([a-f\d]{2})?$/i
+        kNAME=OOPSj
+        dOOPS
+        OOPSl
+        dOOPSl
+        CONST_VALUE
+        true
+      `,
     },
   });
 });

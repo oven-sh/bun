@@ -1330,9 +1330,7 @@ it("new Request(https://example.com, otherRequest) uses url from left instead of
 });
 
 it("fetch() file:// works", async () => {
-  console.log("here1");
   expect(await (await fetch(import.meta.url)).text()).toEqual(await Bun.file(import.meta.path).text());
-  console.log("here2");
   expect(await (await fetch(new URL("fetch.test.ts", import.meta.url))).text()).toEqual(
     await Bun.file(Bun.fileURLToPath(new URL("fetch.test.ts", import.meta.url))).text(),
   );

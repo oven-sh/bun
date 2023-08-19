@@ -1150,12 +1150,15 @@ pub const Fetch = struct {
                 _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch @panic("OOM");
             }
 
-            if (!task.has_schedule_callback.load(.Acquire)) {
-                task.has_schedule_callback.store(true, .Monotonic);
-                task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
-            }
             // reset for reuse
             task.response_buffer.reset();
+
+            if (task.has_schedule_callback.compareAndSwap(false, true, .Acquire, .Monotonic)) |has_schedule_callback| {
+                if (has_schedule_callback) {
+                    return;
+                }
+            }
+            task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
         }
     };
 

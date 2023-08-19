@@ -371,18 +371,21 @@ pub const Body = struct {
             }
         }
 
+        fn _lockedSize(this: *const Value) Blob.SizeType {
+            if (this.Locked.readable) |readable| {
+                return readable.ptr.Bytes.size_hint;
+            }
+
+            return this.Locked.size_hint;
+        }
+
         pub fn size(this: *const Value) Blob.SizeType {
             return switch (this.*) {
                 .Blob => this.Blob.size,
                 .InternalBlob => @as(Blob.SizeType, @truncate(this.InternalBlob.sliceConst().len)),
                 .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.utf8ByteLength())),
                 .Locked => {
-                    if (this.Locked.readable) |readable| {
-                        if (readable.ptr == .Bytes) {
-                            return readable.ptr.Bytes.size_hint;
-                        }
-                    }
-                    return this.Locked.size_hint;
+                    return this._lockedSize();
                 },
                 // .InlineBlob => @truncate(Blob.SizeType, this.InlineBlob.sliceConst().len),
                 else => 0,

@@ -73,8 +73,6 @@ pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) 
         }
 
         pub fn pop(self: *Self) ?*T {
-            if (self.isEmpty()) return null;
-
             const first = @atomicLoad(?*T, &@field(self.front, next), .Acquire) orelse return null;
             if (@atomicLoad(?*T, &@field(first, next), .Acquire)) |next_item| {
                 @atomicStore(?*T, &@field(self.front, next), next_item, .Monotonic);

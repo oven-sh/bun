@@ -4,7 +4,7 @@ import { createReadStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { writeFileSync } from "node:fs";
 import tty from "tty";
-import { openpty } from "./create-pty.js";
+import { openpty, close } from "./create-pty.js";
 
 describe("Readable", () => {
   it("should be able to be created without _construct method defined", done => {
@@ -211,6 +211,8 @@ describe("TTY", () => {
     expect(rs.isRaw).toBe(true);
     expect(rs.setRawMode(false)).toBe(rs);
     expect(rs.isRaw).toBe(false);
+    close(parent_fd);
+    close(child_fd);
   });
 
   it("ReadStream not a tty", () => {
@@ -234,6 +236,8 @@ describe("TTY", () => {
 
     expect(ws.getColorDepth()).toBeGreaterThanOrEqual(0);
     expect(ws.hasColors(2)).toBe(true);
+    close(parent_fd);
+    close(child_fd);
   });
 
   it("process.stdio tty", () => {

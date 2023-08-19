@@ -1834,7 +1834,7 @@ it("new Stats", () => {
   expect(stats.birthtime).toEqual(new Date(14));
 });
 
-it("stat bigint", () => {
+it("BigIntStats", () => {
   const withoutBigInt = statSync(__filename, { bigint: false });
   const withBigInt = statSync(__filename, { bigint: true });
   expect(withoutBigInt.isFile() === withBigInt.isFile()).toBe(true);

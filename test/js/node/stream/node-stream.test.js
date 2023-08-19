@@ -205,7 +205,7 @@ const suffix = process.platform === "darwin" ? "dylib" : "so.6";
 var lazyOpenpty;
 export function openpty() {
   if (!lazyOpenpty) {
-    lazyOpenpty = dlopen(\`libutil.\${suffix}\`, {
+    lazyOpenpty = dlopen(\`libc.\${suffix}\`, {
       openpty: {
         args: ["ptr", "ptr", "ptr", "ptr", "ptr"],
         returns: "int",
@@ -215,8 +215,11 @@ export function openpty() {
 
   const parent_fd = new Int32Array(1).fill(0);
   const child_fd = new Int32Array(1).fill(0);
+  const name_buf = new Int8Array(1000).fill(0);
+  const term_buf = new Uint8Array(1000).fill(0);
+  const win_buf = new Uint8Array(1000).fill(0);
 
-  lazyOpenpty(parent_fd, child_fd, 0, 0, 0);
+  lazyOpenpty(parent_fd, child_fd, name_buf, term_buf, win_buf);
 
   return {
     parent_fd: parent_fd[0],

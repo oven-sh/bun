@@ -45,7 +45,7 @@ const TaggedPointerUnion = @import("./tagged_pointer.zig").TaggedPointerUnion;
 const DeadSocket = opaque {};
 var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
 //TODO: this needs to be freed when Worker Threads are implemented
-var socket_async_http_tracker = std.AutoArrayHashMap(u32, *uws.Socket).init(bun.default_allocator);
+var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, *uws.Socket).init(bun.default_allocator);
 var async_http_id: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0);
 
 const print_every = 0;
@@ -657,7 +657,7 @@ pub const HTTPThread = struct {
 
     fn drainEvents(this: *@This()) void {
         while (this.queued_shutdowns.pop()) |http| {
-            if (socket_async_http_tracker.fetchSwapRemove(http.async_http_id)) |socket_ptr| {
+            if (socket_async_http_abort_tracker.fetchSwapRemove(http.async_http_id)) |socket_ptr| {
                 if (http.client.isHTTPS()) {
                     const socket = uws.SocketTLS.from(socket_ptr.value);
                     socket.shutdown();
@@ -762,7 +762,7 @@ pub fn onOpen(
         }
     }
     if (client.aborted != null) {
-        socket_async_http_tracker.put(client.async_http_id, socket.socket) catch unreachable;
+        socket_async_http_abort_tracker.put(client.async_http_id, socket.socket) catch unreachable;
     }
     log("Connected {s} \n", .{client.url.href});
 
@@ -814,7 +814,7 @@ pub fn onClose(
     // if the peer closed after a full chunk, treat this
     // as if the transfer had complete, browsers appear to ignore
     // a missing 0\r\n chunk
-    if (in_progress and client.state.transfer_encoding == .chunked) {
+    if (in_progress and client.state.isChunkedEncoding()) {
         if (picohttp.phr_decode_chunked_is_in_data(&client.state.chunked_decoder) == 0) {
             var buf = client.state.getBodyBuffer();
             if (buf.list.items.len > 0) {
@@ -1643,7 +1643,7 @@ pub const AsyncHTTP = struct {
     pub fn onAsyncHTTPCallback(this: *AsyncHTTP, result: HTTPClientResult) void {
         std.debug.assert(this.real != null);
 
-        var completion = this.result_callback;
+        var callback = this.result_callback;
         this.elapsed = http_thread.timer.read() -| this.elapsed;
         this.redirected = this.client.remaining_redirect_count != default_redirect_count;
         if (!result.isSuccess()) {
@@ -1656,9 +1656,9 @@ pub const AsyncHTTP = struct {
             this.state.store(.success, .Monotonic);
         }
 
-        completion.function(completion.ctx, result);
-
-        if (!result.has_more) {
+        if (result.has_more) {
+            callback.function(callback.ctx, result);
+        } else {
             this.client.deinit();
 
             this.real.?.* = this.*;
@@ -1670,6 +1670,8 @@ pub const AsyncHTTP = struct {
 
             const active_requests = AsyncHTTP.active_requests_count.fetchSub(1, .Monotonic);
             std.debug.assert(active_requests > 0);
+
+            callback.function(callback.ctx, result);
 
             if (active_requests >= AsyncHTTP.max_simultaneous_requests.load(.Monotonic)) {
                 http_thread.drainEvents();
@@ -1828,7 +1830,7 @@ pub fn doRedirect(this: *HTTPClient) void {
         this.proxy_tunnel = null;
     }
     if (this.aborted != null) {
-        _ = socket_async_http_tracker.swapRemove(this.async_http_id);
+        _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
     }
     return this.start(.{ .bytes = "" }, body_out_str);
 }
@@ -2498,7 +2500,7 @@ pub fn closeAndAbort(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCo
 
 fn fail(this: *HTTPClient, err: anyerror) void {
     if (this.aborted != null) {
-        _ = socket_async_http_tracker.swapRemove(this.async_http_id);
+        _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
     }
     this.state.request_stage = .fail;
     this.state.response_stage = .fail;
@@ -2547,7 +2549,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
         const is_done = this.state.isDone();
 
         if (this.aborted != null and is_done) {
-            _ = socket_async_http_tracker.swapRemove(this.async_http_id);
+            _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
         }
 
         log("progressUpdate {}", .{is_done});
@@ -2575,6 +2577,15 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
             this.state.request_stage = .done;
             this.state.stage = .done;
             this.proxy_tunneling = false;
+            if (comptime print_every > 0) {
+                print_every_i += 1;
+                if (print_every_i % print_every == 0) {
+                    Output.prettyln("Heap stats for HTTP thread\n", .{});
+                    Output.flush();
+                    default_arena.dumpThreadStats();
+                    print_every_i = 0;
+                }
+            }
         }
         result.body.?.* = body;
         if (comptime print_every > 0) {
@@ -2882,7 +2893,7 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
             const body_buffer = this.state.getBodyBuffer();
             try body_buffer.appendSliceExact(buffer);
 
-            // streaming
+            // streaming chunks
             if (this.enable_body_stream.load(.Acquire)) {
                 try this.state.processBodyBuffer(body_buffer.*);
                 return this.state.body_out_str.?.list.items.len > 0;

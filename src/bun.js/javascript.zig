@@ -713,6 +713,7 @@ pub const VirtualMachine = struct {
 
         pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
             debug("create", .{});
+            JSC.markBinding(@src());
             this.debugger.?.script_execution_context_id = Bun__createJSDebugger(globalObject);
             if (!has_started_debugger_thread) {
                 has_started_debugger_thread = true;
@@ -739,6 +740,7 @@ pub const VirtualMachine = struct {
             var arena = bun.MimallocArena.init() catch unreachable;
             Output.Source.configureNamedThread("Debugger");
             debug("startJSDebuggerThread", .{});
+            JSC.markBinding(@src());
 
             var vm = JSC.VirtualMachine.init(.{
                 .allocator = arena.allocator(),
@@ -758,6 +760,8 @@ pub const VirtualMachine = struct {
         pub export var Bun__debugger_server_url: bun.String = undefined;
 
         fn start(other_vm: *VirtualMachine) void {
+            JSC.markBinding(@src());
+
             var this = VirtualMachine.get();
             var str = bun.String.create(other_vm.debugger.?.path_or_port);
             Bun__debugger_server_url = Bun__startJSDebuggerThread(this.global, other_vm.debugger.?.script_execution_context_id, &str);

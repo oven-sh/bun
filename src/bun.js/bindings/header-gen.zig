@@ -727,22 +727,30 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                 all_types[0] = first_import;
                 all_types[1] = second_import;
                 var counter: usize = 2;
-                inline for (first_import.DOMCalls) |Type| {
-                    inline for (std.meta.fieldNames(@TypeOf(Type.Class.functionDefinitions))) |static_function_name| {
-                        const static_function = @field(Type.Class.functionDefinitions, static_function_name);
-                        if (@TypeOf(static_function) == type and @hasDecl(static_function, "is_dom_call")) {
-                            all_types[counter] = static_function;
-                            counter += 1;
-                        }
+                inline for (first_import.DOMCalls) |Type_| {
+                    const Type = if (@typeInfo(@TypeOf(Type_)) == .Pointer)
+                        @typeInfo(@TypeOf(Type_)).Pointer.child
+                    else
+                        @TypeOf(Type_);
+
+                    inline for (bun.meta.fieldNames(Type)) |static_function_name| {
+                        const static_function = @field(Type_, static_function_name);
+                        all_types[counter] = static_function;
+                        counter += 1;
                     }
                 }
 
                 break :brk all_types[0..counter];
             };
 
-            inline for (first_import.DOMCalls) |Type| {
-                inline for (comptime std.meta.fieldNames(@TypeOf(Type.Class.functionDefinitions))) |static_function_name| {
-                    const static_function = @field(Type.Class.functionDefinitions, static_function_name);
+            inline for (first_import.DOMCalls) |Type_| {
+                const Type = if (@typeInfo(@TypeOf(Type_)) == .Pointer)
+                    @typeInfo(@TypeOf(Type_)).Pointer.child
+                else
+                    @TypeOf(Type_);
+
+                inline for (comptime bun.meta.fieldNames(Type)) |static_function_name| {
+                    const static_function = comptime @field(Type_, static_function_name);
                     if (comptime @TypeOf(static_function) == type and @hasDecl(static_function, "is_dom_call")) {
                         dom_writer.writeAll("\n\n") catch unreachable;
                         static_function.printGenerateDOMJITSignature(@TypeOf(&dom_writer), &dom_writer) catch unreachable;

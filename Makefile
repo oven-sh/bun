@@ -943,6 +943,7 @@ headers:
 	$(ZIG) translate-c src/bun.js/bindings/headers.h > src/bun.js/bindings/headers.zig
 	$(BUN_OR_NODE) misctools/headers-cleaner.js
 	$(ZIG) fmt src/bun.js/bindings/headers.zig
+	$(CLANG_FORMAT) -i src/bun.js/bindings/ZigGeneratedCode.cpp 
 
 .PHONY: jsc-bindings-headers
 jsc-bindings-headers: headers

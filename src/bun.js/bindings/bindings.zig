@@ -5756,14 +5756,9 @@ pub const __DOMCall__reader_f64 = @import("../api/bun.zig").FFIObject.Reader.DOM
 pub const __DOMCall__reader_i64 = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.i64;
 pub const __DOMCall__reader_u64 = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.u64;
 pub const __DOMCall__reader_intptr = @import("../api/bun.zig").FFIObject.Reader.DOMCalls.intptr;
-pub const __Crypto_getRandomValues = @import("../webcore.zig").Crypto.Class.functionDefinitions.getRandomValues;
-pub const __Crypto_randomUUID = @import("../webcore.zig").Crypto.Class.functionDefinitions.randomUUID;
-pub const __Crypto_randomInt = @import("../webcore.zig").Crypto.Class.functionDefinitions.randomInt;
-pub const __Crypto_timingSafeEqual = @import("../webcore.zig").Crypto.Class.functionDefinitions.timingSafeEqual;
-pub const DOMCalls = .{
-    @import("../api/bun.zig").FFI,
-    @import("../api/bun.zig").FFI.Reader,
-    @import("../webcore.zig").Crypto,
+pub const DOMCalls = &.{
+    .{ .ptr = @import("../api/bun.zig").FFIObject.dom_call },
+    @import("../api/bun.zig").FFIObject.Reader.DOMCalls,
 };
 
 extern "c" fn JSCInitialize(env: [*]const [*:0]u8, count: usize, cb: *const fn ([*]const u8, len: usize) callconv(.C) void) void;

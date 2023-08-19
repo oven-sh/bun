@@ -639,6 +639,7 @@ fn NewLexer_(
             stringLiteral: while (true) {
                 switch (lexer.code_point) {
                     '\\' => {
+                        needs_slow_path = true;
                         lexer.step();
 
                         // Handle Windows CRLF
@@ -662,12 +663,9 @@ fn NewLexer_(
                             // 0 cannot be in this list because it may be a legacy octal literal
                             'v', 'f', 't', 'r', 'n', '`', '\'', '"', '\\', 0x2028, 0x2029 => {
                                 lexer.step();
-
                                 continue :stringLiteral;
                             },
-                            else => {
-                                needs_slow_path = true;
-                            },
+                            else => {},
                         }
                     },
                     // This indicates the end of the file

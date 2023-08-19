@@ -27,6 +27,7 @@ describe("bundler", () => {
         capture(\`😋📋👌\`.length == 6)
         capture(\`😋📋👌\`.length === 2)
         capture(\`😋📋👌\`.length == 2)
+        capture("hello\\nworld".length)
       `,
     },
     capture: [
@@ -50,6 +51,7 @@ describe("bundler", () => {
       "!0",
       "!1",
       "!1",
+      "11",
     ],
     minifySyntax: true,
     target: "bun",

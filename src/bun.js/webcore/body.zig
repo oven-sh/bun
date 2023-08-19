@@ -384,9 +384,7 @@ pub const Body = struct {
                 .Blob => this.Blob.size,
                 .InternalBlob => @as(Blob.SizeType, @truncate(this.InternalBlob.sliceConst().len)),
                 .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.utf8ByteLength())),
-                .Locked => {
-                    return this._lockedSize();
-                },
+                .Locked => this._lockedSize(),
                 // .InlineBlob => @truncate(Blob.SizeType, this.InlineBlob.sliceConst().len),
                 else => 0,
             };

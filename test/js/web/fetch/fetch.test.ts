@@ -1330,15 +1330,24 @@ it("new Request(https://example.com, otherRequest) uses url from left instead of
 });
 
 it("fetch() file:// works", async () => {
+  console.log("here1");
   expect(await (await fetch(import.meta.url)).text()).toEqual(await Bun.file(import.meta.path).text());
+  console.log("here2");
   expect(await (await fetch(new URL("fetch.test.ts", import.meta.url))).text()).toEqual(
     await Bun.file(Bun.fileURLToPath(new URL("fetch.test.ts", import.meta.url))).text(),
   );
-  expect(await (await fetch(new URL("file with space in the name.txt", import.meta.url))).text()).toEqual(
-    await Bun.file(Bun.fileURLToPath(new URL("file with space in the name.txt", import.meta.url))).text(),
-  );
+  gc(true), console.log("here3");
+  var fileResponse = await fetch(new URL("file with space in the name.txt", import.meta.url));
+  gc(true), console.log("here4");
+  var fileResponseText = await fileResponse.text();
+  gc(true), console.log("here5");
+  var bunFile = Bun.file(Bun.fileURLToPath(new URL("file with space in the name.txt", import.meta.url)));
+  gc(true), console.log("here6");
+  var bunFileText = await bunFile.text();
+  gc(true), console.log("here7");
+  expect(fileResponseText).toEqual(bunFileText);
+  gc(true), console.log("here7");
 });
-
 it("cloned response headers are independent before accessing", () => {
   const response = new Response("hello", {
     headers: {
@@ -1365,7 +1374,126 @@ it("cloned response headers are independent after accessing", () => {
   expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
 });
 
-it("fetch() stream with gzip chunked response works (multiple chunks)", async () => {
+it("fetch() stream chunked response works with response out of context", async () => {
+  const content = "Hello, world!\n".repeat(5);
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            const data = Buffer.from(content, "utf8");
+            const size = data.byteLength / 5;
+            controller.write(data.slice(0, size));
+            await controller.flush();
+            await Bun.sleep(100);
+            controller.write(data.slice(size, size * 2));
+            await controller.flush();
+            await Bun.sleep(100);
+            controller.write(data.slice(size * 2, size * 3));
+            await controller.flush();
+            await Bun.sleep(100);
+            controller.write(data.slice(size * 3, size * 5));
+            await controller.flush();
+
+            controller.close();
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/plain" } },
+      );
+    },
+  });
+
+  async function getReader() {
+    return (await fetch(`http://${server.hostname}:${server.port}`, { verbose: true })).body?.getReader();
+  }
+  gcTick(true);
+  const reader = await getReader();
+  gcTick(true);
+  let buffer = Buffer.alloc(0);
+  let parts = 0;
+  while (true) {
+    gcTick(true);
+
+    const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
+    if (value) {
+      buffer = Buffer.concat([buffer, value]);
+    }
+    parts++;
+    if (done) {
+      break;
+    }
+  }
+
+  gcTick(true);
+  expect(buffer.toString("utf8")).toBe(content);
+  expect(parts).toBeGreaterThan(1);
+});
+
+it("fetch() response inspected size should reflect stream state", async () => {
+  const content = "Bun!\n".repeat(4);
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            const data = Buffer.from(content, "utf8");
+            const size = data.byteLength / 5;
+            controller.write(data.slice(0, size));
+            await controller.flush();
+            await Bun.sleep(100);
+            controller.write(data.slice(size, size * 2));
+            await controller.flush();
+            await Bun.sleep(100);
+            controller.write(data.slice(size * 2, size * 3));
+            await controller.flush();
+            await Bun.sleep(100);
+            controller.write(data.slice(size * 3, size * 4));
+            await controller.flush();
+
+            controller.close();
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/plain" } },
+      );
+    },
+  });
+
+  function inspectBytes(response: Response) {
+    const match = /Response \(([0-9]+ )bytes\)/g.exec(
+      Bun.inspect(response, {
+        depth: 0,
+      }),
+    );
+    if (!match) return 0;
+    return parseInt(match[1]?.trim(), 10);
+  }
+
+  const res = await fetch(`http://${server.hostname}:${server.port}`, { verbose: true });
+  gcTick(true);
+  const reader = res.body?.getReader();
+  gcTick(true);
+  let size = 0;
+  while (true) {
+    gcTick(true);
+
+    const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
+    if (value) {
+      size += value.length;
+    }
+    expect(inspectBytes(res)).toBe(size);
+    if (done) {
+      break;
+    }
+  }
+
+  gcTick(true);
+});
+
+it("fetch() stream chunked response works (multiple chunks)", async () => {
   const content = "Hello, world!\n".repeat(5);
   const server = Bun.serve({
     port: 0,
@@ -1410,7 +1538,7 @@ it("fetch() stream with gzip chunked response works (multiple chunks)", async ()
   while (true) {
     gcTick(true);
 
-    const { done, value } = await reader?.read();
+    const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
     if (value) {
       buffer = Buffer.concat([buffer, value]);
     }
@@ -1449,7 +1577,7 @@ it("fetch() stream response works (multiple parts)", async () => {
   while (true) {
     gcTick(true);
 
-    const { done, value } = await reader?.read();
+    const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
     if (value) {
       buffer = Buffer.concat([buffer, value]);
     }

@@ -86,7 +86,7 @@ it("fetch() with a protocol-relative redirect that returns a buffered gzip respo
   server.stop();
 });
 
-it("fetch() with a gzip response works (one chunk, streamed, with a delay", async () => {
+it("fetch() with a gzip response works (one chunk, streamed, with a delay)", async () => {
   var server = Bun.serve({
     port: 0,
 
@@ -224,7 +224,7 @@ it("fetch() stream with gzip chunked response works (multiple chunks)", async ()
   while (true) {
     gcTick(true);
 
-    const { done, value } = await reader?.read();
+    const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
     if (value) {
       buffer = Buffer.concat([buffer, value]);
     }
@@ -264,7 +264,7 @@ it("fetch() stream with gzip response works (multiple parts)", async () => {
   while (true) {
     gcTick(true);
 
-    const { done, value } = await reader?.read();
+    const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
     if (value) {
       buffer = Buffer.concat([buffer, value]);
     }

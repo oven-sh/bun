@@ -620,12 +620,12 @@ pub const Fetch = struct {
         javascript_vm: *VirtualMachine = undefined,
         global_this: *JSGlobalObject = undefined,
         request_body: HTTPRequestBody = undefined,
-        // buffer being used by AsyncHTTP
+        /// buffer being used by AsyncHTTP
         response_buffer: MutableString = undefined,
-        // buffer used to stream response to JS
+        /// buffer used to stream response to JS
         scheduled_response_buffer: MutableString = undefined,
-        // actual response
-        response: ?*Response = null,
+        /// response strong ref
+        response: JSC.Strong = .{},
         request_headers: Headers = Headers{ .allocator = undefined },
         promise: JSC.JSPromise.Strong,
         concurrent_task: JSC.ConcurrentTask = .{},
@@ -702,6 +702,7 @@ pub const Fetch = struct {
 
             this.result.deinitMetadata();
             this.response_buffer.deinit();
+            this.response.deinit();
             this.scheduled_response_buffer.deinit();
             this.request_body.detach();
 
@@ -739,63 +740,66 @@ pub const Fetch = struct {
                 return;
             }
 
-            if (this.response) |response| {
-                const body = response.body;
-                if (body.value == .Locked) {
-                    if (body.value.Locked.readable) |readable| {
-                        if (readable.ptr == .Bytes) {
-                            this.response.?.body.value.Locked.readable.?.ptr.Bytes.size_hint = @as(u52, @intCast(this.body_size));
+            if (this.response.get()) |response_js| {
+                if (response_js.as(Response)) |response| {
+                    const body = response.body;
+                    if (body.value == .Locked) {
+                        if (body.value.Locked.readable) |readable| {
+                            if (readable.ptr == .Bytes) {
+                                readable.ptr.Bytes.size_hint = @as(u52, @intCast(this.body_size));
+
+                                var scheduled_response_buffer = this.scheduled_response_buffer.list;
+
+                                const chunk = scheduled_response_buffer.items;
+
+                                if (this.result.has_more) {
+                                    readable.ptr.Bytes.onData(
+                                        .{
+                                            .temporary = bun.ByteList.initConst(chunk),
+                                        },
+                                        bun.default_allocator,
+                                    );
+
+                                    // clean for reuse later
+                                    this.scheduled_response_buffer.reset();
+                                } else {
+                                    readable.ptr.Bytes.onData(
+                                        .{
+                                            .temporary_and_done = bun.ByteList.initConst(chunk),
+                                        },
+                                        bun.default_allocator,
+                                    );
+                                }
+
+                                return;
+                            }
+                        } else {
+                            response.body.value.Locked.size_hint = @as(u52, @intCast(this.body_size));
+                        }
+                        // we will reach here when not streaming
+                        if (!this.result.has_more) {
                             var scheduled_response_buffer = this.scheduled_response_buffer.list;
 
-                            const chunk = scheduled_response_buffer.items;
+                            // done resolve body
+                            var old = body.value;
+                            var body_value = Body.Value{
+                                .InternalBlob = .{
+                                    .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
+                                },
+                            };
+                            response.body.value = body_value;
 
-                            if (this.result.has_more) {
-                                readable.ptr.Bytes.onData(
-                                    .{
-                                        .temporary = bun.ByteList.initConst(chunk),
-                                    },
-                                    bun.default_allocator,
-                                );
+                            this.scheduled_response_buffer = .{
+                                .allocator = bun.default_allocator,
+                                .list = .{
+                                    .items = &.{},
+                                    .capacity = 0,
+                                },
+                            };
 
-                                // clean for reuse later
-                                this.scheduled_response_buffer.reset();
-                            } else {
-                                readable.ptr.Bytes.onData(
-                                    .{
-                                        .temporary_and_done = bun.ByteList.initConst(chunk),
-                                    },
-                                    bun.default_allocator,
-                                );
+                            if (old == .Locked) {
+                                old.resolve(&response.body.value, this.global_this);
                             }
-
-                            return;
-                        }
-                    } else {
-                        this.response.?.body.value.Locked.size_hint = @as(u52, @intCast(this.body_size));
-                    }
-                    // we will reach here when not streaming
-                    if (!this.result.has_more) {
-                        var scheduled_response_buffer = this.scheduled_response_buffer.list;
-
-                        // done resolve body
-                        var old = body.value;
-                        var body_value = Body.Value{
-                            .InternalBlob = .{
-                                .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
-                            },
-                        };
-                        this.response.?.body.value = body_value;
-
-                        this.scheduled_response_buffer = .{
-                            .allocator = bun.default_allocator,
-                            .list = .{
-                                .items = &.{},
-                                .capacity = 0,
-                            },
-                        };
-
-                        if (old == .Locked) {
-                            old.resolve(&this.response.?.body.value, this.global_this);
                         }
                     }
                 }
@@ -984,8 +988,10 @@ pub const Fetch = struct {
             const allocator = bun.default_allocator;
             var response = allocator.create(Response) catch unreachable;
             response.* = this.toResponse(allocator);
-            this.response = response;
-            return Response.makeMaybePooled(@as(js.JSContextRef, @ptrCast(this.global_this)), response);
+            const response_js = Response.makeMaybePooled(@as(js.JSContextRef, @ptrCast(this.global_this)), response);
+            response_js.ensureStillAlive();
+            this.response = JSC.Strong.create(response_js, this.global_this);
+            return response_js;
         }
 
         pub fn get(

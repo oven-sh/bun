@@ -1120,7 +1120,7 @@ pub const InternalState = struct {
         try this.decompressConst(buffer.list.items, body_out_str);
     }
 
-    pub fn processBodyBuffer(this: *InternalState, buffer: MutableString) !void {
+    pub fn processBodyBuffer(this: *InternalState, buffer: MutableString) !usize {
         var body_out_str = this.body_out_str.?;
 
         switch (this.encoding) {
@@ -1138,10 +1138,10 @@ pub const InternalState = struct {
             },
         }
 
-        this.postProcessBody();
+        return this.postProcessBody();
     }
 
-    pub fn postProcessBody(this: *InternalState) void {
+    pub fn postProcessBody(this: *InternalState) usize {
         var response = &this.pending_response;
         // if it compressed with this header, it is no longer
         if (this.content_encoding_i < response.headers.len) {
@@ -1150,6 +1150,8 @@ pub const InternalState = struct {
             response.headers = mutable_headers.items;
             this.content_encoding_i = std.math.maxInt(@TypeOf(this.content_encoding_i));
         }
+
+        return this.body_out_str.?.list.items.len;
     }
 };
 
@@ -2725,7 +2727,7 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
         progress.context.maybeRefresh();
     }
 
-    this.state.postProcessBody();
+    _ = this.state.postProcessBody();
 }
 
 fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []const u8) !bool {
@@ -2753,14 +2755,14 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
     // done or streaming
     const is_done = this.state.total_body_received >= this.state.body_size;
     if (is_done or this.enable_body_stream.load(.Acquire)) {
-        try this.state.processBodyBuffer(buffer.*);
+        const processed = try this.state.processBodyBuffer(buffer.*);
 
         if (this.progress_node) |progress| {
             progress.activate();
             progress.setCompletedItems(this.state.total_body_received);
             progress.context.maybeRefresh();
         }
-        return is_done or this.state.body_out_str.?.list.items.len > 0;
+        return is_done or processed > 0;
     }
     return false;
 }
@@ -2797,9 +2799,9 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
         &bytes_decoded,
     );
     buffer.list.items.len -|= incoming_data.len - bytes_decoded;
-    buffer_.* = buffer;
+    this.state.body_size += bytes_decoded;
 
-    this.state.body_size += buffer.list.items.len;
+    buffer_.* = buffer;
 
     switch (pret) {
         // Invalid HTTP response body
@@ -2815,8 +2817,8 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
             }
             // streaming chunks
             if (this.enable_body_stream.load(.Acquire)) {
-                try this.state.processBodyBuffer(buffer);
-                return this.state.body_out_str.?.list.items.len > 0;
+                const processed = try this.state.processBodyBuffer(buffer);
+                return processed > 0;
             }
 
             return false;
@@ -2824,7 +2826,7 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
         // Done
         else => {
             this.state.received_last_chunk = true;
-            try this.state.processBodyBuffer(
+            _ = try this.state.processBodyBuffer(
                 buffer,
             );
 
@@ -2875,8 +2877,7 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
         &bytes_decoded,
     );
     buffer.len -|= incoming_data.len - bytes_decoded;
-
-    this.state.body_size += buffer.len;
+    this.state.body_size += bytes_decoded;
 
     switch (pret) {
         // Invalid HTTP response body
@@ -2895,9 +2896,10 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
 
             // streaming chunks
             if (this.enable_body_stream.load(.Acquire)) {
-                try this.state.processBodyBuffer(body_buffer.*);
-                return this.state.body_out_str.?.list.items.len > 0;
+                const processed = try this.state.processBodyBuffer(body_buffer.*);
+                return processed > 0;
             }
+
             return false;
         },
         // Done

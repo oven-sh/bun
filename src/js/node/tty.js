@@ -2,8 +2,13 @@ const { ttySetMode, isatty, getWindowSize: _getWindowSize } = $lazy("tty");
 
 function ReadStream(fd) {
   if (!(this instanceof ReadStream)) return new ReadStream(fd);
+  if (fd >> 0 !== fd || fd < 0) throw new RangeError("fd must be a positive integer");
 
   const stream = require("node:fs").ReadStream.call(this, `/dev/fd/${fd}`);
+
+  if (!isatty(stream.fd)) {
+    throw new TypeError("TTY initialization failed: file descriptor is not a TTY");
+  }
 
   stream.isRaw = false;
   stream.isTTY = true;
@@ -90,8 +95,13 @@ function warnOnDeactivatedColors(env) {
 
 function WriteStream(fd) {
   if (!(this instanceof WriteStream)) return new WriteStream(fd);
+  if (fd >> 0 !== fd || fd < 0) throw new RangeError("fd must be a positive integer");
 
   const stream = require("node:fs").WriteStream.call(this, `/dev/fd/${fd}`);
+
+  if (!isatty(stream.fd)) {
+    throw new TypeError("TTY initialization failed: file descriptor is not a TTY");
+  }
 
   stream.columns = undefined;
   stream.rows = undefined;

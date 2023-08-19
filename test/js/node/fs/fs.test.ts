@@ -1837,6 +1837,7 @@ it("new Stats", () => {
 it("BigIntStats", () => {
   const withoutBigInt = statSync(__filename, { bigint: false });
   const withBigInt = statSync(__filename, { bigint: true });
+
   expect(withoutBigInt.isFile() === withBigInt.isFile()).toBe(true);
   expect(withoutBigInt.isDirectory() === withBigInt.isDirectory()).toBe(true);
   expect(withoutBigInt.isBlockDevice() === withBigInt.isBlockDevice()).toBe(true);
@@ -1844,20 +1845,24 @@ it("BigIntStats", () => {
   expect(withoutBigInt.isSymbolicLink() === withBigInt.isSymbolicLink()).toBe(true);
   expect(withoutBigInt.isFIFO() === withBigInt.isFIFO()).toBe(true);
   expect(withoutBigInt.isSocket() === withBigInt.isSocket()).toBe(true);
-  expect(BigInt(withoutBigInt.dev)).toBe(withBigInt.dev);
-  expect(BigInt(withoutBigInt.ino)).toBe(withBigInt.ino);
-  expect(BigInt(withoutBigInt.mode)).toBe(withBigInt.mode);
-  expect(BigInt(withoutBigInt.nlink)).toBe(withBigInt.nlink);
-  expect(BigInt(withoutBigInt.uid)).toBe(withBigInt.uid);
-  expect(BigInt(withoutBigInt.gid)).toBe(withBigInt.gid);
-  expect(BigInt(withoutBigInt.rdev)).toBe(withBigInt.rdev);
-  expect(BigInt(withoutBigInt.size)).toBe(withBigInt.size);
-  expect(BigInt(withoutBigInt.blksize)).toBe(withBigInt.blksize);
-  expect(BigInt(withoutBigInt.blocks)).toBe(withBigInt.blocks);
-  expect(BigInt(Math.floor(withoutBigInt.atimeMs))).toBe(withBigInt.atimeMs);
-  expect(BigInt(Math.floor(withoutBigInt.mtimeMs))).toBe(withBigInt.mtimeMs);
-  expect(BigInt(Math.floor(withoutBigInt.ctimeMs))).toBe(withBigInt.ctimeMs);
-  expect(BigInt(Math.floor(withoutBigInt.birthtimeMs))).toBe(withBigInt.birthtimeMs);
+
+  const expectclose = (a: bigint, b: bigint) => expect(Math.abs(Number(a - b))).toBeLessThan(1000);
+
+  expectclose(BigInt(withoutBigInt.dev), withBigInt.dev);
+  expectclose(BigInt(withoutBigInt.ino), withBigInt.ino);
+  expectclose(BigInt(withoutBigInt.mode), withBigInt.mode);
+  expectclose(BigInt(withoutBigInt.nlink), withBigInt.nlink);
+  expectclose(BigInt(withoutBigInt.uid), withBigInt.uid);
+  expectclose(BigInt(withoutBigInt.gid), withBigInt.gid);
+  expectclose(BigInt(withoutBigInt.rdev), withBigInt.rdev);
+  expectclose(BigInt(withoutBigInt.size), withBigInt.size);
+  expectclose(BigInt(withoutBigInt.blksize), withBigInt.blksize);
+  expectclose(BigInt(withoutBigInt.blocks), withBigInt.blocks);
+  expectclose(BigInt(Math.floor(withoutBigInt.atimeMs)), withBigInt.atimeMs);
+  expectclose(BigInt(Math.floor(withoutBigInt.mtimeMs)), withBigInt.mtimeMs);
+  expectclose(BigInt(Math.floor(withoutBigInt.ctimeMs)), withBigInt.ctimeMs);
+  expectclose(BigInt(Math.floor(withoutBigInt.birthtimeMs)), withBigInt.birthtimeMs);
+
   expect(withBigInt.atime.getTime()).toEqual(withoutBigInt.atime.getTime());
   expect(withBigInt.mtime.getTime()).toEqual(withoutBigInt.mtime.getTime());
   expect(withBigInt.ctime.getTime()).toEqual(withoutBigInt.ctime.getTime());

@@ -1,10 +1,10 @@
 import { expect, describe, it } from "bun:test";
 import { Readable, Writable, Duplex, Transform, PassThrough } from "node:stream";
 import { createReadStream } from "node:fs";
+import { join } from "path";
+import { bunExe, bunEnv } from "harness";
 import { tmpdir } from "node:os";
-import { writeFileSync } from "node:fs";
-import tty from "tty";
-import { openpty, close } from "./create-pty.js";
+import { writeFileSync, copyFileSync } from "node:fs";
 
 describe("Readable", () => {
   it("should be able to be created without _construct method defined", done => {
@@ -195,69 +195,17 @@ describe("PassThrough", () => {
   });
 });
 
-describe("TTY", () => {
-  it("ReadStream stdin", () => {
-    const { parent_fd, child_fd } = openpty();
-    const rs = new tty.ReadStream(parent_fd);
-    const rs1 = tty.ReadStream(child_fd);
-    expect(rs1 instanceof tty.ReadStream).toBe(true);
-    expect(rs instanceof tty.ReadStream).toBe(true);
-    expect(tty.isatty(rs.fd)).toBe(true);
-    expect(tty.isatty(rs1.fd)).toBe(true);
-    expect(rs.isRaw).toBe(false);
-    expect(rs.isTTY).toBe(true);
-    expect(rs.setRawMode).toBeInstanceOf(Function);
-    expect(rs.setRawMode(true)).toBe(rs);
-    expect(rs.isRaw).toBe(true);
-    expect(rs.setRawMode(false)).toBe(rs);
-    expect(rs.isRaw).toBe(false);
-    close(parent_fd);
-    close(child_fd);
+it("TTY streams", async () => {
+  copyFileSync(join(import.meta.dir, "tty-streams-test.js"), "/tmp/tty-streams.test.js");
+
+  const { stdout, stderr, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "test", "tty-streams.test.js"],
+    env: bunEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+    cwd: "/tmp",
   });
 
-  it("ReadStream not a tty", () => {
-    expect(() => {
-      new tty.ReadStream(6);
-    });
-  });
-
-  it("WriteStream stdout", () => {
-    const { child_fd, parent_fd } = openpty();
-    const ws = new tty.WriteStream(child_fd);
-    const ws1 = tty.WriteStream(parent_fd);
-    expect(ws1 instanceof tty.WriteStream).toBe(true);
-    expect(ws instanceof tty.WriteStream).toBe(true);
-    expect(tty.isatty(ws.fd)).toBe(true);
-    expect(ws.isTTY).toBe(true);
-
-    // pseudo terminal, not the best test because cols and rows can be 0
-    expect(ws.columns).toBeGreaterThanOrEqual(0);
-    expect(ws.rows).toBeGreaterThanOrEqual(0);
-
-    expect(ws.getColorDepth()).toBeGreaterThanOrEqual(0);
-    expect(ws.hasColors(2)).toBe(true);
-    close(parent_fd);
-    close(child_fd);
-  });
-
-  it("process.stdio tty", () => {
-    expect(process.stdin instanceof tty.ReadStream).toBe(true);
-    expect(process.stdout instanceof tty.WriteStream).toBe(true);
-    expect(process.stderr instanceof tty.WriteStream).toBe(true);
-    expect(process.stdin.isTTY).toBe(true);
-    expect(process.stdout.isTTY).toBe(true);
-    expect(process.stderr.isTTY).toBe(true);
-  });
-
-  it("read and write stream prototypes", () => {
-    expect(tty.ReadStream.prototype.setRawMode).toBeInstanceOf(Function);
-    expect(tty.WriteStream.prototype.clearLine).toBeInstanceOf(Function);
-    expect(tty.WriteStream.prototype.clearScreenDown).toBeInstanceOf(Function);
-    expect(tty.WriteStream.prototype.cursorTo).toBeInstanceOf(Function);
-    expect(tty.WriteStream.prototype.getColorDepth).toBeInstanceOf(Function);
-    expect(tty.WriteStream.prototype.getWindowSize).toBeInstanceOf(Function);
-    expect(tty.WriteStream.prototype.hasColors).toBeInstanceOf(Function);
-    expect(tty.WriteStream.prototype.hasColors).toBeInstanceOf(Function);
-    expect(tty.WriteStream.prototype.moveCursor).toBeInstanceOf(Function);
-  });
+  expect(stdout.toString()).toBe("");
+  expect(stderr.toString()).toContain("0 fail");
+  expect(exitCode).toBe(0);
 });

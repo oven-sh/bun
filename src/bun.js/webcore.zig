@@ -190,7 +190,7 @@ pub const Prompt = struct {
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        const arguments = callframe.arguments(3);
+        const arguments = callframe.arguments(3).slice();
         var state = std.heap.stackFallback(2048, bun.default_allocator);
         const allocator = state.get();
         var output = bun.Output.writer();
@@ -315,7 +315,7 @@ pub const Crypto = struct {
     garbage: i32 = 0,
     const BoringSSL = @import("root").bun.BoringSSL;
 
-    pub const doScryptSync = JSC.wrapInstancEMethod(Crypto, "scryptSync", false);
+    pub const doScryptSync = JSC.wrapInstanceMethod(Crypto, "scryptSync", false);
 
     pub fn scryptSync(
         globalThis: *JSC.JSGlobalObject,
@@ -617,6 +617,7 @@ pub const Crypto = struct {
     }
 
     pub fn randomUUID(
+        _: *@This(),
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
@@ -649,7 +650,7 @@ pub const Crypto = struct {
     }
 
     pub fn randomUUIDWithoutTypeChecks(
-        _: *anyopaque,
+        _: *Crypto,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
         var out: [36]u8 = undefined;
@@ -659,12 +660,12 @@ pub const Crypto = struct {
         return JSC.ZigString.init(&out).toValueGC(globalThis);
     }
 
-    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*Crypto {
         globalThis.throw("Crypto is not constructable", .{});
         return null;
     }
 
-    pub export fn Crypto__create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub export fn CryptoObject__create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
 
         var ptr = bun.default_allocator.create(Crypto) catch {
@@ -676,6 +677,10 @@ pub const Crypto = struct {
     }
 
     pub usingnamespace JSC.Codegen.JSCrypto;
+
+    comptime {
+        if (!JSc.is_bindgen) {}
+    }
 };
 
 comptime {

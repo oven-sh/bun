@@ -430,8 +430,7 @@ static String computeErrorInfo(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsi
     return computeErrorInfoWithoutPrepareStackTrace(vm, stackTrace, line, column, sourceURL, errorInstance);
 }
 
-extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObjectClass, int count,
-    void* console_client, int32_t executionContextId, bool miniMode, void* worker_ptr)
+extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
 
@@ -475,10 +474,6 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObje
     globalObject->isThreadLocalDefaultGlobalObject = true;
     globalObject->setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT); // Node.js defaults to 10
     vm.setOnComputeErrorInfo(computeErrorInfo);
-
-    if (count > 0) {
-        globalObject->installAPIGlobals(globalObjectClass, count, vm);
-    }
 
     JSC::gcProtect(globalObject);
 
@@ -665,20 +660,14 @@ using namespace WebCore;
 const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, nullptr, nullptr,
     CREATE_METHOD_TABLE(GlobalObject) };
 
-extern "C" JSClassRef* Zig__getAPIGlobals(size_t* count);
-
 static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
     Zig::GlobalObject* shadow = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::JSGlobalObject::create(vm, JSC::JSGlobalObject::createStructure(vm, JSC::jsNull())), JSC::jsNull()));
     shadow->setConsole(shadow);
     size_t count = 0;
-    JSClassRef* globalObjectClass = Zig__getAPIGlobals(&count);
 
     shadow->setConsole(shadow);
-    if (count > 0) {
-        shadow->installAPIGlobals(globalObjectClass, count, vm);
-    }
 
     return shadow;
 }
@@ -909,6 +898,9 @@ GENERATED_CONSTRUCTOR_SETTER(JSBlob);
 GENERATED_CONSTRUCTOR_GETTER(JSHTMLRewriter);
 GENERATED_CONSTRUCTOR_SETTER(JSHTMLRewriter);
 
+GENERATED_CONSTRUCTOR_GETTER(JSCrypto);
+GENERATED_CONSTRUCTOR_SETTER(JSCrypto);
+
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSMessageEvent);
 WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSMessageEvent);
 
@@ -1001,6 +993,16 @@ JSC_DEFINE_CUSTOM_GETTER(property_lazyProcessGetter,
     auto clientData = WebCore::clientData(vm);
     return JSC::JSValue::encode(
         globalObject->processObject());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(property_lazyCryptoGetter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName property))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(JSValue::decode(thisValue));
+    JSValue cryptoObject = thisObject->cryptoObject();
+    thisObject->putDirect(thisObject->vm(), property, cryptoObject, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    return JSValue::encode(cryptoObject);
 }
 
 JSC_DEFINE_CUSTOM_SETTER(lazyProcessEnvSetter,
@@ -2727,10 +2729,26 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+extern "C" EncodedJSValue CryptoObject__create(JSGlobalObject*);
+
 void GlobalObject::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+
+    m_cryptoObject.initLater(
+        [](const Initializer<JSObject>& init) {
+            JSC::JSGlobalObject* globalObject = init.owner;
+            JSObject* crypto = JSValue::decode(CryptoObject__create(globalObject)).getObject();
+            // this should technically go on the prototype i think?
+            crypto->putDirectCustomAccessor(
+                init.vm,
+                Identifier::fromString(init.vm, "subtle"_s),
+                JSC::CustomGetterSetter::create(init.vm, getterSubtleCrypto, nullptr),
+                JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+
+            init.set(crypto);
+        });
 
     m_lazyRequireCacheObject.initLater(
         [](const Initializer<JSObject>& init) {
@@ -3470,6 +3488,10 @@ JSC::GCClient::IsoSubspace* GlobalObject::subspaceForImpl(JSC::VM& vm)
         [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSWorkerGlobalScope; });
 }
 
+extern "C" EncodedJSValue WebCore__alert(JSC::JSGlobalObject*, JSC::CallFrame*);
+extern "C" EncodedJSValue WebCore__prompt(JSC::JSGlobalObject*, JSC::CallFrame*);
+extern "C" EncodedJSValue WebCore__confirm(JSC::JSGlobalObject*, JSC::CallFrame*);
+
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 {
     m_builtinInternalFunctions.initialize(*this);
@@ -3562,6 +3584,30 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
             GlobalPropertyInfo { postMessageIdentifier,
                 JSC::JSFunction::create(vm, this, 1,
                     "postMessage"_s, jsFunctionPostMessage, ImplementationVisibility::Public),
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
+    }
+
+    {
+        extraStaticGlobals.uncheckedAppend(
+            GlobalPropertyInfo { JSC::Identifier::fromString(vm, "alert"_s),
+                JSC::JSFunction::create(vm, this, 1,
+                    "alert"_s, WebCore__alert, ImplementationVisibility::Public),
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
+    }
+
+    {
+        extraStaticGlobals.uncheckedAppend(
+            GlobalPropertyInfo { JSC::Identifier::fromString(vm, "confirm"_s),
+                JSC::JSFunction::create(vm, this, 1,
+                    "confirm"_s, WebCore__confirm, ImplementationVisibility::Public),
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
+    }
+
+    {
+        extraStaticGlobals.uncheckedAppend(
+            GlobalPropertyInfo { JSC::Identifier::fromString(vm, "prompt"_s),
+                JSC::JSFunction::create(vm, this, 1,
+                    "prompt"_s, WebCore__prompt, ImplementationVisibility::Public),
                 JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
     }
 
@@ -3684,6 +3730,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "HTMLRewriter"_s), JSC::CustomGetterSetter::create(vm, JSHTMLRewriter_getter, JSHTMLRewriter_setter),
         JSC::PropertyAttribute::DontDelete | 0);
 
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Crypto"_s), JSC::CustomGetterSetter::create(vm, JSCrypto_getter, JSCrypto_setter),
+        JSC::PropertyAttribute::DontDelete | 0);
+
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "DOMException"_s), JSC::CustomGetterSetter::create(vm, JSDOMException_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
@@ -3706,6 +3755,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onmessage"_s), JSC::CustomGetterSetter::create(vm, globalGetterOnMessage, globalSetterOnMessage), 0);
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onerror"_s), JSC::CustomGetterSetter::create(vm, globalGetterOnError, globalSetterOnError), 0);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "crypto"_s), JSC::CustomGetterSetter::create(vm, property_lazyCryptoGetter, nullptr),
+        JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
 
     auto bufferAccessor = JSC::CustomGetterSetter::create(vm, JSBuffer_getter, JSBuffer_setter);
     auto realBufferAccessor = JSC::CustomGetterSetter::create(vm, JSBuffer_privateGetter, nullptr);
@@ -3799,72 +3851,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         ImplementationVisibility::Public,
         NoIntrinsic,
         JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
-}
-
-// We set it in here since it's a global
-extern "C" void Crypto__randomUUID__put(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value);
-extern "C" void Crypto__getRandomValues__put(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value);
-
-// This is not a publicly exposed API currently.
-// This is used by the bundler to make Response, Request, FetchEvent,
-// and any other objects available globally.
-void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm)
-{
-    auto clientData = WebCore::clientData(vm);
-    auto& builtinNames = clientData->builtinNames();
-    WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-    extraStaticGlobals.reserveCapacity((size_t)count + 3 + 1 + 1);
-
-    int j = 0;
-    // First one is Crypto
-    {
-        auto jsClass = globals[j];
-
-        JSC::JSCallbackObject<JSNonFinalObject>* object = JSC::JSCallbackObject<JSNonFinalObject>::create(this, this->callbackObjectStructure(),
-            jsClass, nullptr);
-        if (JSObject* prototype = object->classRef()->prototype(this))
-            object->setPrototypeDirect(vm, prototype);
-
-        Crypto__getRandomValues__put(this, JSValue::encode(object));
-        Crypto__randomUUID__put(this, JSValue::encode(object));
-        Crypto__timingSafeEqual__put(this, JSValue::encode(object));
-        object->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "subtle"_s), JSC::CustomGetterSetter::create(vm, getterSubtleCrypto, nullptr),
-            JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        this->putDirect(vm, JSC::Identifier::fromString(vm, "crypto"_s), object, JSC::PropertyAttribute::DontDelete | 0);
-    }
-
-    for (j = 1; j < count; j++) {
-        auto jsClass = globals[j];
-
-        JSC::JSCallbackObject<JSNonFinalObject>* object = JSC::JSCallbackObject<JSNonFinalObject>::create(this, this->callbackObjectStructure(),
-            jsClass, nullptr);
-        if (JSObject* prototype = object->classRef()->prototype(this))
-            object->setPrototypeDirect(vm, prototype);
-
-        this->putDirect(vm, JSC::Identifier::fromString(vm, jsClass->className()), JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0);
-    }
-
-    // // The last one must be "process.env"
-    // // Runtime-support is for if they change
-    // {
-    //   auto jsClass = globals[i];
-
-    //   JSC::JSCallbackObject<JSNonFinalObject> *object =
-    //     JSC::JSCallbackObject<JSNonFinalObject>::create(this, this->callbackObjectStructure(),
-    //                                                     jsClass, nullptr);
-    //   if (JSObject *prototype = jsClass->prototype(this)) object->setPrototypeDirect(vm,
-    //   prototype);
-
-    //   process->putDirect(this->vm, JSC::Identifier::fromString(this->vm, "env"),
-    //                      JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0);
-    // }
-
-    this->addStaticGlobals(extraStaticGlobals.data(), extraStaticGlobals.size());
-
-    // putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "SQL"_s), JSC::CustomGetterSetter::create(vm, JSSQLStatement_getter, nullptr),
-    //     JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
-
-    extraStaticGlobals.releaseBuffer();
 }
 
 extern "C" bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* globalObject, unsigned char* host, uint16_t arg1)
@@ -3965,6 +3951,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_callSiteStructure.visit(visitor);
     thisObject->m_emitReadableNextTickFunction.visit(visitor);
     thisObject->m_JSBufferSubclassStructure.visit(visitor);
+    thisObject->m_cryptoObject.visit(visitor);
 
     thisObject->m_requireFunctionUnbound.visit(visitor);
     thisObject->m_requireResolveFunctionUnbound.visit(visitor);

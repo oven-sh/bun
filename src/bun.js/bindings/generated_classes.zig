@@ -760,20 +760,20 @@ pub const JSCrypto = struct {
             @compileLog("Expected Crypto.randomUUIDWithoutTypeChecks to be a DOMJIT function");
         if (@TypeOf(Crypto.randomUUID) != CallbackType)
             @compileLog("Expected Crypto.randomUUID to be a callback but received " ++ @typeName(@TypeOf(Crypto.randomUUID)));
-        if (@TypeOf(Crypto.scryptSync) != CallbackType)
-            @compileLog("Expected Crypto.scryptSync to be a callback but received " ++ @typeName(@TypeOf(Crypto.scryptSync)));
+        if (@TypeOf(Crypto.doScryptSync) != CallbackType)
+            @compileLog("Expected Crypto.doScryptSync to be a callback but received " ++ @typeName(@TypeOf(Crypto.doScryptSync)));
         if (@TypeOf(Crypto.timingSafeEqualWithoutTypeChecks) != fn (*Crypto, *JSC.JSGlobalObject, *JSC.JSUint8Array, *JSC.JSUint8Array) callconv(.C) JSC.JSValue)
             @compileLog("Expected Crypto.timingSafeEqualWithoutTypeChecks to be a DOMJIT function");
         if (@TypeOf(Crypto.timingSafeEqual) != CallbackType)
             @compileLog("Expected Crypto.timingSafeEqual to be a callback but received " ++ @typeName(@TypeOf(Crypto.timingSafeEqual)));
         if (!JSC.is_bindgen) {
             @export(Crypto.constructor, .{ .name = "CryptoClass__construct" });
+            @export(Crypto.doScryptSync, .{ .name = "CryptoPrototype__doScryptSync" });
             @export(Crypto.getRandomValues, .{ .name = "CryptoPrototype__getRandomValues" });
             @export(Crypto.getRandomValuesWithoutTypeChecks, .{ .name = "CryptoPrototype__getRandomValuesWithoutTypeChecks" });
             @export(Crypto.randomInt, .{ .name = "CryptoPrototype__randomInt" });
             @export(Crypto.randomUUID, .{ .name = "CryptoPrototype__randomUUID" });
             @export(Crypto.randomUUIDWithoutTypeChecks, .{ .name = "CryptoPrototype__randomUUIDWithoutTypeChecks" });
-            @export(Crypto.scryptSync, .{ .name = "CryptoPrototype__scryptSync" });
             @export(Crypto.timingSafeEqual, .{ .name = "CryptoPrototype__timingSafeEqual" });
             @export(Crypto.timingSafeEqualWithoutTypeChecks, .{ .name = "CryptoPrototype__timingSafeEqualWithoutTypeChecks" });
         }
@@ -893,237 +893,237 @@ pub const JSCryptoHasher = struct {
         }
     }
 };
-pub const JSDebugModeHTTPSServer = struct {
-    const DebugModeHTTPSServer = Classes.DebugModeHTTPSServer;
-    const GetterType = fn (*DebugModeHTTPSServer, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = fn (*DebugModeHTTPSServer, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = fn (*DebugModeHTTPSServer, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = fn (*DebugModeHTTPSServer, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = fn (*DebugModeHTTPSServer, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+pub const JSDebugHTTPSServer = struct {
+    const DebugHTTPSServer = Classes.DebugHTTPSServer;
+    const GetterType = fn (*DebugHTTPSServer, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*DebugHTTPSServer, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*DebugHTTPSServer, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*DebugHTTPSServer, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*DebugHTTPSServer, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
-    pub fn fromJS(value: JSC.JSValue) ?*DebugModeHTTPSServer {
+    pub fn fromJS(value: JSC.JSValue) ?*DebugHTTPSServer {
         JSC.markBinding(@src());
-        return DebugModeHTTPSServer__fromJS(value);
+        return DebugHTTPSServer__fromJS(value);
     }
 
-    extern fn DebugModeHTTPSServerPrototype__hostnameSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+    extern fn DebugHTTPSServerPrototype__hostnameSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
-    extern fn DebugModeHTTPSServerPrototype__hostnameGetCachedValue(JSC.JSValue) JSC.JSValue;
+    extern fn DebugHTTPSServerPrototype__hostnameGetCachedValue(JSC.JSValue) JSC.JSValue;
 
-    /// `DebugModeHTTPSServer.hostname` setter
+    /// `DebugHTTPSServer.hostname` setter
     /// This value will be visited by the garbage collector.
     pub fn hostnameSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         JSC.markBinding(@src());
-        DebugModeHTTPSServerPrototype__hostnameSetCachedValue(thisValue, globalObject, value);
+        DebugHTTPSServerPrototype__hostnameSetCachedValue(thisValue, globalObject, value);
     }
 
-    /// `DebugModeHTTPSServer.hostname` getter
+    /// `DebugHTTPSServer.hostname` getter
     /// This value will be visited by the garbage collector.
     pub fn hostnameGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
         JSC.markBinding(@src());
-        const result = DebugModeHTTPSServerPrototype__hostnameGetCachedValue(thisValue);
+        const result = DebugHTTPSServerPrototype__hostnameGetCachedValue(thisValue);
         if (result == .zero)
             return null;
 
         return result;
     }
 
-    /// Create a new instance of DebugModeHTTPSServer
-    pub fn toJS(this: *DebugModeHTTPSServer, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    /// Create a new instance of DebugHTTPSServer
+    pub fn toJS(this: *DebugHTTPSServer, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
-            const value__ = DebugModeHTTPSServer__create(globalObject, this);
-            std.debug.assert(value__.as(DebugModeHTTPSServer).? == this); // If this fails, likely a C ABI issue.
+            const value__ = DebugHTTPSServer__create(globalObject, this);
+            std.debug.assert(value__.as(DebugHTTPSServer).? == this); // If this fails, likely a C ABI issue.
             return value__;
         } else {
-            return DebugModeHTTPSServer__create(globalObject, this);
+            return DebugHTTPSServer__create(globalObject, this);
         }
     }
 
-    /// Modify the internal ptr to point to a new instance of DebugModeHTTPSServer.
-    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*DebugModeHTTPSServer) bool {
+    /// Modify the internal ptr to point to a new instance of DebugHTTPSServer.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*DebugHTTPSServer) bool {
         JSC.markBinding(@src());
-        return DebugModeHTTPSServer__dangerouslySetPtr(value, ptr);
+        return DebugHTTPSServer__dangerouslySetPtr(value, ptr);
     }
 
     /// Detach the ptr from the thisValue
-    pub fn detachPtr(_: *DebugModeHTTPSServer, value: JSC.JSValue) void {
+    pub fn detachPtr(_: *DebugHTTPSServer, value: JSC.JSValue) void {
         JSC.markBinding(@src());
-        std.debug.assert(DebugModeHTTPSServer__dangerouslySetPtr(value, null));
+        std.debug.assert(DebugHTTPSServer__dangerouslySetPtr(value, null));
     }
 
-    extern fn DebugModeHTTPSServer__fromJS(JSC.JSValue) ?*DebugModeHTTPSServer;
-    extern fn DebugModeHTTPSServer__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+    extern fn DebugHTTPSServer__fromJS(JSC.JSValue) ?*DebugHTTPSServer;
+    extern fn DebugHTTPSServer__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
 
-    extern fn DebugModeHTTPSServer__create(globalObject: *JSC.JSGlobalObject, ptr: ?*DebugModeHTTPSServer) JSC.JSValue;
+    extern fn DebugHTTPSServer__create(globalObject: *JSC.JSGlobalObject, ptr: ?*DebugHTTPSServer) JSC.JSValue;
 
-    extern fn DebugModeHTTPSServer__dangerouslySetPtr(JSC.JSValue, ?*DebugModeHTTPSServer) bool;
+    extern fn DebugHTTPSServer__dangerouslySetPtr(JSC.JSValue, ?*DebugHTTPSServer) bool;
 
     comptime {
-        if (@TypeOf(DebugModeHTTPSServer.finalize) != (fn (*DebugModeHTTPSServer) callconv(.C) void)) {
-            @compileLog("DebugModeHTTPSServer.finalize is not a finalizer");
+        if (@TypeOf(DebugHTTPSServer.finalize) != (fn (*DebugHTTPSServer) callconv(.C) void)) {
+            @compileLog("DebugHTTPSServer.finalize is not a finalizer");
         }
 
-        if (@TypeOf(DebugModeHTTPSServer.getDevelopment) != GetterType)
-            @compileLog("Expected DebugModeHTTPSServer.getDevelopment to be a getter");
+        if (@TypeOf(DebugHTTPSServer.getDevelopment) != GetterType)
+            @compileLog("Expected DebugHTTPSServer.getDevelopment to be a getter");
 
-        if (@TypeOf(DebugModeHTTPSServer.doFetch) != CallbackType)
-            @compileLog("Expected DebugModeHTTPSServer.doFetch to be a callback but received " ++ @typeName(@TypeOf(DebugModeHTTPSServer.doFetch)));
-        if (@TypeOf(DebugModeHTTPSServer.getHostname) != GetterType)
-            @compileLog("Expected DebugModeHTTPSServer.getHostname to be a getter");
+        if (@TypeOf(DebugHTTPSServer.doFetch) != CallbackType)
+            @compileLog("Expected DebugHTTPSServer.doFetch to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPSServer.doFetch)));
+        if (@TypeOf(DebugHTTPSServer.getHostname) != GetterType)
+            @compileLog("Expected DebugHTTPSServer.getHostname to be a getter");
 
-        if (@TypeOf(DebugModeHTTPSServer.getPendingRequests) != GetterType)
-            @compileLog("Expected DebugModeHTTPSServer.getPendingRequests to be a getter");
+        if (@TypeOf(DebugHTTPSServer.getPendingRequests) != GetterType)
+            @compileLog("Expected DebugHTTPSServer.getPendingRequests to be a getter");
 
-        if (@TypeOf(DebugModeHTTPSServer.getPendingWebSockets) != GetterType)
-            @compileLog("Expected DebugModeHTTPSServer.getPendingWebSockets to be a getter");
+        if (@TypeOf(DebugHTTPSServer.getPendingWebSockets) != GetterType)
+            @compileLog("Expected DebugHTTPSServer.getPendingWebSockets to be a getter");
 
-        if (@TypeOf(DebugModeHTTPSServer.getPort) != GetterType)
-            @compileLog("Expected DebugModeHTTPSServer.getPort to be a getter");
+        if (@TypeOf(DebugHTTPSServer.getPort) != GetterType)
+            @compileLog("Expected DebugHTTPSServer.getPort to be a getter");
 
-        if (@TypeOf(DebugModeHTTPSServer.getProtocol) != GetterType)
-            @compileLog("Expected DebugModeHTTPSServer.getProtocol to be a getter");
+        if (@TypeOf(DebugHTTPSServer.getProtocol) != GetterType)
+            @compileLog("Expected DebugHTTPSServer.getProtocol to be a getter");
 
-        if (@TypeOf(DebugModeHTTPSServer.doPublish) != CallbackType)
-            @compileLog("Expected DebugModeHTTPSServer.doPublish to be a callback but received " ++ @typeName(@TypeOf(DebugModeHTTPSServer.doPublish)));
-        if (@TypeOf(DebugModeHTTPSServer.doReload) != CallbackType)
-            @compileLog("Expected DebugModeHTTPSServer.doReload to be a callback but received " ++ @typeName(@TypeOf(DebugModeHTTPSServer.doReload)));
-        if (@TypeOf(DebugModeHTTPSServer.doStop) != CallbackType)
-            @compileLog("Expected DebugModeHTTPSServer.doStop to be a callback but received " ++ @typeName(@TypeOf(DebugModeHTTPSServer.doStop)));
-        if (@TypeOf(DebugModeHTTPSServer.doUpgrade) != CallbackType)
-            @compileLog("Expected DebugModeHTTPSServer.doUpgrade to be a callback but received " ++ @typeName(@TypeOf(DebugModeHTTPSServer.doUpgrade)));
+        if (@TypeOf(DebugHTTPSServer.doPublish) != CallbackType)
+            @compileLog("Expected DebugHTTPSServer.doPublish to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPSServer.doPublish)));
+        if (@TypeOf(DebugHTTPSServer.doReload) != CallbackType)
+            @compileLog("Expected DebugHTTPSServer.doReload to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPSServer.doReload)));
+        if (@TypeOf(DebugHTTPSServer.doStop) != CallbackType)
+            @compileLog("Expected DebugHTTPSServer.doStop to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPSServer.doStop)));
+        if (@TypeOf(DebugHTTPSServer.doUpgrade) != CallbackType)
+            @compileLog("Expected DebugHTTPSServer.doUpgrade to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPSServer.doUpgrade)));
         if (!JSC.is_bindgen) {
-            @export(DebugModeHTTPSServer.doFetch, .{ .name = "DebugModeHTTPSServerPrototype__doFetch" });
-            @export(DebugModeHTTPSServer.doPublish, .{ .name = "DebugModeHTTPSServerPrototype__doPublish" });
-            @export(DebugModeHTTPSServer.doReload, .{ .name = "DebugModeHTTPSServerPrototype__doReload" });
-            @export(DebugModeHTTPSServer.doStop, .{ .name = "DebugModeHTTPSServerPrototype__doStop" });
-            @export(DebugModeHTTPSServer.doUpgrade, .{ .name = "DebugModeHTTPSServerPrototype__doUpgrade" });
-            @export(DebugModeHTTPSServer.finalize, .{ .name = "DebugModeHTTPSServerClass__finalize" });
-            @export(DebugModeHTTPSServer.getDevelopment, .{ .name = "DebugModeHTTPSServerPrototype__getDevelopment" });
-            @export(DebugModeHTTPSServer.getHostname, .{ .name = "DebugModeHTTPSServerPrototype__getHostname" });
-            @export(DebugModeHTTPSServer.getPendingRequests, .{ .name = "DebugModeHTTPSServerPrototype__getPendingRequests" });
-            @export(DebugModeHTTPSServer.getPendingWebSockets, .{ .name = "DebugModeHTTPSServerPrototype__getPendingWebSockets" });
-            @export(DebugModeHTTPSServer.getPort, .{ .name = "DebugModeHTTPSServerPrototype__getPort" });
-            @export(DebugModeHTTPSServer.getProtocol, .{ .name = "DebugModeHTTPSServerPrototype__getProtocol" });
+            @export(DebugHTTPSServer.doFetch, .{ .name = "DebugHTTPSServerPrototype__doFetch" });
+            @export(DebugHTTPSServer.doPublish, .{ .name = "DebugHTTPSServerPrototype__doPublish" });
+            @export(DebugHTTPSServer.doReload, .{ .name = "DebugHTTPSServerPrototype__doReload" });
+            @export(DebugHTTPSServer.doStop, .{ .name = "DebugHTTPSServerPrototype__doStop" });
+            @export(DebugHTTPSServer.doUpgrade, .{ .name = "DebugHTTPSServerPrototype__doUpgrade" });
+            @export(DebugHTTPSServer.finalize, .{ .name = "DebugHTTPSServerClass__finalize" });
+            @export(DebugHTTPSServer.getDevelopment, .{ .name = "DebugHTTPSServerPrototype__getDevelopment" });
+            @export(DebugHTTPSServer.getHostname, .{ .name = "DebugHTTPSServerPrototype__getHostname" });
+            @export(DebugHTTPSServer.getPendingRequests, .{ .name = "DebugHTTPSServerPrototype__getPendingRequests" });
+            @export(DebugHTTPSServer.getPendingWebSockets, .{ .name = "DebugHTTPSServerPrototype__getPendingWebSockets" });
+            @export(DebugHTTPSServer.getPort, .{ .name = "DebugHTTPSServerPrototype__getPort" });
+            @export(DebugHTTPSServer.getProtocol, .{ .name = "DebugHTTPSServerPrototype__getProtocol" });
         }
     }
 };
-pub const JSDebugModeHTTPServer = struct {
-    const DebugModeHTTPServer = Classes.DebugModeHTTPServer;
-    const GetterType = fn (*DebugModeHTTPServer, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = fn (*DebugModeHTTPServer, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = fn (*DebugModeHTTPServer, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = fn (*DebugModeHTTPServer, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = fn (*DebugModeHTTPServer, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+pub const JSDebugHTTPServer = struct {
+    const DebugHTTPServer = Classes.DebugHTTPServer;
+    const GetterType = fn (*DebugHTTPServer, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*DebugHTTPServer, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*DebugHTTPServer, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*DebugHTTPServer, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*DebugHTTPServer, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
-    pub fn fromJS(value: JSC.JSValue) ?*DebugModeHTTPServer {
+    pub fn fromJS(value: JSC.JSValue) ?*DebugHTTPServer {
         JSC.markBinding(@src());
-        return DebugModeHTTPServer__fromJS(value);
+        return DebugHTTPServer__fromJS(value);
     }
 
-    extern fn DebugModeHTTPServerPrototype__hostnameSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+    extern fn DebugHTTPServerPrototype__hostnameSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
-    extern fn DebugModeHTTPServerPrototype__hostnameGetCachedValue(JSC.JSValue) JSC.JSValue;
+    extern fn DebugHTTPServerPrototype__hostnameGetCachedValue(JSC.JSValue) JSC.JSValue;
 
-    /// `DebugModeHTTPServer.hostname` setter
+    /// `DebugHTTPServer.hostname` setter
     /// This value will be visited by the garbage collector.
     pub fn hostnameSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         JSC.markBinding(@src());
-        DebugModeHTTPServerPrototype__hostnameSetCachedValue(thisValue, globalObject, value);
+        DebugHTTPServerPrototype__hostnameSetCachedValue(thisValue, globalObject, value);
     }
 
-    /// `DebugModeHTTPServer.hostname` getter
+    /// `DebugHTTPServer.hostname` getter
     /// This value will be visited by the garbage collector.
     pub fn hostnameGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
         JSC.markBinding(@src());
-        const result = DebugModeHTTPServerPrototype__hostnameGetCachedValue(thisValue);
+        const result = DebugHTTPServerPrototype__hostnameGetCachedValue(thisValue);
         if (result == .zero)
             return null;
 
         return result;
     }
 
-    /// Create a new instance of DebugModeHTTPServer
-    pub fn toJS(this: *DebugModeHTTPServer, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    /// Create a new instance of DebugHTTPServer
+    pub fn toJS(this: *DebugHTTPServer, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
-            const value__ = DebugModeHTTPServer__create(globalObject, this);
-            std.debug.assert(value__.as(DebugModeHTTPServer).? == this); // If this fails, likely a C ABI issue.
+            const value__ = DebugHTTPServer__create(globalObject, this);
+            std.debug.assert(value__.as(DebugHTTPServer).? == this); // If this fails, likely a C ABI issue.
             return value__;
         } else {
-            return DebugModeHTTPServer__create(globalObject, this);
+            return DebugHTTPServer__create(globalObject, this);
         }
     }
 
-    /// Modify the internal ptr to point to a new instance of DebugModeHTTPServer.
-    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*DebugModeHTTPServer) bool {
+    /// Modify the internal ptr to point to a new instance of DebugHTTPServer.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*DebugHTTPServer) bool {
         JSC.markBinding(@src());
-        return DebugModeHTTPServer__dangerouslySetPtr(value, ptr);
+        return DebugHTTPServer__dangerouslySetPtr(value, ptr);
     }
 
     /// Detach the ptr from the thisValue
-    pub fn detachPtr(_: *DebugModeHTTPServer, value: JSC.JSValue) void {
+    pub fn detachPtr(_: *DebugHTTPServer, value: JSC.JSValue) void {
         JSC.markBinding(@src());
-        std.debug.assert(DebugModeHTTPServer__dangerouslySetPtr(value, null));
+        std.debug.assert(DebugHTTPServer__dangerouslySetPtr(value, null));
     }
 
-    extern fn DebugModeHTTPServer__fromJS(JSC.JSValue) ?*DebugModeHTTPServer;
-    extern fn DebugModeHTTPServer__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+    extern fn DebugHTTPServer__fromJS(JSC.JSValue) ?*DebugHTTPServer;
+    extern fn DebugHTTPServer__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
 
-    extern fn DebugModeHTTPServer__create(globalObject: *JSC.JSGlobalObject, ptr: ?*DebugModeHTTPServer) JSC.JSValue;
+    extern fn DebugHTTPServer__create(globalObject: *JSC.JSGlobalObject, ptr: ?*DebugHTTPServer) JSC.JSValue;
 
-    extern fn DebugModeHTTPServer__dangerouslySetPtr(JSC.JSValue, ?*DebugModeHTTPServer) bool;
+    extern fn DebugHTTPServer__dangerouslySetPtr(JSC.JSValue, ?*DebugHTTPServer) bool;
 
     comptime {
-        if (@TypeOf(DebugModeHTTPServer.finalize) != (fn (*DebugModeHTTPServer) callconv(.C) void)) {
-            @compileLog("DebugModeHTTPServer.finalize is not a finalizer");
+        if (@TypeOf(DebugHTTPServer.finalize) != (fn (*DebugHTTPServer) callconv(.C) void)) {
+            @compileLog("DebugHTTPServer.finalize is not a finalizer");
         }
 
-        if (@TypeOf(DebugModeHTTPServer.getDevelopment) != GetterType)
-            @compileLog("Expected DebugModeHTTPServer.getDevelopment to be a getter");
+        if (@TypeOf(DebugHTTPServer.getDevelopment) != GetterType)
+            @compileLog("Expected DebugHTTPServer.getDevelopment to be a getter");
 
-        if (@TypeOf(DebugModeHTTPServer.doFetch) != CallbackType)
-            @compileLog("Expected DebugModeHTTPServer.doFetch to be a callback but received " ++ @typeName(@TypeOf(DebugModeHTTPServer.doFetch)));
-        if (@TypeOf(DebugModeHTTPServer.getHostname) != GetterType)
-            @compileLog("Expected DebugModeHTTPServer.getHostname to be a getter");
+        if (@TypeOf(DebugHTTPServer.doFetch) != CallbackType)
+            @compileLog("Expected DebugHTTPServer.doFetch to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPServer.doFetch)));
+        if (@TypeOf(DebugHTTPServer.getHostname) != GetterType)
+            @compileLog("Expected DebugHTTPServer.getHostname to be a getter");
 
-        if (@TypeOf(DebugModeHTTPServer.getPendingRequests) != GetterType)
-            @compileLog("Expected DebugModeHTTPServer.getPendingRequests to be a getter");
+        if (@TypeOf(DebugHTTPServer.getPendingRequests) != GetterType)
+            @compileLog("Expected DebugHTTPServer.getPendingRequests to be a getter");
 
-        if (@TypeOf(DebugModeHTTPServer.getPendingWebSockets) != GetterType)
-            @compileLog("Expected DebugModeHTTPServer.getPendingWebSockets to be a getter");
+        if (@TypeOf(DebugHTTPServer.getPendingWebSockets) != GetterType)
+            @compileLog("Expected DebugHTTPServer.getPendingWebSockets to be a getter");
 
-        if (@TypeOf(DebugModeHTTPServer.getPort) != GetterType)
-            @compileLog("Expected DebugModeHTTPServer.getPort to be a getter");
+        if (@TypeOf(DebugHTTPServer.getPort) != GetterType)
+            @compileLog("Expected DebugHTTPServer.getPort to be a getter");
 
-        if (@TypeOf(DebugModeHTTPServer.getProtocol) != GetterType)
-            @compileLog("Expected DebugModeHTTPServer.getProtocol to be a getter");
+        if (@TypeOf(DebugHTTPServer.getProtocol) != GetterType)
+            @compileLog("Expected DebugHTTPServer.getProtocol to be a getter");
 
-        if (@TypeOf(DebugModeHTTPServer.doPublish) != CallbackType)
-            @compileLog("Expected DebugModeHTTPServer.doPublish to be a callback but received " ++ @typeName(@TypeOf(DebugModeHTTPServer.doPublish)));
-        if (@TypeOf(DebugModeHTTPServer.doReload) != CallbackType)
-            @compileLog("Expected DebugModeHTTPServer.doReload to be a callback but received " ++ @typeName(@TypeOf(DebugModeHTTPServer.doReload)));
-        if (@TypeOf(DebugModeHTTPServer.doStop) != CallbackType)
-            @compileLog("Expected DebugModeHTTPServer.doStop to be a callback but received " ++ @typeName(@TypeOf(DebugModeHTTPServer.doStop)));
-        if (@TypeOf(DebugModeHTTPServer.doUpgrade) != CallbackType)
-            @compileLog("Expected DebugModeHTTPServer.doUpgrade to be a callback but received " ++ @typeName(@TypeOf(DebugModeHTTPServer.doUpgrade)));
+        if (@TypeOf(DebugHTTPServer.doPublish) != CallbackType)
+            @compileLog("Expected DebugHTTPServer.doPublish to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPServer.doPublish)));
+        if (@TypeOf(DebugHTTPServer.doReload) != CallbackType)
+            @compileLog("Expected DebugHTTPServer.doReload to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPServer.doReload)));
+        if (@TypeOf(DebugHTTPServer.doStop) != CallbackType)
+            @compileLog("Expected DebugHTTPServer.doStop to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPServer.doStop)));
+        if (@TypeOf(DebugHTTPServer.doUpgrade) != CallbackType)
+            @compileLog("Expected DebugHTTPServer.doUpgrade to be a callback but received " ++ @typeName(@TypeOf(DebugHTTPServer.doUpgrade)));
         if (!JSC.is_bindgen) {
-            @export(DebugModeHTTPServer.doFetch, .{ .name = "DebugModeHTTPServerPrototype__doFetch" });
-            @export(DebugModeHTTPServer.doPublish, .{ .name = "DebugModeHTTPServerPrototype__doPublish" });
-            @export(DebugModeHTTPServer.doReload, .{ .name = "DebugModeHTTPServerPrototype__doReload" });
-            @export(DebugModeHTTPServer.doStop, .{ .name = "DebugModeHTTPServerPrototype__doStop" });
-            @export(DebugModeHTTPServer.doUpgrade, .{ .name = "DebugModeHTTPServerPrototype__doUpgrade" });
-            @export(DebugModeHTTPServer.finalize, .{ .name = "DebugModeHTTPServerClass__finalize" });
-            @export(DebugModeHTTPServer.getDevelopment, .{ .name = "DebugModeHTTPServerPrototype__getDevelopment" });
-            @export(DebugModeHTTPServer.getHostname, .{ .name = "DebugModeHTTPServerPrototype__getHostname" });
-            @export(DebugModeHTTPServer.getPendingRequests, .{ .name = "DebugModeHTTPServerPrototype__getPendingRequests" });
-            @export(DebugModeHTTPServer.getPendingWebSockets, .{ .name = "DebugModeHTTPServerPrototype__getPendingWebSockets" });
-            @export(DebugModeHTTPServer.getPort, .{ .name = "DebugModeHTTPServerPrototype__getPort" });
-            @export(DebugModeHTTPServer.getProtocol, .{ .name = "DebugModeHTTPServerPrototype__getProtocol" });
+            @export(DebugHTTPServer.doFetch, .{ .name = "DebugHTTPServerPrototype__doFetch" });
+            @export(DebugHTTPServer.doPublish, .{ .name = "DebugHTTPServerPrototype__doPublish" });
+            @export(DebugHTTPServer.doReload, .{ .name = "DebugHTTPServerPrototype__doReload" });
+            @export(DebugHTTPServer.doStop, .{ .name = "DebugHTTPServerPrototype__doStop" });
+            @export(DebugHTTPServer.doUpgrade, .{ .name = "DebugHTTPServerPrototype__doUpgrade" });
+            @export(DebugHTTPServer.finalize, .{ .name = "DebugHTTPServerClass__finalize" });
+            @export(DebugHTTPServer.getDevelopment, .{ .name = "DebugHTTPServerPrototype__getDevelopment" });
+            @export(DebugHTTPServer.getHostname, .{ .name = "DebugHTTPServerPrototype__getHostname" });
+            @export(DebugHTTPServer.getPendingRequests, .{ .name = "DebugHTTPServerPrototype__getPendingRequests" });
+            @export(DebugHTTPServer.getPendingWebSockets, .{ .name = "DebugHTTPServerPrototype__getPendingWebSockets" });
+            @export(DebugHTTPServer.getPort, .{ .name = "DebugHTTPServerPrototype__getPort" });
+            @export(DebugHTTPServer.getProtocol, .{ .name = "DebugHTTPServerPrototype__getProtocol" });
         }
     }
 };
@@ -6442,8 +6442,8 @@ comptime {
     _ = JSComment;
     _ = JSCrypto;
     _ = JSCryptoHasher;
-    _ = JSDebugModeHTTPSServer;
-    _ = JSDebugModeHTTPServer;
+    _ = JSDebugHTTPSServer;
+    _ = JSDebugHTTPServer;
     _ = JSDirent;
     _ = JSDocEnd;
     _ = JSDocType;

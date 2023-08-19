@@ -21,7 +21,6 @@
     macro(hash) \
     macro(main) \
     macro(origin) \
-    macro(routesDir) \
     macro(stderr) \
     macro(stdin) \
     macro(stdout) \
@@ -41,9 +40,6 @@
     macro(gc) \
     macro(generateHeapSnapshot) \
     macro(getImportedStyles) \
-    macro(getPublicPath) \
-    macro(getRouteFiles) \
-    macro(getRouteNames) \
     macro(gunzipSync) \
     macro(gzipSync) \
     macro(indexOfLine) \
@@ -51,7 +47,6 @@
     macro(inspect) \
     macro(jest) \
     macro(listen) \
-    macro(match) \
     macro(mmap) \
     macro(nanoseconds) \
     macro(openInEditor) \

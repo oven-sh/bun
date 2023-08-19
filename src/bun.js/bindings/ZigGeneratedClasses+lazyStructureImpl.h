@@ -41,16 +41,16 @@ void GlobalObject::initGeneratedLazyClasses() {
                  init.setStructure(WebCore::JSCryptoHasher::createStructure(init.vm, init.global, init.prototype));
                  init.setConstructor(WebCore::JSCryptoHasher::createConstructor(init.vm, init.global, init.prototype));
               });
-    m_JSDebugModeHTTPSServer.initLater(
+    m_JSDebugHTTPSServer.initLater(
               [](LazyClassStructure::Initializer& init) {
-                 init.setPrototype(WebCore::JSDebugModeHTTPSServer::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
-                 init.setStructure(WebCore::JSDebugModeHTTPSServer::createStructure(init.vm, init.global, init.prototype));
+                 init.setPrototype(WebCore::JSDebugHTTPSServer::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSDebugHTTPSServer::createStructure(init.vm, init.global, init.prototype));
                  
               });
-    m_JSDebugModeHTTPServer.initLater(
+    m_JSDebugHTTPServer.initLater(
               [](LazyClassStructure::Initializer& init) {
-                 init.setPrototype(WebCore::JSDebugModeHTTPServer::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
-                 init.setStructure(WebCore::JSDebugModeHTTPServer::createStructure(init.vm, init.global, init.prototype));
+                 init.setPrototype(WebCore::JSDebugHTTPServer::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSDebugHTTPServer::createStructure(init.vm, init.global, init.prototype));
                  
               });
     m_JSDirent.initLater(
@@ -298,8 +298,8 @@ void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& 
       thisObject->m_JSComment.visit(visitor);  visitor.append(thisObject->m_JSCommentSetterValue);
       thisObject->m_JSCrypto.visit(visitor);  visitor.append(thisObject->m_JSCryptoSetterValue);
       thisObject->m_JSCryptoHasher.visit(visitor);  visitor.append(thisObject->m_JSCryptoHasherSetterValue);
-      thisObject->m_JSDebugModeHTTPSServer.visit(visitor);  visitor.append(thisObject->m_JSDebugModeHTTPSServerSetterValue);
-      thisObject->m_JSDebugModeHTTPServer.visit(visitor);  visitor.append(thisObject->m_JSDebugModeHTTPServerSetterValue);
+      thisObject->m_JSDebugHTTPSServer.visit(visitor);  visitor.append(thisObject->m_JSDebugHTTPSServerSetterValue);
+      thisObject->m_JSDebugHTTPServer.visit(visitor);  visitor.append(thisObject->m_JSDebugHTTPServerSetterValue);
       thisObject->m_JSDirent.visit(visitor);  visitor.append(thisObject->m_JSDirentSetterValue);
       thisObject->m_JSDocEnd.visit(visitor);  visitor.append(thisObject->m_JSDocEndSetterValue);
       thisObject->m_JSDocType.visit(visitor);  visitor.append(thisObject->m_JSDocTypeSetterValue);

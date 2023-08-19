@@ -52,9 +52,9 @@ function generate(name) {
 }
 export default [
   generate(`HTTPServer`),
-  generate(`DebugModeHTTPServer`),
+  generate(`DebugHTTPServer`),
   generate(`HTTPSServer`),
-  generate(`DebugModeHTTPSServer`),
+  generate(`DebugHTTPSServer`),
 
   define({
     name: "ServerWebSocket",

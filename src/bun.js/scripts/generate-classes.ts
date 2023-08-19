@@ -739,7 +739,7 @@ JSC_DEFINE_CUSTOM_GETTER(js${typeName}Constructor, (JSGlobalObject * lexicalGlob
     auto* prototype = jsDynamicCast<${prototypeName(typeName)}*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Cannot get constructor for ${typeName}"_s);
     return JSValue::encode(globalObject->${className(typeName)}Constructor());
 }    
     
@@ -832,7 +832,8 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(
 
         if (UNLIKELY(!thisObject)) {
             auto throwScope = DECLARE_THROW_SCOPE(vm);
-            return throwVMTypeError(lexicalGlobalObject, throwScope);
+            throwVMTypeError(lexicalGlobalObject, throwScope, "Expected 'this' to be instanceof ${typeName}"_s);
+            return JSValue::encode({});
         }
 
         JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);

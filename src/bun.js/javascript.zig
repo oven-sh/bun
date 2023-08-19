@@ -88,16 +88,6 @@ const PackageManager = @import("../install/install.zig").PackageManager;
 const ModuleLoader = JSC.ModuleLoader;
 const FetchFlags = JSC.FetchFlags;
 
-pub const GlobalClasses = [_]type{
-    WebCore.Crypto.Class,
-    js_ast.Macro.JSNode.BunJSXCallbackFunction,
-
-    WebCore.Crypto.Prototype,
-
-    WebCore.Alert.Class,
-    WebCore.Confirm.Class,
-    WebCore.Prompt.Class,
-};
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 const Task = JSC.Task;
 const Blob = @import("../blob.zig");
@@ -863,17 +853,6 @@ pub const VirtualMachine = struct {
         this.transpiler_store.enabled = true;
     }
 
-    pub fn getAPIGlobals() []js.JSClassRef {
-        if (is_bindgen)
-            return &[_]js.JSClassRef{};
-        var classes = default_allocator.alloc(js.JSClassRef, GlobalClasses.len) catch return &[_]js.JSClassRef{};
-        inline for (GlobalClasses, 0..) |Class, i| {
-            classes[i] = Class.get().*;
-        }
-
-        return classes;
-    }
-
     pub fn isWatcherEnabled(this: *VirtualMachine) bool {
         return this.bun_dev_watcher != null or this.bun_watcher != null;
     }
@@ -964,13 +943,7 @@ pub const VirtualMachine = struct {
 
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
 
-        var global_classes: [GlobalClasses.len]js.JSClassRef = undefined;
-        inline for (GlobalClasses, 0..) |Class, i| {
-            global_classes[i] = Class.get().*;
-        }
         vm.global = ZigGlobalObject.create(
-            &global_classes,
-            @as(i32, @intCast(global_classes.len)),
             vm.console,
             -1,
             false,
@@ -1072,13 +1045,7 @@ pub const VirtualMachine = struct {
             vm.bundler.linker.onImportCSS = Bun.onImportCSS;
         }
 
-        var global_classes: [GlobalClasses.len]js.JSClassRef = undefined;
-        inline for (GlobalClasses, 0..) |Class, i| {
-            global_classes[i] = Class.get().*;
-        }
         vm.global = ZigGlobalObject.create(
-            &global_classes,
-            @as(i32, @intCast(global_classes.len)),
             vm.console,
             -1,
             opts.smol,
@@ -1194,13 +1161,7 @@ pub const VirtualMachine = struct {
             vm.bundler.linker.onImportCSS = Bun.onImportCSS;
         }
 
-        var global_classes: [GlobalClasses.len]js.JSClassRef = undefined;
-        inline for (GlobalClasses, 0..) |Class, i| {
-            global_classes[i] = Class.get().*;
-        }
         vm.global = ZigGlobalObject.create(
-            &global_classes,
-            @as(i32, @intCast(global_classes.len)),
             vm.console,
             @as(i32, @intCast(worker.execution_context_id)),
             worker.mini,

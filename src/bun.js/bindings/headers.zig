@@ -355,7 +355,7 @@ pub extern fn Reader__intptr__put(arg0: *bindings.JSGlobalObject, JSValue1: JSC_
 pub extern fn Crypto__getRandomValues__put(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) void;
 pub extern fn Crypto__randomUUID__put(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) void;
 pub extern fn Crypto__timingSafeEqual__put(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) void;
-pub extern fn Zig__GlobalObject__create(arg0: [*c]JSClassRef, arg1: i32, arg2: ?*anyopaque, arg3: i32, arg4: bool, arg5: ?*anyopaque) *bindings.JSGlobalObject;
+pub extern fn Zig__GlobalObject__create(arg2: ?*anyopaque, arg3: i32, arg4: bool, arg5: ?*anyopaque) *bindings.JSGlobalObject;
 pub extern fn Zig__GlobalObject__getModuleRegistryMap(arg0: *bindings.JSGlobalObject) ?*anyopaque;
 pub extern fn Zig__GlobalObject__resetModuleRegistryMap(arg0: *bindings.JSGlobalObject, arg1: ?*anyopaque) bool;
 pub extern fn Bun__Path__create(arg0: *bindings.JSGlobalObject, arg1: bool) JSC__JSValue;

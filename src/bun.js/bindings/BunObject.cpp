@@ -594,9 +594,6 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     gc                                             BunObject_callback_gc                                               DontDelete|Function 1
     generateHeapSnapshot                           BunObject_callback_generateHeapSnapshot                             DontDelete|Function 1
     getImportedStyles                              BunObject_callback_getImportedStyles                                DontEnum|DontDelete|Function 1
-    getPublicPath                                  BunObject_callback_getPublicPath                                    DontDelete|Function 1
-    getRouteFiles                                  BunObject_callback_getRouteFiles                                    DontEnum|DontDelete|Function 1
-    getRouteNames                                  BunObject_callback_getRouteNames                                    DontEnum|DontDelete|Function 1
     gunzipSync                                     BunObject_callback_gunzipSync                                       DontDelete|Function 1
     gzipSync                                       BunObject_callback_gzipSync                                         DontDelete|Function 1
     hash                                           BunObject_getter_wrap_hash                                          DontDelete|PropertyCallback
@@ -607,7 +604,6 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     jest                                           BunObject_callback_jest                                             DontEnum|DontDelete|Function 1
     listen                                         BunObject_callback_listen                                           DontDelete|Function 1
     main                                           BunObject_getter_wrap_main                                          DontDelete|PropertyCallback
-    match                                          BunObject_callback_match                                            DontEnum|DontDelete|Function 1
     mmap                                           BunObject_callback_mmap                                             DontDelete|Function 1
     nanoseconds                                    functionBunNanoseconds                                              DontDelete|Function 0
     openInEditor                                   BunObject_callback_openInEditor                                     DontDelete|Function 1
@@ -626,7 +622,6 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     resolve                                        BunObject_callback_resolve                                          DontDelete|Function 1
     resolveSync                                    BunObject_callback_resolveSync                                      DontDelete|Function 1
     revision                                       constructBunRevision                                                ReadOnly|DontDelete|PropertyCallback
-    routesDir                                      BunObject_getter_wrap_routesDir                                     DontEnum|DontDelete|PropertyCallback
     serve                                          BunObject_callback_serve                                            DontDelete|Function 1
     sha                                            BunObject_callback_sha                                              DontDelete|Function 1
     shrink                                         BunObject_callback_shrink                                           DontDelete|Function 1

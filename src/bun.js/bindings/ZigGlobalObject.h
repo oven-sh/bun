@@ -201,7 +201,6 @@ public:
     static void promiseRejectionTracker(JSGlobalObject*, JSC::JSPromise*,
         JSC::JSPromiseRejectionOperation);
     void setConsole(void* console);
-    void installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm);
     WebCore::JSBuiltinInternalFunctions& builtinInternalFunctions() { return m_builtinInternalFunctions; }
     JSC::Structure* FFIFunctionStructure() { return m_JSFFIFunctionStructure.getInitializedOnMainThread(this); }
     JSC::Structure* NapiClassStructure() { return m_NapiClassStructure.getInitializedOnMainThread(this); }
@@ -460,6 +459,8 @@ public:
 
     LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
 
+    JSObject* cryptoObject() { return m_cryptoObject.getInitializedOnMainThread(this); }
+
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
 private:
@@ -540,6 +541,7 @@ private:
     LazyProperty<JSGlobalObject, Structure> m_commonJSModuleObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSFunctionArgumentsStructure;
     LazyProperty<JSGlobalObject, Structure> m_memoryFootprintStructure;
+    LazyProperty<JSGlobalObject, JSObject> m_cryptoObject;
 
     LazyProperty<JSGlobalObject, JSC::JSObject> m_requireFunctionUnbound;
     LazyProperty<JSGlobalObject, JSC::JSObject> m_requireResolveFunctionUnbound;

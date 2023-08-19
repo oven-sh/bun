@@ -41,14 +41,12 @@ pub const ZigGlobalObject = extern struct {
     pub const Interface: type = NewGlobalObject(JS.VirtualMachine);
 
     pub fn create(
-        class_ref: [*]CAPI.JSClassRef,
-        count: i32,
         console: *anyopaque,
         context_id: i32,
         mini_mode: bool,
         worker_ptr: ?*anyopaque,
     ) *JSGlobalObject {
-        var global = shim.cppFn("create", .{ class_ref, count, console, context_id, mini_mode, worker_ptr });
+        var global = shim.cppFn("create", .{ console, context_id, mini_mode, worker_ptr });
         Backtrace.reloadHandlers() catch unreachable;
         return global;
     }
@@ -136,20 +134,6 @@ pub const ZigErrorType = extern struct {
 
     code: ErrorCode,
     ptr: ?*anyopaque,
-
-    pub fn isPrivateData(ptr: ?*anyopaque) callconv(.C) bool {
-        return JSBase.JSPrivateDataPtr.isValidPtr(ptr);
-    }
-
-    pub const Export = shim.exportFunctions(.{
-        .isPrivateData = isPrivateData,
-    });
-
-    comptime {
-        @export(isPrivateData, .{
-            .name = Export[0].symbol_name,
-        });
-    }
 };
 
 pub const NodePath = JSC.Node.Path;
@@ -245,12 +229,6 @@ export fn ZigString__free_global(ptr: [*]const u8, len: usize) void {
     }
     // we must untag the string pointer
     Mimalloc.mi_free(untagged);
-}
-
-export fn Zig__getAPIGlobals(count: *usize) [*]JSC.C.JSClassRef {
-    var globals = JSC.VirtualMachine.getAPIGlobals();
-    count.* = globals.len;
-    return globals.ptr;
 }
 
 pub const JSErrorCode = enum(u8) {
@@ -3449,10 +3427,10 @@ comptime {
 const Bun = @import("../api/bun.zig");
 pub const BunTimer = Bun.Timer;
 pub const Formatter = ZigConsoleClient.Formatter;
-pub const HTTPServerRequestContext = JSC.API.Server.RequestContext;
-pub const HTTPSSLServerRequestContext = JSC.API.SSLServer.RequestContext;
-pub const HTTPDebugServerRequestContext = JSC.API.DebugServer.RequestContext;
-pub const HTTPDebugSSLServerRequestContext = JSC.API.DebugSSLServer.RequestContext;
+pub const HTTPServerRequestContext = JSC.API.HTTPServer.RequestContext;
+pub const HTTPSSLServerRequestContext = JSC.API.HTTPSServer.RequestContext;
+pub const HTTPDebugServerRequestContext = JSC.API.DebugHTTPServer.RequestContext;
+pub const HTTPDebugSSLServerRequestContext = JSC.API.DebugHTTPSServer.RequestContext;
 pub const TestScope = @import("../test/jest.zig").TestScope;
 comptime {
     if (!is_bindgen) {
@@ -3468,7 +3446,6 @@ comptime {
 
         _ = Process.getTitle;
         _ = Process.setTitle;
-        _ = Zig__getAPIGlobals;
         Bun.Timer.shim.ref();
         NodePath.shim.ref();
         JSReadableStreamBlob.shim.ref();

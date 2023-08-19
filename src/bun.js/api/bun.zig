@@ -21,8 +21,6 @@ pub const BunObject = struct {
     pub const generateHeapSnapshot = Bun.generateHeapSnapshot;
     pub const getImportedStyles = Bun.getImportedStyles;
     pub const getPublicPath = Bun.getPublicPathJS;
-    pub const getRouteFiles = Bun.getRouteFiles;
-    pub const getRouteNames = Bun.getRouteNames;
     pub const gunzipSync = JSC.wrapStaticMethod(JSZlib, "gunzipSync", true);
     pub const gzipSync = JSC.wrapStaticMethod(JSZlib, "gzipSync", true);
     pub const indexOfLine = Bun.indexOfLine;
@@ -30,7 +28,6 @@ pub const BunObject = struct {
     pub const inspect = Bun.inspect;
     pub const jest = @import("../test/jest.zig").Jest.call;
     pub const listen = JSC.wrapStaticMethod(JSC.API.Listener, "listen", false);
-    pub const match = Router.deprecatedBunGlobalMatch;
     pub const mmap = Bun.mmapFile;
     pub const nanoseconds = Bun.nanoseconds;
     pub const openInEditor = Bun.openInEditor;
@@ -68,7 +65,6 @@ pub const BunObject = struct {
     pub const hash = Bun.getHashObject;
     pub const main = Bun.getMain;
     pub const origin = Bun.getOrigin;
-    pub const routesDir = Bun.getRoutesDir;
     pub const stderr = Bun.getStderr;
     pub const stdin = Bun.getStdin;
     pub const stdout = Bun.getStdout;
@@ -113,7 +109,6 @@ pub const BunObject = struct {
         @export(BunObject.hash, .{ .name = getterName("hash") });
         @export(BunObject.main, .{ .name = getterName("main") });
         @export(BunObject.origin, .{ .name = getterName("origin") });
-        @export(BunObject.routesDir, .{ .name = getterName("routesDir") });
         @export(BunObject.stderr, .{ .name = getterName("stderr") });
         @export(BunObject.stdin, .{ .name = getterName("stdin") });
         @export(BunObject.stdout, .{ .name = getterName("stdout") });
@@ -133,9 +128,6 @@ pub const BunObject = struct {
         @export(BunObject.gc, .{ .name = callbackName("gc") });
         @export(BunObject.generateHeapSnapshot, .{ .name = callbackName("generateHeapSnapshot") });
         @export(BunObject.getImportedStyles, .{ .name = callbackName("getImportedStyles") });
-        @export(BunObject.getPublicPath, .{ .name = callbackName("getPublicPath") });
-        @export(BunObject.getRouteFiles, .{ .name = callbackName("getRouteFiles") });
-        @export(BunObject.getRouteNames, .{ .name = callbackName("getRouteNames") });
         @export(BunObject.gunzipSync, .{ .name = callbackName("gunzipSync") });
         @export(BunObject.gzipSync, .{ .name = callbackName("gzipSync") });
         @export(BunObject.indexOfLine, .{ .name = callbackName("indexOfLine") });
@@ -143,7 +135,6 @@ pub const BunObject = struct {
         @export(BunObject.inspect, .{ .name = callbackName("inspect") });
         @export(BunObject.jest, .{ .name = callbackName("jest") });
         @export(BunObject.listen, .{ .name = callbackName("listen") });
-        @export(BunObject.match, .{ .name = callbackName("match") });
         @export(BunObject.mmap, .{ .name = callbackName("mmap") });
         @export(BunObject.nanoseconds, .{ .name = callbackName("nanoseconds") });
         @export(BunObject.openInEditor, .{ .name = callbackName("openInEditor") });
@@ -205,7 +196,6 @@ const Request = WebCore.Request;
 const Response = WebCore.Response;
 const Headers = WebCore.Headers;
 const Fetch = WebCore.Fetch;
-const FetchEvent = WebCore.FetchEvent;
 const js = @import("root").bun.JSC.C;
 const JSC = @import("root").bun.JSC;
 const JSError = @import("../base.zig").JSError;
@@ -586,30 +576,6 @@ pub fn getArgv(
     return JSC.Node.Process.getArgv(globalThis);
 }
 
-pub fn getRoutesDir(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) callconv(.C) JSC.JSValue {
-    if (!VirtualMachine.get().bundler.options.routes.routes_enabled or VirtualMachine.get().bundler.options.routes.dir.len == 0) {
-        return .undefined;
-    }
-
-    return ZigString.init(VirtualMachine.get().bundler.options.routes.dir).toValueGC(globalThis);
-}
-
-pub fn getRouteFiles(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    if (VirtualMachine.get().bundler.router == null) return JSValue.createEmptyArray(globalObject, 0);
-
-    const router = &VirtualMachine.get().bundler.router.?;
-    const list = router.getPublicPaths() catch unreachable;
-
-    for (routes_list_strings[0..@min(list.len, routes_list_strings.len)], 0..) |_, i| {
-        routes_list_strings[i] = ZigString.init(list[i]);
-    }
-
-    return JSValue.createStringArray(globalObject, &routes_list_strings, list.len, true);
-}
-
 const Editor = @import("../../open.zig").Editor;
 pub fn openInEditor(
     globalThis: js.JSContextRef,
@@ -970,21 +936,6 @@ fn getImportedStyles(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callc
     }
 
     return JSValue.createStringArray(globalObject, styles.ptr, styles.len, true);
-}
-
-fn getRouteNames(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    if (VirtualMachine.get().bundler.router == null) {
-        return JSC.JSValue.createEmptyArray(globalObject, 0);
-    }
-
-    const router = &VirtualMachine.get().bundler.router.?;
-    const list = router.getNames() catch unreachable;
-
-    for (routes_list_strings[0..@min(list.len, routes_list_strings.len)], 0..) |_, i| {
-        routes_list_strings[i] = ZigString.init(list[i]);
-    }
-
-    return JSValue.createStringArray(globalObject, &routes_list_strings, list.len, true);
 }
 
 pub fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -2543,7 +2494,7 @@ pub fn serve(
     // This is so we can return a Server object
     if (config.ssl_config != null) {
         if (config.development) {
-            var server = JSC.API.DebugSSLServer.init(config, globalObject.ptr());
+            var server = JSC.API.DebugHTTPSServer.init(config, globalObject.ptr());
             exception_value = &server.thisObject;
             server.listen();
             if (!server.thisObject.isEmpty()) {
@@ -2553,12 +2504,13 @@ pub fn serve(
                 server.deinit();
                 return .zero;
             }
-            var obj = JSC.API.DebugSSLServer.Class.make(globalObject, server);
-            JSC.C.JSValueProtect(globalObject, obj);
-            server.thisObject = JSValue.c(obj);
-            return JSValue.c(obj);
+            const obj = server.toJS(globalObject);
+            obj.protect();
+
+            server.thisObject = obj;
+            return obj;
         } else {
-            var server = JSC.API.SSLServer.init(config, globalObject.ptr());
+            var server = JSC.API.HTTPSServer.init(config, globalObject.ptr());
             exception_value = &server.thisObject;
             server.listen();
             if (!exception_value.isEmpty()) {
@@ -2568,14 +2520,14 @@ pub fn serve(
                 server.deinit();
                 return .zero;
             }
-            var obj = JSC.API.SSLServer.Class.make(globalObject, server);
-            JSC.C.JSValueProtect(globalObject, obj);
-            server.thisObject = JSValue.c(obj);
-            return JSValue.c(obj);
+            const obj = server.toJS(globalObject);
+            obj.protect();
+            server.thisObject = obj;
+            return obj;
         }
     } else {
         if (config.development) {
-            var server = JSC.API.DebugServer.init(config, globalObject.ptr());
+            var server = JSC.API.DebugHTTPServer.init(config, globalObject.ptr());
             exception_value = &server.thisObject;
             server.listen();
             if (!exception_value.isEmpty()) {
@@ -2585,12 +2537,12 @@ pub fn serve(
                 server.deinit();
                 return .zero;
             }
-            var obj = JSC.API.DebugServer.Class.make(globalObject, server);
-            JSC.C.JSValueProtect(globalObject, obj);
-            server.thisObject = JSValue.c(obj);
-            return JSValue.c(obj);
+            const obj = server.toJS(globalObject);
+            obj.protect();
+            server.thisObject = obj;
+            return obj;
         } else {
-            var server = JSC.API.Server.init(config, globalObject.ptr());
+            var server = JSC.API.HTTPServer.init(config, globalObject.ptr());
             exception_value = &server.thisObject;
             server.listen();
             if (!exception_value.isEmpty()) {
@@ -2600,10 +2552,11 @@ pub fn serve(
                 server.deinit();
                 return .zero;
             }
-            var obj = JSC.API.Server.Class.make(globalObject, server);
-            JSC.C.JSValueProtect(globalObject, obj);
-            server.thisObject = JSValue.c(obj);
-            return JSValue.c(obj);
+            const obj = server.toJS(globalObject);
+            obj.protect();
+
+            server.thisObject = obj;
+            return obj;
         }
     }
 
@@ -3789,17 +3742,17 @@ pub const Timer = struct {
 pub const FFIObject = struct {
     const fields = .{
         .viewSource = JSC.wrapStaticMethod(
-            JSC.FFIObject,
+            JSC.FFI,
             "print",
             false,
         ),
-        .dlopen = JSC.wrapStaticMethod(JSC.FFIObject, "open", false),
-        .callback = JSC.wrapStaticMethod(JSC.FFIObject, "callback", false),
-        .linkSymbols = JSC.wrapStaticMethod(JSC.FFIObject, "linkSymbols", false),
+        .dlopen = JSC.wrapStaticMethod(JSC.FFI, "open", false),
+        .callback = JSC.wrapStaticMethod(JSC.FFI, "callback", false),
+        .linkSymbols = JSC.wrapStaticMethod(JSC.FFI, "linkSymbols", false),
         .toBuffer = JSC.wrapStaticMethod(@This(), "toBuffer", false),
         .toArrayBuffer = JSC.wrapStaticMethod(@This(), "toArrayBuffer", false),
-        .closeCallback = JSC.wrapStaticMethod(JSC.FFIObject, "closeCallback", false),
-        .CString = JSC.wrapStaticMethod(JSC.FFIObject, "newCString", false),
+        .closeCallback = JSC.wrapStaticMethod(JSC.FFI, "closeCallback", false),
+        .CString = JSC.wrapStaticMethod(Bun.FFIObject, "newCString", false),
     };
 
     pub fn newCString(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, lengthValue: ?JSValue) JSC.JSValue {
@@ -3814,9 +3767,6 @@ pub const FFIObject = struct {
     }
 
     pub const dom_call = JSC.DOMCall("FFI", @This(), "ptr", f64, JSC.DOMEffect.forRead(.TypedArrayProperties));
-    pub const DOMCalls = .{
-        dom_call,
-    };
 
     pub fn toJS(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         const object = JSC.JSValue.createEmptyObject(globalObject, comptime std.meta.fieldNames(@TypeOf(fields)).len + 2);
@@ -3851,9 +3801,9 @@ pub const FFIObject = struct {
         };
 
         pub fn toJS(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-            const obj = JSC.JSValue.createEmptyObject(globalThis, std.meta.fieldNames(Reader.DOMCalls).len);
+            const obj = JSC.JSValue.createEmptyObject(globalThis, std.meta.fieldNames(@TypeOf(Reader.DOMCalls)).len);
 
-            inline for (comptime std.meta.fieldNames(Reader.DOMCalls)) |field| {
+            inline for (comptime std.meta.fieldNames(@TypeOf(Reader.DOMCalls))) |field| {
                 @field(Reader.DOMCalls, field).put(globalThis, obj);
             }
 

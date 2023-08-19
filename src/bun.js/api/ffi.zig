@@ -82,7 +82,7 @@ pub const FFI = struct {
     functions: bun.StringArrayHashMapUnmanaged(Function) = .{},
     closed: bool = false,
 
-    pub usingnamespace JSC.JSFFI;
+    pub usingnamespace JSC.Codegen.JSFFI;
 
     pub fn finalize(_: *FFI) callconv(.C) void {}
 
@@ -501,9 +501,9 @@ pub const FFI = struct {
             .functions = symbols,
         };
 
-        var close_object = JSC.JSValue.c(Class.make(global, lib));
-
-        return JSC.JSValue.createObject2(global, ZigString.static("close"), ZigString.static("symbols"), close_object, obj);
+        const js_object = lib.toJS(global);
+        JSC.Codegen.JSFFI.symbolsValueSetCached(js_object, global, obj);
+        return js_object;
     }
     pub fn generateSymbolForFunction(global: *JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, function: *Function) !?JSValue {
         JSC.markBinding(@src());

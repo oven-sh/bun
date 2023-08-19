@@ -1268,6 +1268,21 @@ pub fn wrapInstanceMethod(
             var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.ptr[0..arguments.len]);
             var args: Args = undefined;
 
+            const has_exception_ref: bool = comptime brk: {
+                var i: usize = 0;
+                while (i < FunctionTypeInfo.params.len) : (i += 1) {
+                    const ArgType = FunctionTypeInfo.params[i].type.?;
+
+                    if (ArgType == JSC.C.ExceptionRef) {
+                        break :brk true;
+                    }
+                }
+
+                break :brk false;
+            };
+            var exception_value = [_]JSC.C.JSValueRef{null};
+            var exception: JSC.C.ExceptionRef = if (comptime has_exception_ref) &exception_value else undefined;
+
             comptime var i: usize = 0;
             inline while (i < FunctionTypeInfo.params.len) : (i += 1) {
                 const ArgType = comptime FunctionTypeInfo.params[i].type.?;
@@ -1405,11 +1420,22 @@ pub fn wrapInstanceMethod(
                     ?JSValue => {
                         args[i] = eater(&iter);
                     },
+                    JSC.C.ExceptionRef => {
+                        args[i] = exception;
+                    },
                     else => @compileError("Unexpected Type " ++ @typeName(ArgType)),
                 }
             }
 
             defer iter.deinit();
+
+            defer {
+                if (comptime has_exception_ref) {
+                    if (exception_value[0] != null) {
+                        globalThis.throwValue(exception_value[0].?.value());
+                    }
+                }
+            }
 
             return @call(.auto, @field(Container, name), args);
         }

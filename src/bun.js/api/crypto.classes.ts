@@ -71,7 +71,7 @@ export default [
         length: 2,
       },
       scryptSync: {
-        fn: "scryptSync",
+        fn: "doScryptSync",
         length: 2,
       },
     },

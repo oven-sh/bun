@@ -433,7 +433,7 @@ function CFunction(options) {
     [identifier]: options,
   });
   var hasClosed = false;
-  var close = result.close;
+  var close = result.close.bind(result);
   result.symbols[identifier].close = () => {
     if (hasClosed || !close) return;
     hasClosed = true;

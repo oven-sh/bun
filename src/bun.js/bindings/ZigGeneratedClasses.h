@@ -398,22 +398,22 @@ public:
     mutable JSC::WriteBarrier<JSC::Unknown> m_algorithm;
 };
 
-class JSDebugModeHTTPSServer final : public JSC::JSDestructibleObject {
+class JSDebugHTTPSServer final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
-    static JSDebugModeHTTPSServer* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+    static JSDebugHTTPSServer* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
 
     DECLARE_EXPORT_INFO;
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSDebugModeHTTPSServer, WebCore::UseCustomHeapCellType::No>(
+        return WebCore::subspaceForImpl<JSDebugHTTPSServer, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForDebugModeHTTPSServer.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDebugModeHTTPSServer = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForDebugModeHTTPSServer.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForDebugModeHTTPSServer = std::forward<decltype(space)>(space); });
+            [](auto& spaces) { return spaces.m_clientSubspaceForDebugHTTPSServer.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDebugHTTPSServer = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForDebugHTTPSServer.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForDebugHTTPSServer = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -425,7 +425,7 @@ public:
     static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
     ;
 
-    ~JSDebugModeHTTPSServer();
+    ~JSDebugHTTPSServer();
 
     void* wrapped() const { return m_ctx; }
 
@@ -435,11 +435,11 @@ public:
     }
 
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-    static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSDebugModeHTTPSServer, m_ctx); }
+    static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSDebugHTTPSServer, m_ctx); }
 
     void* m_ctx { nullptr };
 
-    JSDebugModeHTTPSServer(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
+    JSDebugHTTPSServer(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
         : Base(vm, structure)
     {
         m_ctx = sinkPtr;
@@ -454,22 +454,22 @@ public:
     mutable JSC::WriteBarrier<JSC::Unknown> m_hostname;
 };
 
-class JSDebugModeHTTPServer final : public JSC::JSDestructibleObject {
+class JSDebugHTTPServer final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
-    static JSDebugModeHTTPServer* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+    static JSDebugHTTPServer* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
 
     DECLARE_EXPORT_INFO;
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSDebugModeHTTPServer, WebCore::UseCustomHeapCellType::No>(
+        return WebCore::subspaceForImpl<JSDebugHTTPServer, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForDebugModeHTTPServer.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDebugModeHTTPServer = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForDebugModeHTTPServer.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForDebugModeHTTPServer = std::forward<decltype(space)>(space); });
+            [](auto& spaces) { return spaces.m_clientSubspaceForDebugHTTPServer.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDebugHTTPServer = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForDebugHTTPServer.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForDebugHTTPServer = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -481,7 +481,7 @@ public:
     static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
     ;
 
-    ~JSDebugModeHTTPServer();
+    ~JSDebugHTTPServer();
 
     void* wrapped() const { return m_ctx; }
 
@@ -491,11 +491,11 @@ public:
     }
 
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-    static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSDebugModeHTTPServer, m_ctx); }
+    static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSDebugHTTPServer, m_ctx); }
 
     void* m_ctx { nullptr };
 
-    JSDebugModeHTTPServer(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
+    JSDebugHTTPServer(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
         : Base(vm, structure)
     {
         m_ctx = sinkPtr;

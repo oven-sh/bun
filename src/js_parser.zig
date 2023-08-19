@@ -4182,7 +4182,7 @@ fn NewParser_(
         pub const parser_features: ParserFeatures = js_parser_features;
         const P = @This();
         pub const jsx_transform_type: JSXTransformType = js_parser_jsx;
-        const allow_macros = FeatureFlags.is_macro_enabled and jsx_transform_type != .macro;
+        const allow_macros = FeatureFlags.is_macro_enabled;
         const MacroCallCountType = if (allow_macros) u32 else u0;
         macro: MacroState = undefined,
         allocator: Allocator,
@@ -14769,7 +14769,7 @@ fn NewParser_(
                         e_.tag = p.visitExpr(tag);
 
                         if (comptime allow_macros) {
-                            if (e_.tag.?.data == .e_import_identifier) {
+                            if (e_.tag.?.data == .e_import_identifier and !p.options.features.is_macro_runtime) {
                                 const ref = e_.tag.?.data.e_import_identifier.ref;
 
                                 if (p.macro.refs.get(ref)) |import_record_id| {
@@ -15522,9 +15522,11 @@ fn NewParser_(
                         }
 
                         if (comptime allow_macros) {
-                            if (p.macro_call_count > 0 and e_.target.data == .e_object and e_.target.data.e_object.was_originally_macro) {
-                                if (e_.target.get(e_.name)) |obj| {
-                                    return obj;
+                            if (!p.options.features.is_macro_runtime) {
+                                if (p.macro_call_count > 0 and e_.target.data == .e_object and e_.target.data.e_object.was_originally_macro) {
+                                    if (e_.target.get(e_.name)) |obj| {
+                                        return obj;
+                                    }
                                 }
                             }
                         }
@@ -15754,8 +15756,7 @@ fn NewParser_(
                         else => {},
                     }
 
-                    const is_macro_ref: bool = if (comptime FeatureFlags.is_macro_enabled and
-                        jsx_transform_type != .macro)
+                    const is_macro_ref: bool = if (comptime FeatureFlags.is_macro_enabled)
                         e_.target.data == .e_import_identifier and p.macro.refs.contains(e_.target.data.e_import_identifier.ref)
                     else
                         false;
@@ -15875,7 +15876,7 @@ fn NewParser_(
                     }
 
                     if (comptime allow_macros) {
-                        if (is_macro_ref) {
+                        if (is_macro_ref and p.options.features.is_macro_runtime) {
                             const ref = e_.target.data.e_import_identifier.ref;
                             const import_record_id = p.macro.refs.get(ref).?;
                             p.ignoreUsage(ref);

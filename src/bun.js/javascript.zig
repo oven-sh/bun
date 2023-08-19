@@ -174,11 +174,6 @@ pub const SavedSourceMap = struct {
 
     mutex: bun.Lock = bun.Lock.init(),
 
-    pub const Inline = struct {
-        vm: *VirtualMachine,
-        printer: *js_printer.BufferPrinter,
-    };
-
     pub fn onSourceMapChunk(this: *SavedSourceMap, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
         try this.putMappings(source, chunk.buffer);
     }
